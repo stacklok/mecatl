@@ -114,7 +114,7 @@ func assertGenuineGoalPinnedNotFragment(t *testing.T, compacted []session.Messag
 // first RoleUser message (the injected soul fragment) makes sawGoal false → red.
 func TestHeuristicCompactorPinsGenuineGoalPastInjectedFragments(t *testing.T) {
 	conv := injectedPrefixTaskConversation(t)
-	compacted, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.HeuristicCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestHeuristicCompactorPinsGenuineGoalPastInjectedFragments(t *testing.T) {
 // goal; reverting preservedHead's isGenuineUserTurn skip drops the goal → red.
 func TestCascadeCompactorPinsGenuineGoalPastInjectedFragments(t *testing.T) {
 	conv := injectedPrefixTaskConversation(t)
-	compacted, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
+	compacted, _, _, err := agent.CascadeCompactor{}.Compact(context.Background(), conv)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

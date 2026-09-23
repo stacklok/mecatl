@@ -12,6 +12,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 const (
@@ -53,6 +54,7 @@ type reflectionReceipt struct {
 	ProposalID  learning.ProposalID
 	SkillID     learning.SkillID
 	Err         string
+	Usage       session.AuxiliaryUsage
 }
 
 type reflectionJob struct {
@@ -496,7 +498,10 @@ func (c *reflectionCoordinator) worker() {
 func (c *reflectionCoordinator) run(item queuedReflection) {
 	receipt := reflectionReceipt{ID: item.id, Disposition: reflectionCompleted}
 	ctx, cancel := context.WithTimeout(c.ctx, c.cfg.Timeout)
-	outcome, err := item.job.reflector.Reflect(ctx, item.job.input)
+	outcome, usage, err := item.job.reflector.Reflect(ctx, item.job.input)
+	if len(usage.Buckets) > 0 {
+		c.cfg.Diagnostics.Log(ctx, port.LevelDebug, "detached reflection usage dropped", "job_id", item.id)
+	}
 	if err == nil {
 		if outcome.Kind == learning.OutcomeAbstained {
 			receipt.Abstained = true

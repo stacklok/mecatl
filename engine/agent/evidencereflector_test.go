@@ -64,7 +64,7 @@ func TestEvidenceReflectorReservationEstimateCoversExactRequestAndOutput(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = reflector.Reflect(context.Background(), input); err != nil {
+	if _, _, err = reflector.Reflect(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
 	actual := len(request.System.Render()) + len(request.Messages[0].Text) + 123
@@ -87,7 +87,7 @@ func TestEvidenceReflectorOneProviderCallZeroToolsAndSelectedModel(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := reflector.Reflect(context.Background(), input)
+	out, _, err := reflector.Reflect(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestEvidenceReflectorAbstainsWithoutSignalAndDoesNotCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := reflector.Reflect(context.Background(), input)
+	out, _, err := reflector.Reflect(context.Background(), input)
 	if err != nil || out.Kind != learning.OutcomeAbstained || len(out.Candidates) != 0 || provider.Calls() != 0 {
 		t.Fatalf("out=%#v calls=%d err=%v", out, provider.Calls(), err)
 	}
@@ -210,7 +210,7 @@ func TestEvidenceReflectorBoundsCancellationAndTimeout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := reflector.Reflect(context.Background(), bounded); !errors.Is(err, agent.ErrReflectionLimits) {
+		if _, _, err := reflector.Reflect(context.Background(), bounded); !errors.Is(err, agent.ErrReflectionLimits) {
 			t.Fatalf("event limit error = %v", err)
 		}
 	})
@@ -220,7 +220,7 @@ func TestEvidenceReflectorBoundsCancellationAndTimeout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionLimits) {
+		if _, _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionLimits) {
 			t.Fatalf("input limit error = %v", err)
 		}
 	})
@@ -230,7 +230,7 @@ func TestEvidenceReflectorBoundsCancellationAndTimeout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionOutput) {
+		if _, _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionOutput) {
 			t.Fatalf("error = %v", err)
 		}
 	})
@@ -240,7 +240,7 @@ func TestEvidenceReflectorBoundsCancellationAndTimeout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionOutput) {
+		if _, _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionOutput) {
 			t.Fatalf("error = %v", err)
 		}
 	})
@@ -248,13 +248,13 @@ func TestEvidenceReflectorBoundsCancellationAndTimeout(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		reflector, _ := agent.NewEvidenceReflector(mockllm.New(mockllm.TextTurn(`{"kind":"abstained"}`)), "m", nil, agent.ReflectionLimits{})
-		if _, err := reflector.Reflect(ctx, input); !errors.Is(err, context.Canceled) {
+		if _, _, err := reflector.Reflect(ctx, input); !errors.Is(err, context.Canceled) {
 			t.Fatalf("error = %v", err)
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
 		reflector, _ := agent.NewEvidenceReflector(waitProvider{}, "m", nil, agent.ReflectionLimits{Timeout: time.Millisecond})
-		if _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, context.DeadlineExceeded) {
+		if _, _, err := reflector.Reflect(context.Background(), input); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("error = %v", err)
 		}
 	})
@@ -285,7 +285,7 @@ func TestEvidenceReflectorRejectsUnexpectedAndNonBenignStreams(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionOutput) && !errors.Is(err, agent.ErrReflectionProvider) {
+			if _, _, err = reflector.Reflect(context.Background(), input); !errors.Is(err, agent.ErrReflectionOutput) && !errors.Is(err, agent.ErrReflectionProvider) {
 				t.Fatalf("error = %v", err)
 			}
 		})
@@ -308,7 +308,7 @@ func TestEvidenceReflectorAcceptsHarmlessStreamMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := reflector.Reflect(context.Background(), input)
+	out, _, err := reflector.Reflect(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
