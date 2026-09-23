@@ -452,7 +452,7 @@ A logical file namespace exposed through a backend-independent port. File `Tools
 
 **Invariants**
 
-- **workspace-contained** — File access stays within the backend's namespace unless both the backend supports the requested external access and policy authorizes it. A posture cannot create a missing backend capability or turn a virtual root into a host filesystem path. Local out-of-root serving is operation-specific; namespace operations and searches remain confined even where Read, Write, and Edit support approved access.
+- **workspace-contained** — File access stays within the backend's namespace unless both the backend supports the requested external access and policy authorizes it. A posture cannot create a missing backend capability or turn a virtual root into a host filesystem path. Local out-of-root serving is operation-specific: Read, ListDir, Write, and Edit can serve policy-authorized external absolute targets, while mutating namespace operations and searches remain confined.
 
 - **workspace-tools-use-ports** — Read, ListDir, Write, Edit, Copy, Move, Remove, Glob, and Grep use the `Environment`'s `Workspace` capabilities. Their bodies do not select a storage backend or fall back to host filesystem access. Unsupported namespace operations return an explicit error.
 
@@ -593,7 +593,7 @@ erDiagram
 
 - **workspace-tools-use-ports** — Read, ListDir, Write, Edit, Copy, Move, Remove, Glob, and Grep use the `Environment`'s `Workspace` capabilities. Their bodies do not select a storage backend or fall back to host filesystem access. Unsupported namespace operations return an explicit error.
 
-- **workspace-contained** — File access stays within the backend's namespace unless both the backend supports the requested external access and policy authorizes it. A posture cannot create a missing backend capability or turn a virtual root into a host filesystem path. Local out-of-root serving is operation-specific; namespace operations and searches remain confined even where Read, Write, and Edit support approved access.
+- **workspace-contained** — File access stays within the backend's namespace unless both the backend supports the requested external access and policy authorizes it. A posture cannot create a missing backend capability or turn a virtual root into a host filesystem path. Local out-of-root serving is operation-specific: Read, ListDir, Write, and Edit can serve policy-authorized external absolute targets, while mutating namespace operations and searches remain confined.
 
 - **read-evidence-session-scoped** — Sharing backing files does not share read evidence between `Sessions`. A new child session receives fresh evidence even when it uses the parent's file namespace. A command changing a file does not count as the model reading that file's new version.
 
@@ -903,7 +903,7 @@ erDiagram
 - **skill-crosses-as-bundle-not-path** — A `Skill` crosses the boundary as identity, body, and named assets — never as a filesystem path or directory.
 
 - **skill-assets-on-demand** — A `Skill`'s textual assets are retrieved one at a time by logical name; they are not materialized or exposed to the `Workspace`.
-- **workspace-contained** — File access stays within the backend's namespace unless both the backend supports the requested external access and policy authorizes it. A posture cannot create a missing backend capability or turn a virtual root into a host filesystem path. Local out-of-root serving is operation-specific; namespace operations and searches remain confined even where Read, Write, and Edit support approved access.
+- **workspace-contained** — File access stays within the backend's namespace unless both the backend supports the requested external access and policy authorizes it. A posture cannot create a missing backend capability or turn a virtual root into a host filesystem path. Local out-of-root serving is operation-specific: Read, ListDir, Write, and Edit can serve policy-authorized external absolute targets, while mutating namespace operations and searches remain confined.
 
 
 ### A subagent overrides the model within the same provider

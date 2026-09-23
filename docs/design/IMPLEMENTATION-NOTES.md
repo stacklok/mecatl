@@ -6392,10 +6392,11 @@ capability handed to tools. The built-in bodies use only the safe path:
 
 The additive namespace extension is `engine/tool/tool.go` (`WorkspaceNamespace`), not a widening of
 `Workspace`: external content-only workspaces remain source-compatible and the built-in tools return an
-honest unsupported result when the extension is absent. `ListDir` is read-only; `Copy`, `Move`, and
-`Remove` are mutate-serial and do not consult or update the content read ledger. Their contract is
-intentionally safer than general POSIX commands: Remove is non-recursive, Copy accepts one regular file,
-and Copy/Rename refuse an existing destination. `engine/adapter/fsconformance/fsconformance.go`
+honest unsupported result when the extension is absent. `ListDir` is read-only and local osfs can serve a
+policy-authorized external absolute directory; `Copy`, `Move`, and `Remove` remain workspace-confined,
+mutate-serial, and independent of the content read ledger. Their contract is intentionally safer than
+general POSIX commands: Remove is non-recursive, Copy accepts one regular file, and Copy/Rename refuse
+an existing destination. `engine/adapter/fsconformance/fsconformance.go`
 (`RunNamespace`) pins sorting, derived-directory behavior, no-clobber, subtree rename, and copied-version
 consistency across memfs, osfs, and Redis. Redis performs each namespace mutation atomically in Lua;
 prefix-backed memfs/Redis workspaces derive directories and cannot retain empty ones. Permission-pattern
@@ -6447,13 +6448,13 @@ tool body, never re-opens it after).
 **Decision in composition, serving in osfs.** Two halves, deliberately split:
 
 - `internal/app/escapeclassifier.go` (`escapeClassifier`) — a pure composition-layer
-  predicate answering "is this Read/Write/Edit call an out-of-root escape?" into three
+  predicate answering "is this Read/ListDir/Write/Edit call an out-of-root escape?" into three
   kinds: in-root / escape / pseudo-fs. It NEVER reimplements the osfs algorithms — it is
   built from `internal/adapter/osfs/osfs.go` (`Canonicalize`) and its sibling exported
   helpers `LocalizeInRoot` and `ResolveRoot` — the SAME canonicalize-then-reject primitives
   the tool body runs over the same canonicalized root, so a symlinked absolute path
   classifies identically to the tool body by construction. The escape relax applies only
-  to Read/Write/Edit: ListDir/Copy/Move/Remove stay workspace-confined, Shell is gated by
+  to Read/ListDir/Write/Edit: Copy/Move/Remove stay workspace-confined, Shell is gated by
   its own classifiers, and Glob/Grep route patterns and stay workspace-confined at every posture (ADR-0047 point 5), and a malformed path arg
   classifies in-root (the
   tool body's own validation rejects it — the escape decision never invents a path).
@@ -6473,7 +6474,7 @@ tool body, never re-opens it after).
 
 **The posture → escape-decision table** (the running behaviour, per posture tier):
 
-| Posture | Read escape | Write escape |
+| Posture | Read/ListDir escape | Write/Edit escape |
 |---|---|---|
 | `yolo` | allow | allow |
 | `auto` | allow (guardrail-gated iff the escape knob is configured — ADR 0080) | ask (guardrail-gated iff configured) |
@@ -6482,8 +6483,8 @@ tool body, never re-opens it after).
 | pseudo-fs (`/proc`,`/sys`,`/dev`) | hard deny, every posture | hard deny, every posture |
 | any child engine | hard deny, every posture | hard deny, every posture |
 
-At `auto`/`yolo` a read escape allows by Shell parity (the Shell channel already reads the
-same bytes, so the FS read boundary was cosmetic); a write escape allows only at `yolo`
+At `auto`/`yolo` a Read or ListDir escape allows by Shell parity (the Shell channel already reads the
+same bytes and directory metadata, so the FS read boundary was cosmetic); a write escape allows only at `yolo`
 and ASKS everywhere below it (never a silent un-asked mutation). At `strict`/`trusted`
 BOTH read and write escapes now ASK on the FS tool itself (Scenario 4) instead of
 dead-ending — the ask names the path, so the approval is legible, and the escape Ask is
@@ -6498,8 +6499,12 @@ policy — single construction, so workspace and policy can never disagree). The
 options only make SERVING possible — whether an escape RUNS is the policy's call, and an
 escape left at Ask never reaches the tool body unapproved. At strict/trusted the relaxed
 workspace is what lets an APPROVED escape actually execute (the ask would otherwise be
-un-actionable). Both options serve through a FRESH `*os.Root` opened on the target's
-LEXICAL parent directory — never a bare os.Open/os.WriteFile — so a symlink inside the
+un-actionable). `WithRelaxedReads` serves Read, Stat, and ListDir. Production Copy
+confinement is enforced by `escapeWorkspace.CopyFile` on both operands: naked osfs
+CopyFile composes ReadVersion/Stat/CreateFile, inheriting relaxed source reads and,
+with `WithRelaxedWrites`, destination writes. Move, Remove, Glob, and Grep remain
+confined. Both relaxed options serve through a FRESH `*os.Root` opened on
+the target's LEXICAL parent directory — never a bare os.Open/os.WriteFile — so a symlink inside the
 target dir that escapes further is refused by that root's containment, exactly as the
 workspace root's own containment refuses an in-root escape. The relax widens WHICH
 paths may be served, never HOW they are served. `escapeWorkspace` also carries the

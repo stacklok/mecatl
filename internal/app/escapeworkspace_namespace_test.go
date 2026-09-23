@@ -11,23 +11,12 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
-// escapeworkspace_namespace_test.go pins the ADR-0315 namespace-operation
-// wrapping in escapeWorkspace (internal/app/escapepolicy.go): ReadDir, Remove,
-// Rename, and CopyFile must delegate for genuine in-root paths, and must
-// reject an ordinary out-of-root path and a pseudo-filesystem path (/proc) on
-// every operand. Every negative assertion also confirms the rejection is not
-// ErrFileOperationUnsupported, since the underlying relaxed osfs.Workspace
-// does implement tool.WorkspaceNamespace (proven by the in-root positive
-// case) — a bare "unsupported" would itself be a bug the test must not paper
-// over.
-//
-// MUTATION-VERIFIED (planted: deleted escapeWorkspace's refuseNamespacePath
-// call from all four methods, confirmed red, reverted): the relaxed base
-// workspace independently refuses ReadDir/Remove/Rename outside its root
-// regardless of the wrapper, so the wrapper's guard is defense-in-depth
-// there. CopyFile is the load-bearing case (see its RejectsOutOfRootSource
-// doc comment below) — its two out-of-root sub-tests are the only ones that
-// actually went red under the plant.
+// escapeworkspace_namespace_test.go pins the namespace-operation wrapping in
+// escapeWorkspace (internal/app/escapepolicy.go). ReadDir delegates an ordinary
+// policy-authorized external path in the main view while rejecting pseudo-fs and
+// every child escape. Remove, Rename, and CopyFile remain confined on every
+// operand. Negative assertions distinguish confinement from a missing
+// WorkspaceNamespace capability.
 
 // newNamespaceTestWorkspace builds the SAME shape osfsWorkspaceFactory builds
 // for the main session: a posture-relaxed *osfs.Workspace (WithRelaxedReads +
@@ -63,21 +52,37 @@ func TestADR_0315_EscapeWorkspace_ReadDir_InRootDelegates(t *testing.T) {
 	}
 }
 
-func TestADR_0315_EscapeWorkspace_ReadDir_RejectsOutOfRoot(t *testing.T) {
+func TestEscapeWorkspace_ReadDir_OutOfRootMainDelegatesAndChildRejects(t *testing.T) {
 	ws, root := newNamespaceTestWorkspace(t)
 	outside := filepath.Join(filepath.Dir(root), "outside")
 	if err := os.MkdirAll(outside, 0o755); err != nil {
 		t.Fatalf("MkdirAll(outside): %v", err)
 	}
-	_, err := ws.ReadDir(context.Background(), outside)
+	if err := os.WriteFile(filepath.Join(outside, "external.txt"), []byte("outside"), 0o644); err != nil {
+		t.Fatalf("seed outside file: %v", err)
+	}
+	entries, err := ws.ReadDir(context.Background(), outside)
+	if err != nil {
+		t.Fatalf("main ReadDir(out-of-root) = %v, want relaxed delegation", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "external.txt" {
+		t.Fatalf("main ReadDir(out-of-root) = %+v, want [external.txt]", entries)
+	}
+
+	child := childWorkspaceView(ws)
+	ns, ok := child.(tool.WorkspaceNamespace)
+	if !ok {
+		t.Fatal("child workspace lost WorkspaceNamespace")
+	}
+	_, err = ns.ReadDir(context.Background(), outside)
 	if err == nil {
-		t.Fatal("ReadDir(out-of-root) = nil error, want confinement refusal")
+		t.Fatal("child ReadDir(out-of-root) = nil error, want confinement refusal")
 	}
 	if errors.Is(err, tool.ErrFileOperationUnsupported) {
-		t.Fatalf("ReadDir(out-of-root) = %v; rejection must come from the wrapper's confinement check, not ErrFileOperationUnsupported", err)
+		t.Fatalf("child ReadDir(out-of-root) = %v; rejection must come from confinement, not ErrFileOperationUnsupported", err)
 	}
 	if !errors.Is(err, osfs.ErrPathEscape) {
-		t.Fatalf("ReadDir(out-of-root) = %v, want errors.Is(_, osfs.ErrPathEscape)", err)
+		t.Fatalf("child ReadDir(out-of-root) = %v, want errors.Is(_, osfs.ErrPathEscape)", err)
 	}
 }
 
@@ -86,6 +91,9 @@ func TestADR_0315_EscapeWorkspace_ReadDir_RejectsPseudoFS(t *testing.T) {
 	_, err := ws.ReadDir(context.Background(), "/proc")
 	if err == nil {
 		t.Fatal("ReadDir(/proc) = nil error, want pseudo-fs refusal")
+	}
+	if !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("ReadDir(/proc) = %v, want ErrPathEscape", err)
 	}
 	if errors.Is(err, tool.ErrFileOperationUnsupported) {
 		t.Fatalf("ReadDir(/proc) = %v; rejection must come from the wrapper's pseudo-fs check, not ErrFileOperationUnsupported", err)
