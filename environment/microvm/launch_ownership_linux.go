@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -378,6 +379,25 @@ func runLaunchOwnerChild() error { //nolint:gocyclo // linear fail-closed valida
 	if err != nil {
 		return err
 	}
+	if err := publishLaunchReceipt(dir, lock, receipt, payload); err != nil {
+		return err
+	}
+	_ = dir.Close()
+	_ = receipt.Close()
+	_ = intentFile.Close()
+	err = syscall.Exec(intent.RunnerPath, []string{intent.RunnerPath, string(intent.Config)}, os.Environ())
+	runtime.KeepAlive(lock)
+	return err
+}
+
+func publishLaunchReceipt(dir, lock, receipt *os.File, payload []byte) error {
+	flags, err := unix.FcntlInt(lock.Fd(), unix.F_GETFD, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := unix.FcntlInt(lock.Fd(), unix.F_SETFD, flags&^unix.FD_CLOEXEC); err != nil {
+		return err
+	}
 	if err := receipt.Truncate(0); err != nil {
 		return err
 	}
@@ -387,22 +407,7 @@ func runLaunchOwnerChild() error { //nolint:gocyclo // linear fail-closed valida
 	if err := receipt.Sync(); err != nil {
 		return err
 	}
-	if err := dir.Sync(); err != nil {
-		return err
-	}
-	unix.CloseOnExec(childLockFD)
-	// CloseOnExec sets the bit; clear it so the exact lock remains held across runner exec.
-	flags, err := unix.FcntlInt(uintptr(childLockFD), unix.F_GETFD, 0)
-	if err != nil {
-		return err
-	}
-	if _, err := unix.FcntlInt(uintptr(childLockFD), unix.F_SETFD, flags&^unix.FD_CLOEXEC); err != nil {
-		return err
-	}
-	_ = dir.Close()
-	_ = receipt.Close()
-	_ = intentFile.Close()
-	return syscall.Exec(intent.RunnerPath, []string{intent.RunnerPath, string(intent.Config)}, os.Environ())
+	return dir.Sync()
 }
 
 func validateInheritedAttempt(dir, lock, receipt, intent *os.File) error {
@@ -528,12 +533,24 @@ func waitOwnedProcess(ctx context.Context, receipt LaunchReceipt, lock *os.File,
 		if err == nil {
 			return nil
 		}
-		if err := validateOwnedStartAndLock(receipt, lock); err != nil {
+		// Exec can transiently hide /proc/<pid>/fd and /proc/<pid>/exe. Retry only
+		// while the receipt PID/start identity is unchanged and its exact lock remains held.
+		if err := validateOwnedStartAndReceiptLock(receipt, lock); err != nil {
 			return err
 		}
 		digest, dev, ino, executableErr := processExecutableIdentity(receipt.PID)
-		if executableErr == nil && (digest != receipt.LauncherDigest || dev != receipt.LauncherDevice || ino != receipt.LauncherInode) {
+		if executableErr == nil &&
+			(digest != receipt.LauncherDigest || dev != receipt.LauncherDevice || ino != receipt.LauncherInode) &&
+			(digest != receipt.RunnerDigest || dev != receipt.RunnerDevice || ino != receipt.RunnerInode) {
 			return err
+		}
+		lockErr := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if lockErr == nil {
+			_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+			return err
+		}
+		if !errors.Is(lockErr, unix.EWOULDBLOCK) {
+			return lockErr
 		}
 		if context.Cause(ctx) != nil {
 			return context.Cause(ctx)
@@ -557,6 +574,22 @@ func validateOwnedProcess(receipt LaunchReceipt, lock *os.File) error {
 }
 
 func validateOwnedStartAndLock(receipt LaunchReceipt, lock *os.File) error {
+	if err := validateOwnedStartAndReceiptLock(receipt, lock); err != nil {
+		return err
+	}
+	lockStat, err := fileStat(lock)
+	if err != nil {
+		return fmt.Errorf("%w: lock inode identity mismatch", ErrLaunchOwnershipUncertain)
+	}
+	childLock := filepath.Join("/proc", strconv.Itoa(receipt.PID), "fd", strconv.Itoa(childLockFD))
+	var childStat unix.Stat_t
+	if err := unix.Stat(childLock, &childStat); err != nil || childStat.Dev != lockStat.Dev || childStat.Ino != lockStat.Ino {
+		return fmt.Errorf("%w: runner does not retain the ownership lock descriptor", ErrLaunchOwnershipUncertain)
+	}
+	return nil
+}
+
+func validateOwnedStartAndReceiptLock(receipt LaunchReceipt, lock *os.File) error {
 	start, err := rawProcessStartTime(receipt.PID)
 	if err != nil || start != receipt.StartTime {
 		return fmt.Errorf("%w: runner start identity mismatch", ErrLaunchOwnershipUncertain)
@@ -564,11 +597,6 @@ func validateOwnedStartAndLock(receipt LaunchReceipt, lock *os.File) error {
 	lockStat, err := fileStat(lock)
 	if err != nil || lockStat.Dev != receipt.LockDevice || lockStat.Ino != receipt.LockInode {
 		return fmt.Errorf("%w: lock inode identity mismatch", ErrLaunchOwnershipUncertain)
-	}
-	childLock := filepath.Join("/proc", strconv.Itoa(receipt.PID), "fd", strconv.Itoa(childLockFD))
-	var childStat unix.Stat_t
-	if err := unix.Stat(childLock, &childStat); err != nil || childStat.Dev != lockStat.Dev || childStat.Ino != lockStat.Ino {
-		return fmt.Errorf("%w: runner does not retain the ownership lock descriptor", ErrLaunchOwnershipUncertain)
 	}
 	return nil
 }

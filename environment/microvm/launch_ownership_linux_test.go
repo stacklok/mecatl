@@ -30,6 +30,11 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if os.Getenv(launchOwnerHelperEnv) == "runner" && len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "{") {
+		var lockStat unix.Stat_t
+		if err := unix.Fstat(childLockFD, &lockStat); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "runner started without ownership lock descriptor:", err)
+			os.Exit(92)
+		}
 		for {
 			time.Sleep(time.Second)
 		}
@@ -172,6 +177,34 @@ func TestLaunchOwnershipRejectsReplacedReceiptPath(t *testing.T) {
 	}
 	if _, err := ownership.openAttempt(intent.EnvironmentID, intent.LaunchID); err == nil {
 		t.Fatal("replaced receipt path was trusted")
+	}
+}
+
+func TestPublishLaunchReceiptMakesLockInheritableBeforePublication(t *testing.T) {
+	ownership := newTestLaunchOwnership(t)
+	intent := testLaunchIntent(t, ownership, "repository-receipt-order", testRunnerConfig(t))
+	files, err := ownership.createAttempt(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.close()
+
+	if err := publishLaunchReceipt(files.dir, files.lock, files.receipt, []byte(`{"ready":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	flags, err := unix.FcntlInt(files.lock.Fd(), unix.F_GETFD, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags&unix.FD_CLOEXEC != 0 {
+		t.Fatal("receipt was published before the ownership lock became exec-inheritable")
+	}
+	data, err := os.ReadFile(filepath.Join(ownership.root, environmentDirectory(intent.EnvironmentID), intent.LaunchID, "receipt.json")) // #nosec G304 -- test-owned exact private path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{\"ready\":true}\n" {
+		t.Fatalf("published receipt = %q", data)
 	}
 }
 
