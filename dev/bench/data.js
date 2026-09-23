@@ -237458,6 +237458,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790191364346,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "648992278a600360d9db2ecdc94bd44b6d99d6ed",
+          "message": "docs: clarify iteration verification (#1788)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T12:23:35-07:00",
+          "tree_id": "6d0edc72e85aa0885d6d45143ea5042df1623b19",
+          "url": "https://github.com/stacklok/mecatl/commit/648992278a600360d9db2ecdc94bd44b6d99d6ed"
+        },
+        "date": 1790192110666,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -344904,6 +344938,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790192107853,
+  "lastUpdate": 1790192111413,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
