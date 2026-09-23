@@ -111,6 +111,8 @@ type CascadeCompactor struct {
 	// LLM, when non-nil, enables tier 4 (LLM summary of the oldest segment). When
 	// nil the cascade stops at tier 3 and never makes a model call.
 	LLM port.LLMProvider
+	// ProviderModel is the exact provider/model selected for the tier-4 call.
+	ProviderModel session.ProviderModelID
 	// Model is the model identifier passed to the LLM on the tier-4 summary call.
 	Model string
 	// SummaryMaxTokens is the SOFT size budget for the tier-4 summary, expressed
@@ -130,18 +132,18 @@ var _ Compactor = CascadeCompactor{}
 // error or an EMPTY summary (tiers 1–3 cannot fail) — or when the assembled
 // history would orphan a tool pairing (ErrCompactionWouldOrphan). In both error
 // cases the ORIGINAL history is returned alongside the error (abort-to-original).
-func (c CascadeCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (c CascadeCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	return c.compact(ctx, conv)
 }
 
 // compactToBudget applies a request-local automatic-compaction budget without
 // changing the configured budget used by manual compaction.
-func (c CascadeCompactor) compactToBudget(ctx context.Context, conv *session.Conversation, budget int) ([]session.Message, string, error) {
+func (c CascadeCompactor) compactToBudget(ctx context.Context, conv *session.Conversation, budget int) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	c.BudgetTokens = budget
 	return c.compact(ctx, conv)
 }
 
-func (c CascadeCompactor) compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (c CascadeCompactor) compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	counter := c.counter()
 	keep := cascadeKeepLastTurns
 	if c.KeepLastTurns > 0 {
@@ -242,13 +244,14 @@ func (c CascadeCompactor) compact(ctx context.Context, conv *session.Conversatio
 	// (call error, stream error, or an empty summary) the cascade aborts to the
 	// ORIGINAL history — the loop keeps the uncompacted conversation rather than
 	// replacing real turns with nothing.
-	summary, err := c.summarize(ctx, head, middle)
+	summary, usage, err := c.summarize(ctx, head, middle)
 	if err != nil {
-		return conv.Messages, "", fmt.Errorf("agent: cascade tier-4 summarize: %w", err)
+		return conv.Messages, "", usage, fmt.Errorf("agent: cascade tier-4 summarize: %w", err)
 	}
 	middle = []session.Message{session.NewUserMessage(summary)}
 	notes = append(notes, "summarize: replaced oldest segment with an LLM summary")
-	return c.finish(conv, head, middle, tail, paths, notes)
+	out, note, _, err := c.finish(conv, head, middle, tail, paths, notes)
+	return out, note, usage, err
 }
 
 // finish assembles the compacted history from the preserved head, paths summary,
@@ -257,12 +260,12 @@ func (c CascadeCompactor) compact(ctx context.Context, conv *session.Conversatio
 // emits a history that orphans a tool result or dangles a tool call. On a pairing
 // failure it aborts to the ORIGINAL history with ErrCompactionWouldOrphan — the
 // loop keeps the uncompacted history rather than bricking the session.
-func (c CascadeCompactor) finish(conv *session.Conversation, head, middle, tail []session.Message, paths []string, notes []string) ([]session.Message, string, error) {
+func (c CascadeCompactor) finish(conv *session.Conversation, head, middle, tail []session.Message, paths []string, notes []string) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	out := c.assemble(head, middle, tail, paths)
 	if err := session.ValidateToolPairing(out); err != nil {
-		return conv.Messages, "", fmt.Errorf("%w: %v", ErrCompactionWouldOrphan, err)
+		return conv.Messages, "", session.AuxiliaryUsage{}, fmt.Errorf("%w: %v", ErrCompactionWouldOrphan, err)
 	}
-	return out, summaryNote(notes), nil
+	return out, summaryNote(notes), session.AuxiliaryUsage{}, nil
 }
 
 // counter returns the configured TokenCounter or the heuristic default.
@@ -311,7 +314,7 @@ func (CascadeCompactor) assemble(head, middle, tail []session.Message, paths []s
 // over-long summary are accepted as-is), but an EMPTY/whitespace-only output is
 // an error (fail-safe: Compact aborts to the original history rather than
 // replacing real turns with a blank message).
-func (c CascadeCompactor) summarize(ctx context.Context, head, middle []session.Message) (string, error) {
+func (c CascadeCompactor) summarize(ctx context.Context, head, middle []session.Message) (string, session.AuxiliaryUsage, error) {
 	instruction := session.NewUserMessage(fmt.Sprintf(summarizerRequestTemplate, c.summaryMaxTokens()))
 	// Tier-4 summary is a TEXT-only call: substitute a text placeholder for any
 	// media part so we NEVER ship image/audio bytes to the summary model. The
@@ -328,26 +331,31 @@ func (c CascadeCompactor) summarize(ctx context.Context, head, middle []session.
 		Model:    c.Model,
 	})
 	if err != nil {
-		return "", err
+		return "", session.AuxiliaryUsage{}, err
 	}
 	var b strings.Builder
+	var reported session.Usage
 	for chunk, cerr := range seq {
+		if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
+			reported = reported.Add(*chunk.Usage)
+		}
 		if cerr != nil {
-			return "", cerr
+			return "", auxiliaryUsage(session.UsageKindCompaction, c.ProviderModel, reported), cerr
 		}
 		if chunk.Kind == port.ChunkText {
 			b.WriteString(chunk.Text)
 		}
 	}
+	usage := auxiliaryUsage(session.UsageKindCompaction, c.ProviderModel, reported)
 	out := strings.TrimSpace(b.String())
 	if out == "" {
-		return "", fmt.Errorf("summariser returned an empty summary")
+		return "", usage, fmt.Errorf("summariser returned an empty summary")
 	}
 	// The Tier4SummaryMarker prefix is load-bearing beyond display: it lets the
 	// user-turn back-snap (session.IsSynthesisedSummary) recognise this synthesised
 	// summary on a LATER compaction and NOT anchor the verbatim tail on it (the
 	// re-compaction footgun). Keep it byte-for-byte in sync with the const.
-	return session.Tier4SummaryMarker + "\n" + out, nil
+	return session.Tier4SummaryMarker + "\n" + out, usage, nil
 }
 
 // deMediaMessages returns msgs with every media-bearing user message rewritten

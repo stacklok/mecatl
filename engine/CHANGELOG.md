@@ -324,6 +324,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Workspace-free harness prompt sources (ADR 0357)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
 
+- **Direct auxiliary usage results** — `agent.Compactor.Compact`,
+  `agent.EvidenceReflector.Reflect` / `ReflectProjection`, and the
+  `learning.Reflector` seam now return `session.AuxiliaryUsage`; direct compaction
+  and reflection callers record it only while they retain current session
+  ownership. Changed (minor).
+
 - **Exact Team parent-call correlation** — Team-tool member relationships now
   populate the existing `session.SessionRelationship.CallID`; validation permits
   that optional value only with a valid parent lifetime. The exported

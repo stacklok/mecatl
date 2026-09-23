@@ -32,6 +32,7 @@
     method func (*Session).PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool)
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
+    method func (*Session).RecordAuxiliaryUsage(usage AuxiliaryUsage)
     method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
     method func (*Session).RecordHarnessPrompt(text string) error
     method func (*Session).RecordLastError(cause string) error

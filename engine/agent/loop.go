@@ -3030,7 +3030,10 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	if budget < 1 {
 		budget = 1
 	}
-	result, compacted, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	result, compacted, usage, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	// The active run owns sess through its existing run capability; record all
+	// provider-reported usage before handling a terminal compaction error.
+	sess.RecordAuxiliaryUsage(usage)
 	if err != nil {
 		// Compaction is best-effort: a failure must not abort the run. Keep the
 		// existing history and continue — but no longer SILENTLY: surface the
@@ -3417,6 +3420,10 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	e.emitResult(r, sess, reason, text, usage, errMsg, session.RetryDispositionUnknown, session.StreamProgressComplete)
 }
 
+type auxiliaryUsageObserver interface {
+	ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error)
+}
+
 // observeCompletion invokes the optional host observer after the aggregate has
 // reached a qualifying completed state. The owned message snapshot prevents an
 // observer from mutating the live conversation. Failures are operational facts:
@@ -3438,6 +3445,14 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 				break
 			}
 		}
+	}
+	if observer, ok := e.deps.LearningObserver.(auxiliaryUsageObserver); ok {
+		auxUsage, err := observer.ObserveWithUsage(ctx, tr)
+		sess.RecordAuxiliaryUsage(auxUsage)
+		if err != nil {
+			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)
+		}
+		return
 	}
 	if err := e.deps.LearningObserver.Observe(ctx, tr); err != nil {
 		r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)

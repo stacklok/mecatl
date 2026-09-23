@@ -23,6 +23,7 @@ var sinkRequest port.LLMRequest
 var (
 	sinkMessages []session.Message
 	sinkSummary  string
+	sinkUsage    session.AuxiliaryUsage
 	sinkErr      error
 )
 
@@ -81,7 +82,7 @@ func BenchmarkHeuristicCompact(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		sinkMessages, sinkSummary, sinkErr = c.Compact(ctx, conv)
+		sinkMessages, sinkSummary, sinkUsage, sinkErr = c.Compact(ctx, conv)
 	}
 }
 
@@ -97,7 +98,7 @@ func BenchmarkCascadeCompact(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		sinkMessages, sinkSummary, sinkErr = c.Compact(ctx, conv)
+		sinkMessages, sinkSummary, sinkUsage, sinkErr = c.Compact(ctx, conv)
 	}
 }
 
