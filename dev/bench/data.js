@@ -257543,6 +257543,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790148905851,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6713184c894dc84f5717178e760dba8b57bbc9fe",
+          "message": "test(mecatui): guard log delivery through startup and fallback failures (#1794)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T10:36:47+03:00",
+          "tree_id": "4703356b685ba7705bc16a93ab413c30ca79f207",
+          "url": "https://github.com/stacklok/mecatl/commit/6713184c894dc84f5717178e760dba8b57bbc9fe"
+        },
+        "date": 1790149692729,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3317.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -337723,6 +337762,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790149689320,
+  "lastUpdate": 1790149693869,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
