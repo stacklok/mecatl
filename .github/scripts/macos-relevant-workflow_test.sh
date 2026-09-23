@@ -28,8 +28,8 @@ require 'macos_go: ${{ steps.classify.outputs.macos_go }}' 'macos_go must be a c
 require 'macos_sdk: ${{ steps.classify.outputs.macos_sdk }}' 'macos_sdk must be a changes-job output'
 require 'macos_classifier="$RUNNER_TEMP/macos-relevant-changes.sh"' 'trusted macOS classifier must be extracted outside the candidate checkout'
 require 'if git show "$base:.github/scripts/macos-relevant-changes.sh" > "$macos_classifier"; then' 'macOS classifier extraction must read the trusted base ref and stay fail-closed'
-require 'git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" go)" || macos_go=true' 'go relevance must use no-renames NUL-delimited paths and fail closed to RUN'
-require 'git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true' 'sdk relevance must use no-renames NUL-delimited paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$macos_classifier" go)" || macos_go=true' 'go relevance must use merge-base-to-head no-renames NUL-delimited paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true' 'sdk relevance must use merge-base-to-head no-renames NUL-delimited paths and fail closed to RUN'
 require 'echo "macos_go=$macos_go"' 'macos_go must be written to GITHUB_OUTPUT'
 require 'echo "macos_sdk=$macos_sdk"' 'macos_sdk must be written to GITHUB_OUTPUT'
 
