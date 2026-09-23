@@ -99,9 +99,8 @@ const askReviewTimeout = 30 * time.Second
 //
 // Exported so the cmd/ flag declarations (mecated/mecatui/mecatequi) reference a
 // single named const for their --subagent-ask-reviewer-max-denies default instead
-// of an inline literal that could drift from this value. See the run-bounds index
-// in docs/design/IMPLEMENTATION-NOTES.md and the drift guard in
-// engine/agent/runbounds_drift_test.go.
+// of an inline literal that could drift from this value. The drift guard lives
+// in engine/agent/runbounds_drift_test.go.
 const DefaultAskReviewMaxDenies = 3
 
 // askReviewLimits are the default reviewer run's stop conditions: ONE turn,

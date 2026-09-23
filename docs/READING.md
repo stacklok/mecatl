@@ -5,7 +5,6 @@ organized by audience. Pick the row that fits. Every link points to an existing
 living guide (the code as it exists today) or a reference.
 
 **Living docs** describe **current behavior** (architecture pages, the usage guide).
-**`docs/design/IMPLEMENTATION-NOTES.md`** is the dense per-subsystem reference.
 **ADRs** in `docs/adr/` are **frozen rationale on demand** — reach for them to
 understand a decision's *why*, never as the primary introduction to a feature.
 
@@ -43,7 +42,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 ### After the architecture pages
 
 - [Agent Fabric Protocol](agent-fabric-protocol.md) — draft protocol proposal for remote agent capabilities over HTTP/JSON; not a shipped mecatl surface.
-- [Implementation notes](design/IMPLEMENTATION-NOTES.md) — the dense per-subsystem companion to the architecture pages (a reference, not a narrative).
+- [Documentation change review](development-process.md#documentation-change-review) — choose one owner, verify current behavior, and prune obsolete material.
 - [ADR index](adr/README.md) — the frozen *why* archive; reach for it on demand to understand a decision's rationale.
 - [Production readiness tracker](design/PRODUCTION-READINESS.md) — the live shipped/deferred status ledger.
 

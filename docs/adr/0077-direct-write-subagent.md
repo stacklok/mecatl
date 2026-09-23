@@ -108,5 +108,5 @@ Parallel is enabled.
 - [ADR 0014](./0014-agent-teams.md) — agent teams (the concurrent mutating members
   that still use force-copy).
 - `docs/architecture/subagents-and-teams.md` — the living description of the subagent writable mode.
-- `docs/design/IMPLEMENTATION-NOTES.md` — the per-subsystem writable-Subagent entry.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the per-subsystem writable-Subagent entry.
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

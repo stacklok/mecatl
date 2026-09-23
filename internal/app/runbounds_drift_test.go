@@ -15,10 +15,8 @@ import (
 // composition tier: the run-bound default consts declared in internal/app must
 // match the inventory below EXACTLY, and the companion AST scan
 // (TestRunBoundsInventoryHasNoUnlistedConsts) fails when a NEW default* run-bound
-// const appears that is not inventoried — forcing a row in the doc table in
-// docs/design/IMPLEMENTATION-NOTES.md. This mirrors the posture of
-// TestPerSessionCatalogMatchesSharedCatalog (catalog_drift_test.go) and the DAG
-// layering test (engine/arch/layering_test.go): exact-set equality, loud diff.
+// const appears that is not inventoried. This checks the code inventory, not a
+// duplicate Markdown table. Update the owning API/config reference when relevant.
 //
 // The engine/agent tier has its own guard (engine/agent/runbounds_drift_test.go);
 // the split is required by the layering rule (engine/ cannot import internal/ or
@@ -71,7 +69,7 @@ func TestRunBoundsInventoryIsComplete(t *testing.T) {
 			continue
 		}
 		if got != b.val {
-			t.Errorf("run-bound const %q = %v, want %v — update the doc table in docs/design/IMPLEMENTATION-NOTES.md AND this inventory",
+			t.Errorf("run-bound const %q = %v, want %v — update the inventory and any affected API/config reference",
 				b.name, got, b.val)
 		}
 	}
@@ -80,10 +78,9 @@ func TestRunBoundsInventoryIsComplete(t *testing.T) {
 // TestRunBoundsInventoryHasNoUnlistedConsts is the OTHER half of the guard: it
 // AST-scans internal/app for `const default…` / `const Default…` declarations and
 // fails if any run-bound-looking default const is NOT in the inventory above. This
-// catches the "added a knob, forgot the doc table" drift that a pure value-pinning
-// test cannot. The engine/agent tier cannot run an equivalent scan (os/go/build are
-// banned there by the layering rule), so the closed-set guarantee for the agent
-// tier rests on the identifier references in its test plus the doc-citation guard.
+// catches an unlisted declaration that a pure value-pinning test cannot detect.
+// The engine/agent tier references known identifiers but does not AST-scan for
+// additional declarations.
 //
 // A const is considered "run-bound-looking" if its name begins with default/Default
 // AND it is declared in one of the run-bounds-bearing files. To avoid false
@@ -156,14 +153,14 @@ func TestRunBoundsInventoryHasNoUnlistedConsts(t *testing.T) {
 	}
 	sort.Strings(unlisted)
 	if len(unlisted) > 0 {
-		t.Errorf("internal/app declares run-bound default* const(s) not in the inventory: %v — add a row to the table in docs/design/IMPLEMENTATION-NOTES.md AND to TestRunBoundsInventoryIsComplete, or extend runBoundsFiles if a new file is intentional", unlisted)
+		t.Errorf("internal/app declares run-bound default* const(s) not in the inventory: %v — add a row to TestRunBoundsInventoryIsComplete and update the owning API/config reference, or extend runBoundsFiles if a new file is intentional", unlisted)
 	}
 
 	// Also assert every listed const was actually found declared (catches a stale
 	// inventory entry after a const is removed).
 	for name := range listed {
 		if _, ok := found[name]; !ok {
-			t.Errorf("inventory lists %q but no default* const declaration was found in %v — remove the stale row from the doc table AND this inventory", name, runBoundsFiles)
+			t.Errorf("inventory lists %q but no default* const declaration was found in %v — remove the stale inventory row and update any affected API/config reference", name, runBoundsFiles)
 		}
 	}
 }

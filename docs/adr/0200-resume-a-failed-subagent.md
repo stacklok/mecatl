@@ -348,5 +348,5 @@ rather than the benign clean-finish one.
   changes.
 - [ADR 0027](./0027-cloud-native.md) — the run-entry recovery discipline
   (`loadAndReopen`) the child path now matches.
-- [docs/design/IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md) — the living
+- [docs/design/IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the living
   per-subsystem reference for the resume path.

@@ -51,5 +51,5 @@ The harness ALREADY has the exact primitive a guardrail block wants: an out-of-b
 - [ADR 0060](./0060-guardrails-bash-default.md) — the default Bash rule (the most common block an operator will approve-once).
 - [ADR 0027](./0027-cloud-native.md) — the awaiting-resume seam (Phase 2) the HookOriginated marker rides.
 - `docs/usage/guardrails.md` — the operator-facing approve-once / waiver / posture behaviour.
-- `docs/design/IMPLEMENTATION-NOTES.md` — the approve-once mechanics (the preHook→ask seam, headless degrade, resume skip, waiver, posture-coupling).
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the approve-once mechanics (the preHook→ask seam, headless degrade, resume skip, waiver, posture-coupling).
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

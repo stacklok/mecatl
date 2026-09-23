@@ -232,7 +232,7 @@ by a dedicated no-emit examples project in CI so package exports and examples
 cannot drift.
 
 M4 adds the deferred SDK pages under `user-docs/`, and updates
-`docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, and the relevant
+`docs/architecture.md`, [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md), and the relevant
 cloud/resource inventories. `task docs` and `task site:build` are release gates.
 The `website/` application remains npm-managed and is not added to the pnpm
 workspace.
@@ -359,4 +359,4 @@ remain separate and do not block v0.1.
 - [ADR 0292 — TypeScript SDK local daemon and callback tools](./0292-typescript-sdk-local-daemon-and-tools.md)
 - [ADR 0093 — Provider modules and path-qualified tags](./0093-provider-modules.md)
 - [Architecture guide](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)

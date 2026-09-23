@@ -281,8 +281,7 @@ func TestTeamToolFormsTeamAndIsolatesContent(t *testing.T) {
 // de-dup, no-Member, and the authoritative TERMINAL state (the last live snapshot and the
 // settled team.end both show completed). Per-transition visibility is best-effort; making
 // it a guarantee would require capturing the snapshot at mutation time and is a separate,
-// deliberate emit-path change (see the "team-snapshot fidelity note" in
-// docs/design/IMPLEMENTATION-NOTES.md), not a test fix.
+// deliberate emit-path change, not a test fix.
 func TestTeamToolStreamsTaskSnapshots(t *testing.T) {
 	// The lead creates the task on its first turn, then idles. The worker's first
 	// turn is a no-op (the task does not exist yet in round 1); the supervisor then

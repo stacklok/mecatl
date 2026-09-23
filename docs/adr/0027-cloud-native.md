@@ -1110,7 +1110,7 @@ a resource: the package-level timeout `var`s (`gracefulStopTimeout`,
 `managerCloseTimeout`, the 45s `runCleanup` cap) are compile-time configuration of
 already-inventoried goroutines/servers (rows 1, 2, 11, 27, 28, 30), and the
 goroutines spawned on the bounded-timeout paths are abandoned-by-design at process
-exit (a shutdown-only posture, documented in `docs/design/IMPLEMENTATION-NOTES.md`
+exit (a shutdown-only posture, documented in [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 "Bounded shutdown"). The one behavioural change to an existing row: `Service.Close`
 now CANCELS in-flight runs (row 9) via `run.Cancel()` on shutdown, EXCLUDING runs
 parked on a permission ask whose durable awaiting snapshot is the Phase-2 resume

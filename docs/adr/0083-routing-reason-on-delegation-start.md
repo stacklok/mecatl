@@ -38,4 +38,4 @@ Empty-on-hit is the contract: the hit is already fully described by `routed_cate
 - [ADR 0034](./0034-team-parallel-model-routing.md) — the routed-*hit* fields this complements.
 - [ADR 0035](./0035-per-delegation-model-surface.md) — the unconditional `model` field.
 - [ADR 0079](./0079-delegation-observability-convergence.md) — the bounded-preview delegation-observability contract this extends.
-- `docs/design/IMPLEMENTATION-NOTES.md` — the per-subsystem routing description.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the per-subsystem routing description.

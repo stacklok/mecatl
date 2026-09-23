@@ -39,8 +39,8 @@ exists that no landed plan tracks.
 
 Named-test conventions ac-trace recognises:
 
-- `TestInvariant_<id>` — an invariant from `AGENTS.md` ("Things That Will
-  Bite You") or `docs/design/IMPLEMENTATION-NOTES.md`, id kebab → snake.
+- `TestInvariant_<id>` — an invariant in the owning architecture topic or
+  `AGENTS.md`, id kebab → snake.
 - `TestADR_NNNN_*` — a rule codified in `docs/adr/NNNN-*.md`.
 - `Test<Plan>_Scenario<N>_*` — a scenario test a plan scenario claims.
 - Descriptive test names are accepted in a `verify:` line, but prefer the

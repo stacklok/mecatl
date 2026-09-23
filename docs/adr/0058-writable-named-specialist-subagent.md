@@ -91,5 +91,5 @@ composition wiring is in `internal/app/build.go` (`buildAgentWritableEngineFacto
   `parentMutatingCaller` seam, the `isolated:false` posture, and the direct-write mechanics are all
   REUSED, not superseded; only its "named specialists run read-only" v1 scope cut is lifted here).
 - `docs/architecture/subagents-and-teams.md` — the living description of the subagent writable mode.
-- `docs/design/IMPLEMENTATION-NOTES.md` — the per-subsystem writable-Subagent entry.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the per-subsystem writable-Subagent entry.
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

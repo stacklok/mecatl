@@ -53,7 +53,7 @@ cross-replica fairness or mutual exclusion from the process-local cursor and gat
 ## See also
 
 - [Memory architecture](../architecture/memory.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [Production readiness](../design/PRODUCTION-READINESS.md)
 - [Cloud-native resource inventory](./0027-cloud-native.md)
 - [ADR 0009 — Tiered memory](./0009-tiered-memory.md)

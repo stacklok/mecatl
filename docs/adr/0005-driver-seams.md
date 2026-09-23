@@ -24,7 +24,7 @@ deliberate deferrals. The operator-facing flags live in `docs/usage.md`
 ("Remote store drivers" / "Remote content-source drivers"); the mechanics and
 the full conformance run matrix live in `docs/architecture.md` ("Remote store +
 source drivers"); per-phase implementation detail is in
-`docs/design/IMPLEMENTATION-NOTES.md` (the "Store drivers" / "Source drivers"
+[Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (the "Store drivers" / "Source drivers"
 subsections). Don't duplicate those — this is the rationale layer.
 
 ## The pattern
@@ -363,4 +363,4 @@ streaming, paging, and a sync protocol with no consumer to validate against.
 
 ---
 
-*Part of the [design docs](../design/README.md). Related: [mecatl — Architecture](0004-v1-architecture.md), [Implementation Notes](../design/IMPLEMENTATION-NOTES.md).*
+*Part of the [design docs](../design/README.md). Related: [mecatl — Architecture](0004-v1-architecture.md), [Implementation Notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md).*

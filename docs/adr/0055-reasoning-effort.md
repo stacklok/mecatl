@@ -125,4 +125,4 @@ verbatim — the runtime-discoverability axis.
   `engine/api` gate the `Session.ReasoningEffort` addition is classified under.
 - The provider-neutrality discipline and the per-session-factory re-mint pattern are
   the same ones recorded for the subagent `model` override and the "Provider is FIXED
-  per session" rule in `docs/design/IMPLEMENTATION-NOTES.md`.
+  per session" rule in [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md).

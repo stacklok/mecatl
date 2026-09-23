@@ -472,7 +472,7 @@ type Config struct {
 	// the dial refuses), DriverTLS enables transport TLS with the optional
 	// DriverTLSCA bundle and DriverTLSCert/DriverTLSKey mTLS client pair. The
 	// user-model store stays LOCAL in Phase B (a deliberate deferral; see
-	// docs/design/IMPLEMENTATION-NOTES.md).
+	// docs/architecture/observability.md).
 	//
 	// Phase C1 adds the content-source drivers: SkillSourceURL replaces the
 	// LOCAL skills discovery (mutually exclusive with SkillsDirs/

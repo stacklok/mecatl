@@ -184,7 +184,7 @@ The living docs stop describing Subagent/Parallel as metadata-only:
 `docs/architecture/domain-model.md`'s delegation-families note, the
 `SubagentPayload`/`ParallelPayload` doc-comments (landed in Scenario 1), and the
 delegation-families section of
-[`IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) all state the two-tier
+[the delegation event contract](../architecture/domain-model.md) all state the two-tier
 model per [ADR-0079](../adr/0079-delegation-observability-convergence.md). Because this
 is operator-visible TUI behavior, the relevant `user-docs/` page notes the change in
 the same PR, per the [`AGENTS.md` user-docs checklist](../../AGENTS.md).

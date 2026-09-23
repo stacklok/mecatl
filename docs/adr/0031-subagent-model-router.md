@@ -152,4 +152,4 @@ bounds the worst case).
 - [ADR 0030](./0030-model-selection-heuristics.md) — the parent scheme; this realises its Layer 3b.
 - [ADR 0021](./0021-guardrails.md) and the issue-#31 ask reviewer — the sibling composition-built one-turn-engine patterns this mirrors.
 - [ADR 0027](./0027-cloud-native.md) — List 1 (the classifier engine + the per-run breaker resource rows).
-- Living docs: [`docs/architecture/providers.md`](../architecture/providers.md) (the router section), [`docs/usage.md`](../usage.md) (`--subagent-model-router` + the `models.router:` YAML block), [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) (router mechanics, precedence, the breaker).
+- Living docs: [`docs/architecture/providers.md`](../architecture/providers.md) (the router section), [`docs/usage.md`](../usage.md) (`--subagent-model-router` + the `models.router:` YAML block), [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (router mechanics, precedence, the breaker).

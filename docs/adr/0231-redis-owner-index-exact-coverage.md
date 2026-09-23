@@ -42,4 +42,4 @@ proof.
 
 - [ADR 0230](./0230-redis-migration-atomic-ownership-and-coverage.md) — the superseded per-snapshot coverage decision.
 - [`docs/architecture.md`](../architecture.md) — current Redis migration behavior.
-- [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) — migration protocol details.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — migration protocol details.

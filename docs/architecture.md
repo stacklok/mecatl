@@ -13,9 +13,8 @@
 
 ### How to read this
 
-Start with the **living guides** — this overview, the per-subsystem pages below,
-and [`docs/design/IMPLEMENTATION-NOTES.md`](design/IMPLEMENTATION-NOTES.md) —
-which describe the code as it exists today. The [ADR index](adr/README.md) is a
+Start with this overview and the per-subsystem living guides below, which
+describe the code as it exists today. The [ADR index](adr/README.md) is a
 **historical *why* archive**: each ADR records the decision made at a point in
 time and is frozen, so reach for it on demand to understand a rationale, not as
 the primary introduction to a feature.
