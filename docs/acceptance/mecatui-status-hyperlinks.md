@@ -7,7 +7,7 @@
 **Status:** proposed, 2026-09-23. The operator selected native OSC 8 terminal hyperlinks rather than application-owned mouse routing.
 **Delivery:** Split. This user-visible output and safety-boundary contract merits review before implementation; the Plan / Interface PR is the approval gate.
 **Expected tasks:** 1
-**Plan PR:** pending
+**Plan PR:** [#1830](https://github.com/stacklok/mecatl/pull/1830)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 StatusML already represents a link as display text plus a separately validated `Href`, but mecatui currently renders it only as themed, underlined text. This follow-up owns the terminal-hyperlink scope deferred by the existing [status-line plan](../acceptance/mecatui-status-line.md) and implements the future renderer behavior anticipated by [ADR 0247](../adr/0247-mecatui-status-line.md). It makes each retained StatusML link a native OSC 8 terminal hyperlink in custom header and footer surfaces, while keeping ordinary text and every rejected destination free of OSC 8 controls.
