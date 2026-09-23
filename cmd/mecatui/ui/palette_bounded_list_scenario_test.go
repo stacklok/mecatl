@@ -30,7 +30,7 @@ func scenarioPaletteState(commands []client.Command) paletteState {
 func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testing.T) {
 	for _, width := range []int{24, 48, 80} {
 		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
-			st := scenarioPaletteState(scenarioPaletteCommands(12))
+			st := scenarioPaletteState(scenarioPaletteCommands(maxPaletteRows + 2))
 			got := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", width, maxPaletteRows)
 			if got == "" {
 				t.Fatal("usable geometry suppressed the palette")
@@ -100,7 +100,7 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testi
 			if !model.paletteVisible() || !model.palette.list.Valid() {
 				t.Fatal("admissible geometry suppressed the palette")
 			}
-			if got := len(model.palette.list.View().Rows); got > rows {
+			if got := len(model.palette.list.View().Rows); got > maxPaletteRows {
 				t.Fatalf("list rows = %d, budget = %d", got, rows)
 			}
 			if height := lipglossHeight(frame); height > model.height {

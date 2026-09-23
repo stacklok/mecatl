@@ -14,10 +14,11 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
-// maxPaletteRows caps how many command rows the palette shows at once so a large
-// command set cannot push the input off-screen. The selection still moves
-// through the full filtered set; the window scrolls to keep it visible.
-const maxPaletteRows = 8
+// maxPaletteRows caps the palette body at twelve physical rows, including up to
+// two overflow indicators, so large command sets cannot push the input off-screen.
+// The selection still moves through the full filtered set; the window scrolls to
+// keep it visible.
+const maxPaletteRows = 12
 
 // Inline-menu navigation key strings, shared by the slash palette (onPaletteKey)
 // and the @-mention menu (onMentionKey) since both react to msg.String() with the
