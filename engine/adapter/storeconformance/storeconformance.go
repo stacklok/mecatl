@@ -763,6 +763,10 @@ func representativeSession(t *testing.T, id session.SessionID) *session.Session 
 		InputTokens: 1200, OutputTokens: 340, CacheReadTokens: 800, CacheWriteTokens: 200,
 	}))
 	s.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 1200, Estimated: true})
+	// Forward-compatible auxiliary buckets are part of the same canonical snapshot
+	// and must survive every adapter that runs this conformance suite.
+	s.RecordTokenUsage(session.UsageKindCompaction, "openrouter", "summary-model", session.Usage{InputTokens: 21, OutputTokens: 8})
+	s.RecordTokenUsage(session.UsageKind("future_helper"), "future-provider", "future-model", session.Usage{InputTokens: 5, OutputTokens: 3})
 	calls := []session.ToolCall{
 		// Keep Args COMPACT JSON: json.RawMessage round-trips verbatim only
 		// for already-compact payloads.
@@ -829,8 +833,8 @@ func assertSessionEqual(t *testing.T, got, want *session.Session) {
 	if got.Kind != want.Kind || !reflect.DeepEqual(got.Relationship, want.Relationship) {
 		t.Errorf("session metadata = (%q, %+v) want (%q, %+v)", got.Kind, got.Relationship, want.Kind, want.Relationship)
 	}
-	if got.UsageFor(session.UsageKindMain) != want.UsageFor(session.UsageKindMain) {
-		t.Errorf("main usage = %+v want %+v", got.UsageFor(session.UsageKindMain), want.UsageFor(session.UsageKindMain))
+	if !reflect.DeepEqual(got.TokenUsageSnapshot(), want.TokenUsageSnapshot()) {
+		t.Errorf("token usage = %#v want %#v", got.TokenUsageSnapshot(), want.TokenUsageSnapshot())
 	}
 	gotOccupancy, gotPresent := got.LatestContextOccupancy()
 	wantOccupancy, wantPresent := want.LatestContextOccupancy()
