@@ -286,8 +286,8 @@ append-only log can fold its `EventLog` (+ `SessionMeta`) into a session via
 `EvUserPrompt` so user turns reconstruct, with a replay-fidelity caveat for
 reasoning providers (#115, [ADR 0038](adr/0038-event-sourced-rehydration.md)); and the
 supply chain gains per-module **`govulncheck`** (engine strict-clean; a
-fail-closed reachable-vuln gate on the root) plus **`dependabot`** over both
-modules and the SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
+fail-closed reachable-vuln gate on the root) plus **Renovate** over the
+modules, npm workspaces, and SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
 provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
 in `provider/openai`, the native Anthropic Messages API in

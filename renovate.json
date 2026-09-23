@@ -1,6 +1,154 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommitTypeAll(chore)",
+    ":semanticCommitScope(deps)"
+  ],
+  "labels": ["dependencies"],
+  "schedule": ["every weekend"],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "addLabels": ["security"]
+  },
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 2,
+  "postUpdateOptions": ["gomodTidyAll", "gomodUpdateImportPaths"],
+  "packageRules": [
+    {
+      "description": "In-repo Go modules resolve through go.work and replace directives; their published version floors and the Helm chart's own image tag are bumped deliberately by the release process",
+      "matchPackageNames": [
+        "github.com/stacklok/mecatl/**",
+        "ghcr.io/stacklok/mecatl/**"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "typescript-5.7 is a deliberate old-compiler alias for the SDK declaration compatibility check",
+      "matchDepNames": ["typescript-5.7"],
+      "enabled": false
+    },
+    {
+      "description": "Wait before adopting new npm releases (supply-chain hygiene)",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Group routine Go module updates not covered by a more specific group",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "go dependencies"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["go.opentelemetry.io/**"],
+      "groupName": "go opentelemetry"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
+      "groupName": "go kubernetes"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["google.golang.org/**", "buf.build/gen/go/**"],
+      "groupName": "go grpc and protobuf"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["golang.org/x/**"],
+      "groupName": "go golang.org/x"
+    },
+    {
+      "description": "mecatui terminal UI stack",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["charm.land/**", "github.com/charmbracelet/**"],
+      "groupName": "go charm"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/prometheus/**"],
+      "groupName": "go prometheus"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/onsi/**"],
+      "groupName": "go ginkgo and gomega"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": [
+        "github.com/stacklok/**",
+        "!github.com/stacklok/mecatl/**"
+      ],
+      "groupName": "go stacklok modules"
+    },
+    {
+      "description": "Provider SDKs change model-facing behaviour; keep each vendor reviewable on its own across root and provider modules",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/anthropics/anthropic-sdk-go"],
+      "groupName": "go anthropic sdk"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/openai/openai-go/**"],
+      "groupName": "go openai sdk"
+    },
+    {
+      "description": "Group routine Docker image updates",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "groupName": "docker images"
+    },
+    {
+      "description": "Website (Docusaurus docs site): one PR for everything, majors included",
+      "matchFileNames": ["website/**"],
+      "groupName": "website",
+      "separateMajorMinor": false
+    },
+    {
+      "description": "Published TypeScript SDK and its examples",
+      "matchFileNames": ["sdk/typescript/**"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "typescript sdk"
+    },
+    {
+      "description": "Mecatl Studio workspace, Node version, and image",
+      "matchFileNames": ["apps/**"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "groupName": "studio"
+    },
+    {
+      "description": "Studio consumes the published SDK; adopt new releases in their own PR without the npm release-age wait",
+      "matchFileNames": ["apps/**"],
+      "matchPackageNames": ["@stacklok-oss/mecatl-sdk"],
+      "groupName": "studio mecatl sdk",
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Group routine GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action", "workflow"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "groupName": "github actions",
+      "semanticCommitScope": "ci",
+      "addLabels": ["ci"]
+    },
+    {
+      "description": "Tool versions passed to setup-* actions (node, buf, helm, deno, bun, ...)",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["uses-with"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "ci toolchain versions",
+      "semanticCommitScope": "ci",
+      "addLabels": ["ci"]
+    },
+    {
+      "description": "pnpm pins in packageManager fields and pnpm/action-setup inputs must move together, or pnpm/action-setup fails on a version mismatch",
+      "matchPackageNames": ["pnpm"],
+      "groupName": "pnpm"
+    }
   ]
 }
