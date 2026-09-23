@@ -1,4 +1,4 @@
-# ADR 0350 - Jev as an explicit delegated-model router backend
+# ADR 0352 - Jev as an explicit delegated-model router backend
 
 - Status: Accepted by direct operator approval under the continuing explicit stacked waiver; this does not claim that Plan / Interface PR #1735 merged
 - Date: 2026-09-22

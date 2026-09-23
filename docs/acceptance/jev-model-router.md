@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural - selecting an external decision service and exposing durable routing-decision evidence change the operator configuration, exported engine API, wire, persistence, credential, data-egress, and adapter boundaries of delegated-model routing.
-**Decision record:** [ADR 0350](../adr/0350-jev-delegated-model-router.md)
+**Decision record:** [ADR 0352](../adr/0352-jev-delegated-model-router.md)
 **Phase:** delegated-model router backend
 **Status:** proposed, 2026-09-23 — implementation candidate; this transition becomes authoritative only after human merge. Plan / Interface PR [#1735](https://github.com/stacklok/mecatl/pull/1735) and stacked implementation PR #1738 remain open with human merge gates. All decisions below, including the configurable Jev input bound, shared Build-wide capacity, exact Team parent-call correlation, end-to-end durable evidence proofs, and transport/UI presence semantics, are directly approved in conversation; that approval does not claim the plan PR merged, and the earlier explicit waiver of the merged-plan prerequisite continues for the stacked implementation.
 **Delivery:** Split. The external decision boundary and exact operator, engine, wire, and evidence contracts are directly approved for this stacked implementation under the continuing waiver.
@@ -66,11 +66,11 @@ The strict operator configuration owns the backend decision, while taxonomy pres
 
 **Acceptance:**
 - AC1.1: configuration with no `backend` continues to build the existing LLM classifier, and `backend: jev` builds the Jev adapter only when routing is enabled.
-  - verify: `TestADR_0350_Scenario1_BackendSelection`
+  - verify: `TestADR_0352_Scenario1_BackendSelection`
 - AC1.2: strict parsing rejects unknown keys, wrong shapes, an unknown backend, invalid confidence values, and `maximum-input-bytes` values that are non-integers, below 1, or above 65536, regardless of `disabled` or taxonomy presence. Disabled or taxonomy-free routing prevents client construction and skips only inactive-backend credential, connectivity, and selection-conflict checks. An active Jev router rejects a missing credential and an explicitly authored `classifier-slot`; an active LLM router rejects a `jev` block. `default-category` is valid for both backends.
-  - verify: `TestADR_0350_Scenario1_ValidationAndDisabledPrecedence`
+  - verify: `TestADR_0352_Scenario1_ValidationAndDisabledPrecedence`
 - AC1.3: project-tier router configuration cannot select Jev, and endpoint or credential presence alone does not enable or select it.
-  - verify: `TestADR_0350_Scenario1_OperatorAuthority`
+  - verify: `TestADR_0352_Scenario1_OperatorAuthority`
 
 ### Scenario 2 - Jev makes one validated category decision
 
@@ -78,15 +78,15 @@ Composition sends the task as untrusted `SystemOneRequest.State` and asks one `C
 
 **Acceptance:**
 - AC2.1: a valid exact Jev choice routes each eligible Subagent invocation, an unpinned named specialist, and a writable explorer through the shared router. Team members route once at `AddMember` and retain that model for the member lifetime; each Parallel branch routes once for that branch. Explicit per-call or definition pins, including explicit `model: inherit`, as well as fork and resume bypass classification but retain configured-router skip metadata.
-  - verify: `TestADR_0350_Scenario2_ExistingRoutingSemantics`
+  - verify: `TestADR_0352_Scenario2_ExistingRoutingSemantics`
 - AC2.2: malformed or invalid protocol responses return `bad-verdict`; an observed offered-set violation returns `unknown-category` when the SDK exposes it as structured data; transport or SDK errors return `classifier-error`. The adapter never parses arbitrary error text to invent a cause, and unknown local status fails closed to `classifier-error`. Every outcome falls back to the ordinary inherited model with no accepted routed category.
-  - verify: `TestADR_0350_Scenario2_InvalidResponseFallsBack`
+  - verify: `TestADR_0352_Scenario2_InvalidResponseFallsBack`
 - AC2.3: when `minimum-confidence` is nonzero, confidence below the threshold is `low-confidence`; a local input/category cap is `input-over-limit`; an expired queue while the caller remains active is `capacity-timeout`. Each is a miss for the existing three-miss per-run breaker and does not force `default-category`. A below-threshold candidate that resolves to a model different from the inherited fallback proves that `model` names the inherited model that actually ran while `routed_model` remains absent; candidate evidence never masquerades as an accepted route.
-  - verify: `TestADR_0350_Scenario2_LowConfidenceAbstains`
+  - verify: `TestADR_0352_Scenario2_LowConfidenceAbstains`
 - AC2.4: composition exhaustively maps Jev's adapter-local typed statuses to the engine's shared constants: local transport/SDK error -> `classifier-error`, invalid protocol -> `bad-verdict`, structured observed unknown category -> `unknown-category`, low confidence -> `low-confidence`, local cap -> `input-over-limit`, active-caller queue expiry -> `capacity-timeout`, caller cancellation -> `cancelled`, and caller/request/SDK deadline -> `timeout`. The existing LLM classifier applies the same cancellation/deadline distinction without changing timeout durations or call count; no signal means no guessed timeout. The adapter does not import `engine/agent`.
-  - verify: `TestADR_0350_Scenario2_BackendNeutralOutcomes`
+  - verify: `TestADR_0352_Scenario2_BackendNeutralOutcomes`
 - AC2.5: a real-composition LLM router and the actual SDK-backed Jev adapter accept the current user-shaped medium `default-category` configuration and carry the capability-oriented contract in their rendered instructions. The optional trimmed hint is exactly `If no category clearly fits, choose %q.`; absent/blank values add nothing, and quote-escaping expansion participates in the configured byte count over the complete rendered request. The hint neither widens the offered set nor changes confidence, protocol-error, or inherited-model fallback behavior. Request-capture tests prove hostile task text appears only in Jev `State`, never in trusted instructions or criteria, and the criteria remain exactly the operator-authored category names and descriptions.
-  - verify: `TestADR_0350_Scenario2_DefaultCategoryHint`
+  - verify: `TestADR_0352_Scenario2_DefaultCategoryHint`
 
 Failure precedence is based on observed terminal state, not a wall-clock race. A successfully obtained and validated result is processed normally as a hit, `low-confidence`, or local mapping miss and retains its usage; late unrelated cancellation never relabels it. For a failed classification, retain independently validated SDK `ProtocolError.Usage` first, then classify an observed caller `ctx.Err()` (`context.Canceled` -> `cancelled`, `context.DeadlineExceeded` -> `timeout`); then an observed request/operation-context deadline, typed `errors.Is(err, context.DeadlineExceeded)`, or typesafe `ErrAttemptTimeout` -> `timeout`; then `errors.Is(err, context.Canceled)` -> `cancelled`; then structured invalid protocol -> `bad-verdict`; otherwise -> `classifier-error`. Queue expiry is `capacity-timeout` only while the caller context remains active. Tests pin observed state rather than a wall-clock winner. The LLM reference classifier uses structured terminal signals only and never parses raw provider text.
 
@@ -96,11 +96,11 @@ The existing dispatch seam in `engine/agent/dispatch.go` (`routeTaskBody`) recor
 
 **Acceptance:**
 - AC3.1: successful responses map Jev input and output tokens to `session.Usage` and return them with the route hit. An otherwise valid response rejected for low confidence or local category-to-model mapping returns the same usage with the miss; a response that completes at a context-classification race also retains valid usage. The existing parent fold records it exactly once. Every nonhit continues to count toward the existing three-miss per-run router breaker rather than any backend-health circuit breaker.
-  - verify: `TestADR_0350_Scenario3_HitUsage`
+  - verify: `TestADR_0352_Scenario3_HitUsage`
 - AC3.2: a `ProtocolError` with non-nil validated usage returns that usage with the miss, including reported zero. Nil or absent usage maps to the callback's existing zero value as "not reported," not proof that the service spent zero tokens; no spend is estimated and no unknown-usage field is added.
-  - verify: `TestADR_0350_Scenario3_ErrorUsage`
+  - verify: `TestADR_0352_Scenario3_ErrorUsage`
 - AC3.3: the shared and per-session engine paths use the same backend builder and category alias lookup, so provider-fixed child construction and no-FS behavior do not diverge.
-  - verify: `TestADR_0350_Scenario3_CompositionParity`
+  - verify: `TestADR_0352_Scenario3_CompositionParity`
 
 ### Scenario 4 - External routing is bounded and secret-safe
 
@@ -108,13 +108,13 @@ The external call follows the command-credential boundary in [AGENTS.md](../../A
 
 **Acceptance:**
 - AC4.1: the adapter permits at most eight concurrent requests across one `app.Build`. The shared engine and all per-session engines contend for the same real semaphore and client rather than receiving independent eight-slot pools. The adapter gives up after a 10-second queue wait, applies a 10-second request deadline and 1 MiB response limit, configures zero SDK retries, disables redirects, and rejects non-loopback cleartext endpoints before sending data. Caller cancellation releases capacity and sends/cancels at most one request. An active-caller queue expiry is `capacity-timeout`; caller cancellation is `cancelled`; a caller deadline, request deadline, or SDK attempt timeout is `timeout`. Validated response and `ProtocolError` usage are retained. Every timeout/cancellation remains fail-soft and no path duplicates a classification call.
-  - verify: `TestADR_0350_Scenario4_BoundedTransport`
+  - verify: `TestADR_0352_Scenario4_BoundedTransport`
 - AC4.2: before SDK marshalling, the adapter measures UTF-8 bytes of the complete rendered textual request: delegated task/state, the full trusted instructions including the `%q`-expanded optional `default-category` hint, selected model, fixed question identifier and question text, and every category name and description. A sum above configured `maximum-input-bytes`, whose default is 16384 and whose accepted range is 1 through the immutable 65536-byte ceiling, or more than 255 categories returns the inherited `input-over-limit` fallback without inference or I/O. The adapter never truncates the task, instructions, or taxonomy. The request uses no user-defined `MarshalJSON`. This byte count is a local safety policy, not a vendor tokenization, context-window, or service-acceptance guarantee.
-  - verify: `TestADR_0350_Scenario4_RequestLimits`
+  - verify: `TestADR_0352_Scenario4_RequestLimits`
 - AC4.3: the 1 MiB cap bounds response data and request deadlines bound transport waiting. A valid response whose encoded body exceeds the cap is rejected through the ordinary fail-soft classifier fallback, proving the cap is enforced independently of malformed-response handling. The plan claims no hard end-to-end wall-clock limit over arbitrary CPU work performed by SDK JSON processing.
-  - verify: `TestADR_0350_Scenario4_BoundedTransport`
+  - verify: `TestADR_0352_Scenario4_BoundedTransport`
 - AC4.4: `TYPESAFE_API_KEY` cannot enter any agent-facing command environment. Diagnostics and evidence contain only sanitized configured/candidate metadata, breaker state, and shared canonical reasons, never credentials, task text, category descriptions, raw answers, probabilities, request IDs, endpoints, raw response models, errors, or response bodies. Cross-backend outcomes use identical canonical values. Optional zero confidence/threshold remain distinguishable from absence, while NaN/Inf/out-of-range/custom hostile data cannot break JSON, protobuf, logs, or terminal rendering. The existing diagnostics owners emit the same bounded facts and one build-time effective backend/classifier/threshold/category-mapping summary without per-turn duplicate log lines or service-version claims.
-  - verify: `TestADR_0350_Scenario4_SecretAndContentRedaction`, `TestADR_0350_Scenario4_CanonicalOutcomeProjection`
+  - verify: `TestADR_0352_Scenario4_SecretAndContentRedaction`, `TestADR_0352_Scenario4_CanonicalOutcomeProjection`
 - AC4.5: offline tests use ordinary injected clients and fake or `httptest` endpoints, perform no live Jev call or private payload upload, and require no new testing framework.
   - verify: inspection - test fixtures and CI configuration contain no live Typesafe endpoint invocation
 
@@ -124,7 +124,7 @@ The additive evidence extends the existing bounded start-event contract in [ADR 
 
 **Acceptance:**
 - AC5.1: hits, low-confidence candidates, mapping misses, target-factory rejection, classifier failures, breaker skips, pins, fork, resume, unavailable delegation families, and nil `Route` produce the exact candidate/final/outcome and post-decision breaker semantics in this plan. A configured router emits an independent sanitized `RoutingDecision` without extra classifier calls; an absent router or historical payload remains nil. Existing `model`, `routed_category`, `routed_model`, and `routing_reason` remain the sole authority for the actual model, accepted route, and final reason.
-  - verify: `TestADR_0350_Scenario5_DecisionEvidence`
+  - verify: `TestADR_0352_Scenario5_DecisionEvidence`
 
 ### Scenario 6 - Wire replay and debugger preserve the decision
 
@@ -133,7 +133,7 @@ The evidence follows the three existing lifecycle families from [ADR 0083](../ad
 **Acceptance:**
 - AC6.1: the exact protobuf fields and optional-presence semantics round-trip through generated Go/TypeScript and handwritten SDK events. Proof starts from a real router decision producer, crosses the existing Subagent, Parallel, or Team family emitter, passes through a real relay into the durable event log, reloads that event, and reaches `InspectSession delegation`; a shared real-relay proof may rely on the existing per-family emitter proofs rather than duplicate the whole stack three times. Historical absence stays absent. Both gRPC and HTTP transport proofs cover a Team roster decision whose confidence and minimum threshold are present zero values, plus a historical Team roster whose optional decision or optional numbers are absent, and the handwritten TypeScript SDK preserves the same distinction.
   Team roster recovery uses the existing lineage graph. A Team-tool member must have a `SessionRelationship.CallID` exactly equal to the `team.start` parent call ID, plus the exact root session and incarnation, team ID, member name, kind, edge, owner, current retained state, and existing uniqueness defense. Private supervisor wiring records the parent Team tool-call ID without adding a public constructor or field. A substitution regression runs two real Team tool calls and proves that a member from one call cannot satisfy the other call's roster. Historical team-member relationships with no `CallID` still load but produce no correlated row; direct-team relationships and behavior stay unchanged. Missing exact correlation, deleted or replaced lifetimes, zero, ambiguity, stale lineage, cross-owner data, and different-call data fail closed with no row and never fall back to the tuple alone. Tests prove private IDs are omitted from wire, SDK, client, UI, and debugger JSON; scoped opaque existing handles appear only after proof. Tests also prove no child-content or hostile/secret metadata leak. An unavailable event log uses the debugger's existing unavailable/error behavior; a missing or failed event append leaves routing evidence absent and never reconstructed by inference or falsely labeled as a skipped classifier. Append failures retain the existing warn-and-continue run behavior, with offline failure-injection coverage.
-  - verify: `TestADR_0350_Scenario6_WireAndDebugger`
+  - verify: `TestADR_0352_Scenario6_WireAndDebugger`
 
 ### Scenario 7 - A user can diagnose the route end to end
 
@@ -141,7 +141,7 @@ This journey follows the bounded event contract in [ADR 0083](../adr/0083-routin
 
 **Acceptance:**
 - AC7.1: mecatui keeps the current compact one- or two-line model status and adds an optional candidate/confidence-below-threshold cue on fallback. The expanded existing card and F6 focus show backend, configured classifier, candidate, actual model, decision reason, threshold, and breaker snapshot. Parallel branch completion and group completion retain the start decision on those existing compact and F6 surfaces; they do not add an inline routing card or a new lifecycle event. Nil LLM confidence displays as unavailable in detail, never zero; historical nil keeps the old label. Viewport, narrow-width, width-zero, all three delegation-family subviews, client mapping, and selectively updated goldens cover the new fields. `user-docs/features/choose-models.md` gives the workflow card -> F6 Agents details -> `mecatui debug` / `InspectSession delegation`, separates effective configuration from runtime outcome, distinguishes rejected candidate from actual model, explains that confidence is not accuracy and thresholds require a labeled workload, and proposes no nonexistent evaluation command or magic threshold.
-  - verify: `TestADR_0350_Scenario7_UserJourney`
+  - verify: `TestADR_0352_Scenario7_UserJourney`
 
 ## Out of scope
 
