@@ -260846,6 +260846,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790174333818,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "117f6d0fb65438aeafc9b53497f0f526b30c561b",
+          "message": "feat(router): add Jev delegated-model routing (#1738)\n\nCo-Authored-By: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T17:39:30+03:00",
+          "tree_id": "68b79085e5a12bf8ecef0a589a5a4b579b684a78",
+          "url": "https://github.com/stacklok/mecatl/commit/117f6d0fb65438aeafc9b53497f0f526b30c561b"
+        },
+        "date": 1790175036982,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3301,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 94,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -342052,6 +342091,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790175032644,
+  "lastUpdate": 1790175038244,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
