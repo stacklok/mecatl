@@ -156,8 +156,9 @@ report or checklist file is required.
    agent instructions. Add a page only for a distinct reader need.
 2. **Verify the state.** Check behavioral claims against code and tests. Plans
    describe intended behavior; plan approval is not implementation. Keep durable
-   rationale in ADRs and mutable shipped/deferred status in the
-   [readiness tracker](design/PRODUCTION-READINESS.md).
+   rationale in ADRs. Track actionable work in issues and PRs, not a manually
+   synchronized feature-status table. Document current operator limitations in
+   the owning guide; release artifacts and CI provide delivery evidence.
 3. **Replace and prune.** Edit outdated explanations in place. Delete redundant
    or obsolete text; preserve only verified, non-obvious knowledge absent from
    its owner. Bug chronology, repair attempts, and implementation summaries

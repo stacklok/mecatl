@@ -15,7 +15,7 @@ A three-job split-privilege graph enforces a hard token boundary: acknowledge (i
 
 ## Consequences
 
-Shipped at v0.0.3. The conversational v2 (multi-turn bot) is deferred pending cloud-native rehydration seam readiness. Current behaviour and the operator walkthrough live in docs/architecture.md and docs/usage.md. Status lives in docs/design/PRODUCTION-READINESS.md. The token boundary invariant must be preserved across both adoption paths; the reusable-pins CI gate enforces hardcoded sibling-action refs match the release tag on every cut.
+Shipped at v0.0.3. The conversational v2 (multi-turn bot) is deferred pending cloud-native rehydration seam readiness. Current behaviour and the operator walkthrough live in docs/architecture.md and docs/usage.md. Status lives in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md). The token boundary invariant must be preserved across both adoption paths; the reusable-pins CI gate enforces hardcoded sibling-action refs match the release tag on every cut.
 
 ---
 

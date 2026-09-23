@@ -140,6 +140,6 @@ unsafe behavior merely for compatibility.
 ## See also
 
 - [Extensibility architecture](../architecture/extensibility.md)
-- [Production-readiness tracker](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 - [ADR 0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
 - [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)

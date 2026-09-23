@@ -236,7 +236,7 @@ and lifecycle documented in [`user-docs/reference/configuration.md`](https://mec
 
 ## Cross-cutting deliverables
 
-- Update `docs/architecture.md`, `docs/design/IMPLEMENTATION-NOTES.md`, `docs/design/PRODUCTION-READINESS.md`, `docs/tui.md`, and relevant `user-docs/` pages with the shipped behavior.
+- Update the owning session-storage architecture, TUI, and public `user-docs/` pages with the shipped behavior; do not recreate retired implementation notes or status trackers.
 - Inventory every catalog, maintenance-job registry, cache, goroutine, semaphore, and durable file in ADR 0027 Lists 1/2 as required by `AGENTS.md`.
 - Extend store/driver conformance and engine compatibility artifacts for any exported optional port surface.
 - Keep every test offline; no live model, Redis service, or network dependency.

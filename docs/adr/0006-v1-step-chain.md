@@ -14,7 +14,7 @@ Freeze all shared types and port interfaces first (WP1), then execute Wave B (fi
 
 ## Consequences
 
-The plan was fully executed; all eleven work packages shipped. The frozen interface set proved sufficient — no mid-build port breaks required. The architecture established here is the one that remains in production. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in `docs/design/PRODUCTION-READINESS.md`.
+The plan was fully executed; all eleven work packages shipped. The frozen interface set proved sufficient — no mid-build port breaks required. The architecture established here is the one that remains in production. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

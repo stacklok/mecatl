@@ -14,7 +14,7 @@ accumulator: acc/cloud-native-learning
 # Repair brief
 
 Repair finding: document the shipped ADR 0259 capability and its remaining limitations in
-`docs/design/PRODUCTION-READINESS.md`, reconcile architecture and cloud-native resource inventories
+[the historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md), reconcile architecture and cloud-native resource inventories
 after the repair wave, and make ADR, index, and plan statuses consistent. This is documentation and
 status work only; do not change behavioral code or take ownership of numbered acceptance criteria.
 

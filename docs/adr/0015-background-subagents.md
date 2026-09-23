@@ -14,7 +14,7 @@ A shared child-run registry on the parent `Run`, keyed by child session id, is t
 
 ## Consequences
 
-Per-child cancel and background execution work across all three delegation families (Subagent, Parallel branch, team member) through a single code path. The "loop emits exactly N diagnostics lines" invariant is amended to three (adding the drain-abandon warn). Session-scoped background detach requires a durable per-session outbox and is explicitly named as v2 work. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in `docs/design/PRODUCTION-READINESS.md`.
+Per-child cancel and background execution work across all three delegation families (Subagent, Parallel branch, team member) through a single code path. The "loop emits exactly N diagnostics lines" invariant is amended to three (adding the drain-abandon warn). Session-scoped background detach requires a durable per-session outbox and is explicitly named as v2 work. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

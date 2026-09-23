@@ -19,7 +19,7 @@ Adopt hexagonal architecture with a DDD core. Dependencies point inward only: do
 
 ## Consequences
 
-The domain is fully unit-testable offline via reference adapters (`mockllm`, `memfs`, etc.). New LLM providers, tools, and storage backends slot in without touching the loop. The `FileSystem`/`Workspace` types must live in `engine/tool` (not `engine/port`) to avoid a `port↔tool` import cycle. The composition root (`internal/app`, `cmd/`) is the only place adapters meet ports. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in `docs/design/PRODUCTION-READINESS.md`.
+The domain is fully unit-testable offline via reference adapters (`mockllm`, `memfs`, etc.). New LLM providers, tools, and storage backends slot in without touching the loop. The `FileSystem`/`Workspace` types must live in `engine/tool` (not `engine/port`) to avoid a `port↔tool` import cycle. The composition root (`internal/app`, `cmd/`) is the only place adapters meet ports. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 
@@ -675,7 +675,7 @@ keyed off `Tool.ReadOnly()`; **stop conditions** (`Limits`/`Counters` on Session
 
 Most of the v1 "designed-in seams, not built" list is now built behind the seam it
 was designed for. The authoritative tracker is
-`docs/design/PRODUCTION-READINESS.md`; the summary:
+[Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md); the summary:
 
 | Originally deferred | Status | Where it landed |
 |---|---|---|

@@ -14,7 +14,7 @@ The adapter uses the stateless, client-owned strategy (`store:false`, no `previo
 
 ## Consequences
 
-The adapter is portable across OpenAI-compatible endpoints; server-side state chaining is not used, so all compaction, persistence, and multi-provider portability remain in the harness. The reasoning blob and phase replay are regression-pinned by tests. OpenAI-only features (encrypted reasoning, `prompt_cache_key`, hosted tools) degrade gracefully on compatible endpoints. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in `docs/design/PRODUCTION-READINESS.md`.
+The adapter is portable across OpenAI-compatible endpoints; server-side state chaining is not used, so all compaction, persistence, and multi-provider portability remain in the harness. The reasoning blob and phase replay are regression-pinned by tests. OpenAI-only features (encrypted reasoning, `prompt_cache_key`, hosted tools) degrade gracefully on compatible endpoints. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

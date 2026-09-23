@@ -13,9 +13,11 @@ Each ADR records *why* a thing is shaped the way it is at a point in time and is
 supersession in this living index; never edit the landed record. Copy
 [`template.md`](./template.md) to start one. Number monotonically.
 
-Current behaviour lives in [`docs/architecture.md`](../architecture.md) (the living
-reference); shipped/deferred status lives in
-[PRODUCTION-READINESS.md](../design/PRODUCTION-READINESS.md) (the single tracker).
+Current behavior belongs in the owning [architecture topic](../READING.md) and
+public guide. Track actionable work in issues and PRs rather than a second
+hand-maintained status ledger. Follow the [documentation change review](../development-process.md#documentation-change-review)
+for current ownership; historical references in ADRs do not require recreating
+retired trackers or completed execution plans.
 Documentation/citation conventions are in [`docs/design/README.md`](../design/README.md).
 
 > History: ADRs 0004–0029 were the former `docs/design/*` design records, consolidated

@@ -36,4 +36,4 @@ Selected reporting provides a practical GitHub-like issue journey while keeping 
 - [Subagents and teams](../architecture/subagents-and-teams.md)
 - [Observability](../architecture/observability.md)
 - [Usage guide](../usage.md)
-- [Production readiness tracker](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)

@@ -118,4 +118,4 @@ are similarly observable via `Manager.ListResources`/`ListPrompts` (the
 - [ADR 0027](./0027-cloud-native.md) List 1 row 28 — the SSE goroutine
   inventory.
 - `docs/architecture/extensibility.md` — the MCP client section.
-- `docs/design/PRODUCTION-READINESS.md` — the MCP rows.
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) — the MCP rows.

@@ -119,4 +119,4 @@ After ADR 0281 lands:
 - [Architecture: parallelism](../architecture/parallelism.md) — current Parallel fork and preserved-winner behavior.
 - [Architecture: subagents and teams](../architecture/subagents-and-teams.md) — current child and team fork ownership.
 - [Architecture: extensibility](../architecture/extensibility.md) — command-runner and environment seams.
-- [Production readiness](../design/PRODUCTION-READINESS.md) — shipped/deferred status tracking.
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) — shipped/deferred status tracking.

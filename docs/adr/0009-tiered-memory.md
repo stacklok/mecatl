@@ -15,7 +15,7 @@ Add a tier-0 index: a derived, capped (200 entries/~8 KB), one-line-per-entry di
 
 ## Consequences
 
-The model can enumerate its memory at session start and search trimmed entries by keyword without guessing keys. The `memory.json` format gains an additive `description` field (zero-migration: old files load cleanly with an empty description, which falls back to the first line of value). Cross-process safety is provided by a flock sentinel so concurrent writers cannot lose updates. The one-`*Store`-per-dir invariant must be upheld by composition. Semantic/embedding recall stays deferred; the deferred path and its design are recorded in docs/adr/0010-semantic-memory-recall.md. Current behaviour: docs/architecture.md. Shipped/deferred state: docs/design/PRODUCTION-READINESS.md.
+The model can enumerate its memory at session start and search trimmed entries by keyword without guessing keys. The `memory.json` format gains an additive `description` field (zero-migration: old files load cleanly with an empty description, which falls back to the first line of value). Cross-process safety is provided by a flock sentinel so concurrent writers cannot lose updates. The one-`*Store`-per-dir invariant must be upheld by composition. Semantic/embedding recall stays deferred; the deferred path and its design are recorded in docs/adr/0010-semantic-memory-recall.md. Current behaviour: docs/architecture.md. Shipped/deferred state: [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

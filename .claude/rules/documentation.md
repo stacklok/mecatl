@@ -14,6 +14,8 @@ Living guides describe verified, implemented behavior. Keep proposed behavior in
 acceptance plans, durable rationale in ADRs, and implementation history in PRs or
 Git. A merged plan does not prove a feature shipped. Legitimate release notes and
 public API changelogs remain release artifacts, not substitutes for current docs.
+Track actionable work in issues and PRs; keep current operator limitations in
+their owning guides, not a parallel feature-status ledger.
 
 Replace stale explanations rather than appending corrections. Delete obsolete or
 redundant material; migrate only verified, non-obvious knowledge missing from its

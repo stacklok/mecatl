@@ -33,6 +33,6 @@ The debugger can reason over raw stored conversation content, including secrets,
 - [Architecture overview](../architecture.md)
 - [Observability, persistence and reliability](../architecture/observability.md)
 - [TUI reference](../tui.md)
-- [Production readiness tracker](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 - [ADR 0018](./0018-perf-observability.md)
 - [ADR 0027](./0027-cloud-native.md)

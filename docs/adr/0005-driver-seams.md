@@ -15,7 +15,7 @@ Each externalizable store/source is a minimal Go interface in the engine. A sing
 
 ## Consequences
 
-A driver author in any language proves conformance by running the exported Go suites against their endpoint. Snapshot format evolution uses additive JSON fields under the existing `sessnap-json/1` tag; a format-tag bump is reserved for encoding replacement only. The workspace/FS driver is deliberately left as a sketch (the one unimplemented seam) because it breaks the 64 MiB unary rule and the Bash-needs-real-exec constraint. Server-wrapper promotion to a public API is deferred until an external Go consumer exists. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in `docs/design/PRODUCTION-READINESS.md`.
+A driver author in any language proves conformance by running the exported Go suites against their endpoint. Snapshot format evolution uses additive JSON fields under the existing `sessnap-json/1` tag; a format-tag bump is reserved for encoding replacement only. The workspace/FS driver is deliberately left as a sketch (the one unimplemented seam) because it breaks the 64 MiB unary rule and the Bash-needs-real-exec constraint. Server-wrapper promotion to a public API is deferred until an external Go consumer exists. Current behaviour is in `docs/architecture.md`; shipped and deferred items are in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

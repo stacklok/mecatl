@@ -38,7 +38,7 @@ The status idiom itself was inconsistent across docs (`> Status: **SHIPPED**`,
 | Lifecycle | Where | Job | Maintenance |
 |---|---|---|---|
 | **Living truth** | `README.md`, `docs/architecture.md`, `docs/usage.md`, `docs/tui.md`, [`docs/architecture/mecatl.modelith.md`](../architecture/mecatl.modelith.md) (generated) | how the system works / is operated **now** | kept current; the single source for current behaviour |
-| **Status tracker** | `docs/design/PRODUCTION-READINESS.md` | what is shipped / in-progress / deferred | the **only** place mutable status lives |
+| **Status tracker** | [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) | what is shipped / in-progress / deferred | the **only** place mutable status lives |
 | **Decision record** | `docs/adr/NNNN-*.md` (new) and `docs/design/*.md` (existing spikes) | *why* a thing is shaped the way it is, captured at a point in time | **frozen**; supersede with a new ADR, never edit to match new code |
 | **Research** | `docs/design/*RESEARCH*.md` | point-in-time study | frozen, dated |
 
@@ -102,5 +102,5 @@ citations); only their *role* changes.
 ## See also
 
 - [`docs/design/README.md`](../design/README.md) — the lifecycle model + banner spec + citation convention.
-- [`docs/design/PRODUCTION-READINESS.md`](../design/PRODUCTION-READINESS.md) — the status tracker.
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md) — the status tracker.
 - [`docs/architecture.md`](../architecture.md) — the living architecture reference.

@@ -148,7 +148,6 @@ For an embedded deployment, see the
 - [Repository documentation index](./docs/README.md)
 - [Architecture guide](./docs/architecture.md)
 - [User documentation](https://mecatl.dev/docs/)
-- [Production-readiness tracker](./docs/design/PRODUCTION-READINESS.md)
 - [Engine compatibility contract](./engine/COMPATIBILITY.md)
 
 ## Contributing, security, and license

@@ -4,8 +4,6 @@ This folder no longer holds the per-feature design records — those are now num
 **ADRs** in [`docs/adr/`](../adr/README.md) (consolidated by
 [ADR 0003](../adr/0003-consolidate-design-records-as-adrs.md)). What lives here:
 
-- [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) — the **single status tracker**
-  (what is shipped / in-progress / deferred).
 - [principles.md](./principles.md) — the **platform principles** acceptance plans cite
   as `Principle N` (the ac-trace grounding list).
 - [surface-migration-plan.md](./surface-migration-plan.md) — the issue #555 surface
@@ -13,9 +11,9 @@ This folder no longer holds the per-feature design records — those are now num
 - this file — the **documentation & citation conventions** the `docs/lint` gate enforces.
 
 One source of truth per fact: current behavior in the owning
-[architecture topic](../READING.md), mutable status in
-[PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md), and durable rationale in
-[ADRs](../adr/README.md). Supersede accepted decisions with a new ADR, never an
+[architecture topic](../READING.md) and durable rationale in
+[ADRs](../adr/README.md). Track actionable work in issues and PRs, not a duplicate
+feature-status ledger. Supersede accepted decisions with a new ADR, never an
 in-place rewrite. Follow the [documentation change review](../development-process.md#documentation-change-review)
 when deciding what to write, update, or delete. This directory is not a journal
 of implementation work; that history remains in PRs and Git.

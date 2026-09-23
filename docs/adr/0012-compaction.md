@@ -15,7 +15,7 @@ Implement compaction as a turn-boundary check at 80% of the context window, appl
 
 ## Consequences
 
-The agent survives long coding sessions without losing its goal or the most-recent user instruction. Middle instructions (between the goal and the recent tail) are best-effort: summarised verbatim by tier 4 when an LLM is wired, dropped otherwise. The unpaired-history invariant is enforced by three independent layers (forward-snap, ValidateToolPairing, ReplaceHistory). The archive event grows the event log super-linearly across many compactions; the deferred delta-archive optimization is recorded in docs/adr/0027-cloud-native.md. Current behaviour: docs/architecture.md. Shipped/deferred state: docs/design/PRODUCTION-READINESS.md.
+The agent survives long coding sessions without losing its goal or the most-recent user instruction. Middle instructions (between the goal and the recent tail) are best-effort: summarised verbatim by tier 4 when an LLM is wired, dropped otherwise. The unpaired-history invariant is enforced by three independent layers (forward-snap, ValidateToolPairing, ReplaceHistory). The archive event grows the event log super-linearly across many compactions; the deferred delta-archive optimization is recorded in docs/adr/0027-cloud-native.md. Current behaviour: docs/architecture.md. Shipped/deferred state: [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

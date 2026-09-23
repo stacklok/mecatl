@@ -15,7 +15,7 @@ All multi-provider wiring lives in the composition layer only; the domain, agent
 
 ## Consequences
 
-Adding Anthropic required zero domain or port changes — only composition and cmd wiring — validating the abstraction. Per-session context-window resolution is a live-first closure, not a frozen scalar, so a post-build live-catalog swap self-corrects without an engine rebuild. Disclosure hardening ensures no API key or credentialed URL reaches any wire, log, or proto surface. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in `docs/design/PRODUCTION-READINESS.md`.
+Adding Anthropic required zero domain or port changes — only composition and cmd wiring — validating the abstraction. Per-session context-window resolution is a live-first closure, not a frozen scalar, so a post-build live-catalog swap self-corrects without an engine rebuild. Disclosure hardening ensures no API key or credentialed URL reaches any wire, log, or proto surface. Current behaviour is described in `docs/architecture.md`; shipped/deferred state is tracked in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

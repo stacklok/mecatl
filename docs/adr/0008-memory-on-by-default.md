@@ -14,7 +14,7 @@ Compute a per-project default memory directory under XDG data (`~/.local/share/m
 
 ## Consequences
 
-Memory tools are available in every mecatui session by default without user configuration. The XDG data base is resolved via `adrg/xdg` (promoted to a direct dependency) rather than a hand-rolled env dance, consolidating two previously inconsistent XDG lookups. The store creates the directory; `cmd/mecatui` only computes the path string, keeping the wiring forward-compatible with tiering changes. Current behaviour: docs/architecture.md. Shipped/deferred state: docs/design/PRODUCTION-READINESS.md.
+Memory tools are available in every mecatui session by default without user configuration. The XDG data base is resolved via `adrg/xdg` (promoted to a direct dependency) rather than a hand-rolled env dance, consolidating two previously inconsistent XDG lookups. The store creates the directory; `cmd/mecatui` only computes the path string, keeping the wiring forward-compatible with tiering changes. Current behaviour: docs/architecture.md. Shipped/deferred state: [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md).
 
 ---
 

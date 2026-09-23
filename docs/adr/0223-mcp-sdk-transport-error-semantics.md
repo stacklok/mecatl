@@ -102,4 +102,4 @@ network-policy responsibilities recorded in ADR 0219.
 - [ADR 0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)
 - [ADR 0219 — Qualify the official MCP SDK authorization-code profile](./0219-mcp-oauth-sdk-profile.md)
 - [Extensibility architecture](../architecture/extensibility.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
