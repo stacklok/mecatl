@@ -1021,6 +1021,21 @@ STRING passthrough on the wire (`session.StopBudget = "budget"`, no proto enum).
 Guards: `agent.TestBudget*`, `session.TestStopBudgetIsCleanReopenableTerminal`,
 `server.TestServiceBudgetSurfacesAndReopens`, `app.TestMaxRunTokensPropagatesToParentAndChild`.
 
+**Purpose-attributed auxiliary usage (ADR 0350).** `Session.tokenUsage` is the canonical
+purpose ledger, while `Session.Usage`, normal `EvResult.Usage`, and Team budgets remain
+`main`-only. `router` is the narrow exception for the existing classifier spend-safety rule:
+its separate bucket contributes to the internal `MaxRunTokens` calculation without rolling into
+`main` or client-visible run usage. Direct and ephemeral session-associated auxiliary calls record
+provider-reported usage under `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`,
+or `parallel_judge`, alongside the existing `session_title` kind. Composition owns the exact
+provider/model attribution and source-session binding. A slot may select a model for a matching
+purpose, but it is not the ledger's identity; `parallel_judge` has no dedicated slot. Partial
+usage observed before terminal errors is retained, but accounting is forward-only best effort:
+implementation never replays an uncertain provider call solely to repair usage. No prompts,
+outputs, raw provider errors, request IDs, credentials, or client-selected billing controls enter
+the ledger. Source-less dream and consolidation planning remains outside session accounting
+([#1791](https://github.com/stacklok/mecatl/issues/1791)).
+
 **Team-aggregate token budget — the supervisor-level ceiling (`WithTeamTokenBudget`).** The
 team-AGGREGATE companion to the per-engine `MaxRunTokens` closes the residual 4A item.
 `Supervisor.WithTeamTokenBudget(n)` (0 = disabled, no nonzero default) is a TEAM-WIDE cumulative
