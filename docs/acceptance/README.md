@@ -374,6 +374,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio global search and keyboard shortcuts](studio-search-shortcuts.md) — the last Studio feature layer: a browser-owned search index over already-served inventories, the closed shortcut registry, the reference page with honest help features, and the palette in the top nav. Status: landed in the implementation candidate; authoritative on merge.
 
+- [Session-scoped agent identity](session-scoped-agent-identity.md) — a `CreateSessionRequest.agent_definition_name` binding whose root engine is built exclusively from a named AgentDef's own tools/provider/model/limits/mode/hooks/memory, with ordinary main-session guardrails and ask-flow, a strictly non-widenable tool ceiling (closing two grant channels — `Config.RootAuthority` and `Config.MCPBroker` — ADR 0352's own text didn't name), and fail-closed behavior across every engine-rebuild path. Status: draft.
+
 ## See also
 
 - [Development process](../development-process.md) — the spine end to end.
