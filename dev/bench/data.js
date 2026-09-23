@@ -238442,6 +238442,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790195725403,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13a98e402de886c8c6fa653353a7106b1e09e8f1",
+          "message": "chore: Configure Renovate (#1819)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>\nCo-authored-by: Dan Barr <6922515+danbarr@users.noreply.github.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T16:49:56-04:00",
+          "tree_id": "54da04d9dbc73550b75e062339932057b26167fd",
+          "url": "https://github.com/stacklok/mecatl/commit/13a98e402de886c8c6fa653353a7106b1e09e8f1"
+        },
+        "date": 1790197286130,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -346347,6 +346381,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790197283332,
+  "lastUpdate": 1790197286932,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
