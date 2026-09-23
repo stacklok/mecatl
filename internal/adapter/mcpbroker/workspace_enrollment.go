@@ -82,9 +82,17 @@ func (a *SessionHandle) BeginWorkspaceEnrollment(ctx context.Context) (contract.
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	defer done()
-	backends, target, _ := a.bundleBackends()
+	backends, target, process := a.bundleBackends()
 	if len(backends) == 0 {
 		return contract.WorkspaceEnrollmentPresentation{}, ErrWorkspaceEnrollmentUnsupported
+	}
+	if process != nil && process.protectedStorage != nil {
+		healthCtx, cancel := context.WithTimeout(opCtx, process.protectedStorage.healthTimeout)
+		err := process.protectedStorage.Health(healthCtx)
+		cancel()
+		if err != nil {
+			return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: protected storage unavailable")
+		}
 	}
 	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonRequestStarted, "backend_count", len(backends))
 

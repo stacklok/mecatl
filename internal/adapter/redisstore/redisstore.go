@@ -148,6 +148,9 @@ type Config struct {
 	// takes precedence when both are set.
 	TLS            bool
 	AllowPlaintext bool
+	// DialTimeout and OperationTimeout are optional connection bounds.
+	DialTimeout      time.Duration
+	OperationTimeout time.Duration
 	// FollowPoolSize bounds the dedicated Redis connection pool used only for
 	// blocking event followers. Zero selects the production default of 32.
 	FollowPoolSize int
@@ -381,7 +384,7 @@ func connectionConfigWithReader(cfg Config, readFile credentialFileReader) (tcre
 	if cfg.CAFile != "" {
 		tlsCfg.CACert = files.ca
 	}
-	return tcredis.Config{Addr: cfg.Addr, Username: username, Password: password, TLS: tlsCfg}, nil
+	return tcredis.Config{Addr: cfg.Addr, Username: username, Password: password, TLS: tlsCfg, DialTimeout: cfg.DialTimeout, ReadTimeout: cfg.OperationTimeout, WriteTimeout: cfg.OperationTimeout}, nil
 }
 
 const maxCredentialFileSize int64 = 1 << 20

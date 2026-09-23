@@ -34,6 +34,7 @@ import (
 	vmcpsession "github.com/stacklok/toolhive/pkg/vmcp/session"
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -58,13 +59,15 @@ type Process struct {
 	Handlers     HandlerBundle
 	CallbackPath string
 
-	ctx             context.Context
-	cancel          context.CancelFunc
-	lifecycleMu     sync.Mutex
-	closed          bool
-	construction    toolHiveConstruction
-	discovery       *authenticatedDiscovery
-	protectedTarget *oauthRoute
+	ctx              context.Context
+	cancel           context.CancelFunc
+	lifecycleMu      sync.Mutex
+	closed           bool
+	construction     toolHiveConstruction
+	discovery        *authenticatedDiscovery
+	protectedTarget  *oauthRoute
+	protectedStorage *protectedToolHiveStorage
+	custody          *credentialCustody
 	// reservedToolNames is the immutable model-visible name set outside this Process's
 	// broker catalogue (core/global tools), captured once at construction so a
 	// later workspace-enrollment freeze can reuse it without re-deriving it.
@@ -190,6 +193,18 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	var authKeyProvider keys.KeyProvider
 	var incoming func(http.Handler) http.Handler
 	var authInfo http.Handler
+	var protectedStorage *protectedToolHiveStorage
+	if config.ProtectedStorage != nil {
+		if config.AuthStorage != nil || config.AuthRedisClient != nil || len(construction.upstreams) == 0 {
+			return rollback(errors.New("mcpbroker: protected storage configuration conflicts with storage seams"))
+		}
+		protectedStorage, err = newProtectedToolHiveStorage(processCtx, *config.ProtectedStorage)
+		if err != nil {
+			return rollback(errors.New("mcpbroker: protected storage unavailable"))
+		}
+		process.protectedStorage = protectedStorage
+		process.resources = append(process.resources, ownedResource{name: "protected-storage", close: protectedStorage.Close})
+	}
 	if len(construction.upstreams) != 0 {
 		// A restart between a user starting an OAuth authorization and
 		// completing it in their browser must not lose the pending-state
@@ -197,12 +212,17 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		// operator already configured Redis for the session store
 		// (ToolHiveConfig.AuthStorage); otherwise this falls back to the
 		// in-memory default, which does not survive a process restart.
-		authStore := config.AuthStorage
-		if authStore == nil && config.AuthRedisClient != nil {
-			authStore = storage.NewRedisStorageWithClient(config.AuthRedisClient, toolHiveAuthStoragePrefix)
-		}
-		if authStore == nil {
-			authStore = storage.NewMemoryStorage()
+		var authStore storage.Storage
+		if protectedStorage != nil {
+			authStore = protectedStorage.storage
+		} else {
+			authStore = config.AuthStorage
+			if authStore == nil && config.AuthRedisClient != nil {
+				authStore = storage.NewRedisStorageWithClient(config.AuthRedisClient, toolHiveAuthStoragePrefix)
+			}
+			if authStore == nil {
+				authStore = storage.NewMemoryStorage()
+			}
 		}
 		if protectedTarget == nil {
 			return rollback(fmt.Errorf("%w: protected ToolHive target is required", ErrInvalidCatalogue))
@@ -232,9 +252,19 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		}
 		process.resources = append(process.resources, ownedResource{name: "authserver", close: auth.Close})
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
+		if protectedStorage != nil {
+			process.custody, err = newCredentialCustody(protectedStorage.client, protectedStorage.keys, reader, wallclock.Clock{}, protectedStorage.storage)
+			if err != nil {
+				return rollback(errors.New("mcpbroker: protected custody unavailable"))
+			}
+		}
+		verifiedReader := upstreamtoken.TokenReader(reader)
+		if protectedStorage != nil {
+			verifiedReader = &capturingTokenReader{next: reader}
+		}
 		incoming, _, authInfo, err = factory.NewIncomingAuthMiddleware(processCtx, &vmcpconfig.IncomingAuthConfig{
 			Type: "oidc", OIDC: &vmcpconfig.OIDCConfig{Issuer: issuer, Audience: issuer, Resource: issuer, JWKSURL: issuer + "/.well-known/jwks.json"},
-		}, "mecatl-broker", nil, reader, authKeyProvider, issuer)
+		}, "mecatl-broker", nil, verifiedReader, authKeyProvider, issuer)
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create incoming auth: %w", err))
 		}
@@ -264,6 +294,7 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 			capabilities: capabilityAggregator,
 			backends:     backendRegistry,
 			incoming:     incoming,
+			captureTSID:  protectedStorage != nil,
 		}
 	}
 	process.resources = append(process.resources, ownedResource{name: "vmcp", close: func() error { return server.Stop(context.Background()) }})
@@ -610,22 +641,38 @@ func (p *Process) Ready(ctx context.Context) error {
 	return p.ready(ctx)
 }
 
-func (p *Process) ready(context.Context) error {
+func (p *Process) ready(ctx context.Context) error {
 	if p == nil {
 		return errors.New("mcpbroker: ToolHive process is unavailable")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	p.lifecycleMu.Lock()
-	defer p.lifecycleMu.Unlock()
 	if p.closed || p.Runtime == nil || p.cancel == nil {
+		p.lifecycleMu.Unlock()
 		return errors.New("mcpbroker: ToolHive process is unavailable")
 	}
-	if len(p.construction.upstreams) != 0 {
-		if p.Handlers.VMCP == nil || p.protectedTarget == nil || p.Handlers.Authorization == nil || p.Handlers.Token == nil ||
-			p.Handlers.UpstreamCallback == nil || p.Handlers.Discovery == nil || p.Handlers.JWKS == nil ||
-			p.Handlers.ProtectedResource == nil || p.Handlers.Callback == nil {
+	protectedStorage := p.protectedStorage
+	construction := p.construction
+	handlerBundle := p.Handlers
+	discovery := p.discovery
+	p.lifecycleMu.Unlock()
+	if protectedStorage != nil {
+		healthCtx, cancel := context.WithTimeout(ctx, protectedStorage.healthTimeout)
+		err := protectedStorage.Health(healthCtx)
+		cancel()
+		if err != nil {
+			return errors.New("mcpbroker: protected storage unavailable")
+		}
+	}
+	if len(construction.upstreams) != 0 {
+		if handlerBundle.VMCP == nil || p.protectedTarget == nil || handlerBundle.Authorization == nil || handlerBundle.Token == nil ||
+			handlerBundle.UpstreamCallback == nil || handlerBundle.Discovery == nil || handlerBundle.JWKS == nil ||
+			handlerBundle.ProtectedResource == nil || handlerBundle.Callback == nil {
 			return errors.New("mcpbroker: protected ToolHive route is unavailable")
 		}
-		if len(p.construction.protectedBackends) != 0 && p.discovery == nil {
+		if len(construction.protectedBackends) != 0 && discovery == nil {
 			return errors.New("mcpbroker: authenticated ToolHive discovery is unavailable")
 		}
 	}

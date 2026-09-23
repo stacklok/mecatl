@@ -13,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
+	"github.com/stacklok/toolhive/pkg/authserver/storage"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -78,56 +79,94 @@ type custodyRecord struct {
 	State     custodyState
 }
 
+type upstreamTokenRowReader interface {
+	GetUpstreamTokens(context.Context, string, string) (*storage.UpstreamTokens, error)
+}
+
+type stagedCustody struct {
+	Recovery  recoveryID
+	ExpiresAt time.Time
+}
+
 type credentialCustody struct {
 	client redis.UniversalClient
 	keys   *credentialKeyRing
+	rows   upstreamTokenRowReader
 	tokens *upstreamtoken.InProcessService
 	clock  port.Clock
 }
 
-func newCredentialCustody(client redis.UniversalClient, keys *credentialKeyRing, tokens *upstreamtoken.InProcessService, clock port.Clock) (*credentialCustody, error) {
-	if client == nil || keys == nil || tokens == nil || clock == nil {
+func newCredentialCustody(client redis.UniversalClient, keys *credentialKeyRing, tokens *upstreamtoken.InProcessService, clock port.Clock, rows upstreamTokenRowReader) (*credentialCustody, error) {
+	if client == nil || keys == nil || tokens == nil || clock == nil || rows == nil {
 		return nil, errCustodyUnavailable
 	}
-	return &credentialCustody{client: client, keys: keys, tokens: tokens, clock: clock}, nil
+	return &credentialCustody{client: client, keys: keys, rows: rows, tokens: tokens, clock: clock}, nil
 }
 
-func (c *credentialCustody) Stage(ctx context.Context, request custodyRequest, verifiedTSID string, retention custodyRetention) (recoveryID, error) {
+//nolint:gocyclo // Stage is one fail-closed native-expiry transaction.
+func (c *credentialCustody) Stage(ctx context.Context, request custodyRequest, verifiedTSID string) (stagedCustody, error) {
 	if ctx.Err() != nil {
-		return "", ctx.Err()
+		return stagedCustody{}, ctx.Err()
 	}
-	if c.validRequest(request) != nil || len(verifiedTSID) == 0 || len(verifiedTSID) > maxCustodyTSID || !utf8.ValidString(verifiedTSID) || !validFuture(retention.ExpiresAt, c.clock.Now()) || request.AttemptDeadline.After(retention.ExpiresAt) {
-		return "", errCustodyUnavailable
+	if c.validRequest(request) != nil || len(verifiedTSID) == 0 || len(verifiedTSID) > maxCustodyTSID || !utf8.ValidString(verifiedTSID) {
+		return stagedCustody{}, errCustodyUnavailable
+	}
+	retention := custodyRetention{}
+	rows := make(map[string]*storage.UpstreamTokens, len(request.Guard.Providers))
+	for _, provider := range request.Guard.Providers {
+		row, err := c.rows.GetUpstreamTokens(ctx, verifiedTSID, provider)
+		if err != nil && !errors.Is(err, storage.ErrExpired) {
+			return stagedCustody{}, custodyError(ctx, err)
+		}
+		if row == nil || row.ProviderID != provider || !validFuture(row.SessionExpiresAt, c.clock.Now()) {
+			return stagedCustody{}, errCustodyUnavailable
+		}
+		rows[provider] = row
+		if retention.ExpiresAt.IsZero() || row.SessionExpiresAt.Before(retention.ExpiresAt) {
+			retention.ExpiresAt = row.SessionExpiresAt
+		}
 	}
 	for _, provider := range request.Guard.Providers {
 		credential, err := c.tokens.GetValidTokens(ctx, verifiedTSID, provider)
 		if err != nil || credential == nil {
-			return "", custodyError(ctx, err)
+			return stagedCustody{}, custodyError(ctx, err)
 		}
+	}
+	for _, provider := range request.Guard.Providers {
+		row, err := c.rows.GetUpstreamTokens(ctx, verifiedTSID, provider)
+		if (err != nil && !errors.Is(err, storage.ErrExpired)) || row == nil || row.ProviderID != provider || !validFuture(row.SessionExpiresAt, c.clock.Now()) {
+			return stagedCustody{}, errCustodyUnavailable
+		}
+		if !row.SessionExpiresAt.Equal(rows[provider].SessionExpiresAt) {
+			return stagedCustody{}, errCustodyUnavailable
+		}
+	}
+	if !validFuture(retention.ExpiresAt, c.clock.Now()) || request.AttemptDeadline.After(retention.ExpiresAt) {
+		return stagedCustody{}, errCustodyUnavailable
 	}
 	ref, err := newRecoveryID()
 	if err != nil {
-		return "", errCustodyUnavailable
+		return stagedCustody{}, errCustodyUnavailable
 	}
 	record := custodyRecord{Version: custodySchemaVersion, ID: ref, Guard: cloneGuard(request.Guard), TSID: verifiedTSID, ExpiresAt: retention.ExpiresAt.UTC(), Revision: 1, State: custodyStaged}
 	sealed, err := c.sealRecord(record)
 	if err != nil {
-		return "", errCustodyUnavailable
+		return stagedCustody{}, errCustodyUnavailable
 	}
 	if c.validRequest(request) != nil || !validFuture(retention.ExpiresAt, c.clock.Now()) {
-		return "", errCustodyUnavailable
+		return stagedCustody{}, errCustodyUnavailable
 	}
 	result, err := custodyCreateScript.Run(ctx, c.client, []string{c.key(ref)}, sealed, record.ExpiresAt.UnixMilli(), request.AttemptDeadline.UnixMilli()).Int()
 	if err != nil {
-		return "", custodyError(ctx, err)
+		return stagedCustody{}, custodyError(ctx, err)
 	}
 	if result == -1 {
-		return "", errCustodyUnavailable
+		return stagedCustody{}, errCustodyUnavailable
 	}
 	if result != 1 {
-		return "", errCustodyConflict
+		return stagedCustody{}, errCustodyConflict
 	}
-	return ref, nil
+	return stagedCustody{Recovery: ref, ExpiresAt: record.ExpiresAt}, nil
 }
 
 func (c *credentialCustody) Commit(ctx context.Context, assertion custodyAssertion) error {

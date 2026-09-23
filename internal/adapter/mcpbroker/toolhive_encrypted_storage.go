@@ -3,6 +3,7 @@ package mcpbroker
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 )
@@ -15,8 +16,10 @@ const credentialAADNamespace = "mecatl:authserver:"
 // expiry, and CAS ownership with ToolHive while sealing only the scoped fields.
 type encryptedAuthStorage struct {
 	storage.Storage
-	dcr  storage.DCRCredentialStore
-	keys *credentialKeyRing
+	dcr       storage.DCRCredentialStore
+	keys      *credentialKeyRing
+	closeOnce sync.Once
+	closeErr  error
 }
 
 var (
@@ -33,6 +36,17 @@ func newEncryptedAuthStorage(inner storage.Storage, keys *credentialKeyRing) (*e
 		return nil, errCredentialEnvelope
 	}
 	return &encryptedAuthStorage{Storage: inner, dcr: dcr, keys: keys}, nil
+}
+
+// Close closes the native store exactly once. No Unwrap method is provided:
+// ToolHive must continue to see this decorator as the DCR store and must not
+// reach raw Redis for legacy migration.
+func (s *encryptedAuthStorage) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.closeOnce.Do(func() { s.closeErr = s.Storage.Close() })
+	return s.closeErr
 }
 
 func (s *encryptedAuthStorage) StoreUpstreamTokens(ctx context.Context, sessionID, provider string, tokens *storage.UpstreamTokens) error {

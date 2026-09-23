@@ -42,6 +42,69 @@ type custodyFixture struct {
 	id        session.SessionID
 }
 
+type trackingRows struct {
+	storage *storage.MemoryStorage
+	calls   []string
+	drift   string
+}
+
+func (r *trackingRows) GetUpstreamTokens(ctx context.Context, sessionID, provider string) (*storage.UpstreamTokens, error) {
+	r.calls = append(r.calls, provider)
+	row, err := r.storage.GetUpstreamTokens(ctx, sessionID, provider)
+	if err == nil && provider == r.drift && len(r.calls) > 1 {
+		copy := *row
+		copy.SessionExpiresAt = copy.SessionExpiresAt.Add(time.Minute)
+		row = &copy
+	}
+	return row, err
+}
+
+func TestCredentialCustodyStageDerivesEarliestNativeSessionExpiry(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	inner := storage.NewMemoryStorage()
+	first := now.Add(30 * time.Minute)
+	second := now.Add(time.Hour)
+	for provider, expiry := range map[string]time.Time{"one": first, "two": second} {
+		if err := inner.StoreUpstreamTokens(t.Context(), "tsid", provider, &storage.UpstreamTokens{ProviderID: provider, AccessToken: provider, SessionExpiresAt: expiry}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := &trackingRows{storage: inner}
+	client := newMiniRedis(t)
+	clock := custodyTestClock{now: now}
+	core, err := newCredentialCustody(client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(inner, nil), clock, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := custodyRequest{Guard: custodyGuard{SessionID: "session", Incarnation: session.NewIncarnationID(), Providers: []string{"one", "two"}}, AttemptDeadline: now.Add(time.Minute)}
+	staged, err := core.Stage(t.Context(), request, "tsid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !staged.ExpiresAt.Equal(first) {
+		t.Fatalf("expiry = %v, want %v", staged.ExpiresAt, first)
+	}
+	if len(rows.calls) != 4 || rows.calls[0] != "one" || rows.calls[1] != "two" || rows.calls[2] != "one" || rows.calls[3] != "two" {
+		t.Fatalf("row-read order = %v", rows.calls)
+	}
+}
+
+func TestCredentialCustodyStageRejectsSessionExpiryDrift(t *testing.T) {
+	f := newFixture(t)
+	rows := &trackingRows{storage: f.inner, drift: "provider"}
+	core, err := newCredentialCustody(f.client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(f.inner, nil), f.clock, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.Stage(t.Context(), f.request, "tsid"); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("drifted Stage = %v", err)
+	}
+	keys, _, err := f.client.Scan(t.Context(), 0, custodyPrefix+"*", 10).Result()
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("drifted Stage published custody: %v, %v", keys, err)
+	}
+}
+
 func TestToolHiveCredentialCustody_StorageDecoratorEncryptsAndBindsFields(t *testing.T) {
 	inner := storage.NewMemoryStorage()
 	decorated, err := newEncryptedAuthStorage(inner, testCredentialKeyRing(t))
@@ -257,12 +320,13 @@ func TestToolHiveCredentialCustody_SameGuardDoesNotConflateNULDelimitedProviders
 
 func TestToolHiveCredentialCustody_RestartStagedCommitAndResolve(t *testing.T) {
 	f := newFixture(t)
-	ref, err := f.core.Stage(t.Context(), f.request, "tsid", f.retention)
+	staged, err := f.core.Stage(t.Context(), f.request, "tsid")
+	ref := staged.Recovery
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertion := custodyAssertion{custodyRequest: f.request, Recovery: ref}
-	restarted, err := newCredentialCustody(f.client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(f.inner, nil), f.clock)
+	restarted, err := newCredentialCustody(f.client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(f.inner, nil), f.clock, f.inner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +410,8 @@ func TestToolHiveCredentialCustody_CrossesCommittedReferencesAndGuards(t *testin
 	secondRequest.Guard = cloneGuard(f.request.Guard)
 	secondRequest.Guard.SessionID = "second-session"
 	secondRequest.Guard.Incarnation = session.NewIncarnationID()
-	second, err := f.core.Stage(t.Context(), secondRequest, "tsid", f.retention)
+	staged, err := f.core.Stage(t.Context(), secondRequest, "tsid")
+	second := staged.Recovery
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,12 +433,13 @@ func TestToolHiveCredentialCustody_CrossesCommittedReferencesAndGuards(t *testin
 
 func TestToolHiveCredentialCustody_RestartRepeatCommitIsIdempotent(t *testing.T) {
 	f := newFixture(t)
-	ref, err := f.core.Stage(t.Context(), f.request, "tsid", f.retention)
+	staged, err := f.core.Stage(t.Context(), f.request, "tsid")
+	ref := staged.Recovery
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertion := custodyAssertion{custodyRequest: f.request, Recovery: ref}
-	restarted, err := newCredentialCustody(f.client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(f.inner, nil), f.clock)
+	restarted, err := newCredentialCustody(f.client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(f.inner, nil), f.clock, f.inner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +459,8 @@ func TestToolHiveCredentialCustody_RestartRepeatCommitIsIdempotent(t *testing.T)
 
 func TestToolHiveCredentialCustody_ConcurrentCommitAndTombstoneLeavesTombstone(t *testing.T) {
 	f := newFixture(t)
-	ref, err := f.core.Stage(t.Context(), f.request, "tsid", f.retention)
+	staged, err := f.core.Stage(t.Context(), f.request, "tsid")
+	ref := staged.Recovery
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,6 +706,126 @@ func newRealRefresherFixture(t *testing.T, response string) (*upstreamtoken.InPr
 	return upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher()), fault, encrypted, inner
 }
 
+type lostReplyClient struct {
+	redis.UniversalClient
+	lose bool
+	err  error
+}
+
+func (c *lostReplyClient) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	cmd := c.UniversalClient.Eval(ctx, script, keys, args...)
+	if c.lose && cmd.Err() == nil {
+		out := redis.NewCmd(ctx)
+		out.SetErr(c.err)
+		return out
+	}
+	return cmd
+}
+func (c *lostReplyClient) EvalSha(ctx context.Context, sha1 string, keys []string, args ...interface{}) *redis.Cmd {
+	cmd := c.UniversalClient.EvalSha(ctx, sha1, keys, args...)
+	if c.lose && cmd.Err() == nil {
+		out := redis.NewCmd(ctx)
+		out.SetErr(c.err)
+		return out
+	}
+	return cmd
+}
+
+func TestToolHiveCredentialCustody_AmbiguousCommitAndTombstoneReplies(t *testing.T) {
+	f := newFixture(t)
+	staged, err := f.core.Stage(t.Context(), f.request, "tsid")
+	ref := staged.Recovery
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := custodyAssertion{custodyRequest: f.request, Recovery: ref}
+	lost := &lostReplyClient{UniversalClient: f.client, lose: true, err: errors.New("reply lost")}
+	f.core.client = lost
+	if err := f.core.Commit(t.Context(), assertion); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("ambiguous commit = %v", err)
+	}
+	f.core.client = f.client
+	if err := f.core.Commit(t.Context(), assertion); err != nil {
+		t.Fatalf("commit retry = %v", err)
+	}
+	f.core.client = lost
+	if err := f.core.Tombstone(t.Context(), f.request, ref); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("ambiguous tombstone = %v", err)
+	}
+	f.core.client = f.client
+	if err := f.core.Tombstone(t.Context(), f.request, ref); err != nil {
+		t.Fatalf("tombstone retry = %v", err)
+	}
+	record, _, err := f.core.readRecord(t.Context(), ref)
+	if err != nil || record.State != custodyTombstoned {
+		t.Fatalf("final record = %#v, %v", record, err)
+	}
+}
+
+type blockingUpstreamStorage struct {
+	*storage.MemoryStorage
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingUpstreamStorage) GetUpstreamTokens(ctx context.Context, sessionID, provider string) (*storage.UpstreamTokens, error) {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-s.release:
+		return s.MemoryStorage.GetUpstreamTokens(ctx, sessionID, provider)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestToolHiveCredentialCustody_StageDeadlineExpiresBeforePublication(t *testing.T) {
+	f := newFixture(t)
+	clock := &mutableCustodyClock{now: f.clock.now}
+	f.core.clock = clock
+	blocked := &blockingUpstreamStorage{MemoryStorage: f.inner, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	f.core.tokens = upstreamtoken.NewInProcessService(blocked, nil)
+	result := make(chan error, 1)
+	go func() { _, err := f.core.Stage(context.Background(), f.request, "tsid"); result <- err }()
+	<-blocked.entered
+	clock.Set(f.request.AttemptDeadline)
+	close(blocked.release)
+	if err := <-result; !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("Stage = %v", err)
+	}
+	keys, _, err := f.client.Scan(t.Context(), 0, custodyPrefix+"*", 10).Result()
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("published keys = %v, %v", keys, err)
+	}
+}
+
+func TestToolHiveCredentialCustody_RedisScriptsRejectExpiredDeadlineAtomically(t *testing.T) {
+	client := newMiniRedis(t)
+	ctx := t.Context()
+	deadline := time.Now().Add(-time.Minute).UnixMilli()
+	expires := time.Now().Add(time.Hour).UnixMilli()
+	created, err := custodyCreateScript.Run(ctx, client, []string{"custody:create"}, "new", expires, deadline).Int()
+	if err != nil || created != -1 {
+		t.Fatalf("create = %d, %v", created, err)
+	}
+	if _, err := client.Get(ctx, "custody:create").Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("expired create wrote key: %v", err)
+	}
+	if err := client.Set(ctx, "custody:replace", "old", time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := custodyReplaceScript.Run(ctx, client, []string{"custody:replace"}, "old", "new", expires, deadline).Int()
+	if err != nil || replaced != -1 {
+		t.Fatalf("replace = %d, %v", replaced, err)
+	}
+	value, err := client.Get(ctx, "custody:replace").Result()
+	if err != nil || value != "old" {
+		t.Fatalf("expired replace changed key = %q, %v", value, err)
+	}
+}
+
 func TestToolHiveCredentialCustody_TombstoneMissingAndCorrupt(t *testing.T) {
 	f, assertion := committedFixture(t)
 	missing, err := newRecoveryID()
@@ -659,7 +846,8 @@ func TestToolHiveCredentialCustody_TombstoneMissingAndCorrupt(t *testing.T) {
 func committedFixture(t *testing.T) (*custodyFixture, custodyAssertion) {
 	t.Helper()
 	f := newFixture(t)
-	ref, err := f.core.Stage(t.Context(), f.request, "tsid", f.retention)
+	staged, err := f.core.Stage(t.Context(), f.request, "tsid")
+	ref := staged.Recovery
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +869,7 @@ func newFixture(t *testing.T) *custodyFixture {
 		t.Fatal(err)
 	}
 	client := newMiniRedis(t)
-	core, err := newCredentialCustody(client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(inner, nil), clock)
+	core, err := newCredentialCustody(client, testCredentialKeyRing(t), upstreamtoken.NewInProcessService(inner, nil), clock, inner)
 	if err != nil {
 		t.Fatal(err)
 	}

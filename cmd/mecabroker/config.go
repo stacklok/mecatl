@@ -11,13 +11,17 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokerserver"
+	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
@@ -59,9 +63,10 @@ type fileConfig struct {
 		MaxJWKSStaleness    duration                 `json:"max_jwks_staleness"`
 		KubernetesBootstrap *fileKubernetesBootstrap `json:"kubernetes_bootstrap,omitempty"`
 	} `json:"workload_jwt"`
-	CallbackURL string        `json:"callback_url"`
-	Profiles    []fileProfile `json:"profiles"`
-	Drain       struct {
+	CallbackURL      string                `json:"callback_url"`
+	Profiles         []fileProfile         `json:"profiles"`
+	ProtectedStorage *fileProtectedStorage `json:"protected_storage,omitempty"`
+	Drain            struct {
 		PropagationDelay        duration `json:"propagation_delay"`
 		Timeout                 duration `json:"timeout"`
 		ListenerShutdownTimeout duration `json:"listener_shutdown_timeout"`
@@ -85,6 +90,42 @@ type fileConfig struct {
 		MaxPendingAuthStates int      `json:"max_pending_auth_states"`
 	} `json:"runtime"`
 }
+type fileProtectedStorage struct {
+	Redis      fileProtectedRedis      `json:"redis"`
+	Encryption fileProtectedEncryption `json:"encryption"`
+}
+type fileProtectedRedis struct {
+	Address          string    `json:"address"`
+	UsernameFile     string    `json:"username_file,omitempty"`
+	PasswordFile     string    `json:"password_file"`
+	CAFile           string    `json:"ca_file,omitempty"`
+	DialTimeout      *duration `json:"dial_timeout,omitempty"`
+	OperationTimeout *duration `json:"operation_timeout,omitempty"`
+	HealthTimeout    *duration `json:"health_timeout,omitempty"`
+}
+type fileProtectedEncryption struct {
+	ActiveID string             `json:"active_id"`
+	Keys     []fileProtectedKey `json:"keys"`
+}
+type fileProtectedKey struct {
+	ID   string `json:"id"`
+	File string `json:"file"`
+}
+
+func protectedTimeouts(r fileProtectedRedis) (dial, operation, health time.Duration) {
+	dial, operation, health = 5*time.Second, 5*time.Second, 2*time.Second
+	if r.DialTimeout != nil {
+		dial = r.DialTimeout.value()
+	}
+	if r.OperationTimeout != nil {
+		operation = r.OperationTimeout.value()
+	}
+	if r.HealthTimeout != nil {
+		health = r.HealthTimeout.value()
+	}
+	return dial, operation, health
+}
+
 type fileKubernetesBootstrap struct {
 	DiscoveryURL string `json:"discovery_url"`
 	JWKSURI      string `json:"jwks_uri"`
@@ -159,6 +200,9 @@ func readConfig(path string) (fileConfig, error) {
 	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
 	if err != nil || len(data) > maxConfigBytes {
 		return fileConfig{}, errors.New("broker configuration exceeds size limit")
+	}
+	if err := rejectDuplicateJSON(data); err != nil {
+		return fileConfig{}, errors.New("decode broker configuration")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -345,8 +389,118 @@ func (cfg fileConfig) validate() error {
 			return errors.New("profile auth mode is invalid")
 		}
 	}
+	// TODO(plan 10): once Helm renders protected_storage, require this block for every OAuth profile.
 	if hasOAuthProfile && cfg.CallbackURL == "" {
 		return errors.New("broker callback is required when OAuth profiles are configured")
+	}
+	// TODO(broker credential continuity): require protected_storage for every
+	// OAuth profile once the mecak8s chart renders it. Until then OAuth keeps the
+	// in-memory ToolHive storage so existing chart installs continue to start.
+	if cfg.ProtectedStorage != nil {
+		if !hasOAuthProfile {
+			return errors.New("protected storage requires an OAuth profile")
+		}
+		if err := cfg.validateProtectedStorage(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var protectedKeyID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+//nolint:gocyclo // strict cross-field configuration policy is intentionally centralized.
+func (cfg fileConfig) validateProtectedStorage() error {
+	r := cfg.ProtectedStorage.Redis
+	host, portNumber, err := net.SplitHostPort(r.Address)
+	portValue, portErr := strconv.Atoi(portNumber)
+	if err != nil || portErr != nil || host == "" || portValue < 1 || portValue > 65535 || strings.ContainsAny(r.Address, "/@") {
+		return errors.New("protected Redis address is invalid")
+	}
+	if r.PasswordFile == "" {
+		return errors.New("protected Redis password file is required")
+	}
+	dial, op, health := protectedTimeouts(r)
+	for _, d := range []time.Duration{dial, op, health} {
+		if d <= 0 || d > 30*time.Second {
+			return errors.New("protected Redis timeout is invalid")
+		}
+	}
+	if health > op {
+		return errors.New("protected Redis health timeout exceeds operation timeout")
+	}
+	e := cfg.ProtectedStorage.Encryption
+	if !protectedKeyID.MatchString(e.ActiveID) || len(e.Keys) == 0 || len(e.Keys) > 16 {
+		return errors.New("protected encryption key ring is invalid")
+	}
+	seen := map[string]struct{}{}
+	active := false
+	for _, k := range e.Keys {
+		if !protectedKeyID.MatchString(k.ID) || k.File == "" {
+			return errors.New("protected encryption key is invalid")
+		}
+		if _, ok := seen[k.ID]; ok {
+			return errors.New("duplicate protected encryption key")
+		}
+		seen[k.ID] = struct{}{}
+		active = active || k.ID == e.ActiveID
+	}
+	if !active {
+		return errors.New("active protected encryption key is missing")
+	}
+	return nil
+}
+
+func rejectDuplicateJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		d, ok := tok.(json.Delim)
+		if !ok {
+			return nil
+		}
+		if d == '{' {
+			seen := map[string]struct{}{}
+			for dec.More() {
+				k, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := k.(string)
+				if !ok {
+					return errors.New("invalid object")
+				}
+				if _, ok := seen[strings.ToLower(key)]; ok {
+					return errors.New("duplicate object member")
+				}
+				seen[strings.ToLower(key)] = struct{}{}
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token()
+			return err
+		}
+		if d == '[' {
+			for dec.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			_, err = dec.Token()
+			return err
+		}
+		return nil
+	}
+	if err := walk(); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("trailing JSON")
 	}
 	return nil
 }
@@ -447,5 +601,19 @@ func (cfg fileConfig) toolHive() mcpbroker.ToolHiveConfig {
 	if len(profiles) != 0 {
 		callbackURL = cfg.CallbackURL
 	}
-	return mcpbroker.ToolHiveConfig{CallbackURL: callbackURL, Profiles: profiles}
+	out := mcpbroker.ToolHiveConfig{CallbackURL: callbackURL, Profiles: profiles}
+	if cfg.ProtectedStorage != nil {
+		r := cfg.ProtectedStorage.Redis
+		dial, op, health := protectedTimeouts(r)
+		keys := make([]mcpbroker.ProtectedEncryptionKey, len(cfg.ProtectedStorage.Encryption.Keys))
+		for i, k := range cfg.ProtectedStorage.Encryption.Keys {
+			keys[i] = mcpbroker.ProtectedEncryptionKey{ID: k.ID, File: k.File}
+		}
+		clientConfig := mcpbroker.ProtectedRedisClientConfig{Addr: r.Address, UsernameFile: r.UsernameFile, PasswordFile: r.PasswordFile, CAFile: r.CAFile, TLS: true, DialTimeout: dial, OperationTimeout: op}
+		factory := func(config mcpbroker.ProtectedRedisClientConfig) (redis.UniversalClient, error) {
+			return redisstore.NewClient(redisstore.Config{Addr: config.Addr, UsernameFile: config.UsernameFile, PasswordFile: config.PasswordFile, CAFile: config.CAFile, TLS: config.TLS, AllowPlaintext: config.AllowPlaintext, DialTimeout: config.DialTimeout, OperationTimeout: config.OperationTimeout})
+		}
+		out.ProtectedStorage = &mcpbroker.ProtectedStorageConfig{Redis: mcpbroker.ProtectedRedisConfig{Client: factory, ClientConfig: clientConfig, HealthTimeout: health}, Encryption: mcpbroker.ProtectedEncryptionConfig{ActiveID: cfg.ProtectedStorage.Encryption.ActiveID, Keys: keys}}
+	}
+	return out
 }

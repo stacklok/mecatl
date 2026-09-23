@@ -13,6 +13,16 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+func TestReadConfigRejectsCaseInsensitiveDuplicateMembers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "broker.json")
+	if err := os.WriteFile(path, []byte(`{"api_version":"mecabroker.mecatl.dev/v1","API_VERSION":"duplicate"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readConfig(path); err == nil {
+		t.Fatal("case-insensitive duplicate JSON members accepted")
+	}
+}
+
 func TestManagedMCPRenderedBrokerConfigAdmitsStrictParser(t *testing.T) {
 	cmd := exec.Command("helm", "template", "production", "../../deploy/helm/mecak8s", "-f", "../../deploy/helm/mecak8s/ci/broker-mcp-values.yaml")
 	output, err := cmd.CombinedOutput()
