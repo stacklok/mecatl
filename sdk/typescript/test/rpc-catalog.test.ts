@@ -70,7 +70,7 @@ async function* singleValue<T>(value: T): AsyncIterable<T> {
 }
 
 describe("RPC transport catalog", () => {
-  it("all 88 raw RPCs are callable through the public raw seam", async () => {
+  it("all 83 raw RPCs are callable through the public raw seam", async () => {
     const transport = new CatalogTransport();
     const raw = createRawClient({ transport });
 
@@ -88,7 +88,7 @@ describe("RPC transport catalog", () => {
       }
     }
 
-    expect(transport.calls).toHaveLength(88);
+    expect(transport.calls).toHaveLength(83);
     expect(transport.calls.sort()).toEqual(
       Object.values(RPC_CATALOG)
         .map(({ method }) => method)
@@ -101,7 +101,7 @@ describe("RPC transport catalog", () => {
       ...Object.values(HarnessService.method).map((method) => `HarnessService.${method.name}`),
       ...Object.values(ScheduleService.method).map((method) => `ScheduleService.${method.name}`),
     ];
-    expect(descriptorKeys).toHaveLength(88);
+    expect(descriptorKeys).toHaveLength(83);
     expect(Object.keys(RPC_CATALOG).sort()).toEqual(descriptorKeys.sort());
 
     const omitted = "HarnessService.GetSession";
@@ -114,8 +114,8 @@ describe("RPC transport catalog", () => {
     expect(Object.values(HTTP_ONLY_CONTROLS).every((entry) => entry.kind === "http")).toBe(true);
     expect(resolveHTTPOnlyControl("cancel", { session_id: "a session" })).toMatchObject({
       method: "POST",
-      path: "/v1/sessions/a%20session/cancel",
-      requestBody: "optional-json",
+      path: "/v1/sessions/a%20session/controls/cancel",
+      requestBody: "json",
       response: "json",
     });
     expect(() => resolveHTTPOnlyControl("cancel", {})).toThrowError(

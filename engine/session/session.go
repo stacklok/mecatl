@@ -365,11 +365,6 @@ type Session struct {
 	// selected by composition. Empty means a restored or inert session has not
 	// yet lazily derived it from its durable labels.
 	usageAttribution string
-	// Usage is the deprecated lifetime main-token compatibility projection. It always
-	// mirrors TokenUsage[UsageKindMain].Total. Unlike Counters, it is deliberately
-	// NOT cleared by resetToIdle; the sole exception is the explicit ResetUsage
-	// seam, which clears both this mirror and its underlying ledger bucket together.
-	Usage Usage
 	// EnvironmentRef is the sole durable identity of the execution environment.
 	// It is minted by the placement provider and must be valid before persistence
 	// or execution. Resolution to live capabilities belongs to composition.
@@ -480,19 +475,15 @@ type Session struct {
 	pendingWorkspaceEnrollment *PendingWorkspaceEnrollment
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
-	// permanent is the compatibility projection of failureDisposition==Permanent.
-	permanent bool
-	// failureDisposition and failureProgress retain the typed terminal facts needed
-	// to decide failed-step retry eligibility after restart. They are meaningful only in
-	// StateFailed and are cleared by resetToIdle.
-	failureDisposition RetryDisposition
-	failureProgress    StreamProgress
+	// failureMetadata retains the typed terminal facts needed to decide failed-step
+	// retry eligibility after restart. It is meaningful only in StateFailed and is
+	// cleared by resetToIdle.
+	failureMetadata RetryMetadata
 	// retryPending records a durably-prepared exact model-step retry. It is
 	// meaningful while idle or running and prevents a new user prompt from
 	// bypassing the failed step after a process crash.
-	retryPending     bool
-	retryDisposition RetryDisposition
-	retryProgress    StreamProgress
+	retryPending  bool
+	retryMetadata RetryMetadata
 	// lastError records the terminal failure CAUSE (the loop's
 	// session.ResultPayload.Error) when this session is in StateFailed. It is the
 	// Permanent-analog for the failure detail itself: persisted on the snapshot so a
@@ -621,11 +612,10 @@ func (s *Session) SetUsageAttribution(providerID, modelID string) {
 }
 
 // RecordUsage accumulates the token usage of a model call onto the aggregate's
-// canonical main ledger and its deprecated lifetime compatibility mirror. It is
-// the intention-revealing seam the loop uses instead of poking the public Usage
-// field, mirroring RecordAssistant/RecordToolResults: it is legal ONLY while
-// running (a usage record belongs to an in-flight turn). Unlike Counters, Usage
-// is deliberately NOT reset by resetToIdle.
+// canonical main ledger. It is the intention-revealing seam the loop uses instead
+// of mutating accounting state directly, mirroring RecordAssistant/RecordToolResults:
+// it is legal ONLY while running (a usage record belongs to an in-flight turn).
+// Unlike Counters, main usage is deliberately NOT reset by resetToIdle.
 func (s *Session) RecordUsage(u Usage) error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: RecordUsage from %q", ErrIllegalTransition, s.State)
@@ -636,37 +626,12 @@ func (s *Session) RecordUsage(u Usage) error {
 		s.usageAttribution = attribution
 	}
 	s.recordTokenUsage(UsageKindMain, attribution, u)
-	s.Usage = s.tokenUsage[UsageKindMain].Total
 	return nil
 }
 
-// ResetUsage zeroes the aggregate's cumulative Usage (and its underlying
-// UsageKindMain ledger bucket — RecordUsage re-derives Usage from that bucket,
-// so clearing only the mirror would be silently undone by the next call),
-// granting a fresh MaxRunTokens allowance for the next run. It is the EXPLICIT
-// counterpart to the deliberate non-reset in resetToIdle: because Usage
-// survives Reopen/Interrupt/Recover (so the budget brake bounds the whole
-// logical run across restart), a caller that genuinely wants a fresh budget
-// for a NEW phase of work must say so through this intention-revealing seam
-// rather than poking the public Usage field (the aggregate-mutation
-// discipline RecordUsage established). The UsageKindSessionTitle bucket is
-// untouched — this seam bounds only the main-run budget.
-//
-// It is legal from any NON-running state (idle, completed, or the other terminals)
-// — NOT while running, where it would discard an in-flight turn's spend mid-budget
-// and race the loop's own RecordUsage. The SOLE caller today is the team
-// supervisor's synthesise step (engine/agent/teamsupervisor.go): a lead whose
-// working run was stopped by its MaxRunTokens must still produce the team's
-// synthesis deliverable, so the supervisor resets the lead's accumulator between
-// the working drive and the synthesis drive (the synthesis spend is then folded
-// into the team outcome separately). Returns ErrIllegalTransition from running.
-func (s *Session) ResetUsage() error {
-	if s.State == StateRunning || s.State == StateAuthorizing {
-		return fmt.Errorf("%w: ResetUsage from %q", ErrIllegalTransition, s.State)
-	}
-	delete(s.tokenUsage, UsageKindMain)
-	s.Usage = Usage{}
-	return nil
+// UsageFor returns the authoritative total for a canonical usage bucket.
+func (s *Session) UsageFor(kind UsageKind) Usage {
+	return s.tokenUsage[kind].Total
 }
 
 // RecordUserPrompt appends a user prompt to the conversation through the
@@ -864,47 +829,24 @@ func (s *Session) Cancel() error {
 	return nil
 }
 
-// RecordFailurePermanence stamps whether the failure that landed this session in
-// StateFailed is permanent (unrecoverable, e.g. a fatal configuration error) versus
-// transient (retryable, e.g. a provider 5xx). It is legal ONLY when State==StateFailed
-// (mirroring the guard style of Fail/Recover: an idle session or a non-failed
-// terminal returns ErrIllegalTransition). The flag is cleared on any transition out
-// of StateFailed (resetToIdle via Recover/Interrupt/Reopen), so a healed session
-// never keeps a stale permanence marker.
-func (s *Session) RecordFailurePermanence(permanent bool) error {
-	if permanent {
-		return s.RecordFailureMetadata(RetryDispositionPermanent, s.failureProgress)
-	}
-	if s.State != StateFailed {
-		return fmt.Errorf("%w: RecordFailurePermanence from %q", ErrIllegalTransition, s.State)
-	}
-	s.permanent = false
-	if s.failureDisposition == RetryDispositionPermanent {
-		s.failureDisposition = RetryDispositionUnknown
-	}
-	return nil
-}
-
 // RecordFailureMetadata stamps typed provider retry facts on a failed session.
-func (s *Session) RecordFailureMetadata(disposition RetryDisposition, progress StreamProgress) error {
+func (s *Session) RecordFailureMetadata(metadata RetryMetadata) error {
 	if s.State != StateFailed {
 		return fmt.Errorf("%w: RecordFailureMetadata from %q", ErrIllegalTransition, s.State)
 	}
-	if !disposition.Valid() || !progress.Valid() {
-		return fmt.Errorf("%w: invalid failure metadata disposition=%d progress=%d", ErrIllegalTransition, disposition, progress)
+	if !metadata.Valid() {
+		return fmt.Errorf("%w: invalid failure metadata disposition=%d progress=%d", ErrIllegalTransition, metadata.Disposition, metadata.Progress)
 	}
-	s.failureDisposition = disposition
-	s.failureProgress = progress
-	s.permanent = disposition == RetryDispositionPermanent
+	s.failureMetadata = metadata
 	return nil
 }
 
 // FailureMetadata returns typed terminal facts only while the session is failed.
-func (s *Session) FailureMetadata() (RetryDisposition, StreamProgress) {
+func (s *Session) FailureMetadata() RetryMetadata {
 	if s.State != StateFailed {
-		return RetryDispositionUnknown, StreamProgressUnknown
+		return RetryMetadata{}
 	}
-	return s.failureDisposition, s.failureProgress
+	return s.failureMetadata
 }
 
 // PrepareFailedStepRetry consumes an eligible failed attempt into a durable,
@@ -915,61 +857,47 @@ func (s *Session) PrepareFailedStepRetry() error {
 	if s.retryPending && s.State == StateIdle {
 		return nil
 	}
-	if s.State != StateFailed || !s.failureDisposition.Valid() || !s.failureProgress.Valid() ||
-		s.failureDisposition != RetryDispositionRetryable ||
-		(s.failureProgress != StreamProgressPrecommit && s.failureProgress != StreamProgressVisible) {
+	metadata := s.failureMetadata
+	if s.State != StateFailed || !metadata.Valid() ||
+		metadata.Disposition != RetryDispositionRetryable ||
+		(metadata.Progress != StreamProgressPrecommit && metadata.Progress != StreamProgressVisible) {
 		return fmt.Errorf("%w: PrepareFailedStepRetry from %q", ErrIllegalTransition, s.State)
 	}
-	disposition, progress := s.failureDisposition, s.failureProgress
 	s.closeOutInterruptedTurn(recoverCloseOutMessage)
 	s.resetToIdle()
 	s.retryPending = true
-	s.retryDisposition = disposition
-	s.retryProgress = progress
+	s.retryMetadata = metadata
 	return nil
 }
 
-// RestoreFailedStepRetryPending restores additive snapshot retry intent without
-// widening sessnap.RestoreState. It is legal only on an idle or running aggregate.
-func (s *Session) RestoreFailedStepRetryPending(disposition RetryDisposition, progress StreamProgress) error {
-	if (s.State != StateIdle && s.State != StateRunning) || disposition != RetryDispositionRetryable ||
-		(progress != StreamProgressPrecommit && progress != StreamProgressVisible) {
+// RestoreFailedStepRetryPending restores persisted retry intent. It is legal only
+// on an idle or running aggregate.
+func (s *Session) RestoreFailedStepRetryPending(metadata RetryMetadata) error {
+	if (s.State != StateIdle && s.State != StateRunning) ||
+		metadata.Disposition != RetryDispositionRetryable ||
+		(metadata.Progress != StreamProgressPrecommit && metadata.Progress != StreamProgressVisible) {
 		return fmt.Errorf("%w: RestoreFailedStepRetryPending from %q", ErrIllegalTransition, s.State)
 	}
 	s.retryPending = true
-	s.retryDisposition = disposition
-	s.retryProgress = progress
+	s.retryMetadata = metadata
 	return nil
 }
 
-// FailedStepRetryPending reports the durable retry intent and its original failure
-// facts. The marker remains set while the retry model step is running.
-func (s *Session) FailedStepRetryPending() (RetryDisposition, StreamProgress, bool) {
-	return s.retryDisposition, s.retryProgress, s.retryPending
+// FailedStepRetryPending reports the durable retry intent and its original failure facts.
+func (s *Session) FailedStepRetryPending() (RetryMetadata, bool) {
+	return s.retryMetadata, s.retryPending
 }
 
 func (s *Session) clearRetryIntent() {
 	s.retryPending = false
-	s.retryDisposition = RetryDispositionUnknown
-	s.retryProgress = StreamProgressUnknown
-}
-
-// FailurePermanence reports whether the failure that landed this session in
-// StateFailed was marked as permanent. It returns false for any state other than
-// StateFailed.
-func (s *Session) FailurePermanence() bool {
-	if s.State != StateFailed {
-		return false
-	}
-	return s.permanent
+	s.retryMetadata = RetryMetadata{}
 }
 
 // RecordLastError stamps the terminal failure CAUSE (the loop's
 // session.ResultPayload.Error) onto a StateFailed session so it persists on the
-// snapshot independent of the parent's subagent.end emit (issue #332). It is the
-// Permanent-analog for the failure detail itself, mirroring the guard style of
-// RecordFailurePermanence: legal ONLY when State==StateFailed (an idle or non-failed
-// terminal returns ErrIllegalTransition). The cause is normalised to ONE line and
+// snapshot independent of the parent's subagent.end emit (issue #332). It is legal
+// ONLY when State==StateFailed (an idle or non-failed terminal returns
+// ErrIllegalTransition). The cause is normalised to ONE line and
 // clamped to maxSnapshotErrorRunes (mirroring the event-side
 // subagentCausePayload normaliser so the snapshot and event fields agree). The
 // field is cleared on any transition out of StateFailed (resetToIdle via
@@ -1037,9 +965,7 @@ func (s *Session) Fail() error {
 	// A new failure supersedes the prepared retry's facts. terminate stamps the
 	// new attempt's typed metadata immediately after this transition.
 	s.clearRetryIntent()
-	s.failureDisposition = RetryDispositionUnknown
-	s.failureProgress = StreamProgressUnknown
-	s.permanent = false
+	s.failureMetadata = RetryMetadata{}
 	s.lastError = ""
 	return nil
 }
@@ -1082,19 +1008,13 @@ func (s *Session) resetToIdle() {
 	s.State = StateIdle
 	s.stop = StopNone
 	s.pending = nil
-	s.permanent = false
-	s.failureDisposition = RetryDispositionUnknown
-	s.failureProgress = StreamProgressUnknown
+	s.failureMetadata = RetryMetadata{}
 	s.lastError = ""
 	s.clearRetryIntent()
 	s.Counters = Counters{}
-	// CRITICAL: Usage is DELIBERATELY NOT cleared here (the divergence from
-	// Counters). The MaxRunTokens budget (StopBudget) is evaluated against the
-	// cumulative Usage, and the whole point of the budget is to bound spend across
-	// the logical run INCLUDING reopen/restart — clearing it on reopen would
-	// re-grant a full fresh allowance every continuation, defeating the brake.
-	// Adding `s.Usage = Usage{}` here is the exact regression
-	// TestResetToIdlePreservesUsage pins against.
+	// CRITICAL: canonical main usage is deliberately not cleared here. The
+	// MaxRunTokens budget is evaluated against UsageFor(UsageKindMain), so spend
+	// remains cumulative across reopen and restart.
 }
 
 // Synthetic close-out messages for closeOutInterruptedTurn. The text is DURABLE
@@ -1227,15 +1147,14 @@ func (s *Session) Abandon() error {
 	if s.State != StateRunning {
 		return fmt.Errorf("%w: Abandon from %q", ErrIllegalTransition, s.State)
 	}
-	pending, disposition, progress := s.retryPending, s.retryDisposition, s.retryProgress
+	pending, metadata := s.retryPending, s.retryMetadata
 	s.closeOutInterruptedTurn(abandonCloseOutMessage)
 	s.resetToIdle()
 	// Exact retry is the one Abandon carve-out: a crash after durable preparation
 	// must return to idle-but-pending, not become an ordinary promptable session.
 	if pending {
 		s.retryPending = true
-		s.retryDisposition = disposition
-		s.retryProgress = progress
+		s.retryMetadata = metadata
 	}
 	return nil
 }

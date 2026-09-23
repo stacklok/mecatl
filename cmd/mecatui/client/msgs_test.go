@@ -101,8 +101,8 @@ func TestEventToMsg(t *testing.T) {
 		},
 		{
 			"permission.ask",
-			&mecatlv1.Event{Type: "permission.ask", Ask: &mecatlv1.PermissionAsk{AskId: "a1", Tool: "Write", Args: "{}", Reason: "why"}},
-			PermissionAskMsg{AskID: "a1", Tool: "Write", Args: "{}", Reason: "why"},
+			&mecatlv1.Event{Type: "permission.ask", RunId: "run-1", Ask: &mecatlv1.PermissionAsk{AskId: "a1", Tool: "Write", Args: "{}", Reason: "why"}},
+			PermissionAskMsg{RunID: "run-1", AskID: "a1", Tool: "Write", Args: "{}", Reason: "why"},
 		},
 		{
 			"permission.retract",
@@ -226,11 +226,12 @@ func TestEventToMsg(t *testing.T) {
 		{
 			"result permanent error",
 			&mecatlv1.Event{Type: "result", Result: &mecatlv1.Result{
-				Stop: "error", Error: "invalid_encrypted_content: the blob is malformed", Permanent: true,
+				Stop: "error", Error: "invalid_encrypted_content: the blob is malformed", RetryDisposition: retryDisposition(mecatlv1.RetryDisposition_RETRY_DISPOSITION_PERMANENT),
 				Usage: &mecatlv1.Usage{InputTokens: 20, OutputTokens: 2},
 			}},
 			ResultMsg{Stop: "error", Error: "invalid_encrypted_content: the blob is malformed",
-				Usage: Usage{InputTokens: 20, OutputTokens: 2}, Permanent: true, Transient: false},
+				Usage: Usage{InputTokens: 20, OutputTokens: 2}, Permanent: true, Transient: false,
+				RetryDisposition: RetryDispositionPermanent, RetryDispositionPresent: true},
 		},
 		{
 			// The three log-only kinds are relayed ONLY by the replay (the live
@@ -238,9 +239,9 @@ func TestEventToMsg(t *testing.T) {
 			// shared readEventLoop path projects them for a transcript viewer.
 			"approval",
 			&mecatlv1.Event{Type: "approval", Approval: &mecatlv1.Approval{
-				AskId: "a1", Verdict: "allow_always", Tool: "Write", CallId: "c1", AllowAlways: true,
+				AskId: "a1", Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS, Tool: "Write", CallId: "c1",
 			}},
-			ApprovalMsg{AskID: "a1", Verdict: "allow_always", Tool: "Write", CallID: "c1", AllowAlways: true},
+			ApprovalMsg{AskID: "a1", Verdict: "allow_always", Tool: "Write", CallID: "c1"},
 		},
 		{
 			"user_prompt with parts",
@@ -571,21 +572,16 @@ func TestReadLoopCancelUnblocks(t *testing.T) {
 	}
 }
 
-// TestAskRoundTrip asserts SendApproval emits a ResumeApproval frame carrying the
-// EXACT ask_id (the only correlation) and sets BOTH the verdict enum AND the legacy
-// allow bool (so an older server that ignores the verdict still resolves correctly,
-// and a newer server can learn an always-allow rule). This is the load-bearing
-// round-trip the permission flow depends on.
+// TestAskRoundTrip asserts SendApproval emits the exact ask ID and typed verdict.
 func TestAskRoundTrip(t *testing.T) {
 	tests := []struct {
 		name        string
 		verdict     Verdict
-		wantAllow   bool
 		wantVerdict mecatlv1.ApprovalVerdict
 	}{
-		{"allow once", VerdictAllowOnce, true, mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE},
-		{"allow always", VerdictAllowAlways, true, mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS},
-		{"deny", VerdictDeny, false, mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY},
+		{"allow once", VerdictAllowOnce, mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE},
+		{"allow always", VerdictAllowAlways, mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS},
+		{"deny", VerdictDeny, mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -604,9 +600,6 @@ func TestAskRoundTrip(t *testing.T) {
 			}
 			if ra.GetAskId() != "ask-write-1" {
 				t.Errorf("ask_id = %q, want ask-write-1", ra.GetAskId())
-			}
-			if ra.GetAllow() != tc.wantAllow {
-				t.Errorf("allow = %v, want %v", ra.GetAllow(), tc.wantAllow)
 			}
 			if ra.GetVerdict() != tc.wantVerdict {
 				t.Errorf("verdict = %v, want %v", ra.GetVerdict(), tc.wantVerdict)

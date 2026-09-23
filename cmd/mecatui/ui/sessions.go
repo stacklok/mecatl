@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -23,6 +24,7 @@ type sessionDetailsView struct {
 	DebugTargetID string
 	Title         string
 	State         string
+	Connection    string
 	Placement     client.Placement
 	CreatedAt     int64
 	ModifiedAt    int64
@@ -70,7 +72,6 @@ func (m *Model) newSessionsSurface(startup bool) *sessionsState {
 		pager:                         m.deps.Sessions,
 		transcripter:                  m.deps.Transcript,
 		healthFetcher:                 m.deps.StorageHealth,
-		migration:                     m.deps.Migration,
 		cleanup:                       m.deps.Cleanup,
 		forker:                        m.deps.Session,
 		manager:                       m.deps.SessionManagement,
@@ -111,9 +112,24 @@ func (m Model) bindSessionID(id string) Model {
 func (m Model) sessionDetails() sessionDetailsView {
 	return sessionDetailsView{
 		ID: m.sessionID, DebugTargetID: m.deps.DebugTarget, Title: m.sessionTitle, State: m.sessionState,
-		Placement: m.activePlacement, CreatedAt: m.sessionCreatedAt,
+		Connection: sessionConnectionLabel(m.deps.ConnectionMode, m.deps.Server),
+		Placement:  m.activePlacement, CreatedAt: m.sessionCreatedAt,
 		ModifiedAt: m.sessionModifiedAt, ProviderID: m.resolvedSessionModel.ProviderID,
 		ModelID: m.resolvedSessionModel.ModelID,
+	}
+}
+
+func sessionConnectionLabel(mode, target string) string {
+	switch mode {
+	case "embedded":
+		return "embedded"
+	case "connect":
+		if target == "" {
+			return "remote"
+		}
+		return "remote (" + target + ")"
+	default:
+		return ""
 	}
 }
 
@@ -131,7 +147,7 @@ func (m Model) sessionCopyTarget() string {
 func safeSessionID(id string) string { return strconv.QuoteToASCII(id) }
 
 func (m Model) openSessionDetails() (tea.Model, tea.Cmd) {
-	if m.phase != phaseIdle || m.sessionID == "" {
+	if m.sessionID == "" {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("no active session")
 		return m, nil
 	}
@@ -186,7 +202,7 @@ func (m Model) onSessionIDCopyResult(msg sessionIDCopyResultMsg) Model {
 		return m
 	}
 	if msg.err != nil {
-		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy " + label + ": " + sanitizeTerminal(msg.err.Error()))
+		m.statusMsg = m.deps.Theme.Style("warning").Render("could not copy " + label + ": " + terminaltext.Sanitize(msg.err.Error()))
 		return m
 	}
 	m.statusMsg = m.deps.Theme.Style("success").Render("copied " + label)
@@ -205,7 +221,7 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 		if value == "" {
 			return unknownLabel
 		}
-		return sanitizeTerminal(value)
+		return terminaltext.Sanitize(value)
 	}
 	budget := cardTextWidth(width)
 	row := func(label, value string) string { return wrapCardText(label+unknown(value), budget) }
@@ -217,6 +233,7 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 	}
 	b.WriteString(row("Title: ", details.Title) + "\n")
 	b.WriteString(row("State: ", details.State) + "\n")
+	b.WriteString(row("Connection: ", details.Connection) + "\n")
 	b.WriteString(row("Placement: ", details.Placement.Label) + "\n")
 	b.WriteString("Created: " + formatSessionTimestamp(details.CreatedAt) + "\n")
 	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")
@@ -240,9 +257,6 @@ func (m Model) openSessions() (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{pageCmd, textinput.Blink}
 	if m.caps.StorageHealth && m.deps.StorageHealth != nil {
 		cmds = append(cmds, loadStorageHealthCmd(m.deps.Ctx, m.deps.StorageHealth))
-	}
-	if m.maintenanceMigrationJobID != "" && m.caps.StorageMigration && m.deps.Migration != nil {
-		cmds = append(cmds, migrationStatusCmd(m.deps.Ctx, m.deps.Migration, m.maintenanceMigrationJobID))
 	}
 	if m.maintenanceCleanupJobID != "" && m.caps.StorageCleanup && m.deps.Cleanup != nil {
 		cmds = append(cmds, cleanupStatusCmd(m.deps.Ctx, m.deps.Cleanup, m.maintenanceCleanupJobID))
@@ -296,7 +310,7 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.closeModal()
 	m.browsingStartupSessions = false
 	m.phase = phaseIdle
-	m.statusMsg = "continuing chat " + sanitizeTerminal(row.Title) + " — type to add a turn"
+	m.statusMsg = "continuing chat " + terminaltext.Sanitize(row.Title) + " — type to add a turn"
 	cmd := m.prompt.Focus()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)

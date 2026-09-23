@@ -113,7 +113,7 @@ export interface ServerCapabilities {
   readonly memory: boolean;
   readonly skills: boolean;
   readonly teams: boolean;
-  readonly bash: boolean;
+  readonly shell: boolean;
   readonly image: boolean;
   readonly audio: boolean;
   readonly agents: boolean;
@@ -127,7 +127,6 @@ export interface ServerCapabilities {
   readonly learningProposals: boolean;
   readonly learnedSkills: boolean;
   readonly manualDream?: ManualDreamCapabilities;
-  readonly storageMigration: boolean;
   readonly storageCleanup: boolean;
   readonly storageHealth: boolean;
   readonly steer: boolean;
@@ -148,7 +147,6 @@ export interface SessionSnapshot {
   readonly toolCalls: number;
   readonly createdAtUnix: bigint;
   readonly resolvedModel?: SessionResolvedModel;
-  readonly capabilities?: ServerCapabilities;
   readonly kind: string;
   readonly relationship?: SessionRelationship;
   readonly debugMcpServers: readonly string[];
@@ -242,7 +240,7 @@ export function projectServerCapabilities(value: ProtoServerCapabilities): Serve
   return {
     agents: value.agents,
     audio: value.audio,
-    bash: value.bash,
+    shell: value.shell,
     debugMcp: value.debugMcp,
     image: value.image,
     learnedSkills: value.learnedSkills,
@@ -263,7 +261,6 @@ export function projectServerCapabilities(value: ProtoServerCapabilities): Serve
     steer: value.steer,
     storageCleanup: value.storageCleanup,
     storageHealth: value.storageHealth,
-    storageMigration: value.storageMigration,
     teams: value.teams,
     userModel: value.userModel,
     workspaceEnrollment: value.workspaceEnrollment,
@@ -352,9 +349,7 @@ export function projectSessionSnapshot(
   }
   const title =
     value.titleMetadata === undefined
-      ? value.title === "" && value.titleProvenance === ""
-        ? undefined
-        : { provenance: value.titleProvenance, value: value.title }
+      ? undefined
       : {
           ...(value.titleMetadata.generationState === ""
             ? {}
@@ -374,9 +369,6 @@ export function projectSessionSnapshot(
           value: value.titleMetadata.title,
         };
   return {
-    ...(value.capabilities === undefined
-      ? {}
-      : { capabilities: projectServerCapabilities(value.capabilities) }),
     createdAtUnix: value.createdAtUnix,
     debugMcpServers: [...value.debugMcpServers],
     debugMcpTools: [...value.debugMcpTools],

@@ -26,8 +26,15 @@ import {
   planPermissionVerdict,
 } from "./plan.js";
 
-/** A server permission verdict accepted by run.resolveAsk(). @public */
-export type PermissionVerdict = "allow_once" | "allow_always" | "deny";
+/** Canonical server permission verdicts. @public */
+export const PermissionVerdict = {
+  AllowOnce: "allow_once",
+  AllowAlways: "allow_always",
+  Deny: "deny",
+} as const;
+
+/** One server permission verdict accepted by run.resolveAsk(). @public */
+export type PermissionVerdict = (typeof PermissionVerdict)[keyof typeof PermissionVerdict];
 
 /** An optional automatic responder invoked for each permission ask on a run. @public */
 export type PermissionAskResponder = (
@@ -98,20 +105,14 @@ export interface Run extends AsyncIterable<Event> {
   readonly id: string;
   readonly sessionId: string;
   /**
-   * Sends a Boolean permission verdict for a `permission.ask` event.
-   *
-   * @param askId - ID carried by the permission ask.
-   * @param allow - Whether to allow the call once.
-   * @returns A promise that resolves after the verdict is sent.
-   * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
-   */
-  approve(askId: string, allow: boolean): Promise<void>;
-  /**
    * Resolves one pending ask on this run with the server's string verdict vocabulary.
    *
    * @param askId - ID carried by the permission ask.
    * @param verdict - Decision to apply to the pending ask.
-   * @returns A promise that resolves after the server accepts the verdict.
+   * @returns A promise that resolves after the verdict frame is handed to the
+   * active stream transport. This send-only API does not acknowledge server
+   * acceptance; use `Session.controls(runId).resolveAsk()` when an acknowledged
+   * control operation is required.
    * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
    * @throws `InvalidStateError` when used for a plan-approval ask.
    */
@@ -192,20 +193,6 @@ export class RunImpl implements Run {
     this.#observe(this.#first);
   }
 
-  async approve(askId: string, allow: boolean): Promise<void> {
-    this.#operations.assertOpen();
-    if (this.#knownAsks.has(askId)) {
-      await this.resolveAsk(askId, allow ? "allow_once" : "deny");
-      return;
-    }
-    this.#send({
-      kind: {
-        case: "resumeApproval",
-        value: { allow, askId, expectedRunId: this.id },
-      },
-    });
-  }
-
   async resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void> {
     this.#operations.assertOpen();
     const pending = this.#pendingAsks.get(askId);
@@ -252,7 +239,6 @@ export class RunImpl implements Run {
       kind: {
         case: "resumeApproval",
         value: {
-          allow: verdict !== "deny",
           askId,
           expectedRunId: this.id,
           verdict: wireVerdict,
@@ -545,7 +531,7 @@ function runResult(sessionId: string, runId: string, event: EventOf<"result">): 
     sessionId,
     stopReason: event.payload.stop,
     text: event.payload.text,
-    usage: event.payload.usage ?? event.usage,
+    usage: event.payload.usage,
   };
 }
 

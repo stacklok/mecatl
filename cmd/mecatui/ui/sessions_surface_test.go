@@ -251,7 +251,7 @@ func TestSessionDeleteConfirmationNamesTargetAndConsequence(t *testing.T) {
 func TestSessionsSurfaceEscapeClosesMaintenanceSubviewFirst(t *testing.T) {
 	st := newSessionsPanelState()
 	st.deps.keys = defaultKeys()
-	st.tab, st.maintenance, st.maintenanceErr = tabStorageHealth, maintenanceOptimizePlan, true
+	st.tab, st.maintenance, st.maintenanceErr = tabStorageHealth, maintenanceCleanupPlan, true
 	if _, handled, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEscape}); !handled || closed {
 		t.Fatalf("escape handled=%v closed=%v, want maintenance-only close", handled, closed)
 	}

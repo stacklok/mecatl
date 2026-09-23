@@ -12,6 +12,35 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+func TestResolvedSessionProjectionPreservesSelectorSemantics(t *testing.T) {
+	provider := mockllm.New()
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			"default": {id: "default", provider: provider, available: true, defaultModel: "default-provider-model"},
+			"gateway": {id: "gateway", provider: provider, available: true, defaultModel: "terra-default"},
+		},
+		defaultID: "default",
+	}
+	cfg := Config{Model: "operator-default", ModelSlots: map[string]string{slotPlan: "terra-plan"}}
+	for _, tc := range []struct {
+		name string
+		sel  server.ProviderSelector
+		mode session.PermissionMode
+		want server.ResolvedModel
+	}{
+		{name: "empty selector", want: server.ResolvedModel{ProviderID: "default", ModelID: "operator-default"}},
+		{name: "provider only", sel: server.ProviderSelector{ProviderID: "gateway"}, want: server.ResolvedModel{ProviderID: "gateway", ModelID: "terra-default"}},
+		{name: "explicit provider and model", sel: server.ProviderSelector{ProviderID: "gateway", ModelID: "terra-1"}, want: server.ResolvedModel{ProviderID: "gateway", ModelID: "terra-1"}},
+		{name: "plan mode", sel: server.ProviderSelector{ProviderID: "gateway", ModelID: "terra-1"}, mode: session.ModePlan, want: server.ResolvedModel{ProviderID: "gateway", ModelID: "terra-plan"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolvedSessionProjection(cfg, reg, tc.sel, tc.mode); got != tc.want {
+				t.Fatalf("resolvedSessionProjection() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildOperatorContextWindowsFeedEchoListAndPerSessionFactory(t *testing.T) {
 	const (
 		model          = "gpt-5"

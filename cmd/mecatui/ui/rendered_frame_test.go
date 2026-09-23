@@ -159,7 +159,7 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 		if r.toolCardPrepares != wantPrepares {
 			t.Fatalf("%s: prepareToolCard calls = %d, want %d", step, r.toolCardPrepares, wantPrepares)
 		}
-		entry, ok := r.blockCache[0]
+		entry, ok := r.blocks.rendered[0]
 		if !ok || len(entry.rows) == 0 {
 			t.Fatalf("%s: matching tool block cache entry did not retain structural rows", step)
 		}
@@ -357,8 +357,8 @@ func TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
 			if len(second.provenance) != len(second.lines) || len(first.provenance) == 0 {
 				t.Fatal("frame provenance must be row-linear and present")
 			}
-			if r.joinPrefixN != len(c.blocks)-1 {
-				t.Fatalf("cached prefix covers %d blocks, want settled prefix of %d", r.joinPrefixN, len(c.blocks)-1)
+			if r.blocks.prefixN != len(c.blocks)-1 {
+				t.Fatalf("cached prefix covers %d blocks, want settled prefix of %d", r.blocks.prefixN, len(c.blocks)-1)
 			}
 		})
 	}

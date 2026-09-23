@@ -9,7 +9,6 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -97,33 +96,6 @@ func TestSessionStorageContinuity_Scenario2_SameFamilyMutationSerialized(t *test
 	}{
 		{name: "Save", run: func(ctx context.Context, st *Store, id session.SessionID) error {
 			return st.Save(ctx, session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
-		}},
-		{name: "Migration promotion", setup: func(t *testing.T, st *Store, id session.SessionID) {
-			t.Helper()
-			if err := st.Delete(ctx, id); err != nil {
-				t.Fatalf("remove canonical seed: %v", err)
-			}
-			legacy := session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/legacy", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_600_000_000, 0).UTC())
-			payload, err := sessnap.Marshal(legacy)
-			if err != nil {
-				t.Fatalf("marshal legacy snapshot: %v", err)
-			}
-			if err := os.WriteFile(st.resolver.legacyPath(id, kindSnapshot), append(payload, '\n'), 0o600); err != nil {
-				t.Fatalf("write legacy snapshot: %v", err)
-			}
-			if err := os.WriteFile(st.resolver.legacyPath(id, kindTools), []byte("legacy-tool\n"), 0o600); err != nil {
-				t.Fatalf("write legacy sidecar: %v", err)
-			}
-		}, run: func(ctx context.Context, st *Store, id session.SessionID) error {
-			return st.Save(ctx, session.New(id, session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(1_700_000_000, 0).UTC()))
-		}, verify: func(t *testing.T, st *Store, id session.SessionID) {
-			t.Helper()
-			if _, err := os.Stat(st.resolver.canonicalPath(id, kindTools)); err != nil {
-				t.Fatalf("promoted sidecar: %v", err)
-			}
-			if _, err := os.Stat(st.resolver.legacyPath(id, kindSnapshot)); !os.IsNotExist(err) {
-				t.Fatalf("legacy snapshot remains after promotion: %v", err)
-			}
 		}},
 		{name: "Delete", run: func(ctx context.Context, st *Store, id session.SessionID) error { return st.Delete(ctx, id) }},
 		{name: "ConditionalDelete", run: func(ctx context.Context, st *Store, id session.SessionID) error {

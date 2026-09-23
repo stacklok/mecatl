@@ -2600,7 +2600,7 @@ func TestDoubleClickIdentitySnapshotSurvivesRefresh(t *testing.T) {
 	}
 }
 
-// TestMouseDebugOverlay covers the gated MECATUI_DEBUG_MOUSE diagnostic: with
+// TestMouseDebugOverlay covers the gated --debug mouse diagnostic: with
 // DebugMouse on, a mouse press sets m.mouseDebug to the formatted line (raw coords +
 // content and input mapping) and the footer surfaces it (highest priority — over the phase
 // arms). With DebugMouse off, no press sets it and the footer shows the normal

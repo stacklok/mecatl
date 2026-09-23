@@ -152,13 +152,13 @@ func TestAttemptDecisionTerminalReasons(t *testing.T) {
 		failure    error
 		classifier func(error) bool
 		wantReason replaySuppressedReason
-		wantDisp   port.RetryDisposition
+		wantDisp   session.RetryDisposition
 	}{
-		{name: "permanent", failure: apiErr(400), wantReason: replayPermanent, wantDisp: port.RetryDispositionPermanent},
-		{name: "unknown", failure: errors.New("secret unknown body"), wantReason: replayUnknown, wantDisp: port.RetryDispositionUnknown},
-		{name: "classifier veto", failure: connection(), classifier: func(error) bool { return false }, wantReason: replayClassifierVeto, wantDisp: port.RetryDispositionRetryable},
-		{name: "provider internal veto", failure: &explicitNoRetryTestError{err: connection()}, wantReason: replayProviderInternalVeto, wantDisp: port.RetryDispositionRetryable},
-		{name: "attempts exhausted", failure: connection(), wantReason: replayAttemptsExhausted, wantDisp: port.RetryDispositionRetryable},
+		{name: "permanent", failure: apiErr(400), wantReason: replayPermanent, wantDisp: session.RetryDispositionPermanent},
+		{name: "unknown", failure: errors.New("secret unknown body"), wantReason: replayUnknown, wantDisp: session.RetryDispositionUnknown},
+		{name: "classifier veto", failure: connection(), classifier: func(error) bool { return false }, wantReason: replayClassifierVeto, wantDisp: session.RetryDispositionRetryable},
+		{name: "provider internal veto", failure: &explicitNoRetryTestError{err: connection()}, wantReason: replayProviderInternalVeto, wantDisp: session.RetryDispositionRetryable},
+		{name: "attempts exhausted", failure: connection(), wantReason: replayAttemptsExhausted, wantDisp: session.RetryDispositionRetryable},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

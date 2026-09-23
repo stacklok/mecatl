@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/fstools"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 var acpTestLedgers sync.Map
@@ -255,7 +255,7 @@ func TestFSWorkspaceReadWriteDelegate(t *testing.T) {
 
 func TestFSWorkspaceEditInvariants(t *testing.T) {
 	ctx := context.Background()
-	edit := tools.EditTool{}
+	edit := fstools.EditTool{}
 
 	// (i) edit without prior Read -> rejected (invariant #1).
 	ws, peer, root := newTestFSWorkspace(t, map[string]string{"f.go": "package x\nvar A = 1\nvar B = 1\n"})
@@ -317,7 +317,7 @@ func TestFSWorkspaceEditInvariants(t *testing.T) {
 }
 
 // runEdit executes the real EditTool against ws and returns the result.
-func runEdit(t *testing.T, edit tools.EditTool, ws *fsWorkspace, path, oldS, newS string, replaceAll bool) session.ToolResult {
+func runEdit(t *testing.T, edit fstools.EditTool, ws *fsWorkspace, path, oldS, newS string, replaceAll bool) session.ToolResult {
 	t.Helper()
 	args := map[string]any{"path": path, "old_string": oldS, "new_string": newS}
 	if replaceAll {
@@ -542,7 +542,7 @@ func TestFSWorkspaceBufferOnlyStatGatesWrite(t *testing.T) {
 		t.Fatalf("Stat synthesized FileInfo = %+v, want a regular file of size %d", info, len("original"))
 	}
 
-	write := tools.WriteTool{}
+	write := fstools.WriteTool{}
 
 	// (a) Write WITHOUT a prior Read -> refused (read-before-overwrite engages).
 	res := runWrite(t, write, ws, "buf.txt", "clobbered")
@@ -667,7 +667,7 @@ func TestFSWorkspaceCreateAcceptsAnchoredNotFoundMessagesWithPath(t *testing.T) 
 }
 
 // runWrite executes the real WriteTool against ws and returns the result.
-func runWrite(t *testing.T, write tools.WriteTool, ws *fsWorkspace, path, content string) session.ToolResult {
+func runWrite(t *testing.T, write fstools.WriteTool, ws *fsWorkspace, path, content string) session.ToolResult {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]any{"path": path, "content": content})
 	env := tool.MustEnvironment(session.EnvironmentRef{Kind: session.EnvKindMem, ID: ws.Root()}, ws, testLedger(ws), nil)

@@ -2,7 +2,6 @@ package grpcdriver
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -25,67 +24,34 @@ type MemoryStore struct {
 	client driverv1.MemoryStoreServiceClient
 }
 
-// MemoryLifecycleStore is the negotiated lifecycle-capable view of MemoryStore.
-// It is returned only after the remote driver successfully answers a lifecycle
-// probe, so base-only drivers never accidentally advertise optional tools.
-type MemoryLifecycleStore struct{ *MemoryStore }
+// compile-time assertion for the mandatory seam.
+var _ tool.MemoryStore = (*MemoryStore)(nil)
 
-// MemoryConvergenceStore is the negotiated presence-and-version CAS view.
-type MemoryConvergenceStore struct{ *MemoryLifecycleStore }
-
-// compile-time assertions for the distinct base and optional seams.
-var (
-	_ tool.MemoryStore            = (*MemoryStore)(nil)
-	_ tool.MemoryLifecycleStore   = (*MemoryLifecycleStore)(nil)
-	_ tool.MemoryConvergenceStore = (*MemoryConvergenceStore)(nil)
+const (
+	memoryCapabilityTimeout  = 5 * time.Second
+	memoryStoreContract      = "memory-store/1"
+	maxMemoryRecordRevisions = 64
 )
 
-// ErrMemoryLifecycleUnsupported reports an old/base-only remote driver. Base
-// memory operations remain usable; irreversible lifecycle operations never
-// silently downgrade.
-var ErrMemoryLifecycleUnsupported = errors.New("remote memory driver does not support lifecycle operations")
-
-const memoryCapabilityTimeout = 5 * time.Second
-
-// NewMemoryStore wraps an established driver connection (see Dial) as a
-// tool.MemoryStore.
-func NewMemoryStore(conn grpc.ClientConnInterface) *MemoryStore {
+func newMemoryStore(conn grpc.ClientConnInterface) *MemoryStore {
 	return &MemoryStore{client: driverv1.NewMemoryStoreServiceClient(conn)}
 }
 
-// NegotiateMemoryStore reads the explicit optional-capability signal once and
-// returns either the base client or a distinct lifecycle-capable wrapper.
-// Unimplemented means an older valid driver; every other negotiation failure is
-// returned rather than silently changing the catalog.
+// NegotiateMemoryStore requires the remote driver's current mandatory memory
+// capabilities. Older/base-only drivers are rejected rather than silently
+// weakening lifecycle or CAS semantics.
 func NegotiateMemoryStore(ctx context.Context, conn grpc.ClientConnInterface) (tool.MemoryStore, error) {
-	base := NewMemoryStore(conn)
+	store := newMemoryStore(conn)
 	probeCtx, cancel := context.WithTimeout(ctx, memoryCapabilityTimeout)
 	defer cancel()
-	caps, err := base.client.Capabilities(probeCtx, &driverv1.MemoryStoreCapabilitiesRequest{})
-	if status.Code(err) == codes.Unimplemented {
-		return base, nil
-	}
+	caps, err := store.client.Capabilities(probeCtx, &driverv1.MemoryStoreCapabilitiesRequest{})
 	if err != nil {
 		return nil, rpcErr(probeCtx, "negotiate memory capabilities", err)
 	}
-	if !caps.GetLifecycle() {
-		return base, nil
+	if caps == nil || caps.GetContract() != memoryStoreContract {
+		return nil, fmt.Errorf("remote memory driver contract is %q, want %q", caps.GetContract(), memoryStoreContract)
 	}
-	lifecycle := &MemoryLifecycleStore{MemoryStore: base}
-	if caps.GetConvergence() {
-		return &MemoryConvergenceStore{MemoryLifecycleStore: lifecycle}, nil
-	}
-	return lifecycle, nil
-}
-
-// RememberEntry stores e on the driver, overwriting any existing entry under
-// e.Key. The driver stamps UpdatedAt on write (the input value is advisory);
-// a blank/whitespace-only key surfaces the driver's INVALID_ARGUMENT.
-func (st *MemoryStore) RememberEntry(ctx context.Context, e tool.MemoryEntry) error {
-	if _, err := st.client.RememberEntry(ctx, &driverv1.RememberEntryRequest{Entry: toProtoEntry(e)}); err != nil {
-		return rpcErr(ctx, "remember entry", err)
-	}
-	return nil
+	return store, nil
 }
 
 // Recall returns the entry for the exact key. A driver miss (found=false) is
@@ -95,10 +61,17 @@ func (st *MemoryStore) Recall(ctx context.Context, key string) (tool.MemoryEntry
 	if err != nil {
 		return tool.MemoryEntry{}, false, rpcErr(ctx, "recall", err)
 	}
+	if resp == nil {
+		return tool.MemoryEntry{}, false, fmt.Errorf("grpcdriver: recall: empty response")
+	}
 	if !resp.GetFound() {
+		if resp.GetEntry() != nil {
+			return tool.MemoryEntry{}, false, fmt.Errorf("grpcdriver: recall: missing key returned an entry")
+		}
 		return tool.MemoryEntry{}, false, nil
 	}
-	return fromProtoEntry(resp.GetEntry()), true, nil
+	entry, err := memoryEntryFromResponse(resp.GetEntry(), key, false)
+	return entry, err == nil, err
 }
 
 // List returns all entries whose key has the given prefix (empty = all),
@@ -109,15 +82,6 @@ func (st *MemoryStore) List(ctx context.Context, prefix string) ([]tool.MemoryEn
 		return nil, rpcErr(ctx, "list", err)
 	}
 	return fromProtoEntries(resp.GetEntries()), nil
-}
-
-// Forget deletes the entry for key on the driver; a missing key is not an
-// error (idempotent).
-func (st *MemoryStore) Forget(ctx context.Context, key string) error {
-	if _, err := st.client.Forget(ctx, &driverv1.ForgetRequest{Key: key}); err != nil {
-		return rpcErr(ctx, "forget", err)
-	}
-	return nil
 }
 
 // Index returns the driver's tier-0 routing table: key-sorted entries with
@@ -141,58 +105,44 @@ func (st *MemoryStore) Search(ctx context.Context, query string, k int) ([]tool.
 	return fromProtoEntries(resp.GetEntries()), nil
 }
 
-// RememberVersioned uses the lifecycle RPC selected by negotiation. Once a
-// driver advertises lifecycle support, any RPC failure is a protocol/operation
-// error; the capable client never downgrades to legacy unconditional writes.
-func (st *MemoryLifecycleStore) RememberVersioned(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+// Remember performs the canonical presence-and-version CAS operation.
+func (st *MemoryStore) Remember(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	attr, _ := tool.MemoryAttributionFromContext(ctx)
 	if err := tool.ValidateMemoryEntryWrite(entry, attr); err != nil {
 		return tool.MemoryRecord{}, err
 	}
-	resp, err := st.client.RememberVersioned(ctx, &driverv1.RememberVersionedRequest{Entry: toProtoEntry(entry), ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
-	if status.Code(err) == codes.FailedPrecondition {
-		return tool.MemoryRecord{}, st.versionConflict(ctx, entry.Key, expected)
-	}
-	if err != nil {
-		return tool.MemoryRecord{}, rpcErr(ctx, "remember versioned", err)
-	}
-	return fromProtoRecord(resp.GetRecord()), nil
-}
-
-// RememberIfCurrent invokes the separately negotiated atomic convergence RPC.
-func (st *MemoryConvergenceStore) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
-	attr, _ := tool.MemoryAttributionFromContext(ctx)
-	if err := tool.ValidateMemoryEntryWrite(entry, attr); err != nil {
-		return tool.MemoryRecord{}, err
-	}
-	resp, err := st.client.RememberIfCurrent(ctx, &driverv1.RememberIfCurrentRequest{Entry: toProtoEntry(entry), ExpectedExists: expected.Exists, ExpectedVersion: string(expected.Version), Attribution: toProtoAttribution(attr)})
+	resp, err := st.client.Remember(ctx, &driverv1.RememberRequest{
+		Entry: toProtoEntry(entry), Current: &driverv1.MemoryCurrent{Exists: expected.Exists, Version: string(expected.Version)}, Attribution: toProtoAttribution(attr),
+	})
 	if status.Code(err) == codes.FailedPrecondition {
 		return tool.MemoryRecord{}, st.versionConflict(ctx, entry.Key, expected.Version)
 	}
 	if err != nil {
-		return tool.MemoryRecord{}, rpcErr(ctx, "remember if current", err)
+		return tool.MemoryRecord{}, rpcErr(ctx, "remember", err)
 	}
-	return fromProtoRecord(resp.GetRecord()), nil
+	return memoryRecordFromResponse(resp.GetRecord(), entry.Key)
 }
 
-// Inspect returns lifecycle data from the positively negotiated driver. A
-// missing or failing lifecycle RPC is not reinterpreted as a legacy Recall.
-func (st *MemoryLifecycleStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
-	resp, err := st.client.InspectMemory(ctx, &driverv1.InspectMemoryRequest{Key: key})
+// Inspect returns lifecycle data from the mandatory current driver contract.
+func (st *MemoryStore) Inspect(ctx context.Context, key string) (tool.MemoryRecord, bool, error) {
+	resp, err := st.client.Inspect(ctx, &driverv1.InspectRequest{Key: key})
 	if err != nil {
 		return tool.MemoryRecord{}, false, rpcErr(ctx, "inspect memory", err)
 	}
-	return fromProtoRecord(resp.GetRecord()), resp.GetFound(), nil
+	if !resp.GetFound() {
+		if resp.GetRecord() != nil {
+			return tool.MemoryRecord{}, false, fmt.Errorf("grpcdriver: inspect memory: missing key returned a record")
+		}
+		return tool.MemoryRecord{}, false, nil
+	}
+	record, err := memoryRecordFromResponse(resp.GetRecord(), key)
+	return record, err == nil, err
 }
 
-// ForgetVersioned never downgrades to legacy Forget because doing so would lose
-// compare-version protection and history.
-func (st *MemoryLifecycleStore) ForgetVersioned(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+// Forget appends a tombstone under exact-version CAS.
+func (st *MemoryStore) Forget(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	attr, _ := tool.MemoryAttributionFromContext(ctx)
-	resp, err := st.client.ForgetVersioned(ctx, &driverv1.ForgetVersionedRequest{Key: key, ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
-	if status.Code(err) == codes.Unimplemented {
-		return tool.MemoryRecord{}, fmt.Errorf("%w: forget", ErrMemoryLifecycleUnsupported)
-	}
+	resp, err := st.client.Forget(ctx, &driverv1.ForgetRequest{Key: key, ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
 	if status.Code(err) == codes.FailedPrecondition {
 		return tool.MemoryRecord{}, st.versionConflict(ctx, key, expected)
 	}
@@ -200,28 +150,25 @@ func (st *MemoryLifecycleStore) ForgetVersioned(ctx context.Context, key string,
 		return tool.MemoryRecord{}, fmt.Errorf("%w: %s", tool.ErrMemoryNotFound, status.Convert(err).Message())
 	}
 	if err != nil {
-		return tool.MemoryRecord{}, rpcErr(ctx, "forget versioned", err)
+		return tool.MemoryRecord{}, rpcErr(ctx, "forget", err)
 	}
-	return fromProtoRecord(resp.GetRecord()), nil
+	return memoryRecordFromResponse(resp.GetRecord(), key)
 }
 
-// UndoLatest requires lifecycle support and never silently degrades.
-func (st *MemoryLifecycleStore) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+// Undo appends a compensating revision under exact-version CAS.
+func (st *MemoryStore) Undo(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	attr, _ := tool.MemoryAttributionFromContext(ctx)
-	resp, err := st.client.UndoLatest(ctx, &driverv1.UndoLatestRequest{Key: key, ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
-	if status.Code(err) == codes.Unimplemented {
-		return tool.MemoryRecord{}, fmt.Errorf("%w: undo", ErrMemoryLifecycleUnsupported)
-	}
+	resp, err := st.client.Undo(ctx, &driverv1.UndoRequest{Key: key, ExpectedVersion: string(expected), Attribution: toProtoAttribution(attr)})
 	if status.Code(err) == codes.FailedPrecondition {
 		return tool.MemoryRecord{}, st.versionConflict(ctx, key, expected)
 	}
 	if err != nil {
-		return tool.MemoryRecord{}, rpcErr(ctx, "undo latest", err)
+		return tool.MemoryRecord{}, rpcErr(ctx, "undo", err)
 	}
-	return fromProtoRecord(resp.GetRecord()), nil
+	return memoryRecordFromResponse(resp.GetRecord(), key)
 }
 
-func (st *MemoryLifecycleStore) versionConflict(ctx context.Context, key string, expected tool.MemoryVersion) error {
+func (st *MemoryStore) versionConflict(ctx context.Context, key string, expected tool.MemoryVersion) error {
 	record, found, err := st.Inspect(ctx, key)
 	if err != nil {
 		return err
@@ -241,15 +188,49 @@ func toProtoSource(s tool.MemorySource) *driverv1.MemorySource {
 	return &driverv1.MemorySource{SessionId: session.ToValidUTF8(s.SessionID), ProposalId: session.ToValidUTF8(s.ProposalID)}
 }
 
-func fromProtoRecord(record *driverv1.MemoryRecord) tool.MemoryRecord {
-	if record == nil {
-		return tool.MemoryRecord{}
+func memoryRecordFromResponse(record *driverv1.MemoryRecord, key string) (tool.MemoryRecord, error) {
+	if record == nil || record.GetCurrent() == nil || len(record.GetRevisions()) == 0 || len(record.GetRevisions()) > maxMemoryRecordRevisions {
+		return tool.MemoryRecord{}, fmt.Errorf("grpcdriver: malformed memory record: current revision and 1..%d history entries are required", maxMemoryRecordRevisions)
 	}
 	out := tool.MemoryRecord{Current: fromProtoRevision(record.GetCurrent()), Revisions: make([]tool.MemoryRevision, len(record.GetRevisions()))}
 	for i, rev := range record.GetRevisions() {
+		if err := validateProtoRevision(rev, key); err != nil {
+			return tool.MemoryRecord{}, fmt.Errorf("grpcdriver: malformed memory record revision %d: %w", i, err)
+		}
 		out.Revisions[i] = fromProtoRevision(rev)
 	}
-	return out
+	if err := validateProtoRevision(record.GetCurrent(), key); err != nil {
+		return tool.MemoryRecord{}, fmt.Errorf("grpcdriver: malformed current memory revision: %w", err)
+	}
+	last := out.Revisions[len(out.Revisions)-1]
+	if !sameMemoryRevision(out.Current, last) {
+		return tool.MemoryRecord{}, fmt.Errorf("grpcdriver: malformed memory record: current revision does not match history tail")
+	}
+	return out, nil
+}
+
+func validateProtoRevision(rev *driverv1.MemoryRevision, key string) error {
+	if rev == nil || rev.GetKey() == "" || rev.GetKey() != key || !tool.ValidMemoryKey(rev.GetKey()) {
+		return fmt.Errorf("invalid key")
+	}
+	if rev.GetVersion() == "" || len(rev.GetVersion()) > 128 {
+		return fmt.Errorf("invalid version")
+	}
+	switch tool.MemoryStatus(rev.GetStatus()) {
+	case tool.MemoryStatusActive, tool.MemoryStatusSuperseded, tool.MemoryStatusDeleted:
+	default:
+		return fmt.Errorf("invalid status %q", rev.GetStatus())
+	}
+	if rev.GetUpdatedAt() == nil || rev.GetUpdatedAt().CheckValid() != nil {
+		return fmt.Errorf("invalid updated_at")
+	}
+	return nil
+}
+
+func sameMemoryRevision(a, b tool.MemoryRevision) bool {
+	return a.Key == b.Key && a.Value == b.Value && a.Description == b.Description &&
+		a.Version == b.Version && a.Status == b.Status && a.Writer == b.Writer &&
+		a.Origin == b.Origin && a.Source == b.Source && a.UpdatedAt.Equal(b.UpdatedAt)
 }
 
 func fromProtoRevision(rev *driverv1.MemoryRevision) tool.MemoryRevision {
@@ -273,6 +254,19 @@ func toProtoEntry(e tool.MemoryEntry) *driverv1.MemoryEntry {
 		pe.UpdatedAt = timestamppb.New(e.UpdatedAt)
 	}
 	return pe
+}
+
+func memoryEntryFromResponse(pe *driverv1.MemoryEntry, key string, valueMustBeEmpty bool) (tool.MemoryEntry, error) {
+	if pe == nil || !tool.ValidMemoryKey(pe.GetKey()) || key != "" && pe.GetKey() != key {
+		return tool.MemoryEntry{}, fmt.Errorf("grpcdriver: malformed memory entry key")
+	}
+	if valueMustBeEmpty && pe.GetValue() != "" {
+		return tool.MemoryEntry{}, fmt.Errorf("grpcdriver: malformed memory index entry contains a value")
+	}
+	if pe.GetUpdatedAt() == nil || pe.GetUpdatedAt().CheckValid() != nil {
+		return tool.MemoryEntry{}, fmt.Errorf("grpcdriver: malformed memory entry timestamp")
+	}
+	return fromProtoEntry(pe), nil
 }
 
 // fromProtoEntry projects a wire entry back onto tool.MemoryEntry. A nil/

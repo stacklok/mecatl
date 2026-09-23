@@ -285,8 +285,9 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d, p := stillFailed.FailureMetadata(); stillFailed.State != session.StateFailed || d != session.RetryDispositionRetryable || p != session.StreamProgressPrecommit {
-		t.Fatalf("setup failure consumed eligibility: state=%s disposition=%v progress=%v", stillFailed.State, d, p)
+	metadata := stillFailed.FailureMetadata()
+	if stillFailed.State != session.StateFailed || metadata.Disposition != session.RetryDispositionRetryable || metadata.Progress != session.StreamProgressPrecommit {
+		t.Fatalf("setup failure consumed eligibility: state=%s metadata=%+v", stillFailed.State, metadata)
 	}
 
 	var retrySeen atomic.Value
@@ -296,8 +297,8 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 		llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
 			persisted, loadErr := store.Load(context.Background(), sess.ID)
 			if loadErr == nil && persisted.State == session.StateIdle {
-				d, p, pending := persisted.FailedStepRetryPending()
-				recoveredBeforeProvider.Store(pending && d == session.RetryDispositionRetryable && p == session.StreamProgressPrecommit)
+				metadata, pending := persisted.FailedStepRetryPending()
+				recoveredBeforeProvider.Store(pending && metadata.Disposition == session.RetryDispositionRetryable && metadata.Progress == session.StreamProgressPrecommit)
 			}
 		})}, mockllm.TextTurn("same selector retried"))
 		return server.SessionEngineResult{Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: got.ModelID}), ProviderID: got.ProviderID, ModelID: got.ModelID}, nil
@@ -323,8 +324,9 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d, p := stillFailed.FailureMetadata(); stillFailed.State != session.StateFailed || d != session.RetryDispositionRetryable || p != session.StreamProgressPrecommit {
-		t.Fatalf("admission failure consumed eligibility: state=%s disposition=%v progress=%v", stillFailed.State, d, p)
+	metadata = stillFailed.FailureMetadata()
+	if stillFailed.State != session.StateFailed || metadata.Disposition != session.RetryDispositionRetryable || metadata.Progress != session.StreamProgressPrecommit {
+		t.Fatalf("admission failure consumed eligibility: state=%s metadata=%+v", stillFailed.State, metadata)
 	}
 	if admittedProvider != selector.ProviderID || admittedModel != selector.ModelID {
 		t.Fatalf("admission identity = %q/%q, want %q/%q", admittedProvider, admittedModel, selector.ProviderID, selector.ModelID)
@@ -366,8 +368,9 @@ func TestRetryFailedRunAdmitsVisibleAndSecondFailureGovernsNextRetry(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d, p := got.FailureMetadata(); got.State != session.StateFailed || d != session.RetryDispositionPermanent || p != session.StreamProgressVisible {
-		t.Fatalf("second failure = state=%s metadata=(%v,%v)", got.State, d, p)
+	metadata := got.FailureMetadata()
+	if got.State != session.StateFailed || metadata.Disposition != session.RetryDispositionPermanent || metadata.Progress != session.StreamProgressVisible {
+		t.Fatalf("second failure = state=%s metadata=%+v", got.State, metadata)
 	}
 	if _, err := svc.RetryFailedRun(ctx, id); !errors.Is(err, server.ErrFailedStepRetryIneligible) {
 		t.Fatalf("retry after permanent second failure = %v", err)
@@ -384,7 +387,7 @@ func TestRetryPendingRestartBlocksPromptAndRetryIsIdempotent(t *testing.T) {
 	if err := sess.Fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.RecordFailureMetadata(session.RetryDispositionRetryable, session.StreamProgressPrecommit); err != nil {
+	if err := sess.RecordFailureMetadata(session.RetryMetadata{Disposition: session.RetryDispositionRetryable, Progress: session.StreamProgressPrecommit}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.PrepareFailedStepRetry(); err != nil {

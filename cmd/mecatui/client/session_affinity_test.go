@@ -37,6 +37,9 @@ func (c *affinityRecordingConn) Invoke(ctx context.Context, method string, _, re
 	c.record(ctx, method)
 	if response, ok := reply.(*mecatlv1.CreateSessionResponse); ok {
 		response.SessionId = "created"
+	}
+	if response, ok := reply.(*mecatlv1.GetCompatibilityInfoResponse); ok {
+		response.ApiMajor = 1
 		response.Capabilities = &mecatlv1.ServerCapabilities{SessionDebug: true}
 	}
 	return nil
@@ -113,10 +116,16 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 		})
 	}
 
-	if len(conn.calls) != len(calls) {
-		t.Fatalf("recorded calls = %d, want %d", len(conn.calls), len(calls))
+	if len(conn.calls) != len(calls)+1 {
+		t.Fatalf("recorded calls = %d, want %d", len(conn.calls), len(calls)+1)
 	}
 	for _, call := range conn.calls {
+		if strings.HasSuffix(call.method, "/GetCompatibilityInfo") {
+			if got := call.md.Get(sessionaffinity.HeaderName); len(got) != 0 {
+				t.Errorf("GetCompatibilityInfo session metadata = %#v, want none", got)
+			}
+			continue
+		}
 		if got := call.md.Get(sessionaffinity.HeaderName); !reflect.DeepEqual(got, []string{sessionID}) {
 			t.Errorf("%s session metadata = %#v, want exact %q", call.method, got, sessionID)
 		}

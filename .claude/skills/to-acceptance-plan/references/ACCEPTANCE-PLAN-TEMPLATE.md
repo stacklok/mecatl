@@ -83,7 +83,7 @@ Public or material choices must be exact; do not defer them to implementation. U
 
 ## Definition of done
 
-1. Applicable `task lint`, `task test`, `task docs`, and `task api:check` gates pass.
+1. Applicable `task lint`, `task test:race`, `task docs`, and `task api:check` gates pass on the final candidate.
 2. `task ac-trace-strict` resolves every named proof when the plan becomes `landed`.
 3. `go run ./cmd/mecademo` remains green for runtime changes.
 4. The implementation PR links the Plan / Interface PR and approved commit and reports

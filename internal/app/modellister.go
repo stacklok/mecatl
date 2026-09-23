@@ -39,7 +39,7 @@ type modelSwapper interface {
 // slice, heal a still-empty intent-driven default model, re-project
 // provider_status when the swapper supports it) can never drift between the
 // three call sites. fresh is ONLY the providers this call actually re-fetched
-// — the FULL available set for the background refresh, or a PARTIAL
+// — the FULL background-eligible set for the background refresh, or a PARTIAL
 // stale-only set for refreshStaleModels — never a whole-map snapshot of
 // EVERYTHING, so a partial refresh can only ever touch the providers it
 // fetched (mergeSwap, issue #262 review finding 2: the lost-update race a
@@ -649,7 +649,6 @@ func liveModelSnapshotForPublish(ctx context.Context, d port.Diagnostics, reg *p
 			continue // the mock never advertises selectable models
 		}
 		if entry, ok := reg.Lookup(pid); ok && entry.nativeEndpoint {
-			byProvider[pid] = providerInventoryFloor(reg, pid)
 			continue // native authenticated listing is on-demand, never during Build
 		}
 		if models, ok := reg.bootstrapModels[pid]; ok {

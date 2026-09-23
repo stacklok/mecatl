@@ -70,7 +70,7 @@ func renderedLineWindow(scroll, total, window int) renderedLineWindowBounds {
 // the content overflows the window. Each input line must be a COMPLETE styled
 // line (lipgloss renders multi-line strings with per-line SGR sequences — the
 // same property capRenderedLines relies on), so slicing never severs an escape.
-// Like capRenderedLines it must NOT sanitizeTerminal its input (that would strip
+// Like capRenderedLines it must NOT terminaltext.Sanitize its input (that would strip
 // the embedded styling); the line TEXT is sanitized by the callers at render
 // time. Every emitted line carries a trailing newline so the callers' footer
 // concatenation stays uniform across the scrolled and unscrolled cases.

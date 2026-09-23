@@ -55,6 +55,8 @@ for cat in go sdk; do
   run "$cat: perf harness skips" "$cat" false perf/kpi/capture.go perf/scenarios/loop_bench_test.go perf/cmd/allocsgate/main.go
   run "$cat: e2e + deploy skip" "$cat" false e2e/k8s/suite_test.go deploy/helm/mecak8s/values_test.go
   run "$cat: docs-lint tool skips" "$cat" false docs/lint/citations.go
+  run "$cat: Studio apps/ workspace skips" "$cat" false apps/web/src/main.tsx apps/server/src/app.ts apps/pnpm-lock.yaml
+  run "$cat: Studio apps/ + in-closure package runs" "$cat" true apps/server/src/app.ts internal/app/build.go
   # A change mixing a terminal dir with an in-closure package still RUNS.
   run "$cat: terminal dir + in-closure package runs" "$cat" true perf/kpi/capture.go internal/app/build.go
 done

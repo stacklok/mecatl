@@ -409,11 +409,7 @@ func TestReasoningAndTurnEnd(t *testing.T) {
 	if turnEnd == nil {
 		t.Fatalf("no turn.end event in %v", typesOf(evs))
 	}
-	// The per-turn data lives in the typed TurnEnd payload, NOT in Event.Usage
-	// (which is reserved for the cumulative-on-result semantics).
-	if turnEnd.Usage != nil {
-		t.Fatalf("turn.end must not set Event.Usage (reserved for result): %+v", turnEnd.Usage)
-	}
+	// The per-turn data lives in the typed TurnEnd payload.
 	if turnEnd.TurnEnd == nil {
 		t.Fatalf("turn.end missing TurnEnd payload")
 	}

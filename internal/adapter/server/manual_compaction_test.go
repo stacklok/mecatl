@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -352,15 +351,11 @@ func TestCompactSessionWireSurfaces(t *testing.T) {
 func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 	store, _, _ := compactFixture(t, session.StateIdle)
 	svc := newCompactService(t, store, serviceCompactCompactor{}, false, nil, nil)
-	resp, err := server.NewHarnessServer(svc).CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-	if !resp.GetCapabilities().GetManualCompaction() {
+	if !svc.CompatibilityInfo(context.Background()).GetCapabilities().GetManualCompaction() {
 		t.Fatal("manual_compaction capability is false on a service with an engine")
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodGet, "/v1/compatibility", nil)
 	rr := httptest.NewRecorder()
 	server.NewHTTPHandler(svc).ServeHTTP(rr, req)
 	var body struct {
@@ -368,7 +363,7 @@ func TestCompactSessionCapabilityAdvertised(t *testing.T) {
 			ManualCompaction bool `json:"manual_compaction"`
 		} `json:"capabilities"`
 	}
-	if rr.Code != http.StatusCreated || json.Unmarshal(rr.Body.Bytes(), &body) != nil || !body.Capabilities.ManualCompaction {
+	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &body) != nil || !body.Capabilities.ManualCompaction {
 		t.Fatalf("HTTP capability status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

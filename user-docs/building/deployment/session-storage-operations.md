@@ -8,8 +8,8 @@ description:
 
 # Operate local session storage
 
-Use Mecatl's management API to inspect, optimize, and clean up a local JSONL
-session store. Do not edit or delete store files directly.
+Use Mecatl's management API to inspect and clean up a local JSONL session
+store. Do not edit or delete store files directly.
 
 This guide covers a single-user `mecated` daemon with stable configuration and
 state paths. For the API, see the [gRPC reference](/reference/grpc-api.md). For
@@ -182,23 +182,20 @@ An absent or empty principal list disables remote storage management. Project
 settings, owner claims, display names, grant types, and system-principal status
 cannot grant this authority.
 
-Destructive migration, cleanup, and retention also require a cross-process
-session-Lease backend for every shared store. If the backend is missing,
-disabled, or unimplemented, destructive operations remain unavailable. A Lease
-held by another process protects that session family from mutation. Local JSONL
-stores automatically use per-session file locks under the store root.
+Destructive cleanup and retention require a cross-process session-lease backend
+for every shared store. If the backend is missing, disabled, or unimplemented,
+destructive operations remain unavailable. A lease held by another process
+protects that session family from mutation. Local JSONL stores automatically use
+per-session file locks under the store root.
 
-Before changing the store:
+Before deleting sessions:
 
 1. Open **Sessions > Maintenance**, then inspect **Storage health**.
-1. Record the effective policy, current and reclaimable bytes, format counts,
-   last and next sweep, active job, and last failure.
-1. Select **Optimize storage** or **Clean up sessions** to create a read-only
-   plan.
-1. Review its scope, protected counts, generation, reclaimable estimate, and
-   temporary-space requirement.
-1. Apply the plan. Optimization preserves sessions; cleanup is destructive and
-   requires a separate confirmation.
+1. Record the effective policy, current bytes, session counts, last and next
+   sweep, active cleanup, and last failure.
+1. Select **Clean up sessions** to create a read-only plan.
+1. Review its scope, protected counts, generation, and reclaimable estimate.
+1. Apply the plan after the separate destructive confirmation.
 
 Discard a stale plan and create a new one.
 
@@ -206,53 +203,49 @@ For an unsupported backend, use the maintenance and backup procedure supplied
 by that backend's operator. Do not infer safety from empty fields or fall back
 to filesystem deletion.
 
-## Quiesced backup, migration, and restore runbook
+## Quiesced backup and restore runbook
 
-Use this sequence for upgrades, storage optimization, retention changes, and
-recovery drills. Use your platform's backup tooling while the service is
-stopped.
+Use this sequence for upgrades, retention changes, and recovery drills. Use
+your platform's backup tooling while the service is stopped.
 
 1. **Stop and quiesce the store.** Stop the service and confirm that no daemon,
-   replica, or maintenance job uses the same store. The store and its parent
+   replica, or cleanup job uses the same store. The store and its parent
    directories must be physical directories, not symbolic links. On macOS, use
    the physical `/private/...` path instead of its `/var/...` alias.
 1. **Confirm durability.** Check storage health before relying on a backup.
    Mecatl can report filesystems that do not support its full durability
    contract. Successful sync probes show syscall support, but the underlying
    storage must still honor sync and atomic rename. Temporary filesystems do not
-   survive host failure. Event-log append, deletion, retention, and migration
-   fail before mutation when directory sync is unavailable. A malformed
-   complete JSONL record requires operator recovery; only an interrupted final
-   record can be treated as a torn tail.
-1. **Back up the complete state directory.** Include snapshots, legacy files,
-   event and tool sidecars, catalog data, maintenance state, and lock sentinels.
-   Preserve ownership, permissions, timestamps, and filesystem boundaries.
-   Record the Mecatl version, configuration, effective retention policy, and
-   backup checksum. Keep directories mode `0700` and files mode `0600`.
-1. **Check space and create a plan.** Allow space for the backup, the plan's
-   temporary-space estimate, and a safety margin. Request an optimization or
-   cleanup dry run. Stop if storage health, durability, planning, or management
-   is unavailable for the backend.
-1. **Apply the exact plan.** Start only the intended daemon, confirm the policy
-   and dry run again, then apply that generation-bound plan. Follow the durable
-   job status. You can resume interrupted migration batches. Cancellation stops
-   future items but does not undo completed items. Run migration and destructive
-   cleanup as separate operations.
+   survive host failure. Event-log append, deletion, and retention fail before
+   mutation when directory sync is unavailable. A malformed complete JSONL
+   record requires operator recovery; only an interrupted final record can be
+   treated as a torn tail.
+1. **Back up the complete state directory.** Include current snapshots under
+   `sid-v1`, event and tool sidecars, catalog data, and lock sentinels. Preserve ownership, permissions, timestamps, and filesystem boundaries. Record the Mecatl version,
+   configuration, effective retention policy, and backup checksum. Keep
+   directories mode `0700` and files mode `0600`.
 1. **Validate a restore.** Restore the backup to a new directory with owner-only
    permissions. Point a separate test instance at it, then inspect inventory,
-   representative transcripts, sidecars, storage health, and a migration dry
-   run. Do not overwrite the production directory for validation.
+   representative transcripts, sidecars, and storage health. Do not overwrite
+   the production directory for validation.
 1. **Return to service.** Stop the test instance, preserve the validated backup,
    and start the normal service with its stable configuration and state paths.
    Confirm storage health, policy, inventory, and the next retention sweep
    before admitting new work.
 
-If validation fails, stop the daemon and diagnose the failure. Do not merge
-partial state trees or delete the only known-good backup.
+If inventory reports a malformed current snapshot, quiesce every service using
+the namespace and preserve a byte-for-byte copy for diagnosis. Restore the complete
+namespace from a verified backup in a separate location, validate it, and then
+switch the service to that restored namespace. Do not directly edit the
+artifact or delete the damaged namespace as the default recovery action.
+
+If validation fails, keep the service stopped. Preserve the failed namespace
+and the last known-good backup for diagnosis; do not merge partial state trees.
 
 ## Next steps
 
-- [Review the gRPC API](/reference/grpc-api.md) for storage-management methods.
+- [Review the gRPC API](/reference/grpc-api.md) for session cleanup and
+  storage-health methods.
 - [Manage sessions in mecatui](/mecatui/sessions.md#privacy-and-maintenance).
 - [Configure Mecatl](./settings.md) with stable operator settings and
   credentials.

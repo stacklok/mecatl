@@ -37,9 +37,6 @@ export const MECATL_ERROR_CODES = [
   "learning_unavailable",
   "management_unauthorized",
   "mcp_connector_unavailable",
-  "migration_backend",
-  "migration_conflict",
-  "migration_unsupported",
   "mcp_authorization_pending",
   "no_active_run",
   "no_event_log",
@@ -336,7 +333,6 @@ export class IncompatibleServerError extends MecatlError {
 export class ServerError extends MecatlError {
   declare readonly code: ServerErrorCode;
 
-  // biome-ignore lint/complexity/noUselessConstructor: this narrows code to the server vocabulary.
   constructor(
     message: string,
     options: Omit<MecatlErrorOptions, "code"> & { code: ServerErrorCode },

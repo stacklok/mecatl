@@ -284,14 +284,13 @@ type config struct {
 	// durable FACTS about the operator (explicit user-memory tools plus a live
 	// bounded operator profile in the volatile system suffix). ON by default at the conventional
 	// ~/.config/mecatl/usermodel; noUserModel disables it; userModelDir overrides
-	// the dir. userModelReview is the deprecated alias for completed-trajectory
-	// auto review; userModelReviewInterval is its session-count debounce.
-	// userModelConsolidateInterval independently authorizes the process-wide
+	// the dir. learningAdmissionInterval is the process-wide automatic-reflection
+	// debounce; userModelConsolidateInterval independently authorizes the process-wide
 	// cross-project "user/" dream consolidator; learning.mode does not gate it.
 	userModelDir                 string
 	noUserModel                  bool
-	userModelReview              bool
-	userModelReviewInterval      int
+	learningAdmissionInterval    int
+	learningAdmissionIntervalSet bool
 	userModelConsolidateInterval time.Duration
 
 	// Skills: explicit directories of progressive-disclosure skill units laid out
@@ -614,7 +613,7 @@ func runConfigInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing settings.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -665,7 +664,7 @@ func runConfigDaemonInit(argv []string, out io.Writer) error {
 	var printOnly, force bool
 	fs.BoolVar(&printOnly, "print", false, "print the daemon.yaml skeleton to stdout and write NO file (a paste-ready reference)")
 	fs.BoolVar(&force, "force", false, "overwrite an existing daemon.yaml (default: refuse, naming the path)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -716,7 +715,7 @@ func runConfigDaemonValidate(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var file string
 	fs.StringVar(&file, "file", "", "path to the daemon.yaml to validate (default: the conventional $XDG_CONFIG_HOME/mecatl/daemon.yaml)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -758,7 +757,7 @@ func runSkillsPromote(argv []string, in io.Reader, out io.Writer) error {
 	fs.StringVar(&quarantine, "skills-draft-dir", "", "the QUARANTINE directory the candidate was drafted into")
 	fs.StringVar(&active, "skills-dir", "", "the ACTIVE skills directory to promote the candidate into")
 	fs.BoolVar(&assumeYes, "yes", false, "skip the interactive content review and promote without confirmation (scripted/CI use only)")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 	name := fs.Arg(0)
@@ -805,7 +804,7 @@ func runPerfMCPPrintConfig(argv []string, out io.Writer) error {
 	fs.SetOutput(out)
 	var addr string
 	fs.StringVar(&addr, "metrics-addr", defaultMetricsAddr, "the loopback admin listen address the perf MCP server is mounted on (host:port); sets the host:port in the printed URL")
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		return err
 	}
 
@@ -1234,8 +1233,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		SoulStrict:                    cfg.soulStrict,
 		UserModelDir:                  cfg.userModelDir,
 		NoUserModel:                   cfg.noUserModel,
-		UserModelReview:               cfg.userModelReview,
-		UserModelReviewInterval:       cfg.userModelReviewInterval,
+		LearningAdmissionInterval:     cfg.learningAdmissionInterval,
+		LearningAdmissionIntervalSet:  cfg.learningAdmissionIntervalSet,
 		UserModelConsolidateInterval:  cfg.userModelConsolidateInterval,
 		SkillsDirs:                    cfg.skillsDirs,
 		SkillsConventional:            cfg.skillsConventional,
@@ -1770,8 +1769,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 
 	fs.StringVar(&cfg.userModelDir, "user-model-dir", "", "directory for user-scoped facts shared across projects. Default is the conventional XDG location. It supplies user-memory tools and a bounded operator profile; agent behavior comes from the soul and system rules.")
 	fs.BoolVar(&cfg.noUserModel, "no-user-model", false, "disable the user-model entirely (explicit tools and live operator profile)")
-	fs.BoolVar(&cfg.userModelReview, "user-model-review", false, "set learning.mode to auto unless settings explicitly select another mode. Eligible completed sessions can contribute facts to the user model.")
-	fs.IntVar(&cfg.userModelReviewInterval, "user-model-review-interval", 1, "process-wide completed-session debounce for automatic user-model review: review every Nth eligible completion (1 = every completion). Applies to learning.mode: auto and the compatibility --user-model-review alias")
+	fs.IntVar(&cfg.learningAdmissionInterval, "learning-admission-interval", 1, "process-wide automatic-learning debounce: admit every Nth eligible reflection (0 or 1 admits every eligible reflection)")
 	fs.DurationVar(&cfg.userModelConsolidateInterval, "user-model-consolidate-interval", 0, "independent process-wide interval for background consolidation (dream) of the cross-project user-model store's user/ namespace; 0 disables. Requires the user-model store and provider; learning.mode (including a project off ceiling) does not gate this explicit maintenance schedule")
 
 	fs.Var(&cfg.skillsDirs, "skills-dir", "directory of skills arranged as <name>/SKILL.md. Repeatable; these directories have highest precedence. An SKILL.md can steer the model, so use only trusted directories.")
@@ -1863,7 +1861,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 		writeServeCommonHelp(out, fs)
 	}
 
-	if err := fs.Parse(cliconfig.NormalizeLegacyNoBash(argv)); err != nil {
+	if err := fs.Parse(argv); err != nil {
 		// Return the fully-registered FlagSet even on a parse/help error so the
 		// progressive-help completeness invariant (validateFlagMeta) can run over
 		// the full real registration path via the --help-triggered ErrHelp path.
@@ -2018,6 +2016,8 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 			cfg.retentionCLISet.ScheduledMaxCount = true
 		case "child-gc-interval":
 			cfg.retentionCLISet.SweepCadence = true
+		case "learning-admission-interval":
+			cfg.learningAdmissionIntervalSet = true
 		case "no-steer":
 			cfg.noSteerFlagSet = true
 		}

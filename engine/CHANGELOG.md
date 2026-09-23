@@ -22,6 +22,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `RouterMissCapacityTimeout` to the engine-owned closed classifier-outcome taxonomy.
   Added (minor).
 
+- **Authoritative negotiated session-store capabilities** — adds
+  `port.SessionCapabilitySupport` and the `SupportsSessionCreate`,
+  `SupportsSessionMetadataPaging`, and `SupportsSessionLineage` probes. Adapters
+  that retain optional interfaces for compatibility can now report negotiated
+  false capabilities without consumers selecting unusable operations. Added (minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
@@ -71,14 +77,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `TitlePayload.Revision`: a durable, title-specific monotonic revision that
   advances only for effective title metadata mutations. Added (minor).
 - **Canonical token-usage buckets and title lifecycle projection** — adds
-  `session.UsageKind`/`TokenUsage` and `Session.TokenUsageSnapshot`, canonical
-  token usage kinds with opaque model attribution maps. Each total is normalized
-  to the sum of its model entries; legacy snapshots map unattributed usage to
-  `unknown`. The snapshot is an owned read view of the aggregate's private
-  canonical ledger. `Session.Usage` remains dual-written compatibility data.
-  `SessionTitle` is the source-free canonical title lifecycle projection; its
-  nested usage is removed. Added (minor); the retained wire title/provenance
-  fields are deprecated (pre-v1 breaking compatibility classification).
+  `session.UsageKind`/`TokenUsage`, `Session.TokenUsageSnapshot`, and
+  `Session.UsageFor`, with canonical token usage kinds and opaque model attribution
+  maps. Each total is normalized to the sum of its model entries. Current snapshots
+  persist only this canonical ledger. `SessionTitle` is the source-free canonical
+  title lifecycle projection; its nested usage is removed. Added (minor); the
+  removed compatibility projections are classified below.
 
 - **Reversible external-authorization claims** — `session.Session.RestoreAuthorizationClaim` compensates a claimed continuation that could not be registered, returning the aggregate to the exact durable `authorizing` state instead of abandoning unresolved tool calls in `running`. Added (minor).
 
@@ -260,6 +264,20 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `RouterMissCancelled`; cancellation remains `RouterMissCancelled`. Changed
   (observable behavior, pre-v1 minor).
 
+- **Mandatory versioned memory lifecycle/CAS** — consolidates `tool.MemoryStore`
+  around `Remember`, `Inspect`, `Recall`, `List`, `Index`, `Search`, `Forget`, and
+  `Undo`. Every mutation now requires either an explicit absent-state expectation
+  or the exact opaque current version; the optional lifecycle/convergence
+  interfaces and unconditional mutation methods are removed. Changed/breaking
+  (pre-v1 minor).
+
+- **Canonical session accounting, retry metadata, and snapshot restore** — adds
+  `session.RetryMetadata` and `Session.UsageFor`, changes failure/retry-pending APIs
+  to pass that value object instead of positional tuples, and changes
+  `sessnap.RestoreState` to accept adapter-owned `sessnap.RestoreData`. Snapshot
+  decoding validates canonical fields, ignores unknown fields, and treats an omitted
+  empty token ledger as its zero value. Changed/breaking (pre-v1 minor).
+
 - **Go compatibility floor** - the engine module requires Go 1.27. The root,
   provider, and authentication modules use the same floor. Changed (breaking,
   pre-v1 minor).
@@ -361,6 +379,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   breaking under `COMPATIBILITY.md` (pre-v1 a minor bump).
 
 ### Removed
+
+- **`port.RetryDisposition`, `port.StreamProgress`, and their constants** — removes
+  the temporary source-compatibility aliases. Providers and decorators use the
+  canonical `session.RetryDisposition` and `session.StreamProgress` vocabularies;
+  the classifier interfaces remain port-owned. Removed/breaking (pre-v1 minor).
+
+- **Legacy session usage/permanence projections** — removes exported
+  `Session.Usage`, `Event.Usage`, `ResultPayload.Permanent`,
+  `Session.RecordFailurePermanence`, `Session.FailurePermanence`, and
+  `port.PermanentError`. Canonical accounting is available through
+  `UsageFor`/`TokenUsageSnapshot`; terminal retry classification is carried only
+  by `RetryMetadata` and `port.RetryDispositionError`. Removed/breaking (pre-v1 minor).
 
 - **Subagent `max_tokens` tool argument** — removed the deprecated alias for
   `max_run_tokens` from the `Subagent` tool schema. Both named the SAME cumulative

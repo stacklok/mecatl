@@ -164,7 +164,7 @@ func relationEdge(parent session.SessionID, parentIncarnation session.Incarnatio
 func (t *inspectTool) scanLineage(ctx context.Context, root *session.Session) lineageGraph {
 	g := lineageGraph{Available: true, ScanComplete: true}
 	reader, ok := t.store.(port.SessionLineageReader)
-	if !ok {
+	if !ok || !port.SupportsSessionLineage(t.store) {
 		g.Available = false
 		g.Error = "lineage index is not configured"
 		return g
@@ -255,7 +255,7 @@ func sameLineageRecord(a, b port.SessionLineageRecord) bool {
 //nolint:gocyclo // The bounded ancestry proof keeps every fail-closed check at the projection gate.
 func (t *inspectTool) proveScope(ctx context.Context, root *session.Session, claim scopeClaim) (*session.Session, lineageNode, error) {
 	reader, ok := t.store.(port.SessionLineageReader)
-	if !ok || claim.RootFingerprint != t.expectedFingerprint || claim.ID == root.ID {
+	if !ok || !port.SupportsSessionLineage(t.store) || claim.RootFingerprint != t.expectedFingerprint || claim.ID == root.ID {
 		return nil, lineageNode{}, errors.New("scope handle is stale or inaccessible")
 	}
 	id, incarnation := claim.ID, session.IncarnationID(claim.Incarnation)

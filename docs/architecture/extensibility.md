@@ -25,16 +25,15 @@ allocation and reaping and leaves existing managed data for explicit inspection 
 removal. Managed mode is available on Linux and macOS; other platforms must use
 `system` mode. See [ADR 0281](../adr/0281-managed-temporary-command-leases.md).
 
-**Portable memory capabilities.** `tool.MemoryStore` remains the six-method base
-contract. `tool.MemoryLifecycleStore` is an optional additive capability for opaque
-versions, inspection, tombstones, and compensating undo. Consumers register the
-portable `engine/adapter/memorytools` base family for every store and its lifecycle
-family only when that interface is implemented. Remote adapters may implement both;
-an old driver still serves ordinary operations and operator-profile reads through the
-original RPCs, while unsupported lifecycle mutations fail visibly instead of falling
-back to unversioned deletion. `prompt.OperatorProfileSource` is a separate
+**Portable memory contract.** `tool.MemoryStore` is one mandatory lifecycle/CAS
+contract: create-only or exact-version Remember, Inspect, Recall, List, exact-version
+Forget, Index, Search, and exact-version Undo. Portable
+`engine/adapter/memorytools` bodies register the same six model-facing tools for
+every store. Remote adapters must negotiate the exact current driver contract
+before composition; old/base-only peers are rejected rather than receiving
+unversioned writes or deletes. `prompt.OperatorProfileSource` is a separate
 consumer-defined read seam, so an embedding can supply live user facts without
-adopting the file adapter or the lifecycle capability.
+adopting the file adapter.
 
 **MCP client** (`internal/adapter/mcp`) — remote tools register here. The
 transport is **streaming-HTTP only** (the project's hard constraint): the

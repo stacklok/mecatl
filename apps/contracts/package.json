@@ -1,0 +1,27 @@
+{
+  "name": "@mecatl-studio/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./generated": "./src/generated/index.ts",
+    "./query": "./src/generated/@tanstack/react-query.gen.ts",
+    "./client": "./src/generated/client.gen.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "generate": "openapi-ts",
+    "test": "node --input-type=module --eval \"await import('./src/index.ts')\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.103.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
+    "typescript": "6.0.3"
+  }
+}

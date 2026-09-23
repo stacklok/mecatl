@@ -2,8 +2,6 @@ package jsonlstore
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -193,12 +191,19 @@ func TestLineageWriterTouchesOnlyAffectedPartitions(t *testing.T) {
 	}
 }
 
-func TestLineageLegacyGlobalIndexNeverBecomesAQueryFallback(t *testing.T) {
-	st, err := New(t.TempDir())
-	if err != nil {
+func TestLineageOldNamespaceNeverBecomesAQueryFallback(t *testing.T) {
+	dir := t.TempDir()
+	oldDir := filepath.Join(dir, "sid-v1", ".session-inventory")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(st.legacyLineageIndexPath(), []byte(`{"v":"session-lineage-json/1","records":[]}`), 0o600); err != nil {
+	oldPath := filepath.Join(oldDir, ".session-lineage.json")
+	oldBytes := []byte(`{"v":"session-lineage-json/1","records":[]}`)
+	if err := os.WriteFile(oldPath, oldBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := New(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	root := lineageTestSession(t, "root", session.SessionKindMain, session.SessionRelationship{})
@@ -224,9 +229,13 @@ func TestLineageLegacyGlobalIndexNeverBecomesAQueryFallback(t *testing.T) {
 	if got := loaded.Conversation.Messages; len(got) != 1 || got[0].Text != "newest snapshot" {
 		t.Fatalf("loaded messages = %#v, want newest snapshot", got)
 	}
-	_, err = st.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10})
-	if !errors.Is(err, errLineagePartitionIncomplete) {
-		t.Fatalf("ReadSessionLineage error = %v, want %v", err, errLineagePartitionIncomplete)
+	result, err := st.ReadSessionLineage(t.Context(), port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10})
+	if err != nil || len(result.Records) != 1 {
+		t.Fatalf("ReadSessionLineage = %+v, %v", result, err)
+	}
+	got, readErr := os.ReadFile(oldPath)
+	if readErr != nil || !bytes.Equal(got, oldBytes) {
+		t.Fatalf("old lineage changed: bytes=%q err=%v", got, readErr)
 	}
 }
 
@@ -404,77 +413,6 @@ func TestLineageRecoverySettlesHistoricalAndReparentedPartitions(t *testing.T) {
 	for _, entry := range entries {
 		if filepath.Ext(entry.Name()) == ".dirty" {
 			t.Fatalf("recovery left dirty partition %q", entry.Name())
-		}
-	}
-}
-
-func TestMigrateLegacyLineagePublishesCompleteTargetPartitions(t *testing.T) {
-	st, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := lineageTestSession(t, "legacy-root", session.SessionKindMain, session.SessionRelationship{})
-	child := lineageTestSession(t, "legacy-child", session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: root.ID, ParentIncarnation: root.Incarnation(), CallID: "legacy-call"})
-	data, err := json.Marshal(legacyLineageIndex{Format: legacyLineageIndexFormat, Records: []port.SessionLineageRecord{retainedLineageRecord(root), retainedLineageRecord(child)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(st.legacyLineageIndexPath(), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	query := port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10}
-	if _, err := st.ReadSessionLineage(t.Context(), query); err == nil {
-		t.Fatal("unmigrated legacy lineage unexpectedly readable")
-	}
-	if err := st.MigrateLegacyLineage(t.Context(), 1); err == nil {
-		t.Fatal("bounded migration accepted insufficient max work")
-	}
-	if _, err := os.Stat(st.legacyLineageIndexPath()); err != nil {
-		t.Fatalf("failed bounded migration removed legacy authority: %v", err)
-	}
-	if err := st.MigrateLegacyLineage(t.Context(), 100); err != nil {
-		t.Fatalf("MigrateLegacyLineage: %v", err)
-	}
-	got, err := st.ReadSessionLineage(t.Context(), query)
-	if err != nil || len(got.Records) != 2 || got.Records[0].ID != root.ID || got.Records[1].ID != child.ID {
-		t.Fatalf("migrated target = %+v, %v", got, err)
-	}
-	if _, err := os.Stat(st.legacyLineageIndexPath()); !os.IsNotExist(err) {
-		t.Fatalf("legacy index retained after complete migration: %v", err)
-	}
-}
-
-func TestMigrateLegacyLineageRetriesAfterInterruptedMarker(t *testing.T) {
-	st, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := lineageTestSession(t, "retry-root", session.SessionKindMain, session.SessionRelationship{})
-	child := lineageTestSession(t, "retry-child", session.SessionKindSubagent, session.SessionRelationship{ParentSessionID: root.ID, ParentIncarnation: root.Incarnation(), CallID: "retry-call"})
-	data, err := json.Marshal(legacyLineageIndex{Format: legacyLineageIndexFormat, Records: []port.SessionLineageRecord{retainedLineageRecord(root), retainedLineageRecord(child)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(st.legacyLineageIndexPath(), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(st.lineageMigrationPath(), []byte("incomplete\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	query := port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10}
-	if _, err := st.ReadSessionLineage(t.Context(), query); err == nil {
-		t.Fatal("interrupted migration marker did not fail reads closed")
-	}
-	if err := st.MigrateLegacyLineage(t.Context(), 100); err != nil {
-		t.Fatalf("retry migration: %v", err)
-	}
-	got, err := st.ReadSessionLineage(t.Context(), query)
-	if err != nil || len(got.Records) != 2 || got.Records[0].ID != root.ID || got.Records[1].ID != child.ID {
-		t.Fatalf("retry did not converge: %+v, %v", got, err)
-	}
-	for _, path := range []string{st.lineageMigrationPath(), st.legacyLineageIndexPath()} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("migration authority %q remained after convergence: %v", path, err)
 		}
 	}
 }

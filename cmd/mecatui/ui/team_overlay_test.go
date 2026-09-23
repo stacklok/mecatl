@@ -223,7 +223,7 @@ func TestAgentsMidRunKeysDriveOverlayNotInput(t *testing.T) {
 	}
 }
 
-// TestTeamOverlaySanitizesMemberContent locks the sanitizeTerminal wrappers on
+// TestTeamOverlaySanitizesMemberContent locks the terminaltext.Sanitize wrappers on
 // the LIVE /team overlay: member content is CLAUDE.md-trust-class (it flows from
 // TeamMsg, which a member model emits), so a member NAME or tool Detail carrying
 // an escape sequence must render inert (no raw 0x1b) in BOTH the roster and the
@@ -251,7 +251,7 @@ func TestTeamOverlaySanitizesMemberContent(t *testing.T) {
 	}
 	roster := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(roster, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the roster overlay; sanitizeTerminal not applied:\n%q", roster)
+		t.Errorf("raw ESC (0x1b) leaked into the roster overlay; terminaltext.Sanitize not applied:\n%q", roster)
 	}
 	if !strings.Contains(roster, "]0;pwnedscout") {
 		t.Errorf("sanitized member name not rendered as inert text in the roster:\n%q", roster)
@@ -262,7 +262,7 @@ func TestTeamOverlaySanitizesMemberContent(t *testing.T) {
 	m.team.member = evilName
 	focus := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(focus, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the focus pane; sanitizeTerminal not applied:\n%q", focus)
+		t.Errorf("raw ESC (0x1b) leaked into the focus pane; terminaltext.Sanitize not applied:\n%q", focus)
 	}
 	if !strings.Contains(focus, "]0;pwnedscout") {
 		t.Errorf("sanitized member name not rendered as inert text in the focus pane:\n%q", focus)

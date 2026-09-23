@@ -63,17 +63,11 @@ func writeOperatorSteerFile(t *testing.T, value string) string {
 	return path
 }
 
-// steerCapsFromBuild creates a session against the built Service via the gRPC
-// CreateSession handler and returns the echoed ServerCapabilities — the SAME
-// projection a real client reads (mirrors postureEchoFromBuild).
+// steerCapsFromBuild returns the canonical deployment-wide compatibility
+// capabilities a real client reads.
 func steerCapsFromBuild(t *testing.T, built *Built) *mecatlv1.ServerCapabilities {
 	t.Helper()
-	resp, err := server.NewHarnessServer(built.Service).CreateSession(context.Background(),
-		&mecatlv1.CreateSessionRequest{})
-	if err != nil {
-		t.Fatalf("CreateSession: %v", err)
-	}
-	return resp.GetCapabilities()
+	return built.Service.CompatibilityInfo(context.Background()).GetCapabilities()
 }
 
 // TestSteer_EnabledByDefaultEndToEnd is AC6.1: with steer enabled (the DEFAULT —

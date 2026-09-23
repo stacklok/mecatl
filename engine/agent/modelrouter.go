@@ -300,17 +300,17 @@ func runModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest, 
 	switch stop {
 	case session.StopError:
 		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
-			return "", sess.Usage, reason, false
+			return "", sess.UsageFor(session.UsageKindMain), reason, false
 		}
-		return "", sess.Usage, RouterMissClassifierError, false
+		return "", sess.UsageFor(session.UsageKindMain), RouterMissClassifierError, false
 	case session.StopCancelled:
 		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
-			return "", sess.Usage, reason, false
+			return "", sess.UsageFor(session.UsageKindMain), reason, false
 		}
-		return "", sess.Usage, RouterMissCancelled, false
+		return "", sess.UsageFor(session.UsageKindMain), RouterMissCancelled, false
 	}
 	cat, reason, catOK := parseRouterVerdict(final, req.Categories)
-	return cat, sess.Usage, reason, catOK
+	return cat, sess.UsageFor(session.UsageKindMain), reason, catOK
 }
 
 func modelRouterContextMiss(callerCtx, operationCtx context.Context) string {

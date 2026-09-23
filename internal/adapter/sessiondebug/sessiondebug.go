@@ -223,7 +223,7 @@ type pendingAskEvidence struct {
 }
 
 func (t *inspectTool) statusView(ctx context.Context, s *session.Session, scope string) statusEvidence {
-	out := statusEvidence{View: "status", Scope: scope, State: s.State, Kind: s.Kind, Limits: s.Limits, LatestRunCounters: s.Counters, SnapshotCumulativeUsage: s.Usage, Lifetime: t.lifetimeView(ctx, s.ID), CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
+	out := statusEvidence{View: "status", Scope: scope, State: s.State, Kind: s.Kind, Limits: s.Limits, LatestRunCounters: s.Counters, SnapshotCumulativeUsage: s.UsageFor(session.UsageKindMain), Lifetime: t.lifetimeView(ctx, s.ID), CreatedAt: s.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
 	if scope == rootScope {
 		out.Target = s.ID
 	}

@@ -119,8 +119,8 @@ func TestFoldEqualsSnapshotLoad(t *testing.T) {
 		t.Fatalf("conversation mismatch:\n folded=%+v\n  snap=%+v", folded.Conversation.Messages, snap.Conversation.Messages)
 	}
 	// MUST round-trip: cumulative Usage (folded sums per-run EvResult; snap persists it).
-	if folded.Usage != snap.Usage {
-		t.Fatalf("usage mismatch: folded=%+v snap=%+v", folded.Usage, snap.Usage)
+	if folded.UsageFor(session.UsageKindMain) != snap.UsageFor(session.UsageKindMain) {
+		t.Fatalf("usage mismatch: folded=%+v snap=%+v", folded.UsageFor(session.UsageKindMain), snap.UsageFor(session.UsageKindMain))
 	}
 	// MUST round-trip: terminal State + recorded stop reason.
 	if folded.State != snap.State {

@@ -77,6 +77,7 @@ func (m Model) applyApprovalSurfaceIntent(intent surfaceIntent) (model tea.Model
 	switch intent := intent.(type) {
 	case approvalResolvedIntent:
 		m.conv.addNotice(intent.notice)
+		m.notifyHookPermissionResult(intent.askID)
 		cmd := (&m).approvalSendCmd(intent.askID, intent.verdict)
 		model, cmd, stopSurfaceDispatch = m.finishApprovalIntent(intent.advance, intent.resume, cmd)
 		return model, cmd, true, stopSurfaceDispatch
@@ -102,6 +103,12 @@ func (m Model) finishApprovalIntent(advance approvalAdvance, resume phase, cmd t
 		// Its next frame must establish fresh hit bounds.
 		m.hits.clear()
 		m.metrics.clear()
+		// The promoted ask is only NOW visible and actionable. A main ask that
+		// arrived behind a background-child head was queued silently, so without
+		// this the host never learns the main session wants attention.
+		if s := approvalSurfaceFor(&m); s != nil {
+			m.notifyHookPermissionAsk(s.ask.AskID, s.ask.Reason)
+		}
 		return m, cmd, false
 	case approvalQueueDrained:
 		m.phase = resume
@@ -114,6 +121,35 @@ func (m Model) finishApprovalIntent(advance approvalAdvance, resume phase, cmd t
 	default:
 		return m, cmd, false
 	}
+}
+
+// notifyHookPermissionAsk emits the host hook's PermissionRequest for an ask
+// that has just become the VISIBLE head — the moment the agent is actually
+// blocked on a human for it.
+//
+// Head transition is the trigger, not arrival, because an ask that arrives
+// behind an already-open card is queued and the user cannot act on it yet;
+// emitting then would notify for something invisible and double-notify when it
+// is finally shown. Both entry points (first open, and promotion of a
+// successor) route through here so the child filter cannot drift between them:
+// only a MAIN-session ask counts, since a host drives terminal-level status
+// from the main loop and never from a surfaced subagent ask.
+func (m Model) notifyHookPermissionAsk(askID, reason string) {
+	if m.deps.AgentHook == nil || askID == "" || isChildAsk(askID, m.sessionID) {
+		return
+	}
+	m.deps.AgentHook.PermissionRequest(m.deps.Ctx, m.sessionID, reason)
+}
+
+// notifyHookPermissionResult clears the host's waiting state as soon as the
+// operator answers a visible main-session ask. The resumed run may not emit a
+// new turn.start before doing more work, so waiting for Start would leave the
+// host stuck on PermissionRequest until the terminal Stop.
+func (m Model) notifyHookPermissionResult(askID string) {
+	if m.deps.AgentHook == nil || askID == "" || isChildAsk(askID, m.sessionID) {
+		return
+	}
+	m.deps.AgentHook.PermissionResult(m.deps.Ctx, m.sessionID)
 }
 
 // applyPermissionAsk reduces a PermissionAskMsg. The surface owns its FIFO and
@@ -132,6 +168,9 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 		m.phase = phaseAwaitingApproval
 		m.activeTool = ""
 		m.toolProgress = ""
+		// Host hook PermissionRequest: this ask became the visible head, so the
+		// agent is now blocked on a human for it.
+		m.notifyHookPermissionAsk(msg.AskID, msg.Reason)
 	}
 	return m.afterEvent()
 }

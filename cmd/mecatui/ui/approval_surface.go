@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -651,7 +652,7 @@ type shellAskArgs struct {
 // non-plan ask's args (issue #488). ok is false for plan asks and diff-capable
 // tools (their surfaces are the plan-review view and the in-modal diff).
 //
-// The RAW tier is the VERBATIM wire args text — sanitizeTerminal(ask.Args),
+// The RAW tier is the VERBATIM wire args text — terminaltext.Sanitize(ask.Args),
 // nothing else (no prettyJSON, no re-indent): raw is the escape hatch that can
 // never lie, "exactly what am I approving". The PRETTY tier is the readable
 // decode: a Shell ask's {"command": …} decodes into the command TEXT (real
@@ -666,12 +667,12 @@ func askArgsContent(th theme.Theme, ask pendingAsk) (pretty string, raw string, 
 	if isPlanAsk(ask.Tool) || isDiffCapableAskTool(ask.Tool) {
 		return "", "", false
 	}
-	raw = sanitizeTerminal(strings.TrimSpace(ask.Args))
+	raw = terminaltext.Sanitize(strings.TrimSpace(ask.Args))
 	pretty = prettyJSON(ask.Args)
 	if ask.Tool == "Shell" {
 		var args shellAskArgs
 		if err := json.Unmarshal([]byte(strings.TrimSpace(ask.Args)), &args); err == nil && args.Command != "" {
-			pretty = sanitizeTerminal(args.Command)
+			pretty = terminaltext.Sanitize(args.Command)
 			if args.TimeoutMS != 0 {
 				pretty += "\n" + th.Style("muted").Render(fmt.Sprintf("timeout_ms: %d", args.TimeoutMS))
 			}
@@ -708,7 +709,7 @@ func wrapAskArgs(s string, w int) string {
 // current rendered content width. Reasons are independent metadata: never parse
 // or reconstruct the child ask's Args to display them.
 func wrapApprovalReason(reason string, width int) string {
-	return wrapAskArgs(sanitizeTerminal(reason), width)
+	return wrapAskArgs(terminaltext.Sanitize(reason), width)
 }
 
 // segment that is NOT the last of its source line — "this logical line
@@ -843,7 +844,7 @@ func (s *approvalSurface) permissionModalBodyParts(width, height int) (body stri
 	// sanitized inside prettyJSON; the diff path sanitizes internally.)
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
-	b.WriteString(th.Style("toolName").Render(sanitizeTerminal(ask.Tool)) + "\n")
+	b.WriteString(th.Style("toolName").Render(terminaltext.Sanitize(ask.Tool)) + "\n")
 	// Prefer a concrete diff for Edit/Write. It is always capped to the rows left
 	// above the pinned actions; ctrl+t opens the complete, scrollable diff in the
 	// approval-details view. Fall back to pretty JSON for any other tool, or when
@@ -1169,10 +1170,10 @@ func (s *approvalSurface) openPlan(width, height int) {
 	}
 	var head strings.Builder
 	head.WriteString(s.deps.theme.Style("askTitle").Render(title) + "\n")
-	head.WriteString(s.deps.theme.Style("toolName").Render(sanitizeTerminal(s.ask.Tool)) + "\n")
+	head.WriteString(s.deps.theme.Style("toolName").Render(terminaltext.Sanitize(s.ask.Tool)) + "\n")
 	modelLine := "execute model: session default model"
 	if s.modelID != "" {
-		modelLine = fmt.Sprintf("plan model: %s · execute model: session default model", sanitizeTerminal(s.modelID))
+		modelLine = fmt.Sprintf("plan model: %s · execute model: session default model", terminaltext.Sanitize(s.modelID))
 	}
 	head.WriteString(s.deps.theme.Style("muted").Render(modelLine) + "\n")
 	var body string
@@ -1289,9 +1290,9 @@ func (s *approvalSurface) openArgs(width, height int) {
 		return
 	}
 	previous, fresh := s.argsVP.YOffset(), !s.argsVPReady
-	title := "Ask args: " + sanitizeTerminal(s.ask.Tool)
+	title := "Ask args: " + terminaltext.Sanitize(s.ask.Tool)
 	if isDiffCapableAskTool(s.ask.Tool) {
-		title = "Approval details: " + sanitizeTerminal(s.ask.Tool)
+		title = "Approval details: " + terminaltext.Sanitize(s.ask.Tool)
 	}
 	if len(s.queue) > 0 {
 		title = fmt.Sprintf("%s (1 of %d)", title, len(s.queue)+1)
@@ -1372,7 +1373,7 @@ func planBodyFromArgs(rawArgs string) string {
 	if body == "" {
 		return ""
 	}
-	return sanitizeTerminal(strings.TrimRight(body, "\n"))
+	return terminaltext.Sanitize(strings.TrimRight(body, "\n"))
 }
 
 // approvalNotice renders the muted one-line verdict notice for a replayed

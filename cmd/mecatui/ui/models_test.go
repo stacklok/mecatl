@@ -145,7 +145,7 @@ func TestRunModelsOpensPicker(t *testing.T) {
 	}
 }
 
-// TestModelsPanelSanitizesNames locks the sanitizeTerminal wrappers in the /models
+// TestModelsPanelSanitizesNames locks the terminaltext.Sanitize wrappers in the /models
 // picker against deletion: open the picker with a model whose id + display_name +
 // provider_id embed ANSI/OSC escapes (the live OpenRouter catalog is an UNTRUSTED
 // source now), feed the inventory, render, and assert no raw ESC (0x1b) survives.
@@ -165,10 +165,10 @@ func TestModelsPanelSanitizesNames(t *testing.T) {
 
 	// stripANSIstr removes the LEGITIMATE theme styling escapes; what remains must
 	// carry NO raw ESC — if any survives, it came from the server-derived model
-	// id/display_name/provider_id and sanitizeTerminal was not applied.
+	// id/display_name/provider_id and terminaltext.Sanitize was not applied.
 	out := stripANSIstr(m.View().Content)
 	if strings.ContainsRune(out, 0x1b) {
-		t.Errorf("raw ESC (0x1b) leaked into the rendered picker; sanitizeTerminal not applied:\n%q", out)
+		t.Errorf("raw ESC (0x1b) leaked into the rendered picker; terminaltext.Sanitize not applied:\n%q", out)
 	}
 	// The sanitized fields still render as inert text (ESC stripped, body kept):
 	// the id-fallback label, the provider segment, and the display-name label.
@@ -183,7 +183,7 @@ func TestModelsPanelSanitizesNames(t *testing.T) {
 	m = typeFilter(t, m, "router")
 	out = stripANSIstr(m.View().Content)
 	if strings.ContainsRune(out, 0x1b) {
-		t.Errorf("raw ESC leaked into the FILTERED picker; sanitizeTerminal not applied:\n%q", out)
+		t.Errorf("raw ESC leaked into the FILTERED picker; terminaltext.Sanitize not applied:\n%q", out)
 	}
 }
 
@@ -292,7 +292,7 @@ func TestModelsCarryoverKeepsVisibleProjection(t *testing.T) {
 	m.conv.startAssistant()
 	m.conv.appendAssistant("visible assistant")
 	m.refreshView()
-	if len(m.rend.blockCache) == 0 || len(m.rend.blockMD) == 0 {
+	if len(m.rend.blocks.rendered) == 0 || len(m.rend.blocks.markdown) == 0 {
 		t.Fatal("precondition: visible conversation should populate renderer caches")
 	}
 

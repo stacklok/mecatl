@@ -14,7 +14,7 @@ import (
 // TestCallerIdentity_Scenario2_InternalGoroutinesRunAsSystem are exported here.
 var (
 	StartChildGCForTest                = startChildGC
-	StartMemoryConsolidationForTest    = startMemoryConsolidation
+	StartMemoryConsolidatorForTest     = startMemoryConsolidator
 	StartUserModelConsolidationForTest = startUserModelConsolidation
 	StartStaleSessionReconcileForTest  = startStaleSessionReconcile
 )

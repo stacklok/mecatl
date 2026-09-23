@@ -17,9 +17,8 @@
     method func (*Session).Complete() error
     method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
     method func (*Session).Fail() error
-    method func (*Session).FailedStepRetryPending() (RetryDisposition, StreamProgress, bool)
-    method func (*Session).FailureMetadata() (RetryDisposition, StreamProgress)
-    method func (*Session).FailurePermanence() bool
+    method func (*Session).FailedStepRetryPending() (RetryMetadata, bool)
+    method func (*Session).FailureMetadata() RetryMetadata
     method func (*Session).Incarnation() IncarnationID
     method func (*Session).Interrupt() error
     method func (*Session).InterruptAuthorization() ([]ToolResult, error)
@@ -32,8 +31,7 @@
     method func (*Session).PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool)
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
-    method func (*Session).RecordFailureMetadata(disposition RetryDisposition, progress StreamProgress) error
-    method func (*Session).RecordFailurePermanence(permanent bool) error
+    method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
     method func (*Session).RecordLastError(cause string) error
     method func (*Session).RecordTitleAttempt(attempt TitleAttempt)
     method func (*Session).RecordTitleSourcePrompt(text string)
@@ -49,9 +47,8 @@
     method func (*Session).Reopen() error
     method func (*Session).ReplaceHistory(messages []Message) error
     method func (*Session).ReplaceHistoryAtBoundary(messages []Message) error
-    method func (*Session).ResetUsage() error
     method func (*Session).RestoreAuthorizationClaim(pending PendingAuthorization) error
-    method func (*Session).RestoreFailedStepRetryPending(disposition RetryDisposition, progress StreamProgress) error
+    method func (*Session).RestoreFailedStepRetryPending(metadata RetryMetadata) error
     method func (*Session).RestoreIncarnation(inc IncarnationID) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
     method func (*Session).RestoreSessionMetadata(kind SessionKind, rel SessionRelationship) error
@@ -70,6 +67,7 @@
     method func (*Session).TitleAttempts() []TitleAttempt
     method func (*Session).TitleSourcePrompts() []string
     method func (*Session).TokenUsageSnapshot() map[UsageKind]TokenUsage
+    method func (*Session).UsageFor(kind UsageKind) Usage
     method func (*Session).ValidateAuthorizationState() error
     method func (Authority).Clone() Authority
     method func (Authority).Valid() bool
@@ -83,6 +81,7 @@
     method func (PendingAsk).Origin() AskOrigin
     method func (PendingAuthorization).Clone() PendingAuthorization
     method func (RetryDisposition).Valid() bool
+    method func (RetryMetadata).Valid() bool
     method func (State).IsTerminal() bool
     method func (StreamProgress).Valid() bool
     method func (Usage).Add(other Usage) Usage
@@ -337,7 +336,7 @@ type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string
 type EnvironmentRef struct{Kind EnvironmentKind; ID string; Revision string}
-type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Authorization *AuthorizationPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Usage *Usage; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Authorization *AuthorizationPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
 type EventType string
 type ExternalAuthorization struct{ID string; DisplayName string; Binding AuthorizationBinding; ExpiresAt time.Time}
 type ExternalBinding string
@@ -361,12 +360,13 @@ type Principal struct{Issuer string; Subject string; GrantType GrantType; Name s
 type RequestManifestPayload struct{Provider string "json:\"provider,omitempty\""; Model string "json:\"model,omitempty\""; ReasoningEffort string "json:\"reasoning_effort,omitempty\""; ContextWindow int "json:\"context_window,omitempty\""; ToolNames []string "json:\"tool_names\""; ToolDecisions []RequestToolDecision "json:\"tool_decisions\""; AdvertisedToolSchemaBytes int "json:\"advertised_tool_schema_bytes\""; MessageCount int "json:\"message_count\""; MessageBytes int "json:\"message_bytes\""; Prompt []RequestPromptComponent "json:\"prompt\""}
 type RequestPromptComponent struct{Kind string "json:\"kind\""; Provenance string "json:\"provenance\""; Bytes int "json:\"bytes\""}
 type RequestToolDecision struct{Name string "json:\"name\""; Source string "json:\"source\""; Decision string "json:\"decision\""}
-type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Permanent bool; Disposition RetryDisposition; Progress StreamProgress}
+type ResultPayload struct{Stop StopReason; Text string; Usage Usage; Error string; Disposition RetryDisposition; Progress StreamProgress}
 type RetryDisposition uint8
+type RetryMetadata struct{Disposition RetryDisposition; Progress StreamProgress}
 type Role string
 type RoutingDecision struct{Backend string; ClassifierModel string; CandidateCategory string; CandidateModel string; Confidence *float64; MinimumConfidence *float64; Outcome string; ConsecutiveMisses int; MissLimit int; BreakerOpen bool}
 type SchedulePayload struct{ScheduleName string; FireID string; SessionID SessionID; Kind string; Stop StopReason; Err string}
-type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; Usage Usage; EnvironmentRef EnvironmentRef; Placement PlacementMetadata; ExternalBinding ExternalBinding; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; TitleGeneration TitleGenerationState; TitleRevision uint64; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
+type Session struct{ID SessionID; State State; Mode PermissionMode; Conversation *Conversation; Limits Limits; Counters Counters; EnvironmentRef EnvironmentRef; Placement PlacementMetadata; ExternalBinding ExternalBinding; Profile string; ProviderID string; ModelID string; ReasoningEffort string; DebugMCPServers []string; DebugMCPTools []string; DebugTargetFingerprint string; Title string; TitleProvenance TitleProvenance; TitleGeneration TitleGenerationState; TitleRevision uint64; Owner *Principal; Authority Authority; Kind SessionKind; Relationship SessionRelationship; CreatedAt time.Time}
 type SessionID string
 type SessionKind string
 type SessionRelationship struct{ScheduleName string "json:\"schedule_name,omitempty\""; OriginSessionID SessionID "json:\"origin_session_id,omitempty\""; OriginIncarnation IncarnationID "json:\"origin_incarnation,omitempty\""; ParentSessionID SessionID "json:\"parent_session_id,omitempty\""; ParentIncarnation IncarnationID "json:\"parent_incarnation,omitempty\""; CallID ToolCallID "json:\"call_id,omitempty\""; BranchIndex *int "json:\"branch_index,omitempty\""; TeamID string "json:\"team_id,omitempty\""; MemberName string "json:\"member_name,omitempty\""; DebugTargetID SessionID "json:\"debug_target_id,omitempty\""; DebugTargetIncarnation IncarnationID "json:\"debug_target_incarnation,omitempty\""}

@@ -4,6 +4,8 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -83,9 +85,10 @@ func leaseExclusionSpecs() {
 
 				// Drive to the Write ask: the run parks AWAITING, so replica A holds the
 				// session lease for the duration. DO NOT approve.
-				askID, _, driveErr := driveToWriteAsk(ctx, streamA, 90*time.Second)
+				runID, askID, _, driveErr := driveToWriteAsk(ctx, streamA, 90*time.Second)
 				gomega.Expect(driveErr).NotTo(gomega.HaveOccurred(),
 					"drive replica A to the Write permission ask\n--- mecated log tail ---\n"+localA.LogTail(4096))
+				expectNonEmpty(runID, "the exact run id on replica A", localA.LogTail(4096))
 				expectNonEmpty(askID, "a Write permission ask on replica A", localA.LogTail(4096))
 
 				// --- Replica B: a SECOND live mecated sharing A's store + lease dir. ---
@@ -113,20 +116,45 @@ func leaseExclusionSpecs() {
 				gomega.Expect(localA.Kill()).To(gomega.Succeed(), "SIGKILL replica A")
 				killedA = true
 
-				// B can now take over the parked session through the restart-safe approval
-				// path. Denial avoids mutating the workspace; a successful SSE drain proves
-				// the lease was acquired and the resumed run reached terminal state.
-				gomega.Eventually(func() bool {
-					takeoverCtx, c := context.WithTimeout(ctx, 30*time.Second)
+				// B can now take over the parked session through the restart-safe exact-run
+				// control. Only a lease conflict is retryable; a bad route or request fails
+				// immediately with its HTTP status and body intact.
+				gomega.Eventually(func() error {
+					takeoverCtx, c := context.WithTimeout(ctx, 10*time.Second)
 					defer c()
-					stream, aerr := harness.ApproveOverHTTP(takeoverCtx, localB.HTTPAddr(), string(sessionID), askID, "deny")
-					if aerr != nil {
-						return false
+					_, resolveErr := harness.ResolveAskOverHTTP(takeoverCtx, localB.HTTPAddr(), string(sessionID), runID, askID, "deny")
+					if resolveErr == nil {
+						return nil
 					}
-					_, derr := harness.DrainSSE(stream)
-					return derr == nil
-				}, 30*time.Second, 1*time.Second).Should(gomega.BeTrue(),
-					"replica B could not resume the parked run after A died (generation flock should auto-release on death)\n--- B log ---\n"+localB.LogTail(4096))
+					var statusErr *harness.HTTPStatusError
+					if errors.As(resolveErr, &statusErr) && statusErr.Code == "session_leased_elsewhere" {
+						return resolveErr
+					}
+					return gomega.StopTrying("terminal resolve-ask failure").Wrap(resolveErr)
+				}, 30*time.Second, 1*time.Second).Should(gomega.Succeed(),
+					"replica B could not resolve the parked run after A died\n--- B log ---\n"+localB.LogTail(4096))
+
+				// The ACK proves lease admission. Observe the detached resumed run through
+				// the durable event replay rather than treating the control response as SSE.
+				gomega.Eventually(func() error {
+					watchCtx, c := context.WithTimeout(ctx, 10*time.Second)
+					defer c()
+					replay, replayErr := harness.ReplaySessionEventsOverHTTP(watchCtx, localB.HTTPAddr(), string(sessionID))
+					if replayErr != nil {
+						return replayErr
+					}
+					events, parseErr := parseSSEEvents(replay)
+					if parseErr != nil {
+						return gomega.StopTrying("malformed durable event replay").Wrap(parseErr)
+					}
+					for _, ev := range events {
+						if ev.RunID == runID && ev.Type == "result" {
+							return nil
+						}
+					}
+					return fmt.Errorf("run %s has no terminal result yet", runID)
+				}, 30*time.Second, 500*time.Millisecond).Should(gomega.Succeed(),
+					"replica B admitted the control but the resumed run did not complete\n--- B log ---\n"+localB.LogTail(4096))
 				gomega.Expect(time.Since(killedAt)).To(gomega.BeNumerically("<", leaseTTL/4),
 					"crash takeover did not occur materially before the configured lease TTL %s", leaseTTL)
 			})

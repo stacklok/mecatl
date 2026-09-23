@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-27
 - Scope: provider stream semantics, retry classification, durable failure metadata, failed-step retry APIs, and mecatui recovery
-- Supersedes: ADR 0203 for retry classification and client retry behavior; its compatibility fields remain supported
+- Supersedes: ADR 0203 for retry classification and client retry behavior
 
 ## Context
 

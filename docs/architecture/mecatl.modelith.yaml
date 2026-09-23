@@ -28,7 +28,7 @@ entities:
   Session:
     definition: >
       The central aggregate and unit of work: a stateful conversation between a
-      principal and a model, with its own workspace, usage accounting, and
+      principal and a model, with an `Environment` binding, usage accounting, and
       limits. A `Session` is a state machine (idle, running, awaiting, completed,
       cancelled, failed) and is bound to exactly one `Provider` and `Model` for
       its lifetime. It survives process restarts when backed by a store.
@@ -37,10 +37,14 @@ entities:
         cardinality: "1:1"
         ownership: owned
         role: records
-      - entity: Workspace
+      - entity: Environment
         cardinality: "1:1"
-        ownership: owned
-        role: scoped to
+        ownership: referenced
+        role: bound to
+        note: >
+          The `Session` persists the exact environment identity; the host
+          reattaches its capabilities before a `Run`. Binding to an
+          `Environment` does not imply exclusive ownership of its files.
       - entity: Provider
         cardinality: "n:1"
         ownership: referenced
@@ -225,6 +229,10 @@ entities:
         cardinality: "n:1"
         ownership: referenced
         role: invokes
+      - entity: Environment
+        cardinality: "n:1"
+        ownership: referenced
+        role: executes with capabilities from
       - entity: ToolResult
         cardinality: "1:1"
         ownership: owned
@@ -250,20 +258,123 @@ entities:
           A `ToolResult` belongs to exactly one `ToolCall` and is recorded back
           into the `Conversation`.
 
+  Environment:
+    definition: >
+      The binding between a `Workspace`, a session-scoped `ReadLedger`, and an
+      optional `CommandRunner`. The host assembles these capabilities and passes
+      them together to each `ToolCall`. The binding defines how file access and
+      command execution reach the same logical files, even when their adapters
+      or physical locations differ. A shared directory or mount needs no copy
+      synchronization. A binding using separate copies would need an explicit
+      synchronization mechanism with conflict and failure handling; that mechanism
+      is not implemented by the Environment value itself. Local environments use
+      shared files; Redis-backed workspaces have no command runner today.
+    relationships:
+      - entity: Workspace
+        cardinality: "n:1"
+        ownership: referenced
+        role: provides file access through
+        note: Multiple environments can reference the same backing files.
+      - entity: ReadLedger
+        cardinality: "1:1"
+        ownership: referenced
+        role: carries read evidence in
+      - entity: CommandRunner
+        cardinality: "1:1"
+        ownership: referenced
+        role: optionally provides command execution through
+        note: >
+          Optional relationship: one runner when command execution is available,
+          none otherwise. The 1:1 cardinality describes the present case; it
+          does not require every environment to provide command execution.
+    invariants:
+      - id: environment-binding-coherent
+        statement: >
+          When a `CommandRunner` is present, the binding must make successful
+          `Workspace` changes visible to subsequent commands and completed command
+          changes visible to subsequent file operations. Matching root-path
+          strings alone does not establish that both capabilities reach the same
+          files. This is a binding contract, not a guarantee of atomicity against
+          concurrent external writers.
+      - id: environment-binding-failure-visible
+        statement: >
+          An unavailable binding, or a synchronization failure in a binding that
+          requires synchronization, must be reported rather than silently using
+          unrelated or stale copies. Establishing and maintaining the connection
+          belongs to the host's binding implementation, not the agent loop or
+          individual file `Tools`.
+      - id: environment-runner-optional
+        statement: >
+          An `Environment` can provide file access without a `CommandRunner`.
+          File storage does not imply command execution; absent capabilities
+          are omitted from the toolset or reported as unavailable. A no-filesystem
+          environment supplies a workspace that refuses file access and has no
+          command runner.
+
   Workspace:
     definition: >
-      The filesystem scope of a `Session`, rooted at a single directory and
-      contained so that file `Tools` cannot escape it via symlinks or parent
-      traversal. One `Workspace` per `Session`.
+      A logical file namespace exposed through a backend-independent port.
+      File `Tools` use it for content, metadata, search, and versioned mutations;
+      an optional namespace capability adds listing, copying, moving, and removal.
+      An adapter can serve local files, Redis-backed files, memory, or editor
+      buffers. Its root belongs to that backend and need not be a directory on
+      the harness host. Multiple `Sessions` can share the same backing files;
+      their read evidence remains separate in each session's `ReadLedger`.
     invariants:
       - id: workspace-contained
         statement: >
-          File `Tools` cannot read or write outside the `Workspace` root, except
-          through explicitly granted read-only roots.
-      - id: workspace-shell-env-scrubbed
+          File access stays within the backend's namespace unless both the
+          backend supports the requested external access and policy authorizes
+          it. A posture cannot create a missing backend capability or turn a
+          virtual root into a host filesystem path. Local out-of-root serving
+          is operation-specific: Read, ListDir, Write, and Edit can serve
+          policy-authorized external absolute targets, while mutating namespace
+          operations and searches remain confined.
+      - id: workspace-tools-use-ports
         statement: >
-          Every agent-facing shell in a `Workspace` runs with provider
-          credentials and other secrets scrubbed from its environment.
+          Read, ListDir, Write, Edit, Copy, Move, Remove, Glob, and Grep use the
+          `Environment`'s `Workspace` capabilities. Their bodies do not select a
+          storage backend or fall back to host filesystem access. Unsupported
+          namespace operations return an explicit error.
+
+  ReadLedger:
+    definition: >
+      A session's evidence of the file versions it has read, stored independently
+      of the `Workspace` content backend. Read records a version; Edit and
+      overwrite-Write compare that evidence with the current version before a
+      conditional replacement. The ledger can be in memory or durable storage.
+    relationships:
+      - entity: Session
+        cardinality: "1:1"
+        ownership: referenced
+        role: records read evidence for
+    invariants:
+      - id: read-evidence-session-scoped
+        statement: >
+          Sharing backing files does not share read evidence between `Sessions`.
+          A new child session receives fresh evidence even when it uses the
+          parent's file namespace. A command changing a file does not count as
+          the model reading that file's new version.
+
+  CommandRunner:
+    definition: >
+      The optional command-execution port bound into an `Environment`. It runs
+      commands in a namespace selected by the host. Programs access files through
+      a filesystem they understand, such as a shared directory or mount; they do
+      not call the Workspace interface. The environment binding supplies that
+      connection. Binding a working directory does not by itself sandbox a
+      command's filesystem access.
+    invariants:
+      - id: command-runner-bound
+        statement: >
+          A `CommandRunner` is bound at construction. Shell uses the runner from
+          the live `Environment`; it does not select a different workspace per
+          call. An isolated child binding connects both file access and command
+          execution to the child namespace, never to the parent's files.
+      - id: command-runner-env-scrubbed
+        statement: >
+          Every agent-facing shell runs with provider credentials and other
+          secrets scrubbed from its process environment.
 
   Provider:
     definition: >
@@ -660,6 +771,43 @@ entities:
           untrusted input.
 
 scenarios:
+  - name: File tools and commands share a local binding
+    actors: [Principal, Operator]
+    steps:
+      - "The host binds a local `Workspace` and `CommandRunner` to shared files in an `Environment`, with a session-scoped `ReadLedger`."
+      - "An authorized Write creates a source file through the `Workspace`; a subsequent Shell command sees that file through its bound runner."
+      - "The command runs with a secret-scrubbed process environment and modifies the source file. The next Read sees the modification and records its version."
+    invariants_touched:
+      [environment-binding-coherent, workspace-tools-use-ports, command-runner-bound, command-runner-env-scrubbed, read-evidence-session-scoped]
+
+  - name: Shared Redis files do not imply shared read evidence or a shell
+    actors: [Principal, Operator]
+    steps:
+      - "The host binds two `Sessions` for the same principal to Redis-backed files through separate `Environments`, each with its own `ReadLedger` and no `CommandRunner`."
+      - "The first session creates a file; ListDir and Read in the second session access it through that session's `Workspace`, without consulting the host filesystem."
+      - "The second session must read the file itself before Edit; the first session's read evidence does not authorize an overwrite."
+      - "Shell is unavailable because this binding has no runner connected to the Redis files."
+    invariants_touched:
+      [environment-runner-optional, workspace-tools-use-ports, workspace-contained, read-evidence-session-scoped]
+
+  - name: An isolated child keeps file access and execution together
+    actors: [Principal]
+    steps:
+      - "The host forks an `Environment` into an isolated child namespace with fresh read evidence."
+      - "The child's `Workspace` and any `CommandRunner` refer to the child's files. A command sees changes made through the child's file tools."
+      - "The parent's files and `ReadLedger` are unchanged by work in that isolated child."
+    invariants_touched:
+      [environment-binding-coherent, command-runner-bound, read-evidence-session-scoped]
+
+  - name: A separate-copy binding must expose synchronization failures
+    actors: [Operator]
+    steps:
+      - "This is a contract scenario for a future binding using separate copies, not a shipped synchronization feature. The binding implementation must define how the `Workspace` and `CommandRunner` exchange changes and handle conflicts."
+      - "Before a command can consume a file-tool change, the binding must make it visible in the execution filesystem. After a command changes files, it must make those changes visible before subsequent file operations."
+      - "If synchronization fails or encounters an unresolved conflict, the affected operation reports the failure rather than claiming success against stale copies."
+    invariants_touched:
+      [environment-binding-coherent, environment-binding-failure-visible]
+
   - name: A tool call pauses for approval and resumes
     actors: [Principal, Client]
     steps:

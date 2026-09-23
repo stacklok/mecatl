@@ -16,6 +16,19 @@ import (
 func fixture() (learning.ProposalPartition, learning.Candidate) {
 	return learning.ProposalPartition{Principal: "i\x00s", Project: "p"}, learning.Candidate{Kind: learning.CandidateProjectFact, Key: "project/fact", Value: "Use task test.", Description: "Test command", Evidence: []learning.EvidenceRef{{SessionID: session.SessionID("s"), Locator: learning.EvidenceMessage, Ordinal: 0, Digest: strings.Repeat("b", 64)}}}
 }
+func rememberCurrent(ctx context.Context, store tool.MemoryStore, entry tool.MemoryEntry) error {
+	record, found, err := store.Inspect(ctx, entry.Key)
+	if err != nil {
+		return err
+	}
+	expected := tool.MemoryCurrent{Exists: found}
+	if found {
+		expected.Version = record.Current.Version
+	}
+	_, err = store.Remember(ctx, entry, expected)
+	return err
+}
+
 func TestPromoteReconcileUndo(t *testing.T) {
 	ctx := context.Background()
 	repo := memproposal.New()
@@ -47,7 +60,7 @@ func TestCrashReconcile(t *testing.T) {
 	rs, _ := repo.StageBatch(ctx, p, strings.Repeat("c", 64), []learning.Candidate{c}, nil)
 	claimed, _ := repo.ClaimPromotion(ctx, p, rs[0].ID, rs[0].Version)
 	wctx := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Source: tool.MemorySource{ProposalID: string(rs[0].ID)}})
-	mem.RememberIfCurrent(wctx, tool.MemoryEntry{Key: c.Key, Value: c.Value, Description: c.Description}, tool.MemoryCurrent{})
+	mem.Remember(wctx, tool.MemoryEntry{Key: c.Key, Value: c.Value, Description: c.Description}, tool.MemoryCurrent{})
 	done, e := (memorypromotion.Promoter{Proposals: repo, Memory: mem}).Process(ctx, p, rs[0].ID, claimed.Version, memorypromotion.PolicyInput{})
 	if e != nil || done.Status != learning.ProposalPromoted {
 		t.Fatalf("reconcile %#v %v", done, e)
@@ -83,13 +96,13 @@ type racingMemory struct {
 	beforeCAS func(context.Context)
 }
 
-func (m *racingMemory) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+func (m *racingMemory) Remember(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	if m.beforeCAS != nil {
 		fn := m.beforeCAS
 		m.beforeCAS = nil
 		fn(ctx)
 	}
-	return m.Store.RememberIfCurrent(ctx, entry, expected)
+	return m.Store.Remember(ctx, entry, expected)
 }
 
 func stage(t *testing.T, repo *memproposal.Store, digest string, candidate learning.Candidate) (learning.ProposalPartition, learning.ProposalRecord) {
@@ -107,7 +120,7 @@ func TestProcessDeduplicatesWithoutWriting(t *testing.T) {
 	repo := memproposal.New()
 	memory := memmemory.New()
 	_, candidate := fixture()
-	if err := memory.RememberEntry(ctx, tool.MemoryEntry{Key: candidate.Key, Value: candidate.Value, Description: candidate.Description}); err != nil {
+	if err := rememberCurrent(ctx, memory, tool.MemoryEntry{Key: candidate.Key, Value: candidate.Value, Description: candidate.Description}); err != nil {
 		t.Fatal(err)
 	}
 	before, _, _ := memory.Inspect(ctx, candidate.Key)
@@ -129,7 +142,7 @@ func TestProcessKeepsReviewAndConflictOutOfMemory(t *testing.T) {
 		repo := memproposal.New()
 		memory := memmemory.New()
 		_, candidate := fixture()
-		if err := memory.RememberEntry(ctx, tool.MemoryEntry{Key: "project/other", Value: candidate.Value}); err != nil {
+		if err := rememberCurrent(ctx, memory, tool.MemoryEntry{Key: "project/other", Value: candidate.Value}); err != nil {
 			t.Fatal(err)
 		}
 		part, proposal := stage(t, repo, "e", candidate)
@@ -146,7 +159,7 @@ func TestProcessKeepsReviewAndConflictOutOfMemory(t *testing.T) {
 		memory := memmemory.New()
 		_, candidate := fixture()
 		explicit := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterUser, Origin: tool.MemoryOriginExplicit})
-		if err := memory.RememberEntry(explicit, tool.MemoryEntry{Key: candidate.Key, Value: "newer explicit value"}); err != nil {
+		if err := rememberCurrent(explicit, memory, tool.MemoryEntry{Key: candidate.Key, Value: "newer explicit value"}); err != nil {
 			t.Fatal(err)
 		}
 		part, proposal := stage(t, repo, "f", candidate)
@@ -182,7 +195,7 @@ func TestProcessDefersProcedureAndLosesMemoryCASRaceSafely(t *testing.T) {
 		part, proposal := stage(t, repo, "2", candidate)
 		memory.beforeCAS = func(ctx context.Context) {
 			explicit := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterUser, Origin: tool.MemoryOriginExplicit})
-			if err := memory.RememberEntry(explicit, tool.MemoryEntry{Key: candidate.Key, Value: "concurrent explicit value"}); err != nil {
+			if err := rememberCurrent(explicit, memory, tool.MemoryEntry{Key: candidate.Key, Value: "concurrent explicit value"}); err != nil {
 				t.Error(err)
 			}
 		}
@@ -217,14 +230,14 @@ type orderingMemory struct {
 	operations *[]string
 }
 
-func (m orderingMemory) RememberIfCurrent(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
+func (m orderingMemory) Remember(ctx context.Context, entry tool.MemoryEntry, expected tool.MemoryCurrent) (tool.MemoryRecord, error) {
 	*m.operations = append(*m.operations, "remember")
-	return m.Store.RememberIfCurrent(ctx, entry, expected)
+	return m.Store.Remember(ctx, entry, expected)
 }
 
-func (m orderingMemory) UndoLatest(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
+func (m orderingMemory) Undo(ctx context.Context, key string, expected tool.MemoryVersion) (tool.MemoryRecord, error) {
 	*m.operations = append(*m.operations, "undo-write")
-	return m.Store.UndoLatest(ctx, key, expected)
+	return m.Store.Undo(ctx, key, expected)
 }
 
 func TestPromotionAndUndoPersistInCrashSafeOrder(t *testing.T) {
@@ -266,7 +279,7 @@ func TestUndoConflictsWithNewerRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	explicit := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterUser, Origin: tool.MemoryOriginExplicit})
-	if err = memory.RememberEntry(explicit, tool.MemoryEntry{Key: candidate.Key, Value: "newer value"}); err != nil {
+	if err = rememberCurrent(explicit, memory, tool.MemoryEntry{Key: candidate.Key, Value: "newer value"}); err != nil {
 		t.Fatal(err)
 	}
 	undone, err := promoter.Undo(ctx, part, proposal.ID, promoted.Version)

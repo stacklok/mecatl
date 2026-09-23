@@ -454,9 +454,11 @@ Enable JSONL persistence by pointing `--store-dir` at a directory:
 mecated serve --store-dir /var/lib/mecatl/sessions
 ```
 
-The store writes snapshots, tool-call audit, and events beneath `sid-v1`.
-In-flight sessions recover from their snapshot. Older histories migrate on the
-next write. Files are plaintext and owner-only; do not edit or share them. See
+The store writes current snapshots, tool-call audit, events, inventory, and
+lineage beneath `sid-v1`. Files at the addressed current paths must use the
+current format; malformed or incompatible content fails validation without
+being overwritten. Distinct root-level artifacts are not listed or loaded.
+Files are plaintext and owner-only; do not edit or share them. See
 [Session store](/building/extension-points/session-store.md) for the layout and
 durability guarantees.
 
@@ -472,11 +474,18 @@ When configured, its Redis-backed store has no PVC requirement.
 Configure retention in the operator `settings.yaml`. Main-session deletion is
 off by default and requires `acknowledge_main_deletion: true` when enabled.
 Follow [Operate local session storage](session-storage-operations.md) for the
-schema, service definitions, backups, migration, and restore.
+schema, service definitions, backups, cleanup, and restore.
 
 `--session-store-url` replaces the local store with a gRPC driver and cannot be
-combined with `--store-dir`. Current remote drivers do not support OIDC caller
-ownership; use local JSONL or `mecak8s` for multi-user deployments.
+combined with `--store-dir`. Session and memory drivers must negotiate Mecatl's
+current contract at startup; old or partially implemented peers are rejected.
+Optional session operations such as listing, metadata paging, deletion, lineage,
+atomic create, and activity projection remain capability-gated. Remote driver
+operators own their backing namespace and upgrade policy: Mecatl does not scan,
+adopt, migrate, or reject unrelated old driver artifacts. Malformed data returned
+from the selected current namespace fails closed. Current remote drivers do not
+support OIDC caller ownership; use local JSONL or `mecak8s` for multi-user
+deployments.
 
 `--learning-store-url` selects a trusted single-tenant driver for distributed
 learning. Startup rejects partial driver support and deployments with OIDC

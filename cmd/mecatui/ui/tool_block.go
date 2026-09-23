@@ -3,83 +3,30 @@ package ui
 import (
 	"strings"
 
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
 )
 
-// preparedToolCard is the tool card's semantic body before lipgloss adds its
-// border and padding. It exists only during a fresh block render; its semantic
-// sections are converted to structural provenance before the cache entry is kept.
+// preparedToolCard remains a package-local ephemeral adapter for regression
+// checks that ensure prepared semantic content is never retained by the cache.
 type preparedToolCard struct {
-	card     lipgloss.Style
-	sections []preparedToolSection
+	blocks.Prepared
 }
 
-type preparedToolSection struct {
-	region   regionKind
-	text     string
-	trailing int
-}
+type preparedToolSection = blocks.StyledSectionInput
 
 func (p preparedToolCard) render() string {
-	parts := make([]string, 0, len(p.sections))
-	for _, section := range p.sections {
-		if section.text != "" {
-			parts = append(parts, section.text)
-		}
-	}
-	return p.card.Render(strings.Join(parts, "\n"))
+	return p.Text()
 }
 
-// layoutRows returns the decorated card body's padded rows solely to mirror
-// lipgloss's final reflow; it is never retained after structural spans are built.
-func (p preparedToolCard) layoutRows(section int) []string {
-	if section < 0 || section >= len(p.sections) || p.sections[section].text == "" {
-		return nil
-	}
-	bodyWidth := p.card.GetWidth() - p.card.GetHorizontalFrameSize()
-	layout := lipgloss.NewStyle()
-	if bodyWidth > 0 {
-		layout = layout.Width(bodyWidth)
-	}
-	rows := strings.Split(layout.Render(p.sections[section].text), "\n")
-	for i := range rows {
-		rows[i] = ansi.Strip(rows[i])
-	}
-	return rows
-}
-
-// semanticRows wraps the ANSI-free section with the card's body rules without
-// layout padding. It preserves trailing semantic spaces, unlike the padded layout
-// rows used solely to account for decoration reflow.
-func (p preparedToolCard) semanticRows(section int) []string {
-	if section < 0 || section >= len(p.sections) || p.sections[section].text == "" {
-		return nil
-	}
-	bodyWidth := p.card.GetWidth() - p.card.GetHorizontalFrameSize()
-	text := ansi.Strip(p.sections[section].text)
-	rows := strings.Split(wrapToolCardText(text, bodyWidth), "\n")
-	// ansi.Hardwrap normalizes trailing spaces. They are semantic source text,
-	// not card padding, so restore the final source-line suffix explicitly.
-	if sourceLines := strings.Split(text, "\n"); len(sourceLines) > 0 {
-		last := sourceLines[len(sourceLines)-1]
-		trailing := last[len(strings.TrimRight(last, " ")):]
-		if n := p.sections[section].trailing; n > len(trailing) {
-			trailing = strings.Repeat(" ", n)
-		}
-		if trailing != "" && len(rows) > 0 && !strings.HasSuffix(rows[len(rows)-1], trailing) {
-			rows[len(rows)-1] += trailing
-		}
-	}
-	return rows
-}
-
-// prepareToolCard builds every semantic section at the card body width before
-// final decoration. Its caller immediately renders the card and derives the
-// structural provenance needed after these strings are discarded.
+// prepareToolCard snapshots the mutable conversation block into the real
+// stateless blocks package. Dynamic rows are already bounded to bodyWidth before
+// their styles are applied; the blocks package owns only final decoration and
+// lockstep structural provenance.
 func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
 	r.toolCardPrepares++
-	card, _, bodyWidth := r.toolCardLayout()
+	_, _, bodyWidth := r.toolCardLayout()
+	theme := r.blockTheme()
 
 	var glyph, glyphText string
 	switch {
@@ -95,32 +42,33 @@ func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
 	}
 
 	mcpName, isMCP := mcpTitle(b.toolName)
-	headLabel := sanitizeTerminal(b.toolName)
+	headLabel := terminaltext.Sanitize(b.toolName)
 	if isMCP {
 		headLabel = mcpName
 	}
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
 	if isMCP && expand {
-		head += "\n" + renderToolCardText(r.th.Style("muted"), sanitizeTerminal(b.toolName), bodyWidth)
+		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(b.toolName), bodyWidth)
 	}
 
-	sections := []preparedToolSection{{region: conversationRegionChrome, text: head}}
+	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
 	if args := r.renderToolArgs(b, expand, bodyWidth); args != "" {
-		sections = append(sections, preparedToolSection{region: conversationRegionArguments, text: args})
+		sections = append(sections, preparedToolSection{Region: blocks.RegionArguments, Text: args})
 	}
 	if b.resolved {
 		if result := r.renderToolResult(b, expand, bodyWidth); result != "" {
 			sections = append(sections, preparedToolSection{
-				region: conversationRegionResult, text: result,
-				trailing: len(b.resultBody) - len(strings.TrimRight(b.resultBody, " ")),
+				Region:   blocks.RegionResult,
+				Text:     result,
+				Trailing: len(b.resultBody) - len(strings.TrimRight(b.resultBody, " ")),
 			})
 		}
 	}
-	return preparedToolCard{card: card, sections: sections}
+
+	input := blocks.SnapshotStyledTool(blocks.StyledToolInput{Sections: sections})
+	return preparedToolCard{Prepared: blocks.PrepareStyledTool(input, theme)}
 }
 
-// renderTool renders the prepared semantic card only after all sections have
-// been independently wrapped to the card body width.
 func (r *renderer) renderTool(b *block, expand bool) string {
 	return r.prepareToolCard(b, expand).render()
 }

@@ -113,7 +113,7 @@ func TestSessionsModalPlacement(t *testing.T) {
 		maintenance maintenanceView
 	}{
 		{name: "picker", view: sessionsPanel},
-		{name: "maintenance", view: sessionsPanel, maintenance: maintenanceOptimizePlan},
+		{name: "maintenance", view: sessionsPanel, maintenance: maintenanceCleanupPlan},
 		{name: "transcript", view: sessionsTranscript},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

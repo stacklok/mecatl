@@ -13,7 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -73,13 +73,13 @@ func containsField(fields []string, want string) bool {
 func TestADR_0247_SourceAdapterRearmsAndInstallsLatest(t *testing.T) {
 	s := &statusSourceFake{changed: make(chan struct{}, 1)}
 	m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette()), StatusSource: s})
-	s.publish(statusline.Result{Header: statusline.Surface{Present: true, Spans: []statusline.Span{{Text: "first"}}}})
+	s.publish(customization.Result{Header: customization.Surface{Present: true, Spans: []customization.Span{{Text: "first"}}}})
 	updated, rearm := m.update(waitStatusMessage(t, m.statusLineWaitCmd()))
 	m = updated.(Model)
 	if m.generatedStatusLine.Header.Spans[0].Text != "first" {
 		t.Fatal("not installed")
 	}
-	s.publish(statusline.Result{Footer: statusline.Surface{Present: true, Spans: []statusline.Span{{Text: "second"}}}})
+	s.publish(customization.Result{Footer: customization.Surface{Present: true, Spans: []customization.Span{{Text: "second"}}}})
 	updated, _ = m.update(waitStatusMessage(t, rearm))
 	if updated.(Model).generatedStatusLine.Footer.Spans[0].Text != "second" {
 		t.Fatal("not rearmed")
@@ -108,31 +108,31 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	if !ok {
 		t.Fatal("missing input")
 	}
-	if input.Version != statusline.ProtocolVersion || input.Server != (statusline.ServerTarget{DisplayTarget: "server.example", ConnectionMode: "embedded"}) {
+	if input.Version != customization.ProtocolVersion || input.Server != (customization.ServerTarget{DisplayTarget: "server.example", ConnectionMode: "embedded"}) {
 		t.Fatalf("server/version projection = %#v", input)
 	}
 	if input.Session.Title != "Status work" || input.Session.ReasoningEffort != "high" || input.Session.Mode != "default" || input.Session.Handle != "" {
 		t.Fatalf("session projection = %#v", input.Session)
 	}
-	if input.Model.ProviderID != "openai" || input.Model.ID != "gpt-5" || input.Model.DisplayName != "gpt-5" || input.Model.ContextWindow != (statusline.ContextAtom{Raw: 200_000, Human: "200K"}) {
+	if input.Model.ProviderID != "openai" || input.Model.ID != "gpt-5" || input.Model.DisplayName != "gpt-5" || input.Model.ContextWindow != (customization.ContextAtom{Raw: 200_000, Human: "200K"}) {
 		t.Fatalf("model projection = %#v", input.Model)
 	}
-	if input.Usage != (statusline.Usage{
-		Input:            statusline.UsageAtom{Raw: 12_300, Human: "12.3K"},
-		Output:           statusline.UsageAtom{Raw: 456, Human: "456"},
-		CacheRead:        statusline.UsageAtom{Raw: 9_840, Human: "9.8K"},
-		CacheWrite:       statusline.UsageAtom{Raw: 1_200, Human: "1.2K"},
+	if input.Usage != (customization.Usage{
+		Input:            customization.UsageAtom{Raw: 12_300, Human: "12.3K"},
+		Output:           customization.UsageAtom{Raw: 456, Human: "456"},
+		CacheRead:        customization.UsageAtom{Raw: 9_840, Human: "9.8K"},
+		CacheWrite:       customization.UsageAtom{Raw: 1_200, Human: "1.2K"},
 		CacheReadPercent: 80,
 	}) {
 		t.Fatalf("usage projection = %#v", input.Usage)
 	}
-	if input.Context != (statusline.Context{Used: statusline.ContextAtom{Raw: 45_600, Human: "45.6K"}, Window: statusline.ContextAtom{Raw: 200_000, Human: "200K"}, Percent: 22}) {
+	if input.Context != (customization.Context{Used: customization.ContextAtom{Raw: 45_600, Human: "45.6K"}, Window: customization.ContextAtom{Raw: 200_000, Human: "200K"}, Percent: 22}) {
 		t.Fatalf("context projection = %#v", input.Context)
 	}
-	if input.Workspace != (statusline.Workspace{Location: "local", Name: "status-work"}) {
+	if input.Workspace != (customization.Workspace{Location: "local", Name: "status-work"}) {
 		t.Fatalf("workspace projection = %#v", input.Workspace)
 	}
-	if input.MainAgent != (statusline.MainAgent{State: "running_tool", Activity: "Read", Approval: "none"}) || !input.Delegation.Valid() {
+	if input.MainAgent != (customization.MainAgent{State: "running_tool", Activity: "Read", Approval: "none"}) || !input.Delegation.Valid() {
 		t.Fatalf("agent/delegation projection = %#v / %#v", input.MainAgent, input.Delegation)
 	}
 	if input.Terminal.Rows != 40 || input.Terminal.Cols != 120 || input.Terminal.HeaderAvailCols <= 0 || input.Terminal.FooterAvailCols <= 0 {
@@ -235,33 +235,33 @@ func waitStatusMessage(t *testing.T, cmd tea.Cmd) tea.Msg {
 type statusSourceFake struct {
 	changed chan struct{}
 	mu      sync.Mutex
-	latest  statusline.Result
-	inputs  []statusline.Input
+	latest  customization.Result
+	inputs  []customization.Input
 }
 
-func (g *statusSourceFake) Submit(input statusline.Input) {
+func (g *statusSourceFake) Submit(input customization.Input) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.inputs = append(g.inputs, input)
 }
 func (g *statusSourceFake) Changed() <-chan struct{} { return g.changed }
-func (g *statusSourceFake) Latest() statusline.Result {
+func (g *statusSourceFake) Latest() customization.Result {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.latest
 }
 func (*statusSourceFake) Close(context.Context) error { return nil }
-func (g *statusSourceFake) publish(line statusline.Result) {
+func (g *statusSourceFake) publish(line customization.Result) {
 	g.mu.Lock()
 	g.latest = line
 	g.mu.Unlock()
 	g.changed <- struct{}{}
 }
-func (g *statusSourceFake) lastInput() (statusline.Input, bool) {
+func (g *statusSourceFake) lastInput() (customization.Input, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if len(g.inputs) == 0 {
-		return statusline.Input{}, false
+		return customization.Input{}, false
 	}
 	return g.inputs[len(g.inputs)-1], true
 }

@@ -49,10 +49,10 @@ func (s *activityCaptureServer) PageMetadata(ctx context.Context, req *driverv1.
 	return s.delegate.PageMetadata(ctx, req)
 }
 
-type activityLegacyCaptureServer struct{ *activityCaptureServer }
+type activityNoProjectionCaptureServer struct{ *activityCaptureServer }
 
-func (*activityLegacyCaptureServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
-	return &driverv1.SessionStoreCapabilitiesResponse{Create: true}, nil
+func (*activityNoProjectionCaptureServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
+	return &driverv1.SessionStoreCapabilitiesResponse{Create: true, Contract: sessionStoreContract}, nil
 }
 
 func TestDraftAwareSessionInventory_Scenario2_StoresProjectActivityAtomically(t *testing.T) {
@@ -155,6 +155,9 @@ func TestSessionStoreCapabilitiesRequiresProvenActivityProjection(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
+	if caps.GetContract() != sessionStoreContract {
+		t.Fatalf("contract = %q, want %q", caps.GetContract(), sessionStoreContract)
+	}
 	if !caps.GetMetadataPaging() {
 		t.Fatal("metadata paging capability = false, want true")
 	}
@@ -183,25 +186,25 @@ func TestDraftAwareSessionInventory_Scenario2_DriverActivityCapabilityAndOpaqueR
 		t.Fatalf("PageMetadata = %+v, %v", page, err)
 	}
 
-	// An older driver may still accept opaque Save/Create but cannot prove that
-	// its metadata index round-trips activity. The client must omit the scalar
-	// and normalize any discovery row to unknown.
-	var legacy *activityLegacyCaptureServer
-	legacyConn := dialBufconn(t, func(gs *grpc.Server) {
-		legacy = &activityLegacyCaptureServer{activityCaptureServer: &activityCaptureServer{delegate: NewSessionStoreServer(memstore.New())}}
-		driverv1.RegisterSessionStoreServiceServer(gs, legacy)
+	// Activity projection remains a genuinely optional backend operation under
+	// the mandatory current contract. Without it the client omits the scalar and
+	// normalizes any discovery row to unknown.
+	var noProjection *activityNoProjectionCaptureServer
+	noProjectionConn := dialBufconn(t, func(gs *grpc.Server) {
+		noProjection = &activityNoProjectionCaptureServer{activityCaptureServer: &activityCaptureServer{delegate: NewSessionStoreServer(memstore.New())}}
+		driverv1.RegisterSessionStoreServiceServer(gs, noProjection)
 	})
-	legacyStore := mustNewSessionStore(t, legacyConn)
-	if legacyStore.activityProjection {
-		t.Fatal("older driver negotiated activity projection")
+	noProjectionStore := mustNewSessionStore(t, noProjectionConn)
+	if noProjectionStore.activityProjection {
+		t.Fatal("driver without projection capability negotiated activity projection")
 	}
-	if err := legacyStore.Save(context.Background(), activitySession(t, "legacy", true)); err != nil {
-		t.Fatalf("legacy Save: %v", err)
+	if err := noProjectionStore.Save(context.Background(), activitySession(t, "current", true)); err != nil {
+		t.Fatalf("Save: %v", err)
 	}
-	if len(legacy.saves) != 1 || legacy.saves[0].GetActivityState() != "" {
-		t.Fatalf("legacy Save sent activity scalar: %+v", legacy.saves)
+	if len(noProjection.saves) != 1 || noProjection.saves[0].GetActivityState() != "" {
+		t.Fatalf("Save sent unsupported activity scalar: %+v", noProjection.saves)
 	}
-	row := metadataFromProto(&driverv1.SessionMetadataEntry{SessionId: "legacy", ActivityState: string(session.ActivityActive)}, false)
+	row := metadataFromProto(&driverv1.SessionMetadataEntry{SessionId: "current", ActivityState: string(session.ActivityActive)}, false)
 	if row.Activity != session.ActivityUnknown {
 		t.Fatalf("unsupported driver activity = %q, want unknown", row.Activity)
 	}

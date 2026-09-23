@@ -3,7 +3,6 @@ package grpcdriver
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -121,7 +120,7 @@ func (s *sessionStoreServer) Save(ctx context.Context, req *driverv1.SaveRequest
 // Create decodes the snapshot and delegates atomic first publication when supported.
 func (s *sessionStoreServer) Create(ctx context.Context, req *driverv1.SaveRequest) (*driverv1.SaveResponse, error) {
 	creator, ok := s.store.(port.SessionCreator)
-	if !ok {
+	if !ok || !port.SupportsSessionCreate(s.store) {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support atomic create")
 	}
 	if req.GetSessionId() == "" || req.GetSnapshot() == nil || req.GetSnapshot().GetFormat() != SnapshotFormat || len(req.GetSnapshot().GetPayload()) == 0 {
@@ -164,24 +163,25 @@ func (s *sessionStoreServer) Load(ctx context.Context, req *driverv1.LoadRequest
 
 func (s *sessionStoreServer) Capabilities(context.Context, *driverv1.SessionStoreCapabilitiesRequest) (*driverv1.SessionStoreCapabilitiesResponse, error) {
 	_, prunable := s.store.(port.PrunableStore)
-	_, pager := s.store.(port.SessionMetadataPager)
 	deleteSupported := prunable
 	if support, ok := s.store.(port.SessionDeleteSupport); ok {
 		deleteSupported = support.SupportsSessionDelete()
 	}
-	_, lineage := s.store.(port.SessionLineageReader)
-	_, creator := s.store.(port.SessionCreator)
+	pager := port.SupportsSessionMetadataPaging(s.store)
+	lineage := port.SupportsSessionLineage(s.store)
+	creator := port.SupportsSessionCreate(s.store)
 	activityProjection := port.SupportsActivityProjection(s.store)
 	return &driverv1.SessionStoreCapabilitiesResponse{
 		List: prunable, MetadataPaging: pager, Delete: deleteSupported, Lineage: lineage, Create: creator,
 		ActivityProjection: activityProjection,
+		Contract:           sessionStoreContract,
 	}, nil
 }
 
 // ReadLineage serves the optional content-free durable lineage seam.
 func (s *sessionStoreServer) ReadLineage(ctx context.Context, req *driverv1.ReadSessionLineageRequest) (*driverv1.ReadSessionLineageResponse, error) {
 	reader, ok := s.store.(port.SessionLineageReader)
-	if !ok {
+	if !ok || !port.SupportsSessionLineage(s.store) {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support lineage")
 	}
 	query := port.SessionLineageQuery{
@@ -256,7 +256,7 @@ func (s *sessionStoreServer) List(ctx context.Context, _ *driverv1.ListSessionsR
 // its total count.
 func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.PageSessionMetadataRequest) (*driverv1.PageSessionMetadataResponse, error) {
 	pager, ok := s.store.(port.SessionMetadataPager)
-	if !ok {
+	if !ok || !port.SupportsSessionMetadataPaging(s.store) {
 		return nil, status.Error(codes.Unimplemented, "the wrapped session store does not support metadata paging (port.SessionMetadataPager)")
 	}
 	if req.GetLimit() <= 0 {
@@ -267,8 +267,8 @@ func (s *sessionStoreServer) PageMetadata(ctx context.Context, req *driverv1.Pag
 	}
 	if cursor := req.GetCursor(); cursor != nil {
 		if cursor.GetModifiedAt() == nil || cursor.GetSessionId() == "" || cursor.GetModifiedAt().CheckValid() != nil ||
-			!legacyOrBoundCursorFields(cursor.GetGeneration(), cursor.GetScope(), cursor.GetContinuation()) {
-			return nil, status.Error(codes.InvalidArgument, "cursor requires a valid key, and either all of generation/scope/continuation or none")
+			!completeBoundCursorFields(cursor.GetGeneration(), cursor.GetScope(), cursor.GetContinuation()) {
+			return nil, status.Error(codes.InvalidArgument, "cursor requires a valid key and non-empty generation, scope, and continuation")
 		}
 		request.Cursor = &port.SessionMetadataCursor{
 			ModifiedAt: cursor.GetModifiedAt().AsTime(), ID: session.SessionID(cursor.GetSessionId()),
@@ -373,31 +373,46 @@ func NewMemoryStoreServer(st tool.MemoryStore) driverv1.MemoryStoreServiceServer
 	return &memoryStoreServer{store: st}
 }
 
-func (s *memoryStoreServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
-	_, lifecycle := s.store.(tool.MemoryLifecycleStore)
-	_, convergence := s.store.(tool.MemoryConvergenceStore)
-	return &driverv1.MemoryStoreCapabilitiesResponse{Lifecycle: lifecycle, Convergence: convergence}, nil
+func (*memoryStoreServer) Capabilities(context.Context, *driverv1.MemoryStoreCapabilitiesRequest) (*driverv1.MemoryStoreCapabilitiesResponse, error) {
+	return &driverv1.MemoryStoreCapabilitiesResponse{Contract: memoryStoreContract}, nil
 }
 
-// RememberEntry stores the entry; a blank/whitespace-only key is rejected
-// with INVALID_ARGUMENT before the store is consulted (the wrapped store's
-// own rejection remains conformance-tested in-process).
-func (s *memoryStoreServer) RememberEntry(ctx context.Context, req *driverv1.RememberEntryRequest) (*driverv1.RememberEntryResponse, error) {
-	e := req.GetEntry()
-	if e == nil {
-		return nil, status.Error(codes.InvalidArgument, "entry is required")
+func (s *memoryStoreServer) Remember(ctx context.Context, req *driverv1.RememberRequest) (*driverv1.MemoryRecordResponse, error) {
+	if req.GetEntry() == nil || req.GetCurrent() == nil {
+		return nil, status.Error(codes.InvalidArgument, "entry and current are required")
 	}
-	if strings.TrimSpace(e.GetKey()) == "" {
-		return nil, status.Error(codes.InvalidArgument, "entry key must not be blank")
+	current := req.GetCurrent()
+	if current.GetExists() == (current.GetVersion() == "") || len(current.GetVersion()) > 128 {
+		return nil, status.Error(codes.InvalidArgument, "current must be absent with no version or present with an exact bounded version")
 	}
-	if err := s.store.RememberEntry(ctx, fromProtoEntry(e)); err != nil {
+	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	record, err := s.store.Remember(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryCurrent{Exists: current.GetExists(), Version: tool.MemoryVersion(current.GetVersion())})
+	if err != nil {
 		return nil, storeStatus(err)
 	}
-	return &driverv1.RememberEntryResponse{}, nil
+	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
+}
+
+func (s *memoryStoreServer) Inspect(ctx context.Context, req *driverv1.InspectRequest) (*driverv1.InspectResponse, error) {
+	if req.GetKey() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key is required")
+	}
+	record, found, callErr := s.store.Inspect(ctx, req.GetKey())
+	if callErr != nil {
+		return nil, storeStatus(callErr)
+	}
+	resp := &driverv1.InspectResponse{Found: found}
+	if found {
+		resp.Record = toProtoRecord(record)
+	}
+	return resp, nil
 }
 
 // Recall looks up the exact key; a miss is found=false, never NOT_FOUND.
 func (s *memoryStoreServer) Recall(ctx context.Context, req *driverv1.RecallRequest) (*driverv1.RecallResponse, error) {
+	if req.GetKey() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key is required")
+	}
 	e, found, err := s.store.Recall(ctx, req.GetKey())
 	if err != nil {
 		return nil, storeStatus(err)
@@ -418,12 +433,16 @@ func (s *memoryStoreServer) List(ctx context.Context, req *driverv1.ListRequest)
 	return &driverv1.ListResponse{Entries: toProtoServerEntries(entries)}, nil
 }
 
-// Forget deletes the key; missing keys succeed (idempotent).
-func (s *memoryStoreServer) Forget(ctx context.Context, req *driverv1.ForgetRequest) (*driverv1.ForgetResponse, error) {
-	if err := s.store.Forget(ctx, req.GetKey()); err != nil {
-		return nil, storeStatus(err)
+func (s *memoryStoreServer) Forget(ctx context.Context, req *driverv1.ForgetRequest) (*driverv1.MemoryRecordResponse, error) {
+	if req.GetKey() == "" || req.GetExpectedVersion() == "" || len(req.GetExpectedVersion()) > 128 {
+		return nil, status.Error(codes.InvalidArgument, "key and a bounded expected_version are required")
 	}
-	return &driverv1.ForgetResponse{}, nil
+	ctx = withProtoAttribution(ctx, req.GetAttribution())
+	record, callErr := s.store.Forget(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
+	if callErr != nil {
+		return nil, storeStatus(callErr)
+	}
+	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
 }
 
 // Index returns the tier-0 routing table (values omitted by the store).
@@ -444,85 +463,14 @@ func (s *memoryStoreServer) Search(ctx context.Context, req *driverv1.SearchRequ
 	return &driverv1.SearchResponse{Entries: toProtoServerEntries(entries)}, nil
 }
 
-func (s *memoryStoreServer) lifecycle() (tool.MemoryLifecycleStore, error) {
-	lifecycle, ok := s.store.(tool.MemoryLifecycleStore)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "memory store does not support lifecycle operations")
-	}
-	return lifecycle, nil
-}
-
-// RememberVersioned delegates only when the wrapped store advertises lifecycle.
-func (s *memoryStoreServer) RememberVersioned(ctx context.Context, req *driverv1.RememberVersionedRequest) (*driverv1.MemoryRecordResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
-	if req.GetEntry() == nil {
-		return nil, status.Error(codes.InvalidArgument, "entry is required")
+func (s *memoryStoreServer) Undo(ctx context.Context, req *driverv1.UndoRequest) (*driverv1.MemoryRecordResponse, error) {
+	if req.GetKey() == "" || req.GetExpectedVersion() == "" || len(req.GetExpectedVersion()) > 128 {
+		return nil, status.Error(codes.InvalidArgument, "key and a bounded expected_version are required")
 	}
 	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, callErr := lifecycle.RememberVersioned(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryVersion(req.GetExpectedVersion()))
+	record, callErr := s.store.Undo(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
 	if callErr != nil {
 		return nil, storeStatus(callErr)
-	}
-	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
-}
-
-func (s *memoryStoreServer) InspectMemory(ctx context.Context, req *driverv1.InspectMemoryRequest) (*driverv1.InspectMemoryResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
-	record, found, callErr := lifecycle.Inspect(ctx, req.GetKey())
-	if callErr != nil {
-		return nil, storeStatus(callErr)
-	}
-	resp := &driverv1.InspectMemoryResponse{Found: found}
-	if found {
-		resp.Record = toProtoRecord(record)
-	}
-	return resp, nil
-}
-
-func (s *memoryStoreServer) ForgetVersioned(ctx context.Context, req *driverv1.ForgetVersionedRequest) (*driverv1.MemoryRecordResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
-	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, callErr := lifecycle.ForgetVersioned(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
-	if callErr != nil {
-		return nil, storeStatus(callErr)
-	}
-	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
-}
-
-func (s *memoryStoreServer) UndoLatest(ctx context.Context, req *driverv1.UndoLatestRequest) (*driverv1.MemoryRecordResponse, error) {
-	lifecycle, err := s.lifecycle()
-	if err != nil {
-		return nil, err
-	}
-	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, callErr := lifecycle.UndoLatest(ctx, req.GetKey(), tool.MemoryVersion(req.GetExpectedVersion()))
-	if callErr != nil {
-		return nil, storeStatus(callErr)
-	}
-	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
-}
-
-func (s *memoryStoreServer) RememberIfCurrent(ctx context.Context, req *driverv1.RememberIfCurrentRequest) (*driverv1.MemoryRecordResponse, error) {
-	store, ok := s.store.(tool.MemoryConvergenceStore)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "memory convergence unsupported")
-	}
-	if req.GetEntry() == nil {
-		return nil, status.Error(codes.InvalidArgument, "entry is required")
-	}
-	ctx = withProtoAttribution(ctx, req.GetAttribution())
-	record, err := store.RememberIfCurrent(ctx, fromProtoEntry(req.GetEntry()), tool.MemoryCurrent{Exists: req.GetExpectedExists(), Version: tool.MemoryVersion(req.GetExpectedVersion())})
-	if err != nil {
-		return nil, storeStatus(err)
 	}
 	return &driverv1.MemoryRecordResponse{Record: toProtoRecord(record)}, nil
 }

@@ -441,7 +441,6 @@ func TestEventLogRecordsApprovalVerdict(t *testing.T) {
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},
@@ -739,20 +738,17 @@ func TestEventLogRecordsResumePathVerdict(t *testing.T) {
 	svc2 := askingEventLogServiceOverStore(t, store2, log, permstore.New(), &ran2,
 		mockllm.New(mockllm.TextTurn("done after approval")), true)
 
-	// POST /approve with allow_always over the HTTP surface → resumeFromAwaiting →
-	// Engine.ResumeApproval → resolvePendingCall (the emit under test). httptest's
-	// ResponseWriter is a Flusher, so this relays via relayRunSSE (which Appends).
-	srv := httptest.NewServer(server.NewHTTPHandler(svc2))
-	defer srv.Close()
-	body, _ := json.Marshal(approveJSON{AskID: askID, Verdict: session.VerdictStringAllowAlways})
-	resp, err := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/approve", "application/json", strings.NewReader(string(body)))
+	// Resume the durable awaiting snapshot directly, then pass every resumed event
+	// through the same recorder the HTTP/gRPC relays use for durable append.
+	resumed, err := svc2.ApproveRun(context.Background(), sess.ID, askID, session.VerdictAllowAlways, "")
 	if err != nil {
-		t.Fatalf("POST /approve: %v", err)
+		t.Fatalf("ApproveRun: %v", err)
 	}
-	// Drain + close the SSE body so the resumed run completes and relayRunSSE finishes
-	// appending (incl. the terminal EvResult).
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
+	recorder := server.NewRunEventRecorder(context.Background(), svc2, sess.ID)
+	for ev := range resumed.Events() {
+		recorder.Observe(ev)
+	}
+	recorder.Close()
 
 	if ran2.Load() != 1 {
 		t.Fatalf("pending Write executed %d time(s) on resume, want exactly 1", ran2.Load())
@@ -905,13 +901,6 @@ func TestEventLogSurvivesClientDisconnect(t *testing.T) {
 	}
 }
 
-// approveJSON mirrors the HTTP approve body (the server's struct is unexported);
-// only the fields the resume-path test sets are present.
-type approveJSON struct {
-	AskID   string `json:"ask_id"`
-	Verdict string `json:"verdict"`
-}
-
 // catalogWith builds a one-tool catalog (a local helper so a test can build an engine
 // wired to a single tool).
 func catalogWith(tl tool.Tool) *tool.Catalog {
@@ -979,7 +968,6 @@ func driveAskingSessionToCompletion(t *testing.T, client mecatlv1.HarnessService
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},
@@ -1142,7 +1130,6 @@ func TestLiveConverseRelaySkipsLogOnlyKinds(t *testing.T) {
 				Kind: &mecatlv1.ConverseRequest_ResumeApproval{
 					ResumeApproval: &mecatlv1.ResumeApproval{
 						AskId:   ev.GetAsk().GetAskId(),
-						Allow:   true,
 						Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
 					},
 				},

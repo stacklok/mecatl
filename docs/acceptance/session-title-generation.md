@@ -43,8 +43,8 @@ automatic job admission and every client benefits from it.
   best-effort. Per-run HTTP SSE has no out-of-band title push; HTTP clients discover title changes
   from the authoritative session snapshot and durable event stream.
 - The engine owns title provenance, sources/lifecycle, and the event value. ADR 0307 owns
-  canonical token usage: title usage never changes the deprecated `Session.Usage` main mirror,
-  run budgets, ordinary result usage, or conversation history.
+  canonical token usage: title usage never changes `UsageFor(UsageKindMain)`, run budgets,
+  ordinary result usage, or conversation history.
 
 These cuts follow [ADR 0308](../adr/0308-session-title-generation-and-auxiliary-usage.md),
 [ADR 0307](../adr/0307-canonical-durable-token-accounting.md),
@@ -70,7 +70,8 @@ was generated or explicitly set; restarting or reloading may lose that notice.
 - AC1.2: `/title` adds a local, non-persisted scrollback notice containing only the active title
   and generated/operator provenance without mutation; whitespace-only input fails clearly and
   preserves the authoritative title.
-  - verify: `TestSessionTitleGeneration_Scenario1_TitleCommandReadAndRejectsBlank`
+  - verify: `TestSessionTitleGeneration_Scenario1_BareTitleCommandReadsAndClearsInput`,
+    `TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandReadsAndClearsInput`
 - AC1.3: A stale, unauthorized, unavailable, or rejected rename cannot leave an optimistic title
   presented as authoritative; the UI restores or refetches it.
   - verify: `TestSessionTitleGeneration_Scenario1_TitleCommandReconcilesFailure`
@@ -175,8 +176,8 @@ muted client-only notice directing the operator to `/title <text>`; it contains 
 
 Every admitted physical title call aggregates `session_title` token usage by the selected opaque
 provider/model key. The title lifecycle retains only an attempt identity, outcome, and time; it has
-no per-attempt usage ledger. `token_usage[main]` is canonical for main work; deprecated
-`Session.Usage` remains its lifetime compatibility mirror.
+no per-attempt usage ledger. `token_usage[main]`, exposed through `UsageFor(UsageKindMain)`, is
+canonical for main work.
 
 **Acceptance:**
 - AC5.1: Each physical title-generation call aggregates its input/output tokens in the
@@ -188,15 +189,14 @@ no per-attempt usage ledger. `token_usage[main]` is canonical for main work; dep
 - AC5.3: Token usage and title lifecycle round-trip through every in-tree snapshot/store and
   event-sourced reconstruction path, and authorized projections expose the canonical aggregate.
   - verify: `TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection`
-- AC5.4: Title-generation tokens do not alter the deprecated `Session.Usage` main mirror,
-  `MaxRunTokens`, normal turn/result usage, or the agent conversation.
-  - verify: `TestADR_0302_AuxiliaryUsageDoesNotSpendRunBudget`
-- AC5.5: The internal immutable budget baseline leaves `Session.Usage` and
-  `token_usage[main]` lifetime totals untouched: ordinary runs start at zero; team
-  synthesis and a budget-stopped free-text Subagent's one-turn cleanup capture current
-  cumulative main usage immediately before their bounded re-drive; cleanup spend is
-  added to the same lifetime totals; and no externally callable usage-reset or
-  baseline-selection API exists.
+- AC5.4: Title-generation tokens do not alter `UsageFor(UsageKindMain)`, `MaxRunTokens`, normal
+  turn/result usage, or the agent conversation.
+  - verify: `TestADR_0284_TitleUsageDoesNotSpendRunBudget`
+- AC5.5: The internal immutable budget baseline leaves `token_usage[main]` lifetime totals
+  untouched: ordinary runs start at zero; team synthesis and a budget-stopped free-text
+  Subagent's one-turn cleanup capture current cumulative main usage immediately before their
+  bounded re-drive; cleanup spend is added to the same lifetime totals; and no externally
+  callable usage-reset or baseline-selection API exists.
   - verify: `TestOrdinaryRunUsesZeroBudgetBaseline`, `TestSynthesisBudgetBaselineSurvivesNudge`,
     and `TestSubagentBudgetStopSalvages`
 - AC5.6: Other auxiliary callers are not migrated by this plan.

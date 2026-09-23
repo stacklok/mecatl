@@ -24,10 +24,9 @@ import (
 )
 
 const (
-	lineageRecordFormat      = "session-lineage-record-jsonl/2"
-	lineageEdgeFormat        = "session-lineage-edge-jsonl/2"
-	lineagePointFormat       = "session-lineage-point-jsonl/2"
-	legacyLineageIndexFormat = "session-lineage-json/1"
+	lineageRecordFormat = "session-lineage-record-jsonl/2"
+	lineageEdgeFormat   = "session-lineage-edge-jsonl/2"
+	lineagePointFormat  = "session-lineage-point-jsonl/2"
 )
 
 var (
@@ -54,25 +53,6 @@ func (st *Store) lineageEdgePath(id session.SessionID, incarnation session.Incar
 
 func (st *Store) lineagePointPath(parent session.SessionID, parentIncarnation session.IncarnationID, child session.SessionID, childIncarnation string) string {
 	return filepath.Join(st.inventoryCatalogDir(), ".session-lineage-point-"+lineageToken(string(parent), string(parentIncarnation), string(child), childIncarnation)+".jsonl")
-}
-
-func (st *Store) legacyLineageIndexPath() string {
-	return filepath.Join(st.inventoryCatalogDir(), ".session-lineage.json")
-}
-
-func (st *Store) lineageMigrationPath() string {
-	return filepath.Join(st.inventoryCatalogDir(), ".session-lineage-migration.dirty")
-}
-
-func (st *Store) legacyLineageUncertain() (bool, error) {
-	_, err := os.Stat(st.legacyLineageIndexPath()) //nolint:gosec // adapter-private owner-only path
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("jsonlstore: inspect legacy lineage index: %w", err)
 }
 
 func lineageDirtyPath(path string) string { return path + ".dirty" }
@@ -594,208 +574,6 @@ func (st *Store) pruneLineage(ctx context.Context, id session.SessionID, deleteS
 	})
 }
 
-type legacyLineageIndex struct {
-	Format  string                      `json:"v"`
-	Records []port.SessionLineageRecord `json:"records"`
-}
-
-// MigrateLegacyLineage is an explicit, bounded maintenance operation for the
-// pre-partition global index. Callers must quiesce session mutations while it
-// runs. maxWork bounds legacy records plus v2 partition files and rows examined;
-// exceeding it leaves the legacy index in place and targeted queries fail closed.
-//
-//nolint:gocyclo // Explicit migration validates every legacy and v2 partition boundary.
-func (st *Store) MigrateLegacyLineage(ctx context.Context, maxWork int) error {
-	if maxWork <= 0 {
-		return errors.New("jsonlstore: lineage migration max work must be positive")
-	}
-	legacyPath := st.legacyLineageIndexPath()
-	info, err := os.Stat(legacyPath) //nolint:gosec // adapter-private owner-only path
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("jsonlstore: inspect legacy lineage index: %w", err)
-	}
-	if info.Size() > maxScannerTokenSize {
-		return fmt.Errorf("jsonlstore: legacy lineage index exceeds %d bytes", maxScannerTokenSize)
-	}
-	data, err := os.ReadFile(legacyPath) //nolint:gosec // explicit adapter-private maintenance input
-	if err != nil {
-		return fmt.Errorf("jsonlstore: read legacy lineage index: %w", err)
-	}
-	var legacy legacyLineageIndex
-	if err := json.Unmarshal(data, &legacy); err != nil || legacy.Format != legacyLineageIndexFormat {
-		return errors.New("jsonlstore: corrupt legacy lineage index")
-	}
-	work := len(legacy.Records)
-	if work > maxWork {
-		return fmt.Errorf("jsonlstore: lineage migration exceeds max work %d", maxWork)
-	}
-	if err := st.writeInventoryFileWithPattern(st.lineageMigrationPath(), []byte("incomplete\n"), ".session-lineage-migration-*"); err != nil {
-		return fmt.Errorf("jsonlstore: publish lineage migration marker: %w", err)
-	}
-	byID := make(map[session.SessionID][]port.SessionLineageRecord)
-	for _, row := range legacy.Records {
-		if err := validateLineageRecord(row); err != nil {
-			return errors.New("jsonlstore: corrupt legacy lineage index record")
-		}
-		for _, existing := range byID[row.ID] {
-			if existing.Incarnation == row.Incarnation {
-				return errors.New("jsonlstore: duplicate legacy lineage incarnation")
-			}
-		}
-		byID[row.ID] = append(byID[row.ID], row)
-	}
-
-	entries, err := os.ReadDir(st.inventoryCatalogDir())
-	if err != nil {
-		return fmt.Errorf("jsonlstore: scan lineage partitions for migration: %w", err)
-	}
-	// First settle interrupted v2 mutations from their exact snapshots. The
-	// legacy index intentionally keeps their markers dirty until final publish.
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, ".session-lineage-record-") || !strings.HasSuffix(name, ".jsonl.dirty") {
-			continue
-		}
-		work++
-		if work > maxWork {
-			return fmt.Errorf("jsonlstore: lineage migration exceeds max work %d", maxWork)
-		}
-		body, err := os.ReadFile(filepath.Join(st.inventoryCatalogDir(), name)) //nolint:gosec // adapter-private maintenance file
-		if err != nil {
-			return err
-		}
-		var manifest lineageDirtyManifest
-		if err := json.Unmarshal(body, &manifest); err != nil || manifest.ID == "" {
-			return errors.New("jsonlstore: corrupt lineage dirty manifest during migration")
-		}
-		if err := st.recoverDirtyLineage(ctx, manifest.ID); err != nil && !errors.Is(err, errLineagePartitionIncomplete) {
-			return err
-		}
-	}
-
-	entries, err = os.ReadDir(st.inventoryCatalogDir())
-	if err != nil {
-		return fmt.Errorf("jsonlstore: rescan lineage partitions for migration: %w", err)
-	}
-	var edgePaths, pointPaths []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".jsonl") {
-			continue
-		}
-		path := filepath.Join(st.inventoryCatalogDir(), name)
-		switch {
-		case strings.HasPrefix(name, ".session-lineage-record-"):
-			rows, err := readWholeLineagePartition(path, lineageRecordFormat)
-			if err != nil {
-				return err
-			}
-			work += 1 + len(rows)
-			if work > maxWork {
-				return fmt.Errorf("jsonlstore: lineage migration exceeds max work %d", maxWork)
-			}
-			for _, row := range rows {
-				byID[row.ID] = upsertLineageRow(byID[row.ID], row)
-			}
-		case strings.HasPrefix(name, ".session-lineage-edge-"):
-			work++
-			if work > maxWork {
-				return fmt.Errorf("jsonlstore: lineage migration exceeds max work %d", maxWork)
-			}
-			edgePaths = append(edgePaths, path)
-		case strings.HasPrefix(name, ".session-lineage-point-"):
-			work++
-			if work > maxWork {
-				return fmt.Errorf("jsonlstore: lineage migration exceeds max work %d", maxWork)
-			}
-			pointPaths = append(pointPaths, path)
-		}
-	}
-
-	var paths []string
-	desiredEdges := make(map[string][]port.SessionLineageRecord)
-	desiredPoints := make(map[string][]port.SessionLineageRecord)
-	for id, rows := range byID {
-		retained := 0
-		for _, row := range rows {
-			if row.State == port.SessionLineageRetained {
-				retained++
-			}
-			paths = append(paths, st.lineageEdgePath(row.ID, session.IncarnationID(row.Incarnation)))
-			for _, subject := range lineageSubjects(row) {
-				parent, incarnation := session.SessionID(subject[0]), session.IncarnationID(subject[1])
-				path := st.lineageEdgePath(parent, incarnation)
-				desiredEdges[path] = upsertLineageRow(desiredEdges[path], row)
-				paths = append(paths, path)
-				pointPath := st.lineagePointPath(parent, incarnation, row.ID, row.Incarnation)
-				desiredPoints[pointPath] = []port.SessionLineageRecord{row}
-				paths = append(paths, pointPath)
-			}
-		}
-		if retained > 1 {
-			return fmt.Errorf("jsonlstore: multiple retained lineage incarnations for %q", id)
-		}
-		paths = append(paths, st.lineageRecordPath(id))
-	}
-	paths = append(paths, edgePaths...)
-	paths = append(paths, pointPaths...)
-	paths = compactStringsSorted(paths)
-	return st.withLineagePartitionLocks(ctx, paths, func() error {
-		for id, rows := range byID {
-			sort.Slice(rows, func(i, j int) bool { return lineageResultLess(rows[i], rows[j], id) })
-			if err := st.writeLineagePartition(st.lineageRecordPath(id), lineageRecordFormat, rows); err != nil {
-				return err
-			}
-		}
-		for _, path := range paths {
-			switch {
-			case strings.HasPrefix(filepath.Base(path), ".session-lineage-edge-"):
-				rows := desiredEdges[path]
-				sort.Slice(rows, func(i, j int) bool { return lineageResultLess(rows[i], rows[j], "") })
-				if err := st.writeLineagePartition(path, lineageEdgeFormat, rows); err != nil {
-					return err
-				}
-			case strings.HasPrefix(filepath.Base(path), ".session-lineage-point-"):
-				if err := st.writeLineagePartition(path, lineagePointFormat, desiredPoints[path]); err != nil {
-					return err
-				}
-			}
-		}
-		if err := st.clearLineageDirty(paths); err != nil {
-			return err
-		}
-		root, err := st.inventoryCatalogRoot()
-		if err != nil {
-			return err
-		}
-		for _, path := range []string{st.lineageMigrationPath(), legacyPath} {
-			name, nameErr := st.inventoryCatalogRelativePath(path)
-			if nameErr != nil {
-				err = nameErr
-				break
-			}
-			if removeErr := root.Remove(name); removeErr != nil && !os.IsNotExist(removeErr) {
-				err = removeErr
-				break
-			}
-		}
-		_ = root.Close()
-		if err != nil {
-			return fmt.Errorf("jsonlstore: finalize legacy lineage migration: %w", err)
-		}
-		dir, err := os.Open(st.inventoryCatalogDir()) //nolint:gosec // adapter-private owner-only path
-		if err != nil {
-			return err
-		}
-		err = dir.Sync()
-		_ = dir.Close()
-		return err
-	})
-}
-
 func (st *Store) missingLineagePoint(query port.SessionLineageQuery) (port.SessionLineageResult, error) {
 	rows, _, err := readLineagePartition(
 		st.lineageRecordPath(query.RecordID), lineageRecordFormat, 1, true,
@@ -819,16 +597,6 @@ func (st *Store) missingLineagePoint(query port.SessionLineageQuery) (port.Sessi
 func (st *Store) ReadSessionLineage(_ context.Context, query port.SessionLineageQuery) (port.SessionLineageResult, error) {
 	if err := port.ValidateSessionLineageQuery(query); err != nil {
 		return port.SessionLineageResult{}, err
-	}
-	if _, err := os.Stat(st.lineageMigrationPath()); err == nil {
-		return port.SessionLineageResult{}, errLineagePartitionIncomplete
-	} else if !os.IsNotExist(err) {
-		return port.SessionLineageResult{}, fmt.Errorf("jsonlstore: inspect lineage migration state: %w", err)
-	}
-	if legacy, err := st.legacyLineageUncertain(); err != nil {
-		return port.SessionLineageResult{}, err
-	} else if legacy {
-		return port.SessionLineageResult{}, errLineagePartitionIncomplete
 	}
 	if query.RecordID != "" {
 		path := st.lineagePointPath(query.RootID, query.RootIncarnation, query.RecordID, string(query.RecordIncarnation))

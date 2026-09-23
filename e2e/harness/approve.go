@@ -8,51 +8,119 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 )
 
-// ApproveOverHTTP resolves a parked permission ask out-of-band over the daemon's
-// HTTP surface: it POSTs /v1/sessions/{sessionID}/approve with the {ask_id,
-// verdict} body and returns the response body for the caller to drain.
-//
-// This is the cloud-native Phase 2 REHYDRATE path: when the process that parked
-// the ask has died and a SECOND mecated re-enters the loop AT the ask, the approve
-// handler resumes the run and relays its events as Server-Sent Events on THIS
-// response (the standard reconnect-and-relay shape — see internal/adapter/server/
-// http.go approve()). The returned ReadCloser is that SSE stream; the caller MUST
-// drain and Close it so the resumed run is not wedged behind an unread buffer (the
-// server's drain-to-discard keeps the run honest, but the run's terminal state
-// still has to be reached, which a drained body guarantees in-band).
-//
-// verdict is the three-way HTTP verdict string: "allow_once", "allow_always", or
-// "deny" (see verdictFromHTTP server-side). A 2xx returns the body; any non-2xx
-// returns an error with the body text for diagnosis.
-func ApproveOverHTTP(ctx context.Context, httpAddr, sessionID, askID, verdict string) (io.ReadCloser, error) {
-	body, err := json.Marshal(struct {
-		AskID   string `json:"ask_id"`
-		Verdict string `json:"verdict"`
-	}{AskID: askID, Verdict: verdict})
-	if err != nil {
-		return nil, err
+// ResolveAskAcknowledgement is the exact run/ask correlation acknowledged by
+// the resolve-ask control.
+type ResolveAskAcknowledgement struct {
+	RunID string `json:"run_id"`
+	AskID string `json:"ask_id"`
+}
+
+// HTTPStatusError preserves a non-success response for retry classification and
+// diagnostics.
+type HTTPStatusError struct {
+	Method     string
+	URL        string
+	StatusCode int
+	Code       string
+	Body       string
+}
+
+type problemDocument struct {
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	Status   int    `json:"status"`
+	Detail   string `json:"detail,omitempty"`
+	Instance string `json:"instance,omitempty"`
+	Code     string `json:"code"`
+	Error    string `json:"error,omitempty"`
+}
+
+const maxEventReplayBytes = 32 << 20
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("%s %s: status %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
+}
+
+func readHTTPStatusError(resp *http.Response, method, url string) *HTTPStatusError {
+	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	body := bytes.TrimSpace(msg)
+	var problem problemDocument
+	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if mediaType == "application/problem+json" {
+		_ = json.Unmarshal(body, &problem)
 	}
-	url := fmt.Sprintf("http://%s/v1/sessions/%s/approve", httpAddr, sessionID)
+	return &HTTPStatusError{
+		Method: method, URL: url, StatusCode: resp.StatusCode, Code: problem.Code, Body: string(body),
+	}
+}
+
+// ResolveAskOverHTTP resolves an ordinary permission ask on one exact run. The
+// endpoint returns an acknowledgement only; observe completion through the
+// durable session event replay.
+func ResolveAskOverHTTP(ctx context.Context, httpAddr, sessionID, runID, askID, verdict string) (ResolveAskAcknowledgement, error) {
+	body, err := json.Marshal(struct {
+		ExpectedRunID string `json:"expected_run_id"`
+		AskID         string `json:"ask_id"`
+		Verdict       string `json:"verdict"`
+	}{ExpectedRunID: runID, AskID: askID, Verdict: verdict})
+	if err != nil {
+		return ResolveAskAcknowledgement{}, err
+	}
+	url := fmt.Sprintf("http://%s/v1/sessions/%s/controls/resolve-ask", httpAddr, sessionID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return ResolveAskAcknowledgement{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("POST %s: %w", url, err)
+		return ResolveAskAcknowledgement{}, fmt.Errorf("POST %s: %w", url, err)
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
-		return nil, fmt.Errorf("POST %s: status %d: %s", url, resp.StatusCode, bytes.TrimSpace(msg))
+		return ResolveAskAcknowledgement{}, readHTTPStatusError(resp, http.MethodPost, url)
 	}
-	return resp.Body, nil
+	var ack ResolveAskAcknowledgement
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&ack); err != nil {
+		return ResolveAskAcknowledgement{}, fmt.Errorf("POST %s: decode acknowledgement: %w", url, err)
+	}
+	if ack.RunID != runID || ack.AskID != askID {
+		return ResolveAskAcknowledgement{}, fmt.Errorf("POST %s: acknowledgement correlation = run_id %q ask_id %q, want %q and %q", url, ack.RunID, ack.AskID, runID, askID)
+	}
+	return ack, nil
+}
+
+// ReplaySessionEventsOverHTTP reads the finite durable event replay for a
+// session. The response uses SSE framing but ends at the current log tail.
+func ReplaySessionEventsOverHTTP(ctx context.Context, httpAddr, sessionID string) ([]byte, error) {
+	url := fmt.Sprintf("http://%s/v1/sessions/%s/events", httpAddr, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return nil, readHTTPStatusError(resp, http.MethodGet, url)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEventReplayBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: read event replay: %w", url, err)
+	}
+	if len(body) > maxEventReplayBytes {
+		return nil, fmt.Errorf("GET %s: event replay exceeds %d bytes", url, maxEventReplayBytes)
+	}
+	return body, nil
 }
 
 // PromptOverHTTP starts a run on a session via POST /v1/sessions/{id}/prompt and
@@ -85,17 +153,4 @@ func PromptOverHTTP(ctx context.Context, httpAddr, sessionID, text string) (stat
 	// only needs the status and a short message.
 	body, _ = io.ReadAll(io.LimitReader(resp.Body, 8192))
 	return resp.StatusCode, body, nil
-}
-
-// DrainSSE reads an SSE stream to completion, returning the concatenated raw bytes
-// (the caller can grep the frames). It always Closes the body. A 204 No Content
-// (the same-process ack path) yields empty bytes — harmless for the rehydrate
-// scenario, which expects the streaming relay path.
-func DrainSSE(body io.ReadCloser) (out []byte, err error) {
-	defer func() {
-		if cerr := body.Close(); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
-	return io.ReadAll(body)
 }

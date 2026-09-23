@@ -416,7 +416,7 @@ func TestAskArgsContentFallbacks(t *testing.T) {
 		t.Errorf("raw tier must be the verbatim wire args, got %q", raw)
 	}
 
-	// Invalid JSON: both tiers are the sanitizeTerminal passthrough (prettyJSON
+	// Invalid JSON: both tiers are the terminaltext.Sanitize passthrough (prettyJSON
 	// of malformed JSON returns the sanitized input as-is), so the tiers agree
 	// and the toggle honestly hides.
 	pretty, raw, ok = askArgsContent(th, pendingAsk{Tool: "Shell", Args: `not json`})

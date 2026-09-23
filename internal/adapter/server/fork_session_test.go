@@ -144,8 +144,8 @@ func TestForkSessionInheritsHistoryAndLabels(t *testing.T) {
 	if forked.Counters != (session.Counters{}) {
 		t.Fatalf("forked counters = %+v, want zeroed (fresh budget)", forked.Counters)
 	}
-	if forked.Usage != (session.Usage{}) {
-		t.Fatalf("forked usage = %+v, want zero (fresh budget)", forked.Usage)
+	if got := forked.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
+		t.Fatalf("forked usage = %+v, want zero (fresh budget)", got)
 	}
 
 	// The fork can itself run a Converse to completion (history replays, no

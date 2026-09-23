@@ -65,7 +65,13 @@ describe("high-level session affinity", () => {
           });
           const input = requests[Symbol.asyncIterator]();
           await input.next();
-          yield { event: { runId: "different-run-id", text: "started", type: "message.delta" } };
+          yield {
+            event: {
+              ask: { askId: "ask", tool: "Shell" },
+              runId: "different-run-id",
+              type: "permission.ask",
+            },
+          };
           for (const operation of ["approve", "steer", "cancel"]) {
             await input.next();
             seen.push({
@@ -84,7 +90,7 @@ describe("high-level session affinity", () => {
     await client.sessions.get(session.id);
     await client.sessions.fork(session.id);
     const run = await session.run("hello");
-    await run.approve("ask", true);
+    await run.resolveAsk("ask", "allow_once");
     await run.steer("continue");
     await run.cancel();
     await run.result();
@@ -124,11 +130,11 @@ describe("high-level session affinity", () => {
                 ? "fork"
                 : path.endsWith("/prompt")
                   ? "prompt"
-                  : path.endsWith("/approve")
+                  : path.endsWith("/controls/resolve-ask")
                     ? "approve"
-                    : path.endsWith("/steer")
+                    : path.endsWith("/controls/steer")
                       ? "steer"
-                      : path.endsWith("/cancel")
+                      : path.endsWith("/controls/cancel")
                         ? "cancel"
                         : path.endsWith("/delete")
                           ? "delete"
@@ -166,7 +172,7 @@ describe("high-level session affinity", () => {
                 promptController = controller;
                 controller.enqueue(
                   encoder.encode(
-                    `data: ${JSON.stringify({ run_id: "different-http-run-id", text: "started", type: "message.delta" })}\n\n`,
+                    `data: ${JSON.stringify({ ask: { ask_id: "ask", tool: "Shell" }, run_id: "different-http-run-id", type: "permission.ask" })}\n\n`,
                   ),
                 );
               },
@@ -191,7 +197,7 @@ describe("high-level session affinity", () => {
     await http.sessions.get(httpSession.id);
     await http.sessions.fork(httpSession.id);
     const httpRun = await httpSession.run("hello");
-    await httpRun.approve("ask", true);
+    await httpRun.resolveAsk("ask", "allow_once");
     await httpRun.steer("continue");
     await httpRun.cancel();
     await httpRun.result();

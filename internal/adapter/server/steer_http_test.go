@@ -14,7 +14,6 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
-	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -29,7 +28,7 @@ type steerHTTPResponse struct {
 
 func postSteerHTTP(t *testing.T, srv *httptest.Server, id, route string, body io.Reader) (int, string, steerHTTPResponse) {
 	t.Helper()
-	resp, err := http.Post(srv.URL+"/v1/sessions/"+id+"/"+route, "application/json", body)
+	resp, err := http.Post(srv.URL+"/v1/sessions/"+id+"/controls/"+route, "application/json", body)
 	if err != nil {
 		t.Fatalf("POST %s: %v", route, err)
 	}
@@ -57,18 +56,6 @@ func waitForSignal(t *testing.T, ch <-chan struct{}, what string) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for %s", what)
 	}
-}
-
-func waitForNoLiveRun(t *testing.T, svc *server.Service, id session.SessionID) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, ok := svc.LookupRun(id); !ok {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("promoted run %q did not finish", id)
 }
 
 func TestHTTPSteerAcceptedAppendedAndCorrelated(t *testing.T) {
@@ -166,7 +153,11 @@ func TestHTTPSteerCancelHonorsExpectedRunAndBody(t *testing.T) {
 	if !ok {
 		t.Fatal("live run not registered")
 	}
-	status, _, accepted := postSteerHTTPJSON(t, srv, id, "steer", map[string]any{"text": "retract me", "message_id": "m-steer"})
+	status, _, accepted := postSteerHTTPJSON(t, srv, id, "steer", map[string]any{
+		"expected_run_id": live.RunID(),
+		"text":            "retract me",
+		"message_id":      "m-steer",
+	})
 	if status != http.StatusOK || accepted.Outcome != "accepted" {
 		t.Fatalf("steer = status %d body %+v", status, accepted)
 	}
@@ -196,13 +187,13 @@ func TestHTTPSteerCancelHonorsExpectedRunAndBody(t *testing.T) {
 	if status != http.StatusConflict || ended.Code != "stale_run_control" {
 		t.Fatalf("qualified cancel-steer with no live run = status %d body %+v", status, ended)
 	}
-	status, _, none := postSteerHTTP(t, srv, id, "cancel-steer", strings.NewReader(""))
-	if status != http.StatusOK || none.Outcome != "none_pending" {
-		t.Fatalf("empty-body cancel-steer = status %d body %+v", status, none)
+	status, _, missing := postSteerHTTP(t, srv, id, "cancel-steer", strings.NewReader(""))
+	if status != http.StatusBadRequest || missing.Code != "invalid_argument" {
+		t.Fatalf("empty-body cancel-steer = status %d body %+v", status, missing)
 	}
 }
 
-func TestHTTPSteerPromotionIsUnaryAndBackgroundDrained(t *testing.T) {
+func TestHTTPSteerRejectsUnqualifiedLateRequest(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("first"), mockllm.TextTurn("promoted"))
 	svc := newSteerService(t, llm, nil)
 	srv := httptest.NewServer(server.NewHTTPHandler(svc))
@@ -232,84 +223,23 @@ func TestHTTPSteerPromotionIsUnaryAndBackgroundDrained(t *testing.T) {
 	if status != http.StatusConflict || strict.Code != "stale_run_control" {
 		t.Fatalf("strict late steer = status %d body %+v", status, strict)
 	}
-	status, contentType, promoted := postSteerHTTPJSON(t, srv, id, "steer", map[string]any{
-		"message_id": "m-promote",
+	status, contentType, unqualified := postSteerHTTPJSON(t, srv, id, "steer", map[string]any{
+		"message_id": "m-unqualified",
 		"text":       "unqualified late",
 	})
-	if status != http.StatusOK || !strings.HasPrefix(contentType, "application/json") {
-		t.Fatalf("promoted steer = status %d type %q body %+v", status, contentType, promoted)
+	if status != http.StatusBadRequest || !strings.HasPrefix(contentType, "application/problem+json") || unqualified.Code != "invalid_argument" {
+		t.Fatalf("unqualified steer = status %d type %q body %+v", status, contentType, unqualified)
 	}
-	if promoted.Outcome != "too_late" || !promoted.Promoted || promoted.RunID == "" || promoted.RunID == firstRunID || promoted.MessageID != "m-promote" {
-		t.Fatalf("promoted steer body = %+v", promoted)
-	}
-	waitForNoLiveRun(t, svc, session.SessionID(id))
-	if calls := llm.Calls(); calls != 2 {
-		t.Fatalf("provider calls = %d, want 2", calls)
+	if calls := llm.Calls(); calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
 	}
 	loaded, err := svc.GetSession(t.Context(), session.SessionID(id))
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
 	if loaded.State != session.StateCompleted {
-		t.Fatalf("promoted session state = %q, want completed", loaded.State)
+		t.Fatalf("session state = %q, want completed", loaded.State)
 	}
-}
-
-func TestHTTPSteerPromotedBackgroundRunPersistsAwaiting(t *testing.T) {
-	block := &blockingTextTool{started: make(chan struct{}), release: make(chan struct{})}
-	llm := mockllm.New(
-		mockllm.TextTurn("first"),
-		mockllm.ToolCallTurn(call("ask-1", "Read", `{}`)),
-	)
-	svc := newSteerService(t, llm, []governance.Rule{{
-		Scope:  governance.ScopeBuiltinDefault,
-		Tool:   "Read",
-		Effect: governance.Ask,
-	}}, block)
-	srv := httptest.NewServer(server.NewHTTPHandler(svc))
-	defer srv.Close()
-	id := createHTTPSession(t, srv)
-
-	firstResp, err := http.Post(srv.URL+"/v1/sessions/"+id+"/prompt", "application/json", strings.NewReader(`{"text":"first"}`))
-	if err != nil {
-		t.Fatalf("POST prompt: %v", err)
-	}
-	_ = parseSSE(t, bufio.NewReader(firstResp.Body))
-	firstResp.Body.Close()
-
-	status, _, promoted := postSteerHTTPJSON(t, srv, id, "steer", map[string]any{"text": "ask first"})
-	if status != http.StatusOK || !promoted.Promoted || promoted.RunID == "" {
-		t.Fatalf("promoted steer = status %d body %+v", status, promoted)
-	}
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		stored, loadErr := svc.GetSession(t.Context(), session.SessionID(id))
-		if loadErr != nil {
-			t.Fatalf("GetSession: %v", loadErr)
-		}
-		if stored.State == session.StateAwaiting {
-			if _, ok := stored.PendingAsk(); !ok {
-				t.Fatal("persisted awaiting session has no pending approval")
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			_, live := svc.LookupRun(session.SessionID(id))
-			t.Fatalf("promoted session state = %q, live = %t, provider calls = %d; want persisted awaiting", stored.State, live, llm.Calls())
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-	cancelResp, err := http.Post(srv.URL+"/v1/sessions/"+id+"/cancel", "application/json", nil)
-	if err != nil {
-		t.Fatalf("POST cancel: %v", err)
-	}
-	cancelResp.Body.Close()
-	if cancelResp.StatusCode != http.StatusNoContent {
-		t.Fatalf("cancel status = %d, want 204", cancelResp.StatusCode)
-	}
-	waitForNoLiveRun(t, svc, session.SessionID(id))
 }
 
 func TestHTTPSteerStrictValidationAndFeature(t *testing.T) {

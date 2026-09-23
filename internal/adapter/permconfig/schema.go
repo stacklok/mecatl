@@ -295,7 +295,7 @@ func (s *TemporaryStorageSection) UnmarshalYAML(node ast.Node) error {
 }
 
 // StorageManagementSection is the explicit operator authority for process-wide
-// storage health, migration, and cleanup.
+// storage health and cleanup.
 type StorageManagementSection struct {
 	// Version is the required schema version; the only supported value is 1.
 	Version int `yaml:"version"`
@@ -1177,6 +1177,10 @@ type LearningSection struct {
 	// autonomy. It does not override separately configured maintenance schedules such
 	// as --user-model-consolidate-interval.
 	Mode string `yaml:"mode"`
+	// AdmissionInterval admits every Nth eligible automatic reflection process-wide.
+	// Nil uses the default of 1; zero and one both admit every eligible reflection.
+	// This field is operator-owned; project values do not change admission cadence.
+	AdmissionInterval *int `yaml:"admission_interval"`
 	// Sensitivity controls weighted automatic admission. Empty means balanced.
 	Sensitivity string `yaml:"sensitivity"`
 	// Skills controls learned-skill lifecycle policy.
@@ -1276,8 +1280,11 @@ func (s *LearningAutomaticSection) UnmarshalYAML(node ast.Node) error {
 
 // UnmarshalYAML strictly decodes learning.mode and validates its closed vocabulary.
 func (s *LearningSection) UnmarshalYAML(node ast.Node) error {
-	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "sensitivity": &s.Sensitivity, "skills": newPermconfigNodePointer(&s.Skills), "automatic": newPermconfigNodePointer(&s.Automatic)}); err != nil {
+	if err := decodeStrictMapping(node, "learning", map[string]any{modeKey: &s.Mode, "admission_interval": newPermconfigNodePointer(&s.AdmissionInterval), "sensitivity": &s.Sensitivity, "skills": newPermconfigNodePointer(&s.Skills), "automatic": newPermconfigNodePointer(&s.Automatic)}); err != nil {
 		return err
+	}
+	if s.AdmissionInterval != nil && *s.AdmissionInterval < 0 {
+		return fmt.Errorf("learning.admission_interval: must be nonnegative")
 	}
 	if s.Mode != "" {
 		if _, err := learning.ParseMode(s.Mode); err != nil {

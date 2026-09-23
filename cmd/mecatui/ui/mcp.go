@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -677,18 +678,18 @@ func renderMCPPanel(th theme.Theme, st mcpState, caps client.Capabilities, hk he
 			state = "disabled"
 		}
 		head := fmt.Sprintf("%s  [%s]  %s",
-			sanitizeTerminal(s.Name), sanitizeTerminal(s.Kind), state)
+			terminaltext.Sanitize(s.Name), terminaltext.Sanitize(s.Kind), state)
 		if s.Group != "" {
-			head += "  group=" + sanitizeTerminal(s.Group)
+			head += "  group=" + terminaltext.Sanitize(s.Group)
 		}
 		b.WriteString(renderMCPInventoryRow(th, "toolName", head, width) + "\n")
 		for _, srv := range s.Servers {
 			line := fmt.Sprintf("  • %s  %s  %s",
-				sanitizeTerminal(srv.Name), sanitizeTerminal(srv.Transport), sanitizeTerminal(srv.URL))
+				terminaltext.Sanitize(srv.Name), terminaltext.Sanitize(srv.Transport), terminaltext.Sanitize(srv.URL))
 			b.WriteString(renderMCPInventoryRow(th, "toolArgs", line, width) + "\n")
 		}
 		for _, d := range s.Diagnostics {
-			b.WriteString(renderMCPInventoryRow(th, "errorText", "  ! "+sanitizeTerminal(d), width) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "errorText", "  ! "+terminaltext.Sanitize(d), width) + "\n")
 		}
 	}
 	b.WriteString(renderGroupsLine(th, st, width))
@@ -727,7 +728,7 @@ func renderBrokerMCPPanel(th theme.Theme, st mcpState, hk helpKeys, width int) s
 			if row.CatalogueState != "declared" && row.CatalogueState != "discovered" {
 				count = "—"
 			}
-			b.WriteString(renderMCPInventoryRow(th, "toolName", fmt.Sprintf("%s  %s", sanitizeTerminal(row.Name), catalogue), width) + "\n")
+			b.WriteString(renderMCPInventoryRow(th, "toolName", fmt.Sprintf("%s  %s", terminaltext.Sanitize(row.Name), catalogue), width) + "\n")
 			b.WriteString(renderMCPInventoryRow(th, "toolArgs", "  "+count+" tools", width) + "\n")
 		}
 		if st.inventory.Truncated {
@@ -819,7 +820,7 @@ func renderGroupsLine(th theme.Theme, st mcpState, widths ...int) string {
 	}
 	clean := make([]string, len(st.groups))
 	for i, g := range st.groups {
-		clean[i] = sanitizeTerminal(g)
+		clean[i] = terminaltext.Sanitize(g)
 	}
 	return "\n" + renderMCPInventoryRow(th, "toolName", "ToolHive groups: "+strings.Join(clean, ", "), width) + "\n"
 }
@@ -838,7 +839,7 @@ func renderResourceList(th theme.Theme, st mcpState, caps client.Capabilities, h
 		if label == "" {
 			label = r.URI
 		}
-		line := fmt.Sprintf("%s  %s", sanitizeTerminal(label), sanitizeTerminal(r.Server))
+		line := fmt.Sprintf("%s  %s", terminaltext.Sanitize(label), terminaltext.Sanitize(r.Server))
 		b.WriteString(renderRow(th, line, i == st.resCursor, width) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" read · "+hk.closeOnly+" close"))
@@ -878,7 +879,7 @@ func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk 
 		if hasRequiredArgs(p) {
 			marker = "  (args)"
 		}
-		line := fmt.Sprintf("%s  %s%s", sanitizeTerminal(p.Name), sanitizeTerminal(p.Server), marker)
+		line := fmt.Sprintf("%s  %s%s", terminaltext.Sanitize(p.Name), terminaltext.Sanitize(p.Server), marker)
 		b.WriteString(renderRow(th, line, i == st.prCursor, width) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.navUp+"/"+hk.navDown+" move · "+hk.choose+" select · "+hk.closeOnly+" close"))
@@ -889,13 +890,13 @@ func renderPromptList(th theme.Theme, st mcpState, caps client.Capabilities, hk 
 func renderPromptArgs(th theme.Theme, st mcpState, hk helpKeys) string {
 	var b strings.Builder
 	b.WriteString(th.Style("askTitle").Render(
-		"arguments for "+sanitizeTerminal(st.argPrompt.Name)) + "\n")
+		"arguments for "+terminaltext.Sanitize(st.argPrompt.Name)) + "\n")
 	if line := mcpStatusLine(th, st); line != "" {
 		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n")
 	for i, f := range st.argFields {
-		label := th.Style("toolName").Render(sanitizeTerminal(f.name))
+		label := th.Style("toolName").Render(terminaltext.Sanitize(f.name))
 		if i == st.argCursor {
 			label = "› " + label
 		} else {
@@ -930,7 +931,7 @@ func renderRow(th theme.Theme, text string, selected bool, widths ...int) string
 func mcpStatusLine(th theme.Theme, st mcpState) string {
 	if st.errMsg != "" {
 		label := st.errCls.String()
-		return th.Style("errorText").Render("✗ " + label + ": " + sanitizeTerminal(st.errMsg))
+		return th.Style("errorText").Render("✗ " + label + ": " + terminaltext.Sanitize(st.errMsg))
 	}
 	if st.loading {
 		return th.Style("muted").Render("loading…")

@@ -115,6 +115,189 @@ func (f *fakeLister) ListModels(context.Context) ([]modelEntry, error) {
 	return f.models, nil
 }
 
+// TestNativeDiscoveryPublicationPreservesDemandSnapshot pins fetched-only
+// background publication: native authenticated discovery is demand-driven, so an
+// unrelated background refresh must not replace its full live inventory with the
+// configured default floor after it has been published.
+func TestNativeDiscoveryPublicationPreservesDemandSnapshot(t *testing.T) {
+	const (
+		nativeID     = "native-gateway"
+		defaultModel = "native/default"
+		omittedModel = "native/passthrough"
+		unrelatedID  = "unrelated"
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	native := &fakeLister{models: []modelEntry{
+		{ID: defaultModel, ContextLimit: 262_144},
+		{ID: "native/other", ContextLimit: 524_288},
+	}}
+	unrelated := &gateLister{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		models:  []modelEntry{{ID: "unrelated/live", ContextLimit: 65_536}},
+	}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			nativeID:    {id: nativeID, available: true, nativeEndpoint: true, defaultModel: defaultModel, lister: native},
+			unrelatedID: {id: unrelatedID, available: true, lister: unrelated},
+		},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.meta.seedFromCatalog(reg.Available())
+	reg.meta.seedCustomProviderFloors(reg)
+	swap := newFakeSwapper()
+	st := &refreshStaleModelsState{}
+	closer := startLiveModelRefresh(port.NopDiagnostics{}, reg, swap, false, 0)
+	t.Cleanup(func() { unrelated.unblock(); closer() })
+
+	select {
+	case <-unrelated.entered: // background fetch is blocked before publication
+	case <-ctx.Done():
+		t.Fatalf("wait for background fetch: %v", ctx.Err())
+	}
+	refreshStaleModels(ctx, port.NopDiagnostics{}, reg, swap, st)
+	if got := native.calls.Load(); got != 1 {
+		t.Fatalf("native demand listings = %d, want 1", got)
+	}
+	unrelated.unblock()
+	if err := reg.meta.awaitRefresh(ctx); err != nil {
+		t.Fatalf("wait for background publication: %v", err)
+	}
+	closer()
+
+	for _, id := range []string{defaultModel, "native/other"} {
+		if _, ok := reg.meta.lookup(nativeID, id); !ok {
+			t.Fatalf("native live inventory lost %q after unrelated background publication", id)
+		}
+	}
+	if window, known := reg.resolveWindowCore(Config{}, nativeID, defaultModel); !known || window != 262_144 {
+		t.Fatalf("native context window after unrelated background publication = %d, known=%t; want 262144, true", window, known)
+	}
+	_, _, models := swap.snapshot()
+	windows := make(map[string]int64)
+	for _, m := range models {
+		if m.GetProviderId() == nativeID {
+			windows[m.GetId()] = m.GetContextLimit()
+		}
+	}
+	if len(windows) != len(native.models) {
+		t.Fatalf("published native inventory = %v, want both live models", windows)
+	}
+	for _, m := range native.models {
+		if got := windows[m.ID]; got != int64(m.ContextLimit) {
+			t.Errorf("published picker window for %q = %d, want %d", m.ID, got, m.ContextLimit)
+		}
+	}
+	// A successful non-empty listing can omit a passthrough model/window. Its
+	// published evidence admits the conservative fallback without another fetch.
+	if err := awaitContextWindowWithin(ctx, port.NopDiagnostics{}, reg, swap, st, nativeID, omittedModel, 10*time.Second); err != nil {
+		t.Fatalf("first admission after native discovery: %v", err)
+	}
+	if got := native.calls.Load(); got != 1 {
+		t.Fatalf("native listings after admission = %d, want 1", got)
+	}
+}
+
+// TestNativeDiscoveryBackgroundKeepsConfiguredFloor confirms a background refresh
+// that runs before demand preserves the native provider's configured default seed.
+func TestNativeDiscoveryBackgroundKeepsConfiguredFloor(t *testing.T) {
+	const (
+		nativeID     = "native-gateway"
+		defaultModel = "native/default"
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	native := &fakeLister{models: []modelEntry{{ID: defaultModel, ContextLimit: 262_144}}}
+	unrelated := &gateLister{entered: make(chan struct{}), release: make(chan struct{}), models: []modelEntry{{ID: "unrelated/live"}}}
+	reg := &providerRegistry{
+		entries: map[string]providerEntry{
+			nativeID:    {id: nativeID, available: true, nativeEndpoint: true, defaultModel: defaultModel, lister: native},
+			"unrelated": {id: "unrelated", available: true, lister: unrelated},
+		},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.meta.seedFromCatalog(reg.Available())
+	reg.meta.seedCustomProviderFloors(reg)
+	swap := newFakeSwapper()
+	st := &refreshStaleModelsState{}
+	closer := startLiveModelRefresh(port.NopDiagnostics{}, reg, swap, false, 0)
+	t.Cleanup(func() { unrelated.unblock(); closer() })
+
+	select {
+	case <-unrelated.entered:
+	case <-ctx.Done():
+		t.Fatalf("wait for background fetch: %v", ctx.Err())
+	}
+	unrelated.unblock()
+	if err := reg.meta.awaitRefresh(ctx); err != nil {
+		t.Fatalf("wait for background publication: %v", err)
+	}
+	closer()
+	if _, ok := reg.meta.lookup(nativeID, defaultModel); !ok {
+		t.Fatal("background publication dropped the configured native default")
+	}
+	if got := native.calls.Load(); got != 0 {
+		t.Fatalf("native background listings = %d, want 0", got)
+	}
+	_, _, models := swap.snapshot()
+	var configured *mecatlv1.ModelInfo
+	for _, m := range models {
+		if m.GetProviderId() == nativeID && m.GetId() == defaultModel {
+			configured = m
+		}
+	}
+	if configured == nil {
+		t.Fatal("background picker publication dropped the configured native default")
+	}
+	refreshStaleModels(ctx, port.NopDiagnostics{}, reg, swap, st)
+	_, _, models = swap.snapshot()
+	configured = nil
+	for _, m := range models {
+		if m.GetProviderId() == nativeID && m.GetId() == defaultModel {
+			configured = m
+		}
+	}
+	if got := configured.GetContextLimit(); got != 262_144 {
+		t.Fatalf("picker window after demand = %d, want 262144", got)
+	}
+	if window, known := reg.resolveWindowCore(Config{}, nativeID, defaultModel); !known || window != 262_144 {
+		t.Fatalf("context window after demand = %d, known=%t; want 262144, true", window, known)
+	}
+	if err := awaitContextWindowWithin(ctx, port.NopDiagnostics{}, reg, swap, st, nativeID, defaultModel, 10*time.Second); err != nil {
+		t.Fatalf("first admission after demand: %v", err)
+	}
+	if got := native.calls.Load(); got != 1 {
+		t.Fatalf("native listings after admission = %d, want 1", got)
+	}
+}
+
+// TestNativeOnlyRefreshKeepsConfiguredFloor confirms native-only startup settles
+// without publication while retaining the synchronous configured inventory floor.
+func TestNativeOnlyRefreshKeepsConfiguredFloor(t *testing.T) {
+	const (
+		nativeID     = "native-gateway"
+		defaultModel = "native/default"
+	)
+	reg := &providerRegistry{
+		entries:  map[string]providerEntry{nativeID: {id: nativeID, available: true, nativeEndpoint: true, defaultModel: defaultModel, lister: &fakeLister{}}},
+		meta:     newLiveMetaStore(),
+		outcomes: newLiveOutcomeStore(),
+	}
+	reg.meta.seedFromCatalog(reg.Available())
+	reg.meta.seedCustomProviderFloors(reg)
+	startLiveModelRefresh(port.NopDiagnostics{}, reg, newFakeSwapper(), false, 0)()
+	if !reg.meta.refreshCompleted() {
+		t.Fatal("native-only refresh did not settle")
+	}
+	if _, ok := reg.meta.lookup(nativeID, defaultModel); !ok {
+		t.Fatal("native-only refresh dropped the configured native default")
+	}
+}
+
 type deadlineLister struct {
 	deadlines chan time.Time
 }

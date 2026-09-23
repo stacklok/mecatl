@@ -9,17 +9,17 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
 func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
-	s := statusline.NewDefaultSource(0)
+	s := customization.NewDefaultSource(0)
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.deps.StatusSource = s
 	m.deps.Server = "server.example"
-	m.deps.ConnectionMode = "embedded"
+	m.deps.ConnectionMode = "connect"
 	m.sessionID = "session-status-default"
 	m.sessionTitle = "Status work"
 	m.phase = phaseIdle
@@ -30,7 +30,7 @@ func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
 	updated, _ = m.update(waitStatusMessage(t, m.statusLineWaitCmd()))
 	m = updated.(Model)
 	header := stripANSIstr(m.renderHeader())
-	for _, want := range []string{"mecatui", "session session-stat", "mode default", "server.example"} {
+	for _, want := range []string{"mecatui", "Status work", "mode default", "server.example"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("header %q is missing shipped chrome %q", header, want)
 		}
@@ -46,9 +46,9 @@ func TestStatusLine_StaleGeneratedSurfaceNeverWraps(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.deps.StatusSource = &statusSourceFake{changed: make(chan struct{})}
 	m.width = 24
-	m.generatedStatusLine = statusline.Result{
-		Header: statusline.Surface{Present: true, Spans: []statusline.Span{{Text: "mecatui · session #too-wide"}}},
-		Footer: statusline.Surface{Present: true, Spans: []statusline.Span{{Text: "ctx 70% · ↑4K ↓1K cache 75%"}}},
+	m.generatedStatusLine = customization.Result{
+		Header: customization.Surface{Present: true, Spans: []customization.Span{{Text: "mecatui · session #too-wide"}}},
+		Footer: customization.Surface{Present: true, Spans: []customization.Span{{Text: "ctx 70% · ↑4K ↓1K cache 75%"}}},
 	}
 
 	if header := stripANSIstr(m.renderHeader()); strings.Contains(header, "too-wide") {
@@ -77,9 +77,9 @@ func TestStatusLine_SourceDoesNotFallBackToLegacyGenerators(t *testing.T) {
 }
 
 func TestStatusCustomization_Scenario2_PartialSurfaceOverrideKeepsDefault(t *testing.T) {
-	s := statusline.NewTemplateSource(statusline.TemplateSet{Header: statusline.SurfaceTemplates{Full: `<header><accent>custom header</accent></header>`}}, 0)
+	s := customization.NewTemplateSource(customization.TemplateSet{Header: customization.SurfaceTemplates{Full: `<header><accent>custom header</accent></header>`}}, 0)
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
-	s.Submit(statusline.Input{Terminal: statusline.Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
+	s.Submit(customization.Input{Terminal: customization.Terminal{HeaderAvailCols: 80, FooterAvailCols: 80}})
 	select {
 	case <-s.Changed():
 	case <-time.After(time.Second):
@@ -93,7 +93,7 @@ func TestStatusCustomization_Scenario2_PartialSurfaceOverrideKeepsDefault(t *tes
 func TestStatusLine_Scenario2_HeaderSystemIndicatorsSurviveOverride(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.width = 100
-	m.generatedStatusLine.Header = statusline.Render(`<header><accent>CUSTOM</accent></header>`, nil).Header
+	m.generatedStatusLine.Header = customization.Render(`<header><accent>CUSTOM</accent></header>`, nil).Header
 	m.caps.Posture = postureAuto
 	m.conv.filesChanged = []string{"changed.go"}
 	header := stripANSIstr(m.renderHeader())
@@ -105,25 +105,36 @@ func TestStatusLine_Scenario2_HeaderSystemIndicatorsSurviveOverride(t *testing.T
 }
 func TestStatusLine_RenderStatusSpansUsesLinkThemeStyle(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	span := statusline.Render(`<footer><link href="https://example.test/docs">docs</link></footer>`, nil).Footer.Spans[0]
-	got := renderStatusSpans(th, []statusline.Span{span})
+	span := customization.Render(`<footer><link href="https://example.test/docs">docs</link></footer>`, nil).Footer.Spans[0]
+	got := renderStatusSpans(th, []customization.Span{span})
 	want := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Palette.MdLink)).Underline(true).Render("docs")
 	if got != want || strings.Contains(got, "]8;") {
 		t.Fatalf("link output %q", got)
 	}
 }
+
+func TestStatusLine_RenderStatusSpansUsesSingleLineSanitization(t *testing.T) {
+	spans := []customization.Span{{Text: "header\twith\nlayout\u2028controls\u2029"}}
+	if got, want := statusSpansText(spans), "headerwithlayoutcontrols"; got != want {
+		t.Fatalf("status text = %q, want %q", got, want)
+	}
+	if got, want := stripANSIstr(renderStatusSpans(theme.New("aztec", theme.AztecPalette()), spans)), "headerwithlayoutcontrols"; got != want {
+		t.Fatalf("rendered status = %q, want %q", got, want)
+	}
+}
+
 func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
-	s := statusline.NewDefaultSource(0)
+	s := customization.NewDefaultSource(0)
 	t.Cleanup(func() { _ = s.Close(context.Background()) })
-	s.Submit(statusline.Input{
-		Session: statusline.Session{Handle: "deadbeef", Mode: "default"},
-		Model:   statusline.Model{ProviderID: "openai", DisplayName: "GPT-5", Route: "azure"},
-		Usage: statusline.Usage{
-			Input:  statusline.UsageAtom{Human: "4K"},
-			Output: statusline.UsageAtom{Human: "1K"},
+	s.Submit(customization.Input{
+		Session: customization.Session{Handle: "deadbeef", Mode: "default"},
+		Model:   customization.Model{ProviderID: "openai", DisplayName: "GPT-5", Route: "azure"},
+		Usage: customization.Usage{
+			Input:  customization.UsageAtom{Human: "4K"},
+			Output: customization.UsageAtom{Human: "1K"},
 		},
-		Context:  statusline.Context{Used: statusline.ContextAtom{Raw: 2_000, Human: "2K"}, Window: statusline.ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 20},
-		Terminal: statusline.Terminal{HeaderAvailCols: 80, FooterAvailCols: 80},
+		Context:  customization.Context{Used: customization.ContextAtom{Raw: 2_000, Human: "2K"}, Window: customization.ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 20},
+		Terminal: customization.Terminal{HeaderAvailCols: 80, FooterAvailCols: 80},
 	})
 	select {
 	case <-s.Changed():
@@ -131,7 +142,7 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 		t.Fatal("no result")
 	}
 	line := s.Latest()
-	if got, want := statusSpansText(line.Header.Spans), "mecatui · session deadbeef · openai/GPT-5/azure · mode default"; got != want {
+	if got, want := statusSpansText(line.Header.Spans), "mecatui · openai/GPT-5/azure · mode default"; got != want {
 		t.Fatalf("header = %q, want %q", got, want)
 	}
 	if got, want := statusSpansText(line.Footer.Spans), "ctx ▒▒░░░░░░ 20% · 2K/10K · ↑4K ↓1K cache 0%"; got != want {

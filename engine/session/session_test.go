@@ -1230,8 +1230,8 @@ func TestRecordUsageAccumulates(t *testing.T) {
 		t.Fatalf("RecordUsage #2: %v", err)
 	}
 	want := Usage{InputTokens: 150, OutputTokens: 25, CacheReadTokens: 70, CacheWriteTokens: 10}
-	if s.Usage != want {
-		t.Fatalf("accumulated Usage = %+v, want %+v", s.Usage, want)
+	if s.UsageFor(UsageKindMain) != want {
+		t.Fatalf("accumulated Usage = %+v, want %+v", s.UsageFor(UsageKindMain), want)
 	}
 }
 
@@ -1260,8 +1260,8 @@ func TestRecordUsageRunningOnly(t *testing.T) {
 			if !errors.Is(err, ErrIllegalTransition) {
 				t.Fatalf("RecordUsage from %s err = %v, want ErrIllegalTransition", tc.name, err)
 			}
-			if s.Usage != (Usage{}) {
-				t.Fatalf("Usage mutated on rejected RecordUsage: %+v", s.Usage)
+			if s.UsageFor(UsageKindMain) != (Usage{}) {
+				t.Fatalf("Usage mutated on rejected RecordUsage: %+v", s.UsageFor(UsageKindMain))
 			}
 		})
 	}
@@ -1271,7 +1271,7 @@ func TestRecordUsageRunningOnly(t *testing.T) {
 // Phase 1): the three terminal-recovery seams (Reopen / Interrupt / Recover) all
 // route through resetToIdle, which clears the Counters but DELIBERATELY preserves
 // the cumulative Usage so the MaxRunTokens budget brake survives reopen/restart.
-// Mutation: adding `s.Usage = Usage{}` to resetToIdle must fail this test.
+// Mutation: adding `s.UsageFor(UsageKindMain) = Usage{}` to resetToIdle must fail this test.
 func TestResetToIdlePreservesUsage(t *testing.T) {
 	spend := Usage{InputTokens: 5000, OutputTokens: 1200, CacheReadTokens: 100, CacheWriteTokens: 50}
 
@@ -1281,8 +1281,8 @@ func TestResetToIdlePreservesUsage(t *testing.T) {
 		mustOK(t, s.RecordUsage(spend))
 		mustOK(t, s.Complete())
 		mustOK(t, s.Reopen())
-		if s.Usage != spend {
-			t.Fatalf("Reopen cleared Usage: got %+v, want %+v (the budget must survive)", s.Usage, spend)
+		if s.UsageFor(UsageKindMain) != spend {
+			t.Fatalf("Reopen cleared Usage: got %+v, want %+v (the budget must survive)", s.UsageFor(UsageKindMain), spend)
 		}
 		if s.Counters != (Counters{}) {
 			t.Fatalf("Reopen did NOT reset Counters: %+v", s.Counters)
@@ -1295,8 +1295,8 @@ func TestResetToIdlePreservesUsage(t *testing.T) {
 		mustOK(t, s.RecordUsage(spend))
 		mustOK(t, s.Cancel())
 		mustOK(t, s.Interrupt())
-		if s.Usage != spend {
-			t.Fatalf("Interrupt cleared Usage: got %+v, want %+v", s.Usage, spend)
+		if s.UsageFor(UsageKindMain) != spend {
+			t.Fatalf("Interrupt cleared Usage: got %+v, want %+v", s.UsageFor(UsageKindMain), spend)
 		}
 	})
 
@@ -1306,8 +1306,8 @@ func TestResetToIdlePreservesUsage(t *testing.T) {
 		mustOK(t, s.RecordUsage(spend))
 		mustOK(t, s.Fail())
 		mustOK(t, s.Recover())
-		if s.Usage != spend {
-			t.Fatalf("Recover cleared Usage: got %+v, want %+v", s.Usage, spend)
+		if s.UsageFor(UsageKindMain) != spend {
+			t.Fatalf("Recover cleared Usage: got %+v, want %+v", s.UsageFor(UsageKindMain), spend)
 		}
 	})
 }
@@ -1402,8 +1402,8 @@ func TestAbandonPreservesUsage(t *testing.T) {
 		t.Fatalf("precondition: state = %q, want running", s.State)
 	}
 	mustOK(t, s.Abandon())
-	if s.Usage != spend {
-		t.Fatalf("Abandon cleared Usage: got %+v, want %+v (the budget must survive)", s.Usage, spend)
+	if s.UsageFor(UsageKindMain) != spend {
+		t.Fatalf("Abandon cleared Usage: got %+v, want %+v (the budget must survive)", s.UsageFor(UsageKindMain), spend)
 	}
 	if s.Counters != (Counters{}) {
 		t.Fatalf("Abandon did NOT reset Counters: %+v", s.Counters)
@@ -1467,8 +1467,8 @@ func TestRecordUsageKeepsLifetimeCompatibilityMirror(t *testing.T) {
 	mustOK(t, s.RecordUsage(second))
 
 	want := first.Add(second)
-	if s.Usage != want {
-		t.Fatalf("Usage = %+v, want lifetime main total %+v", s.Usage, want)
+	if s.UsageFor(UsageKindMain) != want {
+		t.Fatalf("Usage = %+v, want lifetime main total %+v", s.UsageFor(UsageKindMain), want)
 	}
 	if got := s.TokenUsageSnapshot()[UsageKindMain].Total; got != want {
 		t.Fatalf("TokenUsageSnapshot()[main].Total = %+v, want %+v", got, want)
@@ -1502,10 +1502,9 @@ func TestLimitsWithDefaults(t *testing.T) {
 	})
 }
 
-// TestRecordFailurePermanenceRejectsNonFailed asserts the state guard:
-// RecordFailurePermanence is legal ONLY from StateFailed, mirroring the guard
-// style of Fail/Recover (ErrIllegalTransition otherwise).
-func TestRecordFailurePermanenceRejectsNonFailed(t *testing.T) {
+// TestRecordFailureMetadataRejectsNonFailed asserts the state guard:
+// retry metadata is legal only from StateFailed.
+func TestRecordFailureMetadataRejectsNonFailed(t *testing.T) {
 	for _, mk := range []struct {
 		name  string
 		setup func(s *Session)
@@ -1525,71 +1524,33 @@ func TestRecordFailurePermanenceRejectsNonFailed(t *testing.T) {
 		t.Run(mk.name, func(t *testing.T) {
 			s := newTestSession(Limits{})
 			mk.setup(s)
-			if err := s.RecordFailurePermanence(true); !errors.Is(err, ErrIllegalTransition) {
-				t.Fatalf("RecordFailurePermanence from %s: err = %v, want ErrIllegalTransition", mk.name, err)
+			if err := s.RecordFailureMetadata(RetryMetadata{Disposition: RetryDispositionPermanent}); !errors.Is(err, ErrIllegalTransition) {
+				t.Fatalf("RecordFailureMetadata from %s: err = %v, want ErrIllegalTransition", mk.name, err)
 			}
-			if s.FailurePermanence() {
-				t.Fatalf("FailurePermanence from %s returned true, want false (flag not set)", mk.name)
+			if got := s.FailureMetadata(); got != (RetryMetadata{}) {
+				t.Fatalf("FailureMetadata from %s = %+v, want zero", mk.name, got)
 			}
 		})
 	}
 }
 
-// TestRecordFailurePermanenceRoundTrip asserts the full lifecycle: Fail() →
-// RecordFailurePermanence(true) → FailurePermanence()==true → Recover() clears it.
-func TestRecordFailurePermanenceRoundTrip(t *testing.T) {
+// TestRecordFailureMetadataRoundTrip asserts that recovery clears typed metadata.
+func TestRecordFailureMetadataRoundTrip(t *testing.T) {
 	s := newTestSession(Limits{})
-	if err := s.RecordUserPrompt("prompt", nil); err != nil {
-		t.Fatalf("RecordUserPrompt: %v", err)
+	mustOK(t, s.RecordUserPrompt("prompt", nil))
+	mustOK(t, s.BeginTurn())
+	mustOK(t, s.Fail())
+	want := RetryMetadata{Disposition: RetryDispositionPermanent, Progress: StreamProgressVisible}
+	mustOK(t, s.RecordFailureMetadata(want))
+	if got := s.FailureMetadata(); got != want {
+		t.Fatalf("FailureMetadata after stamp = %+v, want %+v", got, want)
 	}
-	if err := s.BeginTurn(); err != nil {
-		t.Fatalf("BeginTurn: %v", err)
-	}
-	if err := s.Fail(); err != nil {
-		t.Fatalf("Fail: %v", err)
-	}
-	if s.State != StateFailed {
-		t.Fatalf("precondition: state = %q, want failed", s.State)
-	}
-
-	// Not yet stamped; accessor returns false.
-	if s.FailurePermanence() {
-		t.Fatal("FailurePermanence before stamp = true, want false")
-	}
-
-	// Stamp as permanent.
-	if err := s.RecordFailurePermanence(true); err != nil {
-		t.Fatalf("RecordFailurePermanence(true): %v", err)
-	}
-	if !s.FailurePermanence() {
-		t.Fatal("FailurePermanence after stamp = false, want true")
-	}
-
-	// Recover clears the flag via resetToIdle.
-	if err := s.Recover(); err != nil {
-		t.Fatalf("Recover: %v", err)
-	}
-	if s.FailurePermanence() {
-		t.Fatal("FailurePermanence after Recover = true, want false (cleared by resetToIdle)")
+	mustOK(t, s.Recover())
+	if got := s.FailureMetadata(); got != (RetryMetadata{}) {
+		t.Fatalf("FailureMetadata after Recover = %+v, want zero", got)
 	}
 	if s.State != StateIdle {
 		t.Fatalf("after Recover state = %q, want idle", s.State)
-	}
-}
-
-// TestFailurePermanenceFalseForNonFailed asserts the accessor returns false for any
-// state other than StateFailed, even if the underlying flag was somehow set.
-func TestFailurePermanenceFalseForNonFailed(t *testing.T) {
-	s := newTestSession(Limits{})
-	// Idle: false even though the zero value is also false — the guard is the state.
-	if s.FailurePermanence() {
-		t.Fatal("FailurePermanence from idle = true, want false")
-	}
-
-	// Running: false.
-	mustOK(t, s.BeginTurn())
-	if s.FailurePermanence() {
-		t.Fatal("FailurePermanence from running = true, want false")
 	}
 }
 
@@ -1738,7 +1699,7 @@ func TestReplaceHistoryAtBoundaryStateAndMetadataContract(t *testing.T) {
 			mustOK(t, s.RecordUserPrompt("original", nil))
 			tc.setup(s)
 			s.Counters = Counters{Turns: 7, ToolCalls: 3, ConsecutiveFailures: 2}
-			s.Usage = Usage{InputTokens: 101, OutputTokens: 17}
+			s.RestoreTokenUsage(map[UsageKind]TokenUsage{UsageKindMain: {Models: map[string]Usage{"unknown": {InputTokens: 101, OutputTokens: 17}}}})
 			s.ProviderID, s.ModelID, s.Profile = "provider", "model", "no-fs"
 			s.EnvironmentRef = EnvironmentRef{Kind: "remote", ID: "env"}
 			s.Owner = &Principal{Issuer: "issuer", Subject: "owner", GrantType: GrantTypeUser}

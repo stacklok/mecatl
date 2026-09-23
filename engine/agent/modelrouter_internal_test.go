@@ -1297,13 +1297,13 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 
 	// First call: fold perCall into the parent session.
 	caps.routeDecision(context.Background(), "task 1")
-	if got := parentSess.Usage.TotalTokens(); got != perCall {
+	if got := parentSess.UsageFor(session.UsageKindMain).TotalTokens(); got != perCall {
 		t.Fatalf("after first routeTask call: sess.Usage.TotalTokens() = %d, want %d (first fold)", got, perCall)
 	}
 
 	// Second call: fold another perCall — must ACCUMULATE, not overwrite.
 	caps.routeDecision(context.Background(), "task 2")
-	if got := parentSess.Usage.TotalTokens(); got != 2*perCall {
+	if got := parentSess.UsageFor(session.UsageKindMain).TotalTokens(); got != 2*perCall {
 		t.Fatalf("after second routeTask call: sess.Usage.TotalTokens() = %d, want %d (cumulative fold)", got, 2*perCall)
 	}
 }
@@ -1340,7 +1340,7 @@ func TestRouteTaskNewCanonicalMissesShareBreakerAndFoldUsageOnce(t *testing.T) {
 				if got.ok || got.reason != reason {
 					t.Fatalf("miss %d = reason %q ok=%v, want %q false", i+1, got.reason, got.ok, reason)
 				}
-				if got := parent.Usage.InputTokens; got != (i+1)*perCall {
+				if got := parent.UsageFor(session.UsageKindMain).InputTokens; got != (i+1)*perCall {
 					t.Fatalf("after miss %d usage=%d, want exactly %d", i+1, got, (i+1)*perCall)
 				}
 			}
@@ -1348,8 +1348,8 @@ func TestRouteTaskNewCanonicalMissesShareBreakerAndFoldUsageOnce(t *testing.T) {
 			if got.ok || got.reason != session.RoutingReasonBreakerOpen {
 				t.Fatalf("post-threshold route = reason %q ok=%v", got.reason, got.ok)
 			}
-			if calls != defaultModelRouterMaxMisses || parent.Usage.InputTokens != defaultModelRouterMaxMisses*perCall {
-				t.Fatalf("calls=%d usage=%d, want %d calls and exactly-once usage %d", calls, parent.Usage.InputTokens,
+			if calls != defaultModelRouterMaxMisses || parent.UsageFor(session.UsageKindMain).InputTokens != defaultModelRouterMaxMisses*perCall {
+				t.Fatalf("calls=%d usage=%d, want %d calls and exactly-once usage %d", calls, parent.UsageFor(session.UsageKindMain).InputTokens,
 					defaultModelRouterMaxMisses, defaultModelRouterMaxMisses*perCall)
 			}
 		})
@@ -1388,7 +1388,7 @@ func TestRouteTaskFoldsClassifierUsageOnMissPath(t *testing.T) {
 	if routed := caps.routeDecision(context.Background(), "classify me"); routed.ok {
 		t.Fatal("the underlying router misses (ok=false), routeTask must pass through as miss")
 	}
-	if got := parentSess.Usage.TotalTokens(); got != perCall {
+	if got := parentSess.UsageFor(session.UsageKindMain).TotalTokens(); got != perCall {
 		t.Fatalf("miss path: sess.Usage.TotalTokens() = %d, want %d (miss must fold spend)", got, perCall)
 	}
 }
@@ -1435,7 +1435,7 @@ func TestClassifierSpendTripsMaxRunTokens(t *testing.T) {
 	tripped := false
 	for i := 0; i < 10; i++ {
 		caps.routeDecision(context.Background(), "classify")
-		if mainEngine.budgetExhausted(run, parentSess.Usage) {
+		if mainEngine.budgetExhausted(run, parentSess.UsageFor(session.UsageKindMain)) {
 			tripped = true
 			// Assert it tripped at exactly the expected call (wantTrip-th call crosses budget).
 			if i+1 < wantTrip {

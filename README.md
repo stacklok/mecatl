@@ -49,50 +49,16 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 
 ## Install
 
-The following methods install the two executables most people run — `mecatui`,
-the terminal client, and `mecated`, the server:
-
-<details>
-<summary><b>Homebrew</b></summary>
+Install `mecatui`, the terminal client, and `mecated`, the server, with
+Homebrew:
 
 ```sh
 brew install stacklok/tap/mecatl
 ```
 
-</details>
-
-<details>
-<summary><b>Conda</b></summary>
-
-```sh
-conda install -c conda-forge mecatl
-```
-
-</details>
-<details>
-<summary><b>Mamba</b></summary>
-
-```sh
-mamba install -c conda-forge mecatl
-```
-
-</details>
-
-<details>
-<summary><b>Pixi</b></summary>
-
-```sh
-pixi add mecatl
-```
-
-</details>
-
-Every release also attaches macOS and Linux archives (amd64 and arm64) with
-checksums, cosign signature bundles, SBOMs, and build provenance. See
-[Install Mecatl](https://mecatl.dev/docs/install) for archive verification, the
-container images, and the from-source path. `mecademo`, `mecatequi`, and
-`mecak8s` are not in the formulae — build them from a checkout with
-`task build`.
+[Install and verify Mecatl](https://mecatl.dev/docs/install) covers Conda-forge,
+release archives, verification, and source builds. Build `mecademo`,
+`mecatequi`, and `mecak8s` from a checkout with `task build`.
 
 ## Run agents as production workloads
 

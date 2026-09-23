@@ -61,7 +61,7 @@ function approval(run: string, token: string, askId: string): DurableRecord {
         ask_id: askId,
         call_id: "call-approval",
         tool: "Bash",
-        verdict: "allow_once",
+        verdict: "APPROVAL_VERDICT_ALLOW_ONCE",
       },
       run_id: run,
       type: "approval",

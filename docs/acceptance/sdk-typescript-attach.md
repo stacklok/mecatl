@@ -634,7 +634,7 @@ safe to attach.
   accurate when this plan landed, but [ADR-0347](../adr/0347-run-id-addressed-prompt-free-controls.md)
   Decision 8 supersedes that deferral model now that prompt-free controls ship
   as a separate run-ID-addressed resource.
-  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXBwcm92YWwga2VlcHMgdGhlIGxvY2FsIGNvbXBhdGliaWxpdHkgZGVmZXJyYWwgb24gYm90aCB0cmFuc3BvcnRz — `sdk/typescript/test/attached-controls.test.ts :: "attached approval keeps the local compatibility deferral on both transports"`
+  - verify: vitest:sdk/typescript/test/attached-controls.test.ts#YXR0YWNoZWQgYXNrIHJlc29sdXRpb24ga2VlcHMgdGhlIGxvY2FsIGNvbXBhdGliaWxpdHkgZGVmZXJyYWwgb24gYm90aCB0cmFuc3BvcnRz — `sdk/typescript/test/attached-controls.test.ts :: "attached ask resolution keeps the local compatibility deferral on both transports"`
 - AC8.6: `AttachedRun.steer()` follows the same ADR-0347 compatibility rule:
   it fails locally with `attached_run_controls` on both transports, directs the
   caller to the run-ID-addressed resource, and never promotes into a fresh run,

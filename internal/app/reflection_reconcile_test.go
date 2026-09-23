@@ -39,7 +39,7 @@ func TestStartupReconcilesPriorProcessPromotion(t *testing.T) {
 	}
 	memory := memmemory.New()
 	writeCtx := tool.WithMemoryAttribution(ctx, tool.MemoryAttribution{Writer: tool.MemoryWriterModel, Origin: tool.MemoryOriginLearning, Source: tool.MemorySource{SessionID: "source", ProposalID: string(claimed.ID)}})
-	if _, err = memory.RememberIfCurrent(writeCtx, tool.MemoryEntry{Key: candidate.Key, Value: candidate.Value}, tool.MemoryCurrent{}); err != nil {
+	if _, err = memory.Remember(writeCtx, tool.MemoryEntry{Key: candidate.Key, Value: candidate.Value}, tool.MemoryCurrent{}); err != nil {
 		t.Fatal(err)
 	}
 	// A new repository handle simulates Build after the process that claimed and

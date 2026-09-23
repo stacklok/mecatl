@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -15,13 +16,11 @@ import (
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
-	"github.com/stacklok/mecatl/internal/adapter/tools"
 )
 
 // sortedNames projects a catalog into its sorted tool-name list for diffing.
@@ -344,7 +343,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	}
 	defer mcpClose()
 
-	bash, ok := sharedCat.Lookup(tools.ShellToolName)
+	bash, ok := sharedCat.Lookup(tool.ShellToolName)
 	if !ok {
 		t.Fatal("shared catalog lost Shell under a fully-loaded config")
 	}
@@ -369,7 +368,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 		t.Fatal("precondition: fully-loaded config yields a sandboxed runner")
 	}
 	explorer := readOnlyExplorerCatalog(runner)
-	childShell, ok := explorer.Lookup(tools.ShellToolName)
+	childShell, ok := explorer.Lookup(tool.ShellToolName)
 	if !ok {
 		t.Fatal("read-only explorer catalog lost Shell")
 	}
@@ -398,7 +397,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	}
 	foundShell := false
 	for _, n := range defNames {
-		if n == tools.ShellToolName {
+		if n == tool.ShellToolName {
 			foundShell = true
 		}
 	}
@@ -407,7 +406,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	}
 	// The built engine holds the canonical Shell/ShellStatus pair; the requested
 	// scoped names retain only the explicit Shell allowlist entry.
-	if !defEng.HasTool(tools.ShellToolName) {
+	if !defEng.HasTool(tool.ShellToolName) {
 		t.Fatal("def-scoped engine lost Shell")
 	}
 	if !defEng.HasTool("ShellStatus") {
@@ -416,7 +415,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	if defEng.HasTool("Bash") {
 		t.Fatal("def-scoped engine must not contain legacy Bash")
 	}
-	if _, isAgent := base[tools.ShellToolName].(agent.ShellTool); !isAgent {
-		t.Fatalf("base Shell is %T, want agent.ShellTool (child background parity)", base[tools.ShellToolName])
+	if _, isAgent := base[tool.ShellToolName].(agent.ShellTool); !isAgent {
+		t.Fatalf("base Shell is %T, want agent.ShellTool (child background parity)", base[tool.ShellToolName])
 	}
 }

@@ -17,13 +17,15 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-// permanentTestError implements port.PermanentError for test use.
+// permanentTestError implements port.RetryDispositionError for test use.
 type permanentTestError struct{ msg string }
 
 func (e *permanentTestError) Error() string { return e.msg }
-func (*permanentTestError) Permanent() bool { return true }
+func (*permanentTestError) RetryDisposition() session.RetryDisposition {
+	return session.RetryDispositionPermanent
+}
 
-var _ port.PermanentError = (*permanentTestError)(nil)
+var _ port.RetryDispositionError = (*permanentTestError)(nil)
 
 // TestRecoverNoticeEmittedOnPermanentFailure asserts that when a session's last
 // run failed on a PERMANENT provider error:
@@ -54,8 +56,8 @@ func TestRecoverNoticeEmittedOnPermanentFailure(t *testing.T) {
 	for ev := range run1.Events() {
 		if ev.Type == session.EvResult && ev.Result != nil {
 			stop1 = ev.Result.Stop
-			if !ev.Result.Permanent {
-				t.Fatal("ResultPayload.Permanent = false after permanent provider rejection")
+			if ev.Result.Disposition != session.RetryDispositionPermanent {
+				t.Fatalf("ResultPayload.Disposition = %v after permanent provider rejection", ev.Result.Disposition)
 			}
 		}
 	}
@@ -71,8 +73,8 @@ func TestRecoverNoticeEmittedOnPermanentFailure(t *testing.T) {
 	if loaded.State != session.StateFailed {
 		t.Fatalf("persisted state = %q, want StateFailed", loaded.State)
 	}
-	if !loaded.FailurePermanence() {
-		t.Fatal("FailurePermanence() = false after permanent-error run")
+	if loaded.FailureMetadata().Disposition != session.RetryDispositionPermanent {
+		t.Fatal("failure disposition is not permanent after permanent-error run")
 	}
 
 	// ---- Run 2: re-entry, notice is stored by loadAndReopen ----
@@ -148,8 +150,8 @@ func TestNoRecoverNoticeOnTransientFailure(t *testing.T) {
 	if loaded.State != session.StateFailed {
 		t.Fatalf("persisted state = %q, want StateFailed", loaded.State)
 	}
-	if loaded.FailurePermanence() {
-		t.Fatal("FailurePermanence() = true for transient error, want false")
+	if loaded.FailureMetadata().Disposition == session.RetryDispositionPermanent {
+		t.Fatal("failure disposition is permanent for transient error")
 	}
 
 	// RecoverNotice before StartRunContent — not yet stored (loadAndReopen hasn't run).

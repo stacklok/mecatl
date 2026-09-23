@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 )
 
 // models.go owns /models installation plus model-selection restart and persistence
@@ -337,7 +338,7 @@ type selectionSavedMsg struct{ err error }
 func (m Model) setGlobalDefault(sel client.ModelSelection, label string) (tea.Model, tea.Cmd) {
 	m.modelCatalog.globalDefault = sel
 	m.statusMsg = m.deps.Theme.Style("success").Render(
-		"global default set: " + sanitizeTerminal(label) + " (used by new workspaces)")
+		"global default set: " + terminaltext.Sanitize(label) + " (used by new workspaces)")
 	return m, m.saveGlobalDefaultCmd(sel)
 }
 

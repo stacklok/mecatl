@@ -16,7 +16,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
@@ -24,6 +25,31 @@ import (
 )
 
 const unknownLabel = "unknown"
+
+// LifecycleNotifier receives the session-lifecycle transitions the reducer
+// observes, for a client that mirrors them to an external channel — a host
+// editor's agent lifecycle hook (see cmd/mecatui/agenthook). The ui owns this
+// narrow consumer interface so its import surface stays client+theme only;
+// *agenthook.Notifier satisfies it. A nil LifecycleNotifier is the "no external
+// channel" state and every method must be a no-op, so the reducer holds one and
+// never branches on it.
+//
+// Start is idempotent within a run (the notifier dedupes to one busy signal);
+// Stop fires once per run and is a no-op with no preceding Start; both are
+// best-effort and non-blocking (they must never delay or fail the run).
+type LifecycleNotifier interface {
+	// Start signals the agent began work (the run's first turn).
+	Start(ctx context.Context, sessionID string)
+	// PermissionRequest signals the agent is blocked on a human approval. It
+	// does not affect the run's busy state (a Stop must still follow).
+	PermissionRequest(ctx context.Context, sessionID, message string)
+	// PermissionResult signals that the human answered the approval and the same
+	// run resumed working.
+	PermissionResult(ctx context.Context, sessionID string)
+	// Stop signals the run reached a terminal state; failed selects the error
+	// terminal, message is an optional preview for the notification.
+	Stop(ctx context.Context, sessionID string, failed bool, message string)
+}
 
 // SessionCreator creates a server-side session and returns its id together with
 // the server's advertised capabilities. *client.Client satisfies it (via the
@@ -139,11 +165,8 @@ type Deps struct {
 	// StorageHealth is the authenticated aggregate health surface. The capability
 	// bit controls whether the Sessions panel advertises its maintenance tab.
 	StorageHealth client.StorageHealthFetcher
-	// Migration and Cleanup are deliberately distinct management seams. Their
-	// server capability bits independently gate the semantics-preserving and
-	// destructive workflows.
-	Migration client.SessionMigrator
-	Cleanup   client.SessionCleaner
+	// Cleanup is the destructive storage-management seam.
+	Cleanup client.SessionCleaner
 	// SessionManagement mutates stored main-chat metadata. nil leaves rename/delete
 	// undiscoverable even if a custom lister advertises those capabilities.
 	SessionManagement client.SessionManager
@@ -238,7 +261,7 @@ type Deps struct {
 
 	// StatusSource is composed outside ui. The UI only submits display facts and
 	// consumes semantic snapshots through one Bubble Tea listener.
-	StatusSource statusline.Source
+	StatusSource customization.Source
 	// LocalSessionContext optionally resolves ADR 0296's privileged local root.
 	// The root is used only as a direct status-command CWD, never UI state.
 	LocalSessionContext client.LocalSessionContextGetter
@@ -297,6 +320,14 @@ type Deps struct {
 	// Ctx is the program-level context; per-run stream contexts derive from it.
 	Ctx context.Context //nolint:containedctx // stored to parent per-run stream cancels
 
+	// AgentHook mirrors the session lifecycle to the host tool's AGENT LIFECYCLE
+	// HOOK, in the cross-vendor hook schema Claude Code originated and Codex
+	// adopted. nil when no supported host is detected — the ordinary standalone
+	// run — so the reducer's nil check reflects real absence. Start fires on the
+	// run's first turn, PermissionRequest on a MAIN (non-child) approval ask, and
+	// Stop on the terminal result. See cmd/mecatui/agenthook.
+	AgentHook LifecycleNotifier
+
 	// NoAltScreen disables the alternate screen buffer, rendering inline in the
 	// terminal's normal buffer. Default false (full-screen TUI on the alt screen).
 	// Set true by the --no-alt-screen/--inline flag — a first-class user opt-out
@@ -314,13 +345,9 @@ type Deps struct {
 	// that strip OSC52 or users who prefer native selection.
 	NoMouse bool
 
-	// NoWindowTitle suppresses the dynamic terminal window/tab title, leaving the
-	// title at the bare "mecatui" (no phase word, no session title). Default
-	// false (the title is dynamic: "<title> — <status word> mecatui"). Set true by
-	// --terminal-title=off / MECATUI_NO_TERMINAL_TITLE=1 — the escape hatch for
-	// terminals/multiplexers where a set title does more harm than good (or where
-	// the per-phase churn is unwanted).
-	NoWindowTitle bool
+	// TerminalTitle receives the display-safe snapshot during View. Its implementation
+	// stages the title; Bubble Tea's configured output writer delivers it with the frame.
+	TerminalTitle func(customization.Input)
 
 	// Debug enables every client-side diagnostic surface. DebugMouse, DebugSteer,
 	// and DebugAsk remain narrow compatibility aliases for their original surfaces.
@@ -513,10 +540,9 @@ type Model struct {
 	// freshSessionBinding is true only for a session created by this UI's initial
 	// create flow or /clear successor, never for adopted, resumed, or handoff bindings.
 	freshSessionBinding bool
-	// Maintenance job handles outlive the Sessions overlay. Reopening uses them
-	// only to refetch server-owned durable progress; the UI owns no job state.
-	maintenanceMigrationJobID string
-	maintenanceCleanupJobID   string
+	// Cleanup job handles outlive the Sessions overlay. Reopening uses them only
+	// to refetch server-owned durable progress; the UI owns no job state.
+	maintenanceCleanupJobID string
 	// sessionDetailsOpen is the read-only /session surface. The metadata fields
 	// below are refreshed from the current session snapshot; zero timestamps are
 	// rendered as unknown rather than guessed.
@@ -540,7 +566,7 @@ type Model struct {
 	titleRenameRequestToken uint64
 	titleFailedAttemptID    string
 	statusMsg               string
-	generatedStatusLine     statusline.Result
+	generatedStatusLine     customization.Result
 	fatalErr                string
 
 	compactPending      bool
@@ -1106,7 +1132,7 @@ func New(deps Deps) Model {
 		m.conv = conversationFromTranscript(resume.Transcript.Messages)
 		m.startupAdopted = true
 		m.restartedThisRun = true
-		m.statusMsg = "continuing chat " + sanitizeTerminal(resume.Row.Title) + " — type to add a turn"
+		m.statusMsg = "continuing chat " + terminaltext.Sanitize(resume.Row.Title) + " — type to add a turn"
 		m.refreshView()
 	}
 	return m

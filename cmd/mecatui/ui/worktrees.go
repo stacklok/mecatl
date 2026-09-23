@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -267,7 +268,7 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 		return b.String()
 	}
 	if st.err != nil {
-		b.WriteString(th.Style("errorText").Render("could not list worktrees: " + sanitizeTerminal(st.err.Error())))
+		b.WriteString(th.Style("errorText").Render("could not list worktrees: " + terminaltext.Sanitize(st.err.Error())))
 		b.WriteString("\n" + th.Style("muted").Render(hk.closeOnly+": close"))
 		return b.String()
 	}
@@ -285,11 +286,11 @@ func renderWorktreesPanel(th theme.Theme, st worktreesState, _ client.Capabiliti
 		if i == st.cursor {
 			marker = "▶ "
 		}
-		line := marker + sanitizeTerminal(w.Label)
+		line := marker + terminaltext.Sanitize(w.Label)
 		if w.Branch != "" {
-			line += "  (" + sanitizeTerminal(w.Branch) + ")"
+			line += "  (" + terminaltext.Sanitize(w.Branch) + ")"
 		} else if w.Revision != "" {
-			line += "  (" + sanitizeTerminal(shortSHA(w.Revision)) + ")"
+			line += "  (" + terminaltext.Sanitize(shortSHA(w.Revision)) + ")"
 		}
 		if i == st.cursor {
 			line = renderToolCardText(th.Style("accent"), line, width)
@@ -310,9 +311,9 @@ func renderWorktreesConfirm(th theme.Theme, st worktreesState, hk helpKeys, _, _
 	var b strings.Builder
 	b.WriteString(th.Style("title").Render("start session in worktree") + "\n\n")
 	b.WriteString("a new session will start in:\n")
-	b.WriteString(th.Style("accent").Render("  "+sanitizeTerminal(w.Label)) + "\n")
+	b.WriteString(th.Style("accent").Render("  "+terminaltext.Sanitize(w.Label)) + "\n")
 	if w.Branch != "" {
-		b.WriteString(th.Style("muted").Render("  branch: "+sanitizeTerminal(w.Branch)) + "\n")
+		b.WriteString(th.Style("muted").Render("  branch: "+terminaltext.Sanitize(w.Branch)) + "\n")
 	}
 	b.WriteString("\n" + th.Style("muted").Render(hk.choose+": start session  "+hk.closeOnly+": back"))
 	return b.String()

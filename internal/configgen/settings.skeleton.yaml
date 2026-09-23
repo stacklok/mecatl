@@ -184,6 +184,10 @@
 #   # override separately configured maintenance schedules such as
 #   # --user-model-consolidate-interval.
 #   mode: off
+#   # AdmissionInterval admits every Nth eligible automatic reflection process-wide. Nil
+#   # uses the default of 1; zero and one both admit every eligible reflection. This field
+#   # is operator-owned; project values do not change admission cadence.
+#   admission_interval: 10
 #   # Sensitivity controls weighted automatic admission. Empty means balanced.
 #   sensitivity: balanced
 #   # Skills controls learned-skill lifecycle policy.
@@ -273,8 +277,8 @@
 #   shutdown_reap_timeout: 1m
 
 #| === storage_management === (tier: operator)
-#| Exact verified OIDC issuer/subject pairs authorized for process-wide storage health,
-#| migration, and cleanup. Empty grants nobody; project values are ignored.
+#| Exact verified OIDC issuer/subject pairs authorized for process-wide storage health
+#| and cleanup. Empty grants nobody; project values are ignored.
 # storage_management:
 #   # Version is the required schema version; the only supported value is 1.
 #   version: 1

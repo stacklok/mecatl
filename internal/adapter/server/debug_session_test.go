@@ -151,7 +151,8 @@ func TestDebugSessionGRPCProjectionAndCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("grpc CreateSession: %v", err)
 	}
-	if !created.GetCapabilities().GetSessionDebug() || !created.GetCapabilities().GetDebugMcp() {
+	caps := svc.CompatibilityInfo(context.Background()).GetCapabilities()
+	if !caps.GetSessionDebug() || !caps.GetDebugMcp() {
 		t.Fatal("session_debug/debug_mcp capability is false with a debug MCP factory")
 	}
 	got, err := h.GetSession(context.Background(), &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()})

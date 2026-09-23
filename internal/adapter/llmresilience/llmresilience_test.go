@@ -54,8 +54,7 @@ func TestEncryptedReasoningFallbackFailureIsNotReplayedByOuterResilience(t *test
 		// operator classifier that would otherwise retry every error.
 		Classifier: func(error) bool { return true },
 	})
-	assistant := session.NewAssistantMessage("", "opaque-blob", nil)
-	assistant.ReasoningItemID = "rs_bad"
+	assistant := session.NewAssistantMessage("", `{"v":1,"items":[{"i":"rs_bad","e":"opaque-blob"}]}`, nil)
 	req := port.LLMRequest{Model: "gpt-test", Messages: []session.Message{assistant}}
 
 	seq, err := wrapped.Stream(context.Background(), req)
@@ -65,9 +64,8 @@ func TestEncryptedReasoningFallbackFailureIsNotReplayedByOuterResilience(t *test
 	if got := atomic.LoadInt32(&requests); got != 2 {
 		t.Fatalf("HTTP request count = %d, want exactly 2 despite MaxAttempts=4", got)
 	}
-	var permanent port.PermanentError
-	if errors.As(err, &permanent) {
-		t.Fatalf("error = %T %v, must not claim a cleaned 503 is permanent", err, err)
+	if got := dispositionOf(err); got == session.RetryDispositionPermanent {
+		t.Fatalf("error disposition = %v, must not claim a cleaned 503 is permanent", got)
 	}
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable {
@@ -101,12 +99,8 @@ func TestExplicitNoRetryDecisionRemainsCausallyRetryableMidStream(t *testing.T) 
 
 	got := classifyVisibleError(err)
 	var disposition port.RetryDispositionError
-	if !errors.As(got, &disposition) || disposition.RetryDisposition() != port.RetryDispositionRetryable {
+	if !errors.As(got, &disposition) || disposition.RetryDisposition() != session.RetryDispositionRetryable {
 		t.Fatalf("disposition = %v, want retryable", disposition)
-	}
-	var permanent port.PermanentError
-	if errors.As(got, &permanent) {
-		t.Fatal("explicit no-retry policy veto was incorrectly promoted to port.PermanentError")
 	}
 }
 
@@ -1192,9 +1186,8 @@ func TestBreakerHalfOpenPermanentErrorStaysOpen(t *testing.T) {
 		t.Fatalf("half-open trial err = %v, want verbatim 400 *oai.Error", err)
 	}
 	// The 400 is a permanent client-side rejection — assert the PermanentError bit.
-	var pe port.PermanentError
-	if !errors.As(err, &pe) || !pe.Permanent() {
-		t.Fatalf("400 establishment error must carry port.PermanentError; err = %v", err)
+	if got := dispositionOf(err); got != session.RetryDispositionPermanent {
+		t.Fatalf("400 establishment disposition = %v, want permanent; err = %v", got, err)
 	}
 	if f.Calls() != 4 {
 		t.Fatalf("half-open permanent trial: inner called %d times, want 4 (trial WAS admitted)", f.Calls())
@@ -2261,9 +2254,8 @@ func TestPermanentError400Establishment(t *testing.T) {
 		t.Fatalf("err = %v, want 400 *oai.Error still reachable via errors.As", err)
 	}
 	// The PermanentError bit is set.
-	var pe port.PermanentError
-	if !errors.As(err, &pe) || !pe.Permanent() {
-		t.Fatalf("400 establishment error must carry port.PermanentError; err = %v", err)
+	if got := dispositionOf(err); got != session.RetryDispositionPermanent {
+		t.Fatalf("400 establishment disposition = %v, want permanent; err = %v", got, err)
 	}
 	if f.Calls() != 1 {
 		t.Fatalf("inner called %d times, want 1 (400 not retried)", f.Calls())
@@ -2277,9 +2269,8 @@ func TestPermanentErrorAbsentFor429(t *testing.T) {
 	p := Wrap(f, Config{MaxAttempts: 1, BaseBackoff: time.Nanosecond})
 	_, err := p.Stream(context.Background(), port.LLMRequest{})
 
-	var pe port.PermanentError
-	if errors.As(err, &pe) {
-		t.Fatalf("429 must NOT carry port.PermanentError; err = %v", err)
+	if got := dispositionOf(err); got == session.RetryDispositionPermanent {
+		t.Fatalf("429 disposition = %v, must not be permanent; err = %v", got, err)
 	}
 	var apiErr *oai.Error
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != 429 {
@@ -2304,9 +2295,8 @@ func TestPermanentErrorAbsentForCallerCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
-	var pe port.PermanentError
-	if errors.As(err, &pe) {
-		t.Fatalf("caller cancel must NOT carry port.PermanentError; err = %v", err)
+	if got := dispositionOf(err); got == session.RetryDispositionPermanent {
+		t.Fatalf("caller cancellation disposition = %v, must not be permanent; err = %v", got, err)
 	}
 }
 
@@ -2346,9 +2336,8 @@ func TestPermanentErrorMidStream400(t *testing.T) {
 	if derr == nil {
 		t.Fatal("expected a mid-stream error")
 	}
-	var pe port.PermanentError
-	if !errors.As(derr, &pe) || !pe.Permanent() {
-		t.Fatalf("mid-stream 400 must carry port.PermanentError; err = %v", derr)
+	if got := dispositionOf(derr); got != session.RetryDispositionPermanent {
+		t.Fatalf("mid-stream 400 disposition = %v, want permanent; err = %v", got, derr)
 	}
 	var apiErr *oai.Error
 	if !errors.As(derr, &apiErr) || apiErr.StatusCode != 400 {
@@ -2376,9 +2365,8 @@ func TestPermanentErrorMidStream429Absent(t *testing.T) {
 	if derr == nil {
 		t.Fatal("expected a mid-stream error")
 	}
-	var pe port.PermanentError
-	if errors.As(derr, &pe) {
-		t.Fatalf("mid-stream 429 must NOT carry port.PermanentError; err = %v", derr)
+	if got := dispositionOf(derr); got == session.RetryDispositionPermanent {
+		t.Fatalf("mid-stream 429 disposition = %v, must not be permanent; err = %v", got, derr)
 	}
 	var apiErr *oai.Error
 	if !errors.As(derr, &apiErr) || apiErr.StatusCode != 429 {

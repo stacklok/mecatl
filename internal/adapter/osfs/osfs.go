@@ -97,6 +97,9 @@ type FileSystem struct {
 	// relaxedReads enables the WithRelaxedReads out-of-root absolute read
 	// carve-out (default off) — see relaxedReadRoot.
 	relaxedReads bool
+	// openReadRoot is a per-instance test seam for observing fresh-root lifetime.
+	// nil uses os.OpenRoot; it is consulted only after relaxed-read path vetting.
+	openReadRoot func(string) (*os.Root, error)
 	// relaxedWrites enables the WithRelaxedWrites out-of-root absolute write
 	// carve-out (default off) — see relaxedWriteRoot.
 	relaxedWrites bool
@@ -112,13 +115,12 @@ type fsOptions struct {
 	relaxedWrites bool
 }
 
-// WithRelaxedReads lets Read and Stat — and ONLY Read and Stat — serve an
-// ABSOLUTE path that canonicalizes OUTSIDE the workspace root. It is an
+// WithRelaxedReads lets Read, Stat, and ReadDir serve an ABSOLUTE path that
+// canonicalizes OUTSIDE the workspace root. It is an
 // EXPLICIT construction option, DEFAULT OFF: the zero-value workspace keeps the
 // canonicalize-then-reject behaviour (ErrPathEscape). The composition layer
-// enables it for the MAIN session's workspace only, at the yolo/auto operator
-// postures where Shell already reads the same bytes (the honesty fix —
-// docs/acceptance/path-escape-posture.md Scenario 2), and always pairs it
+// enables it for the MAIN session's workspace only at every posture so an
+// approved request can execute, and always pairs it
 // with the root-aware wrapping permission policy that refuses pseudo-fs
 // (/proc, /sys, /dev) before the tool body: this option exists for THAT
 // pairing, and a relaxed workspace without the policy wrapper is a mis-wire.
@@ -127,8 +129,10 @@ type fsOptions struct {
 // serves the leaf through it — never a bare os.Open — so a symlink inside the
 // target dir that escapes further is refused by that root's containment,
 // exactly as the workspace root's own containment refuses an in-root escape.
-// Write, Edit, Glob, and Grep stay workspace-confined regardless of this
-// option (the relax is read-only).
+// Move, Remove, Write, Edit, Glob, and Grep stay workspace-confined under this
+// option alone. CopyFile composes ReadVersion/Stat/CreateFile, so its source
+// inherits relaxed reads and its destination can inherit WithRelaxedWrites.
+// Production Copy confinement belongs to escapeWorkspace's two-operand guard.
 func WithRelaxedReads() Option {
 	return func(o *fsOptions) {
 		o.relaxedReads = true
@@ -140,9 +144,9 @@ func WithRelaxedReads() Option {
 // It is an EXPLICIT construction option, DEFAULT OFF: the
 // zero-value workspace keeps the ordinary canonicalize-then-reject behaviour
 // (ErrPathEscape). The composition layer enables it for the MAIN session's
-// workspace only, at the yolo/auto operator postures (never a child engine),
-// and always pairs it with the root-aware wrapping permission policy that
-// resolves a write escape Allow at yolo / Ask at auto and hard-denies
+// workspace only at every posture (never a child engine), and always pairs it
+// with the root-aware wrapping permission policy that resolves a write escape
+// Allow at yolo / Ask below yolo and hard-denies
 // pseudo-fs (/proc, /sys, /dev) before the tool body — docs/acceptance/
 // path-escape-posture.md Scenario 3. A relaxed workspace without the policy
 // wrapper is a mis-wire: the workspace's job is only to SERVE the path the
@@ -282,6 +286,7 @@ func (f *FileSystem) Read(_ context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer f.closeResolvedReadRoot(r)
 	if info, statErr := r.Stat(rel); statErr == nil && info.Size() > maxReadBytes {
 		return nil, fmt.Errorf("osfs: file %q is %d bytes, exceeds the %d-byte read limit", path, info.Size(), int64(maxReadBytes))
 	}
@@ -292,7 +297,7 @@ func (f *FileSystem) Read(_ context.Context, path string) ([]byte, error) {
 	return data, nil
 }
 
-// resolveRead maps a Read/Stat path onto the os.Root that serves it. Relative
+// resolveRead maps a Read/Stat/ReadDir path onto the os.Root that serves it. Relative
 // paths and absolute paths that resolve inside the workspace use the workspace
 // root. WithRelaxedReads may serve an out-of-root absolute path; otherwise the
 // original escape error is returned.
@@ -305,6 +310,12 @@ func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 		return r, sub, nil
 	}
 	return nil, "", err
+}
+
+func (f *FileSystem) closeResolvedReadRoot(r *os.Root) {
+	if r != nil && r != f.r {
+		_ = r.Close()
+	}
 }
 
 // relaxedReadRoot serves an out-of-root ABSOLUTE path under the
@@ -329,7 +340,7 @@ func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 // It only ever fires after resolvePath declined, so the target is provably
 // outside the workspace root. An unverifiable ancestor or unopenable parent
 // fails safe with no root (the caller returns the original escape error). Only
-// Read/Stat consult it (via resolveRead); writes never do.
+// Read/Stat/ReadDir consult it (via resolveRead); writes never do.
 func (f *FileSystem) relaxedReadRoot(path string) (*os.Root, string, bool) {
 	if !f.relaxedReads || !filepath.IsAbs(path) {
 		return nil, "", false
@@ -342,7 +353,11 @@ func (f *FileSystem) relaxedReadRoot(path string) (*os.Root, string, bool) {
 	if !vetRelaxedParent(parent) {
 		return nil, "", false
 	}
-	rr, err := os.OpenRoot(parent)
+	openRoot := f.openReadRoot
+	if openRoot == nil {
+		openRoot = os.OpenRoot
+	}
+	rr, err := openRoot(parent)
 	if err != nil {
 		return nil, "", false
 	}
@@ -449,6 +464,7 @@ func (f *FileSystem) Stat(_ context.Context, path string) (tool.FileInfo, error)
 	if err != nil {
 		return tool.FileInfo{}, err
 	}
+	defer f.closeResolvedReadRoot(r)
 	fi, err := r.Stat(rel)
 	if err != nil {
 		return tool.FileInfo{}, mapEscape(path, err)
@@ -475,8 +491,69 @@ func (f *FileSystem) Glob(ctx context.Context, pattern string) ([]string, error)
 	return matches, nil
 }
 
+// globWalkFS makes cancellation visible to doublestar as an I/O error at every
+// traversal boundary while masking ordinary filesystem errors to preserve
+// GlobWalk's historical ignore-and-continue semantics. It exposes only the
+// interfaces doublestar currently consults: fs.FS, fs.ReadDirFS, and fs.StatFS.
+// Deliberately do not forward optional interfaces from base; doing so would
+// couple cancellation behavior to speculative traversal paths instead of
+// doublestar's current Open/ReadDir/Stat contract.
+type globWalkFS struct {
+	ctx  context.Context
+	base fs.FS
+}
+
+// Open satisfies fs.FS. doublestar v4.10.0 uses ReadDir and Stat for GlobWalk.
+func (g globWalkFS) Open(name string) (fs.File, error) {
+	return g.base.Open(name)
+}
+
+func (g globWalkFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	if err := g.ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(g.base, name)
+	if ctxErr := g.ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, nil
+	}
+	return entries, nil
+}
+
+func (g globWalkFS) Stat(name string) (fs.FileInfo, error) {
+	if err := g.ctx.Err(); err != nil {
+		return nil, err
+	}
+	info, err := fs.Stat(g.base, name)
+	if ctxErr := g.ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if err != nil {
+		return nil, globNotExist("stat", name)
+	}
+	return info, nil
+}
+
+// globNotExist preserves GlobWalk's historical ignore-and-continue behavior for
+// ordinary Stat errors while WithFailOnIOErrors propagates context cancellation.
+// This masking depends on not enabling doublestar.WithFailOnPatternNotExist.
+func globNotExist(op, name string) error {
+	return &fs.PathError{Op: op, Path: name, Err: fs.ErrNotExist}
+}
+
 // globWalk visits root-relative matches without first materializing them.
 func (f *FileSystem) globWalk(ctx context.Context, pattern string, visit func(string, fs.DirEntry) error) error {
+	return walkGlob(ctx, f.r.FS(), pattern, visit)
+}
+
+// walkGlob contains the production traversal options while allowing tests to
+// supply deterministic filesystems.
+func walkGlob(ctx context.Context, base fs.FS, pattern string, visit func(string, fs.DirEntry) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// doublestar patterns are root-relative, slash-separated paths. normalizeGlobPattern
 	// preserves the old filepath.Join leniency (silently absorbing a leading "/"
 	// or "./", which would otherwise be an invalid absolute pattern). An empty or
@@ -487,12 +564,12 @@ func (f *FileSystem) globWalk(ctx context.Context, pattern string, visit func(st
 		return nil
 	}
 
-	// Walk the os.Root-confined fs.FS. f.r.FS() (Go 1.24+) returns an fs.FS that
-	// refuses to traverse any symlink that would leave the root, so escaping
-	// intermediate-directory components are rejected by construction — closing
-	// the filename-enumeration leak filepath.Glob had. WithNoFollow keeps the
-	// walk from descending into symlinked directories.
-	return doublestar.GlobWalk(f.r.FS(), pat, func(path string, entry fs.DirEntry) error {
+	// In production the FileSystem method supplies its os.Root-confined fs.FS.
+	// That FS (Go 1.24+) refuses to traverse any symlink that would leave the
+	// root, so escaping intermediate-directory components are rejected by
+	// construction — closing the filename-enumeration leak filepath.Glob had.
+	// WithNoFollow keeps the walk from descending into symlinked directories.
+	err := doublestar.GlobWalk(globWalkFS{ctx: ctx, base: base}, pat, func(path string, entry fs.DirEntry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -511,7 +588,17 @@ func (f *FileSystem) globWalk(ctx context.Context, pattern string, visit func(st
 		// path is already root-relative and slash-separated. Returning the visitor
 		// error stops GlobWalk immediately.
 		return visit(path, entry)
-	}, doublestar.WithNoFollow())
+	},
+		// Cancellation enters GlobWalk through ReadDir/Stat errors. Without this
+		// option doublestar would swallow those errors and continue traversing.
+		doublestar.WithFailOnIOErrors(),
+		// Preserve the FileSystem contract: never descend through symlinks.
+		doublestar.WithNoFollow(),
+	)
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // normalizeGlobPattern applies the leniency the old filepath.Join-based Glob
@@ -786,21 +873,27 @@ func (w *Workspace) Read(ctx context.Context, path string) ([]byte, error) {
 	return w.fs.Read(ctx, path)
 }
 
-// ReadDir returns the immediate children of a confined physical directory.
+// ReadDir returns the immediate children of a physical directory. WithRelaxedReads
+// it can serve a policy-authorized out-of-root absolute directory through the
+// same bounded os.Root path used by Read and Stat.
 func (w *Workspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	rel, err := w.fs.resolvePath(path)
+	r, rel, err := w.fs.resolveRead(path)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := fs.ReadDir(w.fs.r.FS(), filepath.ToSlash(rel))
+	defer w.fs.closeResolvedReadRoot(r)
+	entries, err := fs.ReadDir(r.FS(), filepath.ToSlash(rel))
 	if err != nil {
 		return nil, mapEscape(path, err)
 	}
 	out := make([]tool.FileInfo, 0, len(entries))
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return nil, mapEscape(path, err)

@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
@@ -240,14 +241,14 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 	} else if st.loading {
 		lines = append(lines, th.Style("muted").Render("loading…"))
 	} else if st.err != nil {
-		lines = append(lines, th.Style("errorText").Render(sanitizeTerminal(st.err.Error())))
+		lines = append(lines, th.Style("errorText").Render(terminaltext.Sanitize(st.err.Error())))
 		if st.stale {
 			lines = append(lines, "proposal changed; press r to refresh its current version and status")
 		}
 	} else if st.view == reflectionsDetail && st.detail != nil {
 		p := st.detail
 		lines = append(lines,
-			renderToolCardText(th.Style("toolName"), sanitizeTerminal(p.ID), budget),
+			renderToolCardText(th.Style("toolName"), terminaltext.Sanitize(p.ID), budget),
 			wrapCardText("status: "+p.Status, budget),
 			wrapCardText("version: "+p.Version, budget),
 			wrapCardText("kind: "+p.Kind, budget),
@@ -360,7 +361,7 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 			if summary == "" {
 				summary = p.Title
 			}
-			lines = append(lines, mark+sanitizeTerminal(p.Status)+"  "+sanitizeTerminal(summary))
+			lines = append(lines, mark+terminaltext.Sanitize(p.Status)+"  "+terminaltext.Sanitize(summary))
 		}
 		if start > 0 || end < len(st.page.Proposals) {
 			lines = append(lines, fmt.Sprintf("rows %d–%d of %d", start+1, end, len(st.page.Proposals)))
@@ -381,7 +382,7 @@ func renderReflectionsOverlay(th theme.Theme, st reflectionsState, caps client.C
 
 func wrapReflectionField(label, value string, width int) []string {
 	width = max(12, width)
-	value = sanitizeTerminal(value)
+	value = terminaltext.Sanitize(value)
 	var out []string
 	for lineIndex, line := range strings.Split(value, "\n") {
 		prefix := ""
@@ -405,7 +406,7 @@ func wrapReflectionField(label, value string, width int) []string {
 }
 
 func boundedReflectionPreview(value string) string {
-	value = sanitizeTerminal(value)
+	value = terminaltext.Sanitize(value)
 	if len(value) <= 1024 {
 		return value
 	}
@@ -417,5 +418,5 @@ func boundedReflectionPreview(value string) string {
 }
 
 func reflectionDisplayText(value string, limit int) string {
-	return truncate(sanitizeTerminal(strings.Join(strings.Fields(value), " ")), limit)
+	return truncate(terminaltext.Sanitize(strings.Join(strings.Fields(value), " ")), limit)
 }
