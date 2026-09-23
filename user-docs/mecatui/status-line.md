@@ -16,9 +16,10 @@ embedded and connected sessions. Project files, remote servers, prompts, and
 sessions cannot change it.
 
 With no `status_customization:` entry, `mecatui` uses its shipped responsive
-templates. Keyboard help, the header posture/scroll/changed-file indicators, and
-the footer activity lane remain part of the client interface; customization
-cannot remove them.
+templates. The header includes the active session title at every width and the
+remote target in its full variant. Keyboard help, the header
+posture/scroll/changed-file indicators, and the footer activity lane remain part
+of the client interface; customization cannot remove them.
 
 ## Choose a source
 

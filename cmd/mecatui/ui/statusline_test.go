@@ -19,7 +19,7 @@ func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.deps.StatusSource = s
 	m.deps.Server = "server.example"
-	m.deps.ConnectionMode = "embedded"
+	m.deps.ConnectionMode = "connect"
 	m.sessionID = "session-status-default"
 	m.sessionTitle = "Status work"
 	m.phase = phaseIdle
@@ -30,7 +30,7 @@ func TestStatusLine_Scenario2_DefaultTemplatesPreserveChrome(t *testing.T) {
 	updated, _ = m.update(waitStatusMessage(t, m.statusLineWaitCmd()))
 	m = updated.(Model)
 	header := stripANSIstr(m.renderHeader())
-	for _, want := range []string{"mecatui", "mode default", "server.example"} {
+	for _, want := range []string{"mecatui", "Status work", "mode default", "server.example"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("header %q is missing shipped chrome %q", header, want)
 		}

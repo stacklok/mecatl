@@ -43,8 +43,9 @@ mecatui: final-session-id="01JOPAQUESESSIONID"
 ## Inspect the active session during a run
 
 Run `/session` after a session is bound to open its read-only details overlay,
-including while the agent is responding or waiting on a tool. Press `c` to copy
-the full session ID. Press `esc` to close the overlay and return focus to the
+including while the agent is responding or waiting on a tool. It shows whether
+`mecatui` is using its embedded server or a remote target. Press `c` to copy the
+full session ID. Press `esc` to close the overlay and return focus to the
 conversation. Opening the overlay does not cancel, pause, or steer the run.
 
 ## Browse and maintain stored sessions

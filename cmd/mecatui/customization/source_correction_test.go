@@ -34,7 +34,7 @@ func TestStatusLine_DefaultTemplatesExposeLegacyDisplayAtoms(t *testing.T) {
 	source.Submit(Input{
 		Session: Session{Handle: "deadbeef", Mode: "plan"},
 		Model:   Model{ProviderID: "openai", DisplayName: "GPT-5", Route: "azure"},
-		Server:  ServerTarget{DisplayTarget: "server.example"},
+		Server:  ServerTarget{DisplayTarget: "server.example", ConnectionMode: "connect"},
 		Usage:   Usage{Input: UsageAtom{Raw: 4_000, Human: "4K"}, Output: UsageAtom{Raw: 1_000, Human: "1K"}, CacheWrite: UsageAtom{Raw: 500, Human: "500"}, CacheReadPercent: 75},
 		Context: Context{Used: ContextAtom{Raw: 7_000, Human: "7K"}, Window: ContextAtom{Raw: 10_000, Human: "10K"}, Percent: 70},
 		Delegation: Delegation{
@@ -63,6 +63,24 @@ func TestStatusLine_DefaultTemplatesExposeLegacyDisplayAtoms(t *testing.T) {
 		if strings.Contains(statusSurfaceText(surface), "\n") {
 			t.Fatalf("surface wrapped: %#v", surface)
 		}
+	}
+}
+
+func TestStatusLine_DefaultHeaderOmitsEmbeddedServerTarget(t *testing.T) {
+	source := NewDefaultSource(0)
+	t.Cleanup(func() { _ = source.Close(context.Background()) })
+	source.Submit(Input{
+		Model:    Model{DisplayName: "GPT-5"},
+		Server:   ServerTarget{DisplayTarget: "unix:///private/mecatui.sock", ConnectionMode: "embedded"},
+		Terminal: Terminal{HeaderAvailCols: 80},
+	})
+	select {
+	case <-source.Changed():
+	case <-time.After(time.Second):
+		t.Fatal("source did not publish")
+	}
+	if got, want := statusSurfaceText(source.Latest().Header), "mecatui · GPT-5"; got != want {
+		t.Fatalf("embedded header = %q, want %q", got, want)
 	}
 }
 

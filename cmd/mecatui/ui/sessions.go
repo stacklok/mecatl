@@ -23,6 +23,7 @@ type sessionDetailsView struct {
 	DebugTargetID string
 	Title         string
 	State         string
+	Connection    string
 	Placement     client.Placement
 	CreatedAt     int64
 	ModifiedAt    int64
@@ -111,9 +112,24 @@ func (m Model) bindSessionID(id string) Model {
 func (m Model) sessionDetails() sessionDetailsView {
 	return sessionDetailsView{
 		ID: m.sessionID, DebugTargetID: m.deps.DebugTarget, Title: m.sessionTitle, State: m.sessionState,
-		Placement: m.activePlacement, CreatedAt: m.sessionCreatedAt,
+		Connection: sessionConnectionLabel(m.deps.ConnectionMode, m.deps.Server),
+		Placement:  m.activePlacement, CreatedAt: m.sessionCreatedAt,
 		ModifiedAt: m.sessionModifiedAt, ProviderID: m.resolvedSessionModel.ProviderID,
 		ModelID: m.resolvedSessionModel.ModelID,
+	}
+}
+
+func sessionConnectionLabel(mode, target string) string {
+	switch mode {
+	case "embedded":
+		return "embedded"
+	case "connect":
+		if target == "" {
+			return "remote"
+		}
+		return "remote (" + target + ")"
+	default:
+		return ""
 	}
 }
 
@@ -217,6 +233,7 @@ func renderSessionDetails(th theme.Theme, details sessionDetailsView, hk helpKey
 	}
 	b.WriteString(row("Title: ", details.Title) + "\n")
 	b.WriteString(row("State: ", details.State) + "\n")
+	b.WriteString(row("Connection: ", details.Connection) + "\n")
 	b.WriteString(row("Placement: ", details.Placement.Label) + "\n")
 	b.WriteString("Created: " + formatSessionTimestamp(details.CreatedAt) + "\n")
 	b.WriteString("Modified: " + formatSessionTimestamp(details.ModifiedAt) + "\n")

@@ -20,11 +20,13 @@ func TestSessionContinuityUX_Scenario5_DetailsSurface(t *testing.T) {
 	m.sessionCreatedAt = 1_700_000_000
 	m.sessionModifiedAt = 1_700_000_100
 	m.activePlacement = client.Placement{Kind: "git", Label: "repo"}
+	m.deps.ConnectionMode = "connect"
+	m.deps.Server = "server.example:8080"
 	m.resolvedSessionModel = client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5"}
 
 	got := stripANSIstr(renderSessionDetails(m.deps.Theme, m.sessionDetails(), helpKeys{closeOnly: "esc"}, 100, 30))
 	for _, want := range []string{
-		strconv.QuoteToASCII(m.sessionID), "Current chat", "idle", "repo",
+		strconv.QuoteToASCII(m.sessionID), "Current chat", "idle", "remote (server.example:8080)", "repo",
 		"2023-11-14", "openrouter", "openai/gpt-5", "c: copy exact ID",
 	} {
 		if !strings.Contains(got, want) {
@@ -33,6 +35,21 @@ func TestSessionContinuityUX_Scenario5_DetailsSurface(t *testing.T) {
 	}
 	if strings.Contains(got, "opaque\nfull-id") {
 		t.Fatalf("details rendered a control-bearing ID literally:\n%s", got)
+	}
+}
+
+func TestSessionConnectionLabel(t *testing.T) {
+	for _, tc := range []struct {
+		mode, target, want string
+	}{
+		{mode: "embedded", target: "unix:///private/mecatui.sock", want: "embedded"},
+		{mode: "connect", target: "server.example:8080", want: "remote (server.example:8080)"},
+		{mode: "connect", want: "remote"},
+		{mode: "unknown", target: "server.example", want: ""},
+	} {
+		if got := sessionConnectionLabel(tc.mode, tc.target); got != tc.want {
+			t.Errorf("sessionConnectionLabel(%q, %q) = %q, want %q", tc.mode, tc.target, got, tc.want)
+		}
 	}
 }
 

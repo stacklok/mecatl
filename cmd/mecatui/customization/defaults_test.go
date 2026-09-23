@@ -1,8 +1,10 @@
 package customization
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -113,5 +115,46 @@ func TestDefaultTitleTemplateElidesWideSessionTitle(t *testing.T) {
 	}
 	if !strings.HasSuffix(title, "…") {
 		t.Fatalf("elided title = %q, want ellipsis", title)
+	}
+}
+
+func TestDefaultStatusHeadersElideSessionTitleByVariant(t *testing.T) {
+	const title = "界界界界界界界界界界界界界界界界界界界界"
+	for _, tc := range []struct {
+		name, suffix      string
+		width, titleWidth int
+	}{
+		{name: "full", width: 80, titleWidth: 32, suffix: " · openai/GPT-5"},
+		{name: "compact", width: 45, titleWidth: 24, suffix: " · GPT-5"},
+		{name: "minimal", width: 24, titleWidth: 12},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := NewDefaultSource(0)
+			t.Cleanup(func() { _ = source.Close(context.Background()) })
+			source.Submit(Input{
+				Session:  Session{Title: title},
+				Model:    Model{ProviderID: "openai", DisplayName: "GPT-5"},
+				Terminal: Terminal{HeaderAvailCols: tc.width},
+			})
+			select {
+			case <-source.Changed():
+			case <-time.After(time.Second):
+				t.Fatal("source did not publish")
+			}
+			header := statusSurfaceText(source.Latest().Header)
+			if !strings.HasPrefix(header, "mecatui · ") || !strings.HasSuffix(header, tc.suffix) {
+				t.Fatalf("header = %q, want title between mecatui and %q", header, tc.suffix)
+			}
+			title := strings.TrimSuffix(strings.TrimPrefix(header, "mecatui · "), tc.suffix)
+			if width := ansi.StringWidth(title); width > tc.titleWidth {
+				t.Fatalf("title width = %d, want at most %d: %q", width, tc.titleWidth, title)
+			}
+			if !strings.HasSuffix(title, "…") {
+				t.Fatalf("title = %q, want ellipsis", title)
+			}
+			if width := ansi.StringWidth(header); width > tc.width {
+				t.Fatalf("header width = %d, want at most %d: %q", width, tc.width, header)
+			}
+		})
 	}
 }
