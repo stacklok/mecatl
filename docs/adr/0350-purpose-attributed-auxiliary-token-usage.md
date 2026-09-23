@@ -8,7 +8,7 @@
 
 ## Context
 
-[ADR 0307](./0307-canonical-durable-token-accounting.md) makes `token_usage` the canonical durable ledger and deliberately limits its initial closed taxonomy to `main` and `session_title`. The title generator proves that a server-owned auxiliary model call can be attributed to its actual provider/model without changing the normal run budget or result usage.
+[ADR 0307](./0307-canonical-durable-token-accounting.md) makes `token_usage` the canonical durable ledger and initially enumerates `main` and `session_title`. The title generator proves that a server-owned auxiliary model call can be attributed to its actual provider/model without changing the normal run budget or result usage.
 
 Several other session-associated auxiliary calls still lose provider-reported `ChunkUsage`, or fold it into `main`. They include compaction summaries, evidence reflection, semantic model routing, the headless child-ask reviewer, guardrail checks, and Parallel winner judging. Folding those calls into `main` misstates both their purpose and, when a slot selected another model, their model attribution. Discarding them leaves the canonical ledger incomplete.
 
@@ -16,7 +16,7 @@ Dream and memory-consolidation planning can consume model tokens but has no sour
 
 ## Decision
 
-1. Extend the closed `session.UsageKind` taxonomy with these session-associated auxiliary purposes:
+1. Add these recognized `session.UsageKind` constants for session-associated auxiliary purposes:
 
    | Usage kind | Model-slot relationship | Owner |
    | --- | --- | --- |
@@ -27,7 +27,7 @@ Dream and memory-consolidation planning can consume model tokens but has no sour
    | `guardrail` | `models.slots.guardrail` when configured | the session whose tool hook is checked |
    | `parallel_judge` | no dedicated slot; uses its actual inherited/resolved model | the session that invoked Parallel |
 
-   Existing `main` and `session_title` kinds remain unchanged. Usage kinds describe why a call happened, while slots describe one possible composition-time model-selection mechanism; the names align where doing so is honest but are not mechanically coupled.
+   Existing `main` and `session_title` kinds remain unchanged. Usage kinds describe why a call happened, while slots describe one possible composition-time model-selection mechanism; the names align where doing so is honest but are not mechanically coupled. The recognized constants define current writer behavior, not a closed reader vocabulary: non-empty unrecognized kinds are accepted as opaque ledger keys and round-trip through restore/save and existing projections without changing main usage or any budget.
 
 2. At the physical-stream boundary, aggregate every `ChunkUsage` emission exactly once for
    the provider attempt that produced it; a retry contributes the reported usage of each distinct
@@ -56,11 +56,13 @@ Dream and memory-consolidation planning can consume model tokens but has no sour
    the established model-attribution migration value.
 
 5. The ledger evolves forward only. Existing snapshots retain their established
-   `main`/`session_title` and legacy-`unknown` restoration semantics. No historical backfill and no
-   new per-attempt usage ledger are introduced. An older writer may discard unknown auxiliary kinds
-   after reading and saving a new snapshot; mixed-version writer preservation is intentionally not a
-   deployment guarantee. The engine API change is additive: it exposes the new closed `UsageKind`
-   constants and updates its compatibility contract/changelog.
+   `main`/`session_title` and legacy-`unknown` restoration semantics. Current and future readers
+   preserve non-empty unrecognized usage kinds as opaque buckets across load/save rather than
+   deleting them. No historical backfill and no new per-attempt usage ledger are introduced. An
+   older released writer may still discard unknown auxiliary kinds after reading and saving a new
+   snapshot; mixed-version writer preservation is intentionally not a deployment guarantee. The
+   engine API change is additive: it exposes the recognized `UsageKind` constants and updates its
+   compatibility contract/changelog.
 
 ## Consequences
 

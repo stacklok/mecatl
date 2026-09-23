@@ -1027,7 +1027,9 @@ purpose ledger, while `Session.Usage`, normal `EvResult.Usage`, and Team budgets
 its separate bucket contributes to the internal `MaxRunTokens` calculation without rolling into
 `main` or client-visible run usage. Direct and ephemeral session-associated auxiliary calls record
 provider-reported usage under `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`,
-or `parallel_judge`, alongside the existing `session_title` kind. Composition owns the exact
+or `parallel_judge`, alongside the existing `session_title` kind. These are recognized current
+writer purposes, not a closed reader vocabulary: non-empty unrecognized kinds round-trip as
+opaque buckets and remain budget-neutral. Composition owns the exact
 provider/model attribution and source-session binding. A slot may select a model for a matching
 purpose, but it is not the ledger's identity; `parallel_judge` has no dedicated slot. Partial
 usage observed before terminal errors is retained, but accounting is forward-only best effort:

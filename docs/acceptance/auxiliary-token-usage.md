@@ -1,7 +1,7 @@
 # Purpose-attributed auxiliary token usage — acceptance plan
 
 **Contract:** human-reviewed/v2
-**Work classification:** Architectural — expands the closed durable session token-accounting taxonomy and its persisted public projection while preserving budget and run-usage semantics.
+**Work classification:** Architectural — adds recognized durable session token-accounting purposes, forward-compatible opaque-kind persistence, and their existing public projection while preserving budget and run-usage semantics.
 **Decision record:** [ADR 0350](../adr/0350-purpose-attributed-auxiliary-token-usage.md)
 **Phase:** canonical auxiliary usage accounting
 **Status:** proposed, 2026-09-22. Decisions resolved with the issue owner.
@@ -22,7 +22,7 @@ ledger/budget separation in [ADR 0307](../adr/0307-canonical-durable-token-accou
 ## Human decisions
 
 - [x] Scope is reachable, session-associated auxiliary LLM calls; normal runs retain their existing `main` accounting, while dream and consolidation planning remains outside session accounting. — Decision: track the latter separately in [#1791](https://github.com/stacklok/mecatl/issues/1791).
-- [x] The closed usage-kind taxonomy is `main`, `session_title`, `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and `parallel_judge`. — Decision: kinds describe purpose and align with a model slot where one honestly exists.
+- [x] The recognized usage kinds are `main`, `session_title`, `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and `parallel_judge`. — Decision: kinds describe current writer purpose and align with a model slot where one honestly exists; non-empty unrecognized kinds are opaque forward-compatible buckets that readers preserve.
 - [x] Each bucket records the actual server-selected provider/model and does not roll into main usage. — Decision: auxiliary usage never changes `Session.Usage`, `EvResult.Usage`, team budgets, or conversation history; only the separate `router` bucket contributes to the internal `MaxRunTokens` calculation, preserving the existing classifier spend bound without a main rollup.
 - [x] Accounting is forward-only and best-effort. — Decision: record reported partial-stream usage; count each physical retry attempt exactly once; do not retry uncertain calls solely for accounting, backfill historical records, or introduce pricing.
 - [x] Mixed-version writers need not preserve new auxiliary buckets. — Decision: an older binary may discard unknown buckets after reading and saving a new snapshot; this early-product tradeoff does not add rollout configuration or compatibility preservation.
@@ -30,30 +30,31 @@ ledger/budget separation in [ADR 0307](../adr/0307-canonical-durable-token-accou
 
 ## Interface contract
 
-- **gRPC / protobuf:** None — existing session and session-summary canonical `token_usage` map projections carry the expanded closed kind set; no RPC, message, or field changes.
-- **Exported Go APIs / interfaces:** Add `session.UsageKindCompaction`, `session.UsageKindReflection`, `session.UsageKindRouter`, `session.UsageKindAskReviewer`, `session.UsageKindGuardrail`, and `session.UsageKindParallelJudge`. Expand `Session.RecordTokenUsage` and `RestoreTokenUsage` validation to accept exactly those constants plus existing `UsageKindMain` and `UsageKindSessionTitle`; do not change `port.LLMProvider`, `port.LLMRequest`, or public method signatures. Private auxiliary-call reporting must hand the owner-side recorder immutable purpose, provider ID, model ID, owner session ID, and aggregate `session.Usage` for every terminal outcome; a custom/non-LLM reporter that supplies no usage records nothing.
+- **gRPC / protobuf:** None — existing session and session-summary canonical `token_usage` map projections carry recognized and opaque forward-compatible kind keys; no RPC, message, or field changes.
+- **Exported Go APIs / interfaces:** Add `session.UsageKindCompaction`, `session.UsageKindReflection`, `session.UsageKindRouter`, `session.UsageKindAskReviewer`, `session.UsageKindGuardrail`, and `session.UsageKindParallelJudge`. `Session.RecordTokenUsage` and `RestoreTokenUsage` must accept and preserve non-empty unrecognized `UsageKind` values as opaque buckets, while only recognized `router` usage receives the explicit internal budget treatment; do not change `port.LLMProvider`, `port.LLMRequest`, or public method signatures. Private auxiliary-call reporting must hand the owner-side recorder immutable purpose, provider ID, model ID, owner session ID, and aggregate `session.Usage` for every terminal outcome; a custom/non-LLM reporter that supplies no usage records nothing.
 - **Tool schemas:** None — no tool name, parameter, result, or model-visible affordance changes.
 - **CLI / config:** None — existing `models.slots.compaction`, `reflection`, `router`, `ask-reviewer`, and `guardrail` continue to select models without new keys or defaults; Parallel judging gains no slot.
 - **Events / persistence:** Persist and restore the six new buckets through the existing `token_usage` snapshot, store, event-source metadata, and authorized session/session-summary projections. No new event or per-attempt ledger is added. At the physical-stream boundary, sum every usage emission once for its provider attempt; retries contribute each distinct attempt's reported usage and wrappers do not duplicate forwarded values. Record partial usage observed before a terminal error/cancellation and persist best effort without reissuing an uncertain call.
 - **Security / authority:** Composition/server code selects the provider/model and binds every recorded call to its true source session. Accounting stores purpose, aggregate token counts, and provider/model attribution only; it never stores prompts, model output, raw provider errors, request IDs, credentials, or client-selected billing controls. Calls without a source session are not attributed to any session.
-- **Compatibility / migration:** Forward-only additive engine API change: update `engine/api/*.txt` and `engine/CHANGELOG.md` as an Added/minor surface. Existing snapshots retain their `main`, `session_title`, and legacy `unknown` model-attribution behavior; no backfill or rewrite is attempted. Older binaries may drop unknown auxiliary buckets after loading and saving a new snapshot; mixed-version writer preservation is intentionally unsupported. `Session.Usage` and legacy snapshot `usage` remain deprecated mirrors of `token_usage[main]` only.
+- **Compatibility / migration:** Forward-only additive engine API change: update `engine/api/*.txt` and `engine/CHANGELOG.md` as an Added/minor surface. Current and future readers preserve non-empty unrecognized kind buckets across restore/save; existing snapshots retain their `main`, `session_title`, and legacy `unknown` model-attribution behavior, with no backfill or rewrite. Older released binaries may still drop unknown auxiliary buckets after loading and saving a new snapshot; mixed-version writer preservation is intentionally unsupported. `Session.Usage` and legacy snapshot `usage` remain deprecated mirrors of `token_usage[main]` only.
 
 ## In scope — 4 scenarios, in implementation order
 
-### Scenario 1 — Canonical auxiliary usage kinds preserve main accounting
+### Scenario 1 — Recognized auxiliary usage kinds preserve main accounting
 
-The aggregate owns the closed usage-kind taxonomy and canonical per-model totals. This extends
+The aggregate owns recognized usage kinds and canonical per-model totals while accepting
+unrecognized non-empty kinds as opaque forward-compatible buckets. This extends
 the title-ledger boundary from [ADR 0307](../adr/0307-canonical-durable-token-accounting.md)
 without changing the normal-run compatibility mirror or client-visible run usage. The separate
 `router` bucket alone preserves the model router's existing internal spend bound.
 
 **Acceptance:**
-- AC1.1: The session accepts and preserves exactly `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and `parallel_judge` in addition to the existing usage kinds, each with totals equal to its provider/model entries.
-  - verify: `TestAuxiliaryTokenUsage_Scenario1_ClosedKindsAndTotals`
+- AC1.1: The session accepts and preserves the recognized `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and `parallel_judge` kinds in addition to existing kinds, each with totals equal to its provider/model entries; it also preserves non-empty unrecognized kinds as opaque buckets.
+  - verify: `TestAuxiliaryTokenUsage_Scenario1_RecognizedAndOpaqueKindTotals`
 - AC1.2: Recording any auxiliary kind leaves `Session.Usage`, `token_usage[main]`, normal `EvResult.Usage`, and Team budget calculations unchanged; only `router` independently contributes to the invoking session's internal `MaxRunTokens` calculation.
   - verify: `TestAuxiliaryTokenUsage_Scenario1_AuxiliaryKindsDoNotSpendMainBudget`, `TestADR_0350_RouterUsageRetainsSpendBound`
-- AC1.3: Unknown usage kinds remain rejected rather than silently becoming durable ledger entries.
-  - verify: `TestAuxiliaryTokenUsage_Scenario1_RejectsUnknownKind`
+- AC1.3: An unrecognized non-empty usage kind round-trips as an opaque ledger bucket and never changes `Session.Usage`, `token_usage[main]`, or a budget; only recognized `router` usage has the explicit separate budget treatment.
+  - verify: `TestAuxiliaryTokenUsage_Scenario1_PreservesOpaqueKindsWithoutBudgetEffect`
 
 ### Scenario 2 — Direct session work records its actual selected model
 
@@ -101,8 +102,8 @@ outside this ledger, as recorded in [#1791](https://github.com/stacklok/mecatl/i
 **Acceptance:**
 - AC4.1: Every new auxiliary bucket round-trips through in-tree snapshot/store implementations, event-sourced reconstruction, and existing authorized session and session-summary projections.
   - verify: `TestAuxiliaryTokenUsage_Scenario4_RoundTripAndProjection`
-- AC4.2: Existing and legacy snapshots preserve their current `main`, `session_title`, and `unknown` attribution behavior without backfill; older writers may discard unknown new auxiliary kinds after read/save, and no new per-attempt usage record is persisted.
-  - verify: `TestAuxiliaryTokenUsage_Scenario4_ForwardOnlyCompatibility`
+- AC4.2: Current and future readers preserve non-empty unrecognized buckets across restore/save; existing and legacy snapshots retain their current `main`, `session_title`, and `unknown` attribution behavior without backfill. Older writers may discard unknown new auxiliary kinds after read/save, and no new per-attempt usage record is persisted.
+  - verify: `TestAuxiliaryTokenUsage_Scenario4_OpaqueKindAndForwardOnlyCompatibility`
 - AC4.3: Accounting records contain no prompt, model output, raw provider-error, request-id, credential, or client-selected provider/model field; dream and consolidation calls receive no fabricated session attribution.
   - verify: `TestAuxiliaryTokenUsage_Scenario4_NoSensitiveOrFabricatedAttribution`
 

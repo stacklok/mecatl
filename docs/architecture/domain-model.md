@@ -134,14 +134,15 @@ verbatim on the assistant message item, never displayed or interpreted (issue
 - `Usage{InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens}`
   (`usage.go`) with `CacheHitRate()` and an immutable `Add(other) Usage`.
 - `TokenUsage` is the canonical durable aggregate for model work. It groups totals by
-  a closed usage kind and opaque server-selected provider/model entries; each total is
+  an opaque usage kind and opaque server-selected provider/model entries; each total is
   the sum of its entries. `main` is normal agent-run usage; `session_title`,
   `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and
-  `parallel_judge` are session-associated auxiliary purposes. A kind describes why the
-  call happened, not how its model was selected. `Session.Usage` remains a deprecated
-  lifetime compatibility mirror of `TokenUsage[main]`; the run budget uses internal
-  per-run state rather than the mirror. `router` alone additionally contributes its
-  separate total to that internal budget to retain classifier spend safety.
+  `parallel_judge` are recognized session-associated auxiliary purposes. A kind describes why the
+  call happened, not how its model was selected; non-empty unrecognized kinds round-trip as opaque
+  forward-compatible buckets. `Session.Usage` remains a deprecated lifetime compatibility mirror
+  of `TokenUsage[main]`; the run budget uses internal per-run state rather than the mirror.
+  `router` alone additionally contributes its separate total to that internal budget to retain
+  classifier spend safety.
 
 ### Session titles and durable token accounting
 
