@@ -183,7 +183,7 @@ subject to the server's permission and trust policy.
 
 - [Agent definitions extension point](/building/extension-points/agent-definitions.md)
   for the complete field and source contract.
-- [Subagents, teams and parallel](/building/what-you-get/subagents-teams-parallel.md)
+- [Subagents, teams and parallel](/features/subagents-and-teams.md)
   for delegation behavior and child lifecycle.
 - [Project instructions and rules](./project-instructions-and-rules.md) for
   workspace trust.

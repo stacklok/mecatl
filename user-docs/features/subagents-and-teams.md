@@ -1,5 +1,5 @@
 ---
-sidebar_position: 9
+sidebar_position: 190
 title: Subagents, teams, and parallel work
 description:
   Choose focused subagents, isolated parallel branches, or coordinated teams for
@@ -167,14 +167,14 @@ router.
   pinned or routed model.
 - `--enable-parallel=false` removes the Parallel tool.
 - Child permission rules determine which delegated calls run automatically. See
-  [Subagent permissions](./permissions.md#subagents-and-the-permission-model).
+  [Permissions and posture](./permissions-and-posture.md).
 - `--subagent-ask-reviewer` lets a headless model review eligible child
   permission requests.
 
-## What's next
+## Next steps
 
-- [Subagent permissions](./permissions.md#subagents-and-the-permission-model)
-  for delegated approval behavior.
+- [Permissions and posture](./permissions-and-posture.md) for delegated
+  approval behavior.
 - [Agent definitions](/building/extension-points/agent-definitions.md) to define
   named specialists.
-- [Core tools](./core-tools.md) for the rest of the default catalog.
+- [Core tools](./tools.md) for the rest of the default catalog.

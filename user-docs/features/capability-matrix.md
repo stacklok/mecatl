@@ -96,6 +96,6 @@ support it.
 
 ## Related information
 
-- [Deployment decision](/building/getting-started/deployment-decision.md)
+- [Deployment decision](/operating/choose-deployment.md)
 - [Permissions and posture](./permissions-and-posture.md)
 - [Execution environments](./execution-environments.md)

@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 title: Install Mecatl
 description:
   Install the mecatui client and the mecated server with Homebrew, a signed
@@ -85,13 +85,13 @@ The Cosign command verifies that a GitHub Actions workflow in the
 
 Deployment-specific guides own the images, charts, and operational instructions:
 
-- [Run mecated standalone](/building/deployment/mecated.md) for the general
+- [Run mecated standalone](/operating/mecated.md) for the general
   server image and server operation.
-- [Run the mecatui container image](/building/deployment/mecatui.md) for the
+- [Run the mecatui container image](/operating/mecatui.md) for the
   importable terminal-client image.
-- [Deploy mecak8s](/building/deployment/mecak8s.md) for the Kubernetes image
+- [Deploy mecak8s](/operating/mecak8s.md) for the Kubernetes image
   and Helm chart.
-- [Use mecatequi in CI](/building/deployment/mecatequi.md) for the one-shot CI
+- [Use mecatequi in CI](/operating/mecatequi.md) for the one-shot CI
   runtime.
 - [Mecatl Studio web UI](/building/deployment/studio.md) for the early-access
   browser client image.
@@ -114,7 +114,7 @@ or `GOPATH/bin`, run `task install`.
 
 - [Get started with mecatui](/mecatui/getting-started.md) to launch a local
   session.
-- [Run mecated standalone](/building/deployment/mecated.md) to operate the
+- [Run mecated standalone](/operating/mecated.md) to operate the
   server.
-- [Choose how to run Mecatl](/building/getting-started/deployment-decision.md)
+- [Choose how to run Mecatl](/operating/choose-deployment.md)
   to choose between `mecated`, `mecak8s`, `mecatequi`, and an engine embedding.

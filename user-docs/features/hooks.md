@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 340
 title: Hook system
 description:
   Understand hook phases and how hooks observe, transform, or block agent
@@ -144,12 +144,12 @@ Mecatl also includes model-backed `PreToolUse` and `PostToolUse` hooks for
 content that scripts cannot reliably classify, such as prompt injection in a
 fetched page or possible secret exfiltration in tool arguments. These guardrails
 remain off until you configure a checker model. See
-[Permissions and guardrails](permissions.md#layer-2-model-backed-guardrails) for
-the default matchers, enforcement modes, and approval flow.
+[Permissions and posture](./permissions-and-posture.md#guardrails) for the
+default matchers, enforcement modes, and approval flow.
 
-## What's next
+## Next steps
 
-- [Permissions and guardrails](./permissions.md) for permission evaluation and
+- [Permissions and posture](./permissions-and-posture.md) for permission evaluation and
   the model-backed guardrail checker.
 - [HookRunner extension point](/building/extension-points/hook-runner.md) to
   implement a custom hook runner.

@@ -74,7 +74,7 @@ show these workflows from package exports.
 ## Related information
 
 - [TypeScript SDK API reference](/reference/typescript-sdk-api/index.md)
-- [Subagents, teams, and parallel work](/building/what-you-get/subagents-teams-parallel.md)
+- [Subagents, teams, and parallel work](/features/subagents-and-teams.md)
 - [Scheduled tasks](/features/scheduled-tasks.md)
-- [Drive Mecatl through gRPC or HTTP](/building/deployment/grpc-http.md)
+- [Drive Mecatl through gRPC or HTTP](/operating/grpc-http.md)
 - [Feature availability](/features/capability-matrix.md)

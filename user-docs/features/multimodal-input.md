@@ -124,7 +124,7 @@ or unresolved capability is fail-closed.
   workspace is needed for the prompt itself.
 
 For the wire definitions and exact event flow, see
-[Drive via gRPC / HTTP](/building/deployment/grpc-http.md) and
+[Drive via gRPC / HTTP](/operating/grpc-http.md) and
 [the HTTP/SSE API guide](/reference/http-sse-api.md). For provider adapter
 capability requirements, see
 [LLM provider extension points](/building/extension-points/llm-provider.md).
@@ -133,4 +133,4 @@ capability requirements, see
 
 - [Choose models and providers](./choose-models.md)
 - [Context windows](./context-windows.md)
-- [Drive via gRPC / HTTP](/building/deployment/grpc-http.md)
+- [Drive via gRPC / HTTP](/operating/grpc-http.md)

@@ -27,7 +27,7 @@ mecatui --mock --workspace "$PWD"
 
 Do not put provider secrets in command-line flags. For provider credentials and
 server-side selection, use
-[Run mecated standalone](/building/deployment/mecated.md#provider-and-model).
+[Run mecated standalone](/operating/mecated.md#provider-and-model).
 
 ## Provider is not configured or credentials are unavailable
 
@@ -109,7 +109,7 @@ and key, issuer trust, and network and TLS settings:
   configuration and `mecatui providers status PROVIDER`.
 
 The
-[provider configuration guide](/building/deployment/mecated.md#configure-providers)
+[provider configuration guide](/operating/mecated.md#configure-providers)
 and [credential store reference](/reference/configuration.md#credential_store)
 describe the supported schema.
 
@@ -142,7 +142,7 @@ A bearer token is allowed over plaintext loopback, but `mecatui` refuses it over
 explicit non-loopback plaintext. Saved OIDC authentication always uses verified
 TLS, even for loopback. See [Connect to a server](./remote-servers.md) and the
 operator
-[server flag reference](/building/deployment/mecated.md#flag-reference).
+[server flag reference](/operating/mecated.md#flag-reference).
 
 If `mecatui login` reports `storage_unavailable`, follow the stage-specific
 action in the same message. An issuer CA read failure means checking the login
@@ -164,7 +164,7 @@ A permanent provider rejection or context-window overflow will not succeed when
 you retry the same request unchanged. Start a new session, or change the request
 or model as directed. Retry transient connection and service failures. For
 recovery details, see
-[Agent-loop recovery behavior](/building/what-you-get/agent-loop.md#restarting-a-session).
+[Session states and continuation](/features/start-and-resume-sessions.md#session-states-and-continuation).
 
 ## A session will not resume
 
@@ -174,7 +174,7 @@ ineligible or unreadable entries. Verify that you reached the same server and
 that its storage still has the session, then ask the operator about storage,
 retention, or leases. Do not create a replacement session if you need the
 original transcript. See [Sessions](./sessions.md) and
-[session storage operations](/building/deployment/session-storage-operations.md).
+[session storage operations](/operating/session-storage-operations.md).
 
 ## A debug command cannot open its target
 

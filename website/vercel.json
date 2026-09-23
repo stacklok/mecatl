@@ -5,6 +5,81 @@
       "source": "/docs/intro",
       "destination": "/docs",
       "permanent": true
+    },
+    {
+      "source": "/docs/building/deployment/embed-engine",
+      "destination": "/docs/building/embed-engine",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/deployment/:path*",
+      "destination": "/docs/operating/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/getting-started/deployment-decision",
+      "destination": "/docs/operating/choose-deployment",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/getting-started/kubernetes",
+      "destination": "/docs/operating/kubernetes",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/cloud-native-harness",
+      "destination": "/docs/cloud-native-harness",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/agent-loop",
+      "destination": "/docs/features/agent-loop",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/core-tools",
+      "destination": "/docs/features/tools",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/engine-and-session",
+      "destination": "/docs/building/embed-engine",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/hooks",
+      "destination": "/docs/features/hooks",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/mcp-client",
+      "destination": "/docs/features/mcp-client",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/memory",
+      "destination": "/docs/features/memory",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/observability",
+      "destination": "/docs/operating/observability",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/permissions",
+      "destination": "/docs/features/permissions-and-posture",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/scheduled-tasks",
+      "destination": "/docs/features/scheduled-tasks",
+      "permanent": true
+    },
+    {
+      "source": "/docs/building/what-you-get/subagents-teams-parallel",
+      "destination": "/docs/features/subagents-and-teams",
+      "permanent": true
     }
   ]
 }

@@ -269,5 +269,5 @@ Use `--no-store` only when you want a non-persistent, in-memory session.
 
 ## Related information
 
-- [Operate local session storage](/building/deployment/session-storage-operations.md)
+- [Operate local session storage](/operating/session-storage-operations.md)
   for daemon retention, backup, and restore procedures.
