@@ -4,7 +4,7 @@
 **Work classification:** Bounded — the existing inline palette adopts the established package-private bounded-list interaction contract, changing cursor state, physical-row geometry, and selection presentation without changing a public API, persistence boundary, protocol, or system architecture.
 **Decision record:** None — this is a focused application of the landed Mecatui bounded-control contract; its surface-local behavior belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-list adoption, slash-command palette slice
-**Status:** proposed, 2026-09-23. Ready for Plan / Interface review.
+**Status:** in-progress, 2026-09-23. Implementation is underway from the merged Plan / Interface baseline.
 **Delivery:** Split. The palette has distinct inline-filtering, built-in dispatch, completion, and layout behavior that needs its interaction contract reviewed before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1742](https://github.com/stacklok/mecatl/issues/1742).
