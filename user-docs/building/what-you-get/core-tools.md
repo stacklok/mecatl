@@ -28,7 +28,7 @@ and permission rules.
 |Catalog name|Purpose|Read-only?|
 |-|-|-|
 |`Read`|Read a file. Supported images return typed image content when the model accepts images.|Yes|
-|`ListDir`|List one directory's sorted immediate children.|Yes|
+|`ListDir`|List one directory's sorted immediate children. Local workspaces can list a policy-authorized external absolute directory.|Yes|
 |`Write`|Create a file or replace a previously read, unchanged file.|No|
 |`Edit`|Replace exact, unique text in a previously read, unchanged file.|No|
 |`Copy`|Copy a regular file to a new path without overwriting.|No|

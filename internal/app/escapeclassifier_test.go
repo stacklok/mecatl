@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 )
 
@@ -113,6 +116,7 @@ func TestPathEscapePosture_Scenario1_ClassifierMatchesResolveInRoot(t *testing.T
 		{"absolute in-root with .. inside root", filepath.Join(root, "sub", "..", "a.txt"), "Read", escapeInRoot},
 		{"dot-dot traversal", "../outside/b.txt", "Read", escapeEscape},
 		{"absolute outside", outsideAbs, "Read", escapeEscape},
+		{"absolute outside ListDir", outside, "ListDir", escapeEscape},
 		{"absolute outside Write", outsideAbs, "Write", escapeEscape},
 	}
 	for _, tc := range cases {
@@ -205,9 +209,11 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 		"/dev",
 	}
 	for _, path := range cases {
-		name, args := toolCall(t, "Read", path)
-		if got := c.classify(name, args); got != escapePseudoFS {
-			t.Fatalf("classify(%q) = %v, want pseudo-fs (never-relaxed, distinct from escape)", path, got)
+		for _, toolName := range []string{"Read", "ListDir"} {
+			name, args := toolCall(t, toolName, path)
+			if got := c.classify(name, args); got != escapePseudoFS {
+				t.Fatalf("classify(%s, %q) = %v, want pseudo-fs (never-relaxed, distinct from escape)", toolName, path, got)
+			}
 		}
 	}
 	// Distinctness: pseudo-fs != escape.
@@ -220,18 +226,52 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 	if got := c.classify(name, args); got != escapeInRoot {
 		t.Fatalf("relative proc-looking path: classify = %v, want in-root", got)
 	}
-	// An in-root symlink INTO a pseudo-fs dir: canonicalize-then-reject makes
-	// it an escape (resolveInRoot), and it must STILL classify pseudo-fs —
-	// the never-relaxed category applies to the RESOLVED target, not only the
-	// lexical form.
-	link := filepath.Join(root, "proclink")
-	if err := os.Symlink("/proc", link); err != nil {
-		t.Fatalf("Symlink(proclink): %v", err)
-	}
-	name, args = toolCall(t, "Read", filepath.Join("proclink", "self", "environ"))
-	got := c.classify(name, args)
-	if got != escapePseudoFS && got != escapeEscape {
-		t.Fatalf("symlink into /proc: classify = %v, want pseudo-fs or escape — never in-root", got)
+	// Aliases target directories only; no pseudo-filesystem contents are read.
+	for _, target := range []string{"/proc", "/sys", "/dev"} {
+		t.Run("directory aliases "+target, func(t *testing.T) {
+			info, err := os.Stat(target)
+			if errors.Is(err, os.ErrNotExist) {
+				t.Skipf("pseudo-filesystem directory %s is absent on this host", target)
+			}
+			if err != nil || !info.IsDir() {
+				t.Fatalf("pseudo-filesystem fixture %s: %v, %v", target, info, err)
+			}
+			ws, aliasRoot := newNamespaceTestWorkspace(t)
+			link := filepath.Join(aliasRoot, "pseudolink")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatalf("Symlink: %v", err)
+			}
+			for _, path := range []string{target, "pseudolink", link} {
+				for _, toolName := range []string{"Read", "ListDir"} {
+					_, args := toolCall(t, toolName, path)
+					if got := ws.classifier.classify(toolName, args); got != escapePseudoFS {
+						t.Errorf("%s(%q) classifies %v, want escapePseudoFS", toolName, path, got)
+					}
+					call := session.NewToolCall("pseudo", toolName, args)
+					for _, posture := range []Posture{PostureStrict, PostureTrusted, PostureAuto, PostureYolo} {
+						policy := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture)
+						decision := policy.Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
+						if decision.Effect != governance.Deny || !strings.Contains(decision.Reason, "pseudo-filesystem") {
+							t.Errorf("%s %s(%q): %+v, want pseudo-fs policy deny", posture, toolName, path, decision)
+						}
+					}
+					if toolName != "ListDir" {
+						continue
+					}
+					// A configured ask returns before the policy's pseudo-fs check.
+					// Even when approved, the serving workspace must refuse it itself.
+					inner := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: "ListDir", Effect: governance.Ask}}, nil)
+					decision := newEscapePolicy(inner, PostureYolo).Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
+					if decision.Effect != governance.Ask || !decision.ConfiguredAsk {
+						t.Fatalf("configured ask for %q = %+v", path, decision)
+					}
+					_, err := ws.ReadDir(t.Context(), path)
+					if !errors.Is(err, osfs.ErrPathEscape) || !strings.Contains(err.Error(), "pseudo-filesystem") {
+						t.Errorf("approved ListDir(%q): %v, want workspace pseudo-fs ErrPathEscape", path, err)
+					}
+				}
+			}
+		})
 	}
 	// And the category must never be returned for an ordinary outside path.
 	name, args = toolCall(t, "Read", "/etc/hostname")
@@ -268,9 +308,9 @@ func TestEscapeClassifier_UnrelatedToolsAreNotEscapes(t *testing.T) {
 			t.Fatalf("%s: classify = %v, want in-root (no workspace path, never an escape)", label, got)
 		}
 	}
-	// Read/Write/Edit (the path-carrying FS tools) DO classify: sanity that the
+	// Read/ListDir/Write/Edit (the path-carrying FS tools) DO classify: sanity that the
 	// tool set is the right one.
-	for _, name := range []string{"Read", "Write", "Edit"} {
+	for _, name := range []string{"Read", "ListDir", "Write", "Edit"} {
 		_, args := toolCall(t, name, "/etc/hostname")
 		if got := c.classify(name, args); got == escapeInRoot {
 			t.Fatalf("%s with an out-of-root path classified in-root — the classifier is not consulting the path", name)

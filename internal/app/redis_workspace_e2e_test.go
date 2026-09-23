@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -131,6 +133,52 @@ func TestRedisWorkspaceRootListDirIsNotDeniedByAuthority(t *testing.T) {
 	}
 	if result.IsError {
 		t.Fatalf("root ListDir was denied before execution: %s", result.Content)
+	}
+}
+
+func TestRedisWorkspaceExternalLookingListDirNeverFallsBackToHost(t *testing.T) {
+	mr := miniredis.RunT(t)
+	hostDir := t.TempDir()
+	const sentinel = "host-only-listdir-sentinel.txt"
+	if err := os.WriteFile(filepath.Join(hostDir, sentinel), []byte("host-only"), 0o600); err != nil {
+		t.Fatalf("write host sentinel: %v", err)
+	}
+	args, err := json.Marshal(map[string]string{"path": hostDir})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	provider := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("list-external", "ListDir", args)),
+		mockllm.TextTurn("done"),
+	)
+	built, err := buildIsolated(t, context.Background(), Config{
+		RedisURL:            mr.Addr(),
+		RedisAllowPlaintext: true,
+		RedisFilesystem:     true,
+		RedisReadLedger:     true,
+		MockProvider:        provider,
+		NoSoul:              true,
+		Posture:             PostureYolo,
+		PostureFlagSet:      true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	principal := &session.Principal{Issuer: "https://issuer.example", Subject: "redis-external-listdir", GrantType: session.GrantTypeUser}
+	ctx := session.WithPrincipal(context.Background(), principal)
+	sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := runRedisWorkspaceE2E(ctx, t, built.Service, sess.ID, "list an external-looking directory")
+	result, ok := results["list-external"]
+	if !ok {
+		t.Fatal("missing ToolResult for list-external")
+	}
+	if strings.Contains(result.Content, sentinel) {
+		t.Fatalf("Redis ListDir exposed host sentinel: %q", result.Content)
 	}
 }
 

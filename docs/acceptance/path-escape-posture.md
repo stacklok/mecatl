@@ -54,6 +54,15 @@ harness can demonstrate, not which packages exist on disk.
 ask-write** (Shell parity for reads; never silent un-asked mutation below `yolo`).
 The guardrail-gated clause is the v2-deferred route, not v1 behaviour.
 
+### Landed ListDir follow-up
+
+The read-only posture row also applies to `ListDir` for an existing external
+absolute directory on the main local workspace. `auto` and `yolo` allow the
+listing; `strict` and `trusted` ask, and an approved call executes through the
+same bounded `*os.Root` serving path as `Read` and `Stat`. This follow-up does
+not relax `Copy`, `Move`, `Remove`, `Glob`, or `Grep`, and does not widen child
+or virtual workspaces.
+
 > **The child row is about engine scope, not workspace trust.** There is no
 > "untrusted child FS" concept: a child's osfs workspace is built by the SAME
 > `newForkWorkspace` helper as every fork family and has the same containment as

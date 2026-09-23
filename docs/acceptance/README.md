@@ -174,6 +174,12 @@ PR after verification. There is no cleanup or status-only PR.
   model-facing view of the existing resolved inventory, presenting exact
   `(provider_id, model_id)` selection handles without redesigning provider identity.
   Status: draft.
+- [Jev delegated-model router](jev-model-router.md) - proposes an explicitly selected,
+  bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
+  existing delegation event, mecatui, and session-debugger paths. Status: proposed; Plan /
+  Interface PR #1735 and stacked implementation PR #1738 remain open. The correction and
+  scope are directly approved in conversation under the continuing stacked waiver; this does
+  not claim that the plan PR merged.
 - [Scalable reflection evidence](scalable-reflection-evidence.md) — one versioned,
   deterministic bounded-evidence materializer for automatic and explicit reflection,
   replacing raw retained-size rejection while preserving coordinator and promotion safety.
