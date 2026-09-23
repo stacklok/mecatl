@@ -100,6 +100,13 @@ sed_in_place 's/\*\*Expected tasks:\*\* deferred to orchestration/\*\*Expected t
 sed_in_place 's|<!-- combined rationale fixture placeholder -->|**Combined rationale:** The fixture is one indivisible documentation check, so separate plan review adds no value.|' "$combined_valid"
 bash "$checker" "$combined_valid" >/dev/null
 
+# Category extraction must survive an interface block larger than a pipe buffer.
+for source in "$valid" "$combined_valid"; do
+  large="$root/acceptance/large-$(basename "$source")"
+  awk '/^### Scenario/ { for (i = 0; i < 4096; i++) print "Additional interface detail for the large-block fixture." } { print }' "$source" >"$large"
+  bash "$checker" "$large" >/dev/null
+done
+
 for case_name in missing-contract invalid-contract missing-category bare-none placeholder bad-delivery bad-status proposed-unchecked missing-human placeholder-human checked-without-decision; do
   cp "$valid" "$root/acceptance/$case_name.md"
 done
