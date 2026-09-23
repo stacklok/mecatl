@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Auxiliary provider/model identity** — adds `session.ProviderModelID`, the
+  opaque server-selected provider/model identity for an auxiliary model call.
+  It deliberately carries no selector/default, context-window, reasoning-effort,
+  provider-instance, or credential semantics. Added (minor).
+
 - **Purpose-attributed auxiliary token usage foundation** — adds
   `session.AuxiliaryUsage` with owned-copy merging and the recognized
   `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and
