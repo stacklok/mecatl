@@ -364,11 +364,11 @@ func TestStatusCustomizationCommandPassthroughEnvReachesExecution(t *testing.T) 
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("TMUX", "configured-tmux")
 	writeSettings(t, "mecatui", "status_customization:\n  command:\n    executable: /bin/sh\n    args: [-c, 'read input; test \"$TMUX\" = \"$1\" && printf \"<footer><text>tmux available</text></footer>\"', --, configured-tmux]\n    passthrough_env: [TMUX]\n")
-	customization, err := readStatusCustomization()
+	statusConfig, err := readStatusCustomization()
 	if err != nil {
 		t.Fatalf("read status customization: %v", err)
 	}
-	source := newSource(customization)
+	source := newSource(statusConfig)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 	source.Submit(customization.Input{Terminal: customization.Terminal{FooterAvailCols: 80}})
 	select {
