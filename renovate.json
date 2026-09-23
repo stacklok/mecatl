@@ -122,10 +122,22 @@
       "groupName": "docker images"
     },
     {
-      "description": "Website (Docusaurus docs site): one PR for everything, majors included",
+      "description": "Website (Docusaurus docs site): one PR for routine updates; majors land separately so one needing config work doesn't hold up the rest",
       "matchFileNames": ["website/**"],
-      "groupName": "website",
-      "separateMajorMinor": false
+      "groupName": "website"
+    },
+    {
+      "description": "Website: bump package.json ranges so every update is visible in the diff, not only in the lockfile",
+      "matchFileNames": ["website/**"],
+      "matchManagers": ["npm"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Website Node engine is pinned to a major (24.x) to match CI and Vercel; replace it on a new major instead of bumping",
+      "matchFileNames": ["website/**"],
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["engines"],
+      "rangeStrategy": "replace"
     },
     {
       "description": "Published TypeScript SDK and its examples",

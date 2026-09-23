@@ -17,11 +17,11 @@
     "format": "prettier --write ../user-docs --ignore-path ../user-docs/.prettierignore"
   },
   "dependencies": {
-    "@docusaurus/core": "^3.10.2",
-    "@docusaurus/faster": "^3.10.2",
-    "@docusaurus/plugin-vercel-analytics": "^3.10.2",
-    "@docusaurus/preset-classic": "^3.10.2",
-    "@docusaurus/theme-mermaid": "^3.10.2",
+    "@docusaurus/core": "3.10.2",
+    "@docusaurus/faster": "3.10.2",
+    "@docusaurus/plugin-vercel-analytics": "3.10.2",
+    "@docusaurus/preset-classic": "3.10.2",
+    "@docusaurus/theme-mermaid": "3.10.2",
     "@easyops-cn/docusaurus-search-local": "^0.55.3",
     "@mdx-js/react": "^3.0.0",
     "@signalwire/docusaurus-plugin-llms-txt": "1.2.2",
@@ -32,9 +32,9 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@docusaurus/module-type-aliases": "^3.10.2",
-    "@docusaurus/tsconfig": "^3.10.2",
-    "@docusaurus/types": "^3.10.2",
+    "@docusaurus/module-type-aliases": "3.10.2",
+    "@docusaurus/tsconfig": "3.10.2",
+    "@docusaurus/types": "3.10.2",
     "@types/react": "^19.0.0",
     "prettier": "^3.9.6",
     "prettier-plugin-compact-markdown-table": "^0.1.0",
@@ -53,6 +53,6 @@
     ]
   },
   "engines": {
-    "node": ">=24.0"
+    "node": "24.x"
   }
 }

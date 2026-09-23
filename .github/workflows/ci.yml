@@ -1574,11 +1574,19 @@ jobs:
       - name: Verify generated SDK reference is fresh
         run: task sdk:docs:check
 
+      - name: Install site dependencies
+        working-directory: website
+        run: npm ci
+
+      # Docusaurus builds through its own bundler and never runs tsc, so a
+      # TypeScript upgrade that breaks the site config only surfaces here.
+      - name: Typecheck site
+        working-directory: website
+        run: npm run typecheck
+
       - name: Build site
         working-directory: website
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
   user-docs-gate:
     name: User docs (gate)
