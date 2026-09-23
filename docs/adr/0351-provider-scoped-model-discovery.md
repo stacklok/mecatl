@@ -28,9 +28,10 @@ open policy recommendations and their exact bounds.
 
 ## Decision
 
-Use one Build-owned discovery owner in `internal/app`. Background work, explicit
-ListModels/picker requests, run admission, and existing bootstrap probes request or join
-its provider-local attempts. It is the sole publisher of accepted live observations.
+Use one Build-owned discovery owner in `internal/app`. Background work, ListModels
+requests (including client startup and SDK calls), Service session-entry admission, and
+existing bootstrap probes request or join its provider-local attempts. It is the sole
+publisher of accepted live observations.
 Registry membership/default selection, protocol adapters, and credential custody remain
 separate responsibilities; the owner borrows their existing listers.
 
@@ -41,12 +42,23 @@ concurrent demand joins it. Retry eligibility follows the actual provider attemp
 completion time, not whether some caller was previously rejected. Another provider's
 completion or cooldown has no bearing on the selected provider.
 
-Publish observations, outcome, admission evidence, and inventory/status projections as
-one immutable snapshot. Accept a completion only for the current live attempt, and wake
-waiters only after publication. A skipped provider contributes no update. Readers perform
-pure exact-provider/model resolution with explicit provenance; they do not fabricate
-readiness or trigger discovery. Wire responses use one captured projection, without
-requiring instantaneous agreement across separate network requests.
+Publish observations, outcome, evidence, and inventory/status as one immutable snapshot.
+For a valid accepted result, perform registry-owned default healing against candidate
+metadata outside the publication lock, capture its default-selection facts, then atomically
+publish and wake waiters. Serialize local completion tails with each other and shutdown/timeout arbitration;
+check identity/liveness before effects and commit. Candidate projection/capability helpers
+read their explicit candidate/default inputs, not the previous published store. Preserve
+existing bootstrap/default remint without rebuilding session capabilities. Skipped providers
+contribute no delta. Defensive copies at lister ingestion and the public projection boundary
+prevent consumers from mutating the owner through shared slices, maps, or messages.
+
+Readers perform pure exact-target resolution. Schedule selector validation uses the same
+pure inventory reader rather than a separately seeded Service atomic. Wire responses use
+one captured projection; separate network requests need not see simultaneous updates.
+A wired context echo resolver's zero overrides a seeded positive value; nil remains distinct.
+Codex's lister leaves missing live context absent: the existing OpenAI metadata namespace
+supplies a catalog-sourced window during pure resolution, preserving entitlement membership
+and display without inventing live evidence. Reasoning tri-state remains outside this slice.
 
 The recommended policy is process-lifetime retention of positive last-good observations,
 including after unauthorized or empty discovery, with the latest failure/empty outcome
@@ -56,18 +68,36 @@ evidence after a failed/empty outcome. Global and exact configured windows, posi
 or catalog windows, no-lister fallback, and a healthy non-empty listing's omitted
 passthrough model/window retain their defined precedence and admission behavior.
 
-The owner bounds each ordinary attempt; cancelling a waiter cancels only its wait.
-Shutdown cancels and joins shared work before borrowed resources close. Retries are
-explicit-demand and provider-local, with no periodic refresher or durable metadata cache.
-Native authenticated listing remains demand-only. Existing ToolHive/Codex bootstrap
-selection and shorter bounds remain explicit exceptions, using the same owner rather
-than independent metadata writers.
+The owner arbitrates one terminal outcome. Success requires a current live attempt and
+valid fetch context at acceptance; a reserved valid result completes its local publication
+tail without a timer replacing it mid-tail. Otherwise the deadline cancels the fetch,
+publishes timeout once, and wakes waiters even before the lister returns. Cooldown starts
+at that owner terminal-publication timestamp, not waiter exit or later fetch return. The
+slot remains occupied until return; only then, after cooldown, can another attempt start.
+Late success is discarded. This prevents overlap rather than adding a replacement-attempt
+API. Cancelling a waiter affects only its wait. Owner shutdown invalidates and cancels/joins
+work without publishing a failure or timeout from shutdown cancellation. Physical cleanup
+still requires listers to honor cancellation.
 
-Keep the neutral server admission callback and engine interfaces. Admission must resolve
-a context window or a permitted fallback before recording a prompt, preparing a failed-step
-retry, consuming a restored approval, compacting, or inferring. Otherwise return the
-existing retryable `context_window_unavailable` condition. Mecatui projects that structured
-condition into safe recovery guidance while retaining the transcript and original draft.
+Retries are ListModels/admission-demand and provider-local, with no periodic refresher or
+durable cache. ListModels is not a human-action signal. Native authenticated listing remains
+demand-only. ToolHive/Codex bootstrap selection and shorter bounds remain explicit
+exceptions using the same owner.
+
+Keep the neutral server callback and engine interfaces. At the named Service session-entry
+paths, admission resolves a context window or permitted fallback before recording a prompt,
+preparing a failed-step retry, consuming a restored approval, compacting, or inferring;
+otherwise it returns `context_window_unavailable`. Direct delegated, utility, and team entry
+remain a separate slice: a known parent can bypass discovery while an unknown child override
+still runs with the engine's 128000 floor. This is not the entire metadata-before-execution
+invariant.
+
+Mecatui maps the structured rejection to safe guidance. Retain one bounded pre-SessionInit
+submission with exact prepared text/media and editable staged paste/image state. Explicit
+Retry sends that prepared payload without re-expansion or automatic replay; Back restores
+editing state, requiring confirmation before replacing a newer draft. SessionInit, explicit
+disposal, session replacement/exit, or unrelated terminal error releases retention. Limits,
+wire/persistence, and unrelated transport/auth recovery stay unchanged.
 
 This decision does not persist effective model identity or alter floating-selector restart
 semantics. It establishes publication and context resolution coherence, not generation-bound
@@ -84,10 +114,11 @@ global cooldown, and independent outcome/inventory publishers instead of retaini
 behind a new facade.
 
 Process-lifetime last-good metadata can age and no longer describe the provider's current
-limits or entitlements. Explicit picker refresh can perform more listing requests than
-the old gateway-only stale path; the provider-local cooldown bounds that activity. Shared
-work can outlive its final waiter until the attempt deadline. These trade-offs require the
-plan's human decisions before acceptance.
+limits or entitlements. ListModels demand can perform more listing requests than the old
+gateway-only stale path; provider-local cooldown bounds that activity. The deadline bounds
+waiter outcomes, while cleanup still depends on lister cancellation. A rejected-submission
+record retains one bounded text/media payload in memory until recovery or disposal. These
+trade-offs require the plan's human decisions before acceptance.
 
 There is no durable migration. A cold process reacquires metadata, and a discovery outage
 can still reject a run without losing its draft or recording a turn. Credential ownership
