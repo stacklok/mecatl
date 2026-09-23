@@ -53,7 +53,7 @@ func TestRunModelRouterOperationDeadlineIsTimeout(t *testing.T) {
 	engine := NewEngine(Deps{LLM: provider, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "classifier"})
 	caller := t.Context()
 	type result struct {
-		usage  session.Usage
+		usage  session.AuxiliaryUsage
 		reason string
 		ok     bool
 	}
@@ -81,7 +81,8 @@ func TestRunModelRouterOperationDeadlineIsTimeout(t *testing.T) {
 		if got.ok || got.reason != RouterMissTimeout {
 			t.Fatalf("operation deadline reason=%q ok=%v", got.reason, got.ok)
 		}
-		if got.usage.InputTokens != 7 || got.usage.OutputTokens != 3 {
+		usage := got.usage.Buckets[session.UsageKindRouter].Total
+		if usage.InputTokens != 7 || usage.OutputTokens != 3 {
 			t.Fatalf("operation deadline dropped retained usage: %+v", got.usage)
 		}
 	case <-time.After(time.Second):

@@ -39,7 +39,7 @@ type BranchJudge interface {
 	// Implementations MUST be non-interactive and bounded. ParallelTool treats a nil
 	// error with an out-of-range index — or any error — as "fall back to the first
 	// successful branch", so a judge must never be load-bearing for correctness.
-	Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, err error)
+	Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, usage session.AuxiliaryUsage, err error)
 }
 
 // defaultJudgeRubric is the criteria the judge optimises for when the caller
@@ -58,6 +58,7 @@ type engineJudge struct {
 	limits    session.Limits
 	childMode session.PermissionMode
 	idPrefix  string
+	identity  session.ProviderModelID
 }
 
 // EngineJudgeOption configures an engineJudge.
@@ -93,6 +94,7 @@ func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge {
 		limits:    defaultChildLimits,
 		childMode: session.ModeDefault,
 		idPrefix:  "fork-judge",
+		identity:  session.ProviderModelID{ModelID: engine.deps.Model},
 	}
 	for _, o := range opts {
 		o(j)
@@ -113,9 +115,9 @@ type judgeVerdict struct {
 // run error returns (0, <note>, nil) — ParallelTool then keeps the first successful
 // branch — so the judge can never hard-fail a Parallel call. An empty candidate set is
 // a programming error (ParallelTool only calls with ≥2) and returns an error.
-func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, criteria string) (int, string, error) {
+func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, criteria string) (int, string, session.AuxiliaryUsage, error) {
 	if len(candidates) == 0 {
-		return 0, "", fmt.Errorf("engineJudge: no candidates to judge")
+		return 0, "", session.AuxiliaryUsage{}, fmt.Errorf("engineJudge: no candidates to judge")
 	}
 
 	// The judge needs no real workspace (it runs no tools); a tool-less in-memory
@@ -133,24 +135,25 @@ func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, cri
 	// The judge child is tool-less and non-interactive; the zero childPosture (headless
 	// auto-deny) is correct — it can never raise a Shell ask.
 	final, stop := drainChild(run, childPosture{role: "judge"})
+	usage := auxiliaryUsage(session.UsageKindParallelJudge, j.identity, sess.UsageFor(session.UsageKindMain))
 	if stop == session.StopError || stop == session.StopCancelled {
-		return 0, "judge run did not complete; selected the first successful branch", nil
+		return 0, "judge run did not complete; selected the first successful branch", usage, nil
 	}
 
 	verdict, ok := parseJudgeVerdict(final)
 	if !ok {
-		return 0, "judge output unparseable; selected the first successful branch", nil
+		return 0, "judge output unparseable; selected the first successful branch", usage, nil
 	}
 	// Winner is 1-based in the prompt; translate to a 0-based candidates position.
 	pos := verdict.Winner - 1
 	if pos < 0 || pos >= len(candidates) {
-		return 0, "judge picked an out-of-range branch; selected the first successful branch", nil
+		return 0, "judge picked an out-of-range branch; selected the first successful branch", usage, nil
 	}
 	rationale := strings.TrimSpace(verdict.Rationale)
 	if rationale == "" {
 		rationale = "selected by judge"
 	}
-	return pos, rationale, nil
+	return pos, rationale, usage, nil
 }
 
 // buildJudgePrompt assembles the judge's prompt from the candidate summaries and

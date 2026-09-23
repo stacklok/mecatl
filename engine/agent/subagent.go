@@ -135,6 +135,8 @@ type parentCaps struct {
 	// — resolveChildAsk then behaves exactly as a headless run did before the
 	// reviewer existed.
 	adjudicate func(ask session.PendingAsk, isolated bool) askReviewOutcome
+	// recordAuxiliaryUsage synchronously records utility work on the owning parent.
+	recordAuxiliaryUsage func(session.AuxiliaryUsage)
 	// hardAbort is the parent Run's explicit unwedge signal (Run.hardAbort, fired
 	// a short grace after Run.Cancel — see hardAbortGrace), handed down so a delegation tool's own
 	// internal forwarding sends (the team supervisor's member→evCh forward) can give
