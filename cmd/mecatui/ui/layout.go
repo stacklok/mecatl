@@ -103,12 +103,9 @@ func sumHeight(rs []region) int {
 func (m Model) chrome() (above, below []region) {
 	above = []region{{role: regionHeader, content: m.renderHeader()}}
 
-	// Render non-palette regions first so the palette receives only rows left after
+	// Render fixed lower regions first so inline menus receive only rows left after
 	// preserving the prompt, footer, queue, and at least one conversation row.
 	var transients []region
-	if men := renderMention(m.deps.Theme, m.mention, m.width); men != "" {
-		transients = append(transients, region{role: regionMention, content: men})
-	}
 	if q := m.renderQueue(); q != "" {
 		transients = append(transients, region{role: regionQueue, content: q})
 	}
@@ -122,11 +119,17 @@ func (m Model) chrome() (above, below []region) {
 	}
 
 	card := m.deps.Theme.Style("askCard")
-	paletteRows := m.height - sumHeight(above) - sumHeight(transients) - sumHeight(fixed) - 1 -
+	availableRows := m.height - sumHeight(above) - sumHeight(transients) - sumHeight(fixed) - 1 -
 		card.GetVerticalFrameSize() - 2 // header and key hint inside the card
-	paletteRows = min(maxPaletteRows, max(0, paletteRows))
-	if pal := renderPaletteSized(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width, paletteRows); pal != "" {
+	mentionRows := min(maxMentionRows, max(0, availableRows))
+	men := renderMentionSized(m.deps.Theme, m.mention, m.width, mentionRows)
+	paletteRows := min(maxPaletteRows, max(0, availableRows))
+	pal := renderPaletteSized(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width, paletteRows)
+	if pal != "" {
 		below = append(below, region{role: regionPalette, content: pal})
+	}
+	if men != "" {
+		below = append(below, region{role: regionMention, content: men})
 	}
 	below = append(below, transients...)
 	below = append(below, fixed...)

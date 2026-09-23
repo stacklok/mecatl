@@ -2048,7 +2048,7 @@ func (m Model) hasDoubleEscapeDraft() bool {
 // gets Escape first. Only the focused, plain idle composer can use the gesture.
 func (m Model) doubleEscapeEligible() bool {
 	return m.keyboardEventTypes && m.phase == phaseIdle && m.prompt.Focused() && m.hasDoubleEscapeDraft() &&
-		!m.sel.active && !m.prompt.HasSelection() && !m.paletteVisible() && !m.mention.open &&
+		!m.sel.active && !m.prompt.HasSelection() && !m.paletteVisible() && !m.mentionVisible() &&
 		m.queuePaused == "" && !bodyOwnerOpen(m)
 }
 
@@ -2819,10 +2819,9 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return mm, cmd
 		}
 	}
-	// The @-mention menu, like the palette, claims its navigation/complete keys
-	// while running EXCEPT enter (which reaches the same builtin dispatcher, then
-	// steers or queues) and esc (the Cancel branch sends Cancel directly).
-	if m.mention.open && !key.Matches(msg, m.keys.Submit) && !key.Matches(msg, m.keys.Cancel) {
+	// A visible @-mention menu has the same ownership while streaming as it does
+	// while idle, including completion and dismissal.
+	if m.mentionVisible() {
 		if mm, handled := m.onMentionKey(msg); handled {
 			return mm, nil
 		}
@@ -3125,7 +3124,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	// The @-mention menu (mutually exclusive with the palette) claims the same
 	// navigation/complete keys while it is open.
-	if m.mention.open {
+	if m.mentionVisible() {
 		if mm, handled := m.onMentionKey(msg); handled {
 			return mm, nil
 		}
@@ -3279,16 +3278,25 @@ func (m Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // the highlighted path; esc dismisses. The two menus never coexist (mutually
 // exclusive tokens), so the caller routes to whichever is open.
 func (m Model) onMentionKey(msg tea.KeyPressMsg) (Model, bool) {
-	switch msg.String() {
-	case keyMenuUp:
+	if !m.mentionVisible() {
+		return m, false
+	}
+	switch {
+	case msg.String() == keyMenuUp:
 		m.mentionMoveUp()
 		return m, true
-	case keyMenuDown:
+	case msg.String() == keyMenuDown:
 		m.mentionMoveDown()
 		return m, true
-	case keyMenuTab, keyMenuEnter:
+	case key.Matches(msg, m.keys.ScrollU):
+		m.mention.list.Move(bounded.PageUp)
+		return m, true
+	case key.Matches(msg, m.keys.ScrollD):
+		m.mention.list.Move(bounded.PageDown)
+		return m, true
+	case msg.String() == keyMenuTab || msg.String() == keyMenuEnter:
 		return m.mentionComplete(), true
-	case keyMenuDismiss:
+	case msg.String() == keyMenuDismiss:
 		return m.mentionDismiss(), true
 	}
 	return m, false

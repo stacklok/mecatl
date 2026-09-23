@@ -28,7 +28,8 @@ retains `~/` when inserted, supports leading `./` and `../` components after `~/
 also works when the client workspace is empty. With no client workspace, non-home
 completion has no implicit process-cwd fallback. Completion lists files only, prunes
 hidden files and directories, and is bounded; use `↑`/`↓` then `tab` or `enter` to
-select a result.
+select a result. While file completion is visible, `enter` completes the selected
+path and `esc` dismisses the list before their ordinary idle or running action.
 
 On send, mecatui reads a mentioned regular file and uploads its bytes into the
 conversation: text files are inlined and supported media becomes an attachment. The
