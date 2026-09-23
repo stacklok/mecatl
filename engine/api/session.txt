@@ -6,14 +6,17 @@
     method func (*Session).Abandon() error
     method func (*Session).AbortAuthorization(reason string) ([]ToolResult, error)
     method func (*Session).AbortWorkspaceEnrollment(id WorkspaceEnrollmentID) error
+    method func (*Session).AdoptRecoveredBrokerCatalogue(expectedRecoveryReference string, expectedExternalBinding ExternalBinding, replacementExternalBinding ExternalBinding, exactTools []string) error
     method func (*Session).ApplyTitleGeneration(generation TitleGenerationState, attempts []TitleAttempt)
     method func (*Session).BeginRun(runID string)
     method func (*Session).BeginTurn() error
     method func (*Session).BeginWorkspaceEnrollment(pending PendingWorkspaceEnrollment) error
     method func (*Session).BindAuthority(authority Authority) error
     method func (*Session).BoundAuthority() (Authority, bool)
+    method func (*Session).BrokerCredentialCustody() (BrokerCredentialCustody, bool)
     method func (*Session).Cancel() error
     method func (*Session).ClaimAuthorization() (PendingAuthorization, error)
+    method func (*Session).ClearBrokerCredentialCustody(expectedRecoveryReference string) (BrokerCredentialCustody, error)
     method func (*Session).Complete() error
     method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
     method func (*Session).Fail() error
@@ -21,6 +24,7 @@
     method func (*Session).FailureMetadata() (RetryDisposition, StreamProgress)
     method func (*Session).FailurePermanence() bool
     method func (*Session).Incarnation() IncarnationID
+    method func (*Session).InstallBrokerCredentialCustody(pending PendingWorkspaceEnrollment, custody BrokerCredentialCustody, now time.Time) error
     method func (*Session).Interrupt() error
     method func (*Session).InterruptAuthorization() ([]ToolResult, error)
     method func (*Session).LastError() string
@@ -51,6 +55,7 @@
     method func (*Session).ReplaceHistoryAtBoundary(messages []Message) error
     method func (*Session).ResetUsage() error
     method func (*Session).RestoreAuthorizationClaim(pending PendingAuthorization) error
+    method func (*Session).RestoreBrokerCredentialCustody(custody BrokerCredentialCustody) error
     method func (*Session).RestoreFailedStepRetryPending(disposition RetryDisposition, progress StreamProgress) error
     method func (*Session).RestoreIncarnation(inc IncarnationID) error
     method func (*Session).RestoreLabels(owner *Principal, authority Authority) error
@@ -76,6 +81,16 @@
     method func (AuthorizationPayload).Valid() bool
     method func (AuthorizationResolution).Status() AuthorizationStatus
     method func (AuthorizationResolution).Valid() bool
+    method func (BrokerCredentialCustody).Active(now time.Time) bool
+    method func (BrokerCredentialCustody).Clone() BrokerCredentialCustody
+    method func (BrokerCredentialCustody).ExpiresAt() time.Time
+    method func (BrokerCredentialCustody).OwnerPartition() [32]byte
+    method func (BrokerCredentialCustody).ProfileDigest() [32]byte
+    method func (BrokerCredentialCustody).Providers() []string
+    method func (BrokerCredentialCustody).RecoveryReference() string
+    method func (BrokerCredentialCustody).SessionIncarnation() IncarnationID
+    method func (BrokerCredentialCustody).Valid() bool
+    method func (BrokerCredentialCustody).WorkloadPartition() [32]byte
     method func (EnvironmentRef).Valid() bool
     method func (GrantType).Valid() bool
     method func (IncarnationID).Valid() bool
@@ -106,6 +121,7 @@ const BlockImage BlockKind = "image"
 const BlockResourceLink BlockKind = "resource_link"
 const BlockStructuredContent BlockKind = "structured"
 const BlockText BlockKind = "text"
+const BrokerRecoveryReferenceBytes untyped int = 43
 const CompactionSummaryMarker untyped string = "[conversation compacted]"
 const EnvKindLocal EnvironmentKind = "local"
 const EnvKindMem EnvironmentKind = "mem"
@@ -157,6 +173,8 @@ const HookAdvisory HookDecision = "advisory"
 const HookBlocked HookDecision = "blocked"
 const HookInfo HookDecision = "info"
 const HookModified HookDecision = "modified"
+const MaxBrokerCustodyProviderBytes untyped int = 256
+const MaxBrokerCustodyProviders untyped int = 64
 const MaxMediaBytes untyped int = 10485760
 const MaxPromptMediaBytes untyped int = 20971520
 const MaxPromptMediaParts untyped int = 16
@@ -273,6 +291,7 @@ func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Messag
 func NewAudioContent(mime string, data []byte) (Content, error)
 func NewAudioURLContent(mime string, rawURL string) (Content, error)
 func NewAuthorizationResolution(status AuthorizationStatus) (AuthorizationResolution, error)
+func NewBrokerCredentialCustody(recoveryReference string, incarnation IncarnationID, ownerPartition [32]byte, workloadPartition [32]byte, profileDigest [32]byte, providers []string, expiresAt time.Time) (BrokerCredentialCustody, error)
 func NewContent(kind MediaKind, mime string, data []byte, rawURL string) (Content, error)
 func NewDebug(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, target SessionID, targetIncarnation IncarnationID) (*Session, error)
 func NewEmbeddedResourceBlock(uri string, mimeType string, text string, blob []byte, audience []string) (Content, error)
@@ -323,6 +342,7 @@ type AuthorizationPayload struct{AuthorizationID string; DisplayName string; Cal
 type AuthorizationResolution struct{}
 type AuthorizationStatus string
 type BlockKind string
+type BrokerCredentialCustody struct{}
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
 type Conversation struct{Messages []Message}

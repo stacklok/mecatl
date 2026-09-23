@@ -33,12 +33,16 @@ type Server struct {
 
 	// mu protects the retained registries, their session-handle and owner state, the
 	// closed flag, and the execution/control counters below.
-	mu              sync.Mutex
-	handles         map[string]*serverHandle            // Process-local handles retained until expiry or shutdown cleanup.
-	owners          map[session.SessionID]*sessionOwner // Logical-session ownership retained beyond individual handles.
-	closed          bool                                // Rejects new work once Shutdown begins.
-	activeExecutes  int                                 // Dispatched executions counted against cfg.MaxActiveExecutes.
-	pendingControls int                                 // Lifecycle controls awaiting settlement.
+	mu                     sync.Mutex
+	handles                map[string]*serverHandle                    // Process-local handles retained until expiry or shutdown cleanup.
+	owners                 map[session.SessionID]*sessionOwner         // Logical-session ownership retained beyond individual handles.
+	continuityReceipts     map[continuityReceiptKey]*continuityReceipt // Bounded Stage/Recover retry receipts, cleared on expiry or shutdown.
+	continuityReceiptBytes int                                         // Reserved continuity receipt bytes.
+	continuityReceiptSlots int                                         // Reserved continuity receipt count.
+	continuityReceiptUsage map[[32]byte]continuityReceiptUsage         // Per-workload receipt capacity, preventing cross-workload starvation.
+	closed                 bool                                        // Rejects new work once Shutdown begins.
+	activeExecutes         int                                         // Dispatched executions counted against cfg.MaxActiveExecutes.
+	pendingControls        int                                         // Lifecycle controls awaiting settlement.
 
 	// Shutdown and cancellation machinery.
 	// stop requests sweeper shutdown; done closes after the sweeper exits.
@@ -83,7 +87,7 @@ func NewServer(service mcpbroker.Service, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("mcpbrokergrpc: mint broker instance ID: %w", err)
 	}
 	executeCtx, executeStop := context.WithCancel(context.Background())
-	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
+	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), continuityReceipts: make(map[continuityReceiptKey]*continuityReceipt), continuityReceiptUsage: make(map[[32]byte]continuityReceiptUsage), done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
 	go s.sweep()
 	return s, nil
 }
@@ -98,8 +102,8 @@ func (s *Server) WithDiagnostics(diagnostics port.Diagnostics) *Server {
 	return s
 }
 
-// TraceRPC records a safe, closed-vocabulary RPC outcome. Authentication has already
-// validated the principal before this method is reached.
+// TraceRPC records an operational RPC outcome. Callers must supply only
+// diagnostic-safe fields; authentication has already validated the principal.
 func (s *Server) TraceRPC(ctx context.Context, operation, outcome string, fields ...any) {
 	level := port.LevelDebug
 	if outcome != "success" {
@@ -119,7 +123,7 @@ func (s *Server) traceUnknownTool(ctx context.Context, a *serverHandle, requeste
 	if truncated {
 		names = names[:previewLimit]
 	}
-	s.TraceRPC(ctx, "execute", "unknown_tool", "logical_session", a.logicalID, "tool", diagnosticToolName(requested), "registered_tool_count", len(a.tools), "registered_tool_preview", strings.Join(names, ","), "registered_tool_preview_truncated", truncated)
+	s.TraceRPC(ctx, "execute", "unknown_tool", "tool", diagnosticToolName(requested), "registered_tool_count", len(a.tools), "registered_tool_preview", strings.Join(names, ","), "registered_tool_preview_truncated", truncated)
 }
 
 func diagnosticToolName(name string) string {
@@ -158,6 +162,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 	clear(s.owners)
+	for key, receipt := range s.continuityReceipts {
+		s.settleExpiredContinuityReceiptLocked(key, receipt)
+	}
+	clear(s.continuityReceipts)
+	clear(s.continuityReceiptUsage)
+	s.continuityReceiptBytes = 0
+	s.continuityReceiptSlots = 0
 	s.mu.Unlock()
 	s.executeStop()
 	executeDone := make(chan struct{})

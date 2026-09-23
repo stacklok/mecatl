@@ -873,7 +873,7 @@ func newFixture(t *testing.T) *custodyFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := custodyRequest{Guard: guard, AttemptDeadline: now.Add(20 * time.Minute)}
+	request := custodyRequest{Guard: guard, AttemptDeadline: now.Add(time.Minute)}
 	return &custodyFixture{core: core, inner: inner, client: client, clock: clock, request: request, retention: custodyRetention{ExpiresAt: now.Add(time.Hour)}, id: id}
 }
 func testCredentialKeyRing(t *testing.T) *credentialKeyRing {

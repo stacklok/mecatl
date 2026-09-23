@@ -104,6 +104,26 @@ func (s *Server) bindSession(ctx context.Context, id session.SessionID) (*sessio
 	return principal.Clone(), owner, nil
 }
 
+func (s *Server) bindExistingSession(ctx context.Context, id session.SessionID) (*session.Principal, *sessionOwner, error) {
+	principal := session.PrincipalFromContext(ctx)
+	if principal == nil {
+		return nil, nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner := s.owners[id]
+	if owner == nil {
+		return principal.Clone(), nil, nil
+	}
+	if owner.retiring {
+		return nil, nil, reasonStatus(codes.Unavailable, "broker session is being retired", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
+	}
+	if !principal.SameIdentity(&owner.principal) {
+		return nil, nil, status.Error(codes.PermissionDenied, "broker session is not available")
+	}
+	owner.pending++
+	return principal.Clone(), owner, nil
+}
 func signalOwner(owner *sessionOwner) {
 	close(owner.changed)
 	owner.changed = make(chan struct{})
@@ -384,6 +404,7 @@ func (s *Server) sweep() {
 			return
 		case now := <-ticker.C:
 			s.mu.Lock()
+			s.sweepContinuityReceiptsLocked(now)
 			var expired []*serverHandle
 			type ownerRetirement struct {
 				id    session.SessionID

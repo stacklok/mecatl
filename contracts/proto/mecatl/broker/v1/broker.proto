@@ -49,6 +49,14 @@ service BrokerService {
   rpc ObserveWorkspaceEnrollment(ObserveWorkspaceEnrollmentRequest) returns (ObserveWorkspaceEnrollmentResponse);
   // CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
   rpc CancelWorkspaceEnrollment(CancelWorkspaceEnrollmentRequest) returns (CancelWorkspaceEnrollmentResponse);
+  // StageCredentialCustody stages an exact completed protected enrollment.
+  rpc StageCredentialCustody(StageCredentialCustodyRequest) returns (StageCredentialCustodyResponse);
+  // CommitCredentialCustody promotes one exact staged custody record.
+  rpc CommitCredentialCustody(CommitCredentialCustodyRequest) returns (CommitCredentialCustodyResponse);
+  // RecoverCredentialAttachment creates fresh provisional state from current custody.
+  rpc RecoverCredentialAttachment(RecoverCredentialAttachmentRequest) returns (RecoverCredentialAttachmentResponse);
+  // TombstoneCredentialCustody removes one exact custody record's authority.
+  rpc TombstoneCredentialCustody(TombstoneCredentialCustodyRequest) returns (TombstoneCredentialCustodyResponse);
 }
 
 // BrokerErrorReason is the closed structured reason vocabulary in BrokerErrorDetail.
@@ -69,6 +77,8 @@ enum BrokerErrorReason {
   BROKER_ERROR_REASON_CAPACITY_REACHED = 5;
   // Client's broker incarnation is stale; recover only before a new prompt, never replay.
   BROKER_ERROR_REASON_INCARNATION_LOST = 6;
+  // Authorized continuity data is unavailable without revealing why.
+  BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE = 7;
 }
 
 // BrokerErrorDetail provides stable error identity without status-text inference.
@@ -86,6 +96,8 @@ message AttachRequest {
   string session_id = 1;
   // Pinned process incarnation; empty only for initial attach, stale values are rejected.
   string broker_incarnation = 2;
+  // Opaque persisted external binding for exact reattach or structured instance-loss classification.
+  string expected_binding = 3;
 }
 // AttachResponse establishes an ephemeral attachment capability.
 message AttachResponse {
@@ -370,3 +382,45 @@ message CancelWorkspaceEnrollmentResponse {
   // Descriptor snapshot if final state is connected.
   repeated ToolDescriptor tools = 3;
 }
+
+// ContinuityGuard binds custody to the exact durable session and authenticated partitions.
+message ContinuityGuard {
+  string session_id = 1;
+  string session_incarnation = 2;
+  bytes owner_partition = 3;
+  bytes workload_partition = 4;
+  bytes profile_digest = 5;
+  repeated string providers = 6;
+}
+message CustodyAssertion {
+  ContinuityGuard guard = 1;
+  string recovery_reference = 2;
+  google.protobuf.Timestamp attempt_deadline = 3;
+}
+message StageCredentialCustodyRequest {
+  string request_id = 1;
+  string handle = 2;
+  string broker_incarnation = 3;
+  ContinuityGuard guard = 4;
+  WorkspaceRef completed_enrollment = 5;
+  google.protobuf.Timestamp attempt_deadline = 6;
+}
+message StageCredentialCustodyResponse {
+  string recovery_reference = 1;
+  google.protobuf.Timestamp custody_expires_at = 2;
+}
+message CommitCredentialCustodyRequest { CustodyAssertion assertion = 1; }
+message CommitCredentialCustodyResponse {}
+message RecoverCredentialAttachmentRequest {
+  CustodyAssertion assertion = 1;
+  string request_id = 2;
+}
+message RecoverCredentialAttachmentResponse {
+  string binding = 1;
+  string handle = 2;
+  repeated ToolDescriptor tools = 3;
+  string broker_incarnation = 4;
+  bool workspace_enrollment = 5;
+}
+message TombstoneCredentialCustodyRequest { CustodyAssertion assertion = 1; }
+message TombstoneCredentialCustodyResponse {}

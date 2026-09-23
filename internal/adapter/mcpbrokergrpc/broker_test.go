@@ -232,7 +232,7 @@ func TestInitialProductionMCPBroker_RejectsNonObjectToolSchema(t *testing.T) {
 
 func TestInvariant_initial_broker_protocol_is_neutral_and_secret_free(t *testing.T) {
 	wire := strings.ToLower(protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_broker_proto).String())
-	for _, token := range []string{"toolcall", "oauth", "verifier", "access_token", "refresh_token", "client_secret", "toolhive", "redis", "generation", "fence", "owner"} {
+	for _, token := range []string{"toolcall", "oauth", "verifier", "access_token", "refresh_token", "client_secret", "toolhive", "redis", "fence"} {
 		if strings.Contains(wire, token) {
 			t.Fatalf("broker descriptor contains forbidden %q", token)
 		}

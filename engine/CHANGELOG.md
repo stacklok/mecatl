@@ -13,6 +13,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Broker credential custody** — adds immutable `session.BrokerCredentialCustody`, exact-pending custody lifecycle methods, and `Session.AdoptRecoveredBrokerCatalogue`. Custody snapshots and trusted event-source metadata preserve only the recovery reference, session-incarnation guard, one-way partitions, profile digest, provider set, and fixed expiry; `ExternalBinding` remains the sole broker-process comparator. Added (minor).
+
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
   `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded

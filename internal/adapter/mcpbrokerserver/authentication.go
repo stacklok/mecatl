@@ -2,7 +2,6 @@ package mcpbrokerserver
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -175,30 +174,23 @@ func operationName(method string) string {
 		return "observe_workspace_enrollment"
 	case brokerv1.BrokerService_CancelWorkspaceEnrollment_FullMethodName:
 		return "cancel_workspace_enrollment"
+	case brokerv1.BrokerService_StageCredentialCustody_FullMethodName:
+		return "stage_credential_custody"
+	case brokerv1.BrokerService_CommitCredentialCustody_FullMethodName:
+		return "commit_credential_custody"
+	case brokerv1.BrokerService_RecoverCredentialAttachment_FullMethodName:
+		return "recover_credential_attachment"
+	case brokerv1.BrokerService_TombstoneCredentialCustody_FullMethodName:
+		return "tombstone_credential_custody"
 	default:
 		return "unknown"
 	}
 }
-func auditIdentity(value string) string {
-	if len(value) > 256 || containsSecretMarker(value) {
-		return "[redacted]"
-	}
-	return value
-}
-
-func auditIssuer(value string) string {
-	digest := sha256.Sum256([]byte(value))
-	return fmt.Sprintf("sha256:%x", digest[:8])
-}
-
 func (h *brokerHost) record(ctx context.Context, operation, outcome string) {
 	level := port.LevelWarn
 	fields := []any{"operation", operation, "outcome", outcome, "inbound_credential_kind", "workload_jwt"}
 	if outcome == "allowed" {
 		level = port.LevelDebug
-		if principal := session.PrincipalFromContext(ctx); principal != nil {
-			fields = append(fields, "principal_subject", auditIdentity(principal.Subject), "principal_issuer", auditIssuer(principal.Issuer))
-		}
 	}
 	h.diagnostics.Log(ctx, level, "broker authentication", fields...)
 	if h.observe != nil {

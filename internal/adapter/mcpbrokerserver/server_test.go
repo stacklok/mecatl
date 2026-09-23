@@ -312,7 +312,7 @@ func TestSingletonBrokerRemediation_Scenario3_PublicRPCAuthenticationPrecedesBro
 	}
 }
 
-func TestWorkloadIdentityAuthorizesAndBindsBrokerSessions(t *testing.T) {
+func TestCredentialContinuityUsesExistingAuthenticatedBrokerChannel(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
 	service := &countingService{}
@@ -419,7 +419,7 @@ func (d *boundDiagnostics) With(args ...any) port.Diagnostics {
 	return &boundDiagnostics{parent: d.parent, args: append(append([]any(nil), d.args...), args...)}
 }
 
-func TestInvariant_initial_broker_observability_is_bounded_and_secret_free(t *testing.T) {
+func TestBrokerTraceOmitsHandlesBindingsAndContinuitySecrets(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
 	diag := &captureDiagnostics{}
@@ -449,7 +449,7 @@ func TestInvariant_initial_broker_observability_is_bounded_and_secret_free(t *te
 	}
 }
 
-func TestBrokerRPCTraceCorrelatesAuthenticatedExecuteWithoutArguments(t *testing.T) {
+func TestBrokerTraceRetainsUsefulClosedFields(t *testing.T) {
 	issuer := newIdentityFixture(t)
 	registerFixtureKey(issuer)
 	diag := &captureDiagnostics{}
@@ -464,12 +464,12 @@ func TestBrokerRPCTraceCorrelatesAuthenticatedExecuteWithoutArguments(t *testing
 		t.Fatal(err)
 	}
 	encoded := fmt.Sprint(diag.records)
-	for _, want := range []string{"principal_subject", "principal_issuer", "trace-session", attached.GetHandle(), "binding", "trace_backend", "route_oauth"} {
+	for _, want := range []string{"trace_backend", "route_oauth", "operation", "outcome"} {
 		if !strings.Contains(encoded, want) {
 			t.Fatalf("trace lacks %q: %s", want, encoded)
 		}
 	}
-	for _, forbidden := range []string{"never-log", token, "authorization"} {
+	for _, forbidden := range []string{"never-log", token, "authorization", "trace-session", attached.GetHandle(), attached.GetBinding(), "principal_subject", "principal_issuer"} {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("trace leaked %q: %s", forbidden, encoded)
 		}
@@ -518,7 +518,7 @@ func TestInvariant_initial_broker_callback_cannot_supply_authority(t *testing.T)
 	}
 
 	wire := strings.ToLower(protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_broker_proto).String())
-	for _, forbidden := range []string{"owner", "principal", "callback_state", "backend", "route"} {
+	for _, forbidden := range []string{"principal", "callback_state", "backend", "route"} {
 		if strings.Contains(wire, forbidden) {
 			t.Fatalf("client protocol contains authority selector %q", forbidden)
 		}

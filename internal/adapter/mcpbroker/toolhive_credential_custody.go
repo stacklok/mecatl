@@ -23,8 +23,6 @@ import (
 const (
 	custodySchemaVersion = 1
 	custodyPrefix        = toolHiveAuthStoragePrefix + "custody:"
-	maxCustodyProviders  = 64
-	maxCustodyProvider   = 256
 	maxCustodyTSID       = 4 << 10
 	maxCustodyPlaintext  = 64 << 10
 	custodyRetries       = 8
@@ -286,7 +284,7 @@ func (c *credentialCustody) Resolve(ctx context.Context, assertion custodyAssert
 }
 
 func (c *credentialCustody) validRequest(request custodyRequest) error {
-	if validateGuard(request.Guard) != nil || !validFuture(request.AttemptDeadline, c.clock.Now()) {
+	if validateGuard(request.Guard) != nil || !contract.ValidContinuityAttemptDeadline(c.clock.Now(), request.AttemptDeadline) {
 		return errCustodyUnavailable
 	}
 	return nil
@@ -368,12 +366,12 @@ func validateRecord(record custodyRecord) error {
 	return nil
 }
 func validateGuard(guard custodyGuard) error {
-	if !contract.ValidLogicalSessionID(guard.SessionID) || !guard.Incarnation.Valid() || len(guard.Providers) == 0 || len(guard.Providers) > maxCustodyProviders {
+	if !contract.ValidLogicalSessionID(guard.SessionID) || !guard.Incarnation.Valid() || len(guard.Providers) == 0 || len(guard.Providers) > contract.MaxContinuityProviders {
 		return errCustodyUnavailable
 	}
 	prior := ""
 	for _, provider := range guard.Providers {
-		if provider == "" || len(provider) > maxCustodyProvider || !utf8.ValidString(provider) || provider <= prior {
+		if !contract.ValidContinuityProvider(provider) || provider <= prior {
 			return errCustodyUnavailable
 		}
 		prior = provider

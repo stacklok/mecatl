@@ -107,8 +107,18 @@ func TestSingletonBrokerRemediation_Scenario1_ExecuteReceiptPreventsRedispatch(t
 	}
 }
 
-func TestSingletonBrokerRemediation_Scenario1_StructuredErrorReasons(t *testing.T) {
-	client := mcpbrokergrpc.NewClient(reasonConn{err: status.Error(codes.Unavailable, mcpbroker.ErrStateUnavailable.Error())})
+func TestContinuityUnavailableExactCodeMessageDetailMapping(t *testing.T) {
+	continuity := status.New(codes.FailedPrecondition, "broker continuity is not available")
+	withContinuity, err := continuity.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := mcpbrokergrpc.NewClient(reasonConn{err: withContinuity.Err()})
+	if _, _, err := client.AttachSession(t.Context(), "continuity-unavailable"); !errors.Is(err, mcpbroker.ErrContinuityUnavailable) {
+		t.Fatalf("continuity mapping = %v", err)
+	}
+
+	client = mcpbrokergrpc.NewClient(reasonConn{err: status.Error(codes.Unavailable, mcpbroker.ErrStateUnavailable.Error())})
 	if _, _, err := client.AttachSession(t.Context(), "text-only"); errors.Is(err, mcpbroker.ErrStateUnavailable) {
 		t.Fatalf("status text was inferred as structured state loss: %v", err)
 	}
@@ -122,7 +132,7 @@ func TestSingletonBrokerRemediation_Scenario1_StructuredErrorReasons(t *testing.
 	if !errors.Is(stateErr, mcpbroker.ErrStateUnavailable) || errors.Is(stateErr, mcpbroker.ErrBrokerIncarnationLost) {
 		t.Fatalf("ordinary structured state loss = %v, want state unavailable without incarnation-loss proof", stateErr)
 	}
-	structuredIncarnation := status.New(codes.FailedPrecondition, "incarnation lost")
+	structuredIncarnation := status.New(codes.FailedPrecondition, "broker incarnation mismatch")
 	withIncarnationDetail, err := structuredIncarnation.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST})
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +154,25 @@ func TestSingletonBrokerRemediation_Scenario1_StructuredErrorReasons(t *testing.
 	}
 }
 
+func TestContinuityUnavailableMalformedMappingFailsClosed(t *testing.T) {
+	for _, malformed := range []error{
+		status.Error(codes.FailedPrecondition, "broker continuity is not available"),
+		func() error {
+			st := status.New(codes.FailedPrecondition, "wrong message")
+			with, err := st.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return with.Err()
+		}(),
+	} {
+		client := mcpbrokergrpc.NewClient(reasonConn{err: malformed})
+		_, _, err := client.AttachSession(t.Context(), "malformed-continuity")
+		if err == nil || errors.Is(err, mcpbroker.ErrContinuityUnavailable) {
+			t.Fatalf("malformed continuity mapping = %v", err)
+		}
+	}
+}
 func hasBrokerReason(err error, want brokerv1.BrokerErrorReason) bool {
 	for _, detail := range status.Convert(err).Details() {
 		if typed, ok := detail.(*brokerv1.BrokerErrorDetail); ok && typed.GetReason() == want {

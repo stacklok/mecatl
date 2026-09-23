@@ -53,8 +53,34 @@ func (c *Client) AttachSession(ctx context.Context, id session.SessionID) (mcpbr
 	if e != nil {
 		return nil, "", clientError(e)
 	}
+	return c.attachResponse(r, false, expected)
+}
+
+// AttachSessionExpectedBinding reattaches only an exact persisted binding. It does
+// not create state and intentionally omits the client's instance pin so the
+// issuing runtime can classify a replacement before allocating a handle.
+func (c *Client) AttachSessionExpectedBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (mcpbroker.SessionHandle, mcpbroker.AttachOutcome, error) {
+	if id == "" || binding == "" {
+		return nil, "", errors.New("mcpbrokergrpc: session id and expected binding are required")
+	}
+	expected := c.brokerInstanceID()
+	rpcCtx, cancel := context.WithTimeout(ctx, c.cfg.RPCDeadline)
+	defer cancel()
+	r, err := c.rpc.Attach(rpcCtx, &brokerv1.AttachRequest{SessionId: string(id), ExpectedBinding: string(binding)})
+	if err != nil {
+		return nil, "", clientError(err)
+	}
+	return c.attachResponse(r, true, expected)
+}
+
+func (c *Client) attachResponse(r *brokerv1.AttachResponse, expectedBinding bool, expected string) (mcpbroker.SessionHandle, mcpbroker.AttachOutcome, error) {
 	if r.GetHandle() == "" || r.GetBinding() == "" || r.GetBrokerIncarnation() == "" || !validAttachOutcome(r.GetOutcome()) {
 		return nil, "", errors.New("mcpbrokergrpc: malformed attach response")
+	}
+	outcome := mcpbroker.AttachOutcome(r.GetOutcome())
+	if expectedBinding && outcome != mcpbroker.AttachReattached && outcome != mcpbroker.AttachRecoveredProvisional {
+		c.discardAttachResponse(r)
+		return nil, "", errors.New("mcpbrokergrpc: invalid expected-binding attach outcome")
 	}
 	tools, e := remoteTools(c, r)
 	if e != nil {
@@ -63,7 +89,18 @@ func (c *Client) AttachSession(ctx context.Context, id session.SessionID) (mcpbr
 	}
 	base := &clientSessionHandle{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), instanceID: r.GetBrokerIncarnation(), tools: tools}
 	c.mu.Lock()
-	if c.instanceID != "" && c.instanceID != r.GetBrokerIncarnation() {
+	current := c.instanceID
+	if expectedBinding {
+		// Expected-binding and recovery responses may adopt a replacement only if
+		// the client instance has not changed since this operation started. A
+		// concurrent, different replacement fails closed; the same response is an
+		// idempotent adoption.
+		if current != expected && current != r.GetBrokerIncarnation() {
+			c.mu.Unlock()
+			c.discardAttachResponse(r)
+			return nil, "", errors.Join(mcpbroker.ErrStateUnavailable, mcpbroker.ErrBrokerIncarnationLost)
+		}
+	} else if current != "" && current != r.GetBrokerIncarnation() {
 		c.mu.Unlock()
 		c.discardAttachResponse(r)
 		return nil, "", errors.Join(mcpbroker.ErrStateUnavailable, mcpbroker.ErrBrokerIncarnationLost)
@@ -75,7 +112,6 @@ func (c *Client) AttachSession(ctx context.Context, id session.SessionID) (mcpbr
 	}
 	return base, mcpbroker.AttachOutcome(r.GetOutcome()), nil
 }
-
 func (c *Client) discardAttachResponse(response *brokerv1.AttachResponse) {
 	handle := &clientSessionHandle{
 		client:     c,
@@ -84,7 +120,7 @@ func (c *Client) discardAttachResponse(response *brokerv1.AttachResponse) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.RPCDeadline)
 	defer cancel()
-	if response.GetOutcome() == string(mcpbroker.AttachCreated) {
+	if response.GetOutcome() == string(mcpbroker.AttachCreated) || response.GetOutcome() == string(mcpbroker.AttachRecoveredProvisional) {
 		_ = handle.Abort(ctx)
 		return
 	}
@@ -244,3 +280,4 @@ func (a *clientEnrollmentSessionHandle) workspaceResult(ctx context.Context, ref
 
 var _ mcpbroker.Service = (*Client)(nil)
 var _ mcpbroker.BindingSessionDeleter = (*Client)(nil)
+var _ mcpbroker.ExpectedBindingAttacher = (*Client)(nil)

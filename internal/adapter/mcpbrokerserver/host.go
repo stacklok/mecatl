@@ -15,9 +15,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
-	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -162,7 +160,7 @@ func (h *brokerHost) newGRPCServer(tlsConfig *tls.Config) (*grpc.Server, error) 
 	if h.grpcServer != nil {
 		return nil, errors.New("mcpbrokerserver: gRPC server already created")
 	}
-	options := []grpc.ServerOption{grpc.ChainUnaryInterceptor(h.admission.UnaryInterceptor, h.authenticate, h.traceRPC)}
+	options := []grpc.ServerOption{grpc.ChainUnaryInterceptor(h.authenticate, h.admission.UnaryInterceptor, h.traceRPC)}
 	if tlsConfig != nil {
 		if err := validateTransport("network", tlsConfig); err != nil {
 			return nil, err
@@ -188,21 +186,7 @@ func (h *brokerHost) traceRPC(ctx context.Context, req any, info *grpc.UnaryServ
 	if err != nil {
 		outcome = status.Code(err).String()
 	}
-	fields := []any{"principal_subject", "", "principal_issuer", ""}
-	if principal := session.PrincipalFromContext(ctx); principal != nil {
-		fields[1], fields[3] = boundedDiagnosticName(principal.Subject), auditIssuer(principal.Issuer)
-	}
-	switch r := req.(type) {
-	case *brokerv1.AttachRequest:
-		fields = append(fields, "logical_session", boundedDiagnosticName(r.GetSessionId()))
-	case *brokerv1.DeleteRequest:
-		fields = append(fields, "logical_session", boundedDiagnosticName(r.GetSessionId()), "binding", boundedDiagnosticName(r.GetBinding()))
-	case interface{ GetHandle() string }:
-		fields = append(fields, "handle", boundedDiagnosticName(r.GetHandle()))
-		if trace, ok := h.rpc.TraceAttachment(r.GetHandle()); ok {
-			fields = append(fields, "logical_session", boundedDiagnosticName(trace.LogicalSession), "binding", boundedDiagnosticName(trace.Binding))
-		}
-	}
+	fields := []any{}
 	if r, ok := req.(interface {
 		GetHandle() string
 		GetName() string
@@ -216,9 +200,6 @@ func (h *brokerHost) traceRPC(ctx context.Context, req any, info *grpc.UnaryServ
 	}
 	if r, ok := req.(interface{ GetName() string }); ok {
 		fields = append(fields, "tool", boundedDiagnosticName(r.GetName()))
-	}
-	if attached, ok := response.(*brokerv1.AttachResponse); ok {
-		fields = append(fields, "handle", attached.GetHandle(), "binding", attached.GetBinding())
 	}
 	h.rpc.TraceRPC(ctx, operationName(info.FullMethod), outcome, fields...)
 	return response, err

@@ -59,6 +59,9 @@ func (s *Session) BeginWorkspaceEnrollment(pending PendingWorkspaceEnrollment) e
 	if !s.authorityBound {
 		return fmt.Errorf("%w: workspace enrollment requires bound authority", ErrIllegalTransition)
 	}
+	if s.brokerCredentialCustody != nil {
+		return fmt.Errorf("%w: broker credential custody must be cleared before beginning workspace enrollment", ErrIllegalTransition)
+	}
 	if s.pendingWorkspaceEnrollment != nil {
 		return fmt.Errorf("%w: workspace enrollment already pending", ErrIllegalTransition)
 	}
@@ -139,6 +142,9 @@ func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment
 func (s *Session) AbortWorkspaceEnrollment(id WorkspaceEnrollmentID) error {
 	if s.pendingWorkspaceEnrollment == nil || s.pendingWorkspaceEnrollment.ID != id {
 		return fmt.Errorf("session: workspace enrollment %q is not pending", id)
+	}
+	if s.brokerCredentialCustody != nil {
+		return fmt.Errorf("%w: broker credential custody must be cleared before aborting workspace enrollment", ErrIllegalTransition)
 	}
 	s.pendingWorkspaceEnrollment = nil
 	return nil

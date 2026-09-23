@@ -61,8 +61,17 @@ func reasonStatus(code codes.Code, message string, reason brokerv1.BrokerErrorRe
 	return withDetail.Err()
 }
 
+func continuityUnavailable() error {
+	return reasonStatus(codes.FailedPrecondition, "broker continuity is not available", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE, "")
+}
+
 func brokerStatus(err error) error {
 	switch {
+	case errors.Is(err, mcpbroker.ErrBrokerIncarnationLost):
+		return reasonStatus(codes.FailedPrecondition, "broker incarnation mismatch", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST, "")
+	case errors.Is(err, mcpbroker.ErrContinuityUnavailable):
+		return continuityUnavailable()
+
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, err.Error())
 	case errors.Is(err, context.Canceled):
@@ -80,7 +89,7 @@ func brokerStatus(err error) error {
 	}
 }
 func validAttachOutcome(v string) bool {
-	return v == string(mcpbroker.AttachCreated) || v == string(mcpbroker.AttachReattached)
+	return v == string(mcpbroker.AttachCreated) || v == string(mcpbroker.AttachReattached) || v == string(mcpbroker.AttachRecoveredProvisional)
 }
 func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 	var found *brokerv1.BrokerErrorDetail
@@ -101,7 +110,8 @@ func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE,
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST,
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED,
-		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND:
+		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND,
+		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE:
 		if found.GetDispatchMethod() != "" {
 			return 0, "", false, errors.New("mcpbrokergrpc: malformed broker error reason")
 		}
@@ -146,11 +156,21 @@ func clientError(err error) error {
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE:
 		return mcpbroker.ErrStateUnavailable
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST:
+		st := status.Convert(err)
+		if st.Code() != codes.FailedPrecondition || st.Message() != "broker incarnation mismatch" {
+			return errors.New("mcpbrokergrpc: malformed broker incarnation lost reason")
+		}
 		return errors.Join(mcpbroker.ErrStateUnavailable, mcpbroker.ErrBrokerIncarnationLost)
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED:
 		return mcpbroker.ErrAttachmentClosed
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND:
 		return mcpbroker.ErrAuthorizationNotFound
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE:
+		st := status.Convert(err)
+		if st.Code() != codes.FailedPrecondition || st.Message() != "broker continuity is not available" {
+			return errors.New("mcpbrokergrpc: malformed continuity unavailable reason")
+		}
+		return mcpbroker.ErrContinuityUnavailable
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED:
 		return mcpbroker.ErrCapacity
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED:
