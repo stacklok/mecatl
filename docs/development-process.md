@@ -94,7 +94,7 @@ requires a rationale. Material public decisions cannot be postponed until code e
    contract drift instead of making it; any material drift stops the run for a
    human-reviewed plan amendment.
 4. **Gate and review — automatic.** On the assembled implementation branch run `task lint`,
-   `task test`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
+   `task test:race`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
    The implementation PR links the approved baseline and reports interface conformance or
    an approved amendment.
 5. **Code review — human.** Review and merge the implementation PR. Only a PR that fully
@@ -144,11 +144,20 @@ failed, harness-owned, primary, and ambiguous worktrees are retained.
 
 ## Verification gates
 
+Use focused package tests while iterating. Workers finish with `task test`, which runs the
+complete offline suite and standalone module proofs without the race detector. After work is
+integrated, run `task test:race` before any implementation PR is ready for review, including
+Routine and Cleanup work outside the plan workflow. `task ci` and its `task all` alias include
+the race suite. For applicable Go changes, CI runs non-race coverage on draft PRs and sharded
+race coverage on ready PRs and main.
+
 | Gate | What it pins |
 |---|---|
 | bundled acceptance-plan checker | plan shape, human-decision/status consistency, interface declaration, AC proofs, citations, scope |
+| focused package tests | the changed behavior during iteration |
+| `task test` | worker fast gate: complete offline suite and standalone module proofs |
+| `task test:race` | integrated/pre-PR complete suite with the race detector |
 | `task lint` | golangci-lint (including govet), layering rules |
-| `task test` | full offline suite and engine standalone proof |
 | `task api:check` | guarded engine API compatibility |
 | `task docs` | generated docs and strict links |
 | `task ac-trace-strict` | every landed AC proof resolves |

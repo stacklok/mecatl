@@ -40,7 +40,8 @@ binaries and is the wrong workflow.
 
 ```sh
 task build              # → bin/mecated, bin/mecademo, bin/mecatui  (NEVER `go build` to repo root)
-task test               # full suite, -race (root module + engine module + the GOWORK=off engine-standalone hygiene proof)
+task test               # complete offline suite without -race (root + all modules + standalone hygiene proofs)
+task test:race          # same complete suite with -race; run before a PR is ready
 task test:golden        # refresh mecatui View/teatest goldens (-update) then re-run
 task api:check          # api-compat gate: fail if the engine public surface drifts from engine/api/*.txt (also under task test)
 task api:update         # regenerate engine/api/*.txt after an INTENTIONAL core-API change (commit + engine/CHANGELOG.md note)
@@ -56,7 +57,7 @@ cd engine && go test ./agent/ -run TestFullCycle   # a single engine test (engin
 go run ./cmd/mecademo    # end-to-end demo, fully offline (mock provider)
 ```
 
-> **Timeouts:** `task test` and `task lint` are full-repository gates and can run well beyond two minutes. When invoking them through an agent or other timeout-bound runner, start with a **600-second timeout**; the default 120 seconds will almost certainly time out.
+> **Timeouts:** `task test`, `task test:race`, and `task lint` are full-repository gates and can run well beyond two minutes. When invoking them through an agent or other timeout-bound runner, start with a **600-second timeout**; the default 120 seconds will almost certainly time out. `task test` is the faster iteration and worker gate.
 
 > `engine/` is its **own Go module** (`github.com/stacklok/mecatl/engine`), kept in
 > this repo as a MONOREPO via the committed `go.work` (`use ./` + `use ./engine`).
@@ -167,7 +168,7 @@ This section is a contract for **changing mecatl's code**. Preserve the document
 
 ## Verification
 
-After changes: `task lint && task test` must be green, and `go run ./cmd/mecademo` must still
+After changes: use `task test` during iteration and for worker completion. Before a PR is ready, `task lint && task test:race` must be green, and `go run ./cmd/mecademo` must still
 print a full offline session (turn → tool.call → permission.ask + approval → result).
 
 ## Workflow

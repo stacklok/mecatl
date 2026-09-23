@@ -345,35 +345,49 @@ tasks:
     cmds:
       - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b); go test -race -count=1 "${packages[@]}"'
 
-  test:non-race:
-    desc: Run complete root + module test coverage without the race detector
+  test:task-wiring:
+    desc: Test the aggregate test-task wiring with an offline fake Go executable
     cmds:
-      - go test ./...
-      - cd engine && go test ./...
-      - cd authn/oidc && go test ./...
-      - cd provider/ssefilter && go test ./...
-      - cd provider/anthropic && go test ./...
-      - cd provider/openai && go test ./...
-      - cd provider/openaichat && go test ./...
+      - bash .github/scripts/task-test-suite_test.sh
 
-  test:
-    desc: Run unit tests with the race detector (root + engine + authn/oidc + provider modules + standalone hygiene proofs)
+  test:_suite:
+    internal: true
+    requires:
+      vars: [RACE]
     cmds:
-      - go test -race ./...
+      - task: test:task-wiring
+      - go test {{.RACE}} ./...
       # engine/ is a separate module under the workspace — `./...` from the root
       # does NOT cross the module boundary, so its tests are a second invocation.
-      - cd engine && go test -race ./...
+      - cd engine && go test {{.RACE}} ./...
       # The opt-in OIDC adapter is a separate non-provider module.
-      - cd authn/oidc && go test -race ./...
+      - cd authn/oidc && go test {{.RACE}} ./...
       # provider/ submodules (ADR 0093) — each its own module under the workspace;
       # the per-module `./...` invocation runs their tests through the workspace.
-      - cd provider/ssefilter && go test -race ./...
-      - cd provider/anthropic && go test -race ./...
-      - cd provider/openai && go test -race ./...
-      - cd provider/openaichat && go test -race ./...
+      - cd provider/ssefilter && go test {{.RACE}} ./...
+      - cd provider/anthropic && go test {{.RACE}} ./...
+      - cd provider/openai && go test {{.RACE}} ./...
+      - cd provider/openaichat && go test {{.RACE}} ./...
       - task: test:engine-standalone
       - task: test:authn-standalone
       - task: test:provider-standalone
+
+  test:
+    desc: Run the complete offline test suite without the race detector
+    cmds:
+      - task: test:_suite
+        vars: {RACE: ''}
+
+  test:non-race:
+    desc: Compatibility alias for the complete offline test suite
+    cmds:
+      - task: test
+
+  test:race:
+    desc: Run the complete offline test suite with the race detector
+    cmds:
+      - task: test:_suite
+        vars: {RACE: '-race'}
 
   test:authn-standalone:
     desc: Prove the opt-in OIDC module builds and tests with GOWORK=off.
@@ -1018,12 +1032,12 @@ tasks:
       - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --matrix
 
   ci:
-    desc: Full local CI gate (tidy, fmt, lint, test, build)
+    desc: Full local CI gate (tidy, fmt, lint, race test, build)
     cmds:
       - task: tidy
       - task: fmt
       - task: lint
-      - task: test
+      - task: test:race
       - task: build
 
   all:
