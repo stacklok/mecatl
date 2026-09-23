@@ -20,7 +20,7 @@ import (
 type ModelRouteResult struct {
 	Category   string
 	Model      string
-	Usage      session.Usage
+	Usage      session.AuxiliaryUsage
 	Reason     string
 	OK         bool
 	Confidence *float64
@@ -255,9 +255,8 @@ type routerVerdict struct {
 }
 
 // RunModelRouter drives a dedicated, tool-less one-turn classifier Engine over a fenced
-// classification prompt and returns the chosen CATEGORY NAME plus the classifier's
-// accumulated session.Usage (so the caller can fold it into a parent session's budget
-// brake — the #92 CWE-770 fix). It mirrors RunGuardrailCheck: bounded by
+// classification prompt and returns the chosen CATEGORY NAME plus purpose-attributed
+// router usage. It mirrors RunGuardrailCheck: bounded by
 // modelRouterTimeout, drained under a zero-capability child posture (role
 // "model-router"), and FAIL-SOFT — failure, cancellation, deadline expiry, an invalid
 // verdict, or an unknown category returns ("", observed usage, canonical miss reason,
@@ -273,13 +272,13 @@ type routerVerdict struct {
 // recipe), so a classification can never recurse or call a tool. A nil engine, an
 // empty category list, or a blank task prompt is a fail-soft miss (ok=false), never a
 // panic — it is a leaf helper on the fast path.
-func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool) {
+func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.AuxiliaryUsage, missReason string, ok bool) {
 	return runModelRouter(ctx, engine, req, modelRouterTimeout)
 }
 
-func runModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest, timeout time.Duration) (category string, usage session.Usage, missReason string, ok bool) {
+func runModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest, timeout time.Duration) (category string, usage session.AuxiliaryUsage, missReason string, ok bool) {
 	if engine == nil || len(req.Categories) == 0 || strings.TrimSpace(req.TaskPrompt) == "" {
-		return "", session.Usage{}, RouterMissDegenerateInput, false
+		return "", session.AuxiliaryUsage{}, RouterMissDegenerateInput, false
 	}
 	callerCtx := ctx
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -297,20 +296,23 @@ func runModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest, 
 	// isolated and its own (non-existent) asks auto-deny — no nesting, no surfacing.
 	run := engine.Run(operationCtx, sess, judgeEnvironment, RunRequest{Text: buildModelRoutePrompt(req)})
 	final, stop := drainChild(run, childPosture{role: "model-router"})
+	collectUsage := func() session.AuxiliaryUsage {
+		return auxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ModelID: engine.deps.Model}, sess.UsageFor(session.UsageKindMain))
+	}
 	switch stop {
 	case session.StopError:
 		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
-			return "", sess.UsageFor(session.UsageKindMain), reason, false
+			return "", collectUsage(), reason, false
 		}
-		return "", sess.UsageFor(session.UsageKindMain), RouterMissClassifierError, false
+		return "", collectUsage(), RouterMissClassifierError, false
 	case session.StopCancelled:
 		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
-			return "", sess.UsageFor(session.UsageKindMain), reason, false
+			return "", collectUsage(), reason, false
 		}
-		return "", sess.UsageFor(session.UsageKindMain), RouterMissCancelled, false
+		return "", collectUsage(), RouterMissCancelled, false
 	}
 	cat, reason, catOK := parseRouterVerdict(final, req.Categories)
-	return cat, sess.UsageFor(session.UsageKindMain), reason, catOK
+	return cat, collectUsage(), reason, catOK
 }
 
 func modelRouterContextMiss(callerCtx, operationCtx context.Context) string {

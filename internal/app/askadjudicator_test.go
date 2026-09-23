@@ -99,7 +99,7 @@ func TestAskReviewerEngineDisablesNoProgressNudge(t *testing.T) {
 	if reviewer == nil {
 		t.Fatalf("reviewer must be built")
 	}
-	if _, err := reviewer.Review(context.Background(), agent.ChildAskReviewRequest{
+	if _, _, err := reviewer.Review(context.Background(), agent.ChildAskReviewRequest{
 		Ask: session.PendingAsk{Tool: "Shell", Args: json.RawMessage(`{"command":"ls"}`)},
 	}); err == nil {
 		t.Fatalf("an empty reviewer turn must yield a failure (fail-safe deny), not a verdict")

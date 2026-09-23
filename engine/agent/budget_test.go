@@ -214,8 +214,8 @@ func (p *subagentSpammerProvider) Stream(ctx context.Context, _ port.LLMRequest)
 // terminal StopBudget asserted off the event stream, mirroring TestBudgetTerminatesRunawayCleanly.
 // The parent provider delegates a plain Subagent every turn with ZERO parent usage; a wired
 // SubagentModelRouter (the Deps closure the composition builds) classifies each delegation,
-// returning a fixed non-zero classifier usage that the dispatch-path routeTask folds into the
-// parent sess.UsageFor(session.UsageKindMain). With no other parent spend, the run must terminate StopBudget purely from
+// returning fixed non-zero classifier usage that routeTask records in the separate
+// router bucket. With no other parent spend, the run must terminate StopBudget purely from
 // accumulated classifier cost — COMPLETED + Reopen-recoverable, the clean-terminal contract.
 //
 // A regression that dropped the fold (routeTask not folding, or RunModelRouter/
@@ -241,7 +241,7 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 		// The composition-built router closure stand-in: classify (hit) and report spend.
 		SubagentModelRouter: &agent.SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) agent.ModelRouteResult {
 			routeCalls.Add(1)
-			return agent.ModelRouteResult{Category: "large", Usage: classifierUsage, OK: true} // empty model → inherit default child; the FOLD is what matters
+			return agent.ModelRouteResult{Category: "large", Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{session.UsageKindRouter: {Total: classifierUsage, Models: map[string]session.Usage{"test/classifier": classifierUsage}}}}, OK: true} // empty model → inherit default child; the FOLD is what matters
 		}},
 	})
 	sess := newSession(t, session.Limits{}) // no turn/tool limits: the budget is the only brake
@@ -266,7 +266,7 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 	if got := routeCalls.Load(); got < 3 {
 		t.Fatalf("router classified %d time(s), want >= 3 (the budget should trip after repeated folds)", got)
 	}
-	if got := sess.UsageFor(session.UsageKindMain).TotalTokens(); got < budget {
+	if got := sess.UsageFor(session.UsageKindRouter).TotalTokens(); got < budget {
 		t.Fatalf("cumulative parent usage = %d, want >= budget %d (folded classifier spend only)", got, budget)
 	}
 	_ = classifierPerCall

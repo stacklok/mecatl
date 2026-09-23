@@ -35,7 +35,7 @@ type scriptedAdjudicator struct {
 	roots    []session.SessionID
 }
 
-func (s *scriptedAdjudicator) Review(ctx context.Context, req agent.ChildAskReviewRequest) (agent.ChildAskReview, error) {
+func (s *scriptedAdjudicator) Review(ctx context.Context, req agent.ChildAskReviewRequest) (agent.ChildAskReview, session.AuxiliaryUsage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := s.calls
@@ -44,9 +44,9 @@ func (s *scriptedAdjudicator) Review(ctx context.Context, req agent.ChildAskRevi
 	root, _ := port.RootSessionIDFromContext(ctx)
 	s.roots = append(s.roots, root)
 	if i < len(s.script) {
-		return s.script[i].review, s.script[i].err
+		return s.script[i].review, session.AuxiliaryUsage{}, s.script[i].err
 	}
-	return agent.ChildAskReview{Allowed: false, Reason: "scripted default deny"}, nil
+	return agent.ChildAskReview{Allowed: false, Reason: "scripted default deny"}, session.AuxiliaryUsage{}, nil
 }
 
 func (s *scriptedAdjudicator) count() int {
