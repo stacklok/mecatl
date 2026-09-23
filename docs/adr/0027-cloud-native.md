@@ -782,7 +782,7 @@ to durable proposal state; row 30 records that materialization accounting and ev
 pre-admission operation reset by design. Cancellation or close before admission leaves
 no queue, singleflight, receipt, reservation, provider, repository, or proposal state.
 
-**Direct MCP reconciliation re-audit (ADR 0350).** List 1 row 64 inventories the
+**Direct MCP reconciliation re-audit (ADR 0351).** List 1 row 64 inventories the
 Build-owned worker, jitter/cooldown timers, coalescing state, source LKG/status, immutable current
 and retiring runtimes, revision-tagged caches, and run/operation pins. Explicit
 refresh adds no outlives-a-call resource: it borrows the existing run-entry lock,
