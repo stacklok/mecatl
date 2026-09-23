@@ -223,8 +223,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
 - [0345 — Host-local direct MCP onboarding and credential custody](./0345-direct-mcp-onboarding.md) *(proposed)*
 - [0326 — Lazy ToolHive grants refresh declared metadata](./0326-lazy-toolhive-metadata-refresh.md)
-- [0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md) *(Decision 6 superseded by 0350)*
-- [0350 — Durable workspace-enrollment broker authority provenance](./0350-durable-workspace-enrollment-broker-authority.md) *(proposed; supersedes ADR 0335 Decision 6 only)*
+- [0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md) *(Decision 6 superseded by 0356)*
+- [0356 — Durable workspace-enrollment broker authority provenance](./0356-durable-workspace-enrollment-broker-authority.md) *(proposed; supersedes ADR 0335 Decision 6 only)*
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

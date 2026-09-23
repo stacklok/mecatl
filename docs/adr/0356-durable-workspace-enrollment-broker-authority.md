@@ -1,4 +1,4 @@
-# ADR 0350 — Durable workspace-enrollment broker authority provenance
+# ADR 0356 — Durable workspace-enrollment broker authority provenance
 
 - Status: Proposed — remains proposed until the Plan / Interface PR receives human merge approval.
 - Date: 2026-09-21
@@ -47,6 +47,7 @@ The new accessors are Added/minor. Changing the existing exported `CompleteWorks
 - **Fail the whole refresh when a previously recorded broker key was excluded from carried authority.** The complete bundle can still register while authority disclosure preserves the exclusion; failure would unnecessarily block unrelated or genuinely new broker keys in the same refresh.
 - **Discard successor provenance because its attachment is fresh.** Carried authority still contains old broker keys; dropping their ledger prevents exact subtraction at the successor's next refresh. Copy provenance, never completed enrollment or runtime.
 - **Omit conflicting broker tools or choose a source precedence.** The broker bundle is atomic, and redirecting a durable key to another implementation changes authority.
+- **Union new broker names into authority and let availability hide stale ones (the ADR 0355 model for direct MCP).** Direct names have no provenance and no cross-source redirection risk inside one runtime; a stale broker key can later resolve to a different source's implementation, so broker keys need exact replacement.
 - **Reimplement ToolHive conflict resolution.** Mecatl needs only the final cross-source registration safeguard.
 - **Repair legacy snapshots heuristically.** Their authority cannot distinguish accidental loss from deliberate attenuation.
 
@@ -54,4 +55,5 @@ The new accessors are Added/minor. Changing the existing exported `CompleteWorks
 
 - [ADR 0234 — Derived delegation authority behind an evaluator port](./0234-authority-evaluator-port.md)
 - [ADR 0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md)
+- [ADR 0355 — Reconcile stale direct MCP source snapshots](./0355-mcp-source-reconciliation.md) — the separate direct-MCP refresh path; it refuses broker-bound sessions
 - [Workspace enrollment authority acceptance plan](../acceptance/workspace-enrollment-authority.md)
