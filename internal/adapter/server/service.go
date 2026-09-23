@@ -945,8 +945,10 @@ type Service struct {
 	// It is configured before serving and runs while the continuation handoff lock
 	// is held, immediately before cancellation is disarmed.
 	beforeAuthorizationContinuationStart func()
-	// steerPromotionRegistered is an inert test synchronization seam. It runs
-	// after a promoted steer has registered its replacement run.
+	// steerPromotionStarted and steerPromotionRegistered are inert test
+	// synchronization seams. They run after a steer is admitted to promotion and
+	// after its replacement run is registered, respectively.
+	steerPromotionStarted    func()
 	steerPromotionRegistered func()
 	closed                   bool
 	shutdownComplete         bool
@@ -5252,6 +5254,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	if expectedRunID != "" {
 		return agent.SteerTooLate, false, nil, checkExpectedRun(expectedRunID, "")
 	}
+	s.notifySteerPromotionStarted()
 	promotedRun, err := s.promotedSteerRun(ctx, id, text, parts, generation)
 	if err != nil {
 		return agent.SteerTooLate, false, nil, err
@@ -5295,6 +5298,15 @@ func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, te
 		s.notifySteerPromotionRegistered()
 	}
 	return run, err
+}
+
+func (s *Service) notifySteerPromotionStarted() {
+	s.mu.Lock()
+	notify := s.steerPromotionStarted
+	s.mu.Unlock()
+	if notify != nil {
+		notify()
+	}
 }
 
 func (s *Service) notifySteerPromotionRegistered() {
