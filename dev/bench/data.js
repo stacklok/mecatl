@@ -231882,6 +231882,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790146104456,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da986d8bf372bf01bf396fef273677135e91c6e1",
+          "message": "fix: preserve resolved model across session restart (#1786)\n\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-23T09:37:32+03:00",
+          "tree_id": "073302b3da5c951ed99e521f4688cfa415c3d4d0",
+          "url": "https://github.com/stacklok/mecatl/commit/da986d8bf372bf01bf396fef273677135e91c6e1"
+        },
+        "date": 1790146739751,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -336727,6 +336761,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790146736736,
+  "lastUpdate": 1790146741498,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
