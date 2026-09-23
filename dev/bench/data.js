@@ -230898,6 +230898,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790124602593,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bbc7af0273df9264504066f44b0b2304b6f4e870",
+          "message": "fix(mecatui): surface session title and connection (#1792)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-22T17:40:04-07:00",
+          "tree_id": "a3928059fab9094bfa6bdb95843de07115b5236d",
+          "url": "https://github.com/stacklok/mecatl/commit/bbc7af0273df9264504066f44b0b2304b6f4e870"
+        },
+        "date": 1790125307372,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -335284,6 +335318,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790125304205,
+  "lastUpdate": 1790125308979,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
