@@ -419,7 +419,28 @@ func modelsSubtree(docs Docs) *Subtree {
 				"--subagent-model-router=false) is the kill-switch. Operator-tier only."
 			rf := fieldsOf("RouterSection", permconfig.RouterSection{}, docs)
 			for _, nf := range rf {
-				if nf.Key == "categories" {
+				switch nf.Key {
+				case "backend":
+					nf.Default = "llm"
+					nf.ExampleValue = "jev"
+				case "jev":
+					nf.Nested = fieldsOf("JevRouterSection", permconfig.JevRouterSection{}, docs)
+					for _, jf := range nf.Nested {
+						switch jf.Key {
+						case "model":
+							jf.Default = "jev-1.13.0"
+							jf.ExampleValue = "jev-1.13.0"
+						case "base-url":
+							jf.ExampleValue = "https://api.typesafe.ai"
+						case "minimum-confidence":
+							jf.Default = "0"
+							jf.ExampleValue = "0.5"
+						case "maximum-input-bytes":
+							jf.Default = "16384"
+							jf.ExampleValue = "16384"
+						}
+					}
+				case "categories":
 					nf.Nested = fieldsOf("RouterCategory", permconfig.RouterCategory{}, docs)
 					for _, cf := range nf.Nested {
 						switch cf.Key {

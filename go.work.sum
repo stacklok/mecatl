@@ -787,6 +787,8 @@ github.com/stacklok/toolhive-catalog v0.20260623.0 h1:x8RqKYJPjPbW/gFyFf7HRhcdC1
 github.com/stacklok/toolhive-catalog v0.20260623.0/go.mod h1:byRwPueB1c9E6UWyZfQUyHmfZjzR5IKnsmVmcZQZyPs=
 github.com/stacklok/toolhive-catalog v0.20260716.0/go.mod h1:G33nbS4PplpBl7lk/hPiIYpsmBl5OATvpohpXJujSfg=
 github.com/stacklok/toolhive-catalog v0.20260824.0/go.mod h1:7l8t1m10oDUtsGroq88TvSJvyBhADvTEF2n5IBedydA=
+github.com/stacklok/typesafe-go v0.1.0 h1:OIYJEEey/L7Xw24oc/WSOGpBkYO0uii33tENRTW2DhY=
+github.com/stacklok/typesafe-go v0.1.0/go.mod h1:LPlCeie7qPQinm0p9pR2hm8xJgbgqWj2h00kOy4ZvDI=
 github.com/stoewer/go-strcase v1.3.0 h1:g0eASXYtp+yvN9fK8sH94oCIk0fau9uV1/ZdJ0AVEzs=
 github.com/stoewer/go-strcase v1.3.0/go.mod h1:fAH5hQ5pehh+j3nZfvwdk2RgEgQjAoM8wodgtPmh1xo=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=

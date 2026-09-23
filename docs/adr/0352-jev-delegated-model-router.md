@@ -1,6 +1,6 @@
 # ADR 0352 - Jev as an explicit delegated-model router backend
 
-- Status: Proposed
+- Status: Accepted by direct operator approval under the continuing explicit stacked waiver; this does not claim that Plan / Interface PR #1735 merged
 - Date: 2026-09-22
 - Scope: operator-tier `models.router` configuration, root composition, a new internal Typesafe/Jev adapter, the shared engine router result and miss taxonomy, and bounded routing-decision evidence on the existing delegation event, client, and debugger paths
 - Extends: [ADR 0031](./0031-subagent-model-router.md) with an explicitly selected non-LLM classifier backend, a backend-neutral result, and shared decision evidence
@@ -109,7 +109,7 @@ Preserve independently validated usage exactly once through the existing parent 
 
 Treat task state and the service response as sensitive producer-influenced data. Add `TYPESAFE_API_KEY` to exact environment deny and non-overridable sets. Selecting Jev is operator consent to delegated-task egress, which user documentation must state. Add the Build-owned client and semaphore to the cloud-native resource inventory; neither has durable session state. Do not add a cache, backend-health breaker, new storage backend, or live Jev test.
 
-The linked acceptance plan records direct conversational approval of the original correction and this 2026-09-23 amendment. It remains `proposed` while Plan / Interface PR #1735 is open. Direct approval does not claim that PR merged. The earlier explicit waiver of the merged-plan prerequisite continues for stacked implementation PR #1738.
+The linked acceptance plan records direct conversational approval of the original correction and this 2026-09-23 amendment. This ADR is accepted by that direct approval under the continuing explicit stacked waiver, while the plan remains `proposed` and the implementation remains a candidate until human merge. Plan / Interface PR #1735 and stacked implementation PR #1738 remain open with human merge gates; direct approval does not claim either PR merged.
 
 ## Consequences
 

@@ -148,6 +148,32 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	target, err = store.Load(ctx, target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Reopen(); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.RecordUserPrompt("run team", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.BeginTurn(); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.RecordAssistant(session.NewAssistantMessage("", "", []session.ToolCall{session.NewToolCall("team-call", "Team", json.RawMessage(`{}`))})); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.RecordToolResults([]session.ToolResult{session.NewToolResult("team-call", "done")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Complete(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+
 	retained, err := session.NewSubagent("subagent-retained", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(2, 0), target.ID, target.Incarnation(), "sub-call")
 	if err != nil {
 		t.Fatal(err)
@@ -165,6 +191,11 @@ func TestSessionDebuggerCrossBoundaryAcceptance(t *testing.T) {
 	}
 	team, err := session.NewTeamMember("team-related-member", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(5, 0), "team-1", "reviewer", target.ID, target.Incarnation())
 	if err != nil {
+		t.Fatal(err)
+	}
+	teamRelationship := team.Relationship
+	teamRelationship.CallID = "team-call"
+	if err := team.RestoreSessionMetadata(session.SessionKindTeamMember, teamRelationship); err != nil {
 		t.Fatal(err)
 	}
 	unrelated := session.New("unrelated-secret", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: workspace, Revision: "in-tree-v1"}, session.Limits{}, time.Unix(6, 0))

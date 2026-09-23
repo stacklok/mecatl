@@ -239,10 +239,10 @@ func TestClassifierSpendTripsStopBudgetE2E(t *testing.T) {
 		Catalog:      catalogWith(t, subagentTool),
 		MaxRunTokens: budget,
 		// The composition-built router closure stand-in: classify (hit) and report spend.
-		SubagentModelRouter: func(context.Context, string) (string, string, session.Usage, string, bool) {
+		SubagentModelRouter: &agent.SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) agent.ModelRouteResult {
 			routeCalls.Add(1)
-			return "large", "", classifierUsage, "", true // empty model → inherit default child; the FOLD is what matters
-		},
+			return agent.ModelRouteResult{Category: "large", Usage: classifierUsage, OK: true} // empty model → inherit default child; the FOLD is what matters
+		}},
 	})
 	sess := newSession(t, session.Limits{}) // no turn/tool limits: the budget is the only brake
 	ws := memfs.NewWorkspace("/ws")

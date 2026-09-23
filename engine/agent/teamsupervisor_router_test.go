@@ -53,9 +53,9 @@ func TestMemberRoutesAtAddMember(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var seenPrompt string
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(_ context.Context, prompt string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(_ context.Context, prompt string) modelRoutingResult {
 		seenPrompt = prompt
-		return "large", "big-model", "", true
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -90,9 +90,9 @@ func TestDefinedMemberSkipsRouter(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		calls++
-		return "large", "big-model", "", true
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -125,8 +125,8 @@ func TestMemberRouteMissInheritsDefault(t *testing.T) {
 	tm := team.New("t")
 	recorded := map[string]string{}
 	var mu sync.Mutex
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "", "", RouterMissDegenerateInput, false
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{reason: RouterMissDegenerateInput}
 	}}
 	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -180,9 +180,9 @@ func TestMemberRouteFallsBackToName(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var seenPrompt string
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(_ context.Context, prompt string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(_ context.Context, prompt string) modelRoutingResult {
 		seenPrompt = prompt
-		return "small", "tiny-model", "", true
+		return modelRoutingResult{category: "small", model: "tiny-model", ok: true}
 	}}
 	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps))
@@ -245,11 +245,11 @@ func TestMemberRoutesOncePerRun(t *testing.T) {
 	recorded := map[string]string{}
 	var mu sync.Mutex
 	var calls int
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
 		mu.Lock()
 		calls++
 		mu.Unlock()
-		return "large", "big-model", "", true
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	sup := NewSupervisor(tm, memEnv("/ws"),
 		scriptedRoutingFactory(tm, providers, recorded, &mu), withParentCaps(caps), WithMaxRounds(10))
@@ -292,8 +292,8 @@ func TestMemberSessionIDUnaffectedByRouting(t *testing.T) {
 	tm := team.New("t")
 	recorded := map[string]string{}
 	var mu sync.Mutex
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 	sup := NewSupervisor(tm, memEnv("/ws"),
 		routingMemberFactory(tm, recorded, &mu), withParentCaps(caps),
@@ -333,14 +333,18 @@ func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {
 	// member is routed (the supervisor passes routedModel). The Team tool's factory shape is
 	// func(*team.Team, MemberSpec, routedModel string) MemberBuild.
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
-	factory := func(tm *team.Team, spec MemberSpec, _ string) MemberBuild {
+	factory := func(tm *team.Team, spec MemberSpec, routedModel string) MemberBuild {
 		cat := tool.NewCatalog()
 		for _, tl := range MemberTools(tm, spec.Name, nil) {
 			cat.MustRegister(tl)
 		}
+		model := "mock"
+		if routedModel != "" {
+			model = routedModel
+		}
 		return MemberBuild{Engine: NewEngine(Deps{
 			LLM: mockllm.New(mockllm.TextTurn("benign output")), Catalog: cat,
-			Policy: allow, Hooks: noopHookRunner{}, Model: "mock",
+			Policy: allow, Hooks: noopHookRunner{}, Model: model,
 		})}
 	}
 	teamTool := NewTeamTool(TeamMemberEngineFactory(factory))
@@ -350,8 +354,8 @@ func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {
 		evs []session.Event
 	)
 	emit := func(ev session.Event) { mu.Lock(); evs = append(evs, ev); mu.Unlock() }
-	caps := parentCaps{children: newChildRunRegistry(), routeTask: func(context.Context, string) (string, string, string, bool) {
-		return "large", "big-model", "", true
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{category: "large", model: "big-model", ok: true}
 	}}
 
 	// The member's role briefing (→ InitialPrompt, the routing artifact) carries the secret.
@@ -397,5 +401,47 @@ func TestTeamRoutedMetadataNoContentLeak(t *testing.T) {
 					ev.Type, r.RoutedCategory, r.RoutedModel, r.RoutingReason)
 			}
 		}
+	}
+}
+
+func TestTeamToolFactoryModelMismatchFallsBackTruthfully(t *testing.T) {
+	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
+	factory := func(tm *team.Team, spec MemberSpec, _ string) MemberBuild {
+		catalog := tool.NewCatalog()
+		for _, memberTool := range MemberTools(tm, spec.Name, nil) {
+			catalog.MustRegister(memberTool)
+		}
+		return MemberBuild{Engine: NewEngine(Deps{
+			LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalog,
+			Policy: allow, Hooks: noopHookRunner{}, Model: "actual-fallback",
+		})}
+	}
+	teamTool := NewTeamTool(TeamMemberEngineFactory(factory))
+	caps := parentCaps{children: newChildRunRegistry(), routeDecision: func(context.Context, string) modelRoutingResult {
+		return modelRoutingResult{
+			category: "deep", model: "requested-target", ok: true,
+			decision: &session.RoutingDecision{Backend: "jev", CandidateCategory: "deep", CandidateModel: "requested-target", Outcome: "routed", MissLimit: 3},
+		}
+	}}
+	var start *session.TeamPayload
+	_, err := teamTool.(childCapableTool).ExecuteWithParent(t.Context(),
+		session.NewToolCall("mismatch-team", "Team", json.RawMessage(`{"goal":"work","members":[{"name":"lead","role":"coordinate"}]}`)),
+		memEnv("/ws"), func(ev session.Event) {
+			if ev.Type == session.EvTeamStart {
+				start = ev.Team
+			}
+		}, caps)
+	if err != nil || start == nil || len(start.Roster) != 1 {
+		t.Fatalf("team start = %+v, err=%v", start, err)
+	}
+	member := start.Roster[0]
+	if member.MemberSessionID == "" || !member.MemberIncarnation.Valid() {
+		t.Fatalf("team roster did not stamp actual member lifetime: %+v", member)
+	}
+	if member.Model != "actual-fallback" || member.RoutedCategory != "" || member.RoutedModel != "" || member.RoutingReason != session.RoutingReasonTargetUnavailable {
+		t.Fatalf("mismatched factory routing truth = %+v", member)
+	}
+	if member.RoutingDecision == nil || member.RoutingDecision.Outcome != "fallback" || member.RoutingDecision.CandidateCategory != "deep" || member.RoutingDecision.CandidateModel != "requested-target" || member.RoutingDecision.ConsecutiveMisses != 0 {
+		t.Fatalf("mismatched factory decision = %+v", member.RoutingDecision)
 	}
 }

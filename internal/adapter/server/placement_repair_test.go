@@ -164,7 +164,40 @@ func (d *repairDiagnostics) With(...any) port.Diagnostics { return d }
 
 type errorCommandLister struct{ err error }
 
-func (l errorCommandLister) List(context.Context, string) ([]Command, error) { return nil, l.err }
+func (l errorCommandLister) List(context.Context, tool.Workspace) ([]Command, error) {
+	return nil, l.err
+}
+
+func TestCommandDiscoveryClosesReattachedBinding(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
+	closed := &atomic.Int32{}
+	provider := &repairPlacementProvider{binding: PlacementBinding{
+		Ref:         ref,
+		Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), memledger.New(), nil),
+		Close:       func() error { closed.Add(1); return nil },
+	}}
+	store := memstore.New()
+	source := session.New("source", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
+	if err := store.Save(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := NewService(Config{
+		Engine: repairEngine(), Store: store, PlacementProvider: provider,
+		PlacementScope: "test", SharedEngineRoot: "/bound", Commands: errorCommandLister{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Service construction validates and releases the default binding. Count only
+	// the request-scoped exact reattachment below.
+	closed.Store(0)
+	if _, err := svc.ListCommandsForSession(t.Context(), source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := closed.Load(); got != 1 {
+		t.Fatalf("reattached binding closes = %d, want 1", got)
+	}
+}
 
 func TestInvariant_command_discovery_errors_are_content_free(t *testing.T) {
 	private := "/srv/private/tenant/commands.yaml"
@@ -184,8 +217,20 @@ func TestInvariant_command_discovery_errors_are_content_free(t *testing.T) {
 	if !errors.Is(err, ErrInternal) || strings.Contains(err.Error(), private) {
 		t.Fatalf("public command discovery error = %q", err)
 	}
-	if !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
+	if !strings.Contains(diag.text, "operationlist commands") ||
+		!strings.Contains(diag.text, "causeread [redacted] denied") ||
+		strings.Contains(diag.text, private) {
 		t.Fatalf("diagnostic was not detailed and sanitized: %q", diag.text)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/commands?session_id="+string(source.ID), nil)
+	rec := httptest.NewRecorder()
+	NewHTTPHandler(svc).ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("HTTP command discovery fault status = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, private) || strings.Contains(body, "denied") {
+		t.Fatalf("HTTP command discovery fault disclosed backend cause: %q", body)
 	}
 }
 

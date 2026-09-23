@@ -64,6 +64,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
+	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/k8slease"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -723,6 +724,22 @@ type Config struct {
 	// key (folded by foldOperatorModelRouter), documented like GuardrailsDisabled. Default
 	// false ⇒ the router is ON iff RouterCategories is non-empty.
 	RouterDisabled bool
+	// RouterBackend selects the classifier implementation: llm (default) or jev.
+	RouterBackend string
+	// RouterJevModel is the fixed System One model used by the Jev backend.
+	RouterJevModel string
+	// RouterJevBaseURL optionally overrides the Typesafe API endpoint.
+	RouterJevBaseURL string
+	// RouterJevMinimumConfidence makes lower-confidence choices abstain when non-zero.
+	RouterJevMinimumConfidence float64
+	// RouterJevMaximumInputBytes bounds the complete rendered textual request.
+	// Zero uses the adapter default of 16384 bytes.
+	RouterJevMaximumInputBytes int
+	// TypesafeAPIKey is the host-provided TYPESAFE_API_KEY credential.
+	TypesafeAPIKey               string
+	routerClassifierSlotAuthored bool
+	routerJevBlockAuthored       bool
+	jevRouter                    *jevrouter.Router
 	// RouterCategories is the operator-defined routing taxonomy (name + description +
 	// model selector per category), folded from the operator-tier `models.router:`
 	// subtree by foldOperatorModelRouter. Empty ⇒ no router. Each entry's Model selector
@@ -1843,6 +1860,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// is ON iff RouterCategories is non-empty AND !cfg.RouterDisabled. No-op
 	// (byte-identical) when no router block.
 	cfg = foldOperatorModelRouter(cfg)
+	if err := prepareJevRouter(&cfg); err != nil {
+		return nil, err
+	}
 	// Operator-YAML models.subagent (issue #288): the settings.yaml twin of
 	// --subagent-model. Fold it onto cfg.SubagentModel BEFORE normalizeSubagentModel so
 	// the YAML value goes through the SAME fail-fast validation path as the flag (a dead
@@ -4640,9 +4660,9 @@ func buildCommandExpander(cfg Config, mcpProvider mcp.Provider) prompt.CommandEx
 // engine consumes on the run path — so the palette enumerates exactly the
 // commands a "/<cmd>" prompt would expand. It returns nil (RPC yields an empty
 // list) when the expander cannot enumerate, i.e. it is the NoopExpander (commands
-// disabled) or does not implement prompt.CommandLister. After Service authorizes
-// and exactly reattaches the owned session, this lister opens a fresh osfs Workspace
-// at that provider-verified private root so discovery reflects current command files.
+// disabled) or does not implement prompt.CommandLister. Service supplies the exact
+// workspace returned by the authorized placement reattachment, so local, virtual,
+// and remote placements all discover through their own adapter.
 func buildCommandLister(cfg Config, mcpProvider mcp.Provider) server.CommandLister {
 	exp := buildCommandExpander(cfg, mcpProvider)
 	lister, ok := exp.(prompt.CommandLister)
@@ -4654,11 +4674,7 @@ func buildCommandLister(cfg Config, mcpProvider mcp.Provider) server.CommandList
 		// palette stays empty without a per-request workspace open.
 		return nil
 	}
-	return commandListerFunc(func(ctx context.Context, root string) ([]server.Command, error) {
-		ws, err := osfs.NewWorkspace(root)
-		if err != nil {
-			return nil, fmt.Errorf("open workspace %q: %w", root, err)
-		}
+	return commandListerFunc(func(ctx context.Context, ws tool.Workspace) ([]server.Command, error) {
 		cmds, err := lister.List(ctx, ws)
 		if err != nil {
 			return nil, err
@@ -4673,11 +4689,11 @@ func buildCommandLister(cfg Config, mcpProvider mcp.Provider) server.CommandList
 
 // commandListerFunc adapts a function to the server.CommandLister interface, the
 // same lightweight-adapter idiom mcpSourceProber uses for its prober closure.
-type commandListerFunc func(ctx context.Context, root string) ([]server.Command, error)
+type commandListerFunc func(ctx context.Context, ws tool.Workspace) ([]server.Command, error)
 
 // List implements server.CommandLister.
-func (f commandListerFunc) List(ctx context.Context, root string) ([]server.Command, error) {
-	return f(ctx, root)
+func (f commandListerFunc) List(ctx context.Context, ws tool.Workspace) ([]server.Command, error) {
+	return f(ctx, ws)
 }
 
 // buildDirCommandExpander returns the file-backed slash-command expander, or nil
@@ -7124,68 +7140,103 @@ func attachAskAdjudicator(deps agent.Deps, cfg Config, provReg *providerRegistry
 // provider-fixed-per-session hazard the rest of this file avoids. The per-session
 // closure already closes over the right (provider, parentModel), so each call re-derives
 // the contamination-safe deps for the classifier model.
-func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) func(ctx context.Context, taskPrompt string) (category, model string, usage session.Usage, missReason string, ok bool) {
+func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) *agent.SubagentModelRouter {
 	if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
-		return nil // OFF: no taxonomy or kill-switched (ADR 0042); byte-identical.
+		return nil
 	}
-	// Resolve the CLASSIFIER model once per closure build (per session) via the SHARED
-	// resolveRouterClassifierModel — the SAME resolution logModelRouterFacts narrates, so
-	// the logged classifier model matches what this session classifies on.
 	classifierModel := resolveRouterClassifierModel(cfg, parentModel)
-	// Project the operator taxonomy into the engine-layer category value (name +
-	// description only — the engine never sees the per-category model selector; that
-	// mapping is composition's, below). Also index name→selector for the post-verdict map.
 	cats := make([]agent.ModelRouteCategory, 0, len(cfg.RouterCategories))
 	selectorByName := make(map[string]string, len(cfg.RouterCategories))
 	for _, c := range cfg.RouterCategories {
 		cats = append(cats, agent.ModelRouteCategory{Name: c.Name, Description: c.Description})
 		selectorByName[c.Name] = c.Model
 	}
-	defaultCat := cfg.RouterDefaultCategory
-	return func(ctx context.Context, taskPrompt string) (string, string, session.Usage, string, bool) {
-		// Build a fresh tool-less classifier engine (the askAdjudicatorDeps recipe): it
-		// compacts/counts/prompts on ITS model, fires no hooks, and carries no nested
-		// caps (childEngineDepsForProvider forces ChildAskReviewer + SubagentModelRouter
-		// nil — the no-nesting recursion guard).
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, classifierModel)
-		deps := childEngineDepsForProvider(cfg, "model-router", provider, classifierModel, windowFn,
-			tool.NewCatalog(), promptConfig(modelCfgFor(cfg, classifierModel), cfg.gitStatus), nil)
-		deps.MaxNoProgressNudges = -1
-		eng := agent.NewEngine(deps)
-
-		// Forward the run's ctx (NOT context.Background()) so a Run.Cancel propagates into
-		// RunModelRouter and the classifier turn dies with the run instead of running out
-		// its 30s clock (issue #94). Fail-soft holds: a cancelled ctx → StopCancelled →
-		// ok=false → inherit the default model.
-		//
-		// Usage is returned on ALL paths (including misses) so the dispatch-path
-		// routeTask can fold it into the parent session's cumulative Usage (#92 fix).
-		category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
-			TaskPrompt: taskPrompt,
-			Categories: cats,
-			Default:    defaultCat,
-		})
-		if !ok {
-			// classifier miss: pass the engine-side reason (issue #287) through UNCHANGED
-			// so the dispatch chokepoint logs WHY; still return spent usage.
-			return "", "", classifierUsage, missReason, false
+	resolveCandidate := func(category string, usage session.Usage, reason string, ok bool, confidence *float64) agent.ModelRouteResult {
+		if ok {
+			reason = ""
+		}
+		result := agent.ModelRouteResult{Category: category, Usage: usage, Reason: reason, OK: ok, Confidence: confidence}
+		if category == "" {
+			return result
 		}
 		sel := strings.TrimSpace(selectorByName[category])
 		if sel == "" {
-			// The classifier chose a category whose taxonomy Model selector is empty — a
-			// composition-side (mapping) miss. Name the category (operator-authored, safe).
-			return "", "", classifierUsage, fmt.Sprintf("category-selector-empty (category=%s)", category), false
+			result.Reason, result.OK = fmt.Sprintf("category-selector-empty (category=%s)", category), false
+			return result
 		}
-		// Operator taxonomy targets are UNCAPPED: resolve through the operator-merged
-		// alias map with no allowlist membership test (the operator is authoritative — a
-		// category mapping is the operator's own binding, like models.default).
 		id, known := lookupModelAlias(cfg, sel)
 		if !known || id == "" {
-			// The category's selector does not resolve to a concrete id — a composition-side
-			// (mapping) miss. Category name + selector are operator-authored metadata (safe).
-			return "", "", classifierUsage, fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
+			result.Reason, result.OK = fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
+			return result
 		}
-		return category, id, classifierUsage, "", true
+		result.Model = id
+		return result
+	}
+	if cfg.RouterBackend == routerBackendJev {
+		minimum := cfg.RouterJevMinimumConfidence
+		configuredModel := strings.TrimSpace(cfg.RouterJevModel)
+		if configuredModel == "" {
+			configuredModel = jevrouter.DefaultModel
+		}
+		router := &agent.SubagentModelRouter{
+			Backend: routerBackendJev, ClassifierModel: configuredModel, MinimumConfidence: &minimum,
+		}
+		if cfg.jevRouter != nil {
+			router.ClassifierModel = cfg.jevRouter.Model()
+		}
+		router.Route = func(ctx context.Context, taskPrompt string) agent.ModelRouteResult {
+			if cfg.jevRouter == nil {
+				return agent.ModelRouteResult{Reason: agent.RouterMissClassifierError}
+			}
+			out := cfg.jevRouter.Route(ctx, taskPrompt, toJevCategories(cfg.RouterCategories))
+			return resolveCandidate(out.Category, out.Usage, jevRouterMissReason(out.Miss), out.OK, out.Confidence)
+		}
+		return router
+	}
+	return &agent.SubagentModelRouter{
+		Backend: routerBackendLLM, ClassifierModel: classifierModel,
+		Route: func(ctx context.Context, taskPrompt string) agent.ModelRouteResult {
+			windowFn := childWindowFor(cfg, provReg, parentProviderID, classifierModel)
+			deps := childEngineDepsForProvider(cfg, "model-router", provider, classifierModel, windowFn,
+				tool.NewCatalog(), promptConfig(modelCfgFor(cfg, classifierModel), cfg.gitStatus), nil)
+			deps.MaxNoProgressNudges = -1
+			eng := agent.NewEngine(deps)
+			category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
+				TaskPrompt: taskPrompt, Categories: cats, Default: cfg.RouterDefaultCategory,
+			})
+			return resolveCandidate(category, classifierUsage, missReason, ok, nil)
+		},
+	}
+}
+
+func toJevCategories(categories []permconfig.RouterCategory) []jevrouter.Category {
+	out := make([]jevrouter.Category, 0, len(categories))
+	for _, category := range categories {
+		out = append(out, jevrouter.Category{Name: category.Name, Description: category.Description})
+	}
+	return out
+}
+
+func jevRouterMissReason(kind jevrouter.MissKind) string {
+	switch kind {
+	case jevrouter.MissBadVerdict:
+		return agent.RouterMissBadVerdict
+	case jevrouter.MissUnknownCategory:
+		return agent.RouterMissUnknownCategory
+	case jevrouter.MissLowConfidence:
+		return agent.RouterMissLowConfidence
+	case jevrouter.MissInputOverLimit:
+		return agent.RouterMissInputOverLimit
+	case jevrouter.MissCapacityTimeout:
+		return agent.RouterMissCapacityTimeout
+	case jevrouter.MissCancelled:
+		return agent.RouterMissCancelled
+	case jevrouter.MissTimeout:
+		return agent.RouterMissTimeout
+	case jevrouter.MissClassifierError:
+		return agent.RouterMissClassifierError
+	default:
+		return agent.RouterMissClassifierError
 	}
 }
 

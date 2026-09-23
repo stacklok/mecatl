@@ -204,11 +204,11 @@ models:
 	}
 }
 
-// TestProjectRouterStrippedWithWarn pins ADR 0031: a project-tier models.router: is
+// TestADR_0352_Scenario1_OperatorAuthority pins that a project-tier models.router: is
 // OPERATOR-TIER ONLY — stripped with a WARN, never honoured. The operator allowlist is
 // present (so the project block is otherwise opt-in eligible and trusted), proving the
 // router strip is its OWN gate, not a side effect of the opt-in.
-func TestProjectRouterStrippedWithWarn(t *testing.T) {
+func TestADR_0352_Scenario1_OperatorAuthority(t *testing.T) {
 	var buf bytes.Buffer
 	diag := slogdiag.New(&buf, false, port.LevelDebug)
 
@@ -216,10 +216,19 @@ func TestProjectRouterStrippedWithWarn(t *testing.T) {
 models:
   allowlist:
     - gpt-4o-mini
+  router:
+    disabled: true
+    backend: jev
+    jev:
+      maximum-input-bytes: 1
 `
 	const projectRouter = `
 models:
   router:
+    backend: jev
+    jev:
+      base-url: https://jev.example.com
+      maximum-input-bytes: 65536
     categories:
       - name: small
         description: x
@@ -235,6 +244,10 @@ models:
 	proj := r.ProjectModelBindings(ws)
 	if proj != nil && proj.Router != nil {
 		t.Fatal("a project-tier models.router must NEVER be honoured (operator-tier only)")
+	}
+	operator := r.OperatorModelPolicy()
+	if operator == nil || operator.Router == nil || operator.Router.Jev == nil || operator.Router.Jev.MaximumInputBytes != 1 {
+		t.Fatalf("project router altered operator maximum-input-bytes: %+v", operator)
 	}
 	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.router") {
 		t.Fatalf("expected a router-strip WARN; got:\n%s", log)
