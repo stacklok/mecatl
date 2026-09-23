@@ -4,6 +4,14 @@ Notable changes to `@stacklok-oss/mecatl-sdk` are recorded here.
 
 For installation and API entry points, see the [TypeScript SDK README](./README.md).
 
+## [0.4.0](https://www.npmjs.com/package/%40stacklok-oss%2Fmecatl-sdk/v/0.4.0)
+
+- refactor(mecatui): prepare conversation cards functionally (#1744) ([`3aebbb5`](https://github.com/stacklok/mecatl/commit/3aebbb5eeb0450a501a6292f16c6e89c402f2c2f))
+- refactor: remove obsolete alpha compatibility paths (#1725) ([`b0cf03a`](https://github.com/stacklok/mecatl/commit/b0cf03a423df907e07269e085105fda2dc81ea47))
+- feat(router): add Jev delegated-model routing (#1738) ([`117f6d0`](https://github.com/stacklok/mecatl/commit/117f6d0fb65438aeafc9b53497f0f526b30c561b))
+
+[Compare changes](https://github.com/stacklok/mecatl/compare/sdk/typescript/v0.3.0...sdk/typescript/v0.4.0)
+
 ## Unreleased
 
 - **Breaking (alpha):** use canonical title metadata, typed approval verdicts, typed event usage and retry disposition, exact-run controls, and compatibility-info capabilities; remove storage migration and deprecated watch aliases.
