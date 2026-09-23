@@ -24,7 +24,7 @@ one lifecycle per provider per host instance and separates
 [ModelMetadata](../architecture/mecatl.modelith.md#modelmetadata) from resolution policy.
 This decision establishes that ownership boundary in composition. The associated
 [acceptance plan](../acceptance/provider-model-discovery.md#human-decisions) contains the
-open policy recommendations and their exact bounds.
+approved policies and their exact bounds.
 
 ## Decision
 
@@ -60,7 +60,7 @@ Codex's lister leaves missing live context absent: the existing OpenAI metadata 
 supplies a catalog-sourced window during pure resolution, preserving entitlement membership
 and display without inventing live evidence. Reasoning tri-state remains outside this slice.
 
-The recommended policy is process-lifetime retention of positive last-good observations,
+The approved policy is process-lifetime retention of positive last-good observations,
 including after unauthorized or empty discovery, with the latest failure/empty outcome
 still visible. That retention is metadata policy, not permission to infer: adapters still
 authenticate each inference request. An unknown target cannot use stale successful omission
@@ -118,7 +118,7 @@ limits or entitlements. ListModels demand can perform more listing requests than
 gateway-only stale path; provider-local cooldown bounds that activity. The deadline bounds
 waiter outcomes, while cleanup still depends on lister cancellation. A rejected-submission
 record retains one bounded text/media payload in memory until recovery or disposal. These
-trade-offs require the plan's human decisions before acceptance.
+trade-offs are recorded in the plan's resolved human decisions.
 
 There is no durable migration. A cold process reacquires metadata, and a discovery outage
 can still reject a run without losing its draft or recording a turn. Credential ownership

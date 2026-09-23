@@ -4,7 +4,7 @@
 **Work classification:** Architectural — establishes one publication owner and provider-local readiness, retry, and freshness rules across composition, run admission, and inventory projections.
 **Decision record:** [ADR 0353](../adr/0353-provider-scoped-model-discovery.md)
 **Phase:** Discovery ownership and context-safe run admission
-**Status:** draft, 2026-09-23. Policy recommendations await the decisions below.
+**Status:** proposed, 2026-09-23. All six human decisions are resolved; the plan PR remains unmerged.
 **Delivery:** Split. Review the discovery and admission contract before implementation.
 **Expected tasks:** deferred to orchestration
 **Related PR:** [PR 1800](https://github.com/stacklok/mecatl/pull/1800), the domain-model prerequisite.
@@ -20,17 +20,16 @@ at the named Service session-entry paths, not full enforcement of the
 [resolution invariants](../architecture/mecatl.modelith.md#invariants), using
 [ModelMetadata](../architecture/mecatl.modelith.md#modelmetadata) as the distinction between
 observations and resolved fallbacks. It does not change the domain-model documents.
-The contract below specifies the recommendations in Human decisions; approval records
-the chosen policy before implementation begins.
+The contract below specifies the policies approved by the directing human in Human decisions.
 
 ## Human decisions
 
-- [ ] Approve the single-owner replacement and internal interfaces below, including a read-only, combined inventory/status snapshot. Recommendation: replace the existing writers in one implementation, including bootstrap producers, rather than retain a second publication path.
-- [ ] Approve last-good usability. Recommendation: retain the last non-empty successful observations for the lifetime of this Build after failures, unauthorized responses, or empty responses; positive exact metadata remains usable without an age TTL. Keep the latest outcome truthful. A failed/empty latest attempt cannot authorize an unknown model's omission fallback. Discovery is metadata evidence, not an inference authorization check; inference still authenticates normally. This accepts possibly stale positive windows after an upstream change, not a guarantee of current entitlement.
-- [ ] Approve shared-request cancellation. Recommendation: the owner, not the first caller, owns the fetch context. Cancelling any or all waiters leaves the bounded fetch running for publication; Build shutdown cancels and joins it. A caller's cancellation ends only its wait and never counts as a provider failure.
-- [ ] Approve request and retry bounds. Recommendation: ten seconds per ordinary provider attempt and per admission/ListModels operation; ten-second per-provider cooldown from owner-published terminal outcome, including timeout before the lister returns. Reuse the slot only after return; no sleeps, overlapping attempts, or automatic retry loop. Unattempted demand starts immediately, in-flight demand joins, and failed/empty demand retries on the next eligible request. Any ListModels demand, including client startup or SDK calls, can refresh a healthy provider after cooldown. Startup is one-shot; native authenticated providers remain demand-only. Preserve ToolHive 1.5-second and Codex five-second bootstrap budgets/default selection. This replaces two-second stale fetches and the global cooldown, and extends recovery to every available lister provider.
-- [ ] Approve the freshness and admission boundary. Recommendation: ship coherent publication and pure context resolution at named Service session-entry gates; preserve resolve-at-use windows. Direct delegated, utility, and team engine entry remains outside the gate: a known parent can bypass discovery while an unknown child override still uses the 128000 floor. Defer that admission slice without adding engine APIs. Also defer generation-bound capability/effort reconstruction, factory reordering, reasoning-field presence, and UI identity/footer reconciliation. Authoritative server echo zero is included here. No periodic refresh, durable cache, or persisted effective-model identity is added.
-- [ ] Approve complete rejected-submission recovery. Recommendation: retain one bounded prepared text/media payload and its editable draft/staged paste-image state until SessionInit or explicit disposal. For a typed pre-SessionInit admission rejection, explicit Retry sends the identical prepared payload without re-expansion; Back restores editing state (confirm replacement if a newer draft exists). Preserve current limits and unrelated transport/auth recovery; retain no durable submission or automatic replay.
+- [x] Approve the single-owner replacement and internal interfaces below, including a read-only, combined inventory/status snapshot. — Decision: replace the existing writers in one implementation, including bootstrap producers, rather than retain a second publication path.
+- [x] Approve last-good usability. — Decision: retain the last non-empty successful observations for the lifetime of this Build after failures, unauthorized responses, or empty responses; positive exact metadata remains usable without an age TTL. Keep the latest outcome truthful. A failed/empty latest attempt cannot authorize an unknown model's omission fallback. Discovery is metadata evidence, not an inference authorization check; inference still authenticates normally. This accepts possibly stale positive windows after an upstream change, not a guarantee of current entitlement.
+- [x] Approve shared-request cancellation. — Decision: the owner, not the first caller, owns the fetch context. Cancelling any or all waiters leaves the bounded fetch running for publication; Build shutdown cancels and joins it. A caller's cancellation ends only its wait and never counts as a provider failure.
+- [x] Approve request and retry bounds. — Decision: ten seconds per ordinary provider attempt and per admission/ListModels operation; ten-second per-provider cooldown from owner-published terminal outcome, including timeout before the lister returns. Reuse the slot only after return; no sleeps, overlapping attempts, or automatic retry loop. Unattempted demand starts immediately, in-flight demand joins, and failed/empty demand retries on the next eligible request. Any ListModels demand, including client startup or SDK calls, can refresh a healthy provider after cooldown. Startup is one-shot; native authenticated providers remain demand-only. Preserve ToolHive 1.5-second and Codex five-second bootstrap budgets/default selection. This replaces two-second stale fetches and the global cooldown, and extends recovery to every available lister provider.
+- [x] Approve the freshness and admission boundary. — Decision: ship coherent publication and pure context resolution at named Service session-entry gates; preserve resolve-at-use windows. Direct delegated, utility, and team engine entry remains outside the gate: a known parent can bypass discovery while an unknown child override still uses the 128000 floor. Defer that admission slice without adding engine APIs. Also defer generation-bound capability/effort reconstruction, factory reordering, reasoning-field presence, and UI identity/footer reconciliation. Authoritative server echo zero is included here. No periodic refresh, durable cache, or persisted effective-model identity is added.
+- [x] Approve complete rejected-submission recovery. — Decision: retain one bounded prepared text/media payload and its editable draft/staged paste-image state until SessionInit or explicit disposal. For a typed pre-SessionInit admission rejection, explicit Retry sends the identical prepared payload without re-expansion; Back restores editing state (confirm replacement if a newer draft exists). Preserve current limits and unrelated transport/auth recovery; retain no durable submission or automatic replay.
 
 ## Interface contract
 
@@ -126,7 +125,7 @@ assigning it a live observation time. Reasoning/modality enrichment is not redes
 Existing constants establish the baseline: `liveModelRefreshTimeout` and
 `refreshStaleModelsCooldown` are ten seconds, stale individual fetches are two seconds
 in [modellister.go](../../internal/app/modellister.go), and bootstrap bounds are 1.5/five
-seconds in [registry.go](../../internal/app/registry.go). The Human decisions recommend
+seconds in [registry.go](../../internal/app/registry.go). The approved policy uses
 one ten-second ordinary attempt budget instead of path-dependent two/ten-second fetches.
 A joined attempt keeps its original deadline; no waiter extends it.
 
@@ -323,8 +322,8 @@ retryable admission condition rather than a transcript failure.
 
 ## Deferred decisions and known risks
 
-No material policy choice is delegated to an implementation worker; the open choices are
-in Human decisions. Residuals include construction-time capability/effort staleness and
+No material policy choice is delegated to an implementation worker; all six choices
+in Human decisions are resolved. Residuals include construction-time capability/effort staleness and
 ungated direct child/utility/team entry. Retaining positive observations for a whole Build
 accepts metadata age risk after an upstream change; discovery cannot prove authorization
 or guarantee the provider's real inference limit. The deadline bounds waiter outcomes,
