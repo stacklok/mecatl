@@ -239754,6 +239754,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790200042891,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "29139614+renovate[bot]@users.noreply.github.com",
+            "name": "renovate[bot]",
+            "username": "renovate[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cbfd74e6044c3eca7feb6d970d6ad51cf998ef6f",
+          "message": "chore(deps): update website (#1825)\n\nCo-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-23T17:47:31-04:00",
+          "tree_id": "6ecee7b90c64a9cbd5462ecb7eaaf9d965cb3472",
+          "url": "https://github.com/stacklok/mecatl/commit/cbfd74e6044c3eca7feb6d970d6ad51cf998ef6f"
+        },
+        "date": 1790200723170,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -348271,6 +348305,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790200719750,
+  "lastUpdate": 1790200724454,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
