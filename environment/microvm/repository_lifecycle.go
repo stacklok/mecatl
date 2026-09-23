@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	repositoryRegistryVersion = 3
+	repositoryRegistryVersion = 1
 	repositoryHealthTimeout   = 10 * time.Second
 
 	repositoryRootFSStaging   = "staging"

@@ -188,9 +188,10 @@ func repositoryLogicalFailure(stage repositoryLogicalStage, err error) error {
 
 // RepositoryLogicalManager creates logical worktrees over the task-62 singleton registry.
 type RepositoryLogicalManager struct {
-	registry *RepositoryVMRegistry
-	preparer *worktree.Preparer
-	guest    RepositoryGuestRegistrar
+	registry         *RepositoryVMRegistry
+	preparer         *worktree.Preparer
+	guest            RepositoryGuestRegistrar
+	prepareOwnership repositoryOwnershipPreparer
 }
 
 // NewRepositoryLogicalManager constructs the daemon-side logical routing use case.
@@ -198,7 +199,7 @@ func NewRepositoryLogicalManager(registry *RepositoryVMRegistry, preparer *workt
 	if registry == nil || preparer == nil || guest == nil {
 		return nil, errors.New("microvm repository logical manager is not fully configured")
 	}
-	return &RepositoryLogicalManager{registry: registry, preparer: preparer, guest: guest}, nil
+	return &RepositoryLogicalManager{registry: registry, preparer: preparer, guest: guest, prepareOwnership: prepareRepositoryOwnership}, nil
 }
 
 // Create reuses one healthy repository VM while allocating a fresh ref, branch,
@@ -237,6 +238,9 @@ func (m *RepositoryLogicalManager) Create(ctx context.Context, request LogicalEn
 			_ = m.preparer.Cleanup(cleanupCtx, prepared)
 		}
 	}()
+	if err := m.prepareOwnership(ctx, logicalRoot, "."); err != nil {
+		return nil, repositoryLogicalFailure(repositoryLogicalStagePrepare, fmt.Errorf("prepare guest ownership for logical root: %w", err))
+	}
 	ref := EnvironmentRef{Kind: Kind, ID: "logical-" + logicalID + "@" + fmt.Sprint(result.Record.Generation)}
 	guestRoot := path.Join("/run/mecatl/repositories", logicalID, "worktree")
 	binding := control.Binding{

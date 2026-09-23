@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	gomicrovmnet "github.com/stacklok/go-microvm/net"
+	gomicrovmvirtiofs "github.com/stacklok/go-microvm/virtiofs"
+	"golang.org/x/sys/unix"
 
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -434,15 +436,60 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	fixture := newRepositoryAttachmentFixture(t)
 	parent := fixture.attachPersisted(t)
 	defer parent.Close()
+	manager := fixture.composition.Attachments
+	var refreshedChildHostMode os.FileMode
+	var prepareCalls int
+	prepare := func(ctx context.Context, root, relative string) error {
+		prepareCalls++
+		if root != parent.Logical.WorktreePath || relative != "." {
+			t.Fatalf("merge ownership preparation = (%q, %q), want parent worktree and dot", root, relative)
+		}
+		if info, err := os.Stat(filepath.Join(root, "child.txt")); err == nil {
+			refreshedChildHostMode = info.Mode().Perm()
+		}
+		return gomicrovmvirtiofs.PrepareOwnership(ctx, root, relative, repositoryGuestOwnershipID, repositoryGuestOwnershipID)
+	}
+	manager.mergeWorktrees = func(ctx context.Context, parentPath, childPath, base string) error {
+		return mergeRepositoryWorktreesWithOwnership(ctx, parentPath, childPath, base, prepare)
+	}
+	if err := gomicrovmvirtiofs.PrepareOwnership(t.Context(), parent.Logical.WorktreePath, ".", repositoryGuestOwnershipID, repositoryGuestOwnershipID); err != nil {
+		t.Fatalf("prepare parent ownership fixture: %v", err)
+	}
+	trackedPath := filepath.Join(parent.Logical.WorktreePath, "tracked.txt")
+	guestMode := overrideStatForTest(t, trackedPath)
+	if len(guestMode) < 3 {
+		t.Fatalf("unexpected override_stat value %q", guestMode)
+	}
+	guestMode = guestMode[:len(guestMode)-3] + "640"
+	if err := unix.Setxattr(trackedPath, "user.containers.override_stat", []byte(guestMode), 0); err != nil {
+		t.Fatal(err)
+	}
+	trackedBefore, err := os.Stat(trackedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stablePath := filepath.Join(parent.Logical.WorktreePath, "stable.txt")
+	stableGuestMode := overrideStatForTest(t, stablePath)
+	if len(stableGuestMode) < 3 {
+		t.Fatalf("unexpected stable override_stat value %q", stableGuestMode)
+	}
+	stableGuestMode = stableGuestMode[:len(stableGuestMode)-3] + "640"
+	if err := unix.Setxattr(stablePath, "user.containers.override_stat", []byte(stableGuestMode), 0); err != nil {
+		t.Fatal(err)
+	}
+	stableBefore, err := os.Stat(stablePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	child, cleanup, _, err := fixture.composition.Attachments.Fork(t.Context(), parent.Environment, "merge-success")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(fixture.composition.Attachments.lookup(child.Ref()).Logical.WorktreePath, "child.txt"), []byte("applied\n"), 0o600); err != nil {
+	childRoot := fixture.composition.Attachments.lookup(child.Ref()).Logical.WorktreePath
+	if err := os.WriteFile(filepath.Join(childRoot, "child.txt"), []byte("applied\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	childRoot := fixture.composition.Attachments.lookup(child.Ref()).Logical.WorktreePath
 	if err := os.WriteFile(filepath.Join(childRoot, "tracked.txt"), []byte("replaced\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -457,6 +504,35 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(parent.Logical.WorktreePath, "tracked.txt")); err != nil || string(got) != "replaced\n" {
 		t.Fatalf("merged replacement = %q, %v", got, err)
+	}
+	if prepareCalls != 1 {
+		t.Fatalf("merge ownership preparation calls = %d, want 1", prepareCalls)
+	}
+	trackedAfter, err := os.Stat(trackedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(trackedBefore, trackedAfter) {
+		t.Fatal("content-changing patch unexpectedly retained tracked file inode")
+	}
+	if got := overrideStatForTest(t, trackedPath); got == guestMode || !strings.HasSuffix(got, "644") {
+		t.Fatalf("replacement file ownership = %q, want host-derived mode without stale %q", got, guestMode)
+	}
+	if got := overrideStatForTest(t, filepath.Join(parent.Logical.WorktreePath, "child.txt")); !strings.HasPrefix(got, "65532:65532:") || !strings.HasSuffix(got, "755") {
+		t.Fatalf("new executable merged file ownership = %q, want host-derived executable mode", got)
+	}
+	if info, err := os.Stat(filepath.Join(parent.Logical.WorktreePath, "child.txt")); err != nil || info.Mode().Perm() != refreshedChildHostMode || info.Mode().Perm() != 0o755 {
+		t.Fatalf("ownership refresh changed new file host mode: before=%o after=%v err=%v", refreshedChildHostMode, infoMode(info), err)
+	}
+	stableAfter, err := os.Stat(stablePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(stableBefore, stableAfter) {
+		t.Fatal("unmodified stable file inode changed during merge")
+	}
+	if got := overrideStatForTest(t, stablePath); got != stableGuestMode {
+		t.Fatalf("merge refresh changed surviving inode guest mode: got %q want %q", got, stableGuestMode)
 	}
 	if _, err := os.Stat(filepath.Join(parent.Logical.WorktreePath, "README.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("merged deletion remains: %v", err)
@@ -491,6 +567,36 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	}
 	if _, err := os.Stat(conflictAttachment.Logical.WorktreePath); err != nil {
 		t.Fatalf("conflict did not preserve child: %v", err)
+	}
+}
+
+func TestRepositoryMergeReportsOwnershipRefreshFailureAfterPatchApplied(t *testing.T) {
+	fixture := newRepositoryAttachmentFixture(t)
+	parent := fixture.attachPersisted(t)
+	defer parent.Close()
+	child, cleanup, _, err := fixture.composition.Attachments.Fork(t.Context(), parent.Environment, "refresh-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	childPath := fixture.composition.Attachments.lookup(child.Ref()).Logical.WorktreePath
+	if err := os.WriteFile(filepath.Join(childPath, "applied-before-refresh-error.txt"), []byte("applied\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refreshErr := &os.PathError{Op: "setxattr", Path: filepath.Join(parent.Logical.WorktreePath, "applied-before-refresh-error.txt"), Err: errors.New("injected ownership refresh failure")}
+	fixture.composition.Attachments.mergeWorktrees = func(ctx context.Context, parentPath, childPath, base string) error {
+		return mergeRepositoryWorktreesWithOwnership(ctx, parentPath, childPath, base,
+			func(context.Context, string, string) error { return refreshErr },
+		)
+	}
+	if err := fixture.composition.Attachments.Merge(t.Context(), child, parent.Environment); !errors.Is(err, refreshErr) || !strings.Contains(err.Error(), "patch already applied") {
+		t.Fatalf("Merge error = %v, want honest already-applied patch path error", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(parent.Logical.WorktreePath, "applied-before-refresh-error.txt")); err != nil || string(got) != "applied\n" {
+		t.Fatalf("parent does not expose already-applied patch: %q, %v", got, err)
+	}
+	if _, err := os.Stat(childPath); err != nil {
+		t.Fatalf("refresh failure removed recoverable child: %v", err)
 	}
 }
 
@@ -541,6 +647,19 @@ func TestRepositoryMergeSerializesConcurrentCalls(t *testing.T) {
 	}
 }
 
+func overrideStatForTest(t *testing.T, path string) string {
+	t.Helper()
+	size, err := unix.Getxattr(path, "user.containers.override_stat", nil)
+	if err != nil {
+		t.Fatalf("read override_stat size for %s: %v", path, err)
+	}
+	value := make([]byte, size)
+	if _, err := unix.Getxattr(path, "user.containers.override_stat", value); err != nil {
+		t.Fatalf("read override_stat for %s: %v", path, err)
+	}
+	return string(value)
+}
+
 type repositoryAttachmentFixture struct {
 	composition   *RepositoryComposition
 	backend       *repositoryCompositionBackend
@@ -560,7 +679,10 @@ func newRepositoryAttachmentFixture(t *testing.T) *repositoryAttachmentFixture {
 	if err := os.WriteFile(filepath.Join(repository, "tracked.txt"), []byte("source\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gitexecForLogicalTest(t.Context(), repository, "add", "tracked.txt"); err != nil {
+	if err := os.WriteFile(filepath.Join(repository, "stable.txt"), []byte("stable fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gitexecForLogicalTest(t.Context(), repository, "add", "tracked.txt", "stable.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := gitexecForLogicalTest(t.Context(), repository, "commit", "-m", "tracked"); err != nil {

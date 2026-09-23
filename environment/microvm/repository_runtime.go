@@ -14,8 +14,6 @@ import (
 	"sync"
 	"time"
 
-	gomicrovm "github.com/stacklok/go-microvm"
-
 	"github.com/stacklok/mecatl/environment/microvm/control"
 	"github.com/stacklok/mecatl/environment/microvm/guestagent"
 )
@@ -162,11 +160,8 @@ func (r *RepositoryRuntime) Start(ctx context.Context, record RepositoryVMRecord
 		RepositoryOwner: record.Owner, RepositoryKey: record.RepositoryKey,
 		RuntimePath: verified.Runtime.Path, FirmwarePath: verified.Firmware.Path, ImagePath: record.RootFSPath,
 		Network: network.Provider, NetworkSocket: network.SocketPath,
-		VsockPort: control.GuestControlPort,
-		Mounts: []gomicrovm.VirtioFSMount{
-			{Tag: repositoryMountTag, HostPath: logicalRoot},
-			{Tag: repositoryObjectMountTag, HostPath: objectSnapshot, ReadOnly: true},
-		},
+		VsockPort:     control.GuestControlPort,
+		Mounts:        repositoryMounts(logicalRoot, objectSnapshot),
 		CapabilityKey: authority.bytes(), Verified: true, HostReadOnly: true,
 		DisableIPv6: r.guestEgress.tightened(),
 	}

@@ -23,7 +23,11 @@ type objectSnapshotLimit struct {
 	entries int64
 }
 
-func snapshotRepositoryObjects(ctx context.Context, common, destinationParent string) (_ string, retErr error) {
+func snapshotRepositoryObjects(ctx context.Context, common, destinationParent string) (string, error) {
+	return snapshotRepositoryObjectsWithOwnership(ctx, common, destinationParent, prepareRepositoryOwnership)
+}
+
+func snapshotRepositoryObjectsWithOwnership(ctx context.Context, common, destinationParent string, prepareOwnership repositoryOwnershipPreparer) (_ string, retErr error) {
 	commonDir, err := openAbsoluteDirectoryNoSymlinks(common)
 	if err != nil {
 		return "", errors.New("repository Git common directory is not a real directory")
@@ -60,6 +64,9 @@ func snapshotRepositoryObjects(ctx context.Context, common, destinationParent st
 	limit := objectSnapshotLimit{bytes: defaultRepositoryObjectSnapshotBytes, entries: defaultRepositoryObjectSnapshotEntries}
 	if err := copyObjectDirectory(ctx, objects, destination, ".", &limit); err != nil {
 		return "", fmt.Errorf("snapshot repository Git objects: %w", err)
+	}
+	if err := prepareOwnership(ctx, snapshot, "."); err != nil {
+		return "", fmt.Errorf("prepare guest ownership for repository Git object snapshot: %w", err)
 	}
 	if err := makeObjectSnapshotReadOnly(snapshot); err != nil {
 		return "", err
@@ -157,7 +164,7 @@ func copyObjectFile(ctx context.Context, input *os.File, destination *os.Root, t
 	}
 	limit.bytes -= size
 
-	output, err := destination.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
+	output, err := destination.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

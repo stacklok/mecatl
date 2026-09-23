@@ -220,7 +220,10 @@ func (m *RepositoryAttachmentManager) Fork(ctx context.Context, parent tool.Envi
 }
 
 // Merge reuses the established conflict-aware isolated-child patch path. A
-// conflict never closes or removes the child attachment.
+// conflict never closes or removes the child attachment. mergeMu serializes
+// cooperating host merges only; patch application and ownership refresh are not
+// transactional with concurrent guest commands, and refresh does not invalidate
+// virtio-fs caches.
 func (m *RepositoryAttachmentManager) Merge(ctx context.Context, child, parent tool.Environment) error {
 	if m == nil {
 		return ErrInvalidFork

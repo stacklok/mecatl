@@ -1,6 +1,7 @@
 package microvm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,12 +21,13 @@ const (
 var errRepositoryRootFSMaterialized = errors.New("repository rootfs is already materialized")
 
 type repositoryRootFSMaterializer struct {
-	mu           sync.Mutex
-	materialized bool
+	mu               sync.Mutex
+	materialized     bool
+	prepareOwnership repositoryOwnershipPreparer
 }
 
 func newRepositoryRootFSMaterializer() *repositoryRootFSMaterializer {
-	return &repositoryRootFSMaterializer{}
+	return &repositoryRootFSMaterializer{prepareOwnership: prepareRepositoryOwnership}
 }
 
 // Materialize clones the admitted Brood tree once, injects the independently
@@ -49,8 +51,15 @@ func (m *repositoryRootFSMaterializer) Materialize(broodRoot, destination, guest
 	if err := injectGuestAgent(destination, guestArtifact); err != nil {
 		return err
 	}
-	if err := establishGuestRuntimeContract(destination, guestexec.DefaultRuntimeContract()); err != nil {
+	contract := guestexec.DefaultRuntimeContract()
+	if err := establishGuestRuntimeContract(destination, contract); err != nil {
 		return err
+	}
+	for _, guestPath := range []string{contract.Home, contract.Workdir} {
+		relative := filepath.FromSlash(strings.TrimPrefix(guestPath, "/"))
+		if err := m.prepareOwnership(context.Background(), destination, relative); err != nil {
+			return fmt.Errorf("prepare guest ownership for runtime directory %s: %w", guestPath, err)
+		}
 	}
 	m.materialized = true
 	return nil

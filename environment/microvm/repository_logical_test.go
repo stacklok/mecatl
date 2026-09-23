@@ -79,6 +79,82 @@ func assertLogicalRootUnavailable(t *testing.T, err error, secret string) {
 	}
 }
 
+func TestRepositoryLogicalManagerPreparesEachLogicalRootBeforeRegister(t *testing.T) {
+	fixture := newLogicalRepositoryFixture(t)
+	prepared := make(map[string]bool)
+	var order []string
+	fixture.manager.prepareOwnership = func(_ context.Context, root, relative string) error {
+		if relative != "." {
+			t.Fatalf("logical ownership target = %q, want whole logical root", relative)
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return err
+		}
+		if len(entries) != 2 || entries[0].Name() != "metadata" || entries[1].Name() != "worktree" {
+			t.Fatalf("logical root contains unexpected authority state: %v", entries)
+		}
+		prepared[root] = true
+		order = append(order, "prepare")
+		return nil
+	}
+	fixture.manager.guest = observingRepositoryGuest{
+		delegate: fixture.guest,
+		beforeRegister: func(mount RepositoryGuestMount) error {
+			if !prepared[filepath.Dir(mount.HostPath)] {
+				return errors.New("register ran before ownership preparation")
+			}
+			order = append(order, "register")
+			return nil
+		},
+	}
+	first := fixture.create(t)
+	defer first.Close()
+	second := fixture.create(t)
+	defer second.Close()
+	if got := strings.Join(order, ","); got != "prepare,register,prepare,register" {
+		t.Fatalf("logical lifecycle order = %q", got)
+	}
+}
+
+func TestRepositoryLogicalManagerOwnershipFailureRollsBackBeforeRegister(t *testing.T) {
+	fixture := newLogicalRepositoryFixture(t)
+	ownershipErr := errors.New("injected ownership failure")
+	fixture.manager.prepareOwnership = func(context.Context, string, string) error { return ownershipErr }
+	registers := 0
+	fixture.manager.guest = observingRepositoryGuest{
+		delegate: fixture.guest,
+		beforeRegister: func(RepositoryGuestMount) error {
+			registers++
+			return nil
+		},
+	}
+	_, err := fixture.manager.Create(t.Context(), LogicalEnvironmentRequest{Owner: "operator", Checkout: fixture.repo, Artifacts: testArtifactSnapshot(fixture.verified)})
+	if !errors.Is(err, ownershipErr) {
+		t.Fatalf("Create error = %v, want ownership failure", err)
+	}
+	if registers != 0 {
+		t.Fatalf("guest registrations = %d, want none", registers)
+	}
+	identity, err := ResolveRepositoryIdentity(t.Context(), "operator", fixture.repo, fixture.manager.registry.stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logicalEntries, err := os.ReadDir(filepath.Join(identity.StateDirectory, "logical"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range logicalEntries {
+		children, readErr := os.ReadDir(filepath.Join(identity.StateDirectory, "logical", entry.Name()))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(children) != 0 {
+			t.Fatalf("ownership failure retained prepared worktree state under %s: %v", entry.Name(), children)
+		}
+	}
+}
+
 func TestMicroVMMVP_Scenario3_LogicalEnvironmentsShareVMNotWorktree(t *testing.T) {
 	t.Parallel()
 	fixture := newLogicalRepositoryFixture(t)
@@ -311,6 +387,22 @@ type logicalRepositoryFixture struct {
 }
 
 type failingRepositoryGuest struct{ err error }
+
+type observingRepositoryGuest struct {
+	delegate       RepositoryGuestRegistrar
+	beforeRegister func(RepositoryGuestMount) error
+}
+
+func (g observingRepositoryGuest) Register(ctx context.Context, record RepositoryVMRecord, binding control.Binding, mount RepositoryGuestMount) (*guestagent.Services, error) {
+	if err := g.beforeRegister(mount); err != nil {
+		return nil, err
+	}
+	return g.delegate.Register(ctx, record, binding, mount)
+}
+
+func (g observingRepositoryGuest) Unregister(ctx context.Context, record RepositoryVMRecord, binding control.Binding) error {
+	return g.delegate.Unregister(ctx, record, binding)
+}
 
 func (g failingRepositoryGuest) Register(context.Context, RepositoryVMRecord, control.Binding, RepositoryGuestMount) (*guestagent.Services, error) {
 	return nil, g.err

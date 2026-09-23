@@ -1,9 +1,11 @@
 package microvm
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -32,9 +34,25 @@ func TestRepositoryRootFSMaterializer_ClonesStaticRootFSAndInjectsGuestAgentOnce
 	guestBytes := []byte("guest-agent-complete")
 
 	materializer := newRepositoryRootFSMaterializer()
+	var prepared []string
 	destination := filepath.Join(root, "repository-rootfs")
+	materializer.prepareOwnership = func(_ context.Context, gotRoot, relative string) error {
+		if gotRoot != destination {
+			t.Fatalf("ownership root = %q, want %q", gotRoot, destination)
+		}
+		prepared = append(prepared, relative)
+		return nil
+	}
 	if err := materializer.Materialize(brood, destination, verified.GuestAgent.Path); err != nil {
 		t.Fatalf("materialize repository rootfs: %v", err)
+	}
+	if want := []string{filepath.Join("home", "guest"), "workspace"}; !slices.Equal(prepared, want) {
+		t.Fatalf("ownership targets = %q, want only %q", prepared, want)
+	}
+	for _, target := range prepared {
+		if target == "." || strings.HasPrefix(target, "etc") || strings.HasPrefix(target, "usr") {
+			t.Fatalf("ownership preparation escaped writable runtime trees: %q", target)
+		}
 	}
 	got, err := os.ReadFile(filepath.Join(destination, guestAgentInstallPath))
 	if err != nil || string(got) != string(guestBytes) {

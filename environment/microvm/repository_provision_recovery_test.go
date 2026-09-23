@@ -2,6 +2,7 @@ package microvm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,28 +15,63 @@ func (*recoverableFakeRepositoryRuntime) Reconcile(context.Context, RepositoryVM
 	return nil
 }
 
-func TestRepositoryRegistryRejectsOldLocalDevelopmentSchemaWithoutMutation(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "registry.json")
-	original := []byte(`{"version":2,"record":{}}` + "\n")
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
+func TestRepositoryRegistryRejectsUnsupportedSchemaWithoutMutation(t *testing.T) {
+	for _, version := range []int{-1, 0, 2, 3} {
+		t.Run(fmt.Sprintf("version-%d", version), func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "registry.json")
+			original := []byte(fmt.Sprintf(`{"version":%d,"record":{}}`+"\n", version))
+			if err := os.WriteFile(path, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			file, err := os.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			directory := &repositoryDirectory{file: file, path: root}
+			_, err = readRepositoryRecord(directory)
+			if closeErr := directory.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if err == nil || !strings.Contains(err.Error(), "data was preserved") || !strings.Contains(err.Error(), "matching build") || !strings.Contains(err.Error(), "incompatible local-development state") {
+				t.Fatalf("unsupported schema error = %v", err)
+			}
+			got, readErr := os.ReadFile(path)
+			if readErr != nil || string(got) != string(original) {
+				t.Fatalf("unsupported schema was mutated: %q, %v", got, readErr)
+			}
+		})
 	}
+}
+
+func TestRepositoryRegistryWritesAndReadsInitialSchema(t *testing.T) {
+	root := t.TempDir()
 	file, err := os.Open(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	directory := &repositoryDirectory{file: file, path: root}
-	_, err = readRepositoryRecord(directory)
-	if closeErr := directory.Close(); closeErr != nil {
-		t.Fatal(closeErr)
+	defer directory.Close()
+
+	record := RepositoryVMRecord{Boot: RepositoryBootRecord{Generation: 1, VMID: "boot-one", Endpoint: "endpoint-one", AuthorityDigest: "authority-one"}}
+	record.syncBootFields()
+	if err := writeRepositoryRecord(directory, record); err != nil {
+		t.Fatal(err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "data was preserved") || !strings.Contains(err.Error(), "matching build") || !strings.Contains(err.Error(), "incompatible local-development state") {
-		t.Fatalf("old schema error = %v", err)
+
+	raw, err := os.ReadFile(filepath.Join(root, "registry.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got, readErr := os.ReadFile(path)
-	if readErr != nil || string(got) != string(original) {
-		t.Fatalf("old schema was mutated: %q, %v", got, readErr)
+	if !strings.Contains(string(raw), `"version":1,`) {
+		t.Fatalf("registry marker = %s, want initial schema version 1", raw)
+	}
+	got, err := readRepositoryRecord(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != record {
+		t.Fatalf("round trip = %+v, want %+v", got, record)
 	}
 }
 

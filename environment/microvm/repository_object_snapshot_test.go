@@ -1,10 +1,13 @@
 package microvm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	gomicrovmvirtiofs "github.com/stacklok/go-microvm/virtiofs"
 
 	"github.com/stacklok/mecatl/environment/microvm/gitexec"
 )
@@ -35,9 +38,27 @@ func TestRepositoryObjectSnapshotRetainsPackedGitObjects(t *testing.T) {
 	}
 
 	common := filepath.Join(repository, ".git")
-	snapshot, err := snapshotRepositoryObjects(t.Context(), common, root)
+	prepared := false
+	snapshot, err := snapshotRepositoryObjectsWithOwnership(t.Context(), common, root, func(ctx context.Context, snapshot, relative string) error {
+		if relative != "." {
+			t.Fatalf("snapshot ownership target = %q, want whole private snapshot", relative)
+		}
+		if err := filepath.Walk(snapshot, func(path string, info os.FileInfo, err error) error {
+			if err == nil && info.Mode().IsRegular() && info.Mode().Perm() != 0o600 {
+				t.Fatalf("object %s mode before ownership preparation = %o, want 600", path, info.Mode().Perm())
+			}
+			return err
+		}); err != nil {
+			return err
+		}
+		prepared = true
+		return gomicrovmvirtiofs.PrepareOwnership(ctx, snapshot, relative, repositoryGuestOwnershipID, repositoryGuestOwnershipID)
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !prepared {
+		t.Fatal("object snapshot was not ownership-prepared before publication")
 	}
 	defer removeObjectSnapshot(snapshot)
 	packs, err := filepath.Glob(filepath.Join(snapshot, "pack", "*.pack"))
@@ -47,6 +68,17 @@ func TestRepositoryObjectSnapshotRetainsPackedGitObjects(t *testing.T) {
 	indexes, err := filepath.Glob(filepath.Join(snapshot, "pack", "*.idx"))
 	if err != nil || len(indexes) == 0 {
 		t.Fatalf("pack indexes missing from snapshot: indexes=%v err=%v", indexes, err)
+	}
+	if err := filepath.Walk(snapshot, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm() != 0o400 {
+			t.Fatalf("published object %s mode = %o, want 400", path, info.Mode().Perm())
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gomicrovmvirtiofs.PrepareOwnership(t.Context(), snapshot, ".", repositoryGuestOwnershipID, repositoryGuestOwnershipID); err != nil {
+		t.Fatalf("matching ownership preparation rewrote sealed 0400 snapshot: %v", err)
 	}
 
 	original := filepath.Join(common, "objects")
