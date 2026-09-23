@@ -416,7 +416,6 @@ func (l *teamLossLease) Acquire(_ context.Context, id session.SessionID, owner s
 
 func (l *teamLossLease) Renew(_ context.Context, lease port.Lease) (port.Lease, error) {
 	if lease.SessionID == l.lostID {
-		l.lostOnce.Do(func() { close(l.lost) })
 		return port.Lease{}, port.ErrLeaseHeld
 	}
 	return lease, nil
@@ -425,7 +424,11 @@ func (l *teamLossLease) Renew(_ context.Context, lease port.Lease) (port.Lease, 
 func (l *teamLossLease) Release(_ context.Context, lease port.Lease) error {
 	l.mu.Lock()
 	l.releases[lease.SessionID]++
+	lost := lease.SessionID == l.lostID
 	l.mu.Unlock()
+	if lost {
+		l.lostOnce.Do(func() { close(l.lost) })
+	}
 	return nil
 }
 

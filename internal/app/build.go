@@ -5890,8 +5890,11 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 // publication. reconcileErr belongs to the initiating waiter and cannot invalidate
 // a complete runtime that another reconciliation cycle published before the pin.
 func selectMCPBuildRuntime(candidate *mcpReconcileCandidate, _ error) (*mcp.Manager, uint64, bool) {
-	if candidate == nil || candidate.manager == nil || len(candidate.configs) == 0 {
+	if candidate == nil {
 		return nil, 0, false
+	}
+	if candidate.manager == nil || len(candidate.configs) == 0 {
+		return nil, candidate.generation, false
 	}
 	return candidate.manager, candidate.generation, true
 }

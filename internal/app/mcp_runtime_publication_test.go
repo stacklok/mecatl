@@ -192,6 +192,28 @@ func TestSelectMCPBuildRuntimeUsesPinnedPublicationAfterWaiterError(t *testing.T
 	}
 }
 
+func TestSelectMCPBuildRuntimePreservesPublishedEmptyGeneration(t *testing.T) {
+	const generation = 42
+	emptyManager, err := mcp.NewCompleteManager(t.Context(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := &mcpReconcileCandidate{manager: emptyManager, generation: generation}
+
+	mgr, revision, ok := selectMCPBuildRuntime(published, nil)
+	if ok || mgr != nil {
+		t.Fatalf("published empty runtime exposed manager=%p available=%v", mgr, ok)
+	}
+	if revision != generation {
+		t.Fatalf("published empty runtime revision = %d, want %d", revision, generation)
+	}
+
+	mgr, revision, ok = selectMCPBuildRuntime(nil, nil)
+	if ok || mgr != nil || revision != 0 {
+		t.Fatalf("unpublished runtime = manager %p revision %d available %v, want nil/0/false", mgr, revision, ok)
+	}
+}
+
 func TestMCPSourceReconciliation_Scenario2_ProductionEngineRevisionMatrix(t *testing.T) {
 	var requests []port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {

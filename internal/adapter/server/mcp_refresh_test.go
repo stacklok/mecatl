@@ -422,10 +422,13 @@ func TestMCPSourceReconciliation_Scenario4_ServiceRefreshMutationMatrix(t *testi
 		go func() { _, err := svc.RefreshMcpSources(ownerCtx, id); done <- err }()
 		<-entered
 		go func() { _, err := svc.RefreshMcpSources(ownerCtx, id); done <- err }()
+		// No exported hook exists between runEntryMu acquisition and MCPRefresh.
+		// Keep this an honest bounded negative oracle: the second callback has a
+		// full second to expose overlap while the first remains blocked.
 		select {
 		case <-entered:
 			t.Fatal("second reconciler entered before the first released run-entry exclusion")
-		case <-time.After(20 * time.Millisecond):
+		case <-time.After(time.Second):
 		}
 		close(release)
 		for range 2 {
