@@ -11,10 +11,11 @@
 **Plan PR:** [#1814](https://github.com/stacklok/mecatl/pull/1814) (draft)
 **Approved baseline:** absent until contract approval by merge
 
-`HarnessContext` names the deployment-configured instruction and customization sources supplied
-to a session. Sources may use APIs, host files, databases, or explicitly selected execution files.
-Separate source and execution responsibilities do not require separate storage. The source
-contract determines admission, precedence, and freshness wherever the content lives.
+`HarnessContext` names the deployment-configured composition of admitted instruction and
+customization sources supplied to a session. Sources may use APIs, host files, databases, or
+explicitly selected execution files. Separate responsibilities do not require separate storage.
+Composition defines enabled sources, ordering, and per-kind combination, collision, override,
+and exclusion behavior. Transport and storage location do not select precedence or trust.
 
 This PR changes the [domain model](../architecture/mecatl.modelith.md) and proposes the shared
 interface correction. The next PR implements that contract. MicroVM and Redis integrations then
@@ -23,13 +24,15 @@ consume it in sibling changes, rather than introducing backend-specific source r
 ## Human decisions
 
 - [x] Independent, flexible sources — Decision: deployment composition selects harness sources independently from execution. APIs, host files, and explicitly selected execution files are valid source implementations; execution placement never implicitly chooses them.
+- [x] Layered composition and overrides — Decision: the operator can combine deployment, API/service, and repository contributions, including multiple sources of the same content kind. Resolution is per-kind, deterministic, and provenance-preserving. Repository context can be disabled without disabling execution; content overrides cannot change authorization.
 - [x] Integration stack — Decision: model/contract first, shared implementation second, then PR #580 and a separate Redis #1811 integration.
+- [ ] Composition configuration and resolution schema: review the exact programmatic/declarative representation of source ordering, entry identities, permitted overrides, exclusion, and per-kind combination policies. Preserve existing behavior as the compatibility default; do not invent a universal deep-merge algorithm or infer priority from file versus gRPC transport.
 - [ ] Public API transition: approve the proposed workspace-free prompt interfaces below, or require a compatibility-adapter window. No breaking release or compatibility window has been selected.
 - [ ] Restart and deployment reconfiguration: choose exact durable session source binding, or explicit deployment-controlled rebinding. If exact binding is selected, review its identity, owner scope, current authorization/revocation, storage interfaces, and legacy migration before implementation. Neither automatic adoption nor rejection of existing sessions or schedules is authorized here.
 
 ## Interface contract
 
-This is a draft proposal, not permission to implement unresolved choices. The two unchecked
+This is a draft proposal, not permission to implement unresolved choices. The unchecked
 items above block implementation dispatch; the contract must be completed before approval.
 
 - **gRPC / protobuf:** No public API field, source selector, backend kind, or path is proposed.
@@ -55,16 +58,24 @@ items above block implementation dispatch; the contract must be completed before
   resolution rather than be represented as nil optional absence. Server-internal command listing
   becomes source-bound as well; it does not accept an execution workspace per call. No new
   `engine/port` provider, `session.HarnessContextRef`, or generic registry is prescribed.
+  These signature changes remove execution coupling; they alone do not define configurable
+  layering. The exact per-kind composition API remains the open schema decision above. Reuse
+  existing consumer-specific combinators where they satisfy that contract; do not require all
+  source kinds to implement one merge interface or share one lifecycle.
 - **Tool schemas:** None — model-facing tool arguments and results remain unchanged. `Skill`
   retains logical bundles and named assets. Execution Read/Write/Shell use their existing
   `Environment` capabilities; harness reads do not create read-ledger evidence.
-- **CLI / config:** No new flag or YAML key is proposed. Existing source settings are resolved into
-  source-bound adapters by trusted composition. The local deployment can configure its startup
-  project root as a source independently from execution. Programmatic integrations can bind
-  other source implementations. No `microvm`/`redis` switch chooses source authority. Selecting
-  execution files as context is an explicit source-binding choice, not a new tool grant.
-  No-FS attenuates execution access and does not filter admitted logical sources by whether their
-  implementation reads files. API transition and startup compatibility follow the open decisions.
+- **CLI / config:** The exact source-layer and override configuration syntax is an open decision,
+  not an implementation detail. It must express enabled sources and per-kind resolution, including
+  deployment-file plus gRPC sources for helpdesk deployments and deployment/service/repository
+  layers for coding deployments. Multiple sources of the same kind must be expressible. Source
+  identity, entry collision keys, ordering, allowed replacements, and exclusions need exact
+  definitions before approval. Existing source settings remain the compatibility default, resolved
+  into source-bound adapters by trusted composition. The local deployment can configure its
+  startup project root independently from execution, and programmatic integrations can bind other
+  implementations. No `microvm`/`redis` switch or transport kind chooses priority or authority.
+  Repository context must be independently disableable while repository execution remains usable.
+  No-FS attenuates execution access without filtering logical sources by their storage backend.
 - **Events / persistence:** No event or snapshot-field change is prescribed yet. Commands remain
   live per List/Expand; root project instructions refresh once per run; rules, skills, and agent
   definitions preserve their existing source-lifetime snapshots. The restart/reconfiguration
@@ -77,7 +88,11 @@ items above block implementation dispatch; the contract must be completed before
   durable identity, if selected, must not freeze a revoked grant. Operator policy, hooks,
   credentials, and execution authority are not merged into customization content. A child inherits
   admitted source authority only subject to existing specialist, profile, and tool attenuation.
-  Source-only command listing owner-authorizes the session and resolves its source context without
+  Source bodies cannot select their own layer or precedence. Combining or replacing context
+  preserves each contribution's provenance and admission constraints. Context instruction rules
+  are distinct from governance PermissionRules: overriding content cannot weaken a deny, grant a
+  tool, bypass source admission, or widen a child. Source-only command listing owner-authorizes
+  the session and resolves its context without
   reattaching unrelated execution capabilities. If the explicitly chosen source itself uses
   execution files, its own backend availability remains a real dependency.
 - **Compatibility / migration:** Removing workspace parameters and changing directory-expander
@@ -89,7 +104,7 @@ items above block implementation dispatch; the contract must be completed before
   framing, provenance manifests, and existing input limits; do not introduce ancestor traversal,
   new size caps, or trusted content roles incidentally.
 
-## In scope - 4 scenarios, in implementation order
+## In scope - 5 scenarios, in implementation order
 
 ### Scenario 1 - Source selection and execution vary independently
 
@@ -111,8 +126,10 @@ has already passed.
 ### Scenario 2 - Discovery and invocation share source authority
 
 Use the existing logical-source contracts described in the [architecture guide](../architecture.md).
-Commands retain first-match precedence: directory commands, skills, driver commands, then MCP
-prompts. Ordinary misses and established fail-soft chain behavior are not authority fallback.
+Without explicit layering, preserve the compatibility chain: directory commands, skills, driver
+commands, then MCP prompts. That existing cross-kind chain is not the full per-kind layering and
+override contract. Explicit compositions follow the approved resolution policy from Scenario 5;
+ordinary misses and established fail-soft behavior remain distinct from authority fallback.
 
 **Acceptance:**
 - AC2.1: Palette listing and prompt expansion resolve through the same configured source chain and precedence, including a positive control with conflicting same-name execution content.
@@ -152,10 +169,30 @@ when the open human decision is resolved; this draft is not ready for implementa
 - AC4.2: Both shared-file and independent-source paths preserve source-specific error semantics; a configured fail-soft chain can still consult its next admitted source without inventing a new source.
   - verify: `TestADR_0354_HarnessContext_Scenario4_ConfiguredChainFailureSemantics`
 
+### Scenario 5 - Hybrid context composition and controlled overrides
+
+The [domain model](../architecture/mecatl.modelith.md#harnesscontext) defines context composition
+independently from execution. The shared PR proves these scenarios with offline source-service
+and filesystem reference adapters; actual mecak8s deployment and backend integration proofs remain
+owned by their integration changes. Per-kind configuration details must be completed under Human
+decisions before implementation, without weakening the agreed behaviors below.
+
+**Acceptance:**
+- AC5.1: A helpdesk composition combines deployment-file instructions with configured service-provided instructions, rules, and skills without a repository or command runner. Equivalent admitted source data served through a file or service adapter has the same precedence and trust.
+  - verify: `TestADR_0354_HarnessContext_Scenario5_HelpdeskDeploymentAndServiceSources`
+- AC5.2: A coding composition combines deployment instructions, organization service skills, and mounted-repository instructions, rules, and skills while file tools and Shell still use the coherent repository execution binding.
+  - verify: `TestADR_0354_HarnessContext_Scenario5_HybridCodingContext`
+- AC5.3: With planted same-name conflicts, the configured policy permits a selected repository skill to replace an organization default and a deployment command to replace a repository command. Listing and invocation/body retrieval choose the same definitions; source transport or discovery timing does not select a winner.
+  - verify: `TestADR_0354_HarnessContext_Scenario5_PerKindOverrideResolution`
+- AC5.4: Instruction and rule contributions combine, replace, or are excluded according to their approved per-kind policy, with retained provenance. They are not processed by an implicit recursive merge of arbitrary source objects. Disabling repository context leaves deployment/service context and repository execution available.
+  - verify: `TestADR_0354_HarnessContext_Scenario5_CombineExcludeAndDisableRepositoryContext`
+- AC5.5: A lower-admission contribution claiming deployment origin or requesting changed override policy cannot promote itself, bypass project admission, weaken a permission deny, or expand a child's tool catalog.
+  - verify: `TestADR_0354_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority`
+
 ## Dependency stack
 
 1. **This PR:** proposed model, ADR, and draft interface/acceptance contract. Resolve Human decisions before approval.
-2. **Shared implementation PR:** source-bound interfaces and local composition, reference-adapter proofs, API compatibility treatment, and the approved restart behavior.
+2. **Shared implementation PR:** source-bound interfaces, per-kind composition/resolution, and local composition, reference-adapter proofs, API compatibility treatment, and the approved restart behavior.
 3. **PR #580:** consume the shared contract for MicroVM. Qualify configured host/API/execution-file sources independently from guest tools; preserve actual VM lifecycle and isolation proofs.
 4. **Issue #1811 sibling PR:** consume the same contract with Redis execution. Retain exact Redis file access and shell-less semantics; prove independent and explicitly Redis-file-backed context selection.
 
@@ -170,12 +207,12 @@ proofs supplement the shared reference proofs rather than being prerequisites fo
 | Concrete MicroVM integration and live journey | PR #580 | Dependent on the shared contract. |
 | Concrete Redis correction | Issue #1811 | Separate sibling implementation. |
 | Generic registry or one new transport per source noun | Future demonstrated need | Existing ports and APIs already support independent sources. |
-| Broader instruction inheritance or changed caps | Separate decision | Preserve root-only behavior in this correction. |
+| Ancestor-directory traversal within a file source or changed caps | Separate decision | Preserve root-only discovery within each file source; composing multiple configured sources is in scope. |
 | Automatic deletion, rejection, or adoption of legacy state | Human decisions | No treatment has been authorized. |
 
 ## Definition of done
 
-Before this draft can become proposed, resolve both Human decisions and complete any resulting
+Before this draft can become proposed, resolve all open Human decisions and complete any resulting
 interface, persistence, migration, and acceptance clauses. Run the acceptance-plan checker and
 its fixtures, `task docs:model`, and `task docs`; render model Markdown from YAML, never by hand.
 Record environment or baseline failures honestly rather than claiming these gates passed.

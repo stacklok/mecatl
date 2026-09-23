@@ -1396,10 +1396,12 @@ backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 and the [acceptance plan](acceptance/harness-context.md) define a Plan / Interface contract that
 is not implemented yet. Deployment composition selects project instructions, commands, rules,
 skills, and agent definitions independently from execution. Sources can read APIs, host files,
-or explicitly selected execution files; separation does not require different storage. Existing
-source contracts retain their provenance and freshness, and listing and invocation share the
-same configured authority. Source reads do not create execution read evidence. Public interface
-transition and restart/reconfiguration policy remain open review decisions. The shared
+or explicitly selected execution files; separation does not require different storage. Composition
+can layer deployment, service, and repository sources with explicit per-kind combination,
+collision, override, and exclusion rules. Resolution preserves provenance and never changes
+permission authority. Listing and invocation share the same resolution rules. Existing source
+freshness and separate execution read evidence remain intact. Composition configuration, public
+interface transition, and restart/reconfiguration policy remain open review decisions. The shared
 implementation precedes the MicroVM and Redis integrations; neither integration may infer sources
 from an execution backend kind or reinterpret a virtual root as a host path.
 

@@ -111,7 +111,7 @@ An entry a `TeamMember` records to its `Team`'s shared findings ledger. The `Lea
 
 ### `HarnessContext`
 
-The deployment-configured selection of model-facing project instructions, commands, rules, skills, and agent definitions supplied to a `Session` through logical source contracts. Sources can read APIs, host files, databases, or explicitly selected files in the execution environment. Source selection is separate from `Environment` selection; separate responsibilities do not require separate storage.
+The deployment-configured composition of admitted sources for model-facing instructions, commands, rules, skills, and agent definitions supplied to a `Session` through logical source contracts. Sources can read APIs, host files, databases, or explicitly selected files in the execution environment. Composition defines source ordering and content-kind-specific resolution: which contributions combine, which named entries override others, and which contributions are excluded. Source selection is separate from `Environment` selection; separate responsibilities do not require separate storage.
 
 **Relationships**
 
@@ -125,6 +125,12 @@ The deployment-configured selection of model-facing project instructions, comman
 - **harness-context-explicit-storage-sharing** — A context source may explicitly read the same logical files as the execution `Workspace`, using that backend's capabilities. Those files then follow the source's admission and freshness rules. Sharing storage does not merge source authority with execution authority or permit reopening a virtual root through a different backend.
 
 - **harness-context-provenance-governs-trust** — Source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
+
+- **harness-context-resolution-explicit** — Deployment composition defines enabled sources, ordering, named-entry collision handling, and combination, replacement, or exclusion of instruction and rule contributions according to their content kind. Given the same configuration and source observations, resolution is deterministic. Storage backend, transport, and discovery timing do not establish precedence; listing and consumption use the same rules.
+
+- **harness-context-resolution-preserves-provenance** — Resolved content retains its contributing source provenance and admission constraints. Combining or overriding content does not promote a source to a more privileged trust tier.
+
+- **harness-context-overrides-do-not-grant-authority** — Context overrides select content; they cannot weaken `PermissionRules`, grant execution capabilities, bypass source admission, or widen a child's allowed tools. Instruction rules remain distinct from the governance `PermissionRule` model.
 
 - **harness-context-preserves-source-freshness** — Commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
 
@@ -623,6 +629,52 @@ erDiagram
 
 
 ## Scenarios
+
+### Helpdesk context combines deployment files and services
+
+**Actors:** Principal, Operator
+
+**Steps**
+
+1. The operator configures a helpdesk `HarnessContext` with instructions from deployment files and additional instructions, rules, and skills from configured service sources, including gRPC implementations of the source contracts.
+2. Composition specifies the order of instruction contributions and the resolution of same-name skills across the enabled sources. No repository or command runner is required to supply this context.
+3. The harness consumes the resolved contributions with their source provenance and admission rules. Replacing a file adapter with an API adapter alone does not change precedence or trust.
+
+**Invariants touched**
+
+- **harness-context-independent-of-execution** — Deployment composition explicitly selects admitted harness sources. An execution `Workspace`, backend kind, root, or command namespace never implicitly selects instructions or customizations.
+
+- **harness-context-resolution-explicit** — Deployment composition defines enabled sources, ordering, named-entry collision handling, and combination, replacement, or exclusion of instruction and rule contributions according to their content kind. Given the same configuration and source observations, resolution is deterministic. Storage backend, transport, and discovery timing do not establish precedence; listing and consumption use the same rules.
+
+- **harness-context-resolution-preserves-provenance** — Resolved content retains its contributing source provenance and admission constraints. Combining or overriding content does not promote a source to a more privileged trust tier.
+
+- **environment-runner-optional** — An `Environment` can provide file access without a `CommandRunner`. File storage does not imply command execution; absent capabilities are omitted from the toolset or reported as unavailable. A no-filesystem environment supplies a workspace that refuses file access and has no command runner.
+
+
+### Coding context combines repository and deployment layers
+
+**Actors:** Principal, Operator
+
+**Steps**
+
+1. The operator configures repository instructions, rules, and skills from the mounted repository, organization skills from a service, and deployment instructions and commands. The repository is also the execution `Workspace`.
+2. Composition combines admitted deployment and repository instruction contributions, permits a selected repository skill to replace an organization default, and gives a deployment command precedence over a same-name repository command.
+3. Listing and consumption resolve the same named entries under the configured policy; combined and overridden contributions retain their own source provenance.
+4. The operator disables repository context contributions without removing repository file access or command execution; deployment and service contributions remain available.
+5. A repository contribution cannot change the composition policy, weaken a permission deny, or grant a child additional tools by claiming to override deployment content.
+
+**Invariants touched**
+
+- **harness-context-explicit-storage-sharing** — A context source may explicitly read the same logical files as the execution `Workspace`, using that backend's capabilities. Those files then follow the source's admission and freshness rules. Sharing storage does not merge source authority with execution authority or permit reopening a virtual root through a different backend.
+
+- **harness-context-resolution-explicit** — Deployment composition defines enabled sources, ordering, named-entry collision handling, and combination, replacement, or exclusion of instruction and rule contributions according to their content kind. Given the same configuration and source observations, resolution is deterministic. Storage backend, transport, and discovery timing do not establish precedence; listing and consumption use the same rules.
+
+- **harness-context-resolution-preserves-provenance** — Resolved content retains its contributing source provenance and admission constraints. Combining or overriding content does not promote a source to a more privileged trust tier.
+
+- **harness-context-overrides-do-not-grant-authority** — Context overrides select content; they cannot weaken `PermissionRules`, grant execution capabilities, bypass source admission, or widen a child's allowed tools. Instruction rules remain distinct from the governance `PermissionRule` model.
+
+- **deny-dominant** — A deny in any scope is absolute; among ask and allow the higher configured scope wins, and a configured ask is never suppressed by a higher-scope allow.
+
 
 ### Harness sources remain independent from execution storage
 

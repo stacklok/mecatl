@@ -1,6 +1,6 @@
 # ADR 0354 - Harness context source authority is independent of execution
 
-- Status: Proposed; interface compatibility and restart policy remain under review
+- Status: Proposed; composition configuration, interface compatibility, and restart policy remain under review
 - Date: 2026-09-23
 - Scope: project instructions, commands, rules, skills, agent definitions, source admission, and deployment composition
 - Supersedes: none
@@ -28,9 +28,10 @@ storage without becoming the same capability.
 
 ### Separate selection, permit shared storage
 
-`HarnessContext` names the deployment-configured selection of admitted instruction and
-customization sources used by a session. It is a domain concept, not a requirement for a new
-exported Go container, registry, or provider framework.
+`HarnessContext` names the deployment-configured composition of admitted instruction and
+customization sources used by a session, with explicit content-kind-specific resolution rules.
+It is a domain concept, not a requirement for a new exported Go container, registry, or provider
+framework.
 
 Sources may read APIs, host files, databases, or files in the execution environment. Reading
 execution files is valid when composition explicitly configures that source. The source uses
@@ -46,6 +47,36 @@ This distinction has two observable cases:
 The latter is intentional sharing, not an exception for MicroVM or Redis. A local MicroVM
 deployment can select host files, while a Kubernetes deployment can select APIs or other drivers.
 Changing the execution backend alone does not select another context source.
+
+### Compose sources and resolve each content kind explicitly
+
+Source selection can include several sources of the same content kind. A helpdesk agent in
+Kubernetes can combine instructions mounted into mecak8s with instructions, rules, or skills
+provided by gRPC services implementing the source contracts. It needs no execution repository.
+
+A coding agent can combine deployment instructions, organization skills from a service, and
+repository instructions, rules, and skills from a mounted checkout that also serves execution.
+The operator can permit a repository-specific skill to replace an organization default, select
+a deployment command over a same-name repository command, combine instruction contributions,
+or disable repository context without disabling repository execution.
+
+The composition contract identifies enabled sources and their ordering, collision keys for named
+entries, permitted overrides, and combination/replacement/exclusion rules for each content kind.
+It does not impose one generic deep-merge algorithm on instruction fragments, rule contributions,
+commands, skills, and agent definitions. Given the same configuration and source observations,
+resolution must be deterministic; transport, storage location, and discovery timing do not choose
+a winner. Listing and consumption apply the same resolution rules. Freshness remains a separate
+source contract, so live updates between calls can legitimately change their results.
+
+Resolution retains the contributing source provenance and effective admission constraints.
+Content cannot raise its own priority or claim a more privileged source tier. Overriding a prompt
+template or instruction rule cannot override a governance permission deny, grant execution
+capabilities, or expand a child's allowed tools. The operator's composition policy is separate
+from the content it resolves.
+
+The exact composition configuration and collision/combination schemas remain an explicit human
+review item in the interface plan. The existing command chain supplies a compatibility default,
+not a complete specification for multiple sources of every content kind.
 
 ### Reuse existing consumer contracts
 
@@ -80,9 +111,10 @@ Command listing authorizes the session and resolves the configured source chain.
 require an unrelated VM or Redis execution backend to be available. Actual runs separately admit
 the execution capabilities they need.
 
-Keep ordinary first-match command precedence and established miss/fail-soft behavior within the
-configured chain. A missing optional source can remain empty. Failure to resolve a required source
-must not silently add execution files, process cwd, or another unconfigured namespace as fallback.
+Keep existing command precedence as the compatibility default and preserve established miss and
+fail-soft behavior within an explicitly configured composition. A missing optional source can
+remain empty. Failure to resolve a required source must not silently add execution files, process
+cwd, or another unconfigured namespace as fallback.
 
 A child inherits source authority only within its existing specialist, profile, trust, and tool
 restrictions. Context inheritance does not copy a parent's broader tool catalog. Source reads do
@@ -95,9 +127,10 @@ Source independence does not automatically require a new durable `HarnessContext
 schema, or binding protocol. Preserving exact source authority across deployment reconfiguration
 is a separate decision from consuming explicit sources in one process.
 
-The [Human decisions](../acceptance/harness-context.md#human-decisions) section keeps two choices
-open: public API transition treatment, and restart/reconfiguration authority. If exact durable
-binding is selected, the contract must specify identity, principal/tenant scope, current
+The [Human decisions](../acceptance/harness-context.md#human-decisions) section keeps three choices
+open: the exact per-kind composition configuration and resolution schema, public API transition
+treatment, and restart/reconfiguration authority. If exact durable binding is selected, the
+contract must specify identity, principal/tenant scope, current
 revocation checks, storage, and legacy migration before implementation. A binding protocol should
 live beside its actual consumer rather than widen `engine/port` without an engine consumer.
 
