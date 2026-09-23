@@ -115,6 +115,19 @@ describe("event unions", () => {
           yield {
             event: { runId: "r", subagent: { routingDecision: decision }, type: "subagent.start" },
           };
+          yield {
+            event: {
+              runId: "r",
+              team: {
+                roster: [
+                  { lead: true, name: "lead", routingDecision: decision },
+                  { name: "unscored", routingDecision: { backend: "jev", outcome: "skipped" } },
+                  { name: "historic" },
+                ],
+              },
+              type: "team.start",
+            },
+          };
           yield terminal("r");
         },
       });
@@ -127,6 +140,17 @@ describe("event unions", () => {
     if (grpcStart?.kind !== "subagent.start") throw new Error("expected subagent.start");
     expectTypeOf(grpcStart.payload).toEqualTypeOf<SubagentEventPayload>();
     expect(grpcStart.payload.routingDecision).toMatchObject(decision);
+    const grpcTeamStart = grpcEvents[1];
+    if (grpcTeamStart?.kind !== "team.start") throw new Error("expected team.start");
+    expectTypeOf(grpcTeamStart.payload).toEqualTypeOf<TeamEventPayload>();
+    expect(grpcTeamStart.payload.roster[0]?.routingDecision).toMatchObject(decision);
+    expect(grpcTeamStart.payload.roster[0]?.routingDecision?.confidence).toBe(0);
+    expect(grpcTeamStart.payload.roster[0]?.routingDecision?.minimumConfidence).toBe(0);
+    expect(grpcTeamStart.payload.roster[0]).not.toHaveProperty("memberSessionId");
+    expect(grpcTeamStart.payload.roster[1]?.routingDecision).toMatchObject({ backend: "jev", outcome: "skipped" });
+    expect(grpcTeamStart.payload.roster[1]?.routingDecision?.confidence).toBeUndefined();
+    expect(grpcTeamStart.payload.roster[1]?.routingDecision?.minimumConfidence).toBeUndefined();
+    expect(grpcTeamStart.payload.roster[2]?.routingDecision).toBeUndefined();
     await grpc.close();
 
     const httpFetch: typeof globalThis.fetch = async (input, init) => {
@@ -156,6 +180,35 @@ describe("event unions", () => {
             run_id: "r",
             type: "parallel.branch",
           },
+          {
+            team: {
+              roster: [
+                {
+                  lead: true,
+                  name: "lead",
+                  routing_decision: {
+                    backend: "jev",
+                    breaker_open: false,
+                    candidate_category: "deep",
+                    candidate_model: "capable",
+                    classifier_model: "jev-1.13.0",
+                    confidence: 0,
+                    consecutive_misses: 1,
+                    minimum_confidence: 0,
+                    miss_limit: 3,
+                    outcome: "fallback",
+                  },
+                },
+                {
+                  name: "unscored",
+                  routing_decision: { backend: "jev", outcome: "skipped" },
+                },
+                { name: "historic" },
+              ],
+            },
+            run_id: "r",
+            type: "team.start",
+          },
           { result: { stop: "end_turn", text: "done" }, run_id: "r", type: "result" },
         ]);
       return Response.json({}, { status: 404 });
@@ -168,6 +221,17 @@ describe("event unions", () => {
     if (httpStart?.kind !== "parallel.branch") throw new Error("expected parallel.branch");
     expectTypeOf(httpStart.payload).toEqualTypeOf<ParallelEventPayload>();
     expect(httpStart.payload.routingDecision).toMatchObject(decision);
+    const httpTeamStart = httpEvents[1];
+    if (httpTeamStart?.kind !== "team.start") throw new Error("expected team.start");
+    expectTypeOf(httpTeamStart.payload).toEqualTypeOf<TeamEventPayload>();
+    expect(httpTeamStart.payload.roster[0]?.routingDecision).toMatchObject(decision);
+    expect(httpTeamStart.payload.roster[0]?.routingDecision?.confidence).toBe(0);
+    expect(httpTeamStart.payload.roster[0]?.routingDecision?.minimumConfidence).toBe(0);
+    expect(httpTeamStart.payload.roster[0]).not.toHaveProperty("memberSessionId");
+    expect(httpTeamStart.payload.roster[1]?.routingDecision).toMatchObject({ backend: "jev", outcome: "skipped" });
+    expect(httpTeamStart.payload.roster[1]?.routingDecision?.confidence).toBeUndefined();
+    expect(httpTeamStart.payload.roster[1]?.routingDecision?.minimumConfidence).toBeUndefined();
+    expect(httpTeamStart.payload.roster[2]?.routingDecision).toBeUndefined();
     await http.close();
   });
 

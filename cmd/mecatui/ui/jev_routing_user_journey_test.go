@@ -51,6 +51,8 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 		client.ParallelMsg{Kind: client.ParallelStart, ParentCallID: "parallel-call", Join: "all", BranchCount: 1},
 		client.ParallelMsg{Kind: client.ParallelBranchStart, ParentCallID: "parallel-call", BranchIndex: 0, ChildID: "parallel-child", BranchLabel: "branch-1", Goal: "inspect routing", Model: "gpt-6-astra", RoutingReason: "low-confidence", RoutingDecision: decision},
 		client.ParallelMsg{Kind: client.ParallelBranchTool, ParentCallID: "parallel-call", BranchIndex: 0, InnerKind: "tool.call", ToolName: "Grep", ToolCount: 1},
+		client.ParallelMsg{Kind: client.ParallelBranchEnd, ParentCallID: "parallel-call", BranchIndex: 0, ChildID: "parallel-child", ToolCount: 1, Stop: "end_turn"},
+		client.ParallelMsg{Kind: client.ParallelEnd, ParentCallID: "parallel-call", Join: "all", BranchCount: 1, Winner: -1},
 		client.ToolCallMsg{ID: "team-call", Name: "Team", Args: `{}`},
 		client.TeamMsg{Kind: client.TeamStart, ParentCallID: "team-call", TeamID: "team-1", Roster: []client.TeamMemberSpec{{Name: "lead", Lead: true, Model: "gpt-6-astra", RoutingReason: "low-confidence", RoutingDecision: decision}}},
 		client.TeamMsg{Kind: client.TeamMember, ParentCallID: "team-call", TeamID: "team-1", Member: "lead", InnerKind: "tool.call", ToolName: "Read"},
@@ -170,6 +172,33 @@ func TestADR_0350_Scenario7_UserJourney(t *testing.T) {
 	assertAcceptedRoutingDetail(t, "accepted Subagent focus", views["accepted Subagent focus"])
 	for _, name := range []string{"Subagent focus", "Parallel focus", "Team focus"} {
 		t.Run(name, func(t *testing.T) { assertRoutingDetail(t, name, views[name]) })
+	}
+	var parallelGroup *parallelGroup
+	for i := range m.conv.parallelGroups {
+		if m.conv.parallelGroups[i].parentCallID == "parallel-call" {
+			parallelGroup = &m.conv.parallelGroups[i]
+			break
+		}
+	}
+	if parallelGroup == nil || len(parallelGroup.branches) != 1 || !parallelGroup.done || !parallelGroup.branches[0].done {
+		t.Fatalf("completed Parallel lifecycle was not retained: %#v", parallelGroup)
+	}
+	compactParallel := parallelBranchDetails(&parallelGroup.branches[0])
+	for _, want := range []string{
+		"model: gpt-6-astra · fallback: low-confidence",
+		"candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50",
+		"done · 1 tool",
+	} {
+		if !strings.Contains(compactParallel, want) {
+			t.Errorf("compact Parallel branch summary missing %q:\n%s", want, compactParallel)
+		}
+	}
+	parallelFocus := views["Parallel focus"]
+	if strings.Contains(parallelFocus, "Grep…") || !strings.Contains(parallelFocus, "done · 1 tool") {
+		t.Errorf("terminal Parallel branch did not replace its active Grep state:\n%s", parallelFocus)
+	}
+	if !strings.Contains(parallelFocus, "Grep") {
+		t.Errorf("terminal Parallel branch lost its historical tool trace:\n%s", parallelFocus)
 	}
 
 	// Width zero must remain renderable, and a narrow terminal must retain the

@@ -76,5 +76,5 @@
 │
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- team done · 1 round                              ⑂ parallel 1◐ 0✓ · f6  ⛭ subagents 0◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
+ team done · 1 round                              ⑂ parallel 0◐ 1✓ · f6  ⛭ subagents 0◐ 2✓ · f6  ctx 0 · ↑0 ↓0 cache 0%
 ? help · / commands · ctrl+c quit
