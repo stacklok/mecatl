@@ -61,6 +61,10 @@ type paletteState struct {
 }
 
 func (st *paletteState) syncList() {
+	st.syncListWidth(0)
+}
+
+func (st *paletteState) syncListWidth(contentWidth int) {
 	if st.list == nil {
 		st.list = new(bounded.List)
 	}
@@ -70,13 +74,101 @@ func (st *paletteState) syncList() {
 		if command.Builtin {
 			kind = "builtin:"
 		}
-		text := terminaltext.Sanitize("/" + command.Name)
-		if description := terminaltext.Sanitize(command.Description); description != "" {
-			text += "  " + description
-		}
-		items = append(items, bounded.ListItem{ID: kind + strings.ToLower(command.Name), Text: text})
+		items = append(items, bounded.ListItem{
+			ID:   kind + strings.ToLower(command.Name),
+			Text: paletteEntry(command, contentWidth),
+		})
 	}
 	st.list.SetItems(items)
+}
+
+// paletteEntry creates the explicitly bounded physical lines for one command.
+// contentWidth is the space after the bounded list's selection gutter.
+func paletteEntry(command client.Command, contentWidth int) string {
+	name := "/" + terminaltext.SanitizeSingleLine(command.Name)
+	if contentWidth <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(name) >= contentWidth {
+		return paletteTruncate(name, contentWidth)
+	}
+
+	description := terminaltext.SanitizeSingleLine(command.Description)
+	if description == "" || contentWidth < 3 {
+		return name
+	}
+
+	prefix := name + "  "
+	firstWidth := contentWidth - ansi.StringWidth(prefix)
+	if firstWidth <= 0 {
+		return name
+	}
+	parts, complete := paletteWrap(description, []int{firstWidth, contentWidth - 2, contentWidth - 2})
+	if len(parts) == 0 {
+		return name
+	}
+	lines := []string{prefix + parts[0]}
+	for _, part := range parts[1:] {
+		lines = append(lines, "│ "+part)
+	}
+	if !complete {
+		lines[len(lines)-1] = "│ " + paletteEllipsis(parts[len(parts)-1], contentWidth-2)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func paletteTruncate(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(text) <= width {
+		return text
+	}
+	if width == 1 {
+		return "…"
+	}
+	return paletteCut(text, width-1) + "…"
+}
+
+func paletteCut(text string, width int) string {
+	return ansi.Strip(ansi.Cut(text, 0, width))
+}
+
+func paletteEllipsis(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if width == 1 {
+		return "…"
+	}
+	if ansi.StringWidth(text) < width {
+		return text + "…"
+	}
+	return paletteTruncate(text, width)
+}
+
+// paletteWrap uses word boundaries when possible and cuts an overlong word by
+// display cells. It returns at most one part for each supplied width.
+func paletteWrap(text string, widths []int) ([]string, bool) {
+	remaining := strings.TrimSpace(text)
+	parts := make([]string, 0, len(widths))
+	for _, width := range widths {
+		if width <= 0 || remaining == "" {
+			break
+		}
+		if ansi.StringWidth(remaining) <= width {
+			parts = append(parts, remaining)
+			remaining = ""
+			break
+		}
+		cut := paletteCut(remaining, width)
+		if space := strings.LastIndexByte(cut, ' '); space > 0 {
+			cut = strings.TrimRight(cut[:space], " ")
+		}
+		parts = append(parts, cut)
+		remaining = strings.TrimSpace(strings.TrimPrefix(remaining, cut))
+	}
+	return parts, remaining == ""
 }
 
 func (st paletteState) selected() client.Command {
@@ -271,9 +363,12 @@ func renderPalette(th theme.Theme, st paletteState, caps client.Capabilities, in
 // renderPaletteSized draws the command dropdown as a bordered card. bodyRows is
 // the complete physical-row budget for command rows and overflow indicators.
 func renderPaletteSized(th theme.Theme, st paletteState, caps client.Capabilities, input string, width, bodyRows int) string {
+	cardWidth := min(72, width)
 	cardStyle := th.Style("askCard")
-	contentWidth := width - cardStyle.GetHorizontalFrameSize()
-	st.syncList()
+	contentWidth := cardWidth - cardStyle.GetHorizontalFrameSize()
+	if st.list == nil {
+		st.syncList()
+	}
 	if bodyRows <= 0 || contentWidth < 3 {
 		st.list.SetGeometry(contentWidth, 0, 1, bounded.Wrap)
 		return ""
@@ -281,12 +376,13 @@ func renderPaletteSized(th theme.Theme, st paletteState, caps client.Capabilitie
 	if !st.open || len(st.filtered) == 0 {
 		st.list.SetGeometry(contentWidth, 0, 1, bounded.Wrap)
 		if note := paletteEmptyNote(th, st, caps, input); note != "" {
-			return lipgloss.NewStyle().MaxWidth(width).Render(cardStyle.Render(ansi.Cut(note, 0, contentWidth)))
+			return cardStyle.Width(cardWidth).Render(ansi.Cut(note, 0, contentWidth))
 		}
 		return ""
 	}
 
 	st.list.SetGeometry(contentWidth, bodyRows, 1, bounded.Wrap)
+	st.syncListWidth(contentWidth - 2) // selection cell and its trailing padding
 	if !st.list.Valid() {
 		return ""
 	}
@@ -317,14 +413,40 @@ func renderPaletteSized(th theme.Theme, st paletteState, caps client.Capabilitie
 		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↑ +%d above", view.Above), 0, contentWidth)))
 	}
 	for _, row := range view.Rows {
-		presentation := presentListRow(row, th.Style("spinner"), th.Style("toolArgs"))
-		lines = append(lines, presentation.Style.Render(presentation.Text))
+		lines = append(lines, renderPaletteRow(th, row))
 	}
 	if bodyRows > 1 && view.Below > 0 {
 		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↓ +%d below", view.Below), 0, contentWidth)))
 	}
 	lines = append(lines, th.Style("muted").Render(ansi.Cut("↑/↓ select · pgup/pgdn page · tab/enter complete · esc dismiss", 0, contentWidth)))
-	return lipgloss.NewStyle().MaxWidth(width).Render(cardStyle.Render(strings.Join(lines, "\n")))
+	return cardStyle.Width(cardWidth).Render(strings.Join(lines, "\n"))
+}
+
+func renderPaletteRow(th theme.Theme, row bounded.ListRow) string {
+	// Keep the shared gutter and selection treatment while the entry text carries
+	// its own command/description hierarchy.
+	gutter := presentListRow(bounded.ListRow{
+		Selected: row.Selected, CursorMarker: row.CursorMarker, GutterCells: row.GutterCells,
+	}, th.Style("spinner"), th.Style("toolArgs"))
+	text := row.Text
+	if row.ItemLine == 0 {
+		if name, description, found := strings.Cut(text, "  "); found {
+			commandStyle := lipgloss.NewStyle().Bold(true)
+			if row.Selected {
+				commandStyle = th.Style("spinner").Bold(true)
+			}
+			text = commandStyle.Render(name) + th.Style("muted").Render("  "+description)
+		} else {
+			commandStyle := lipgloss.NewStyle().Bold(true)
+			if row.Selected {
+				commandStyle = th.Style("spinner").Bold(true)
+			}
+			text = commandStyle.Render(text)
+		}
+	} else {
+		text = th.Style("muted").Render(text)
+	}
+	return gutter.Style.Render(gutter.Text) + text
 }
 
 // paletteEmptyNote returns the one-line neutral note shown when the input is a

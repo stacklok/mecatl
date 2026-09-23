@@ -114,8 +114,11 @@ func TestPaletteOpensOnSlash(t *testing.T) {
 	// Built-ins lead and render first.
 	if !strings.Contains(view, "/clear") || !strings.Contains(view, "/help") ||
 		!strings.Contains(view, "/quit") || strings.Contains(view, "/exit") ||
-		!strings.Contains(view, "/diagnostics") || !strings.Contains(view, "send a concise client and server diagnostics report") {
+		!strings.Contains(view, "below") {
 		t.Fatalf("palette built-in visibility is wrong (want /quit but no /exit):\n%s", view)
+	}
+	if got := m.palette.filtered[6]; got.Name != "diagnostics" || got.Description != "send a concise client and server diagnostics report" {
+		t.Fatalf("diagnostics command changed: %+v", got)
 	}
 	for range 7 {
 		m.paletteMoveDown()

@@ -42,6 +42,9 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testi
 			if view.Below == 0 || !strings.Contains(ansi.Strip(got), "below") {
 				t.Fatalf("missing below-overflow indication: view=%+v\n%s", view, ansi.Strip(got))
 			}
+			if cardWidth := ansi.StringWidth(strings.Split(got, "\n")[0]); cardWidth != min(72, width) {
+				t.Fatalf("outer card width = %d, want %d", cardWidth, min(72, width))
+			}
 			for row, line := range strings.Split(got, "\n") {
 				if cells := ansi.StringWidth(line); cells > width {
 					t.Fatalf("row %d width = %d, offered %d: %q", row, cells, width, ansi.Strip(line))
@@ -209,15 +212,58 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_StandardRowPresentation(t *tes
 			if strings.ContainsAny(plain, "╭╮╰╯") {
 				t.Fatalf("permission-button border leaked into palette rows:\n%s", plain)
 			}
-			selectedPrefix := strings.TrimSuffix(th.Style("spinner").Render("▶"), "\x1b[m")
-			if !strings.Contains(got, selectedPrefix) {
-				t.Fatal("selected row did not use the palette selected-row style")
+			selectedCommand := th.Style("spinner").Bold(true).Render("/alpha")
+			if !strings.Contains(got, selectedCommand) {
+				t.Fatal("selected command is not prominent and bold")
 			}
-			unselectedPrefix := strings.TrimSuffix(th.Style("toolArgs").Render("  /beta"), "\x1b[m")
-			if !strings.Contains(got, unselectedPrefix) {
-				t.Fatal("unselected row did not use the palette unselected-row style")
+			mutedPrefix := strings.Split(th.Style("muted").Render("x"), "x")[0]
+			if !strings.Contains(got, mutedPrefix) {
+				t.Fatal("description did not use the muted style")
+			}
+			if !strings.Contains(got, th.Style("toolArgs").Render("  ")) {
+				t.Fatal("unselected row did not retain its standard gutter style")
 			}
 		})
+	}
+}
+
+func TestMecatuiSlashPaletteBoundedList_Scenario1_PresentationBounds(t *testing.T) {
+	st := scenarioPaletteState([]client.Command{
+		{Name: strings.Repeat("command", 12), Description: "ignored when the command uses the row"},
+		{Name: "details", Description: strings.Repeat("description words ", 24)},
+	})
+	first := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 80, maxPaletteRows)
+	if got, want := ansi.StringWidth(strings.Split(first, "\n")[0]), 72; got != want {
+		t.Fatalf("wide card width = %d, want %d", got, want)
+	}
+	st.list.Move(bounded.LineDown)
+	afterScroll := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 80, maxPaletteRows)
+	if got, want := ansi.StringWidth(strings.Split(afterScroll, "\n")[0]), 72; got != want {
+		t.Fatalf("scroll changed card width to %d, want %d", got, want)
+	}
+
+	view := st.list.View()
+	linesByID := map[string][]bounded.ListRow{}
+	for _, row := range view.Rows {
+		linesByID[row.ID] = append(linesByID[row.ID], row)
+	}
+	for id, rows := range linesByID {
+		if len(rows) > 3 {
+			t.Fatalf("%s rendered %d physical lines, want at most three", id, len(rows))
+		}
+		for _, row := range rows {
+			if ansi.StringWidth(row.Text) > 64 {
+				t.Fatalf("%s row exceeds content width: %q", id, row.Text)
+			}
+		}
+	}
+	long := linesByID["workspace:"+strings.ToLower(strings.Repeat("command", 12))]
+	if !strings.HasSuffix(ansi.Strip(long[0].Text), "…") {
+		t.Fatalf("long command did not use ellipsis: %q", long[0].Text)
+	}
+	details := linesByID["workspace:details"]
+	if len(details) != 3 || !strings.HasPrefix(ansi.Strip(details[1].Text), "│ ") || !strings.HasSuffix(ansi.Strip(details[2].Text), "…") {
+		t.Fatalf("description did not use capped hanging continuation lines: %+v", details)
 	}
 }
 
