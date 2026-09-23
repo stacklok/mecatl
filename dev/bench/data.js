@@ -256809,6 +256809,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790146108614,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da986d8bf372bf01bf396fef273677135e91c6e1",
+          "message": "fix: preserve resolved model across session restart (#1786)\n\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-23T09:37:32+03:00",
+          "tree_id": "073302b3da5c951ed99e521f4688cfa415c3d4d0",
+          "url": "https://github.com/stacklok/mecatl/commit/da986d8bf372bf01bf396fef273677135e91c6e1"
+        },
+        "date": 1790146744916,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3302.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 94.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -336761,6 +336800,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790146741498,
+  "lastUpdate": 1790146746427,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
