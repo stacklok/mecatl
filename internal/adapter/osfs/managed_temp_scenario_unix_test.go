@@ -42,7 +42,7 @@ func TestADR_0281_ForegroundLeaseOverlayAndMetadataPrivacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const command = `printf '%s\n%s' "$TMPDIR" "$GOTMPDIR" > temporary-paths; printf '%s' "${GENERIC_TOKEN-unset}" > secret-status; sleep 30`
+	const command = `printf '%s' "${GENERIC_TOKEN-unset}" > secret-status; printf '%s\n%s' "$TMPDIR" "$GOTMPDIR" > temporary-paths; sleep 30`
 	done := make(chan error, 1)
 	go func() {
 		_, runErr := runner.Run(context.Background(), command)

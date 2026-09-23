@@ -410,7 +410,7 @@ type teamLossLease struct {
 	releases map[session.SessionID]int
 }
 
-func (l *teamLossLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
+func (*teamLossLease) Acquire(_ context.Context, id session.SessionID, owner string) (port.Lease, error) {
 	return port.Lease{SessionID: id, Owner: owner, Token: 1, Expiry: time.Now().Add(time.Hour)}, nil
 }
 
