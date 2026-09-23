@@ -440,8 +440,8 @@ func TestADR_0351_ReconciliationBoundsConsentAndShutdown(t *testing.T) {
 	r.Close()
 	select {
 	case <-joined:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not join reconciliation")
+	default:
+		t.Fatal("Close returned before in-flight reconciliation finished")
 	}
 }
 
