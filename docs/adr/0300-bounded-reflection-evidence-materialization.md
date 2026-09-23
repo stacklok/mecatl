@@ -228,4 +228,4 @@ classify the API change in `engine/CHANGELOG.md` under the compatibility rules.
 - [ADR 0114 — Configurable learning trigger policy](./0114-configurable-learning-trigger-policy.md)
 - [ADR 0027 — Cloud-native stateless execution](./0027-cloud-native.md)
 - [Architecture: Evidence-backed reflection](../architecture.md#evidence-backed-reflection)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)

@@ -39,8 +39,8 @@ exists that no landed plan tracks.
 
 Named-test conventions ac-trace recognises:
 
-- `TestInvariant_<id>` — an invariant from `AGENTS.md` ("Things That Will
-  Bite You") or `docs/design/IMPLEMENTATION-NOTES.md`, id kebab → snake.
+- `TestInvariant_<id>` — an invariant in the owning architecture topic or
+  `AGENTS.md`, id kebab → snake.
 - `TestADR_NNNN_*` — a rule codified in `docs/adr/NNNN-*.md`.
 - `Test<Plan>_Scenario<N>_*` — a scenario test a plan scenario claims.
 - Descriptive test names are accepted in a `verify:` line, but prefer the
@@ -175,6 +175,12 @@ PR after verification. There is no cleanup or status-only PR.
   model-facing view of the existing resolved inventory, presenting exact
   `(provider_id, model_id)` selection handles without redesigning provider identity.
   Status: draft.
+- [Jev delegated-model router](jev-model-router.md) — adds an explicitly selected,
+  bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
+  existing delegation event, mecatui, and session-debugger paths. Status: landed implementation
+  candidate under direct operator approval and the continuing explicit stacked waiver;
+  Plan / Interface PR [#1735](https://github.com/stacklok/mecatl/pull/1735) and its stacked
+  implementation retain human merge gates.
 - [Scalable reflection evidence](scalable-reflection-evidence.md) — one versioned,
   deterministic bounded-evidence materializer for automatic and explicit reflection,
   replacing raw retained-size rejection while preserving coordinator and promotion safety.
@@ -356,6 +362,18 @@ PR after verification. There is no cleanup or status-only PR.
 - [Unified provider configuration and Mecatui provider commands](unified-provider-configuration-and-mecatui-provider-commands.md) — replace the `llm.endpoints` facade and `mecatui llm` surface with one provider model, bounded OIDC configuration, portable local setup, and comprehensive provider help. Status: proposed.
 
 - [Protocol-native prompt-cache breakpoints](unified-prompt-cache-dialect.md) — ask an upstream to cache through the Responses protocol's own `prompt_cache_breakpoint` on every request, so an explicit-ask model caches on any endpoint without mecatl consulting the vendor, plus Messages routing where model ids are shared. Status: proposed.
+
+- [Mecatl Studio bootstrap](studio-bootstrap.md) — bring the Studio web UI into the repository as a self-contained `apps/` skeleton over the published SDK: BFF runtime modes, hardened OIDC browser sessions, a one-origin multi-stage image, CI, and the `publish-studio` release job. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio chat](studio-chat.md) — the first Studio feature layer: session inventory and lifecycle routes, the run SSE union that preserves unknown SDK kinds, run controls addressed to the exact durable run, and the chat workspace with its ported behaviour tests. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio schedules](studio-schedules.md) — the second Studio feature layer: capability-gated schedule inventory, create/update mapping onto the SDK spec with unexposed fields preserved, lifecycle actions and fire history, and the browser cron builder and phrase parser. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio knowledge](studio-knowledge.md) — the third Studio feature layer: per-capability-gated configured and learned skills, revision-checked learned-skill actions, learning proposals and session reflection, and user-memory consolidation plans, with the knowledge workspace. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio settings](studio-settings.md) — the fourth Studio feature layer: the safe, capability-gated runtime-settings inventory, storage health, the eight-section settings workspace, and chat's model picker restored over the live inventory. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio global search and keyboard shortcuts](studio-search-shortcuts.md) — the last Studio feature layer: a browser-owned search index over already-served inventories, the closed shortcut registry, the reference page with honest help features, and the palette in the top nav. Status: landed in the implementation candidate; authoritative on merge.
 
 ## See also
 

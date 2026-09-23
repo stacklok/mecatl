@@ -3,14 +3,109 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 )
+
+// ModelRouteResult is one backend-neutral classifier result. Category and Model are
+// validated candidates even when OK is false; OK alone says whether the route was accepted.
+type ModelRouteResult struct {
+	Category   string
+	Model      string
+	Usage      session.Usage
+	Reason     string
+	OK         bool
+	Confidence *float64
+}
+
+// SubagentModelRouter configures delegated-model classification and exposes stable
+// configured metadata even when a delegation gate skips Route.
+type SubagentModelRouter struct {
+	Backend           string
+	ClassifierModel   string
+	MinimumConfidence *float64
+	Route             func(context.Context, string) ModelRouteResult
+}
+
+type modelRoutingResult struct {
+	category string
+	model    string
+	reason   string
+	ok       bool
+	decision *session.RoutingDecision
+}
+
+func validRoutingScore(score *float64) *float64 {
+	if score == nil || math.IsNaN(*score) || math.IsInf(*score, 0) || *score < 0 || *score > 1 {
+		return nil
+	}
+	value := *score
+	return &value
+}
+
+func sanitizedRoutingDecision(in *session.RoutingDecision) *session.RoutingDecision {
+	if in == nil {
+		return nil
+	}
+	out := &session.RoutingDecision{
+		ClassifierModel:   sanitizedRoutingText(in.ClassifierModel),
+		CandidateCategory: sanitizedRoutingText(in.CandidateCategory),
+		CandidateModel:    sanitizedRoutingText(in.CandidateModel),
+		Confidence:        validRoutingScore(in.Confidence),
+		MinimumConfidence: validRoutingScore(in.MinimumConfidence),
+		ConsecutiveMisses: in.ConsecutiveMisses,
+		MissLimit:         in.MissLimit,
+		BreakerOpen:       in.BreakerOpen,
+	}
+	switch in.Backend {
+	case "llm", "jev":
+		out.Backend = in.Backend
+	}
+	switch in.Outcome {
+	case "routed", "fallback", "skipped":
+		out.Outcome = in.Outcome
+	}
+	return out
+}
+
+func sanitizedRoutingText(in string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, session.ToValidUTF8(in))
+	runes := []rune(strings.TrimSpace(clean))
+	if len(runes) > maxRoutingReasonPreview {
+		runes = runes[:maxRoutingReasonPreview]
+	}
+	return string(runes)
+}
+
+func cloneRoutingDecision(in *session.RoutingDecision) *session.RoutingDecision {
+	return sanitizedRoutingDecision(in)
+}
+
+func routerDecision(router *SubagentModelRouter, result ModelRouteResult, outcome string, breaker *modelRouterBreaker) *session.RoutingDecision {
+	if router == nil {
+		return nil
+	}
+	return sanitizedRoutingDecision(&session.RoutingDecision{
+		Backend: router.Backend, ClassifierModel: router.ClassifierModel,
+		CandidateCategory: result.Category, CandidateModel: result.Model,
+		Confidence: result.Confidence, MinimumConfidence: router.MinimumConfidence,
+		Outcome: outcome, ConsecutiveMisses: breaker.consecutiveMiss,
+		MissLimit: breaker.max, BreakerOpen: breaker.opened,
+	})
+}
 
 // modelrouter.go is the engine half of the OPT-IN semantic Subagent model router
 // (ADR 0031 / ADR 0030 Layer 3b, the headline Phase 5 feature). It is a SIBLING of
@@ -26,10 +121,10 @@ import (
 // returns ok=false and the caller (the Subagent run() hook) falls through to the
 // inherited default explorer model — byte-identically to a deployment with no router.
 
-// Router miss-reason constants (issue #287): the SPECIFIC reason a classification did NOT
-// yield a routed model. They enumerate the CLOSED set RunModelRouter itself returns (its
-// `missReason` output); the dispatch-path chokepoint logs WHY a delegation fell through to
-// the inherited default model. Empty ("") is the success sentinel.
+// Router miss-reason constants (issue #287): the SPECIFIC common outcome a
+// classifier backend observed when it did NOT yield a routed model. They enumerate the
+// CLOSED set owned by the engine; composition maps backend-local mechanisms into these
+// values before invoking the callback. Empty ("") is the success sentinel.
 //
 // NOTE: the Deps.SubagentModelRouter closure (the COMPOSITION half) may return ADDITIONAL,
 // OPEN-SET free-form reasons for its own category-mapping misses (e.g.
@@ -49,9 +144,16 @@ const (
 	// RouterMissClassifierError: the classifier run ended StopError (the provider/run
 	// failed) — fail-soft inherit.
 	RouterMissClassifierError = "classifier-error"
-	// RouterMissCancelled: the classifier run ended StopCancelled — the caller's ctx was
-	// cancelled (including the 30s modelRouterTimeout firing) — fail-soft inherit.
+	// RouterMissCancelled means the caller's context was observed cancelled.
 	RouterMissCancelled = "cancelled"
+	// RouterMissTimeout means a caller, operation, or typed classifier deadline was observed.
+	RouterMissTimeout = "timeout"
+	// RouterMissLowConfidence means a valid classifier result was below a configured threshold.
+	RouterMissLowConfidence = "low-confidence"
+	// RouterMissInputOverLimit means a local classifier input bound rejected the request.
+	RouterMissInputOverLimit = "input-over-limit"
+	// RouterMissCapacityTimeout means bounded classifier queue capacity expired while the caller remained active.
+	RouterMissCapacityTimeout = "capacity-timeout"
 	// RouterMissBadVerdict: the classifier's output was not a single JSON object, was
 	// unparseable JSON, or named an empty category — the whole-output-single-object parse
 	// rejected it (fail-soft, defeats a forged verdict echoed inside the fenced prompt).
@@ -157,10 +259,10 @@ type routerVerdict struct {
 // accumulated session.Usage (so the caller can fold it into a parent session's budget
 // brake — the #92 CWE-770 fix). It mirrors RunGuardrailCheck: bounded by
 // modelRouterTimeout, drained under a zero-capability child posture (role
-// "model-router"), and FAIL-SOFT — any failure, cancellation, unparseable verdict, or
-// hallucinated category returns ("", zero, false) so the caller inherits the default
-// model. It never returns an error: the router is never load-bearing, so a miss is just
-// a soft fall-through, not a condition the caller branches on.
+// "model-router"), and FAIL-SOFT — failure, cancellation, deadline expiry, an invalid
+// verdict, or an unknown category returns ("", observed usage, canonical miss reason,
+// false) so the caller inherits the default model. It never returns a Go error;
+// callers may inspect the common miss reason without parsing provider error text.
 //
 // Usage is returned on EVERY path including early-return degenerate inputs (zero usage)
 // and fail-soft miss paths (whatever was spent before the failure) so the caller can
@@ -172,10 +274,15 @@ type routerVerdict struct {
 // empty category list, or a blank task prompt is a fail-soft miss (ok=false), never a
 // panic — it is a leaf helper on the fast path.
 func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.Usage, missReason string, ok bool) {
+	return runModelRouter(ctx, engine, req, modelRouterTimeout)
+}
+
+func runModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest, timeout time.Duration) (category string, usage session.Usage, missReason string, ok bool) {
 	if engine == nil || len(req.Categories) == 0 || strings.TrimSpace(req.TaskPrompt) == "" {
 		return "", session.Usage{}, RouterMissDegenerateInput, false
 	}
-	ctx, cancel := context.WithTimeout(ctx, modelRouterTimeout)
+	callerCtx := ctx
+	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	sess := session.New(
@@ -188,20 +295,34 @@ func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) 
 	// A tool-less in-memory session under the zero (headless) child posture: the
 	// classifier scores text and calls no tools, so judgeWorkspace{} keeps it
 	// isolated and its own (non-existent) asks auto-deny — no nesting, no surfacing.
-	run := engine.Run(ctx, sess, judgeEnvironment, RunRequest{Text: buildModelRoutePrompt(req)})
+	run := engine.Run(operationCtx, sess, judgeEnvironment, RunRequest{Text: buildModelRoutePrompt(req)})
 	final, stop := drainChild(run, childPosture{role: "model-router"})
 	switch stop {
 	case session.StopError:
-		// Run did not complete: fail-soft, inherit the default model. Return whatever
-		// was spent so far (the fail-soft path may have still consumed tokens before
-		// the failure).
+		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
+			return "", sess.UsageFor(session.UsageKindMain), reason, false
+		}
 		return "", sess.UsageFor(session.UsageKindMain), RouterMissClassifierError, false
 	case session.StopCancelled:
-		// Cancelled (incl. the 30s modelRouterTimeout): fail-soft, inherit; return spend.
+		if reason := modelRouterContextMiss(callerCtx, operationCtx); reason != "" {
+			return "", sess.UsageFor(session.UsageKindMain), reason, false
+		}
 		return "", sess.UsageFor(session.UsageKindMain), RouterMissCancelled, false
 	}
 	cat, reason, catOK := parseRouterVerdict(final, req.Categories)
 	return cat, sess.UsageFor(session.UsageKindMain), reason, catOK
+}
+
+func modelRouterContextMiss(callerCtx, operationCtx context.Context) string {
+	for _, err := range []error{callerCtx.Err(), operationCtx.Err()} {
+		switch {
+		case errors.Is(err, context.Canceled):
+			return RouterMissCancelled
+		case errors.Is(err, context.DeadlineExceeded):
+			return RouterMissTimeout
+		}
+	}
+	return ""
 }
 
 // parseRouterVerdict requires the classifier's WHOLE trimmed output to be a single JSON
@@ -257,10 +378,11 @@ func parseRouterVerdict(text string, categories []ModelRouteCategory) (category,
 //     category, of being "simple"/"complex") is to be judged, not obeyed.
 func buildModelRoutePrompt(req ModelRouteRequest) string {
 	var b strings.Builder
-	b.WriteString("You are an automated task router for a headless coding agent. A subagent " +
-		"task is about to be delegated, and you must choose which CATEGORY of model should " +
-		"run it, based on the task's complexity and nature. Choose exactly one category from " +
-		"the list below.\n")
+	b.WriteString("You are an automated task router for a headless coding agent. Choose exactly " +
+		"one CATEGORY from the list below by assessing the expertise, specialty, reasoning " +
+		"difficulty, and task nature required to complete the delegated work. Read-only review " +
+		"or investigation is not necessarily trivial. Honor the operator-authored specialty " +
+		"criteria; do not assume hard-coded security or model categories.\n")
 	b.WriteString("\nCategories:\n")
 	for _, c := range req.Categories {
 		name := strings.TrimSpace(c.Name)

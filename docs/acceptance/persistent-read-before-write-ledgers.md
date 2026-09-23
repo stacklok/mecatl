@@ -77,7 +77,7 @@ Two independently constructed Redis ledger handles bind to the same session scop
 
 ### Scenario 3 — File tools fail closed without weakening final CAS
 
-The built-in Read/Edit/Write tools use the selected ledger's error-bearing operations. A failed lookup or a corrupt record never authorizes mutation; a changed file still fails before replacement; and a change racing after the tool's current read is still stopped by `ReplaceFile`. New-file Write remains create-only and needs no fabricated prior-read evidence. These are the load-bearing mutation rules in [ADR-0208](../adr/0208-execution-environment.md) and [`IMPLEMENTATION-NOTES.md` § Version-aware Workspace mutation](../design/IMPLEMENTATION-NOTES.md).
+The built-in Read/Edit/Write tools use the selected ledger's error-bearing operations. A failed lookup or a corrupt record never authorizes mutation; a changed file still fails before replacement; and a change racing after the tool's current read is still stopped by `ReplaceFile`. New-file Write remains create-only and needs no fabricated prior-read evidence. These are the load-bearing mutation rules in [ADR-0208](../adr/0208-execution-environment.md) and [the Workspace contract](../architecture/ports.md).
 
 A post-mutation ledger-write failure is reported honestly: the already-successful create/replace is not rolled back or described as untouched, and no new evidence is assumed. Existing evidence is not fabricated or invalidated: a later existing-file mutation may proceed only when that evidence still equals the current version and final `ReplaceFile` CAS succeeds.
 

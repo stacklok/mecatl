@@ -2124,6 +2124,22 @@ message Hook {
   string call_id = 4;
 }
 
+// RoutingDecision is bounded configured-router evidence attached to a delegation
+// start projection. Existing model/routed_*/routing_reason fields remain authoritative
+// for the child that actually ran and the final routing result.
+message RoutingDecision {
+  string backend = 1;
+  string classifier_model = 2;
+  string candidate_category = 3;
+  string candidate_model = 4;
+  optional double confidence = 5;
+  optional double minimum_confidence = 6;
+  string outcome = 7;
+  int32 consecutive_misses = 8;
+  int32 miss_limit = 9;
+  bool breaker_open = 10;
+}
+
 // Subagent is the REDACTED observability projection carried by the three
 // subagent.* events. Mirrors session.SubagentPayload. It carries metadata ONLY —
 // no child message text, tool args, or result bodies — so a client can render a
@@ -2211,6 +2227,9 @@ message Subagent {
   // reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the
   // emit site. Mirrors session.SubagentPayload.RoutingReason.
   string routing_reason = 18;
+  // routing_decision is the optional bounded configured-router evidence captured
+  // on subagent.start. Historical events and deployments without a router omit it.
+  optional RoutingDecision routing_decision = 19;
 }
 
 // TeamMemberSpec is one roster entry forwarded on team.start. Mirrors
@@ -2255,6 +2274,9 @@ message TeamMemberSpec {
   // member content crosses). Clamped at the emit site. Mirrors
   // session.TeamMemberSpec.RoutingReason.
   string routing_reason = 8;
+  // routing_decision is the optional bounded configured-router evidence captured
+  // for this member on team.start. Historical roster entries omit it.
+  optional RoutingDecision routing_decision = 9;
 }
 
 // Team is the BOUNDED observability projection carried by the three team.* events.
@@ -2456,6 +2478,9 @@ message Parallel {
   // it is context-isolation safe (gauntlet #7: no branch content crosses).
   // Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason.
   string routing_reason = 25;
+  // routing_decision is the optional bounded configured-router evidence captured
+  // on branch_start. Historical events and deployments without a router omit it.
+  optional RoutingDecision routing_decision = 26;
 }
 
 // ToolCall is a request from the model to invoke a named tool. Mirrors

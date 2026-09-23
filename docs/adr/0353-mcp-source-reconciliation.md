@@ -1,4 +1,4 @@
-# ADR 0351 — Reconcile stale direct MCP source snapshots
+# ADR 0353 — Reconcile stale direct MCP source snapshots
 
 - Status: Proposed
 - Date: 2026-09-16

@@ -316,7 +316,10 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   memstore has an in-memory sibling; `grpcdriver` carries the remote
   `EventLogService` (`--event-log-url`, independent of the session store). The
   log also records the log-only **`EvUserPrompt`** and out-of-band
-  **`EvSessionTitle`** events. A title event follows a successful snapshot save and
+  **`EvSessionTitle`** events. The append boundary stamps `Event.Actor` from the
+  verified request-context principal, not the session owner. User prompts and
+  compaction archives contain conversation content; delegation-preview redaction
+  is not blanket secret or PII filtering. A title event follows a successful snapshot save and
   carries only title lifecycle metadata; it contains no title-source prompts or
   provider errors. It is also offered best-effort to gRPC live-session subscribers,
   while HTTP clients reconcile it through the authoritative snapshot or durable

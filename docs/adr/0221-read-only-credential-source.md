@@ -59,4 +59,4 @@ coordinate replicas. The default posture remains fail-closed.
 - [ADR 0218 — Internal encrypted credential store](./0218-credential-store.md)
 - [ADR 0220 — Adapter-local MCP OAuth controller](./0220-mcp-oauth-controller.md)
 - [Architecture overview](../architecture.md#internal-credential-store)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md#credential-store)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md#credential-store)

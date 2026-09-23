@@ -971,15 +971,6 @@ func newMCPContractDriftServer(t *testing.T) string {
 	return httpServer.URL
 }
 
-func requestHasTool(req port.LLMRequest, name string) bool {
-	for _, spec := range req.Tools {
-		if spec.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 func TestMCPSourceReconciliation_Scenario3_DelegationAndResumeNameSemantics(t *testing.T) {
 	const (
 		name        = "mcp__svc__echo"

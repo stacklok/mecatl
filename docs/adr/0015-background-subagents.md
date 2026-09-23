@@ -24,7 +24,7 @@ SubagentStatus + seal/drain, `3617285`), **I3b** (notice injection + background-
 nudge + mecademo, `e249dae`), **I4** (TUI background surfaces + description pass + this
 doc's promotion — the final iteration). This document is the design **as built**: the
 post-review amendments are folded into the body where they changed it. Per-subsystem
-implementation detail lives in `docs/design/IMPLEMENTATION-NOTES.md`; companion docs:
+implementation detail lives in [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md); companion docs:
 `docs/adr/0014-agent-teams.md`.
 
 The arc closed the two remaining Tier-4/Tier-5 delegation gaps as ONE co-designed feature

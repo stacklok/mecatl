@@ -67,7 +67,7 @@ Agents and Models use the same physical accounting for their complete rendered s
 
 ### Scenario 3 — visible owners consume consistent mouse input
 
-In alternate-screen mouse mode, wheel and primary-click input target the visible owner rather than hidden conversation content. Models uses the existing frame-scoped hit lifecycle documented in [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md); Agents receives only the explicit root wheel branch needed before its future formal `surface` migration.
+In alternate-screen mouse mode, wheel and primary-click input target the visible owner rather than hidden conversation content. Models uses the existing frame-scoped hit lifecycle documented in [the surface contract](../design/surface-migration-plan.md#shipped-approval-render-frame-hit-dispatch); Agents receives only the explicit root wheel branch needed before its future formal `surface` migration.
 
 **Acceptance:**
 - AC3.1: Wheel over Subagent, Parallel-group, focused-Parallel-branch, or Team rosters moves one logical item; wheel over Subagent/Team traces or Team tasks/findings moves one physical browsing line; every path clamps at both ends.

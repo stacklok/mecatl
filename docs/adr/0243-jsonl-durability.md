@@ -111,7 +111,7 @@ so operators must still secure the owner-only store tree.
 - `internal/adapter/store/jsonlstore/jsonlstore.go` (`appendLine`)
 - [`migrateLegacyFamily` in `resolve.go` at the decision commit](https://github.com/stacklok/mecatl/blob/ad1cfe3c89a640905b88fb69f9905df498ba5c9c/internal/adapter/store/jsonlstore/resolve.go)
 - `docs/architecture/observability.md`
-- `docs/design/IMPLEMENTATION-NOTES.md`
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [ADR 0027](./0027-cloud-native.md)
 - [ADR 0104](./0104-session-family-physical-naming.md)
 - [ADR 0226](./0226-session-storage-maintenance.md)

@@ -1,5 +1,6 @@
-# Publishes and signs the mecated, mecatui, and mecak8s images, the mecak8s Helm
-# chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
+# Publishes and signs the mecated, mecatui, and mecak8s images, the Slack bot
+# example image, the Mecatl Studio image (early access, ADR 0351), the mecak8s
+# Helm chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
 # stacklok/homebrew-tap formula) from root `v*` tags or an explicitly selected tag.
 name: Release
 
@@ -643,6 +644,141 @@ jobs:
         run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE_REF}"
 
       - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          # attest-build-provenance defaults create-storage-record to true whenever
+          # push-to-registry is set, which then needs an `artifact-metadata: write`
+          # permission and emits two warnings per job when it is absent (8 per
+          # release, present since at least v0.0.29). We do not consume GitHub's
+          # artifact-metadata index — the attestation itself is what
+          # `gh attestation verify` / `cosign verify-attestation` read, and it
+          # succeeds regardless. Granting the permission is not currently an option:
+          # actionlint v1.7.7 rejects `artifact-metadata` as an unknown scope, so it
+          # would fail `task lint:actions`. Declare the feature off instead of
+          # silently failing at it.
+          create-storage-record: false
+
+  publish-studio:
+    needs: guard
+    name: Build, publish, sign, attest Mecatl Studio image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+      packages: write # push image + SBOM to GHCR
+      id-token: write # OIDC: cosign keyless signing AND provenance (ghcr login uses GITHUB_TOKEN, not OIDC)
+      attestations: write # SLSA build provenance via actions/attest-build-provenance
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/studio
+      # On workflow_dispatch github.ref_name is the default branch, so prefer
+      # the explicit input; on a tag push github.ref_name is the tag.
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ env.VERSION }}
+
+      # A workflow_dispatch of an older tag checks out that tag while
+      # github.sha stays the default-branch commit that started the run.
+      # Label the revision actually built, or the image identifies a commit it
+      # does not contain.
+      - name: Resolve the built revision
+        id: revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Two cases publish nothing, loudly, instead of failing the release or
+      # publishing a misattributed image:
+      # - a tag that predates Studio has no apps/Dockerfile to build;
+      # - a dispatch that checked out a tag other than the run's own commit
+      #   would get build provenance naming the run's commit, not the source
+      #   actually built. Re-run the workflow ON the tag to publish it.
+      - name: Decide whether this revision publishes Studio
+        id: gate
+        env:
+          BUILT: ${{ steps.revision.outputs.sha }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          if [ ! -f apps/Dockerfile ]; then
+            echo "::notice title=Studio not published::${VERSION} predates Mecatl Studio (no apps/Dockerfile)."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ "$BUILT" != "$RUN_SHA" ]; then
+            echo "::notice title=Studio not published::${VERSION} resolves to ${BUILT}, but this run is ${RUN_SHA}; its provenance would name the wrong source. Run the workflow on ${VERSION} itself."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        if: steps.gate.outputs.publish == 'true'
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: steps.gate.outputs.publish == 'true'
+
+      - name: Login to GHCR
+        if: steps.gate.outputs.publish == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build context is apps/ ONLY: Studio consumes the PUBLISHED
+      # @stacklok-oss/mecatl-sdk, never the in-tree SDK (ADR 0351), so the Go
+      # root and sdk/typescript are not part of the image. Tag both the version
+      # and latest, matching the jobs above. Studio is in EARLY ACCESS and may
+      # change without notice between versions — the stability label says so,
+      # so infrastructure can wire the deployment early without mistaking it
+      # for a stable surface.
+      - name: Build and push image
+        if: steps.gate.outputs.publish == 'true'
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: apps
+          file: apps/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.VERSION }}
+            ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=studio
+            org.opencontainers.image.revision=${{ steps.revision.outputs.sha }}
+            org.opencontainers.image.vendor=Stacklok
+            org.stacklok.mecatl.studio.stability=early-access
+
+      # Sign/SBOM/attest the pushed manifest list BY DIGEST, matching the
+      # ko-based jobs above — never a mutable tag, so this binds to the exact
+      # artifact docker/build-push-action just pushed.
+      - name: Sign image (keyless)
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}"
+
+      - name: Generate SBOM file
+        if: steps.gate.outputs.publish == 'true'
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          # SBOM is attested below; don't also publish it as a release asset.
+          upload-artifact: false
+
+      - name: Attest SBOM (keyless)
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE_REF}"
+
+      - name: Attest build provenance
+        if: steps.gate.outputs.publish == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}

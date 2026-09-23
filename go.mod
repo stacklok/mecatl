@@ -42,6 +42,7 @@ require (
 	github.com/stacklok/toolhive v0.45.0
 	github.com/stacklok/toolhive-core v0.0.50
 	github.com/stacklok/toolhive-core/redisconn v0.0.2
+	github.com/stacklok/typesafe-go v0.1.0
 	github.com/tiktoken-go/tokenizer v0.8.0
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.69.0

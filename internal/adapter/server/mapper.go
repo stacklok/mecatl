@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 	"math"
+	"strings"
+	"unicode"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -212,6 +214,53 @@ func toProtoSteer(p session.SteerPayload) *mecatlv1.SteerEcho {
 	return &mecatlv1.SteerEcho{Text: valid(p.Text), Parts: contentToProto(p.Parts), MessageId: valid(p.MessageID)}
 }
 
+func toProtoRoutingDecision(in *session.RoutingDecision) *mecatlv1.RoutingDecision {
+	if in == nil {
+		return nil
+	}
+	out := &mecatlv1.RoutingDecision{
+		ClassifierModel:   routingEvidenceString(in.ClassifierModel),
+		CandidateCategory: routingEvidenceString(in.CandidateCategory),
+		CandidateModel:    routingEvidenceString(in.CandidateModel),
+		ConsecutiveMisses: ClampInt32(in.ConsecutiveMisses),
+		MissLimit:         ClampInt32(in.MissLimit),
+		BreakerOpen:       in.BreakerOpen,
+	}
+	switch in.Backend {
+	case "llm", "jev":
+		out.Backend = in.Backend
+	}
+	switch in.Outcome {
+	case "routed", "fallback", "skipped":
+		out.Outcome = in.Outcome
+	}
+	out.Confidence = routingProbability(in.Confidence)
+	out.MinimumConfidence = routingProbability(in.MinimumConfidence)
+	return out
+}
+
+func routingProbability(in *float64) *float64 {
+	if in == nil || math.IsNaN(*in) || math.IsInf(*in, 0) || *in < 0 || *in > 1 {
+		return nil
+	}
+	value := *in
+	return &value
+}
+
+func routingEvidenceString(in string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, valid(in))
+	runes := []rune(strings.TrimSpace(clean))
+	if len(runes) > 200 {
+		runes = runes[:200]
+	}
+	return string(runes)
+}
+
 // toProtoParallel maps a session.ParallelPayload to its proto Parallel form: the
 // bounded-preview projection of a Parallel fork-join run. Usage is always emitted
 // (zero on the start/branch_start/branch_tool kinds); the per-kind field population
@@ -221,29 +270,30 @@ func toProtoSteer(p session.SteerPayload) *mecatlv1.SteerEcho {
 // content — preserving gauntlet #7.
 func toProtoParallel(p session.ParallelPayload) *mecatlv1.Parallel {
 	return &mecatlv1.Parallel{
-		ParentCallId:   p.ParentCallID,
-		Kind:           string(p.Kind),
-		Join:           valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
-		BranchCount:    ClampInt32(p.BranchCount),
-		BranchIndex:    ClampInt32(p.BranchIndex),
-		ChildId:        p.ChildID,
-		BranchLabel:    valid(p.BranchLabel),
-		Goal:           valid(p.Goal),
-		RoutedCategory: p.RoutedCategory,
-		RoutedModel:    p.RoutedModel,
-		RoutingReason:  p.RoutingReason,
-		Model:          p.Model,
-		ToolName:       valid(p.ToolName),
-		IsError:        p.IsError,
-		ToolCount:      ClampInt32(p.ToolCount),
-		InnerKind:      string(p.InnerKind),
-		Text:           valid(p.Text),
-		Detail:         valid(p.Detail),
-		Failed:         p.Failed,
-		Stop:           string(p.Stop),
-		Usage:          toProtoUsage(p.Usage),
-		DurationMs:     p.DurationMs,
-		Winner:         ClampInt32(p.Winner),
+		ParentCallId:    p.ParentCallID,
+		Kind:            string(p.Kind),
+		Join:            valid(p.Join), // model-authored arg, not a harness token: normalizeJoin passes unknown values through
+		BranchCount:     ClampInt32(p.BranchCount),
+		BranchIndex:     ClampInt32(p.BranchIndex),
+		ChildId:         p.ChildID,
+		BranchLabel:     valid(p.BranchLabel),
+		Goal:            valid(p.Goal),
+		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
+		RoutedModel:     routingEvidenceString(p.RoutedModel),
+		RoutingReason:   routingEvidenceString(p.RoutingReason),
+		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
+		Model:           routingEvidenceString(p.Model),
+		ToolName:        valid(p.ToolName),
+		IsError:         p.IsError,
+		ToolCount:       ClampInt32(p.ToolCount),
+		InnerKind:       string(p.InnerKind),
+		Text:            valid(p.Text),
+		Detail:          valid(p.Detail),
+		Failed:          p.Failed,
+		Stop:            string(p.Stop),
+		Usage:           toProtoUsage(p.Usage),
+		DurationMs:      p.DurationMs,
+		Winner:          ClampInt32(p.Winner),
 	}
 }
 
@@ -406,14 +456,15 @@ func toProtoTeam(p session.TeamPayload) *mecatlv1.Team {
 	roster := make([]*mecatlv1.TeamMemberSpec, 0, len(p.Roster))
 	for _, m := range p.Roster {
 		roster = append(roster, &mecatlv1.TeamMemberSpec{
-			Name:           valid(m.Name),
-			Role:           valid(m.Role),
-			Mutating:       m.Mutating,
-			Lead:           m.Lead,
-			RoutedCategory: m.RoutedCategory,
-			RoutedModel:    m.RoutedModel,
-			RoutingReason:  m.RoutingReason,
-			Model:          m.Model,
+			Name:            valid(m.Name),
+			Role:            valid(m.Role),
+			Mutating:        m.Mutating,
+			Lead:            m.Lead,
+			RoutedCategory:  routingEvidenceString(m.RoutedCategory),
+			RoutedModel:     routingEvidenceString(m.RoutedModel),
+			RoutingReason:   routingEvidenceString(m.RoutingReason),
+			RoutingDecision: toProtoRoutingDecision(m.RoutingDecision),
+			Model:           routingEvidenceString(m.Model),
 		})
 	}
 	tasks := make([]*mecatlv1.TeamTask, 0, len(p.Tasks))
@@ -531,24 +582,25 @@ func toProtoTeamTaskSnapshot(t session.TeamTaskSnapshot) *mecatlv1.TeamTask {
 // already clamped by the single redaction chokepoint upstream in engine/agent.
 func toProtoSubagent(p session.SubagentPayload) *mecatlv1.Subagent {
 	return &mecatlv1.Subagent{
-		ParentCallId:   p.ParentCallID,
-		ChildId:        p.ChildID,
-		Goal:           valid(p.Goal),
-		Background:     p.Background,
-		RoutedCategory: p.RoutedCategory,
-		RoutedModel:    p.RoutedModel,
-		RoutingReason:  p.RoutingReason,
-		Model:          p.Model,
-		ToolName:       valid(p.ToolName),
-		IsError:        p.IsError,
-		ToolCount:      ClampInt32(p.ToolCount),
-		InnerKind:      string(p.InnerKind),
-		Text:           valid(p.Text),
-		Detail:         valid(p.Detail),
-		Usage:          toProtoUsage(p.Usage),
-		Stop:           string(p.Stop),
-		Cause:          valid(p.Cause),
-		DurationMs:     p.DurationMs,
+		ParentCallId:    p.ParentCallID,
+		ChildId:         p.ChildID,
+		Goal:            valid(p.Goal),
+		Background:      p.Background,
+		RoutedCategory:  routingEvidenceString(p.RoutedCategory),
+		RoutedModel:     routingEvidenceString(p.RoutedModel),
+		RoutingReason:   routingEvidenceString(p.RoutingReason),
+		RoutingDecision: toProtoRoutingDecision(p.RoutingDecision),
+		Model:           routingEvidenceString(p.Model),
+		ToolName:        valid(p.ToolName),
+		IsError:         p.IsError,
+		ToolCount:       ClampInt32(p.ToolCount),
+		InnerKind:       string(p.InnerKind),
+		Text:            valid(p.Text),
+		Detail:          valid(p.Detail),
+		Usage:           toProtoUsage(p.Usage),
+		Stop:            string(p.Stop),
+		Cause:           valid(p.Cause),
+		DurationMs:      p.DurationMs,
 	}
 }
 

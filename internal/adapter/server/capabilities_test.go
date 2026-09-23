@@ -54,7 +54,9 @@ func (noopMemStore) Search(context.Context, string, int) ([]tool.MemoryEntry, er
 
 type stubCommandLister struct{}
 
-func (*stubCommandLister) List(context.Context, string) ([]server.Command, error) { return nil, nil }
+func (*stubCommandLister) List(context.Context, tool.Workspace) ([]server.Command, error) {
+	return nil, nil
+}
 
 // stubMemberEngine satisfies Config.MemberEngine (MemberEngineFactory) just
 // enough to be non-nil; the Service only nil-checks it for the teams cap. It is

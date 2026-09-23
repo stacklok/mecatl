@@ -288,6 +288,10 @@ Provider credentials are read from `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
 use an owner-only `auth.yaml` file. See
 [Configure provider credentials](./settings.md#configure-provider-credentials).
 
+An active `models.router.backend: jev` reads `TYPESAFE_API_KEY` from the process
+environment. This router credential has no `auth.yaml` or command-line form. It
+is inert unless an operator taxonomy selects the Jev backend.
+
 The experimental `openai-codex` provider uses a manually supplied ChatGPT Codex
 token and has no login or refresh flow. See the same credential guide for its
 schema and lifecycle.

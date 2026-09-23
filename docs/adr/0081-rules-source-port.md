@@ -115,5 +115,5 @@ instruction and is never persisted into the conversation (ADR 0043 ephemeral fra
 - [ADR 0011](./0011-soul-and-user-model.md) — the fail-soft byte-cap precedent (soul).
 - The #328 agentfs/skillfs graduation — the consumer-local-port + structural-adapter +
   per-package carry + root-alias-shim pattern this follows.
-- `docs/architecture.md` (prompt package), `docs/design/IMPLEMENTATION-NOTES.md`
+- `docs/architecture.md` (prompt package), [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
   (pattern 2 — scoped context assembly).

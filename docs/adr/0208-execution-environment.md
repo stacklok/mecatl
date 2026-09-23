@@ -174,7 +174,7 @@ cross-run authorization state is introduced.
 ## See also
 
 - [Architecture — ports and adapter boundaries](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [ADR 0027 — cloud-native state and resource inventory](./0027-cloud-native.md)
 - [ADR 0036 — engine module boundary](./0036-engine-module.md)
 - [ADR 0077 — direct-write subagents](./0077-direct-write-subagent.md)

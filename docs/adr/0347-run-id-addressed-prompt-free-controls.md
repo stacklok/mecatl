@@ -160,4 +160,4 @@ atomic result rather than attempting a racy inspection around `Run.Approve`.
 - [ADR 0288 — TypeScript SDK durable attachment](./0288-typescript-sdk-durable-attachment.md)
 - [ADR 0304 — TypeScript SDK public surface completeness](./0304-typescript-sdk-public-surface-and-release.md)
 - [TypeScript SDK architecture](../architecture.md#typescript-sdk)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md#typescript-sdk--sdktypescript-m1m4-public-surface-and-post-v010-deno-integration-adrs-0279-0288-0292-0304-0328-0337-0338-and-0339)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md#typescript-sdk--sdktypescript-m1m4-public-surface-and-post-v010-deno-integration-adrs-0279-0288-0292-0304-0328-0337-0338-and-0339)

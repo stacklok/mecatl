@@ -4,7 +4,7 @@
 # that family's runners. It answers ONE question per category: could any changed
 # path affect this category of job?
 #
-# Usage:  ... | bash relevant-changes.sh <go|sdk|site>
+# Usage:  ... | bash relevant-changes.sh <go|sdk|site|studio>
 #
 #   go   — the Go build/test matrix (build, test-race-*, analysis/lint, vuln,
 #          fuzz-smoke, engine-standalone, provider-standalone, api-compat).
@@ -31,13 +31,21 @@
 #          from the TS declarations), and to the CI-control files that define the
 #          job and its task recipes (.github/, Taskfile.yml). Everything else is
 #          irrelevant.
+#   studio — the Mecatl Studio job (`studio`: apps/ lint, typecheck, test, the
+#          generated-artifact drift check, and a no-push image build of
+#          apps/Dockerfile). Studio is a self-contained pnpm workspace that
+#          consumes only the PUBLISHED @stacklok-oss/mecatl-sdk (ADR 0351), so
+#          neither sdk/typescript/ nor contracts/ nor any Go change can alter it —
+#          relevant ONLY to apps/ and to the CI-control files that define the job
+#          and its task recipes (.github/, Taskfile.yml). Everything else is
+#          irrelevant.
 #
 # The classification is fail-closed. Any malformed, empty, or unterminated input
 # prints "true" (RUN the family) regardless of category, and an unknown category
 # treats nothing as provably irrelevant. For the `go` category, any path outside
 # the small irrelevant allowlist also prints "true" (RUN) — the expensive/critical
-# path defaults to running. The `sdk` and `site` categories use small positive
-# allowlists covering both their content directories AND the CI-control files
+# path defaults to running. The `sdk`, `site`, and `studio` categories use small
+# positive allowlists covering both their content directories AND the CI-control files
 # (.github/, Taskfile.yml) that define the job and its task recipes, so a
 # well-formed path outside the allowlist cannot affect them; the
 # category-independent malformed-input backstop below still fails to RUN.
@@ -55,10 +63,13 @@ category="${1:-}"
 irrelevant() {
   case "$category" in
     go)
-      # Documentation, the docs/user-facing site, and the TypeScript SDK frontend
-      # cannot affect a Go binary or Go test. Anything else RUNs.
+      # Documentation, the docs/user-facing site, the TypeScript SDK frontend, and
+      # the Mecatl Studio workspace cannot affect a Go binary or Go test. apps/ is
+      # a self-contained pnpm workspace with no Go package, no go.mod, and nothing
+      # a Go build or test reads; the `studio` category owns its checks. Anything
+      # else RUNs.
       case "$1" in
-        README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*|sdk/typescript/*)
+        README.md|docs/*.md|docs/*.mdx|user-docs/*|website/*|sdk/typescript/*|apps/*)
           return 0 ;;
       esac
       return 1
@@ -79,6 +90,15 @@ irrelevant() {
       # that define the job and the task recipes it runs.
       case "$1" in
         website/*|user-docs/*|sdk/typescript/*|.github/*|Taskfile.yml) return 1 ;;
+      esac
+      return 0
+      ;;
+    studio)
+      # Mecatl Studio: relevant to the apps/ workspace (which depends on the
+      # published SDK, never the in-tree one) and the CI-control files that define
+      # the job and the task recipes it runs.
+      case "$1" in
+        apps/*|.github/*|Taskfile.yml) return 1 ;;
       esac
       return 0
       ;;

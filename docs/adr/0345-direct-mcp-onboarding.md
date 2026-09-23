@@ -47,4 +47,4 @@ Removal deliberately retains a non-token tombstone so interruption is recoverabl
 - [ADR 0318 — Headless mecatui credential backend selection](./0318-headless-mecatui-credential-backend-selection.md)
 - [ADR 0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
 - [Architecture guide](../architecture.md#internal-credential-store)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md#mcp-oauth-controller-adr-0220)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md#mcp-oauth-controller-adr-0220)

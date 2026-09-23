@@ -6,19 +6,19 @@ This folder no longer holds the per-feature design records — those are now num
 
 - [PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md) — the **single status tracker**
   (what is shipped / in-progress / deferred).
-- [IMPLEMENTATION-NOTES.md](./IMPLEMENTATION-NOTES.md) — the dense, living per-subsystem
-  implementation reference.
 - [principles.md](./principles.md) — the **platform principles** acceptance plans cite
   as `Principle N` (the ac-trace grounding list).
 - [surface-migration-plan.md](./surface-migration-plan.md) — the issue #555 surface
   interface (one modal, dynamic Open, surfaceDeps); `/soul` is the first migrator.
 - this file — the **documentation & citation conventions** the `docs/lint` gate enforces.
 
-One source of truth per fact: current behaviour in
-[`docs/architecture.md`](../architecture.md), mutable status in
-[PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md), the *why* in the
-[ADRs](../adr/README.md). New decisions are new ADRs (copy
-[`template.md`](../adr/template.md)); supersede with a new ADR, never an in-place rewrite.
+One source of truth per fact: current behavior in the owning
+[architecture topic](../READING.md), mutable status in
+[PRODUCTION-READINESS.md](./PRODUCTION-READINESS.md), and durable rationale in
+[ADRs](../adr/README.md). Supersede accepted decisions with a new ADR, never an
+in-place rewrite. Follow the [documentation change review](../development-process.md#documentation-change-review)
+when deciding what to write, update, or delete. This directory is not a journal
+of implementation work; that history remains in PRs and Git.
 
 ## The citation convention
 

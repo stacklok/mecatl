@@ -13,6 +13,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
+  `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
+  snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).
+
+- **Backend-neutral router outcomes** — adds `agent.RouterMissTimeout`,
+  `RouterMissLowConfidence`, `RouterMissInputOverLimit`, and
+  `RouterMissCapacityTimeout` to the engine-owned closed classifier-outcome taxonomy.
+  Added (minor).
+
 - **Authoritative negotiated session-store capabilities** — adds
   `port.SessionCapabilitySupport` and the `SupportsSessionCreate`,
   `SupportsSessionMetadataPaging`, and `SupportsSessionLineage` probes. Adapters
@@ -239,6 +248,25 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Exact Team parent-call correlation** — Team-tool member relationships now
+  populate the existing `session.SessionRelationship.CallID`; validation permits
+  that optional value only with a valid parent lifetime. The exported
+  `session.NewTeamMember` signature and relationship shape are unchanged, and
+  historical relationships without a call ID remain loadable but uncorrelated.
+  Older engine binaries may reject newly populated Team-member relationships because
+  their validation forbade this existing field for that kind. Changed (breaking,
+  pre-v1 minor).
+
+- **Delegated-model router callback** — changes `agent.Deps.SubagentModelRouter`
+  from the callback tuple to `*agent.SubagentModelRouter`, preserving configured
+  classifier metadata on skipped decisions and candidate evidence on rejected
+  decisions. Changed (breaking, pre-v1 minor).
+
+- **Model-router deadline outcome** — `agent.RunModelRouter` now reports an observed
+  caller or operation deadline as `RouterMissTimeout` instead of conflating it with
+  `RouterMissCancelled`; cancellation remains `RouterMissCancelled`. Changed
+  (observable behavior, pre-v1 minor).
 
 - **Mandatory versioned memory lifecycle/CAS** — consolidates `tool.MemoryStore`
   around `Remember`, `Inspect`, `Recall`, `List`, `Index`, `Search`, `Forget`, and

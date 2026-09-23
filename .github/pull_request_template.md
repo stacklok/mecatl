@@ -84,7 +84,8 @@ Relates to #
 
 - [ ] Acceptance-plan checker
 - [ ] Linting (`task lint`)
-- [ ] Offline test suite (`task test`)
+- [ ] Fast offline test suite (`task test`)
+- [ ] Pre-review race suite (`task test:race`)
 - [ ] Offline demo (`go run ./cmd/mecademo`)
 - [ ] Markdown changed: docs generation/link checks (`task docs`)
 - [ ] User docs/user-facing behavior changed: site build (`task site:build`)

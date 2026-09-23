@@ -121,4 +121,4 @@ nor the future remote/durable broker boundary.
 - [ADR 0220 — Adapter-local MCP OAuth controller](./0220-mcp-oauth-controller.md)
 - [ADR 0291 — Server-owned session placement](./0291-server-owned-session-placement.md)
 - [Architecture guide](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)

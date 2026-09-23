@@ -31,7 +31,7 @@ func grantAuthoritySession(t *testing.T) *Session {
 	return s
 }
 
-func TestADR_0351_GrantToolAuthorityPreservesAggregateState(t *testing.T) {
+func TestADR_0353_GrantToolAuthorityPreservesAggregateState(t *testing.T) {
 	t.Run("duplicate stable union and input cloned", func(t *testing.T) {
 		s := grantAuthoritySession(t)
 		before := *s

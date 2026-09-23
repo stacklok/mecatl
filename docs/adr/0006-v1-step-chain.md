@@ -251,4 +251,4 @@ Critical path: **WP1 → WP2 → WP7 → WP8 → WP10 → WP11**.
 
 ---
 
-*Part of the [design docs](../design/README.md). Related: [mecatl — Architecture](0004-v1-architecture.md), [Implementation Notes](../design/IMPLEMENTATION-NOTES.md).*
+*Part of the [design docs](../design/README.md). Related: [mecatl — Architecture](0004-v1-architecture.md), [Implementation Notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md).*

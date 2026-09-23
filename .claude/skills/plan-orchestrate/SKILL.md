@@ -167,7 +167,7 @@ After all tasks integrate, run from the integration worktree and preserve exit c
 
 ```sh
 task lint; LINT_RC=$?
-task test; TEST_RC=$?
+task test:race; TEST_RC=$?
 task docs; DOCS_RC=$?
 go run ./cmd/mecademo; DEMO_RC=$?
 ```

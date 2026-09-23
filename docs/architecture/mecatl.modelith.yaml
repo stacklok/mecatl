@@ -327,8 +327,9 @@ entities:
           backend supports the requested external access and policy authorizes
           it. A posture cannot create a missing backend capability or turn a
           virtual root into a host filesystem path. Local out-of-root serving
-          is operation-specific; namespace operations and searches remain
-          confined even where Read, Write, and Edit support approved access.
+          is operation-specific: Read, ListDir, Write, and Edit can serve
+          policy-authorized external absolute targets, while mutating namespace
+          operations and searches remain confined.
       - id: workspace-tools-use-ports
         statement: >
           Read, ListDir, Write, Edit, Copy, Move, Remove, Glob, and Grep use the

@@ -204,7 +204,7 @@ pre-existing operator can see, and it removes a hop.
   paragraph, now with the direct-mode row.
 - [Usage guide](../usage.md) — the ToolHive LLM gateway walkthrough, the `--toolhive-llm-mode`
   table, `mecatui login`, the headless remediation, and the `tls_skip_verify` → proxy note.
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md) — the direct-mode token-source
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the direct-mode token-source
   section beside the `openaicompat` + `toolhivellm` entry.
 - [ADR 0002 — Documentation lifecycle](./0002-documentation-lifecycle.md) — the ADR freeze
   convention this record follows.

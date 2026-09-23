@@ -860,6 +860,8 @@ export interface ParallelEventPayload {
     // (undocumented)
     readonly routedModel: string;
     // (undocumented)
+    readonly routingDecision?: RoutingDecisionEventPayload | undefined;
+    // (undocumented)
     readonly routingReason: string;
     // (undocumented)
     readonly stop: string;
@@ -1029,6 +1031,30 @@ export const RetryDisposition: {
 
 // @public
 export type RetryDisposition = (typeof RetryDisposition)[keyof typeof RetryDisposition];
+
+// @public
+export interface RoutingDecisionEventPayload {
+    // (undocumented)
+    readonly backend: string;
+    // (undocumented)
+    readonly breakerOpen: boolean;
+    // (undocumented)
+    readonly candidateCategory: string;
+    // (undocumented)
+    readonly candidateModel: string;
+    // (undocumented)
+    readonly classifierModel: string;
+    // (undocumented)
+    readonly confidence?: number | undefined;
+    // (undocumented)
+    readonly consecutiveMisses: number;
+    // (undocumented)
+    readonly minimumConfidence?: number | undefined;
+    // (undocumented)
+    readonly missLimit: number;
+    // (undocumented)
+    readonly outcome: string;
+}
 
 // @public
 export interface Run extends AsyncIterable<Event_2> {
@@ -1668,6 +1694,8 @@ export interface SubagentEventPayload {
     // (undocumented)
     readonly routedModel: string;
     // (undocumented)
+    readonly routingDecision?: RoutingDecisionEventPayload | undefined;
+    // (undocumented)
     readonly routingReason: string;
     // (undocumented)
     readonly stop: string;
@@ -1800,6 +1828,8 @@ export interface TeamMemberSpecEventPayload {
     readonly routedCategory: string;
     // (undocumented)
     readonly routedModel: string;
+    // (undocumented)
+    readonly routingDecision?: RoutingDecisionEventPayload | undefined;
     // (undocumented)
     readonly routingReason: string;
 }

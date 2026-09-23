@@ -76,17 +76,21 @@ fi
 require 'go_relevant=true' 'go_relevant must start fail-closed to RUN'
 require 'sdk_relevant=true' 'sdk_relevant must start fail-closed to RUN'
 require 'site_relevant=true' 'site_relevant must start fail-closed to RUN'
+require 'studio_relevant=true' 'studio_relevant must start fail-closed to RUN'
 require 'go_relevant: ${{ steps.classify.outputs.go_relevant }}' 'go_relevant must be a changes-job output'
 require 'sdk_relevant: ${{ steps.classify.outputs.sdk_relevant }}' 'sdk_relevant must be a changes-job output'
 require 'site_relevant: ${{ steps.classify.outputs.site_relevant }}' 'site_relevant must be a changes-job output'
+require 'studio_relevant: ${{ steps.classify.outputs.studio_relevant }}' 'studio_relevant must be a changes-job output'
 require 'relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"' 'trusted classifier must be extracted outside the candidate checkout'
 require 'if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then' 'classifier extraction must read the trusted base ref and stay fail-closed'
 require 'bash "$relevant_classifier" go)" || go_relevant=true' 'go relevance must use no-renames NUL paths and fail closed to RUN'
 require 'bash "$relevant_classifier" sdk)" || sdk_relevant=true' 'sdk relevance must use no-renames NUL paths and fail closed to RUN'
 require 'bash "$relevant_classifier" site)" || site_relevant=true' 'site relevance must use no-renames NUL paths and fail closed to RUN'
+require 'bash "$relevant_classifier" studio)" || studio_relevant=true' 'studio relevance must use no-renames NUL paths and fail closed to RUN'
 require 'echo "go_relevant=$go_relevant"' 'go_relevant must be written to GITHUB_OUTPUT'
 require 'echo "sdk_relevant=$sdk_relevant"' 'sdk_relevant must be written to GITHUB_OUTPUT'
 require 'echo "site_relevant=$site_relevant"' 'site_relevant must be written to GITHUB_OUTPUT'
+require 'echo "studio_relevant=$studio_relevant"' 'studio_relevant must be written to GITHUB_OUTPUT'
 
 # The candidate checkout's classifier must never run (a PR could tamper with it).
 if grep -Fq 'bash .github/scripts/relevant-changes.sh' "$workflow" \
@@ -124,18 +128,28 @@ done
 assert_if user-docs has "needs.changes.outputs.site_relevant == 'true'"
 assert_if user-docs hasnot "docs_only"
 
+# The Mecatl Studio job gates on studio_relevant OR go_relevant (plus the
+# docs_only guard — an apps/README.md-only change is docs-only and needs no Node
+# run): its integration suite drives the BFF against the current bin/mecated,
+# so a daemon change can break it. Studio consumes the PUBLISHED SDK, so it must
+# NOT be tied to sdk relevance.
+assert_if studio has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
+assert_if studio has "needs.changes.outputs.docs_only != 'true'"
+assert_if studio hasnot "sdk_relevant"
+
 # Drift guard: pin the number of job-level `if:` gates carrying go_relevant so
 # adding or removing a Go-gated job forces a conscious update to the job lists
 # above. Unlike the macOS jobs (which share the `runs-on: macos-14` marker the
 # sibling test counts), Linux Go jobs share `runs-on: ubuntu-24.04` with
 # legitimately-ungated jobs (changes, docs, domain-model, the always() aggregators,
 # sdk, user-docs), so there is no runner marker to count — this pins the gate set
-# instead. Expected 15 = 11 go-family/race/draft (the loop above) + 4 go||sdk jobs.
+# instead. Expected 16 = 11 go-family/race/draft (the loop above) + 4 go||sdk jobs
+# + the studio job (go||studio).
 # The residual this cannot catch is a NEW Go job shipped with NO gate at all; the
 # job lists above are the record for that.
 go_gate_count="$(grep -cF "needs.changes.outputs.go_relevant == 'true'" "$workflow" || true)"
-if [[ "$go_gate_count" -ne 15 ]]; then
-  fail "expected 15 job if: gates on go_relevant (11 go-family + 4 go||sdk), found $go_gate_count — update the job lists in this test when gating/ungating a job"
+if [[ "$go_gate_count" -ne 16 ]]; then
+  fail "expected 16 job if: gates on go_relevant (11 go-family + 4 go||sdk + studio), found $go_gate_count — update the job lists in this test when gating/ungating a job"
 fi
 
 # --- required-check aggregators tolerate the new skips -------------------------

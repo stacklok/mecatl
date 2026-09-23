@@ -36,8 +36,8 @@ and emits a test stub.
 Name the test after the rule it defends. The first two patterns are what
 `ac-trace` gates against:
 
-- `TestInvariant_<id>` — an invariant from `AGENTS.md` ("Things That Will
-  Bite You") or `docs/design/IMPLEMENTATION-NOTES.md`, id kebab → snake.
+- `TestInvariant_<id>` — an invariant in the owning architecture topic or
+  `AGENTS.md`, id kebab → snake.
   Example: `TestInvariant_deny_dominant_scope_resolution`.
 - `TestADR_NNNN_*` — a rule codified in `docs/adr/NNNN-*.md`. Example:
   `TestADR_0041_DirectWriteSubagent`.
@@ -140,16 +140,24 @@ regression. `_ = err` is not verification.
 
 ### Step 5: Verify with the Taskfile
 
+Use three verification stages:
+
 ```bash
-task test          # both modules + the engine-standalone hygiene proof
-cd engine && go test ./agent/ -run TestYourNewTest   # a single engine test
+(cd engine && go test ./agent/ -run TestYourNewTest) # focused iteration
+# For concurrency changes, add -race to the targeted package command.
+task test                                            # complete fast worker gate
+task test:race                                       # integrated/pre-PR aggregate gate
 ```
+
+`task test` and `task test:race` cover the root, engine, authn, and provider modules plus
+all standalone hygiene proofs. The only difference is whether the shared module suite uses
+the race detector.
 
 Then check whether the implementation contradicts its declared work classification or
 introduces an unplanned durable decision. Stop as contract drift rather than silently
 upgrading/downgrading it. Only Architectural work with a genuinely new or superseding durable
 decision adds an ADR and its `TestADR_NNNN_*` pin; a current invariant may instead belong in
-AGENTS.md / IMPLEMENTATION-NOTES.md with `TestInvariant_<id>`. Routine and Bounded rationale
+the owning architecture topic with `TestInvariant_<id>`. Routine and Bounded rationale
 stays in the issue, PR, plan, or ordinary test name. If you touched the engine's exported API:
 `task api:update` plus the `engine/CHANGELOG.md` note.
 

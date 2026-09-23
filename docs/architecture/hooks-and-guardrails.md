@@ -46,6 +46,13 @@ Per-tool placement (`dispatch.go`):
   operator-deployed and trusted, so it may rewrite what the model sees the tool
   returned (e.g. redact secrets).
 
+Before recording or emitting a tool result, `engine/agent/dispatch.go` repairs
+its effective text with `session.RepairToolResult` after post-hook rewriting.
+Pre-hook blocks bypass execution, so `preHook` separately repairs the hook's
+message and rewritten arguments on arrival; `json.Valid` does not establish
+UTF-8 validity. Proto mappers retain their own text-repair backstops. Binary
+payloads and secret-shaped credentials stay byte-exact.
+
 Run-level placement (`engine/agent/hooks.go`). Both pre-prompt phases are **blocking
 run-level gates** that fail safe — a block, or a hook **execution error**, ends
 the run before any model call with `StopError`, emits a `hook` event, and still

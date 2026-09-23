@@ -131,7 +131,7 @@ func (s *discoverySpy) count() int {
 
 type commandDiscoverySpy struct{ calls int }
 
-func (s *commandDiscoverySpy) List(context.Context, string) ([]Command, error) {
+func (s *commandDiscoverySpy) List(context.Context, tool.Workspace) ([]Command, error) {
 	s.calls++
 	return []Command{{Name: "forbidden"}}, nil
 }

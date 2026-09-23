@@ -53,4 +53,4 @@ never receives the snapshot key set.
 - [ADR 0229](./0229-redis-migration-fencing.md) — the initial renewable fencing and constant-work publication decision.
 - [ADR 0226](./0226-session-storage-maintenance.md) — session storage maintenance workflows.
 - [`docs/architecture.md`](../architecture.md) — current Redis deployment behavior.
-- [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) — migration protocol details.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — migration protocol details.
