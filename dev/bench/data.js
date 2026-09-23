@@ -235490,6 +235490,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790174329341,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "117f6d0fb65438aeafc9b53497f0f526b30c561b",
+          "message": "feat(router): add Jev delegated-model routing (#1738)\n\nCo-Authored-By: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T17:39:30+03:00",
+          "tree_id": "68b79085e5a12bf8ecef0a589a5a4b579b684a78",
+          "url": "https://github.com/stacklok/mecatl/commit/117f6d0fb65438aeafc9b53497f0f526b30c561b"
+        },
+        "date": 1790175031591,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -342018,6 +342052,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790175028288,
+  "lastUpdate": 1790175032644,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
