@@ -263415,6 +263415,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790192114399,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cb70893ae36e284c3bf28e92c3a5a49888f0d7b3",
+          "message": "feat(mcp): reconcile sources and refresh session tools (#1673)\n\nCo-authored-by: mecatl <noreply@stacklok.com>\nCo-authored-by: OpenAI <noreply@openai.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>\nCo-authored-by: OpenAI Codex <codex@openai.com>\nCo-authored-by: Mecatl <mecatl@users.noreply.github.com>\nCo-authored-by: Jakub Hrozek <jakub.hrozek@posteo.se>",
+          "timestamp": "2026-09-23T21:49:05+02:00",
+          "tree_id": "d23dae486a801da9fca723008f84c4ba338ed89a",
+          "url": "https://github.com/stacklok/mecatl/commit/cb70893ae36e284c3bf28e92c3a5a49888f0d7b3"
+        },
+        "date": 1790193620205,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3329.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 121,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -345419,6 +345458,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790193616316,
+  "lastUpdate": 1790193621504,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
