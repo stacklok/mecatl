@@ -27,7 +27,7 @@ func grantAuthoritySession(t *testing.T) *Session {
 	}
 	s.Conversation.Append(NewUserMessage("preserve history"))
 	s.Counters = Counters{Turns: 4, ToolCalls: 5}
-	s.Usage = Usage{InputTokens: 6, OutputTokens: 7}
+	s.RecordTokenUsage(UsageKindMain, "test", "model", Usage{InputTokens: 6, OutputTokens: 7})
 	return s
 }
 

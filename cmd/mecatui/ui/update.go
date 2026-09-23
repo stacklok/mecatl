@@ -757,7 +757,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		if msg.Err != nil {
-			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh failed: " + sanitizeTerminal(msg.Err.Error()))
+			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh failed: " + terminaltext.Sanitize(msg.Err.Error()))
 		} else if msg.Result.Changed {
 			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("MCP tools refreshed (revision %d)", msg.Result.Revision))
 		} else {
