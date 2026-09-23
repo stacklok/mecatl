@@ -296,14 +296,14 @@ func TestTransientFilterDoesNotRejectDurableConcepts(t *testing.T) {
 // compileReflector proves an engine-only consumer can implement the public seam.
 type compileReflector struct{}
 
-func (compileReflector) Reflect(context.Context, learning.Input) (learning.Outcome, error) {
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+func (compileReflector) Reflect(context.Context, learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
 func TestExternalConsumerCanUseReflectorAndDetector(t *testing.T) {
 	var reflector learning.Reflector = compileReflector{}
 	input := reflectionInput(session.NewUserMessage("remember that use gofmt"))
-	if _, err := reflector.Reflect(context.Background(), input); err != nil {
+	if _, _, err := reflector.Reflect(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
 	if len(learning.DetectSignals(input)) == 0 {

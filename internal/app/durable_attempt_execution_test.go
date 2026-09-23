@@ -20,14 +20,14 @@ type projectionCapturingReflector struct {
 	projections []learning.Projection
 }
 
-func (r *projectionCapturingReflector) Reflect(context.Context, learning.Input) (learning.Outcome, error) {
+func (r *projectionCapturingReflector) Reflect(context.Context, learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.rawCalls++
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
-func (r *projectionCapturingReflector) ReflectProjection(_ context.Context, projection learning.Projection) (learning.Outcome, error) {
+func (r *projectionCapturingReflector) ReflectProjection(_ context.Context, projection learning.Projection) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.projections = append(r.projections, projection)
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
 func (*projectionCapturingReflector) RequestTokenEstimate(learning.Input) (int, error) {

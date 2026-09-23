@@ -86,7 +86,7 @@ func TestCompactionSlotE2ESummaryModel(t *testing.T) {
 		session.NewAssistantMessage("recent answer", "", nil),
 	}}
 
-	if _, _, err := cc.Compact(context.Background(), conv); err != nil {
+	if _, _, _, err := cc.Compact(context.Background(), conv); err != nil {
 		t.Fatalf("Compact (tier-4): %v", err)
 	}
 	if !rec.contains(cheapModel) {

@@ -33,7 +33,7 @@ var ErrCompactionWouldOrphan = errors.New("agent: compaction would orphan a tool
 // unresolved questions while dropping large tool-output bodies and stale file
 // contents.
 type Compactor interface {
-	Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, err error)
+	Compact(ctx context.Context, conv *session.Conversation) (compacted []session.Message, summary string, usage session.AuxiliaryUsage, err error)
 }
 
 // maxToolBodyChars is the per-tool-result body budget the heuristic compactor
@@ -89,7 +89,7 @@ type HeuristicCompactor struct {
 }
 
 // Compact implements Compactor with the heuristic described on HeuristicCompactor.
-func (h HeuristicCompactor) Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (h HeuristicCompactor) Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	bodyBudget := maxToolBodyChars
 	if h.MaxToolBodyChars > 0 {
 		bodyBudget = h.MaxToolBodyChars
@@ -147,10 +147,10 @@ func (h HeuristicCompactor) Compact(_ context.Context, conv *session.Conversatio
 	// dangle a tool call (boundary-snapping handles the common case, but defend
 	// the contract directly). On failure, abort to the ORIGINAL history.
 	if err := session.ValidateToolPairing(out); err != nil {
-		return msgs, "", fmt.Errorf("%w: %v", ErrCompactionWouldOrphan, err)
+		return msgs, "", session.AuxiliaryUsage{}, fmt.Errorf("%w: %v", ErrCompactionWouldOrphan, err)
 	}
 
-	return out, summary, nil
+	return out, summary, session.AuxiliaryUsage{}, nil
 }
 
 // snapCutToTurnBoundary clamps cut to [0,len(msgs)] and then advances it past any

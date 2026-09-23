@@ -61,15 +61,15 @@ type correlationCompactor struct {
 	turns   []int
 }
 
-func (c *correlationCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (c *correlationCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	serial, serialOK := port.RunSerialFromContext(ctx)
 	turn, turnOK := port.TurnIndexFromContext(ctx)
 	if !serialOK || !turnOK {
-		return nil, "", context.Canceled
+		return nil, "", session.AuxiliaryUsage{}, context.Canceled
 	}
 	c.serials = append(c.serials, serial)
 	c.turns = append(c.turns, turn)
-	return session.CloneMessages(conv.Messages), "compacted", nil
+	return session.CloneMessages(conv.Messages), "compacted", session.AuxiliaryUsage{}, nil
 }
 
 type alwaysCompactCounter struct{}
