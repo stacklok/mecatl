@@ -42,8 +42,8 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testi
 			if view.Below == 0 || !strings.Contains(ansi.Strip(got), "below") {
 				t.Fatalf("missing below-overflow indication: view=%+v\n%s", view, ansi.Strip(got))
 			}
-			if cardWidth := ansi.StringWidth(strings.Split(got, "\n")[0]); cardWidth != min(72, width) {
-				t.Fatalf("outer card width = %d, want %d", cardWidth, min(72, width))
+			if cardWidth := ansi.StringWidth(strings.Split(got, "\n")[0]); cardWidth != min(128, width) {
+				t.Fatalf("outer card width = %d, want %d", cardWidth, min(128, width))
 			}
 			for row, line := range strings.Split(got, "\n") {
 				if cells := ansi.StringWidth(line); cells > width {
@@ -229,16 +229,16 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_StandardRowPresentation(t *tes
 
 func TestMecatuiSlashPaletteBoundedList_Scenario1_PresentationBounds(t *testing.T) {
 	st := scenarioPaletteState([]client.Command{
-		{Name: strings.Repeat("command", 12), Description: "ignored when the command uses the row"},
+		{Name: strings.Repeat("command", 30), Description: "ignored when the command uses the row"},
 		{Name: "details", Description: strings.Repeat("description words ", 24)},
 	})
-	first := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 80, maxPaletteRows)
-	if got, want := ansi.StringWidth(strings.Split(first, "\n")[0]), 72; got != want {
+	first := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 160, maxPaletteRows)
+	if got, want := ansi.StringWidth(strings.Split(first, "\n")[0]), 128; got != want {
 		t.Fatalf("wide card width = %d, want %d", got, want)
 	}
 	st.list.Move(bounded.LineDown)
-	afterScroll := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 80, maxPaletteRows)
-	if got, want := ansi.StringWidth(strings.Split(afterScroll, "\n")[0]), 72; got != want {
+	afterScroll := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 160, maxPaletteRows)
+	if got, want := ansi.StringWidth(strings.Split(afterScroll, "\n")[0]), 128; got != want {
 		t.Fatalf("scroll changed card width to %d, want %d", got, want)
 	}
 
@@ -252,12 +252,12 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PresentationBounds(t *testing.
 			t.Fatalf("%s rendered %d physical lines, want at most three", id, len(rows))
 		}
 		for _, row := range rows {
-			if ansi.StringWidth(row.Text) > 64 {
+			if ansi.StringWidth(row.Text) > 120 {
 				t.Fatalf("%s row exceeds content width: %q", id, row.Text)
 			}
 		}
 	}
-	long := linesByID["workspace:"+strings.ToLower(strings.Repeat("command", 12))]
+	long := linesByID["workspace:"+strings.ToLower(strings.Repeat("command", 30))]
 	if !strings.HasSuffix(ansi.Strip(long[0].Text), "…") {
 		t.Fatalf("long command did not use ellipsis: %q", long[0].Text)
 	}

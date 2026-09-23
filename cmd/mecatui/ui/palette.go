@@ -363,7 +363,7 @@ func renderPalette(th theme.Theme, st paletteState, caps client.Capabilities, in
 // renderPaletteSized draws the command dropdown as a bordered card. bodyRows is
 // the complete physical-row budget for command rows and overflow indicators.
 func renderPaletteSized(th theme.Theme, st paletteState, caps client.Capabilities, input string, width, bodyRows int) string {
-	cardWidth := min(72, width)
+	cardWidth := min(128, width)
 	cardStyle := th.Style("askCard")
 	contentWidth := cardWidth - cardStyle.GetHorizontalFrameSize()
 	if st.list == nil {
