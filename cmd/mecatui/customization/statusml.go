@@ -42,8 +42,8 @@ type Palette interface {
 	StatusColor(Token) string
 }
 
-// LinkPalette is an optional theme extension for StatusML links. Render never
-// emits OSC 8; consumers decide how to display the validated destination.
+// LinkPalette is an optional theme extension for StatusML links. The UI renderer
+// uses the separately validated destination when emitting terminal output.
 type LinkPalette interface {
 	StatusLinkColor() string
 	StatusLinkUnderline() bool
