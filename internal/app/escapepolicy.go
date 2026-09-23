@@ -276,12 +276,16 @@ func (r *escapeGuardrailRoute) review(ctx context.Context, c session.ToolCall) (
 	sb.WriteString(escapeGuardrailPrompt)
 	sb.WriteString("\n\n")
 	governance.WriteUntrustedBlock(&sb, string(c.Args))
-	return r.checker.Check(ctx, modelhook.CheckRequest{
+	result, err := r.checker.Check(ctx, modelhook.CheckRequest{
 		Phase:   modelhook.PhasePre,
 		Tool:    c.Name,
 		Content: string(c.Args),
 		Prompt:  sb.String(),
 	})
+	if reporter := port.AuxiliaryUsageReporterFromContext(ctx); reporter != nil {
+		reporter(result.Usage)
+	}
+	return result.Verdict, err
 }
 
 // denyDecision is the veto the route returns on an unsafe verdict — a checker

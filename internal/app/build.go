@@ -7286,6 +7286,17 @@ func buildParallelJudgeEngine(cfg Config, reg *providerRegistry, providerID stri
 		reg.windowResolver(cfg, providerID, cfg.Model), promptConfig(cfg, cfg.gitStatus))
 }
 
+type attributedAskReviewer struct {
+	inner    agent.ChildAskReviewer
+	identity session.ProviderModelID
+}
+
+func (r attributedAskReviewer) Review(ctx context.Context, req agent.ChildAskReviewRequest) (agent.ChildAskReview, session.AuxiliaryUsage, error) {
+	review, usage, err := r.inner.Review(ctx, req)
+	usage = attributedAuxiliaryUsage(session.UsageKindAskReviewer, r.identity, usage.Buckets[session.UsageKindAskReviewer].Total)
+	return review, usage, err
+}
+
 // buildAskAdjudicator constructs the OPT-IN automated child-ask reviewer (issue
 // #31), mirroring buildParallelJudgeEngine: a tool-less read-only child *Engine
 // over the SESSION's provider, role "ask-reviewer" (which lands in roleFamily's
@@ -7306,7 +7317,8 @@ func buildAskAdjudicator(cfg Config, provReg *providerRegistry, provider port.LL
 	if strings.TrimSpace(cfg.SubagentAskReviewerPolicy) != "" {
 		opts = append(opts, agent.WithAskReviewPolicy(cfg.SubagentAskReviewerPolicy))
 	}
-	return agent.NewEngineAskReviewer(agent.NewEngine(deps), opts...)
+	inner := agent.NewEngineAskReviewer(agent.NewEngine(deps), opts...)
+	return attributedAskReviewer{inner: inner, identity: session.ProviderModelID{ProviderID: parentProviderID, ModelID: deps.Model}}
 }
 
 // askAdjudicatorDeps builds the reviewer engine's agent.Deps — split out from
@@ -7397,6 +7409,21 @@ func attachAskAdjudicator(deps agent.Deps, cfg Config, provReg *providerRegistry
 // provider-fixed-per-session hazard the rest of this file avoids. The per-session
 // closure already closes over the right (provider, parentModel), so each call re-derives
 // the contamination-safe deps for the classifier model.
+func attributedAuxiliaryUsage(kind session.UsageKind, identity session.ProviderModelID, usage session.Usage) session.AuxiliaryUsage {
+	if usage == (session.Usage{}) {
+		return session.AuxiliaryUsage{}
+	}
+	providerID := strings.Join(strings.Fields(identity.ProviderID), " ")
+	modelID := strings.Join(strings.Fields(identity.ModelID), " ")
+	attribution := "unknown"
+	if providerID != "" && modelID != "" {
+		attribution = providerID + "/" + modelID
+	}
+	return session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		kind: {Total: usage, Models: map[string]session.Usage{attribution: usage}},
+	}}
+}
+
 func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) *agent.SubagentModelRouter {
 	if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
 		return nil
@@ -7408,7 +7435,7 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 		cats = append(cats, agent.ModelRouteCategory{Name: c.Name, Description: c.Description})
 		selectorByName[c.Name] = c.Model
 	}
-	resolveCandidate := func(category string, usage session.Usage, reason string, ok bool, confidence *float64) agent.ModelRouteResult {
+	resolveCandidate := func(category string, usage session.AuxiliaryUsage, reason string, ok bool, confidence *float64) agent.ModelRouteResult {
 		if ok {
 			reason = ""
 		}
@@ -7446,7 +7473,8 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 				return agent.ModelRouteResult{Reason: agent.RouterMissClassifierError}
 			}
 			out := cfg.jevRouter.Route(ctx, taskPrompt, toJevCategories(cfg.RouterCategories))
-			return resolveCandidate(out.Category, out.Usage, jevRouterMissReason(out.Miss), out.OK, out.Confidence)
+			usage := attributedAuxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: "jev", ModelID: router.ClassifierModel}, out.Usage)
+			return resolveCandidate(out.Category, usage, jevRouterMissReason(out.Miss), out.OK, out.Confidence)
 		}
 		return router
 	}
@@ -7461,7 +7489,8 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 			category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
 				TaskPrompt: taskPrompt, Categories: cats, Default: cfg.RouterDefaultCategory,
 			})
-			return resolveCandidate(category, classifierUsage, missReason, ok, nil)
+			usage := attributedAuxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: parentProviderID, ModelID: classifierModel}, classifierUsage.Buckets[session.UsageKindRouter].Total)
+			return resolveCandidate(category, usage, missReason, ok, nil)
 		},
 	}
 }
