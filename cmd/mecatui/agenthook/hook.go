@@ -395,7 +395,7 @@ const abandonGrace = killGrace + time.Second
 // accumulate orphans that outlive the bound this package advertises.
 // procgroup.Configure kills the whole process group on POSIX and the nonzero
 // WaitDelay bounds the wait everywhere as a backstop — the same containment
-// convention as internal/adapter/hookexec and cmd/mecatui/statusline.
+// convention as internal/adapter/hookexec and cmd/mecatui/customization.
 func defaultRunner(ctx context.Context, script string, extraEnv []string, payload string) {
 	cmd := exec.CommandContext(ctx, script)
 	cmd.Env = append(os.Environ(), extraEnv...)

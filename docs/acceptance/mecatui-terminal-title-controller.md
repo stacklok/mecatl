@@ -56,9 +56,12 @@ The strict mecatui client settings decoder accepts `terminal_title` independentl
 
 **Acceptance:**
 - AC2.1: Absent settings use the shipped title template; it omits the session handle, falls back to `mecatui` before a session title exists, and the shipped status header no longer displays the handle.
-  - verify: `TestADR_0344_Scenario2_DefaultPresentationOmitsHandle`
+  - verify: `TestDefaultTitleTemplateUntitledActiveSession`,
+    `TestDefaultStatusHeadersElideSessionTitleByVariant`
 - AC2.2: A user-global `terminal_title.template` can compose the documented display-safe input values, including the opt-in handle, and shared title/status `elide WIDTH VALUE` behavior is display-width bounded: non-positive width returns empty, a fitting value is unchanged, width one produces `…`, and wider truncation returns the widest fitting prefix plus `…` without exceeding the requested width.
-  - verify: `TestADR_0344_Scenario2_SharedTemplateProjectionAndElide`
+  - verify: `TestADR_0344_Scenario3_TitleAndCustomHandle`,
+    `TestDefaultTitleTemplateElidesWideSessionTitle`,
+    `TestDefaultStatusHeadersElideSessionTitleByVariant`
 - AC2.3: Unknown title settings fields, invalid YAML, and invalid template parse or execution failures reject startup with an error naming `terminal_title` or `terminal_title.template` and the actionable cause.
   - verify: `TestADR_0344_Scenario2_InvalidConfigurationFailsActionably`
 - AC2.4: An explicitly supplied `--terminal-title=off` or environment opt-out suppresses every OSC title write regardless of a configured template; explicit `--terminal-title=on` enables configured/default rendering despite `terminal_title.enabled: false`; absent explicit controls honor settings disablement.

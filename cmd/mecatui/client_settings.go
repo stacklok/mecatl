@@ -333,11 +333,8 @@ func mergeKeymaps(a, b map[string][]string) map[string][]string {
 //
 // The merged map then goes through keymap.Parse + keymap.Validate unchanged:
 // an invalid override still fails startup.
-func applyKeyOverridesToDeps(cfg config, deps *ui.Deps) error {
-	clientMap, _, err := readClientKeymap()
-	if err != nil {
-		return err
-	}
+func applyKeyOverridesToDeps(cfg config, settings clientSettings, deps *ui.Deps) error {
+	clientMap := splitKeymap(settings.Keymap)
 	cliMap := keyOverridesFromConfig(cfg)
 	merged := mergeKeymaps(clientMap, cliMap)
 	if cfg.debugKeymap {

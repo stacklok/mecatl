@@ -70,7 +70,8 @@ was generated or explicitly set; restarting or reloading may lose that notice.
 - AC1.2: `/title` adds a local, non-persisted scrollback notice containing only the active title
   and generated/operator provenance without mutation; whitespace-only input fails clearly and
   preserves the authoritative title.
-  - verify: `TestSessionTitleGeneration_Scenario1_TitleCommandReadAndRejectsBlank`
+  - verify: `TestSessionTitleGeneration_Scenario1_BareTitleCommandReadsAndClearsInput`,
+    `TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandReadsAndClearsInput`
 - AC1.3: A stale, unauthorized, unavailable, or rejected rename cannot leave an optimistic title
   presented as authoritative; the UI restores or refetches it.
   - verify: `TestSessionTitleGeneration_Scenario1_TitleCommandReconcilesFailure`
@@ -190,7 +191,7 @@ canonical for main work.
   - verify: `TestSessionTitleGeneration_Scenario5_TokenUsageRoundTripAndProjection`
 - AC5.4: Title-generation tokens do not alter `UsageFor(UsageKindMain)`, `MaxRunTokens`, normal
   turn/result usage, or the agent conversation.
-  - verify: `TestADR_0302_AuxiliaryUsageDoesNotSpendRunBudget`
+  - verify: `TestADR_0284_TitleUsageDoesNotSpendRunBudget`
 - AC5.5: The internal immutable budget baseline leaves `token_usage[main]` lifetime totals
   untouched: ordinary runs start at zero; team synthesis and a budget-stopped free-text
   Subagent's one-turn cleanup capture current cumulative main usage immediately before their

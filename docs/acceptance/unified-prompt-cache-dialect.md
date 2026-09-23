@@ -59,7 +59,7 @@ request and no vendor needs naming.
 - AC1.6: `--no-prompt-cache` suppresses the breakpoint along with every other hint, reproducing the pre-ADR-0100 wire.
   - verify: `TestADR_0346_NoPromptCacheSuppressesBreakpoint`
 - AC1.7: a usage payload reporting cached input tokens folds into `session.Usage.CacheReadTokens` as non-zero through a dialect-less endpoint, which is the reported incident's exact shape.
-  - verify: `TestUnifiedPromptCache_Scenario1_DialectLessEndpointReportsCacheReads`
+  - verify: `TestADR_0346_BreakpointCacheReadE2E`
 
 ### Scenario 2 — Claude on OpenRouter caches through Messages, with a TTL
 
@@ -73,7 +73,7 @@ slots and a real TTL where the surface exists.
 - AC2.2: the derived Anthropic base sheds a terminal `v1` so the SDK's suffix resolves to `/api/v1/messages`, copying no userinfo, query, or fragment.
   - verify: `TestADR_0346_OpenRouterAnthropicBaseDerivation`
 - AC2.3: a request on `openrouter-anthropic` carries the ADR 0100 breakpoint budget, and `--anthropic-cache-ttl=1h` stamps a uniform ttl on every marker.
-  - verify: `TestUnifiedPromptCache_Scenario1_OpenRouterAnthropicCarriesBreakpointsAndTTL`
+  - verify: `TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic`
 - AC2.4: `openrouter-anthropic` lists Anthropic-family models only, never an id its endpoint cannot execute.
   - verify: `TestADR_0346_OpenRouterAnthropicListsAnthropicOnly`
 - AC2.5: `openrouter`'s own base URL is unchanged by this work.
@@ -120,7 +120,8 @@ is `port.Diagnostics` work, since no `session.Event` owns it.
 - AC5.1: one build-once INFO line names, per registered provider, the resolved cache posture and its source, emitted from `app.Build` and not the per-engine deps builders.
   - verify: `TestUnifiedPromptCache_Scenario4_PostureLineNamesPostureAndSource`
 - AC5.2: the line is computed from the same resolution the adapter received and is asserted against the emitted body, so a dropped field cannot hide behind a healthy-looking line.
-  - verify: `TestUnifiedPromptCache_Scenario4_PostureLineMatchesEmittedBody`
+  - verify: `TestADR_0346_BreakpointCacheReadE2E`,
+    `TestADR_0346_AnthropicCacheTTLStampedOnOpenRouterAnthropic`
 - AC5.3: no cache-posture diagnostic repeats per session or per heal re-mint.
   - verify: `TestADR_0346_CachePostureLogsOncePerProcess`
 - AC5.4: `prompt_cache_retention` still never accompanies a non-OpenAI dialect.
@@ -135,7 +136,7 @@ ADR 0334's existing gateway decision to the generic constructor.
 - AC6.1: an openai-compat entry whose endpoint answers 307 to another host errors instead of delivering the body there.
   - verify: `TestADR_0346_OpenAICompatEntryRefusesRedirect`
 - AC6.2: redirect refusal rides every per-session and heal re-mint.
-  - verify: `TestUnifiedPromptCache_Scenario5_RedirectRefusalSurvivesRemint`
+  - verify: `TestADR_0346_AnthropicProtocolEntryRefusesRedirect`
 
 ## Out of scope
 

@@ -12,11 +12,20 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
-	statusline "github.com/stacklok/mecatl/cmd/mecatui/statusline"
+	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 	"github.com/stacklok/mecatl/internal/cliconfig"
 )
+
+func mustReadClientSettings(t *testing.T) clientSettings {
+	t.Helper()
+	settings, err := readClientSettings()
+	if err != nil {
+		t.Fatalf("read client settings: %v", err)
+	}
+	return settings
+}
 
 // writeSettings writes body to <XDG_CONFIG_HOME>/<app>/settings.yaml under the
 // test's temp XDG root, creating the app dir.
@@ -107,7 +116,7 @@ func TestStatusCustomizationCommandIntervalReachesCommandSource(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
 
-	source.Submit(statusline.Input{Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	source.Submit(customization.Input{Terminal: customization.Terminal{FooterAvailCols: 80}})
 	select {
 	case <-source.Changed():
 	case <-time.After(2 * time.Second):
@@ -192,8 +201,8 @@ func TestReadClientSettingsIgnoresServerModelsWithoutTitleSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server settings without models.slots.title must not affect client settings: %v", err)
 	}
-	if !reflect.DeepEqual(got, clientSettings{}) {
-		t.Fatalf("client settings = %#v, want zero settings when the client file is absent", got)
+	if !reflect.DeepEqual(got, defaultClientSettings()) {
+		t.Fatalf("client settings = %#v, want defaults when the client file is absent", got)
 	}
 }
 
@@ -235,7 +244,7 @@ func TestKeymapPrecedenceCLIBeatsClient(t *testing.T) {
 	writeSettings(t, "mecatui", "keymap:\n  Agents: ctrl+f3\n  ExpandTools: ctrl+f4\n")
 	cfg := config{keymap: &cliconfig.KeyValueList{"Agents": "ctrl+f5"}}
 	var deps ui.Deps
-	if err := applyKeyOverridesToDeps(cfg, &deps); err != nil {
+	if err := applyKeyOverridesToDeps(cfg, mustReadClientSettings(t), &deps); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	want := map[string][]string{
@@ -251,7 +260,7 @@ func TestCanonicalDebugPrintsKeymapDiagnostics(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var deps ui.Deps
 	out := captureStderr(t, func() {
-		if err := applyKeyOverridesToDeps(config{debugKeymap: true}, &deps); err != nil {
+		if err := applyKeyOverridesToDeps(config{debugKeymap: true}, mustReadClientSettings(t), &deps); err != nil {
 			t.Fatalf("apply: %v", err)
 		}
 	})
@@ -266,7 +275,7 @@ func TestApplyKeyOverridesInvalidActionStillFailsStartup(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	writeSettings(t, "mecatui", "keymap:\n  NotAnAction: ctrl+f9\n")
 	var deps ui.Deps
-	err := applyKeyOverridesToDeps(config{}, &deps)
+	err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps)
 	if err == nil {
 		t.Fatal("an unknown action name must surface as an error")
 	}
@@ -361,7 +370,7 @@ func TestStatusCustomizationCommandPassthroughEnvReachesExecution(t *testing.T) 
 	}
 	source := newSource(customization)
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(statusline.Input{Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	source.Submit(customization.Input{Terminal: customization.Terminal{FooterAvailCols: 80}})
 	select {
 	case <-source.Changed():
 	case <-time.After(time.Second):
@@ -387,7 +396,7 @@ func TestBuildStatusSourceConstructsValidatedTemplateSettings(t *testing.T) {
 		Minimal: `<footer><accent>{{.Session.Title}}</accent></footer>`,
 	}}})
 	t.Cleanup(func() { _ = source.Close(context.Background()) })
-	source.Submit(statusline.Input{Session: statusline.Session{Title: "configured"}, Terminal: statusline.Terminal{FooterAvailCols: 80}})
+	source.Submit(customization.Input{Session: customization.Session{Title: "configured"}, Terminal: customization.Terminal{FooterAvailCols: 80}})
 	select {
 	case <-source.Changed():
 	case <-time.After(time.Second):
@@ -395,5 +404,43 @@ func TestBuildStatusSourceConstructsValidatedTemplateSettings(t *testing.T) {
 	}
 	if got, want := source.Latest().Footer.Spans[0].Text, "configured"; got != want {
 		t.Fatalf("configured template text = %q, want %q", got, want)
+	}
+}
+
+func TestADR_0344_Scenario2_InvalidConfigurationFailsActionably(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"unknown field", "terminal_title:\n  unexpected: true\n", "terminal_title"},
+		{"invalid YAML", "terminal_title: [\n", "terminal_title"},
+		{"parse failure", "terminal_title:\n  template: '{{'\n", "terminal_title.template"},
+		{"execution failure", "terminal_title:\n  template: '{{index .Session.Title 1}}'\n", "terminal_title.template"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			writeSettings(t, "mecatui", tc.body)
+			if _, err := readClientSettings(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("readClientSettings() error = %v, want actionable %q error", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestADR_0344_Scenario2_CommandStatusCannotControlTitle(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatui", "terminal_title:\n  template: '{{.Session.Title}} · mecatui'\nstatus_customization:\n  command:\n    executable: /bin/echo\n    args: ['<header><text>command title</text></header>']\n")
+
+	settings := mustReadClientSettings(t)
+	if settings.StatusCustomization == nil || settings.StatusCustomization.Command == nil {
+		t.Fatal("test setup must select the command status source")
+	}
+	title, err := newTitleRenderer(settings.TerminalTitle)
+	if err != nil {
+		t.Fatalf("build title renderer: %v", err)
+	}
+	got, err := title.Render(customization.Input{Session: customization.Session{Title: "trusted title"}})
+	if err != nil {
+		t.Fatalf("render title: %v", err)
+	}
+	if got != "trusted title · mecatui" || strings.Contains(got, "command title") {
+		t.Fatalf("command-backed status influenced title %q", got)
 	}
 }

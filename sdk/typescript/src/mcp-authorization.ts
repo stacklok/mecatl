@@ -893,7 +893,7 @@ function runResult(sessionId: string, runId: string, event: EventOf<"result">): 
     sessionId,
     stopReason: event.payload.stop,
     text: event.payload.text,
-    usage: event.payload.usage ?? event.usage,
+    usage: event.payload.usage,
   };
 }
 

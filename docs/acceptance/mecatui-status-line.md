@@ -27,7 +27,8 @@ The input contains session title and resolved model facts; a credential-free ser
 
 **Acceptance:**
 - AC1.1: The template renderer and configured command observe the same status values, including terminal dimensions, per-surface available columns, and `clock.now`; unknown values use their documented empty/zero representation.
-  - verify: `TestStatusCustomization_Scenario1_TemplateAndCommandShareStatusInput`
+  - verify: `TestStatusLine_Scenario3_DirectExecutableReceivesSharedInput`,
+    `TestStatusLine_Scenario2_TemplateEscapesValues`
 - AC1.2: The status input excludes prompts, transcript/tool content, credentials, authentication metadata, and diagnostics; the server identity is display-only and never carries authentication data.
   - verify: `TestStatusCustomization_Scenario1_StatusInputExcludesSensitiveContent`
 - AC1.3: `Workspace.Name` remains provider-supplied display metadata and is blank/remote rather than mistaken for a local path in connect mode. Templates receive `Workspace.Path` through their StatusML-escaped projection, and a direct command receives it in raw JSON, only after successful eligible local-context lookup; its CWD uses that root when present, otherwise the configured helper executable's cleaned absolute parent directory, then the local launch directory only if that parent is unavailable.
@@ -124,7 +125,7 @@ The environment has a fixed safe baseline: `HOME`, `PATH`, `TERM`, `LANG`, `LC_A
 - AC3.1: A user-global command invokes only an absolute executable with literal arguments, receives raw JSON `Input` on stdin, and can use the local checkout and terminal dimensions to emit StatusML.
   - verify: `TestStatusLine_Scenario3_DirectExecutableReceivesSharedInput`
 - AC3.2: One command StatusML document can populate both surfaces; each supplied surface has the same themed spans/layout semantics as its template equivalent, and an omitted surface retains its default.
-  - verify: `TestStatusLine_Scenario3_CommandAndTemplateShareSurfaces`
+  - verify: `TestStatusCustomization_Scenario3_CommandAndTemplateShareSurfaces`
 - AC3.3: The runner passes only its fixed baseline plus the explicit user-global, grammar-validated `passthrough_env` entries; it passes raw input only on stdin and cannot be enabled or modified by project/server content.
   - verify: `TestStatusCustomization_Scenario3_CommandBoundaryIsLocalAndSecretFree`
 - AC3.4: Stdout/stderr are bounded while read; overflow, malformed StatusML, and terminal controls fail safely without an unbounded allocation or rendered escape sequence.
