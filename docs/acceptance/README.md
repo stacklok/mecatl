@@ -379,6 +379,7 @@ PR after verification. There is no cleanup or status-only PR.
   retraction over gRPC and HTTP through `session.controls(runId)`, with request options,
   bounded correlated acknowledgements, and mandatory stale-run guards. Status: proposed.
 - [TypeScript SDK MCP authorization lifecycle](sdk-mcp-authorization-lifecycle.md) — superseded proposal. Status: superseded.
+- [SDK high-level parity coverage](sdk-high-level-parity-coverage.md) — classifies every public RPC and mecatui builtin against the existing TypeScript SDK surface, with separate CI guards and cross-workflow examples. Status: proposed.
 - [TypeScript SDK HTTP well-known-type JSON compatibility](sdk-http-wkt-json-compatibility.md) —
   descriptor-guided Timestamp and Duration decoding for daemon stdlib-JSON responses across unary
   HTTP and SSE, preserving ProtoJSON strings, typed failures, and the registered raw response.
