@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
-	if mode := os.Getenv(launchOwnerHelperEnv); (mode == "runner" || mode == "ignore-term" || mode == "exit-7") && len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "{") {
+	if mode := os.Getenv(launchOwnerHelperEnv); (mode == "runner" || mode == "ignore-term" || mode == "exit-7" || mode == "signal-term") && len(os.Args) == 2 && strings.HasPrefix(os.Args[1], "{") {
 		if mode == "ignore-term" {
 			signal.Ignore(syscall.SIGTERM)
 		}
@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 		}
 		if mode == "exit-7" {
 			os.Exit(7)
+		}
+		if mode == "signal-term" {
+			_ = unix.Kill(os.Getpid(), unix.SIGTERM)
 		}
 		select {}
 	}
@@ -65,12 +68,16 @@ func newDarwinTestLaunchOwnership(t *testing.T) *LaunchOwnership {
 }
 
 func darwinTestRunnerConfig(t *testing.T) runner.Config {
+	return darwinTestRunnerConfigMode(t, "runner")
+}
+
+func darwinTestRunnerConfigMode(t *testing.T, mode string) runner.Config {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(launchOwnerHelperEnv, "runner")
+	t.Setenv(launchOwnerHelperEnv, mode)
 	return runner.Config{RunnerPath: executable, VMLogPath: filepath.Join(t.TempDir(), "runner.log")}
 }
 
@@ -117,6 +124,23 @@ func TestDarwinLaunchOwnerSupervisorStopsDirectRunner(t *testing.T) {
 	}
 }
 
+func TestDarwinLaunchOwnerSupervisorEscalatedStopSucceeds(t *testing.T) {
+	ownership := newDarwinTestLaunchOwnership(t)
+	ownership.termTimeout = 50 * time.Millisecond
+	handle, err := ownership.spawn(t.Context(), "env-stop-kill", darwinTestRunnerConfigMode(t, "ignore-term"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := handle.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if handle.IsAlive() {
+		t.Fatal("runner remained alive after escalated stop")
+	}
+}
+
 func TestDarwinDirectChildStopEscalatesAfterIgnoredTERM(t *testing.T) {
 	t.Setenv(launchOwnerHelperEnv, "ignore-term")
 	ready := filepath.Join(t.TempDir(), "ready")
@@ -128,15 +152,15 @@ func TestDarwinDirectChildStopEscalatesAfterIgnoredTERM(t *testing.T) {
 	}
 	waitForTestFile(t, ready)
 	started := time.Now()
-	status, err := ownDirectChild(cmd, nil, 50*time.Millisecond, time.Second, true)
+	result, err := ownDirectChild(cmd, nil, 50*time.Millisecond, time.Second, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(started) < 50*time.Millisecond {
 		t.Fatal("direct child exited before TERM escalation timeout")
 	}
-	if !status.Signaled() || status.Signal() != syscall.SIGKILL {
-		t.Fatalf("direct child status = %v, want SIGKILL", status)
+	if !result.stopRequested || !result.status.Signaled() || result.status.Signal() != syscall.SIGKILL {
+		t.Fatalf("direct child result = %+v, want requested SIGKILL stop", result)
 	}
 }
 
@@ -168,12 +192,15 @@ func TestDarwinDirectChildStopsOnControlEOF(t *testing.T) {
 	waitForTestFile(t, ready)
 	eof := make(chan struct{})
 	close(eof)
-	status, err := ownDirectChild(cmd, eof, time.Second, time.Second, false)
+	result, err := ownDirectChild(cmd, eof, time.Second, time.Second, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.Signaled() || status.Signal() != syscall.SIGTERM {
-		t.Fatalf("direct child status = %v, want SIGTERM", status)
+	if !result.stopRequested || !result.status.Signaled() || result.status.Signal() != syscall.SIGTERM {
+		t.Fatalf("direct child result = %+v, want requested SIGTERM stop", result)
+	}
+	if err := directChildExitError(result); err != nil {
+		t.Fatalf("controlled stop = %v, want success", err)
 	}
 }
 
@@ -184,15 +211,37 @@ func TestDarwinDirectChildNaturalFailureIsPreserved(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	status, err := ownDirectChild(cmd, nil, time.Second, time.Second, false)
+	result, err := ownDirectChild(cmd, nil, time.Second, time.Second, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.Exited() || status.ExitStatus() != 7 {
-		t.Fatalf("direct child status = %v, want exit 7", status)
+	if result.stopRequested || !result.status.Exited() || result.status.ExitStatus() != 7 {
+		t.Fatalf("direct child result = %+v, want unrequested exit 7", result)
 	}
-	if got := formatDirectChildStatus(status); got != "exit status 7" {
+	if got := formatDirectChildStatus(result.status); got != "exit status 7" {
 		t.Fatalf("formatted status = %q", got)
+	}
+	if err := directChildExitError(result); err == nil || !strings.Contains(err.Error(), "exit status 7") {
+		t.Fatalf("unrequested exit error = %v", err)
+	}
+}
+
+func TestDarwinDirectChildNaturalSignalIsPreserved(t *testing.T) {
+	t.Setenv(launchOwnerHelperEnv, "signal-term")
+	cmd := exec.Command(os.Args[0], `{}`)
+	cmd.Env = os.Environ()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ownDirectChild(cmd, nil, time.Second, time.Second, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.stopRequested || !result.status.Signaled() || result.status.Signal() != syscall.SIGTERM {
+		t.Fatalf("direct child result = %+v, want unrequested SIGTERM", result)
+	}
+	if err := directChildExitError(result); err == nil || !strings.Contains(err.Error(), "signal terminated") {
+		t.Fatalf("unrequested signal error = %v", err)
 	}
 }
 

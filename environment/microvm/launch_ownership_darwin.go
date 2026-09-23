@@ -352,14 +352,23 @@ func runLaunchOwnerChild() (retErr error) { //nolint:gocyclo // validation and c
 	eof := make(chan struct{})
 	go func() { _, _ = io.Copy(io.Discard, control); close(eof) }()
 	cleanup = false
-	status, err := ownDirectChild(cmd, eof, termTimeout, killTimeout, false)
+	result, err := ownDirectChild(cmd, eof, termTimeout, killTimeout, false)
 	if err != nil {
 		return err
 	}
-	if status.Exited() && status.ExitStatus() == 0 {
+	return directChildExitError(result)
+}
+
+type directChildResult struct {
+	status        syscall.WaitStatus
+	stopRequested bool
+}
+
+func directChildExitError(result directChildResult) error {
+	if result.stopRequested || result.status.Exited() && result.status.ExitStatus() == 0 {
 		return nil
 	}
-	return fmt.Errorf("owned runner exited: %s", formatDirectChildStatus(status))
+	return fmt.Errorf("owned runner exited: %s", formatDirectChildStatus(result.status))
 }
 
 func formatDirectChildStatus(status syscall.WaitStatus) string {
@@ -385,7 +394,7 @@ func directChildUsesWaitCompatibleIO(cmd *exec.Cmd) bool {
 // ownDirectChild is the sole owner of both Wait4 and signals for cmd. A natural
 // exit remains a zombie until this loop reaps it, so its PID cannot be reused
 // between the exit check and a TERM or KILL.
-func ownDirectChild(cmd *exec.Cmd, controlEOF <-chan struct{}, termTimeout, killTimeout time.Duration, stopping bool) (syscall.WaitStatus, error) {
+func ownDirectChild(cmd *exec.Cmd, controlEOF <-chan struct{}, termTimeout, killTimeout time.Duration, stopping bool) (directChildResult, error) { //nolint:gocyclo // One Wait4 loop keeps stop and signal ordering explicit.
 	pid := cmd.Process.Pid
 	poll := time.NewTicker(directChildPollInterval)
 	defer poll.Stop()
@@ -393,6 +402,7 @@ func ownDirectChild(cmd *exec.Cmd, controlEOF <-chan struct{}, termTimeout, kill
 	var deadline <-chan time.Time
 	var timer *time.Timer
 	phase := 0
+	stopRequested := stopping
 	if stopping {
 		phase = 1
 	}
@@ -410,21 +420,31 @@ func ownDirectChild(cmd *exec.Cmd, controlEOF <-chan struct{}, termTimeout, kill
 	}()
 
 	for {
+		select {
+		case <-controlEOF:
+			if phase == 0 {
+				phase = 1
+				stopRequested = true
+				controlEOF = nil
+			}
+		default:
+		}
+
 		var status syscall.WaitStatus
 		waited, err := syscall.Wait4(pid, &status, syscall.WNOHANG, nil)
 		if err != nil && !errors.Is(err, syscall.EINTR) {
 			_ = cmd.Process.Release()
-			return 0, fmt.Errorf("%w: wait for direct runner: %w", ErrLaunchOwnershipUncertain, err)
+			return directChildResult{}, fmt.Errorf("%w: wait for direct runner: %w", ErrLaunchOwnershipUncertain, err)
 		}
 		if waited == pid {
 			_ = cmd.Process.Release()
-			return status, nil
+			return directChildResult{status: status, stopRequested: stopRequested}, nil
 		}
 
 		if phase == 1 && deadline == nil {
 			if err := unix.Kill(pid, unix.SIGTERM); err != nil && !errors.Is(err, unix.ESRCH) {
 				_ = cmd.Process.Release()
-				return 0, fmt.Errorf("signal direct runner with SIGTERM: %w", err)
+				return directChildResult{}, fmt.Errorf("signal direct runner with SIGTERM: %w", err)
 			}
 			setDeadline(termTimeout)
 		}
@@ -433,6 +453,7 @@ func ownDirectChild(cmd *exec.Cmd, controlEOF <-chan struct{}, termTimeout, kill
 		case <-controlEOF:
 			if phase == 0 {
 				phase = 1
+				stopRequested = true
 				controlEOF = nil
 			}
 		case <-deadline:
@@ -440,14 +461,14 @@ func ownDirectChild(cmd *exec.Cmd, controlEOF <-chan struct{}, termTimeout, kill
 			if phase == 1 {
 				if err := unix.Kill(pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
 					_ = cmd.Process.Release()
-					return 0, fmt.Errorf("signal direct runner with SIGKILL: %w", err)
+					return directChildResult{}, fmt.Errorf("signal direct runner with SIGKILL: %w", err)
 				}
 				phase = 2
 				setDeadline(killTimeout)
 				continue
 			}
 			_ = cmd.Process.Release()
-			return 0, fmt.Errorf("%w: direct runner did not exit after SIGKILL", ErrLaunchOwnershipUncertain)
+			return directChildResult{}, fmt.Errorf("%w: direct runner did not exit after SIGKILL", ErrLaunchOwnershipUncertain)
 		case <-poll.C:
 		}
 	}
@@ -782,8 +803,9 @@ func mkdiratExisting(parent uintptr, name string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = unix.Close(fd) }()
-	return validatePrivateOpenDirectory(os.NewFile(uintptr(fd), name))
+	file := os.NewFile(uintptr(fd), name)
+	defer func() { _ = file.Close() }()
+	return validatePrivateOpenDirectory(file)
 }
 func openatExclusive(dirFD int, name string, flags int, mode uint32) (*os.File, error) {
 	fd, err := unix.Openat(dirFD, name, flags|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, mode)

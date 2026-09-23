@@ -19,9 +19,12 @@ Install and verify published, release-stamped `mecatui` **and** `mecated` binari
 use. `mecatui` runs the embedded server; `mecated` supplies the local `microvm doctor`,
 `status`, and `delete` administration commands and does not need to remain running.
 Source builds are for the separate repository-developer workflow, not ordinary local
-installation. Git, Python 3, read-write `/dev/kvm`, and unprivileged user namespaces are
-required. The full [operator runbook](https://github.com/stacklok/mecatl/blob/main/docs/usage/microvm-environments.md)
-includes verification and developer workflow instructions.
+installation. Linux requires Git, Python 3, read-write `/dev/kvm`, and enabled
+unprivileged user namespaces. The experimental Darwin path requires a non-root Apple
+Silicon host on macOS 15 or newer with Hypervisor.framework. Follow the
+[Darwin source qualification procedure](#qualify-the-experimental-darwin-source-path)
+on this page. The [microVM architecture](https://github.com/stacklok/mecatl/blob/main/docs/architecture/microvm-environments.md)
+describes the placement and isolation boundaries.
 
 > **Evidence boundary:** `task e2e:microvm` is the opt-in deterministic
 > production-composed journey for Linux amd64 KVM and experimental Darwin arm64
@@ -159,7 +162,16 @@ cd ../..
 
 ## Embedded mecatui journey
 
-Set the server-owned placement once in the XDG operator settings file, then use bare
+Bare `mecatui` uses the host-local placement default unless operator settings override
+`execution.default_placement`. To return to host-local execution after using this guide,
+remove that override or set it explicitly:
+
+```yaml
+execution:
+  default_placement: host-local
+```
+
+Set the server-owned MicroVM placement once in the XDG operator settings file, then use bare
 `mecatui`. This command uses `$XDG_CONFIG_HOME` when set and the standard fallback otherwise:
 
 ```sh
@@ -192,9 +204,26 @@ resume starts a fresh VM boot around the retained rootfs and logical worktrees. 
 `EnvironmentRef`, including its revision, stays unchanged. Installed packages, guest home,
 caches, branches, indexes, and dirty or untracked files remain available. A command that was
 running when the process stopped is interrupted and is never replayed automatically.
-On the experimental Darwin path, an ordinary daemon restart retains the exact ref. If the
-launch-owner supervisor dies while its runner survives with the inherited ownership lock,
-replacement fails closed and requires operator recovery instead of signaling a stored PID.
+On the experimental Darwin path, an ordinary daemon restart retains the exact ref.
+If readiness reports that the launch owner is orphaned, Mecatl has no automated
+self-service operation that can prove the surviving runner's identity safely. Preserve the
+MicroVM state and collect diagnostics before recovery:
+
+```sh
+mecated --version
+mecated microvm doctor
+mecated microvm status
+```
+
+Save the command output and a redacted copy of the reported error. If the process that owns
+the local deployment is still available, stop it through its normal service control, such as
+exiting embedded `mecatui` or stopping the managed `mecated` service, then retry the same
+saved session. Do not signal a numeric PID and do not delete the VM or its state. If the
+launch-owner supervisor was lost while the runner retained the ownership lock, no in-process
+recovery can prove that runner safe to signal. After saving other work, restart macOS. The
+restart releases the surviving processes and lock; ordinary session resume then starts a new
+boot around the retained rootfs and logical worktrees. If a host restart is not acceptable,
+keep the state unchanged and provide the collected diagnostics to the deployment operator.
 `mecatui connect ADDRESS` is a pure remote client and never resolves, starts, or forwards
 local MicroVM placement.
 

@@ -17,6 +17,8 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+const repositoryGuestOwnershipID = 65532
+
 func TestMicroVMMVP_Scenario2_DurableSingletonRegistryReattachesOrFailsLoudly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
