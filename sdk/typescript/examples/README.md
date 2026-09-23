@@ -1,10 +1,11 @@
 # TypeScript SDK examples
 
 These small programs compile against the built `@stacklok-oss/mecatl-sdk` package exports. They
-are deliberately independent examples, not an application framework. The workflow examples
-below use the root HTTP entry point and run on Node.js 22+ and Bun. Node.js and Bun examples
-that need gRPC or local spawn use `./node`. Deno 2.9.3 through Deno 2.x uses `./deno` for gRPC and
-`Deno.Command` local ownership, or `.` for remote HTTP/SSE.
+are deliberately independent examples, not an application framework. The session lifecycle,
+capability discovery, and MCP enrollment examples use the root HTTP entry point. They run on
+Node.js 22+ and Bun. The MCP authorization example uses `./node` for gRPC. Other Node.js and Bun
+examples that need gRPC or local spawn also use `./node`. Deno 2.9.3 through Deno 2.x uses
+`./deno` for gRPC and `Deno.Command` local ownership, or `.` for remote HTTP/SSE.
 
 | Example | Focus |
 | --- | --- |

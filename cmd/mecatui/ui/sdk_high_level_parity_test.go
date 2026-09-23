@@ -19,31 +19,43 @@ const (
 )
 
 type sdkBoundaryRow struct {
-	category     sdkBoundaryCategory
-	sdkOperation string
-	rationale    string
+	category               sdkBoundaryCategory
+	sdkOperation           string
+	additionalSDKOperation string
+	applicationDetail      string
+	rationale              string
 }
 
 // This test-only inventory classifies the reusable outcome of each TUI builtin.
 // Its SDK names describe a separate client; the TUI never imports the SDK.
 var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
-	"clear":                {category: sdkBacked, sdkOperation: "Session.clear"},
-	"title":                {category: sdkBacked, sdkOperation: "Session.rename"},
-	"session":              {category: sdkBacked, sdkOperation: "Session.snapshot"},
-	"retry":                {category: sdkBacked, sdkOperation: "Session.retry"},
-	"compact":              {category: sdkBacked, sdkOperation: "Session.compact"},
-	"mcp":                  {category: sdkBacked, sdkOperation: "Client.mcp.listSources"},
-	"agents":               {category: sdkBacked, sdkOperation: "Client.agents.list"},
-	"team":                 {category: sdkBacked, sdkOperation: "Team.list"},
-	"skills":               {category: sdkBacked, sdkOperation: "Client.skills.list"},
-	"soul":                 {category: sdkBacked, sdkOperation: "Client.soul.get"},
-	"usermodel":            {category: sdkBacked, sdkOperation: "Client.userModel.get"},
-	"reflections":          {category: sdkBacked, sdkOperation: "Client.learningProposals.list"},
-	"reflect":              {category: sdkBacked, sdkOperation: "Client.reflection.reflect"},
-	"dream":                {category: sdkBacked, sdkOperation: "Client.dreamPlans.generate"},
-	"models":               {category: sdkBacked, sdkOperation: "Client.models.list"},
-	"effort":               {category: sdkBacked, sdkOperation: "Client.sessions.fork"},
-	"worktrees":            {category: sdkBacked, sdkOperation: "Client.worktrees.list"},
+	"clear":   {category: sdkBacked, sdkOperation: "Session.clear"},
+	"title":   {category: sdkBacked, sdkOperation: "Session.rename"},
+	"session": {category: sdkBacked, sdkOperation: "Session.snapshot"},
+	"retry":   {category: sdkBacked, sdkOperation: "Session.retry"},
+	"compact": {category: sdkBacked, sdkOperation: "Session.compact"},
+	"mcp": {
+		category:               sdkBacked,
+		sdkOperation:           "Client.mcp.listSources",
+		additionalSDKOperation: "Session.listMcpConnectors",
+		applicationDetail:      "The TUI chooses source listing in direct mode or connector inventory in broker mode and renders the result locally.",
+	},
+	"agents":      {category: sdkBacked, sdkOperation: "Client.agents.list"},
+	"team":        {category: sdkBacked, sdkOperation: "Team.list"},
+	"skills":      {category: sdkBacked, sdkOperation: "Client.skills.list"},
+	"soul":        {category: sdkBacked, sdkOperation: "Client.soul.get"},
+	"usermodel":   {category: sdkBacked, sdkOperation: "Client.userModel.get"},
+	"reflections": {category: sdkBacked, sdkOperation: "Client.learningProposals.list"},
+	"reflect":     {category: sdkBacked, sdkOperation: "Client.reflection.reflect"},
+	"dream":       {category: sdkBacked, sdkOperation: "Client.dreamPlans.generate"},
+	"models":      {category: sdkBacked, sdkOperation: "Client.models.list"},
+	"effort":      {category: sdkBacked, sdkOperation: "Client.sessions.fork"},
+	"worktrees": {
+		category:               sdkBacked,
+		sdkOperation:           "Session.clear",
+		additionalSDKOperation: "Client.worktrees.list",
+		applicationDetail:      "The TUI picks a sibling worktree, then passes its selector to Session.clear for the successor handoff.",
+	},
 	"schedule":             {category: sdkBacked, sdkOperation: "Client.schedules.list"},
 	"sessions":             {category: sdkBacked, sdkOperation: "Client.sessions.list"},
 	"tools-connect":        {category: sdkBacked, sdkOperation: "Session.connectWorkspaceServices"},
@@ -91,15 +103,21 @@ func builtinLiteralName(lit *ast.CompositeLit) (string, bool) {
 
 func declaredBuiltinNames(t *testing.T) []string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "builtins.go", nil, 0)
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, "builtins.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var names []string
 	add := func(lit *ast.CompositeLit) {
-		if name, ok := builtinLiteralName(lit); ok {
-			names = append(names, name)
+		if len(lit.Elts) == 0 { // The zero-value return in debugBuiltin is not a declaration.
+			return
 		}
+		name, ok := builtinLiteralName(lit)
+		if !ok {
+			t.Fatalf("builtin declaration at %s has no resolvable name", fileSet.Position(lit.Pos()))
+		}
+		names = append(names, name)
 	}
 	ast.Inspect(file, func(node ast.Node) bool {
 		lit, ok := node.(*ast.CompositeLit)
@@ -148,8 +166,11 @@ func TestSDKHighLevelParity_Scenario2_AllBuiltinDeclarationsClassified(t *testin
 			if row.sdkOperation == "" || row.rationale != "" {
 				t.Errorf("SDK-backed builtin %q needs an operation and no non-SDK rationale", name)
 			}
+			if (row.additionalSDKOperation == "") != (row.applicationDetail == "") {
+				t.Errorf("mixed SDK-backed builtin %q needs both an additional operation and application detail", name)
+			}
 		case applicationOnly, operatorOnly, debugOnly:
-			if row.rationale == "" || row.sdkOperation != "" {
+			if row.rationale == "" || row.sdkOperation != "" || row.additionalSDKOperation != "" || row.applicationDetail != "" {
 				t.Errorf("non-SDK builtin %q needs a rationale and no SDK operation", name)
 			}
 		default:

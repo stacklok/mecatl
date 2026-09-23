@@ -1,12 +1,19 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { createRouterTransport } from "@connectrpc/connect";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
 import { ScheduleService } from "../src/gen/mecatl/v1/schedule_pb.js";
-import type { Client, McpAuthorization, RunControls, Session, Team } from "../src/index.js";
+import {
+  type Client,
+  connect,
+  type McpAuthorization,
+  type RunControls,
+  type Session,
+  type Team,
+} from "../src/index.js";
 import { RPC_CATALOG } from "../src/rpc-catalog.js";
 
 type MethodName<T> = {
@@ -208,16 +215,9 @@ const HIGH_LEVEL_SURFACE = {
 } as const satisfies Record<string, Classification>;
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-const sourceFiles = [
-  "client.ts",
-  "mcp-authorization.ts",
-  "namespaces-core.ts",
-  "namespaces-ops.ts",
-  "plan.ts",
-  "run-controls.ts",
-  "server.ts",
-  "team.ts",
-] as const;
+const sourceFiles = readdirSync(join(packageRoot, "src"), { withFileTypes: true })
+  .filter((entry) => entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts"))
+  .map((entry) => entry.name);
 
 function referenceKey(node: ts.Node): string | undefined {
   if (
@@ -241,7 +241,22 @@ function referenceKey(node: ts.Node): string | undefined {
   return undefined;
 }
 
-function invocationPath(node: ts.Node, file: string, key: string): PublicOperation | undefined {
+function isDescriptorCall(node: ts.Node): boolean {
+  for (let parent = node.parent; parent !== undefined; parent = parent.parent) {
+    if (!ts.isCallExpression(parent)) continue;
+    const descriptor = parent.arguments[0];
+    return (
+      descriptor !== undefined &&
+      descriptor.pos <= node.pos &&
+      node.end <= descriptor.end &&
+      ts.isPropertyAccessExpression(parent.expression) &&
+      ["unary", "stream", "#unary", "#stream"].includes(parent.expression.name.text)
+    );
+  }
+  return false;
+}
+
+function invocationPath(node: ts.Node, file: string): PublicOperation | undefined {
   let className = "";
   let methodName = "";
   let functionName = "";
@@ -272,22 +287,15 @@ function invocationPath(node: ts.Node, file: string, key: string): PublicOperati
       ) as PublicOperation;
     }
     if (className === "ClientImpl") {
-      if (properties.includes("watch")) return "Session.activity";
       const member = properties.at(-1);
       if (member === "create" || member === "fork" || member === "get") {
         return `Client.sessions.${member}`;
       }
-      if (methodName === "#probe") return "Client.server.compatibility";
     }
   }
   if (file === "mcp-authorization.ts") {
     if (className === "McpAuthorizationImpl" && methodName === "presentation") {
       return "McpAuthorization.presentation";
-    }
-    if (className === "McpAuthorizationFlowImpl" && methodName === "#start") {
-      return key === "HarnessService.RecheckMcpAuthorization"
-        ? "McpAuthorization.recheck"
-        : "McpAuthorization.cancel";
     }
   }
   if (file === "plan.ts" && functionName === "createPlanResolution") return "Session.resolvePlan";
@@ -306,8 +314,76 @@ function invocationPath(node: ts.Node, file: string, key: string): PublicOperati
   return undefined;
 }
 
-function sourceWitnesses(): ReadonlyMap<string, ReadonlySet<PublicOperation>> {
-  const found = new Map<string, Set<PublicOperation>>();
+function authorizationFlowKeys(source: ts.SourceFile): readonly string[] {
+  const flow = source.statements.find(
+    (statement): statement is ts.ClassDeclaration =>
+      ts.isClassDeclaration(statement) && statement.name?.text === "McpAuthorizationFlowImpl",
+  );
+  const start = flow?.members.find(
+    (member): member is ts.MethodDeclaration =>
+      ts.isMethodDeclaration(member) && member.name.getText(source) === "#start",
+  );
+  if (start?.body === undefined) return [];
+
+  let selected: ts.ConditionalExpression | undefined;
+  let streamed = false;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "method" &&
+      node.initializer !== undefined &&
+      ts.isConditionalExpression(node.initializer)
+    ) {
+      selected = node.initializer;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "stream" &&
+      node.arguments[0] !== undefined &&
+      ts.isAsExpression(node.arguments[0]) &&
+      ts.isIdentifier(node.arguments[0].expression) &&
+      node.arguments[0].expression.text === "method"
+    ) {
+      streamed = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(start.body);
+  if (!streamed || selected === undefined) return [];
+  const condition = selected.condition;
+  if (
+    !ts.isBinaryExpression(condition) ||
+    condition.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    !ts.isPropertyAccessExpression(condition.left) ||
+    condition.left.expression.kind !== ts.SyntaxKind.ThisKeyword ||
+    condition.left.name.text !== "operation" ||
+    !ts.isStringLiteral(condition.right) ||
+    condition.right.text !== "recheck"
+  ) {
+    return [];
+  }
+  const keys = [referenceKey(selected.whenTrue), referenceKey(selected.whenFalse)];
+  return keys[0] === "HarnessService.RecheckMcpAuthorization" &&
+    keys[1] === "HarnessService.CancelMcpAuthorization"
+    ? (keys as [string, string])
+    : [];
+}
+
+interface SourceWitnesses {
+  readonly operations: ReadonlyMap<string, ReadonlySet<PublicOperation>>;
+  readonly invoked: ReadonlySet<string>;
+}
+
+function sourceWitnesses(): SourceWitnesses {
+  const operations = new Map<string, Set<PublicOperation>>();
+  const invoked = new Set<string>();
+  const record = (key: string, operation: PublicOperation): void => {
+    const entries = operations.get(key) ?? new Set<PublicOperation>();
+    entries.add(operation);
+    operations.set(key, entries);
+  };
   for (const name of sourceFiles) {
     const source = ts.createSourceFile(
       name,
@@ -317,19 +393,27 @@ function sourceWitnesses(): ReadonlyMap<string, ReadonlySet<PublicOperation>> {
     );
     const visit = (node: ts.Node): void => {
       const key = referenceKey(node);
-      if (key !== undefined) {
-        const operation = invocationPath(node, name, key);
-        if (operation !== undefined) {
-          const entries = found.get(key) ?? new Set<PublicOperation>();
-          entries.add(operation);
-          found.set(key, entries);
-        }
+      if (key !== undefined && isDescriptorCall(node)) {
+        invoked.add(key);
+        const operation = invocationPath(node, name);
+        if (operation !== undefined) record(key, operation);
       }
       ts.forEachChild(node, visit);
     };
     visit(source);
+    if (name === "mcp-authorization.ts") {
+      for (const key of authorizationFlowKeys(source)) {
+        invoked.add(key);
+        record(
+          key,
+          key === "HarnessService.RecheckMcpAuthorization"
+            ? "McpAuthorization.recheck"
+            : "McpAuthorization.cancel",
+        );
+      }
+    }
   }
-  return found;
+  return { operations, invoked };
 }
 
 describe("SDK high-level RPC surface", () => {
@@ -344,17 +428,107 @@ describe("SDK high-level RPC surface", () => {
   });
 
   it("covered RPCs have public invocation paths", () => {
-    const witnesses = sourceWitnesses();
+    const { operations } = sourceWitnesses();
     for (const [key, row] of Object.entries(HIGH_LEVEL_SURFACE)) {
       if (row.kind === "raw-only") continue;
-      expect(witnesses.get(key), `${key} must be invoked by ${row.operation}`).toContain(
+      // These indirect public paths are exercised below against a recording transport.
+      if (
+        key === "HarnessService.GetCompatibilityInfo" ||
+        key === "HarnessService.WatchSessionEvents"
+      ) {
+        continue;
+      }
+      expect(operations.get(key), `${key} must be invoked by ${row.operation}`).toContain(
         row.operation,
       );
       expect(row.kind === "session" ? row.operation.startsWith("Session.") : true).toBe(true);
     }
   });
 
+  it("a descriptor read without a unary or stream call is not an invocation", () => {
+    const source = ts.createSourceFile(
+      "dead-reference.ts",
+      `void RPC_CATALOG["HarnessService.ListAgents"];
+       operations.unary(RPC_CATALOG["HarnessService.ListAgents"].grpc.descriptor, {}, {});`,
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const calls: boolean[] = [];
+    const visit = (node: ts.Node): void => {
+      if (referenceKey(node) === "HarnessService.ListAgents") calls.push(isDescriptorCall(node));
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(calls).toEqual([false, true]);
+  });
+
+  it("public server compatibility refresh invokes GetCompatibilityInfo", async () => {
+    expect(HIGH_LEVEL_SURFACE["HarnessService.GetCompatibilityInfo"]).toEqual({
+      kind: "namespace",
+      operation: "Client.server.compatibility",
+    });
+    let calls = 0;
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        getCompatibilityInfo: () => {
+          calls += 1;
+          return { apiMajor: 1, capabilities: {}, features: ["server_info"] };
+        },
+      });
+    });
+    const client = connect({ transport });
+    try {
+      await client.server.compatibility();
+      const before = calls;
+      await client.server.compatibility();
+      expect(calls).toBe(before + 1);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("public session activity invokes WatchSessionEvents", async () => {
+    expect(HIGH_LEVEL_SURFACE["HarnessService.WatchSessionEvents"]).toEqual({
+      kind: "session",
+      operation: "Session.activity",
+    });
+    const watched: string[] = [];
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: {},
+          features: ["watch_session_events"],
+        }),
+        getSession: (request) => ({ session: { sessionId: request.sessionId } }),
+        watchSessionEvents: async function* (request) {
+          watched.push(request.sessionId);
+          yield {
+            cursor: "cursor-1",
+            event: { runId: "run-1", text: "working", type: "message.delta" },
+            phase: "replay",
+          };
+        },
+      });
+    });
+    const client = connect({ transport });
+    try {
+      const session = await client.sessions.get("covered-session");
+      const activity = await session.activity();
+      try {
+        const first = await activity[Symbol.asyncIterator]().next();
+        expect(first.done).toBe(false);
+        expect(watched).toEqual(["covered-session"]);
+      } finally {
+        await activity.close();
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
   it("raw-only RPC exceptions are exact and reasoned", () => {
+    const { invoked } = sourceWitnesses();
     const raw = Object.entries(HIGH_LEVEL_SURFACE).flatMap(([key, row]) =>
       row.kind === "raw-only" ? [key] : [],
     );
@@ -366,9 +540,7 @@ describe("SDK high-level RPC surface", () => {
       const row = HIGH_LEVEL_SURFACE[key as keyof typeof HIGH_LEVEL_SURFACE];
       expect(row.kind).toBe("raw-only");
       if (row.kind === "raw-only") expect(row.rationale.trim().length).toBeGreaterThan(20);
-      expect(sourceWitnesses().has(key), `${key} must remain unused by high-level source`).toBe(
-        false,
-      );
+      expect(invoked.has(key), `${key} must remain unused by high-level source`).toBe(false);
     }
   });
 });
