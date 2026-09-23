@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -142,9 +143,13 @@ func serveFixtureBus(conn net.Conn, mode string) error {
 			return err
 		}
 	}
-	// Any further traffic (including a Secret Service call) violates the protocol.
-	if _, err := reader.ReadByte(); err != io.EOF {
-		return fmt.Errorf("unexpected post-detection traffic: %v", err)
+	// Any further application bytes (including a Secret Service call) violate the
+	// protocol. TCP peers may close with EOF or a reset depending on unread
+	// transport state; both prove the same thing only when zero bytes arrived.
+	var extra [1]byte
+	n, err := reader.Read(extra[:])
+	if n != 0 || (err != io.EOF && !errors.Is(err, syscall.ECONNRESET)) {
+		return fmt.Errorf("unexpected post-detection traffic: bytes=%d err=%v", n, err)
 	}
 	return nil
 }
@@ -201,36 +206,30 @@ func TestHeadlessCredentialStorage_Scenario1_WholeDetectionBudget(t *testing.T) 
 }
 
 func TestSecretServiceDeniedDialFailsClosed(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root bypasses directory search permission; wire authentication denial is tested separately")
-	}
-	root := t.TempDir()
-	private := root + "/private"
-	if err := os.Mkdir(private, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(private, 0000); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chmod(private, 0700) }()
-	_, err := runSecretServiceDetector(t.Context(), 500*time.Millisecond, func(ctx context.Context, executable string) *exec.Cmd {
-		return busChildCommand(ctx, executable, "unix:path=private/bus", root)
+	code := secretServiceHelperWithConnect(t.Context(), func(...dbus.ConnOption) (*dbus.Conn, error) {
+		return nil, syscall.EACCES
 	})
-	if err != errSecretServiceDetection {
-		t.Fatal("permission-denied dial did not fail closed with sanitized error")
+	if code != 82 {
+		t.Fatalf("permission-denied dial exit = %d, want sanitized detection failure", code)
 	}
 }
 
 func TestSecretServiceMissingAndMalformedBus(t *testing.T) {
-	for _, address := range []string{"unix:path=missing", "not-a-bus-address"} {
-		_, err := runSecretServiceDetector(t.Context(), 500*time.Millisecond, func(ctx context.Context, executable string) *exec.Cmd {
-			return busChildCommand(ctx, executable, address, t.TempDir())
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "missing", err: syscall.ENOENT, want: 81},
+		{name: "malformed", err: errors.New("invalid bus address"), want: 82},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code := secretServiceHelperWithConnect(t.Context(), func(...dbus.ConnOption) (*dbus.Conn, error) {
+				return nil, tc.err
+			})
+			if code != tc.want {
+				t.Fatalf("helper exit = %d, want %d", code, tc.want)
+			}
 		})
-		if strings.HasPrefix(address, "unix:") && err != nil {
-			t.Fatal("missing bus did not select absence")
-		}
-		if !strings.HasPrefix(address, "unix:") && err == nil {
-			t.Fatal("malformed address selected absence")
-		}
 	}
 }

@@ -81,6 +81,14 @@ func darwinTestRunnerConfigMode(t *testing.T, mode string) runner.Config {
 	return runner.Config{RunnerPath: executable, VMLogPath: filepath.Join(t.TempDir(), "runner.log")}
 }
 
+func darwinTestProcessEnv(mode, ready string) []string {
+	env := []string{launchOwnerHelperEnv + "=" + mode, "GORACE=atexit_sleep_ms=0"}
+	if ready != "" {
+		env = append(env, "GO_TEST_LAUNCH_OWNER_READY="+ready)
+	}
+	return env
+}
+
 func TestDarwinLaunchOwnerSupervisorStopsDirectRunner(t *testing.T) {
 	ownership := newDarwinTestLaunchOwnership(t)
 	handle, err := ownership.spawn(t.Context(), "env-stop", darwinTestRunnerConfig(t))
@@ -142,11 +150,9 @@ func TestDarwinLaunchOwnerSupervisorEscalatedStopSucceeds(t *testing.T) {
 }
 
 func TestDarwinDirectChildStopEscalatesAfterIgnoredTERM(t *testing.T) {
-	t.Setenv(launchOwnerHelperEnv, "ignore-term")
 	ready := filepath.Join(t.TempDir(), "ready")
-	t.Setenv("GO_TEST_LAUNCH_OWNER_READY", ready)
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = os.Environ()
+	cmd.Env = darwinTestProcessEnv("ignore-term", ready)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -181,11 +187,9 @@ func waitForTestFile(t *testing.T, path string) {
 }
 
 func TestDarwinDirectChildStopsOnControlEOF(t *testing.T) {
-	t.Setenv(launchOwnerHelperEnv, "runner")
 	ready := filepath.Join(t.TempDir(), "ready")
-	t.Setenv("GO_TEST_LAUNCH_OWNER_READY", ready)
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = os.Environ()
+	cmd.Env = darwinTestProcessEnv("runner", ready)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -205,9 +209,8 @@ func TestDarwinDirectChildStopsOnControlEOF(t *testing.T) {
 }
 
 func TestDarwinDirectChildNaturalFailureIsPreserved(t *testing.T) {
-	t.Setenv(launchOwnerHelperEnv, "exit-7")
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = os.Environ()
+	cmd.Env = darwinTestProcessEnv("exit-7", "")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -227,9 +230,8 @@ func TestDarwinDirectChildNaturalFailureIsPreserved(t *testing.T) {
 }
 
 func TestDarwinDirectChildNaturalSignalIsPreserved(t *testing.T) {
-	t.Setenv(launchOwnerHelperEnv, "signal-term")
 	cmd := exec.Command(os.Args[0], `{}`)
-	cmd.Env = os.Environ()
+	cmd.Env = darwinTestProcessEnv("signal-term", "")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +344,7 @@ func TestDarwinReceiptPublicationFailureStopsRunnerAndReleasesLock(t *testing.T)
 	}
 	cmd := exec.Command(executable, internalLaunchOwnerArg)
 	cmd.ExtraFiles = []*os.File{files.dir, files.lock, files.receipt, files.intent, controlReader}
-	cmd.Env = append(os.Environ(), launchOwnerHelperEnv+"=runner")
+	cmd.Env = darwinTestProcessEnv("runner", "")
 	if err := cmd.Start(); err != nil {
 		files.close()
 		_ = controlReader.Close()
