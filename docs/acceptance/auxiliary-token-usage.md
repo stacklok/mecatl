@@ -4,12 +4,12 @@
 **Work classification:** Architectural — adds recognized durable session token-accounting purposes, forward-compatible opaque-kind persistence, and their existing public projection while preserving budget and run-usage semantics.
 **Decision record:** [ADR 0354](../adr/0354-returned-auxiliary-usage-results.md)
 **Phase:** canonical auxiliary usage accounting
-**Status:** proposed, 2026-09-23. Material API revision approved with the issue owner.
-**Delivery:** Split. This amendment requires human review before implementation restarts.
+**Status:** in-progress, 2026-09-23. Material API revision approved with the issue owner.
+**Delivery:** Split. Implementation restarted after amendment approval.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1216](https://github.com/stacklok/mecatl/issues/1216).
-**Plan PR:** pending
-**Approved baseline:** absent until amendment approval
+**Plan PR:** [#1817](https://github.com/stacklok/mecatl/pull/1817)
+**Approved baseline:** `36a618a621b5ec53b593c72930bc229e60c2adf7`
 
 Extend the canonical `Session.tokenUsage` ledger from title generation to every reachable,
 session-associated auxiliary LLM call. Each purpose records provider-reported token usage under
