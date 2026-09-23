@@ -123,6 +123,12 @@ func (c *apiClient) stopSandbox(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodPost, "/sandboxes/"+url.PathEscape(id)+"/stop", nil, nil, http.StatusAccepted, http.StatusOK, http.StatusNoContent)
 }
 
+// me is the cheapest authenticated call the API offers. It proves the
+// credential and endpoint without allocating anything.
+func (c *apiClient) me(ctx context.Context) error {
+	return c.doJSON(ctx, http.MethodGet, "/me", nil, nil, http.StatusOK)
+}
+
 func (c *apiClient) ensureReady(ctx context.Context, id string) error {
 	state, err := c.getSandbox(ctx, id)
 	if err != nil {

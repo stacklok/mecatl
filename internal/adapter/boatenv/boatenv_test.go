@@ -266,6 +266,10 @@ func (f *fakeBoatAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if r.URL.Path == "/me" && r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "type": "user.info"})
+		return
+	}
 	if r.URL.Path == "/sandboxes" && r.Method == http.MethodPost {
 		var req createSandboxRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

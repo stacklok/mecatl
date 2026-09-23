@@ -21,11 +21,37 @@ type workspace struct {
 }
 
 var (
-	_ tool.Workspace          = (*workspace)(nil)
-	_ tool.WorkspaceNamespace = (*workspace)(nil)
+	_ tool.Workspace                 = (*workspace)(nil)
+	_ tool.WorkspaceNamespace        = (*workspace)(nil)
+	_ tool.AuthorityResourceResolver = (*workspace)(nil)
 )
 
+// authorityResolveTimeout bounds the guest round trip AuthorityResourcePath
+// makes; the interface carries no context.
+const authorityResolveTimeout = 30 * time.Second
+
 func (w *workspace) Root() string { return "boat:" + w.sandboxID + ":" + w.workdir }
+
+// AuthorityResourcePath derives the physical identity authority policy sees.
+// It asks the guest, which resolves symlinks with the same confinement rules
+// every file operation uses, so a link cannot aim policy at one file and the
+// access at another. Both returned paths are absolute guest paths.
+func (w *workspace) AuthorityResourcePath(p string) (target, root string, err error) {
+	clean, err := cleanPath(p, true)
+	if err != nil {
+		return "", "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), authorityResolveTimeout)
+	defer cancel()
+	out, err := w.helper(ctx, helperRequest{Op: "resolve", Path: clean})
+	if err != nil {
+		return "", "", classifyHelperError("resolve", clean, out, err)
+	}
+	if !pathpkg.IsAbs(out.Target) || !pathpkg.IsAbs(out.Root) {
+		return "", "", errors.New("boatenv: helper returned a non-absolute resource identity")
+	}
+	return out.Target, out.Root, nil
+}
 
 func (w *workspace) Read(ctx context.Context, p string) ([]byte, error) {
 	clean, err := cleanPath(p, false)
@@ -94,11 +120,11 @@ func (w *workspace) ReplaceFile(ctx context.Context, p string, old tool.FileVers
 	if err != nil {
 		return tool.FileVersion{}, err
 	}
+	// A zero FileVersion is never a wildcard. It still goes to the guest so a
+	// missing path reports fs.ErrNotExist and an existing one a version mismatch.
 	expected, err := tool.EncodeFileVersion(old)
-	if err != nil {
-		return tool.FileVersion{}, &tool.VersionMismatchError{Path: p}
-	}
-	out, err := w.helper(ctx, helperRequest{Op: "replace", Path: clean, Expected: expected, Content: base64.StdEncoding.EncodeToString(data)})
+	expectedValid := err == nil
+	out, err := w.helper(ctx, helperRequest{Op: "replace", Path: clean, Expected: expected, ExpectedValid: expectedValid, Content: base64.StdEncoding.EncodeToString(data)})
 	if err != nil {
 		return tool.FileVersion{}, classifyHelperError("replace", clean, out, err)
 	}
@@ -247,6 +273,9 @@ type helperRequest struct {
 	PathGlob string `json:"path_glob,omitempty"`
 	Content  string `json:"content,omitempty"`
 	Expected string `json:"expected,omitempty"`
+	// ExpectedValid distinguishes a real (possibly empty) version token from
+	// the zero FileVersion, which must match nothing.
+	ExpectedValid bool `json:"expected_valid"`
 }
 
 type helperResponse struct {
@@ -258,6 +287,8 @@ type helperResponse struct {
 	Paths   []string      `json:"paths,omitempty"`
 	Matches []helperMatch `json:"matches,omitempty"`
 	Entries []helperInfo  `json:"entries,omitempty"`
+	Target  string        `json:"target,omitempty"`
+	Root    string        `json:"root,omitempty"`
 }
 
 type helperInfo struct {
@@ -389,6 +420,10 @@ try:
         data = p.read_bytes()
         emit({"ok": True, "content": base64.b64encode(data).decode(), "version": version(data)})
 
+    if op == "resolve":
+        p = confined(req.get("path", "."), True)
+        emit({"ok": True, "target": str(p), "root": root_s})
+
     if op == "stat":
         p = confined(req.get("path", "."), True)
         emit({"ok": True, "info": info(p, "." if p == root else p.name)})
@@ -416,7 +451,7 @@ try:
             if not p.exists(): fail("not_found")
             if not p.is_file(): fail("unsupported")
             current = p.read_bytes()
-            if version(current) != expected: fail("version_mismatch")
+            if not req.get("expected_valid") or version(current) != expected: fail("version_mismatch")
             old_mode = stat.S_IMODE(p.stat().st_mode)
             p.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(prefix=".mecatl-write-", dir=str(p.parent))

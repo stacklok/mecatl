@@ -65,6 +65,7 @@ type Provider struct {
 var (
 	_ server.PlacementProvider   = (*Provider)(nil)
 	_ server.PlacementReattacher = (*Provider)(nil)
+	_ server.PlacementValidator  = (*Provider)(nil)
 )
 
 // New constructs a Boat placement provider. The API key remains only in the
@@ -142,6 +143,19 @@ func (p *Provider) Bind(ctx context.Context, req server.PlacementBindRequest) (s
 	default:
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
 	}
+}
+
+// ValidatePlacement proves the credential and endpoint at startup without
+// provisioning. Bind allocates a billable sandbox, so the server's default
+// preflight must never reach it.
+func (p *Provider) ValidatePlacement(ctx context.Context) error {
+	if p == nil || p.client == nil {
+		return server.ErrPlacementUnavailable
+	}
+	if err := p.client.me(ctx); err != nil {
+		return fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
+	}
+	return nil
 }
 
 // Reattach resolves only the exact persisted sandbox identity. It never follows the

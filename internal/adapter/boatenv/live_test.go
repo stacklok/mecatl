@@ -2,12 +2,17 @@ package boatenv
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/app"
 )
 
 // TestLiveBoat is an opt-in contract smoke against the public boat.dev API. It
@@ -104,5 +109,81 @@ func TestLiveBoat(t *testing.T) {
 	stale.Revision = "boat-v1-stale"
 	if _, err := provider.Reattach(ctx, server.PlacementReattachRequest{Ref: stale, Scope: "live-test"}); err == nil {
 		t.Fatal("stale revision reattached to a live sandbox")
+	}
+}
+
+// TestLiveBoatConformance runs the shared Workspace and WorkspaceNamespace
+// conformance tables against one live sandbox. Every subtest gets its own
+// working directory inside it, so the tables stay isolated without paying for
+// a sandbox per case.
+func TestLiveBoatConformance(t *testing.T) {
+	apiKey := os.Getenv("BOAT_API_KEY")
+	if apiKey == "" {
+		t.Skip("set BOAT_API_KEY to run the live Boat conformance tables")
+	}
+	provider, err := New(Config{APIKey: apiKey, Scope: "live-conformance", MachineType: "small", TTLSeconds: 1800, ReadyTimeout: 5 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	binding, err := provider.Bind(ctx, server.PlacementBindRequest{
+		Selector: server.DefaultPlacement(), Scope: "live-conformance", Operation: server.PlacementOperationCreate,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := binding.Close(); err != nil {
+			t.Errorf("archive live sandbox %s: %v", binding.Ref.ID, err)
+		}
+	})
+	var next int
+	factory := func(t *testing.T) tool.Workspace {
+		t.Helper()
+		next++
+		dir := fmt.Sprintf("conformance/%03d", next)
+		if res, err := provider.client.runCommand(ctx, binding.Ref.ID, ".", "mkdir -p "+dir); err != nil || res.ExitCode != 0 {
+			t.Fatalf("prepare %s: %+v, %v", dir, res, err)
+		}
+		return &workspace{client: provider.client, sandboxID: binding.Ref.ID, workdir: dir}
+	}
+	t.Run("workspace", func(t *testing.T) { fsconformance.Run(t, factory) })
+	t.Run("namespace", func(t *testing.T) { fsconformance.RunNamespace(t, factory) })
+}
+
+// TestLiveBoatComposition drives a scripted session through the real
+// app.Build composition against the live API: startup validation, one
+// provisioned sandbox, authority-checked file tools and Shell all hitting it.
+func TestLiveBoatComposition(t *testing.T) {
+	apiKey := os.Getenv("BOAT_API_KEY")
+	if apiKey == "" {
+		t.Skip("set BOAT_API_KEY to run the live Boat composition smoke")
+	}
+	provider, err := New(Config{APIKey: apiKey, Scope: "live-composition", MachineType: "small", TTLSeconds: 900, ReadyTimeout: 5 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := t.TempDir()
+	ref, results := composedRun(t, provider, app.Config{Workspace: host, Shell: "/bin/sh"},
+		call("write", "Write", `{"path":"notes/composed.txt","content":"alpha\nneedle\n"}`),
+		call("edit", "Edit", `{"path":"notes/composed.txt","old_string":"alpha","new_string":"omega"}`),
+		call("grep", "Grep", `{"pattern":"needle"}`),
+		call("shell", "Shell", `{"command":"cat notes/composed.txt && uname -s && printf from-shell > shell.txt"}`),
+		call("read", "Read", `{"path":"shell.txt"}`),
+	)
+	if ref.Kind == Kind && ref.ID != "" {
+		t.Cleanup(func() {
+			if err := provider.client.stopSandbox(context.Background(), ref.ID); err != nil {
+				t.Errorf("archive live sandbox %s: %v", ref.ID, err)
+			}
+		})
+	}
+	assertToolResults(t, results, map[session.ToolCallID]string{
+		"write": "", "edit": "", "grep": "notes/composed.txt", "shell": "omega\nneedle\nLinux", "read": "from-shell",
+	})
+	for _, name := range []string{"notes/composed.txt", "shell.txt"} {
+		if _, err := os.Stat(filepath.Join(host, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s reached the host workspace: %v", name, err)
+		}
 	}
 }
