@@ -2,13 +2,13 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — separates harness source authority from execution across composition, trust, and public engine interfaces.
-**Decision record:** [ADR 0353](../adr/0353-harness-context-source-authority.md)
+**Decision record:** [ADR 0354](../adr/0354-harness-context-source-authority.md)
 **Phase:** harness context model and shared source binding
 **Status:** draft, 2026-09-23. Model proposal and interface review only; runtime behavior is not implemented.
 **Delivery:** Split. Resolve the human decisions and merge the Plan / Interface contract before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** Relates to [#1811](https://github.com/stacklok/mecatl/issues/1811) and [PR #580](https://github.com/stacklok/mecatl/pull/580). Neither is closed here.
-**Plan PR:** added when opened
+**Plan PR:** [#1814](https://github.com/stacklok/mecatl/pull/1814) (draft)
 **Approved baseline:** absent until contract approval by merge
 
 `HarnessContext` names the deployment-configured instruction and customization sources supplied
@@ -100,13 +100,13 @@ has already passed.
 
 **Acceptance:**
 - AC1.1: The same configured source selection provides the same admitted context with two different execution namespaces, without deriving sources from either execution root.
-  - verify: `TestADR_0353_HarnessContext_Scenario1_SourceIndependentOfExecution`
+  - verify: `TestADR_0354_HarnessContext_Scenario1_SourceIndependentOfExecution`
 - AC1.2: Conflicting instructions and customizations planted only in an unselected execution namespace do not enter automatic context assembly, the command palette, or customization catalogs.
-  - verify: `TestADR_0353_HarnessContext_Scenario1_UnselectedExecutionContentIgnored`
+  - verify: `TestADR_0354_HarnessContext_Scenario1_UnselectedExecutionContentIgnored`
 - AC1.3: An explicitly configured source can read execution files through their actual backend, and admitted contents reach the harness without reopening a virtual root as a host path.
-  - verify: `TestADR_0353_HarnessContext_Scenario1_ExplicitExecutionFileSource`
+  - verify: `TestADR_0354_HarnessContext_Scenario1_ExplicitExecutionFileSource`
 - AC1.4: No-FS execution retains admitted logical sources, including file-backed sources inaccessible to agent file tools; file tools and Shell remain unavailable.
-  - verify: `TestADR_0353_HarnessContext_Scenario1_NoFSKeepsConfiguredSources`
+  - verify: `TestADR_0354_HarnessContext_Scenario1_NoFSKeepsConfiguredSources`
 
 ### Scenario 2 - Discovery and invocation share source authority
 
@@ -116,11 +116,11 @@ prompts. Ordinary misses and established fail-soft chain behavior are not author
 
 **Acceptance:**
 - AC2.1: Palette listing and prompt expansion resolve through the same configured source chain and precedence, including a positive control with conflicting same-name execution content.
-  - verify: `TestADR_0353_HarnessContext_Scenario2_PaletteAndExpansionAgree`
+  - verify: `TestADR_0354_HarnessContext_Scenario2_PaletteAndExpansionAgree`
 - AC2.2: A selected command source edit appears on the next List/Expand. This holds for API-backed fixtures and for explicitly selected execution-file sources; merely changing an unselected execution file has no effect.
-  - verify: `TestADR_0353_HarnessContext_Scenario2_SelectedCommandsRemainLive`
+  - verify: `TestADR_0354_HarnessContext_Scenario2_SelectedCommandsRemainLive`
 - AC2.3: With an independent healthy source and unavailable execution backend, owner-authorized command listing succeeds without calling execution reattachment. An explicitly execution-file-backed source still reports its own backend failure according to its source contract.
-  - verify: `TestADR_0353_HarnessContext_Scenario2_SourceOnlyDiscovery`
+  - verify: `TestADR_0354_HarnessContext_Scenario2_SourceOnlyDiscovery`
 
 ### Scenario 3 - Project instructions and customizations preserve their contracts
 
@@ -130,27 +130,27 @@ The source boundaries build on [ADR 0081](../adr/0081-rules-source-port.md),
 
 **Acceptance:**
 - AC3.1: Root instructions are read once per run from the configured source, refresh on a subsequent run, and remain ephemeral. Both manifest-enabled and ordinary assembly consume the same source with unchanged project provenance.
-  - verify: `TestADR_0353_HarnessContext_Scenario3_ProjectInstructionsPerRun`
+  - verify: `TestADR_0354_HarnessContext_Scenario3_ProjectInstructionsPerRun`
 - AC3.2: The file-backed source preserves root-only AGENTS.md/CLAUDE.md precedence, whitespace-only fallback, absence, genuine read errors, and existing framing without reading unrelated execution files.
-  - verify: `TestADR_0353_HarnessContext_Scenario3_RootDiscoveryCompatibility`
+  - verify: `TestADR_0354_HarnessContext_Scenario3_RootDiscoveryCompatibility`
 - AC3.3: Rules, skills, and agent definitions preserve their current lifetimes, admission, caps, and source-specific error behavior. Host, API, and execution-file storage do not confer a trust tier.
-  - verify: `TestADR_0353_HarnessContext_Scenario3_ProvenanceAndSourceContracts`
+  - verify: `TestADR_0354_HarnessContext_Scenario3_ProvenanceAndSourceContracts`
 - AC3.4: Source reads never update the execution ReadLedger, including when both capabilities reference the same files. Sharing a context source does not share session read evidence.
-  - verify: `TestADR_0353_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits`
+  - verify: `TestADR_0354_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits`
 - AC3.5: Inherited sources do not widen a child's existing specialist catalog, profile, trust admission, or delegation capabilities; an isolated execution fork alone does not retarget its context sources.
-  - verify: `TestADR_0353_HarnessContext_Scenario3_ChildAttenuationPreserved`
+  - verify: `TestADR_0354_HarnessContext_Scenario3_ChildAttenuationPreserved`
 
 ### Scenario 4 - Source failure does not change authority
 
-The [proposed source-authority ADR](../adr/0353-harness-context-source-authority.md) separates
+The [proposed source-authority ADR](../adr/0354-harness-context-source-authority.md) separates
 configuration failure from optional absence. Restart storage and migration proofs must be added
 when the open human decision is resolved; this draft is not ready for implementation dispatch.
 
 **Acceptance:**
 - AC4.1: Optional absence and ordinary configured-chain lookup retain established behavior. Failure resolving a required source is reported rather than replaced by execution files, process cwd, or an unrelated default.
-  - verify: `TestADR_0353_HarnessContext_Scenario4_NoUnconfiguredAuthorityFallback`
+  - verify: `TestADR_0354_HarnessContext_Scenario4_NoUnconfiguredAuthorityFallback`
 - AC4.2: Both shared-file and independent-source paths preserve source-specific error semantics; a configured fail-soft chain can still consult its next admitted source without inventing a new source.
-  - verify: `TestADR_0353_HarnessContext_Scenario4_ConfiguredChainFailureSemantics`
+  - verify: `TestADR_0354_HarnessContext_Scenario4_ConfiguredChainFailureSemantics`
 
 ## Dependency stack
 

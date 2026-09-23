@@ -92,7 +92,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
 - [0337 — Classify synthetic user-prompt origin at emission](./0337-synthetic-user-prompt-origin.md) *(proposed)*
-- [0353 - Harness context source authority is independent of execution](./0353-harness-context-source-authority.md) *(proposed)*
+- [0354 - Harness context source authority is independent of execution](./0354-harness-context-source-authority.md) *(proposed)*
 - [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
 - [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md) *(skill read-root carve-out superseded by 0108)*

@@ -1,4 +1,4 @@
-# ADR 0353 - Harness context source authority is independent of execution
+# ADR 0354 - Harness context source authority is independent of execution
 
 - Status: Proposed; interface compatibility and restart policy remain under review
 - Date: 2026-09-23
