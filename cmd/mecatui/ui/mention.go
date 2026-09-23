@@ -60,7 +60,7 @@ func (st *mentionState) syncList() {
 	}
 	items := make([]bounded.ListItem, 0, len(st.matches))
 	for _, path := range st.matches {
-		items = append(items, bounded.ListItem{ID: path, Text: "@" + terminaltext.Sanitize(path)})
+		items = append(items, bounded.ListItem{ID: path, Text: "@" + terminaltext.SanitizeSingleLine(path)})
 	}
 	st.list.SetItems(items)
 }
@@ -194,6 +194,10 @@ func matchFiles(root, token, prefix string, limit int) []string {
 			return fs.SkipAll
 		}
 		if d.IsDir() {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil || !info.Mode().IsRegular() {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)

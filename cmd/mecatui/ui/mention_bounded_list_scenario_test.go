@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -73,6 +74,15 @@ func TestMecatuiMentionBoundedList_Scenario1_BoundedDiscoveryAndReachability(t *
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(root, "regular-after-specials.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("visible-000.txt", filepath.Join(root, "symlink-before-regulars")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo-before-regulars"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(root, ".hidden"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +100,24 @@ func TestMecatuiMentionBoundedList_Scenario1_BoundedDiscoveryAndReachability(t *
 		if strings.Contains(match, ".hidden") {
 			t.Fatalf("hidden path admitted: %q", match)
 		}
+		if strings.Contains(match, "fifo-before-regulars") || strings.Contains(match, "symlink-before-regulars") {
+			t.Fatalf("non-regular candidate consumed the cap: %q", match)
+		}
+	}
+	if !slices.Contains(matches, "visible-062.txt") {
+		t.Fatalf("regular candidate excluded after special files consumed the cap: %v", matches)
+	}
+	for i := range maxMentionWalk {
+		name := filepath.Join(root, fmt.Sprintf("walk-%04d.txt", i))
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "zz-walk-stop.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := matchFiles(root, "walk-stop", "", maxMentionCandidates); len(got) != 0 {
+		t.Fatalf("walk exceeded %d entries: %v", maxMentionWalk, got)
 	}
 	st := scenarioMentionState(matches)
 	st.list.SetGeometry(40, 4, 1, bounded.Clip)
@@ -122,31 +150,45 @@ func TestMecatuiMentionBoundedList_Scenario1_SelectionPresentationAndPaging(t *t
 		t.Fatalf("page up did not move symmetrically: %d -> %d", paged, st.list.Cursor())
 	}
 	m := newMentionModel(t, seedWorkspace(t))
-	m.prompt.Rewrite("@")
-	m = m.syncMention()
+	m.mention = scenarioMentionState(scenarioMentionMatches(12))
 	_ = m.View()
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	m = updated.(Model)
+	if m.mention.list.Cursor() == 0 {
+		t.Fatal("real pgdown key did not page the mention list")
+	}
+	before := m.mention.list.Cursor()
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if got := updated.(Model).mention.list.Cursor(); got <= before {
+		t.Fatalf("real Down key did not route to mention selection: %d", got)
+	}
 	for _, msg := range []tea.KeyPressMsg{{Code: tea.KeyHome}, {Code: tea.KeyEnd}} {
 		if _, handled := m.onMentionKey(msg); handled {
 			t.Fatalf("mention unexpectedly claimed %q", msg.String())
 		}
 	}
 	cursor := m.mention.list.Cursor()
-	updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 1})
+	updated, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 1})
 	if got := updated.(Model).mention.list.Cursor(); got != cursor {
 		t.Fatalf("mouse moved mention cursor: %d -> %d", cursor, got)
 	}
 }
 
 func TestMecatuiMentionBoundedList_Scenario1_SanitizesFilesystemPaths(t *testing.T) {
-	raw := "hostile\u202e-name.txt"
-	st := scenarioMentionState([]string{raw})
+	displayRaw := "hostile\tline\nnext\u2028split\u202e-name.txt"
+	st := scenarioMentionState([]string{displayRaw})
 	got := renderMentionSized(testTheme(), st, 80, 4)
-	if strings.Contains(got, "\u202e") || !strings.Contains(ansi.Strip(got), "hostile-name.txt") {
-		t.Fatalf("hostile terminal control was not sanitized: %q", got)
+	plain := ansi.Strip(got)
+	if strings.ContainsAny(plain, "\t\u2028\u202e") || !strings.Contains(plain, "▶ @hostilelinenextsplit-name.txt") {
+		t.Fatalf("hostile terminal control was not sanitized into one display line: %q", got)
 	}
+	if got := st.list.CursorID(); got != displayRaw {
+		t.Fatalf("sanitization changed stable ID: got %q, want %q", got, displayRaw)
+	}
+	raw := "hostile\u202e-name.txt"
 	m := newMentionModel(t, seedWorkspace(t))
 	m.prompt.Rewrite("attach @hostile")
-	m.mention = st
+	m.mention = scenarioMentionState([]string{raw})
 	m.mention.open = true
 	m = m.mentionComplete()
 	if got := m.prompt.Value(); got != "attach @"+raw+" " {
@@ -168,10 +210,14 @@ func TestMecatuiMentionBoundedList_Scenario1_StableSelectionAndAnchorsAcrossRefr
 	st.matches = []string{"a", "b", "c", "e"}
 	st.syncList()
 	replacement := st.list.CursorID()
+	anchorAfterRemoval := st.list.View().Rows[0].ID
 	st.matches = []string{"a", "b", "c", "d", "e"}
 	st.syncList()
 	if st.list.CursorID() != replacement {
 		t.Fatalf("removed selection snapped back: got %q, replacement %q", st.list.CursorID(), replacement)
+	}
+	if got := st.list.View().Rows[0].ID; got != anchorAfterRemoval {
+		t.Fatalf("removed top anchor snapped back: got %q, replacement %q", got, anchorAfterRemoval)
 	}
 	_ = renderMentionSized(testTheme(), st, 12, 2)
 	if st.list.CursorID() != replacement {
@@ -225,6 +271,26 @@ func TestMecatuiMentionBoundedList_Scenario1_PhaseSpecificKeyOwnership(t *testin
 		if _, handled := m.onMentionKey(msg); handled {
 			t.Fatalf("suppressed mention claimed %q", msg.String())
 		}
+	}
+	m.phase = phaseRunning
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if got := updated.(Model).statusMsg; got != "cancelling…" {
+		t.Fatalf("suppressed mention did not relinquish Escape to running cancellation: %q", got)
+	}
+
+	m = newMentionModel(t, seedWorkspace(t))
+	m.prompt.Rewrite("@main")
+	m = m.syncMention()
+	m.phase = phaseRunning
+	_ = m.View()
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	dismissed := updated.(Model)
+	if dismissed.mention.open || dismissed.statusMsg == "cancelling…" {
+		t.Fatal("visible running mention Escape did not dismiss before cancellation")
+	}
+	updated, _ = dismissed.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if got := updated.(Model).statusMsg; got != "cancelling…" {
+		t.Fatalf("Escape did not cancel after mention dismissal: %q", got)
 	}
 }
 
