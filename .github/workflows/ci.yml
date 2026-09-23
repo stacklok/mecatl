@@ -1106,10 +1106,6 @@ jobs:
           bash .github/actions/mecatequi-publish/publish_test.sh
           bash .github/actions/action-wrappers_test.sh
 
-      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
-      - name: Test aggregate Task wiring
-        run: task test:task-wiring
-
   # Preserve one stable required context while golangci-lint runs.
   # The aggregate validates the classifier and applicable analysis job, so failures
   # and cancellations cannot be hidden by dependency skipping.

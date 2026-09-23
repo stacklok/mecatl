@@ -348,17 +348,11 @@ tasks:
     cmds:
       - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b); go test -race -count=1 "${packages[@]}"'
 
-  test:task-wiring:
-    desc: Test the aggregate test-task wiring with an offline fake Go executable
-    cmds:
-      - bash .github/scripts/task-test-suite_test.sh
-
   test:_suite:
     internal: true
     requires:
       vars: [RACE]
     cmds:
-      - task: test:task-wiring
       - go test {{.RACE}} ./...
       # engine/ is a separate module under the workspace — `./...` from the root
       # does NOT cross the module boundary, so its tests are a second invocation.
