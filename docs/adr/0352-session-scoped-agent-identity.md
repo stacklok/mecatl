@@ -1,4 +1,4 @@
-# ADR 0350 — Session-scoped agent identity
+# ADR 0352 — Session-scoped agent identity
 
 - Status: Proposed
 - Date: 2026-09-22
@@ -39,7 +39,7 @@ a session that **is** the root. Splitting the reusable catalog/prompt/model/limi
 construction from that child-shaped Deps choice is the real work this ADR requires.
 
 This ADR does not touch operator-tier permission posture. PR
-[#1730](https://github.com/stacklok/mecatl/pull/1730) (draft ADR 0351, unmerged)
+[#1730](https://github.com/stacklok/mecatl/pull/1730) (draft, unmerged — its own working number, 0351, collided with an unrelated ADR that landed first)
 proposes a `--permission-mode` vocabulary and holds that composition-bearing tiers
 (posture, allow-all, substitution loosening) stay operator-only, non-session-selectable,
 and that agent-definition frontmatter can't name one. This ADR is consistent with that:
@@ -225,7 +225,7 @@ only narrow it, never re-derive it wider) is tracked in
   [#882](https://github.com/stacklok/mecatl/issues/882),
   [#883](https://github.com/stacklok/mecatl/issues/883) — Slack bot v1; unmerged planning
   draft sketches the approval UX this ADR keeps buildable.
-- [PR #1730](https://github.com/stacklok/mecatl/pull/1730) / draft ADR 0351 (unmerged) —
+- [PR #1730](https://github.com/stacklok/mecatl/pull/1730) (draft, unmerged) —
   operator-tier permission-mode vocabulary; posture stays non-session-selectable.
 - [Issue #1784](https://github.com/stacklok/mecatl/issues/1784) — open question: should
   posture itself ever become session-configurable.
