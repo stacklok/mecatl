@@ -255708,6 +255708,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790124606324,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bbc7af0273df9264504066f44b0b2304b6f4e870",
+          "message": "fix(mecatui): surface session title and connection (#1792)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-22T17:40:04-07:00",
+          "tree_id": "a3928059fab9094bfa6bdb95843de07115b5236d",
+          "url": "https://github.com/stacklok/mecatl/commit/bbc7af0273df9264504066f44b0b2304b6f4e870"
+        },
+        "date": 1790125312235,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3320,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1153,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -335318,6 +335357,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790125308979,
+  "lastUpdate": 1790125313184,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
