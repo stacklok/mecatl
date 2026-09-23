@@ -3236,10 +3236,10 @@ func (m Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, false
 	}
 	switch {
-	case key.Matches(msg, m.keys.Up):
+	case msg.String() == keyMenuUp:
 		m.paletteMoveUp()
 		return m, nil, true
-	case key.Matches(msg, m.keys.Down):
+	case msg.String() == keyMenuDown:
 		m.paletteMoveDown()
 		return m, nil, true
 	case key.Matches(msg, m.keys.ScrollU):

@@ -291,19 +291,36 @@ func renderPaletteSized(th theme.Theme, st paletteState, caps client.Capabilitie
 		return ""
 	}
 	view := st.list.ViewWithIndicators(bodyRows, st.list.RevealPending())
+	header := "commands"
+	if bodyRows == 1 {
+		// The single physical list row remains available to the bounded control.
+		// Put both overflow counts in the existing card header rather than spending
+		// that row on chrome and hiding one side of a middle selection.
+		view = st.list.View()
+		var overflow []string
+		if view.Above > 0 {
+			overflow = append(overflow, fmt.Sprintf("↑%d above", view.Above))
+		}
+		if view.Below > 0 {
+			overflow = append(overflow, fmt.Sprintf("↓%d below", view.Below))
+		}
+		if len(overflow) > 0 {
+			header = strings.Join(overflow, "·")
+		}
+	}
 	if len(view.Rows) == 0 {
 		return ""
 	}
 
-	lines := []string{th.Style("muted").Render(ansi.Cut("commands", 0, contentWidth))}
-	if view.Above > 0 {
+	lines := []string{th.Style("muted").Render(ansi.Cut(header, 0, contentWidth))}
+	if bodyRows > 1 && view.Above > 0 {
 		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↑ +%d above", view.Above), 0, contentWidth)))
 	}
 	for _, row := range view.Rows {
 		presentation := presentListRow(row, th.Style("spinner"), th.Style("toolArgs"))
 		lines = append(lines, presentation.Style.Render(presentation.Text))
 	}
-	if view.Below > 0 {
+	if bodyRows > 1 && view.Below > 0 {
 		lines = append(lines, th.Style("muted").Render(ansi.Cut(fmt.Sprintf("  ↓ +%d below", view.Below), 0, contentWidth)))
 	}
 	lines = append(lines, th.Style("muted").Render(ansi.Cut("↑/↓ select · pgup/pgdn page · tab/enter complete · esc dismiss", 0, contentWidth)))

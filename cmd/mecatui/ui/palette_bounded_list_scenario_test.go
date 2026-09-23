@@ -58,6 +58,19 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testi
 		t.Fatal("suppressed palette retained valid list geometry")
 	}
 
+	// A one-row body still exposes both sides of a middle physical row without
+	// borrowing a second body row for indicator chrome.
+	st = scenarioPaletteState(scenarioPaletteCommands(3))
+	st.list.SetGeometry(20, 1, 1, bounded.Wrap)
+	st.list.SetCursor(1)
+	got := ansi.Strip(renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 24, 1))
+	if !strings.Contains(got, "above") || !strings.Contains(got, "below") {
+		t.Fatalf("one-row body lost bidirectional overflow indicators:\n%s", got)
+	}
+	if rows := len(st.list.View().Rows); rows != 1 {
+		t.Fatalf("list body rows = %d, want exactly one", rows)
+	}
+
 	m := newPaletteModel(t, sampleCommands())
 	m.conv.addUser("settled conversation")
 	m.refreshView()
@@ -69,6 +82,32 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testi
 	}
 	if m.paletteVisible() {
 		t.Fatal("short frame should suppress the complete palette card")
+	}
+
+	// Each admissible physical-row budget retains the prompt and footer while the
+	// real frame renders the palette through its normal layout path.
+	for rows := 1; rows <= maxPaletteRows; rows++ {
+		t.Run(fmt.Sprintf("body-rows-%d", rows), func(t *testing.T) {
+			model := newPaletteModel(t, sampleCommands())
+			model.conv.addUser("settled conversation")
+			model.refreshView()
+			model = typeRune(t, model, '/')
+			model = applyAll(model, tea.WindowSizeMsg{Width: 80, Height: rows + 19})
+			frame := model.View().Content
+			if !model.paletteVisible() || !model.palette.list.Valid() {
+				t.Fatal("admissible geometry suppressed the palette")
+			}
+			if got := len(model.palette.list.View().Rows); got > rows {
+				t.Fatalf("list rows = %d, budget = %d", got, rows)
+			}
+			if height := lipglossHeight(frame); height > model.height {
+				t.Fatalf("frame height = %d, offered %d", height, model.height)
+			}
+			if !strings.Contains(ansi.Strip(frame), ansi.Strip(model.renderInput())) ||
+				!strings.Contains(ansi.Strip(frame), ansi.Strip(model.renderFooter())) {
+				t.Fatalf("palette displaced prompt or footer:\n%s", ansi.Strip(frame))
+			}
+		})
 	}
 }
 
@@ -124,6 +163,36 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_SelectionAnchors(t *testing.T)
 	if got := m.palette.selected().Name; got != "refactor" {
 		t.Fatalf("removed selection snapped back after widening filter: %q", got)
 	}
+
+	// CommandsMsg is the discovery-refresh seam: preserve stable selection while
+	// available, then adopt its replacement without resurrecting the old ID.
+	m = newPaletteModel(t, sampleCommands())
+	m = typeRune(t, m, '/')
+	for m.palette.selected().Name != "review" {
+		m.palette.list.Move(bounded.LineDown)
+	}
+	updated, _ := m.Update(client.CommandsMsg{Commands: []client.Command{
+		{Name: "fix", Description: "fix a failing test"},
+		{Name: "review", Description: "review refreshed"},
+		{Name: "refactor", Description: "refactor a function"},
+	}})
+	m = updated.(Model)
+	if got := m.palette.selected().Name; got != "review" {
+		t.Fatalf("CommandsMsg lost stable selection: %q", got)
+	}
+	updated, _ = m.Update(client.CommandsMsg{Commands: []client.Command{
+		{Name: "fix", Description: "fix a failing test"},
+		{Name: "refactor", Description: "refactor a function"},
+	}})
+	m = updated.(Model)
+	if got := m.palette.selected().Name; got != "refactor" {
+		t.Fatalf("CommandsMsg missing selection replacement: %q", got)
+	}
+	updated, _ = m.Update(client.CommandsMsg{Commands: sampleCommands().cmds})
+	m = updated.(Model)
+	if got := m.palette.selected().Name; got != "refactor" {
+		t.Fatalf("CommandsMsg resurrected removed selection: %q", got)
+	}
 }
 
 func TestMecatuiSlashPaletteBoundedList_Scenario1_StandardRowPresentation(t *testing.T) {
@@ -160,11 +229,11 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 		t.Fatal("precondition: palette should be visible")
 	}
 	for _, keyMsg := range []tea.KeyPressMsg{{Code: tea.KeyDown}, {Code: tea.KeyUp}, {Code: tea.KeyPgDown}, {Code: tea.KeyPgUp}} {
-		mm, _, handled := m.onPaletteKey(keyMsg)
-		if !handled {
-			t.Fatalf("visible palette did not claim %q", keyMsg.String())
+		updated, _ := m.Update(keyMsg)
+		m = updated.(Model)
+		if !m.paletteVisible() {
+			t.Fatalf("visible palette relinquished %q", keyMsg.String())
 		}
-		m = mm.(Model)
 	}
 	for _, keyMsg := range []tea.KeyPressMsg{{Code: tea.KeyHome}, {Code: tea.KeyEnd}} {
 		if _, _, handled := m.onPaletteKey(keyMsg); handled {
@@ -184,30 +253,63 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 	if filtered.prompt.Value() != "/r" || len(filtered.palette.filtered) != 3 {
 		t.Fatalf("typing did not edit and filter: prompt=%q rows=%d", filtered.prompt.Value(), len(filtered.palette.filtered))
 	}
+	for _, letter := range []rune{'j', 'k'} {
+		t.Run("printable-"+string(letter), func(t *testing.T) {
+			input := newPaletteModel(t, sampleCommands())
+			input = typeRune(t, input, '/')
+			// Model.Update is the production key-routing seam: default Up/Down
+			// bindings include j/k, but the palette must leave them to the prompt.
+			input = typeRune(t, input, letter)
+			if got, want := input.prompt.Value(), "/"+string(letter); got != want {
+				t.Fatalf("prompt = %q, want printable palette filter input %q", got, want)
+			}
+		})
+	}
+
+	paged := newPaletteModel(t, &fakeCommander{cmds: []client.Command{
+		{Name: "alpha", Description: strings.Repeat("wrapped segment ", 24)},
+		{Name: "beta", Description: "second"},
+	}})
+	paged = typeRune(t, paged, '/')
+	paged = applyAll(paged, tea.WindowSizeMsg{Width: 24, Height: 21})
+	_ = paged.View()
+	paged.palette.list.SetCursor(7) // alpha follows the seven built-ins.
+	paged.keys = applyKeyOverrides(paged.keys, map[string][]string{"ScrollU": {"p"}, "ScrollD": {"n"}})
+	updated, _ := paged.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	paged = updated.(Model)
+	pageOffset := paged.palette.list.Offset()
+	if pageOffset == 0 || paged.palette.selected().Name != "alpha" {
+		t.Fatalf("remapped ScrollD did not page wrapped selection: offset=%d selected=%q", pageOffset, paged.palette.selected().Name)
+	}
+	updated, _ = paged.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	paged = updated.(Model)
+	if paged.palette.list.Offset() >= pageOffset || paged.palette.selected().Name != "alpha" {
+		t.Fatalf("remapped ScrollU did not page back: offset=%d selected=%q", paged.palette.list.Offset(), paged.palette.selected().Name)
+	}
 
 	workspace := newPaletteModel(t, sampleCommands())
 	workspace = typeRune(t, workspace, '/')
 	workspace.palette.list.SetCursor(7)
-	completed, _, handled := workspace.onPaletteKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	completed, _ := workspace.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	workspace = completed.(Model)
-	if !handled || workspace.prompt.Value() != "/fix " || workspace.palette.open {
-		t.Fatalf("workspace completion changed: handled=%t prompt=%q open=%t", handled, workspace.prompt.Value(), workspace.palette.open)
+	if workspace.prompt.Value() != "/fix " || workspace.palette.open {
+		t.Fatalf("workspace completion changed: prompt=%q open=%t", workspace.prompt.Value(), workspace.palette.open)
 	}
 
 	builtin := newPaletteModel(t, nil)
 	builtin = typeRune(t, builtin, '/')
 	builtin.palette.list.SetCursor(1) // /help
-	dispatched, _, handled := builtin.onPaletteKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	dispatched, _ := builtin.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	builtin = dispatched.(Model)
-	if !handled || !builtin.showHelp {
+	if !builtin.showHelp {
 		t.Fatal("eligible built-in was not dispatched from the palette")
 	}
 
 	dismissed := newPaletteModel(t, sampleCommands())
 	dismissed = typeRune(t, dismissed, '/')
-	dismissedModel, _, handled := dismissed.onPaletteKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	dismissedModel, _ := dismissed.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	dismissed = dismissedModel.(Model)
-	if !handled || dismissed.palette.open || !dismissed.palette.dismissed {
+	if dismissed.palette.open || !dismissed.palette.dismissed {
 		t.Fatal("idle Escape did not dismiss the visible palette")
 	}
 
@@ -220,12 +322,34 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 		t.Fatalf("command discovery calls = %d, prompt=%q; want one call and /r", commander.calls, fetched.prompt.Value())
 	}
 
+	for _, keyMsg := range []tea.KeyPressMsg{{Code: tea.KeyTab}, {Code: tea.KeyEnter}} {
+		t.Run("running-"+keyMsg.String(), func(t *testing.T) {
+			runningPalette := newPaletteModel(t, sampleCommands())
+			runningPalette = typeRune(t, runningPalette, '/')
+			runningPalette.phase = phaseRunning
+			_ = runningPalette.View()
+			runningPalette.palette.list.SetCursor(7) // /fix workspace command
+			updated, _ := runningPalette.Update(keyMsg)
+			runningPalette = updated.(Model)
+			if runningPalette.prompt.Value() != "/fix " || runningPalette.palette.open {
+				t.Fatalf("running palette did not own %q: prompt=%q open=%t", keyMsg.String(), runningPalette.prompt.Value(), runningPalette.palette.open)
+			}
+		})
+	}
+
 	running, _ := newQueueModel(t)
 	running = startRunning(t, running, "first")
 	running.prompt.Rewrite("/")
 	running, _ = running.syncPalette()
 	_ = running.View()
-	mm, _ := running.onRunningKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	for _, keyMsg := range []tea.KeyPressMsg{{Code: tea.KeyUp}, {Code: tea.KeyDown}, {Code: tea.KeyPgUp}, {Code: tea.KeyPgDown}} {
+		updated, _ := running.Update(keyMsg)
+		running = updated.(Model)
+		if !running.palette.open || running.prompt.Value() != "/" {
+			t.Fatalf("running palette did not retain %q: open=%t prompt=%q", keyMsg.String(), running.palette.open, running.prompt.Value())
+		}
+	}
+	mm, _ := running.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	running = mm.(Model)
 	if running.statusMsg != "cancelling…" || !running.palette.open {
 		t.Fatalf("running Escape did not remain run-cancel: status=%q open=%t", running.statusMsg, running.palette.open)
@@ -246,6 +370,11 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 	short.keyboardEventTypes = true
 	if !short.doubleEscapeEligible() {
 		t.Fatal("suppressed palette kept ordinary idle Escape handling from receiving the key")
+	}
+	updated, _ = short.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	short = updated.(Model)
+	if !short.doubleEscapeArmed {
+		t.Fatal("suppressed palette prevented ordinary idle Escape handling")
 	}
 }
 
