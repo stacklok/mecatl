@@ -282,9 +282,17 @@ necessarily the latest revision when the stream completes, and persists members
 as they run. A configured member store that supports atomic member creation must
 also support session deletion so partial startup can be rolled back; otherwise
 `RunTeam` fails before member enrollment. Factory or workspace-fork failures
-surface from `RunTeam`. A startup failure closes constructed member resources,
-removes snapshots while its mutation lease remains held, releases leases, and
-retains declarations and queued messages so the caller can retry `RunTeam`.
+surface from `RunTeam`. On startup failure, the server closes constructed member
+resources, then attempts to remove each abandoned snapshot while its mutation
+lease remains held, and only then releases the lease. Snapshot removal is
+best-effort: a lost lease or deletion failure can leave the snapshot, and the
+server reports `abandoned team member snapshot could not be deleted; left for
+retention`. The supported recovery is the configured child-session retention or
+an authorized storage cleanup after verifying the session is not live; see
+[Session storage operations](/building/deployment/session-storage-operations.md).
+The server retains team declarations and queued messages so a caller can retry
+`RunTeam`, but that retry does not guarantee that a leftover snapshot has already
+been removed.
 
 ### The `Converse` flow
 

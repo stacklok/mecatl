@@ -5855,7 +5855,7 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 		return nil, nil, result.inventory, nil, nil, 0, func() {}, func() {}
 	}
 	buildCandidate := mcpRuntimeCandidate(pinnedCtx)
-	buildRevision := buildCandidate.generation
+	mgr, buildRevision, buildAvailable := selectMCPBuildRuntime(buildCandidate, err)
 	for _, diagnostic := range result.diagnostics {
 		cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", diagnostic)
 	}
@@ -5864,9 +5864,17 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 		reconciler.Close()
 		runtimes.close()
 	})
-	if err != nil || buildCandidate == nil || len(buildCandidate.configs) == 0 {
+	if err != nil {
+		// Reconcile reports the initiating waiter's outcome, but another successful
+		// cycle may publish before this construction pin is acquired. The pin is the
+		// sole authority for both manager and revision; keep its candidate coherent.
+		logMCPReconcileConnectError(ctx, cfg, cfg.MCPServers, err)
+		if buildAvailable {
+			cfg.diag().Log(ctx, port.LevelWarn, "MCP source reconciliation", "reason", "initial waiter failed; using published runtime")
+		}
+	}
+	if !buildAvailable {
 		if err != nil {
-			logMCPReconcileConnectError(ctx, cfg, cfg.MCPServers, err)
 			cfg.diag().Log(ctx, port.LevelWarn, "MCP manager construction failed; continuing without MCP tools", "reason", "unavailable")
 		} else {
 			cfg.diag().Log(ctx, port.LevelInfo, "MCP DISABLED (no servers resolved from any source)",
@@ -5874,9 +5882,18 @@ func connectMCP(ctx context.Context, cfg Config) (*mcp.Manager, mcp.Provider, []
 		}
 		return nil, runtimes, result.inventory, runtimes, reconciler, buildRevision, buildRelease, closeRuntime
 	}
-	mgr := buildCandidate.manager
 	cfg.diag().Log(ctx, port.LevelInfo, "MCP servers connected", "servers", len(buildCandidate.configs), "tools", len(mgr.Tools()))
 	return mgr, runtimes, result.inventory, runtimes, reconciler, buildRevision, buildRelease, closeRuntime
+}
+
+// selectMCPBuildRuntime derives the startup manager and revision from one pinned
+// publication. reconcileErr belongs to the initiating waiter and cannot invalidate
+// a complete runtime that another reconciliation cycle published before the pin.
+func selectMCPBuildRuntime(candidate *mcpReconcileCandidate, _ error) (*mcp.Manager, uint64, bool) {
+	if candidate == nil || candidate.manager == nil || len(candidate.configs) == 0 {
+		return nil, 0, false
+	}
+	return candidate.manager, candidate.generation, true
 }
 
 func logMCPReconcileConnectError(ctx context.Context, cfg Config, configs []mcp.ServerConfig, err error) {

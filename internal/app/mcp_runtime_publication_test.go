@@ -136,6 +136,27 @@ func TestMCPSourceReconciliation_Scenario2_AllOrNothingPublication(t *testing.T)
 	runtimes.close()
 }
 
+func TestSelectMCPBuildRuntimeUsesPinnedPublicationAfterWaiterError(t *testing.T) {
+	publishedManager := connectMainManager(t, "published", newMCPTestServer(t))
+	published := &mcpReconcileCandidate{
+		manager:    publishedManager,
+		configs:    []mcp.ServerConfig{{Name: "published", URL: "http://published.invalid/mcp"}},
+		generation: 42,
+		tools:      toolMetadata(publishedManager.Tools()),
+	}
+
+	mgr, revision, ok := selectMCPBuildRuntime(published, context.Canceled)
+	if !ok {
+		t.Fatal("successful publication was discarded because the initial waiter was cancelled")
+	}
+	if mgr != publishedManager || revision != published.generation {
+		t.Fatalf("startup pin split manager/revision: manager=%p want=%p revision=%d want=%d", mgr, publishedManager, revision, published.generation)
+	}
+	if len(mgr.Tools()) != len(published.tools) {
+		t.Fatalf("shared catalog source has %d tools, pinned publication has %d", len(mgr.Tools()), len(published.tools))
+	}
+}
+
 func TestMCPSourceReconciliation_Scenario2_ProductionEngineRevisionMatrix(t *testing.T) {
 	var requests []port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {

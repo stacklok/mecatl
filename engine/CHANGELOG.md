@@ -19,7 +19,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   that retain optional interfaces for compatibility can now report negotiated
   false capabilities without consumers selecting unusable operations. Added (minor).
 
-- **Idempotent team-supervisor teardown** — adds `agent.Supervisor.Close`, a concurrent-safe, repeatable lifecycle endpoint that cancels an active run, waits for it to settle, and releases enrolled member resources exactly once. `AddMember` after run start or close returns `agent.ErrSupervisorClosed`. Added (minor).
+- **Idempotent team-supervisor teardown** — adds `agent.Supervisor.Close`, a concurrent-safe, repeatable lifecycle endpoint that cancels an active run and waits until enrolled members stop and their resources are released exactly once. Event callbacks drain independently: `Close` may be called from a callback, while `Run` still waits for every ordered callback before returning. Member factories and cleanup callbacks must not synchronously re-enter `Close`. `AddMember` after run start or close returns `agent.ErrSupervisorClosed`. Added (minor).
 
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 

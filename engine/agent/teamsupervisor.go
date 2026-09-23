@@ -353,6 +353,7 @@ type Supervisor struct {
 	runCancel   context.CancelFunc
 	closed      bool
 	cleanupOnce sync.Once
+	cleanupDone chan struct{}
 	// leadName caches the first Lead member's name (set in AddMember) so the
 	// synthesis phase and persistence find the lead without re-scanning the roster.
 	leadName string
@@ -737,6 +738,7 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 		teamID:             strings.TrimSuffix(TeamSessionPrefix, "-"),
 		members:            make(map[string]*memberRT),
 		runDone:            make(chan struct{}),
+		cleanupDone:        make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(s)
@@ -1207,34 +1209,40 @@ type turnInput struct {
 	prompt string
 }
 
-// Close cancels an active run, waits for it to stop, and tears down every
-// enrolled member. It is safe to call repeatedly or concurrently. A supervisor
-// is single-use: AddMember after Close or after Run starts returns
+// Close cancels an active run and waits until every enrolled member has stopped
+// and its resources have been torn down. Event callbacks may still be draining;
+// Run waits for every ordered callback before it returns. Close is safe to call
+// repeatedly, concurrently, and from an event callback.
+//
+// Member factories and cleanup callbacks must not synchronously call Close: they
+// are part of the resource construction/destruction that Close joins, so recursive
+// teardown cannot complete.
+//
+// A supervisor is single-use: AddMember after Close or after Run starts returns
 // ErrSupervisorClosed, and a second Run returns an empty outcome.
 func (s *Supervisor) Close() {
 	s.lifecycleMu.Lock()
-	if s.closed {
-		started := s.runStarted
-		done := s.runDone
-		s.lifecycleMu.Unlock()
-		if started {
-			<-done
-		}
-		return
+	if !s.closed {
+		s.closed = true
 	}
-	s.closed = true
-	started := s.runStarted
 	cancel := s.runCancel
-	done := s.runDone
+	started := s.runStarted
+	cleanupDone := s.cleanupDone
 	s.lifecycleMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	if started {
-		<-done
-		return
+	if !started {
+		s.settleCleanup()
 	}
-	s.cleanupOnce.Do(s.cleanupAll)
+	<-cleanupDone
+}
+
+func (s *Supervisor) settleCleanup() {
+	s.cleanupOnce.Do(func() {
+		s.cleanupAll()
+		close(s.cleanupDone)
+	})
 }
 
 func (s *Supervisor) beginRun(ctx context.Context) (context.Context, bool) {
@@ -1250,7 +1258,7 @@ func (s *Supervisor) beginRun(ctx context.Context) (context.Context, bool) {
 }
 
 func (s *Supervisor) finishRun() {
-	s.cleanupOnce.Do(s.cleanupAll)
+	s.settleCleanup()
 	s.lifecycleMu.Lock()
 	s.closed = true
 	if s.runCancel != nil {
@@ -1361,10 +1369,15 @@ func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome 
 		rounds++
 	}
 
-	close(evCh)
-	<-done
 	o := s.outcome(rounds)
 	o.Report = report
+	// Member work and teardown settle before callback draining. This lets an event
+	// callback call Close without forming Close -> runDone -> callback deadlock;
+	// Run still waits below until every already-queued callback has returned. Capture
+	// the outcome first because cleanup attributes any never-driven members.
+	s.settleCleanup()
+	close(evCh)
+	<-done
 	return o
 }
 
