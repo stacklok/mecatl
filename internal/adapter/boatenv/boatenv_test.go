@@ -1,22 +1,12 @@
 package boatenv
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
-	"net/http"
-	"net/http/httptest"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -26,18 +16,7 @@ import (
 func TestProviderLifecycleAndWorkspace(t *testing.T) {
 	requireLocalHelper(t)
 	fake := newFakeBoatAPI(t)
-	provider, err := New(Config{
-		APIKey:       "test-key",
-		BaseURL:      fake.server.URL,
-		HTTPClient:   fake.server.Client(),
-		Scope:        "test",
-		TTLSeconds:   60,
-		ReadyTimeout: 2 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider.client.poll = time.Millisecond
+	provider := fakeProvider(t, fake)
 
 	ctx := context.Background()
 	binding, err := provider.Bind(ctx, server.PlacementBindRequest{
@@ -136,19 +115,34 @@ func TestProviderLifecycleAndWorkspace(t *testing.T) {
 	if err := binding.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if state := fake.state(binding.Ref.ID); state != "archived" {
-		t.Fatalf("state after close = %q", state)
+	// Close schedules archival instead of archiving: the run that follows
+	// CreateSession must find the sandbox warm.
+	if state, ttl := fake.state(binding.Ref.ID), fake.lastTTL(); state != "idle" || ttl != min(closeGraceSeconds, 60) {
+		t.Fatalf("after close: state=%q ttl=%d, want a running sandbox with the grace TTL", state, ttl)
 	}
+	// Let the grace expire, as the service would if nothing reattached.
+	fake.setState(fake.sandboxes[binding.Ref.ID], "archived")
 
 	rebound, err := provider.Reattach(ctx, server.PlacementReattachRequest{Ref: binding.Ref, Scope: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := fake.state(binding.Ref.ID); state != "idle" {
-		t.Fatalf("state after reattach = %q", state)
+	// Reattach alone must not wake (and bill) the sandbox; Root() is derived
+	// from the ref without contacting the guest.
+	if state := fake.state(binding.Ref.ID); state != "archived" || fake.resumeCount() != 0 {
+		t.Fatalf("reattach resumed eagerly: state=%q resumes=%d", state, fake.resumeCount())
+	}
+	if rebound.Environment.Workspace().Root() != ws.Root() {
+		t.Fatalf("reattached root = %q, want %q", rebound.Environment.Workspace().Root(), ws.Root())
 	}
 	if got, err := rebound.Environment.Workspace().Read(ctx, "shell.txt"); err != nil || string(got) != "shell" {
 		t.Fatalf("reattached content = %q, %v", got, err)
+	}
+	if state := fake.state(binding.Ref.ID); state != "idle" || fake.resumeCount() != 1 {
+		t.Fatalf("first operation after reattach: state=%q resumes=%d, want one resume", state, fake.resumeCount())
+	}
+	if ttl := fake.resumes[0].TTLSeconds; ttl != 60 {
+		t.Fatalf("resume ttlSeconds = %d, want the configured 60 so an idle sandbox is re-archived", ttl)
 	}
 
 	stale := binding.Ref
@@ -161,11 +155,7 @@ func TestProviderLifecycleAndWorkspace(t *testing.T) {
 func TestConcurrentReplaceHasOneWinner(t *testing.T) {
 	requireLocalHelper(t)
 	fake := newFakeBoatAPI(t)
-	provider, err := New(Config{APIKey: "test-key", BaseURL: fake.server.URL, HTTPClient: fake.server.Client(), Scope: "test", TTLSeconds: 60, ReadyTimeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider.client.poll = time.Millisecond
+	provider := fakeProvider(t, fake)
 	binding, err := provider.Bind(context.Background(), server.PlacementBindRequest{Selector: server.DefaultPlacement(), Scope: "test", Operation: server.PlacementOperationCreate})
 	if err != nil {
 		t.Fatal(err)
@@ -209,10 +199,7 @@ func TestConcurrentReplaceHasOneWinner(t *testing.T) {
 
 func TestNoFSAndConfigurationGuards(t *testing.T) {
 	fake := newFakeBoatAPI(t)
-	provider, err := New(Config{APIKey: "test-key", BaseURL: fake.server.URL, HTTPClient: fake.server.Client(), Scope: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	provider := fakeProvider(t, fake)
 	binding, err := provider.Bind(context.Background(), server.PlacementBindRequest{Selector: server.NoFSPlacement(), Scope: "test", Operation: server.PlacementOperationCreate})
 	if err != nil || binding.Ref.Kind != session.EnvKindNoFS || binding.Environment.CommandRunner() != nil {
 		t.Fatalf("no-fs binding=%+v err=%v", binding.Ref, err)
@@ -237,152 +224,4 @@ func requireLocalHelper(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is required to exercise the same helper used inside a Boat sandbox")
 	}
-}
-
-type fakeBoatAPI struct {
-	t         *testing.T
-	server    *httptest.Server
-	mu        sync.Mutex
-	next      int
-	sandboxes map[string]*fakeSandbox
-	creates   []createSandboxRequest
-}
-
-type fakeSandbox struct {
-	state string
-	root  string
-}
-
-func newFakeBoatAPI(t *testing.T) *fakeBoatAPI {
-	t.Helper()
-	f := &fakeBoatAPI{t: t, sandboxes: map[string]*fakeSandbox{}}
-	f.server = httptest.NewServer(http.HandlerFunc(f.serveHTTP))
-	t.Cleanup(f.server.Close)
-	return f
-}
-
-func (f *fakeBoatAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer test-key" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if r.URL.Path == "/me" && r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "type": "user.info"})
-		return
-	}
-	if r.URL.Path == "/sandboxes" && r.Method == http.MethodPost {
-		var req createSandboxRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		root := f.t.TempDir()
-		f.mu.Lock()
-		f.next++
-		id := fmt.Sprintf("sbx-%d", f.next)
-		f.sandboxes[id] = &fakeSandbox{state: "idle", root: root}
-		f.creates = append(f.creates, req)
-		f.mu.Unlock()
-		writeJSON(w, http.StatusAccepted, sandboxEnvelope{Sandbox: sandboxState{ID: id, State: "idle"}})
-		return
-	}
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] != "sandboxes" {
-		http.NotFound(w, r)
-		return
-	}
-	id := parts[1]
-	f.mu.Lock()
-	sandbox := f.sandboxes[id]
-	f.mu.Unlock()
-	if sandbox == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if len(parts) == 2 && r.Method == http.MethodGet {
-		f.mu.Lock()
-		state := sandbox.state
-		f.mu.Unlock()
-		writeJSON(w, http.StatusOK, sandboxEnvelope{Sandbox: sandboxState{ID: id, State: state}})
-		return
-	}
-	if len(parts) != 3 || r.Method != http.MethodPost {
-		http.NotFound(w, r)
-		return
-	}
-	switch parts[2] {
-	case "stop":
-		f.mu.Lock()
-		sandbox.state = "archived"
-		f.mu.Unlock()
-		w.WriteHeader(http.StatusAccepted)
-	case "resume":
-		var req resumeSandboxRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !req.NoEnv {
-			http.Error(w, "resume must preserve noEnv", http.StatusBadRequest)
-			return
-		}
-		f.mu.Lock()
-		sandbox.state = "idle"
-		f.mu.Unlock()
-		w.WriteHeader(http.StatusAccepted)
-	case "commands":
-		var req commandRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad command", http.StatusBadRequest)
-			return
-		}
-		cwd := sandbox.root
-		if req.CWD != "" && req.CWD != "." {
-			cwd = filepath.Join(sandbox.root, filepath.FromSlash(req.CWD))
-		}
-		if err := os.MkdirAll(cwd, 0o755); err != nil {
-			http.Error(w, "mkdir", http.StatusInternalServerError)
-			return
-		}
-		cmd := exec.CommandContext(r.Context(), "/bin/sh", "-c", req.Command)
-		cmd.Dir = cwd
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
-		exit := 0
-		if err != nil {
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				exit = exitErr.ExitCode()
-			} else {
-				exit = 1
-			}
-		}
-		writeJSON(w, http.StatusOK, commandResponse{Success: exit == 0, ExitCode: exit, Stdout: stdout.String(), Stderr: stderr.String()})
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func (f *fakeBoatAPI) lastCreateNoEnv() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.creates) > 0 && f.creates[len(f.creates)-1].NoEnv
-}
-
-func (f *fakeBoatAPI) createCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.creates)
-}
-
-func (f *fakeBoatAPI) state(id string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if sandbox := f.sandboxes[id]; sandbox != nil {
-		return sandbox.state
-	}
-	return ""
 }

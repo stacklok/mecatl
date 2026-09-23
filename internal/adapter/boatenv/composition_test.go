@@ -43,6 +43,11 @@ func composedRun(t *testing.T, provider *Provider, cfg app.Config, calls ...sess
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Archive the session's sandbox however the test ends, so a failing
+	// assertion never leaves a billed sandbox running.
+	if ref := sess.EnvironmentRef; ref.Kind == Kind && ref.ID != "" {
+		t.Cleanup(func() { _ = provider.client.stopSandbox(context.Background(), ref.ID) })
+	}
 	run, err := built.Service.StartRun(ctx, sess.ID, "exercise the Boat sandbox")
 	if err != nil {
 		t.Fatal(err)
@@ -74,28 +79,6 @@ func assertToolResults(t *testing.T, results map[session.ToolCallID]session.Tool
 			t.Errorf("%s result = %+v (present=%t), want success containing %q", id, result, ok, content)
 		}
 	}
-}
-
-func fakeProvider(t *testing.T, fake *fakeBoatAPI) *Provider {
-	t.Helper()
-	provider, err := New(Config{
-		APIKey: "test-key", BaseURL: fake.server.URL, HTTPClient: fake.server.Client(),
-		Scope: "composition", TTLSeconds: 60, ReadyTimeout: 2 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider.client.poll = time.Millisecond
-	return provider
-}
-
-func (f *fakeBoatAPI) root(id string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if sandbox := f.sandboxes[id]; sandbox != nil {
-		return sandbox.root
-	}
-	return ""
 }
 
 func call(id, name, args string) session.ToolCall {

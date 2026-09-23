@@ -9,10 +9,8 @@ import (
 )
 
 type runner struct {
-	client    *apiClient
-	sandboxID string
-	workdir   string
-	root      string
+	sandbox *sandbox
+	root    string
 }
 
 var _ tool.CommandRunner = (*runner)(nil)
@@ -21,14 +19,21 @@ var _ tool.CommandRunner = (*runner)(nil)
 // server. It exactly matches the sibling workspace's logical Root value.
 func (r *runner) BoundWorkspaceRoot() string { return r.root }
 
+// Run executes command in the sandbox workdir. The time limit follows ctx
+// (clamped to the API's 1-600s range); a signal-killed process reports -1.
+// Output Boat truncated at its per-stream cap is flagged on stderr rather
+// than passed off as complete.
 func (r *runner) Run(ctx context.Context, command string) (tool.CommandResult, error) {
 	if strings.TrimSpace(command) == "" {
 		return tool.CommandResult{}, errors.New("boatenv: empty command")
 	}
-	out, err := r.client.runCommand(ctx, r.sandboxID, r.workdir, command)
-	result := tool.CommandResult{Stdout: out.Stdout, Stderr: out.Stderr, ExitCode: out.ExitCode}
-	if err != nil {
-		return result, err
+	out, err := r.sandbox.run(ctx, command)
+	stderr := out.Stderr
+	if out.StdoutTruncated || out.StderrTruncated {
+		if stderr != "" && !strings.HasSuffix(stderr, "\n") {
+			stderr += "\n"
+		}
+		stderr += "[boatenv: output truncated by the sandbox at its per-stream limit]"
 	}
-	return result, nil
+	return tool.CommandResult{Stdout: out.Stdout, Stderr: stderr, ExitCode: out.ExitCode}, err
 }

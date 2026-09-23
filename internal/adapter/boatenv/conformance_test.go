@@ -3,7 +3,6 @@ package boatenv
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/fsconformance"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -16,17 +15,9 @@ import (
 func fakeWorkspace(t *testing.T) tool.Workspace {
 	t.Helper()
 	requireLocalHelper(t)
-	fake := newFakeBoatAPI(t)
-	provider, err := New(Config{
-		APIKey: "test-key", BaseURL: fake.server.URL, HTTPClient: fake.server.Client(),
-		Scope: "conformance", TTLSeconds: 60, ReadyTimeout: 2 * time.Second,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider.client.poll = time.Millisecond
+	provider := fakeProvider(t, newFakeBoatAPI(t))
 	binding, err := provider.Bind(context.Background(), server.PlacementBindRequest{
-		Selector: server.DefaultPlacement(), Scope: "conformance", Operation: server.PlacementOperationCreate,
+		Selector: server.DefaultPlacement(), Scope: "test", Operation: server.PlacementOperationCreate,
 	})
 	if err != nil {
 		t.Fatal(err)

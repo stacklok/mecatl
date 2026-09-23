@@ -249,7 +249,7 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 	}
 	if validator, ok := cfg.PlacementProvider.(PlacementValidator); ok {
 		if err := validator.ValidatePlacement(ctx); err != nil {
-			return nil, fmt.Errorf("server: validate default placement: %w", err)
+			return nil, fmt.Errorf("server: validate default placement: %w", classifyValidationError(err))
 		}
 		return binder, nil
 	}
@@ -269,6 +269,21 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 		_ = validation.Close()
 	}
 	return binder, nil
+}
+
+// classifyValidationError keeps a validator's cause but guarantees callers
+// can classify it: an error that is not already one of the placement
+// sentinels is reported as ErrPlacementUnavailable.
+func classifyValidationError(err error) error {
+	for _, sentinel := range []error{
+		ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
+		ErrPlacementUnavailable, ErrPlacementChanged, ErrInvalidPlacementBinding,
+	} {
+		if errors.Is(err, sentinel) {
+			return err
+		}
+	}
+	return fmt.Errorf("%w: %w", ErrPlacementUnavailable, err)
 }
 
 func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {

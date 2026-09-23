@@ -24,6 +24,12 @@ const (
 	Kind session.EnvironmentKind = "boat"
 
 	defaultTTLSeconds = 3600
+	// closeGraceSeconds is how long a sandbox keeps running after its
+	// provisional binding closes. CreateSession closes the binding it created
+	// and the first run reattaches moments later, so archiving at once would
+	// make every new session pay an archive-then-resume cycle before its
+	// first tool call; a sandbox nothing reattaches still archives itself.
+	closeGraceSeconds = 300
 	noFSID            = "no-fs"
 	noFSRevision      = "nofs-v1"
 )
@@ -60,6 +66,9 @@ type Provider struct {
 	workdir      string
 	readyTimeout time.Duration
 	revision     string
+	// lockDir is where the guest helper keeps its mutation lock. Tests point
+	// it at a temp dir when the helper runs on the host.
+	lockDir string
 }
 
 var (
@@ -102,6 +111,7 @@ func New(cfg Config) (*Provider, error) {
 		workdir:      workdir,
 		readyTimeout: cfg.ReadyTimeout,
 		revision:     providerRevision(client.baseURL, cfg.MachineType, cfg.TTLSeconds, workdir),
+		lockDir:      "/tmp",
 	}, nil
 }
 
@@ -129,8 +139,10 @@ func providerRevision(baseURL, machineType string, ttlSeconds int, workdir strin
 }
 
 // Bind atomically resolves one server-owned placement choice. Default creates a
-// fresh sandbox. The returned Close archives that provisional live VM; persisted
-// EnvironmentRef remains resumable and Reattach brings the exact sandbox back.
+// fresh sandbox. The returned Close schedules that provisional sandbox for
+// archival after closeGraceSeconds instead of archiving it at once; the
+// persisted EnvironmentRef stays resumable and Reattach brings the exact
+// sandbox back.
 func (p *Provider) Bind(ctx context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
 	if p == nil || p.client == nil || req.Scope != p.scope {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
@@ -160,6 +172,9 @@ func (p *Provider) ValidatePlacement(ctx context.Context) error {
 
 // Reattach resolves only the exact persisted sandbox identity. It never follows the
 // current default or fabricates a replacement when the sandbox is gone/stale.
+// It costs one GET: resuming an archived sandbox is deferred to the first
+// Workspace or Shell operation, so callers that only need the ref or Root()
+// never wake (and pay for) a sandbox.
 func (p *Provider) Reattach(ctx context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
 	if p == nil || p.client == nil || req.Scope != p.scope {
 		return server.PlacementBinding{}, server.ErrPlacementNotFound
@@ -173,16 +188,21 @@ func (p *Provider) Reattach(ctx context.Context, req server.PlacementReattachReq
 	if req.Ref.Revision != p.revision {
 		return server.PlacementBinding{}, server.ErrPlacementStale
 	}
-	readyCtx, cancel := context.WithTimeout(ctx, p.readyTimeout)
-	defer cancel()
-	if err := p.client.ensureReady(readyCtx, req.Ref.ID); err != nil {
+	state, err := p.client.getSandbox(ctx, req.Ref.ID)
+	if err != nil {
 		var statusErr *apiStatusError
 		if errors.As(err, &statusErr) && statusErr.status == http.StatusNotFound {
 			return server.PlacementBinding{}, server.ErrPlacementNotFound
 		}
 		return server.PlacementBinding{}, fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
 	}
-	return p.binding(req.Ref), nil
+	switch normalizeSandboxState(state.State) {
+	case "deleted":
+		return server.PlacementBinding{}, server.ErrPlacementNotFound
+	case "failed", "error":
+		return server.PlacementBinding{}, fmt.Errorf("%w: sandbox is in terminal state %q", server.ErrPlacementUnavailable, state.State)
+	}
+	return p.binding(req.Ref, newSandbox(p, req.Ref.ID, false)), nil
 }
 
 func (p *Provider) create(ctx context.Context) (server.PlacementBinding, error) {
@@ -191,27 +211,27 @@ func (p *Provider) create(ctx context.Context) (server.PlacementBinding, error) 
 		return server.PlacementBinding{}, fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
 	}
 	ref := session.EnvironmentRef{Kind: Kind, ID: created.ID, Revision: p.revision}
-	readyCtx, cancel := context.WithTimeout(ctx, p.readyTimeout)
-	defer cancel()
-	if err := p.client.ensureReady(readyCtx, created.ID); err != nil {
+	handle := newSandbox(p, created.ID, false)
+	if err := handle.ensure(ctx); err != nil {
 		// Best-effort cleanup of a partially provisioned resource.
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		_ = p.client.stopSandbox(cleanupCtx, created.ID)
 		cleanupCancel()
 		return server.PlacementBinding{}, fmt.Errorf("%w: %v", server.ErrPlacementUnavailable, err)
 	}
-	binding := p.binding(ref)
+	binding := p.binding(ref, handle)
 	binding.Close = func() error {
+		handle.invalidate()
 		closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		return p.client.stopSandbox(closeCtx, ref.ID)
+		return p.client.setTTL(closeCtx, ref.ID, min(closeGraceSeconds, p.ttlSeconds))
 	}
 	return binding, nil
 }
 
-func (p *Provider) binding(ref session.EnvironmentRef) server.PlacementBinding {
-	ws := &workspace{client: p.client, sandboxID: ref.ID, workdir: p.workdir}
-	runner := &runner{client: p.client, sandboxID: ref.ID, workdir: p.workdir, root: ws.Root()}
+func (p *Provider) binding(ref session.EnvironmentRef, handle *sandbox) server.PlacementBinding {
+	ws := &workspace{sandbox: handle, lockDir: p.lockDir}
+	runner := &runner{sandbox: handle, root: ws.Root()}
 	env := tool.MustEnvironment(ref, ws, memledger.New(), runner)
 	return server.PlacementBinding{
 		Environment: env,
