@@ -133,7 +133,7 @@ function encodeInput(
   if (method.name === "ApprovePlan" && json.target_mode !== undefined) {
     json.target_mode = permissionMode(json.target_mode);
   }
-  if (method.name === "ResolveRunAsk") {
+  if (method.name === "ResolveRunAsk" || method.name === "ResolvePlanAsk") {
     json.verdict = strictApprovalVerdict(json.verdict);
   }
   if (method.name === "SteerRun") {

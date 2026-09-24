@@ -7234,6 +7234,7 @@ Known server feature identifiers. Unknown identifiers remain observable.
 
 ```ts
 ServerFeature: {
+    readonly ExactPlanAskControl: "exact_plan_ask_control";
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
     readonly PromptFreeControls: "prompt_free_controls";

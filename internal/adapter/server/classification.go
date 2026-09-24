@@ -293,6 +293,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ResolveRunAsk":                {KindCallerOwned, "authorizes via GetSession before resolving or rehydrating the exact addressed ordinary ask"},
 	"ResolveScopedRunAsk":          {KindCallerOwned, "authorizes via GetSession before resolving or rehydrating the exact addressed contextual ask"},
 	"ResolveApprovalRun":           {KindCallerOwned, "same owner checks as ApproveRun, with atomic pending-purpose validation before verdict submission"},
+	"ResolvePlanAsk":               {KindCallerOwned, "authorizes via GetSession before resolving or rehydrating the exact addressed plan-originated ask"},
 	"ApprovePlan":                  {KindCallerOwned, "authorizes the session before resolving the parked plan ask"},
 	"Cancel":                       {KindCallerOwned, "authorizes via GetSession before signalling the in-flight run"},
 	"CancelRun":                    {KindCallerOwned, "authorizes via GetSession before cancelling the exact addressed live run"},

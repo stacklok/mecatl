@@ -85,6 +85,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
 		{"POST /v1/sessions/{id}/controls/resolve-ask", h.resolveRunAsk},
+		{"POST /v1/sessions/{id}/controls/resolve-plan-ask", h.resolvePlanAsk},
 		{"POST /v1/sessions/{id}/controls/cancel", h.cancelRun},
 		{"POST /v1/sessions/{id}/controls/steer", h.steerRun},
 		{"POST /v1/sessions/{id}/controls/cancel-steer", h.cancelRunSteer},
@@ -1405,6 +1406,25 @@ func (h *HTTPHandler) resolveRunAsk(w http.ResponseWriter, r *http.Request) {
 	} else {
 		ack, err = h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
 	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resolveRunAskResponse(ack))
+}
+
+// resolvePlanAsk is the strict acknowledgement-only HTTP mirror of ResolvePlanAsk.
+func (h *HTTPHandler) resolvePlanAsk(w http.ResponseWriter, r *http.Request) {
+	var body resolveRunAskBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	verdict, ok := strictRunAskVerdict(body.Verdict)
+	if body.ExpectedRunID == "" || body.AskID == "" || !ok {
+		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
+		return
+	}
+	ack, err := h.svc.ResolvePlanAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
 	if err != nil {
 		writeServiceError(w, err)
 		return

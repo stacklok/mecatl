@@ -110,6 +110,9 @@ service HarnessService {
   // run without opening or owning its event stream.
   rpc ResolveRunAsk(ResolveRunAskRequest) returns (ResolveRunAskResponse);
 
+  // ResolvePlanAsk acknowledges a verdict for one exact plan-originated ask.
+  rpc ResolvePlanAsk(ResolvePlanAskRequest) returns (ResolvePlanAskResponse);
+
   // CancelRun cancels the exact addressed live run without opening Converse.
   rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
 
@@ -1733,6 +1736,20 @@ message ResolveRunAskResponse {
   string ask_id = 2;
 }
 
+// ResolvePlanAskRequest addresses one plan-originated ask on one exact run.
+message ResolvePlanAskRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
+  string ask_id = 3 [(buf.validate.field).string.min_len = 1];
+  ApprovalVerdict verdict = 4 [(buf.validate.field).enum = {in: [1, 2, 3]}];
+}
+
+// ResolvePlanAskResponse acknowledges only the accepted run/ask correlation.
+message ResolvePlanAskResponse {
+  string run_id = 1;
+  string ask_id = 2;
+}
+
 // CancelRunRequest addresses one exact live run.
 message CancelRunRequest {
   string session_id = 1 [(buf.validate.field).string.min_len = 1];
@@ -2646,6 +2663,9 @@ message PermissionAsk {
   // reason explains why approval is required.
   string reason = 4;
   GuardrailApprovalScope guardrail = 5;
+  // call_id is the exact durable tool-call ID for presentation correlation.
+  // Absence means no tool-row attachment can be proven.
+  optional string call_id = 6;
 }
 
 // RetryDisposition is the neutral causal retry classification of a failed model

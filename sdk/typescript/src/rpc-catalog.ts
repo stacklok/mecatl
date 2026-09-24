@@ -547,6 +547,22 @@ const rpcCatalogRows = [
     ),
   }),
   rpc({
+    key: "HarnessService.ResolvePlanAsk",
+    service: "HarnessService",
+    method: "ResolvePlanAsk",
+    shape: "unary",
+    backingService: "ResolvePlanAsk",
+    grpc: grpc(HarnessService.method.resolvePlanAsk),
+    http: http(
+      "POST",
+      "/v1/sessions/{id}/controls/resolve-plan-ask",
+      ["id=session_id"],
+      [],
+      "json",
+      "json",
+    ),
+  }),
+  rpc({
     key: "HarnessService.CancelRun",
     service: "HarnessService",
     method: "CancelRun",

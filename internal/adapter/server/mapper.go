@@ -773,13 +773,18 @@ func mediaKindFromBlock(k mecatlv1.ContentBlock_Kind) session.MediaKind {
 
 // toProtoAsk maps a session.PendingAsk to its proto PermissionAsk form.
 func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
-	return &mecatlv1.PermissionAsk{
+	out := &mecatlv1.PermissionAsk{
 		AskId:     a.AskID,
 		Tool:      valid(a.Tool),
 		Args:      valid(string(a.Args)),
 		Reason:    valid(a.Reason),
 		Guardrail: toProtoGuardrailApprovalScope(a.Guardrail),
 	}
+	if a.Call != "" {
+		callID := valid(string(a.Call))
+		out.CallId = &callID
+	}
+	return out
 }
 
 func toProtoGuardrailApprovalScope(scope *session.GuardrailPendingScope) *mecatlv1.GuardrailApprovalScope {

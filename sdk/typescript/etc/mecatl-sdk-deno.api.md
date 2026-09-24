@@ -1318,6 +1318,7 @@ export type ServerErrorCode = (typeof MECATL_ERROR_CODES)[number] | "unknown";
 
 // @public
 export const ServerFeature: {
+    readonly ExactPlanAskControl: "exact_plan_ask_control";
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
     readonly PromptFreeControls: "prompt_free_controls";

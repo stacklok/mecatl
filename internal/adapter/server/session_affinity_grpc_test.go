@@ -68,7 +68,7 @@ func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T)
 		"ClearSession": true, "ListCommands": true, "ListWorktrees": true, "StreamSessionEvents": true,
 		"StreamSessionLive": true, "WatchSessionEvents": true, "ReflectSession": true,
 		"ApprovePlan": true, "CreateTeam": true,
-		"ResolveRunAsk": true, "CancelRun": true, "SteerRun": true, "CancelRunSteer": true,
+		"ResolveRunAsk": true, "ResolvePlanAsk": true, "CancelRun": true, "SteerRun": true, "CancelRunSteer": true,
 		"GetMcpAuthorizationPresentation": true, "RecheckMcpAuthorization": true, "CancelMcpAuthorization": true,
 		"ListSessionMcpConnectors": true, "ListGuardrailCoverage": true, "GetGuardrailReviewDetail": true,
 		"ConnectWorkspaceServices": true, "RetryWorkspaceEnrollment": true, "CancelWorkspaceEnrollment": true,
@@ -182,6 +182,13 @@ func TestSessionAffinityAndHandoff_Scenario2_GRPCUnaryAndServerStreamMatrix(t *t
 		}},
 		{"ResolveRunAsk", func() error {
 			_, err := client.ResolveRunAsk(ctx, &mecatlv1.ResolveRunAskRequest{
+				SessionId: requestID, ExpectedRunId: "run", AskId: "ask",
+				Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
+			})
+			return err
+		}},
+		{"ResolvePlanAsk", func() error {
+			_, err := client.ResolvePlanAsk(ctx, &mecatlv1.ResolvePlanAskRequest{
 				SessionId: requestID, ExpectedRunId: "run", AskId: "ask",
 				Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
 			})

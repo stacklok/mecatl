@@ -1352,6 +1352,10 @@ type runState struct {
 	resolvedAskID    string
 	acceptedApproval *agent.ApprovalResolution
 	cancelSignaled   bool
+	// planContinuation reserves one detached relay before an exact plan allow is
+	// consumed. The terminal relay transfers this ownership to the proceed run.
+	// Guarded by Service.mu.
+	planContinuation *planContinuation
 	// preserveDurable prevents a shutdown-cancelled local awaiting run from
 	// overwriting the already-durable PendingAsk handoff point.
 	preserveDurable atomic.Bool
@@ -4640,7 +4644,6 @@ const (
 	scheduleFireSessionPrefix = "sched--"
 )
 
-//nolint:gocyclo // run-entry funnel keeps repair, lease, engine-resolve, and launch in one ordered transaction; inherent.
 func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization bool) (*agent.Run, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
@@ -4664,6 +4667,15 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// reload prevents the preflight from becoming a durable grant.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
+	return s.startRunContentLocked(ctx, id, text, parts, purpose, generation, canPresentAuthorization)
+}
+
+// startRunContentLocked is also used by an accepted plan verdict's terminal
+// relay. Holding runEntryMu across old-run removal and fresh-run admission
+// prevents a competing prompt from taking the continuation's place.
+//
+//nolint:gocyclo // Run-entry repair, lease, engine resolve, and launch share one ordered transaction.
+func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization bool) (*agent.Run, error) {
 	if err := s.validateRunEntryGeneration(id, generation); err != nil {
 		return nil, err
 	}
@@ -6970,6 +6982,9 @@ func (s *Service) completeRelay(ctx context.Context, id session.SessionID, run *
 // finishRelayRun is the one terminal path for wire relays: persist first so a
 // disconnected client cannot lose the terminal snapshot, then release the run.
 func (s *Service) finishRelayRun(ctx context.Context, id session.SessionID, run *agent.Run) {
+	if s.finishExactPlanRun(ctx, id, run) {
+		return
+	}
 	s.completeRelay(ctx, id, run)
 	s.deregister(id, run)
 }
@@ -8191,6 +8206,9 @@ func (s *Service) deregister(id session.SessionID, run *agent.Run) {
 // is still the one recorded (a later run for the same session is never
 // clobbered), so it is safe to call unconditionally after a drain.
 func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
+	if s.finishExactPlanRun(context.Background(), id, run) {
+		return
+	}
 	s.mu.Lock()
 	st, ok := s.runs[id]
 	s.mu.Unlock()

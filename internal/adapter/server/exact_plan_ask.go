@@ -1,0 +1,263 @@
+package server
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/memory"
+)
+
+// planContinuation owns one reserved detached relay after a plan allow. It is
+// attached to the old runState until that run's terminal relay transfers it to
+// the fresh proceed run. The context is independent of the unary request.
+type planContinuation struct {
+	ctx        context.Context
+	stop       context.CancelFunc
+	generation runEntryGeneration
+}
+
+// ResolvePlanAsk resolves one plan-originated ask on the exact authorized run.
+// It acknowledges acceptance only; durable activity carries both terminals.
+func (s *Service) ResolvePlanAsk(ctx context.Context, id session.SessionID, expectedRunID, askID string, verdict session.ApprovalVerdict) (RunAskAcknowledgement, error) {
+	if expectedRunID == "" || askID == "" || !validRunAskVerdict(verdict) {
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: expected_run_id, ask_id, and a valid verdict are required", ErrInvalidArgument)
+	}
+	if err := ctx.Err(); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	// Ownership precedes every registry or lease lookup.
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	generation := s.captureRunEntryGeneration(id)
+	if s.draining.Load() {
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	s.mu.Lock()
+	st := s.runs[id]
+	s.mu.Unlock()
+	if st != nil && st.run != nil {
+		return s.resolveLivePlanAsk(ctx, id, st, expectedRunID, askID, verdict, generation)
+	}
+	return s.resolvePersistedPlanAsk(ctx, id, expectedRunID, askID, verdict, generation)
+}
+
+func (s *Service) resolveLivePlanAsk(ctx context.Context, id session.SessionID, st *runState, expectedRunID, askID string, verdict session.ApprovalVerdict, generation runEntryGeneration) (RunAskAcknowledgement, error) {
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	run, err := s.liveRunForControlLocked(id, st, expectedRunID, generation)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if st.planContinuation != nil {
+		return RunAskAcknowledgement{}, ErrAskNotPending
+	}
+	var continuation *planContinuation
+	if verdict != session.VerdictDeny {
+		if !s.reserveDetachedControlRelay() {
+			return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
+		}
+		ownedCtx, stop := s.detachedControlContext(ctx)
+		continuation = &planContinuation{ctx: ownedCtx, stop: stop, generation: generation}
+	}
+	result := run.ResolvePlanAsk(askID, verdict)
+	if result != agent.AskResolutionResolved {
+		if continuation != nil {
+			continuation.stop()
+			s.detachedControlWG.Done()
+		}
+		return RunAskAcknowledgement{}, ErrAskNotPending
+	}
+	st.resolvedAskID = askID
+	st.planContinuation = continuation
+	return RunAskAcknowledgement{RunID: run.RunID(), AskID: askID}, nil
+}
+
+func (s *Service) validatePersistedPlanAsk(sess *session.Session, expectedRunID, askID string) error {
+	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
+		return err
+	}
+	if sess.State != session.StateAwaiting {
+		return checkExpectedRun(expectedRunID, "")
+	}
+	pending, ok := sess.PendingAsk()
+	if !ok || pending.AskID != askID || pending.Origin() != session.AskOriginPlan {
+		return ErrAskNotPending
+	}
+	return s.validatePersistedWorkspace(sess)
+}
+
+// resolvePersistedPlanAsk rechecks authority after acquiring the distributed
+// lease. Its request context ends at acceptance; both relays are server-owned.
+//
+//nolint:gocyclo // Lease, provenance, admission, and relay gates form one ordered transaction.
+func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.SessionID, expectedRunID, askID string, verdict session.ApprovalVerdict, generation runEntryGeneration) (RunAskAcknowledgement, error) {
+	resumeUnlock := s.resumeMu.lock(id)
+	defer resumeUnlock()
+	entryUnlock := s.runEntryMu.lock(id)
+	defer entryUnlock()
+	if err := ctx.Err(); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if s.validateRunEntryGeneration(id, generation) != nil {
+		return RunAskAcknowledgement{}, checkExpectedRun(expectedRunID, "")
+	}
+	s.mu.Lock()
+	st := s.runs[id]
+	s.mu.Unlock()
+	if st != nil && st.run != nil {
+		return s.resolveLivePlanAsk(ctx, id, st, expectedRunID, askID, verdict, generation)
+	}
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if err := s.validatePersistedPlanAsk(sess, expectedRunID, askID); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	st, admissionCtx, err := s.beginRunAdmission(ctx, id, sess, true)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	promoted := false
+	defer s.cleanupRunAdmission(id, st, &promoted)
+	if err := s.acquireLease(admissionCtx, id); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	requestLeaseCtx, stopRequestLease, leaseHeld := s.mutationLeaseContext(admissionCtx, id)
+	defer func() {
+		if !promoted {
+			stopRequestLease()
+		}
+	}()
+	// A peer may have advanced the snapshot during lease acquisition.
+	sess, err = s.GetSession(requestLeaseCtx, id)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if err := s.validatePersistedPlanAsk(sess, expectedRunID, askID); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	st.persistMu.Lock()
+	s.mu.Lock()
+	if s.runs[id] != st || st.cancelling || st.cancelSignaled {
+		s.mu.Unlock()
+		st.persistMu.Unlock()
+		return RunAskAcknowledgement{}, checkExpectedRun(expectedRunID, "")
+	}
+	st.sess = sess
+	s.mu.Unlock()
+	st.persistMu.Unlock()
+	engine, env, err := s.engineAndEnvironmentFor(requestLeaseCtx, sess)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if err := s.awaitContextWindow(requestLeaseCtx, id); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if !leaseHeld() {
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
+	}
+	ownedCtx, stopOwned := s.detachedControlContext(ctx)
+	ownedLeaseCtx, stopOwnedLease, _ := s.mutationLeaseContext(ownedCtx, id)
+	stopRun := func() { stopOwnedLease(); stopOwned(); stopRequestLease() }
+	if !s.reserveDetachedControlRelay() {
+		stopRun()
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+	planRelayReserved := true
+	defer func() {
+		if planRelayReserved {
+			s.detachedControlWG.Done()
+		}
+	}()
+	var continuation *planContinuation
+	if verdict != session.VerdictDeny {
+		if !s.reserveDetachedControlRelay() {
+			stopRun()
+			return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
+		}
+		contCtx, stopCont := s.detachedControlContext(ctx)
+		continuation = &planContinuation{ctx: contCtx, stop: stopCont, generation: generation}
+	}
+	continuationReserved := continuation != nil
+	defer func() {
+		if continuationReserved {
+			continuation.stop()
+			s.detachedControlWG.Done()
+		}
+	}()
+	run, err := s.promoteDetachedRunAdmission(ctx, id, st, stopRun, func() *agent.Run {
+		return engine.ResumeApproval(memory.WithWorkspace(ownedLeaseCtx, env.Workspace().Root()), sess, env, askID, verdict)
+	})
+	if err != nil {
+		stopRun()
+		return RunAskAcknowledgement{}, err
+	}
+	promoted = true
+	s.mu.Lock()
+	st.planContinuation = continuation
+	s.mu.Unlock()
+	continuationReserved = false
+	go func() {
+		defer s.detachedControlWG.Done()
+		s.relayDetachedControlRun(ownedLeaseCtx, id, run)
+	}()
+	planRelayReserved = false
+	return RunAskAcknowledgement{RunID: expectedRunID, AskID: askID}, nil
+}
+
+// finishExactPlanRun performs the terminal-boundary transfer while holding the
+// per-session entry lock. It is called only after the old event stream drained.
+func (s *Service) finishExactPlanRun(ctx context.Context, id session.SessionID, run *agent.Run) bool {
+	s.mu.Lock()
+	st := s.runs[id]
+	reserved := st != nil && st.run == run && st.planContinuation != nil
+	s.mu.Unlock()
+	if !reserved {
+		return false
+	}
+	entryUnlock := s.runEntryMu.lock(id)
+	defer entryUnlock()
+	s.mu.Lock()
+	st = s.runs[id]
+	if st == nil || st.run != run || st.planContinuation == nil {
+		s.mu.Unlock()
+		return false
+	}
+	continuation := st.planContinuation
+	st.planContinuation = nil
+	s.mu.Unlock()
+	s.completeRelay(ctx, id, run)
+	stop, stopped := st.sess.RecordedStopReason()
+	s.removeRunState(id, st)
+	if !stopped || stop != session.StopPlanApproved {
+		continuation.stop()
+		s.detachedControlWG.Done()
+		return true
+	}
+	proceed, err := s.startRunContentLocked(continuation.ctx, id, agent.PlanApprovedProceedText, nil, runPurposeChat, continuation.generation, false)
+	if err != nil {
+		s.cfg.Diagnostics.Log(continuation.ctx, port.LevelWarn, "accepted plan continuation failed to start", "session", string(id), "error", err.Error())
+		continuation.stop()
+		s.detachedControlWG.Done()
+		return true
+	}
+	go func() {
+		defer s.detachedControlWG.Done()
+		defer continuation.stop()
+		s.relayDetachedControlRun(continuation.ctx, id, proceed)
+	}()
+	return true
+}

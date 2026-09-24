@@ -580,6 +580,8 @@ const (
 	// AskResolutionPlanOriginated means the ask belongs to the dedicated plan
 	// resolution choreography and remains pending.
 	AskResolutionPlanOriginated
+	// AskResolutionNotPlan means the pending ask is ordinary and was not consumed.
+	AskResolutionNotPlan
 )
 
 // Run is the handle to one in-flight prompt. It exposes the Event stream plus the
@@ -1063,6 +1065,12 @@ func (r *Run) ResolveOrdinaryAsk(askID string, v session.ApprovalVerdict) AskRes
 		}
 	}
 	return r.asks.resolveOrdinary(askID, v)
+}
+
+// ResolvePlanAsk atomically consumes only a root plan-originated pending ask.
+// A child ask cannot authorize the root plan, regardless of its tool name.
+func (r *Run) ResolvePlanAsk(askID string, verdict session.ApprovalVerdict) AskResolution {
+	return r.asks.resolvePlan(askID, verdict)
 }
 
 // RetractPermissionAsk withdraws this run's own pending permission ask without

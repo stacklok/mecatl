@@ -79,6 +79,26 @@ func (r *askRegistry) resolveOrdinary(askID string, v session.ApprovalVerdict) A
 	return AskResolutionResolved
 }
 
+// resolvePlan checks provenance and consumes the verdict at one lock point.
+func (r *askRegistry) resolvePlan(askID string, verdict session.ApprovalVerdict) AskResolution {
+	r.mu.Lock()
+	ch, ok := r.pending[askID]
+	ask := r.scopes[askID]
+	if !ok {
+		r.mu.Unlock()
+		return AskResolutionNotPending
+	}
+	if ask.Origin != session.ApprovalOriginPlan || ask.Guardrail != nil {
+		r.mu.Unlock()
+		return AskResolutionNotPlan
+	}
+	delete(r.pending, askID)
+	delete(r.scopes, askID)
+	r.mu.Unlock()
+	ch <- approval{verdict: verdict}
+	return AskResolutionResolved
+}
+
 // resolveWith delivers a full approval (verdict + optional accurate deny message) for
 // askID. It is the message-bearing variant resolve delegates to; the headless subagent
 // auto-deny uses it to carry childAutoDenyMessage so the model sees the accurate cause
