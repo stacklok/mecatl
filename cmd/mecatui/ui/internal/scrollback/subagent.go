@@ -87,6 +87,25 @@ func (s SubagentCards) Start(callID string, start SubagentStart) bool {
 	})
 }
 
+// UpdateStart is part of the internal typed scrollback contract.
+func (s SubagentCards) UpdateStart(callID string, start SubagentStart) bool {
+	c := s.conversation
+	i, ok := c.call(callID)
+	if !ok {
+		return false
+	}
+	payload, ok := c.cards[i].payload.(SubagentCardSnapshot)
+	if !ok {
+		return false
+	}
+	start = cloneSubagentStart(start)
+	if reflect.DeepEqual(payload.Start, start) {
+		return true
+	}
+	payload.Start = start
+	return c.replace(i, payload)
+}
+
 // Update is part of the internal typed scrollback contract.
 func (s SubagentCards) Update(callID string, update SubagentUpdate) bool {
 	c := s.conversation

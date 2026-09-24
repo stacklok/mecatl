@@ -1354,18 +1354,14 @@ func TestAgentsActionsFollowStableSelectionAfterRefresh(t *testing.T) {
 	t.Run("team member cancel", func(t *testing.T) {
 		m := seedTeam(newMCPModel(t, aztec(), nil), func(c *conversation) {
 			c.setTeamStart("t1", "team:one", []client.TeamMemberSpec{{Name: "first"}, {Name: "wanted:member"}})
-			b := c.latestTeamBlock()
-			b.teamLanes[0].sessionID = "child-first"
-			b.teamLanes[1].sessionID = "child-wanted"
+			c.addTeamMember(client.TeamMsg{ParentCallID: "t1", Member: "first", MemberSessionID: "child-first"})
+			c.addTeamMember(client.TeamMsg{ParentCallID: "t1", Member: "wanted:member", MemberSessionID: "child-wanted"})
 		})
 		m = resize(m, 100, 30)
 		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 		m = mm.(Model)
 		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		m = mm.(Model)
-		b := m.conv.latestTeamBlock()
-		b.teamLanes[0], b.teamLanes[1] = b.teamLanes[1], b.teamLanes[0]
-		m.reconcileAgentsLists()
 		sender := &fakeSender{}
 		m.stream = client.NewStream(nil, sender)
 		_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
@@ -1410,17 +1406,23 @@ func TestTeamAggregateSubviewsPinTheirLedgerUntilRoster(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := resize(newMCPModel(t, aztec(), nil), 100, 30)
-			first := block{kind: blockTool, team: true, toolID: "first", teamLanes: []teamLane{{name: "first-member"}}, teamTasks: []teamTask{{id: "first-task"}}, teamFindings: []teamFinding{{member: "first-member", body: "first-finding"}}}
-			m.conv.blocks = append(m.conv.blocks, first)
+			m.conv.addTool("first", "Team", `{}`)
+			m.conv.setTeamStart("first", "", []client.TeamMemberSpec{{Name: "first-member"}})
+			m.conv.setTeamTasks("first", []client.TeamTask{{ID: "first-task"}})
+			m.conv.setTeamFindings("first", []client.TeamFinding{{Member: "first-member", Body: "first-finding"}})
 			m.team, m.agentsTab = newTeamState(), tabTeams
 
-			mm, _ := m.onTeamRosterKey(tc.key, &m.conv.blocks[0])
+			first := m.teamBlockForOverlay()
+			mm, _ := m.onTeamRosterKey(tc.key, first)
 			m = mm.(Model)
-			if m.team.view != tc.view || m.team.aggregate != teamBlockIdentity(&m.conv.blocks[0]) {
+			if m.team.view != tc.view || m.team.aggregate != teamBlockIdentity(first) {
 				t.Fatalf("opening %s = view %v, aggregate %q", tc.name, m.team.view, m.team.aggregate)
 			}
 
-			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, toolID: "newer", teamLanes: []teamLane{{name: "new-member"}}, teamTasks: []teamTask{{id: "new-task"}}, teamFindings: []teamFinding{{member: "new-member", body: "new-finding"}}})
+			m.conv.addTool("newer", "Team", `{}`)
+			m.conv.setTeamStart("newer", "", []client.TeamMemberSpec{{Name: "new-member"}})
+			m.conv.setTeamTasks("newer", []client.TeamTask{{ID: "new-task"}})
+			m.conv.setTeamFindings("newer", []client.TeamFinding{{Member: "new-member", Body: "new-finding"}})
 			pinned := m.teamBlockForOverlay()
 			if pinned == nil || pinned.toolID != "first" {
 				t.Fatalf("%s ledger followed newer team: %#v", tc.name, pinned)
@@ -1655,7 +1657,7 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedRowsUseSessionsTreatment(t *t
 		}, "▶  ◐ selected"},
 		{"team", func(m Model) Model {
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
-			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}})
+			m.conv.addTeamFixture(block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}})
 			return m
 		}, "▶ ◆ · selected"},
 	}
@@ -1756,46 +1758,46 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		}},
 		{"team roster", "▶ Teams · esc close", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
 			return m
 		}},
 		{"team empty", "▶ Teams · esc close", func(m Model) Model { m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams; return m }},
 		{"team focus", "▶ agent ann · esc back", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann", detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team missing focus", "▶ agent bob · esc back", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFocus, member: "bob", detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team tasks", "▶ Tasks · esc back", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamTasks, detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team tasks empty", "▶ Tasks · esc back", func(m Model) Model {
 			b := teamBlock()
 			b.teamTasks = nil
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
 			return m
 		}},
 		{"team findings", "▶ Findings · esc back", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFindings, detail: agentsTestViewport(3)}, tabTeams
 			return m
 		}},
 		{"team findings empty", "▶ Findings · esc back", func(m Model) Model {
 			b := teamBlock()
 			b.teamFindings = nil
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
 			return m
 		}},
@@ -1884,45 +1886,45 @@ func TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport(t *testing.T) 
 		{"parallel empty", "(no entries)|(no parallel runs)", "esc close|↑/↓ select|lines 1", func(m Model) Model { m.team.view, m.agentsTab = teamRoster, tabParallel; return m }},
 		{"team roster", "ann", "esc close|↑/↓ select|lines 1", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
 			return m
 		}},
 		{"team focus", "ann", "esc back|lines 1", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFocus, member: "ann"}, tabTeams
 			return m
 		}},
 		{"team missing focus", "member missing", "esc back|lines 1", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFocus, member: "missing"}, tabTeams
 			return m
 		}},
 		{"team tasks", "task-00", "esc close|lines 1|t roster", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
 			return m
 		}},
 		{"team tasks empty", "(no entries)|(no tasks)", "esc close|↑/↓ select|lines 1", func(m Model) Model {
 			b := teamBlock()
 			b.teamTasks = nil
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
 			return m
 		}},
 		{"team findings", "finding-00", "esc close|lines 1|f roster", func(m Model) Model {
 			b := teamBlock()
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
 			return m
 		}},
 		{"team findings empty", "(no entries)|(no findings)", "esc close|↑/↓ select|lines 1", func(m Model) Model {
 			b := teamBlock()
 			b.teamFindings = nil
-			m.conv.blocks = append(m.conv.blocks, b)
+			m.conv.addTeamFixture(b)
 			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
 			return m
 		}},
@@ -2005,8 +2007,8 @@ func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *
 				members[i] = client.TeamMemberSpec{Name: fmt.Sprintf("T%02d-long-member", i), Role: "long wrapped worker role"}
 			}
 			m.conv.setTeamStart("t1", "", members)
-			for i := range m.conv.blocks[0].teamLanes {
-				m.conv.blocks[0].teamLanes[i].sessionID = fmt.Sprintf("team-child-%02d", i)
+			for i := range members {
+				m.conv.addTeamMember(client.TeamMsg{ParentCallID: "t1", Member: members[i].Name, MemberSessionID: fmt.Sprintf("team-child-%02d", i)})
 			}
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
 			return m

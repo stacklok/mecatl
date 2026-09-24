@@ -425,8 +425,7 @@ func TestTeamFocusStaysOnOriginalAggregateWhenNewerTeamArrives(t *testing.T) {
 	m.conv.addTool("old-call", "Team", `{}`)
 	m.conv.setTeamStart("old-call", "old-team", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
 	old := m.conv.latestTeamBlock()
-	old.teamLanes[0].sessionID = "old-member-session"
-	old.teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "old-team-trace"}}
+	m.conv.addTeamMember(client.TeamMsg{ParentCallID: "old-call", Member: "scout", MemberSessionID: "old-member-session", InnerKind: "message.delta", Text: "old-team-trace"})
 	m = resize(m, 100, 30)
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 	m = mm.(Model)
@@ -438,9 +437,8 @@ func TestTeamFocusStaysOnOriginalAggregateWhenNewerTeamArrives(t *testing.T) {
 
 	m.conv.addTool("new-call", "Team", `{}`)
 	m.conv.setTeamStart("new-call", "new-team", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
+	m.conv.addTeamMember(client.TeamMsg{ParentCallID: "new-call", Member: "scout", MemberSessionID: "new-member-session", InnerKind: "message.delta", Text: "new-team-trace"})
 	newest := m.conv.latestTeamBlock()
-	newest.teamLanes[0].sessionID = "new-member-session"
-	newest.teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "new-team-trace"}}
 	m.reconcileAgentsLists()
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "old-team-trace") || strings.Contains(out, "new-team-trace") {
@@ -496,18 +494,17 @@ func TestTeamLegacyEmptyIDAndLaterBackfillKeepSelectionAndFocus(t *testing.T) {
 		m := resize(newMCPModel(t, aztec(), nil), 100, 30)
 		m.conv.addTool("legacy-call", "Team", `{}`)
 		m.conv.setTeamStart("legacy-call", "", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
-		old := m.conv.latestTeamBlock()
-		old.teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "original trace"}}
+		m.conv.addTeamMember(client.TeamMsg{ParentCallID: "legacy-call", Member: "scout", InnerKind: "message.delta", Text: "original trace"})
 		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
 		m = mm.(Model)
 		mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		m = mm.(Model)
 		wantAggregate := m.team.aggregate
 
-		old.teamID = "backfilled-id"
+		m.conv.addTeamMember(client.TeamMsg{ParentCallID: "legacy-call", TeamID: "backfilled-id", Member: "scout"})
 		m.conv.addTool("new-call", "Team", `{}`)
 		m.conv.setTeamStart("new-call", "backfilled-id", []client.TeamMemberSpec{{Name: "scout", Lead: true}})
-		m.conv.latestTeamBlock().teamLanes[0].trace = []teamTrace{{kind: teamTraceMessage, text: "new trace"}}
+		m.conv.addTeamMember(client.TeamMsg{ParentCallID: "new-call", Member: "scout", InnerKind: "message.delta", Text: "new trace"})
 		if got := teamBlockIdentity(m.teamBlockForOverlay()); got != wantAggregate {
 			t.Fatalf("teamID backfill transferred or lost focus: got %q want %q", got, wantAggregate)
 		}
@@ -1694,13 +1691,25 @@ func TestTeamLaneCauseLastNonEmptyWins(t *testing.T) {
 	c.setTeamStart("t1", "", roster())
 	c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "first failure C1"}))
 	c.addTeamMember(member("scout", "result", client.TeamMsg{Cause: "second failure C2"}))
-	ln := c.blocks[0].lane("scout")
-	if ln.cause != "second failure C2" {
-		t.Errorf("last non-empty cause must win, got %q", ln.cause)
+	cause := func() string {
+		p, ok := c.teamCard("t1")
+		if !ok {
+			t.Fatal("missing typed Team card")
+		}
+		for _, lane := range p.Update.Lanes {
+			if lane.Name == "scout" {
+				return lane.Cause
+			}
+		}
+		t.Fatal("missing typed scout lane")
+		return ""
+	}
+	if got := cause(); got != "second failure C2" {
+		t.Errorf("last non-empty cause must win, got %q", got)
 	}
 	// A later empty cause (clean round) does NOT erase a prior one — last NON-EMPTY wins.
 	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
-	if ln.cause != "second failure C2" {
-		t.Errorf("an empty cause must not erase a prior non-empty one, got %q", ln.cause)
+	if got := cause(); got != "second failure C2" {
+		t.Errorf("an empty cause must not erase a prior non-empty one, got %q", got)
 	}
 }

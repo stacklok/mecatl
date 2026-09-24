@@ -125,22 +125,6 @@ func (c *conversation) ensureTeamCard(callID, teamID string, roster []client.Tea
 	for i := range roster {
 		lanes[i] = scrollTeamLane(roster[i])
 	}
-	// Focused legacy fixtures can seed an overlay before a live event specializes
-	// its tool card. Import that test seam once; production has no legacy state.
-	for i := range c.blocks {
-		b := &c.blocks[i]
-		if b.toolID != callID || !b.team {
-			continue
-		}
-		lanes = make([]scrollback.TeamLane, len(b.teamLanes))
-		for j, lane := range b.teamLanes {
-			lanes[j] = scrollback.TeamLane{Name: lane.name, SessionID: lane.sessionID, Role: lane.role, Mutating: lane.mutating, Lead: lane.lead, RoutedCategory: lane.routedCategory, RoutedModel: lane.routedModel, RoutingReason: lane.routingReason, Model: lane.model, Routing: scrollRouting(lane.routingDecision), Current: lane.current, ToolCount: lane.toolCount, Usage: scrollUsage(lane.usage), Trace: scrollTrace(lane.trace), Idle: lane.idle, Stopped: lane.stopped, StopReason: lane.stopReason, ErrorRounds: lane.errorRounds, Cause: lane.cause, ContextUsed: lane.ctxUsed, ContextWindow: lane.ctxWindow}
-		}
-		if teamID == "" {
-			teamID = b.teamID
-		}
-		break
-	}
 	if !c.scrollback.Teams().Start(callID, scrollback.TeamStart{TeamID: teamID, Lanes: lanes}) {
 		return false
 	}
@@ -243,6 +227,9 @@ func clientUsage(in scrollback.Usage) client.Usage {
 }
 
 func clientRouting(in scrollback.RoutingDecision) *client.RoutingDecision {
+	if in == (scrollback.RoutingDecision{}) {
+		return nil
+	}
 	out := &client.RoutingDecision{Backend: in.Backend, ClassifierModel: in.ClassifierModel, CandidateCategory: in.CandidateCategory, CandidateModel: in.CandidateModel, Outcome: in.Outcome, ConsecutiveMisses: in.ConsecutiveMisses, MissLimit: in.MissLimit, BreakerOpen: in.BreakerOpen}
 	if in.Confidence != nil {
 		v := *in.Confidence

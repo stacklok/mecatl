@@ -77,13 +77,6 @@ func (m Model) teamBlockForOverlay() *block {
 			return &b
 		}
 	}
-	// Legacy test fixtures deliberately exercise overlay mechanics without a model.
-	for i := range m.conv.blocks {
-		b := &m.conv.blocks[i]
-		if b.kind == blockTool && b.team && teamBlockIdentity(b) == m.team.aggregate {
-			return b
-		}
-	}
 	return nil
 }
 

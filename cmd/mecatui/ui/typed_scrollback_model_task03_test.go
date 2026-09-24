@@ -50,7 +50,7 @@ func TestMecatuiTypedScrollbackModel_Scenario2_DelegationPreviewIsolation(t *tes
 	if len(p.Update.Trace) != 1 || strings.Contains(p.Update.Trace[0].Text, "\x1b") {
 		t.Fatalf("preview was not retained as scrubbed bounded trace: %#v", p.Update.Trace)
 	}
-	if strings.Contains(p.Result.Body, canary) || strings.Contains(c.blocks[0].resultBody, canary) {
+	if strings.Contains(p.Result.Body, canary) {
 		t.Fatal("raw child content reached parent tool result")
 	}
 	if c.subagentFleet[0].trace[0].text != p.Update.Trace[0].Text {

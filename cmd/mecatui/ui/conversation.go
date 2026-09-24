@@ -571,57 +571,30 @@ func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...cl
 	if !c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)}) {
 		return false
 	}
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		// Legacy test fixtures may deliberately use the old focused-card seam without
-		// specializing the typed model. Preserve that seam; production always syncs.
-		if b.toolID == callID && (b.subagent || b.team) {
-			b.rev++
-			b.resolved, b.resultBody, b.resultError, b.resultBlocks = true, body, isErr, blocks
-			return true
-		}
-	}
 	c.syncCall(callID)
 	return true
 }
 
-// subagentBlock returns the unresolved Subagent tool block whose toolID matches
-// parentCallID, or nil if none. Matching is by id only — the SAME contract as
-// resolveTool — so a subagent.* event is attributed to its originating Subagent card
-// even with several Subagent cards interleaved. It scans from the end so the most
-// recent matching call wins.
-//
-// It bumps the block's render revision (rev) before returning non-nil: it is the
-// gateway for the three subagent mutators (setSubagentStart / addSubagentTool /
-// setSubagentEnd), all of which mutate render-visible subagent fields — possibly
-// on a NON-tail block (a background subagent.end lands after later blocks were
-// appended), so the renderer's per-block cache must be invalidated here.
+// subagentBlock is a typed read seam retained for focused presentation tests.
 func (c *conversation) subagentBlock(parentCallID string) *block {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.toolID == parentCallID {
-			b.rev++
-			return b
-		}
+	snapshot, ok := c.scrollback.SnapshotForCall(parentCallID)
+	if !ok {
+		return nil
 	}
-	return nil
+	b, ok := delegationBlockFromSnapshot(snapshot)
+	if !ok || !b.subagent {
+		return nil
+	}
+	return &b
 }
 
-// setSubagentStart marks the Subagent block matching parentCallID as a subagent and
-// records its goal title and routed-category metadata. Returns false when no
-// matching block exists.
+// setSubagentStart is a typed transition seam retained for focused presentation tests.
 func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, routedModel, routingReason, model string) bool {
-	b := c.subagentBlock(parentCallID)
-	if b == nil {
-		return false
+	ok := c.scrollback.Subagents().Start(parentCallID, scrollback.SubagentStart{Goal: goal, RoutedCategory: routedCategory, RoutedModel: routedModel, RoutingReason: routingReason, Model: model})
+	if ok {
+		c.syncCall(parentCallID)
 	}
-	b.subagent = true
-	b.subGoal = goal
-	b.subRoutedCategory = routedCategory
-	b.subRoutedModel = routedModel
-	b.subRoutingReason = routingReason
-	b.subModel = model
-	return true
+	return ok
 }
 
 // cloneRoutingDecision takes ownership of optional scalar presence as well as the
@@ -643,34 +616,23 @@ func cloneRoutingDecision(in *client.RoutingDecision) *client.RoutingDecision {
 }
 
 func (c *conversation) setSubagentRoutingDecision(parentCallID, childID string, decision *client.RoutingDecision) {
-	if b := c.subagentBlock(parentCallID); b != nil {
-		b.subRoutingDecision = cloneRoutingDecision(decision)
+	if p, ok := c.subagentCard(parentCallID); ok {
+		p.Start.Routing = scrollRouting(decision)
+		if c.scrollback.Subagents().UpdateStart(parentCallID, p.Start) {
+			c.syncCall(parentCallID)
+		}
 	}
 	if childID != "" {
 		c.fleetLane(childID).routingDecision = cloneRoutingDecision(decision)
 	}
 }
 
-// addSubagentTool routes one subagent.tool projection into the matching Subagent
-// block's trace per the event's InnerKind: a tool.call sets the live current tool
-// and appends a pending chip (with its bounded arg preview); a tool.result
-// finalises the chip (error state + result preview); a message.delta extends a
-// capped message line. A turn.end carries the child's cumulative usage, which the
-// live status line (subagentLiveLine) renders mid-run; the trace is capped at
-// maxTraceEntries (oldest entries dropped); the count is the authoritative running
-// total carried by the event, not len(trace). Returns false when no match.
+// addSubagentTool is a typed transition seam retained for focused presentation tests.
 func (c *conversation) addSubagentTool(msg client.SubagentMsg) bool {
-	b := c.subagentBlock(msg.ParentCallID)
-	if b == nil {
+	if _, ok := c.subagentCard(msg.ParentCallID); !ok {
 		return false
 	}
-	b.subagent = true
-	// ToolCount and Usage are cumulative totals stamped on every projection (see
-	// SubagentPayload docs), so they are assigned unconditionally — always current,
-	// never 0-after-positive. A turn.end projection advances the live usage mid-run.
-	b.subToolCount = msg.ToolCount
-	b.subUsage = msg.Usage
-	b.subTrace, b.subCurrent = routeTraceEvent(b.subTrace, b.subCurrent, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
+	c.applySubagentTyped(msg)
 	return true
 }
 
@@ -697,19 +659,12 @@ func routeTraceEvent(trace []teamTrace, current, innerKind, toolName, detail, te
 	return trace, current
 }
 
-// setSubagentEnd records the resolved end stats (usage, final tool count, stop,
-// duration) on the matching Subagent block. Returns false when no match.
+// setSubagentEnd is a typed transition seam retained for focused presentation tests.
 func (c *conversation) setSubagentEnd(parentCallID string, usage client.Usage, toolCount int, stop string, durationMs int64) bool {
-	b := c.subagentBlock(parentCallID)
-	if b == nil {
+	if _, ok := c.subagentCard(parentCallID); !ok {
 		return false
 	}
-	b.subagent = true
-	b.subDone = true
-	b.subUsage = usage
-	b.subToolCount = toolCount
-	b.subStop = stop
-	b.subDurationMs = durationMs
+	c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: parentCallID, Usage: usage, ToolCount: toolCount, Stop: stop, DurationMs: durationMs})
 	return true
 }
 
@@ -1028,219 +983,86 @@ func (c *conversation) liveParallel() bool {
 // — so a team.* event is attributed to its originating Team card even with several
 // tool cards interleaved. It scans from the end so the most recent match wins.
 //
-// It bumps the block's render revision (rev) before returning non-nil: it is the
-// gateway for the five team mutators (setTeamStart / addTeamMember / setTeamEnd /
-// setTeamTasks / setTeamFindings) — note setTeamTasks/setTeamFindings flip the
-// render-visible b.team flag even though tasks/findings themselves render only in
-// the f6 overlay, so they invalidate too. latestTeamBlock/liveTeamBlock (the
-// overlay READ path) deliberately do NOT bump.
+// teamBlock is a typed read seam retained for focused presentation tests.
 func (c *conversation) teamBlock(parentCallID string) *block {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.toolID == parentCallID {
-			b.rev++
-			return b
-		}
+	snapshot, ok := c.scrollback.SnapshotForCall(parentCallID)
+	if !ok {
+		return nil
 	}
-	return nil
+	b, ok := delegationBlockFromSnapshot(snapshot)
+	if !ok || !b.team {
+		return nil
+	}
+	return &b
 }
 
-// setTeamStart marks the Team block matching parentCallID as a team, records its
-// stable team id (for the live footer summary segment), and seeds its per-member
-// lanes from the roster (in roster order). teamID is set only when non-empty so a
-// later defensive set from a team.member/team.end event never erases a known id.
-// Returns false when no matching block exists.
 func (c *conversation) setTeamStart(parentCallID, teamID string, roster []client.TeamMemberSpec) bool {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
+	if !c.ensureTeamCard(parentCallID, teamID, roster) {
 		return false
 	}
-	b.team = true
-	if teamID != "" {
-		b.teamID = teamID
-	}
-	b.teamLanes = make([]teamLane, 0, len(roster))
-	for _, m := range roster {
-		b.teamLanes = append(b.teamLanes, teamLane{
-			name:            m.Name,
-			role:            m.Role,
-			mutating:        m.Mutating,
-			lead:            m.Lead,
-			routedCategory:  m.RoutedCategory,
-			routedModel:     m.RoutedModel,
-			routingReason:   m.RoutingReason,
-			routingDecision: cloneRoutingDecision(m.RoutingDecision),
-			model:           m.Model,
-		})
-	}
+	c.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: parentCallID, TeamID: teamID, Roster: roster})
 	return true
 }
 
-// lane returns a pointer to the lane for member, creating one (appended in
-// arrival order) if the roster did not list it — so a team.member event is never
-// dropped just because team.start was missed or the roster was partial.
-func (b *block) lane(member string) *teamLane {
-	for i := range b.teamLanes {
-		if b.teamLanes[i].name == member {
-			return &b.teamLanes[i]
-		}
-	}
-	b.teamLanes = append(b.teamLanes, teamLane{name: member})
-	return &b.teamLanes[len(b.teamLanes)-1]
-}
-
-// addTeamMember routes one team.member projection to its member lane on the Team
-// block matching parentCallID, accumulating per the inner kind: a message.delta
-// appends/extends a message trace line; a tool.call sets the lane's current tool
-// and appends a (pending) tool chip; a tool.result finalises the chip's error
-// state; a turn.end/result carries usage and (for result) marks the lane IDLE
-// (finished its round, not terminal); forward activity (delta / tool.call /
-// turn.end) clears idle again. Team-terminal lives on block.teamDone, set only by
-// setTeamEnd — never on a lane. The trace is capped at maxTeamTrace (oldest
-// entries dropped). Returns false when no matching Team block exists.
 func (c *conversation) addTeamMember(msg client.TeamMsg) bool {
-	b := c.teamBlock(msg.ParentCallID)
-	if b == nil {
+	if !c.ensureTeamCard(msg.ParentCallID, msg.TeamID, nil) {
 		return false
 	}
-	b.team = true
-	// Defensively backfill the team id: team.start can be missed (the same race the
-	// lane() fallback guards against), so a team.member carrying the id seeds it.
-	// Only overwrite when non-empty so a known id is never erased.
-	if msg.TeamID != "" {
-		b.teamID = msg.TeamID
-	}
-	ln := b.lane(msg.Member)
-	// Backfill the member's session id (the CancelChild handle) from any member event
-	// carrying it; only overwrite when non-empty so a known id is never erased.
-	if msg.MemberSessionID != "" {
-		ln.sessionID = msg.MemberSessionID
-	}
-	switch msg.InnerKind {
-	case "message.delta":
-		ln.idle = false
-		ln.appendMessage(msg.Text)
-	case "tool.call":
-		ln.idle = false
-		ln.current = msg.ToolName
-		ln.toolCount++
-		ln.appendTool(msg.ToolName, msg.Detail, false)
-	case "tool.result":
-		ln.markToolResult(msg.ToolName, msg.Detail, msg.IsError)
-	case "turn.end":
-		ln.idle = false
-		ln.usage = sumUsage(ln.usage, msg.Usage)
-		// The context meter tracks CURRENT occupancy, not cumulative cost: assign the
-		// most recent turn's input tokens (matching the main meter's
-		// m.contextTokens = msg.Usage.InputTokens), and keep the window sticky so a
-		// later turn.end that omits it (0) does not erase a known denominator.
-		ln.ctxUsed = msg.Usage.InputTokens
-		if msg.ContextWindow > 0 {
-			ln.ctxWindow = msg.ContextWindow
-		}
-	case "result":
-		ln.idle = true
-		ln.current = ""
-		if msg.Usage != (client.Usage{}) {
-			ln.usage = sumUsage(ln.usage, msg.Usage)
-		}
-		if msg.Text != "" {
-			ln.appendMessage(msg.Text)
-		}
-		if msg.Cause != "" {
-			ln.cause = msg.Cause // last failed round's cause wins; rendered only when benched (stopped/error)
-		}
-	}
+	msg.Kind = client.TeamMember
+	c.applyTeamTyped(msg)
 	return true
 }
 
-// appendMessage adds a member message line to the lane trace via the shared
-// traceAppendMessage projection (coalescing streamed deltas).
-func (ln *teamLane) appendMessage(text string) {
-	ln.trace = traceAppendMessage(ln.trace, text)
-}
-
-// appendTool adds a tool chip (pending; error + result detail resolved later by
-// markToolResult). detail here is the call's bounded arg preview.
-func (ln *teamLane) appendTool(name, detail string, isError bool) {
-	ln.trace = traceAppendTool(ln.trace, name, detail, isError)
-}
-
-// markToolResult finalises the most recent matching pending tool chip via the
-// shared traceMarkToolResult projection (result preview supersedes the arg preview).
-func (ln *teamLane) markToolResult(name, detail string, isError bool) {
-	ln.trace = traceMarkToolResult(ln.trace, name, detail, isError)
-}
-
-// setTeamEnd records the resolved end stats (rounds, stop, summed usage) on the
-// Team block matching parentCallID, defensively backfilling the team id (only when
-// non-empty) in case team.start was missed. It also applies the per-member terminal
-// disposition snapshot onto the matching lanes (by name), so a stopped member renders
-// "✗ stopped — <reason>" instead of the blanket "✓ done" once the team has ended.
-// Returns false when no match.
 func (c *conversation) setTeamEnd(parentCallID, teamID string, rounds int, stop string, usage client.Usage, dispositions []client.TeamMemberDisposition) bool {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
+	p, ok := c.teamCard(parentCallID)
+	if !ok {
 		return false
 	}
-	b.team = true
+	u := p.Update
 	if teamID != "" {
-		b.teamID = teamID
+		u.TeamID = teamID
 	}
-	b.teamDone = true
-	b.teamRounds = rounds
-	b.teamStop = stop
-	b.teamUsage = usage
+	u.Rounds, u.Stop, u.Usage, u.Done = rounds, stop, scrollUsage(usage), true
 	for _, d := range dispositions {
-		ln := b.lane(d.Name)
-		ln.stopped = d.Stopped
-		ln.stopReason = d.Reason
-		ln.errorRounds = d.ErrorRounds
+		var i int
+		u.Lanes, i = teamLaneFor(u.Lanes, d.Name)
+		u.Lanes[i].Stopped, u.Lanes[i].StopReason, u.Lanes[i].ErrorRounds = d.Stopped, d.Reason, d.ErrorRounds
 	}
-	return true
-}
-
-// setTeamTasks replaces the shared task-list snapshot on the Team block matching
-// parentCallID. The server emits a fresh full snapshot on every task transition
-// (de-duped on change), so a replace is correct — the latest snapshot is the whole
-// truth. Returns false when no match. Member content is never touched.
-func (c *conversation) setTeamTasks(parentCallID string, tasks []client.TeamTask) bool {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
+	if !c.scrollback.Teams().Update(parentCallID, u) {
 		return false
 	}
-	b.team = true
-	out := make([]teamTask, 0, len(tasks))
-	for _, tk := range tasks {
-		deps := make([]string, len(tk.Deps))
-		copy(deps, tk.Deps)
-		out = append(out, teamTask{
-			id:       tk.ID,
-			desc:     tk.Description,
-			state:    tk.State,
-			assignee: tk.Assignee,
-			deps:     deps,
-		})
-	}
-	b.teamTasks = out
+	c.syncCall(parentCallID)
 	return true
 }
 
-// setTeamFindings replaces the cached findings-ledger snapshot on the Team block
-// identified by parentCallID. Like setTeamTasks, the server emits a fresh full
-// snapshot on every change (de-duped), so a replace is correct. Returns false on no
-// match. Findings carry only the recording member + a bounded body preview.
+func (c *conversation) setTeamTasks(parentCallID string, tasks []client.TeamTask) bool {
+	if !c.ensureTeamCard(parentCallID, "", nil) {
+		return false
+	}
+	p, ok := c.teamCard(parentCallID)
+	if !ok {
+		return false
+	}
+	p.Update.Tasks = scrollTasks(tasks)
+	if !c.scrollback.Teams().Update(parentCallID, p.Update) {
+		return false
+	}
+	c.syncCall(parentCallID)
+	return true
+}
+
 func (c *conversation) setTeamFindings(parentCallID string, findings []client.TeamFinding) {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
+	if !c.ensureTeamCard(parentCallID, "", nil) {
 		return
 	}
-	b.team = true
-	out := make([]teamFinding, 0, len(findings))
-	for _, f := range findings {
-		out = append(out, teamFinding{member: f.Member, body: f.Body})
+	p, ok := c.teamCard(parentCallID)
+	if !ok {
+		return
 	}
-	b.teamFindings = out
+	p.Update.Findings = scrollFindings(findings)
+	if c.scrollback.Teams().Update(parentCallID, p.Update) {
+		c.syncCall(parentCallID)
+	}
 }
 
 // latestTeamBlock returns the most-recent tool block that carries team lanes (a
@@ -1254,12 +1076,6 @@ func (c *conversation) latestTeamBlock() *block {
 	for i := c.scrollback.Len() - 1; i >= 0; i-- {
 		if b, ok := delegationBlockFromSnapshot(c.scrollback.SnapshotAt(i)); ok && b.team && len(b.teamLanes) > 0 {
 			return &b
-		}
-	}
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.team && len(b.teamLanes) > 0 {
-			return b
 		}
 	}
 	return nil

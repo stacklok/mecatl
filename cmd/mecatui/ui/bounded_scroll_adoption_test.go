@@ -758,7 +758,7 @@ func boundedScenarioAgentsModel(t *testing.T, mode string) Model {
 	m := resize(newMCPModel(t, aztec(), nil), 80, 30)
 	m.conv.subagentFleet = boundedScenarioFleet(12)
 	m.conv.parallelGroups = boundedScenarioGroups(10)
-	m.conv.blocks = append(m.conv.blocks, *boundedScenarioTeam(10))
+	m.conv.addTeamFixture(*boundedScenarioTeam(10))
 	m.team = teamState{view: teamRoster}
 	switch mode {
 	case "subagent-roster":
