@@ -29,12 +29,6 @@ const maxToolResultLines = 12
 // content) show inline when collapsed; ctrl+t expands to the full diff.
 const maxDiffLines = 12
 
-// toolCardMaxWidth caps a tool card's column width on a wide terminal: past this
-// the card stops growing with the viewport so a long line stays at a readable
-// measure instead of stretching edge to edge. On a narrow terminal the existing
-// r.width-2 inset wins (the card never exceeds the viewport).
-const toolCardMaxWidth = 100
-
 // Compact-card tuning (issue #24): a collapsed tool card summarizes its JSON
 // args (and large JSON results) into a few scannable key:value rows instead of
 // dumping the full pretty-printed JSON inline — so an MCP call with a huge body
@@ -371,8 +365,7 @@ func (r *renderer) markdownWidth(src string, w int) string {
 		w = 80
 	}
 	// Reserve the terminal's FINAL column: word-wrap one column short of the
-	// viewport width. Retained as harmless hygiene (and to mirror the two-column
-	// inset tool cards get from Width(r.width-2)), NOT as the scramble fix — the
+	// viewport width. Retained as harmless hygiene, NOT as the scramble fix — the
 	// width-method disagreement above, not a last-column pending-wrap, is the root
 	// cause, and normalizeEmojiWidth is what closes it. trimTrailingSpaces likewise
 	// just drops glamour's styled right-padding so rows sit at their natural width.
@@ -835,10 +828,10 @@ func plural(n int, noun string) string {
 // keeping result-row accounting aligned with the final card layout.
 func (r *renderer) toolCardLayout() (card lipgloss.Style, outerWidth, bodyWidth int) {
 	card = r.th.Style("toolCard")
-	if cw := r.contentWidth(); cw > card.GetHorizontalFrameSize()+2 {
-		// Width includes the card's border and padding. Keep the 2-cell right inset
-		// without letting the indented card exceed the viewport.
-		outerWidth = min(cw-2, toolCardMaxWidth)
+	if cw := r.contentWidth(); cw > card.GetHorizontalFrameSize() {
+		// Width includes the card's border and padding. Fill the conversation-content
+		// budget so the block indent plus card reaches the terminal's final column.
+		outerWidth = cw
 		card = card.Width(outerWidth)
 	} else if cw > 0 {
 		// A bordered, padded card has no content column at this width. Start from an
@@ -872,6 +865,15 @@ func renderToolHeader(glyph, glyphText, label string, nameStyle lipgloss.Style, 
 // existing style, so ANSI styling cannot affect width accounting.
 func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
 	text = strings.TrimRightFunc(terminaltext.Sanitize(text), unicode.IsSpace)
+	return renderRawToolCardText(style, text, bodyWidth)
+}
+
+// renderToolMetadata bounds Edit/Write metadata without changing its raw whitespace.
+func renderToolMetadata(style lipgloss.Style, text string, bodyWidth int) string {
+	return renderRawToolCardText(style, terminaltext.Sanitize(text), bodyWidth)
+}
+
+func renderRawToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
 	rows := strings.Split(wrapToolCardText(text, bodyWidth), "\n")
 	for i, row := range rows {
 		rows[i] = style.Render(row)
@@ -899,7 +901,7 @@ func normalizeToolCardTabs(text string) string {
 
 // wrapToolCardText constrains raw card text before it is styled or framed.
 func wrapToolCardText(text string, bodyWidth int) string {
-	text = normalizeToolCardTabs(text)
+	text = normalizeEmojiWidth(normalizeToolCardTabs(text))
 	if text == "" || bodyWidth <= 0 {
 		return text
 	}
@@ -1002,7 +1004,7 @@ func renderDelegationRows(style lipgloss.Style, prefix, text string, bodyWidth i
 // joins the card. It deliberately operates per region, never on the assembled card:
 // card.Render must only frame already fitting rows.
 func wrapToolCardRegion(region string, bodyWidth int) string {
-	region = normalizeToolCardTabs(region)
+	region = normalizeEmojiWidth(normalizeToolCardTabs(region))
 	if region == "" || bodyWidth <= 0 {
 		return region
 	}
@@ -1967,7 +1969,7 @@ func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth,
 func wrapResultDisplayLines(lines []toolResultLine, bodyWidth int) []toolResultLine {
 	wrapped := make([]toolResultLine, 0, len(lines))
 	for _, line := range lines {
-		text := normalizeToolCardTabs(line.text)
+		text := normalizeEmojiWidth(normalizeToolCardTabs(line.text))
 		if strings.TrimSpace(text) == "" {
 			// Preserve an intentional blank source line as one display row, without
 			// retaining width-exceeding padding that could wrap into more rows.
@@ -2091,7 +2093,7 @@ func (r *renderer) renderEditDiff(rawArgs string, expand bool, bodyWidth int) (s
 		header += " (replace all)"
 	}
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
+	b.WriteString(renderToolMetadata(r.th.Style("diffMeta"), header, bodyWidth))
 	b.WriteString("\n")
 	b.WriteString(r.diffSide(args.OldString, "-", "diffRemove", expand, bodyWidth))
 	b.WriteString(r.diffSide(args.NewString, "+", "diffAdd", expand, bodyWidth))
@@ -2121,7 +2123,7 @@ func (r *renderer) renderWriteDiff(rawArgs string, expand bool, bodyWidth int) (
 	}
 	header := fmt.Sprintf("%s · %s (overwrites if it exists)", args.Path, plural(lineCount(args.Content), "line"))
 	var b strings.Builder
-	b.WriteString(r.th.Style("diffMeta").Render(wrapToolCardRegion(terminaltext.Sanitize(header), bodyWidth)))
+	b.WriteString(renderToolMetadata(r.th.Style("diffMeta"), header, bodyWidth))
 	if args.Content != "" {
 		b.WriteString("\n")
 		b.WriteString(r.diffSide(args.Content, "+", "diffAdd", expand, bodyWidth))

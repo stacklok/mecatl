@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes a deliberate, user-visible mecatui layout contract for every main-conversation tool execution, but it does not change protocols, APIs, durable state, authority, or subsystem ownership.
 **Decision record:** None — the behavior is confined to the existing client-local renderer and reuses its established terminal-size, wrapping, and resize paths, so no durable architecture decision is introduced.
 **Phase:** mecatui conversation layout
-**Status:** proposed, 2026-09-24. Plan/documentation layer of the explicitly authorized simultaneous two-PR stack; implementation remains in the child branch.
+**Status:** landed, 2026-09-24. Implementation candidate transition after all six acceptance proofs, aggregate gates, documentation/site/API checks, offline demo, and the human-waived guardrail-withheld post-repair panel completed; authoritative only when the stacked Implementation PR merges.
 **Delivery:** Split. The directing human explicitly waived the normal merge-before-implementation sequencing and requested simultaneous stacked Plan / Interface and Implementation PRs.
 **Expected tasks:** 1
 **Spine waiver:** On 2026-09-24, after the sequencing conflict was explained, the directing human explicitly confirmed `i-would-like-to-detect-the-siz` as the documentation/plan PR and `impl/mecatui-full-width-tool-cards` as its implementation PR.

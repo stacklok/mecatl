@@ -60,6 +60,21 @@ func TestRenderWriteDiff(t *testing.T) {
 	}
 }
 
+func TestRenderToolDiffMetadataPreservesWhitespaceAndStaysBounded(t *testing.T) {
+	r := newTestRenderer()
+	const width = 12
+	out := renderToolMetadata(r.th.Style("diffMeta"), "metadata-without-breaks  ", width)
+	plain := stripANSIstr(out)
+	if joined := strings.ReplaceAll(plain, "\n", ""); !strings.HasSuffix(joined, "  ") {
+		t.Fatalf("metadata trailing whitespace changed: %q", plain)
+	}
+	for i, row := range strings.Split(out, "\n") {
+		if got := maxLineWidth(row); got > width {
+			t.Errorf("metadata row %d width = %d, want <= %d: %q", i, got, width, stripANSIstr(row))
+		}
+	}
+}
+
 func TestRenderToolDiffMalformedFallsBack(t *testing.T) {
 	r := newTestRenderer()
 	// Not JSON at all.
