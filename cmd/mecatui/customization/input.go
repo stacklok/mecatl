@@ -97,14 +97,18 @@ type ContextAtom struct {
 	Human string
 }
 
-// Context describes current context-window consumption. Percent is Used.Raw as
-// an integer percentage of Window.Raw, or zero when the window is unknown. The
-// visual bar is renderer-owned because its glyphs and semantic style depend on
-// the active theme and available surface width.
+// Context describes current context-window consumption. Known reports whether Used
+// reflects a known occupancy; Estimated reports whether that occupancy is an
+// estimate. Percent is Used.Raw as an integer percentage of Window.Raw, or zero
+// when the window or occupancy is unknown. The visual bar is renderer-owned
+// because its glyphs and semantic style depend on the active theme and available
+// surface width.
 type Context struct {
-	Used    ContextAtom
-	Window  ContextAtom
-	Percent int
+	Used      ContextAtom
+	Window    ContextAtom
+	Percent   int
+	Known     bool
+	Estimated bool
 }
 
 // Workspace is the active session workspace's display-safe provenance. Location

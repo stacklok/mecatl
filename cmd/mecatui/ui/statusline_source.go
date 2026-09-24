@@ -213,7 +213,7 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 		Session: customization.Session{Title: m.sessionTitle, Handle: handle, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
 		Model:   customization.Model{ProviderID: m.resolvedSessionModel.ProviderID, ID: m.resolvedSessionModel.ModelID, DisplayName: m.headerModelLabel(), Route: m.providerRoute, ContextWindow: contextAtom(window)},
 		Usage:   customization.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent},
-		Context: customization.Context{Used: contextOccupancyAtom(m.contextTokens, contextKnown, m.contextEstimated), Window: contextAtom(window), Percent: contextPercent}, Workspace: workspace,
+		Context: customization.Context{Used: contextOccupancyAtom(m.contextTokens, contextKnown, m.contextEstimated), Window: contextAtom(window), Percent: contextPercent, Known: contextKnown, Estimated: m.contextEstimated}, Workspace: workspace,
 		MainAgent:  customization.MainAgent{State: state, Activity: activity, Approval: approval},
 		Delegation: m.statusDelegation(),
 		Clock:      customization.Clock{Now: now},
