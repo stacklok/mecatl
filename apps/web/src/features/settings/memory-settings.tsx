@@ -40,7 +40,7 @@ export function MemorySettings() {
             search={{ item: entry.key }}
             to="/workspace/memory"
           >
-            <span className="font-medium">{entry.key}</span>
+            <span className="break-all font-medium">{entry.key}</span>
             <span className="mt-1 block text-sm text-muted-foreground">
               {entry.description || "No description recorded."}
             </span>
@@ -58,7 +58,7 @@ export function MemoryFactDetail({ memoryKey }: { memoryKey: string }) {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl px-4 py-7 sm:px-8 sm:py-10">
         <Link
-          className="inline-flex min-h-10 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
           params={{ section: "memory" }}
           search={{ item: undefined }}
           to="/workspace/settings/$section"
@@ -88,7 +88,7 @@ function MemoryDetail({ detail }: { detail: GetUserMemoryResponse }) {
         {detail.current.status && <Badge variant="success">{detail.current.status}</Badge>}
       </div>
       <p className="mt-2 text-sm text-muted-foreground">{detail.current.description}</p>
-      <p className="mt-4 whitespace-pre-wrap rounded-lg border bg-card p-4 text-sm leading-6">
+      <p className="mt-4 whitespace-pre-wrap break-words rounded-lg border bg-card p-4 text-sm leading-6">
         {detail.current.value || "No value recorded."}
       </p>
       <dl className="mt-4 grid gap-2 text-xs text-muted-foreground">
@@ -109,7 +109,7 @@ function MemoryDetail({ detail }: { detail: GetUserMemoryResponse }) {
       </dl>
       {detail.historyAvailable && detail.history.length > 0 && (
         <details className="mt-4 rounded-lg border p-3">
-          <summary className="cursor-pointer text-sm font-medium">
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-brand">
             Revision history ({detail.history.length})
           </summary>
           <ul className="mt-3 space-y-2">
@@ -119,7 +119,7 @@ function MemoryDetail({ detail }: { detail: GetUserMemoryResponse }) {
                 key={`${revision.key}-${revision.version}`}
               >
                 <span className="font-mono">{revision.version}</span>
-                <p className="mt-1 whitespace-pre-wrap">{revision.value}</p>
+                <p className="mt-1 whitespace-pre-wrap break-words">{revision.value}</p>
               </li>
             ))}
           </ul>

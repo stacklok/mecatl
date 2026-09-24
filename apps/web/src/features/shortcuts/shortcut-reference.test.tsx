@@ -4,7 +4,7 @@
 import type { GetRuntimeResponse } from "@mecatl-studio/contracts/generated";
 import { getRuntimeQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createMemoryHistory, createRouter } from "@tanstack/react-router";
+import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { routeTree } from "../../routeTree.gen";
@@ -13,10 +13,16 @@ import { keycaps, shortcutRegistry } from "./shortcut-registry";
 
 function render(runtime?: GetRuntimeResponse) {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: ["/workspace/shortcuts"] }),
+    routeTree,
+  });
   if (runtime) client.setQueryData(getRuntimeQueryKey(), runtime);
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
-      <ShortcutReference />
+      <RouterContextProvider router={router}>
+        <ShortcutReference />
+      </RouterContextProvider>
     </QueryClientProvider>,
   );
 }

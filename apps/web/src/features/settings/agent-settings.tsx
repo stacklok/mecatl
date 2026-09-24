@@ -28,7 +28,7 @@ export function AgentSettings() {
       <IdentityField description="What the agent calls itself." label="Agent name">
         <Input
           aria-label="Agent name"
-          className="max-w-64"
+          className="min-h-11 max-w-64"
           maxLength={40}
           onChange={(event) => agentName.setValue(event.target.value)}
           placeholder={defaultAgentName}

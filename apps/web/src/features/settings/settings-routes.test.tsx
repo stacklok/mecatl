@@ -59,7 +59,9 @@ describe("settings routes", () => {
     }
     const navigation = renderToStaticMarkup(
       <QueryClientProvider client={new QueryClient()}>
-        <SettingsWorkspace section="permissions" />
+        <RouterContextProvider router={await load("/workspace/settings/permissions")}>
+          <SettingsWorkspace section="permissions" />
+        </RouterContextProvider>
       </QueryClientProvider>,
     );
     for (const section of sections) expect(navigation).toContain(`value="${section}"`);

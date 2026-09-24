@@ -91,6 +91,7 @@ export function MemoryConsolidation() {
           </div>
         </div>
         <Button
+          className="min-h-11"
           disabled={generate.isPending || decide.isPending}
           onClick={() => void generatePlan()}
           size="sm"
@@ -114,6 +115,7 @@ export function MemoryConsolidation() {
             Nothing needs consolidation; this memory is already tidy.
           </p>
           <Button
+            className="min-h-11"
             disabled={!capability.decide || decide.isPending}
             onClick={() => void decidePlan("dismiss")}
             size="sm"
@@ -172,6 +174,7 @@ export function MemoryConsolidation() {
           </ul>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
+              className="min-h-11"
               disabled={!capability.decide || decide.isPending}
               onClick={() => setConfirmApply(true)}
               size="sm"
@@ -181,6 +184,7 @@ export function MemoryConsolidation() {
               Apply plan
             </Button>
             <Button
+              className="min-h-11"
               disabled={!capability.decide || decide.isPending}
               onClick={() => void decidePlan("dismiss")}
               size="sm"
@@ -207,8 +211,12 @@ export function MemoryConsolidation() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={decide.isPending} onClick={() => void decidePlan("apply")}>
+            <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="min-h-11"
+              disabled={decide.isPending}
+              onClick={() => void decidePlan("apply")}
+            >
               Apply
             </AlertDialogAction>
           </AlertDialogFooter>

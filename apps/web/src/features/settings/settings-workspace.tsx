@@ -104,6 +104,13 @@ export function SettingsWorkspace({
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
+        <Link
+          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+          search={{ sessionId: undefined }}
+          to="/workspace/chat"
+        >
+          ← Chats
+        </Link>
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Review your preferences and the settings managed by this deployment.
@@ -114,7 +121,7 @@ export function SettingsWorkspace({
             Settings section
           </label>
           <select
-            className="mt-2 h-10 w-full rounded-lg border bg-card px-3 text-sm"
+            className="mt-2 min-h-11 w-full rounded-lg border bg-card px-3 text-sm focus-visible:outline-2 focus-visible:outline-brand"
             id="settings-section"
             onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
             value={section}
@@ -144,7 +151,7 @@ export function SettingsWorkspace({
                       <li key={item.value}>
                         <button
                           aria-current={section === item.value ? "page" : undefined}
-                          className={`w-full rounded-lg px-3 py-2 text-left text-sm ${section === item.value ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                          className={`min-h-11 w-full rounded-lg px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-brand ${section === item.value ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
                           onClick={() => onSectionChange?.(item.value)}
                           type="button"
                         >
@@ -343,7 +350,7 @@ function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse 
                   {provider.modelCount} model{provider.modelCount === 1 ? "" : "s"} reported
                 </p>
                 <Link
-                  className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+                  className="mt-3 inline-flex min-h-11 items-center text-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-brand"
                   search={{ providerId: provider.id }}
                   to="/workspace/provider"
                 >
@@ -393,7 +400,7 @@ function ModelInventory({
           <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
           <Input
             aria-label="Filter models"
-            className="pl-9"
+            className="min-h-11 pl-9"
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Find a model"
             value={search}
@@ -440,7 +447,7 @@ function ModelCard({
       <div className="flex items-start justify-between gap-3">
         <h3 className="font-medium">{model.displayName}</h3>
         <label
-          className="flex items-center gap-2 text-xs text-muted-foreground"
+          className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground"
           htmlFor={`visible-model-${model.providerId}-${model.id}`}
         >
           Visible
@@ -495,7 +502,10 @@ function AboutAgent({
   const [copyStatus, setCopyStatus] = useState("");
   return (
     <Section icon={runtime.source === "local" ? Laptop : Cloud} title="About">
-      <SourceNote source="authenticated BFF runtime and settings inventory" owner="deployment and Studio build" />
+      <SourceNote
+        source="authenticated BFF runtime and settings inventory"
+        owner="deployment and Studio build"
+      />
       <p className="mt-3 text-sm text-muted-foreground">
         Studio is the browser client. Its build and installed SDK are reported separately from the
         connected daemon.
@@ -511,6 +521,7 @@ function AboutAgent({
       </dl>
       <div className="mt-4 flex flex-wrap gap-2">
         <Button
+          className="min-h-11"
           onClick={async () => {
             try {
               await navigator.clipboard.writeText(supportSummary(runtime, settings));
@@ -526,7 +537,7 @@ function AboutAgent({
           <Copy aria-hidden="true" />
           Copy support summary
         </Button>
-        <Button asChild size="sm" variant="outline">
+        <Button asChild className="min-h-11" size="sm" variant="outline">
           <a
             href="https://mecatl.dev/docs/building/deployment/studio"
             rel="noreferrer"
@@ -537,14 +548,14 @@ function AboutAgent({
             <ExternalLink aria-hidden="true" className="size-3 text-muted-foreground" />
           </a>
         </Button>
-        <Button asChild size="sm" variant="outline">
+        <Button asChild className="min-h-11" size="sm" variant="outline">
           <a href={supportUrl} rel="noreferrer" target="_blank">
             <LifeBuoy aria-hidden="true" />
             Report a problem
             <ExternalLink aria-hidden="true" className="size-3 text-muted-foreground" />
           </a>
         </Button>
-        <Button asChild size="sm" variant="outline">
+        <Button asChild className="min-h-11" size="sm" variant="outline">
           <Link to="/workspace/shortcuts">
             <Keyboard aria-hidden="true" />
             Keyboard shortcuts
@@ -627,7 +638,7 @@ function Fact({ children, label }: { children: ReactNode; label: string }) {
   return (
     <div className="rounded-lg border bg-background p-3">
       <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className="mt-2 break-all text-sm">{children}</dd>
+      <dd className="mt-2 break-words text-sm">{children}</dd>
     </div>
   );
 }

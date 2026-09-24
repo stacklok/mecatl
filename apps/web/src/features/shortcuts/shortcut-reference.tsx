@@ -2,6 +2,7 @@
 
 import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Keyboard } from "lucide-react";
 import { Kbd } from "../../components/ui/kbd";
 import { deriveHelpFeatures } from "./help-features";
@@ -36,6 +37,14 @@ export function ShortcutReference() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-4xl px-4 py-7 sm:px-8 sm:py-10">
+        <Link
+          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+          params={{ section: "about" }}
+          search={{ item: undefined }}
+          to="/workspace/settings/$section"
+        >
+          ← Settings
+        </Link>
         <div className="flex items-start gap-4">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
             <Keyboard aria-hidden="true" className="size-5" />

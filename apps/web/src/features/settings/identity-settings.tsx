@@ -17,7 +17,7 @@ export function IdentitySettings() {
       <IdentityField description="What the agent should call you." label="Display name">
         <Input
           aria-label="Your display name"
-          className="max-w-64"
+          className="min-h-11 max-w-64"
           maxLength={40}
           onChange={(event) => userName.setValue(event.target.value)}
           placeholder="You"

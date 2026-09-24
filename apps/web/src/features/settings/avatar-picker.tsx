@@ -65,7 +65,12 @@ export function AvatarPicker({
           ref={inputRef}
           type="file"
         />
-        <Button onClick={() => inputRef.current?.click()} size="sm" variant="outline">
+        <Button
+          className="min-h-11"
+          onClick={() => inputRef.current?.click()}
+          size="sm"
+          variant="outline"
+        >
           {avatarUrl ? "Change picture" : "Upload picture"}
         </Button>
       </div>

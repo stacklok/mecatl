@@ -46,7 +46,7 @@ export function ProviderDetail({ providerId }: { providerId: string }) {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-4xl px-4 py-7 sm:px-8 sm:py-10">
         <Link
-          className="inline-flex min-h-10 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
           params={{ section: "providers" }}
           search={{ item: undefined }}
           to="/workspace/settings/$section"
@@ -103,7 +103,7 @@ function Fact({ children, label }: { children: React.ReactNode; label: string })
   return (
     <div className="rounded-lg border bg-background p-3">
       <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className="mt-2 break-all text-sm">{children}</dd>
+      <dd className="mt-2 break-words text-sm">{children}</dd>
     </div>
   );
 }

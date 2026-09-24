@@ -96,6 +96,7 @@ export function InterfaceSettings() {
           <div className="flex w-44 items-center justify-between gap-2">
             <Button
               aria-label="Decrease interface scale"
+              className="min-h-11 min-w-11"
               disabled={scale.value <= uiScaleMin}
               onClick={() => scale.setValue(scale.value - 0.05)}
               size="icon"
@@ -106,6 +107,7 @@ export function InterfaceSettings() {
             <span className="text-sm tabular-nums">{Math.round(scale.value * 100)}%</span>
             <Button
               aria-label="Increase interface scale"
+              className="min-h-11 min-w-11"
               disabled={scale.value >= uiScaleMax}
               onClick={() => scale.setValue(scale.value + 0.05)}
               size="icon"
@@ -131,7 +133,7 @@ export function InterfaceSettings() {
           label="Tool activity"
         >
           <label
-            className="flex w-44 items-center justify-between gap-2 text-sm"
+            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm"
             htmlFor="show-tool-activity"
           >
             <span className="flex items-center gap-2">
@@ -185,7 +187,7 @@ function NotificationPreference() {
     <PreferenceRow description={description} label="Browser notifications">
       <div className="flex w-44 items-center gap-2">
         <Button
-          className="flex-1"
+          className="min-h-11 flex-1"
           disabled={permission === "granted"}
           onClick={() => void requestBrowserNotifications().then(setPermission)}
           size="sm"
@@ -196,6 +198,7 @@ function NotificationPreference() {
         </Button>
         <Button
           aria-label="Send a test notification"
+          className="min-h-11 min-w-11"
           disabled={permission !== "granted"}
           onClick={() =>
             sendBrowserNotification("Mecatl notifications are ready", {

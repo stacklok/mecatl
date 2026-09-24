@@ -45,7 +45,7 @@ export function OptionField({
   const trigger = (
     <Button
       aria-label={label}
-      className="h-9 w-44 justify-between gap-2 rounded-lg px-3 font-normal"
+      className="min-h-11 w-44 justify-between gap-2 rounded-lg px-3 font-normal"
       onClick={isMobile ? () => setSheetOpen(true) : undefined}
       variant="outline"
     >
@@ -69,7 +69,7 @@ export function OptionField({
                 const Icon = option.icon;
                 return (
                   <button
-                    className="flex w-full items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/50"
+                    className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-brand"
                     key={option.value}
                     onClick={() => {
                       onChange(option.value);
