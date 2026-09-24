@@ -27,7 +27,7 @@ directories; do not create a manual sidebar to express this structure.
 |`building/typescript-sdk/`|TypeScript developers connecting applications, controlling sessions and runs, or owning a local daemon.|Wire-protocol reference and shared feature semantics. Link to the owning reference or feature page.|
 |`building/what-you-get/`|Builders who need an overview or technical reference for engine capabilities included in an embedding.|Operator procedures and feature configuration that applies across deployment options. Link to the feature page for those.|
 |`building/extension-points/`|Developers integrating with Mecatl's public seams, ports, and APIs.|How to operate a supplied deployment or use an existing feature.|
-|`building/deployment/`|Operators and platform builders deploying, securing, and maintaining a specific Mecatl deployment.|Client workflows and shared feature behavior except where a deployment changes availability or operation.|
+|`building/deployment/`|Operators and platform builders deploying, securing, and maintaining a specific Mecatl deployment. The Studio page also guides people using that deployment's browser client.|Other client workflows and shared feature behavior except where a deployment changes availability or operation.|
 |`features/`|Users and operators enabling or understanding a capability of the shared agent and server core. Each feature page states availability and links to deployment-specific instructions.|Terminal-client controls, embedding APIs, and deployment runbooks.|
 |`reference/`|Readers looking up generated configuration or SDK fields and exact gRPC and HTTP/SSE contracts.|Tutorials, deployment workflows, and conceptual background. Link to the owning guide.|
 
@@ -58,7 +58,7 @@ feature guide.
 |`mecated` operation and flags|`building/deployment/mecated.md`|Feature pages explain shared behavior and link to the deployment guide for flags.|
 |`mecak8s` operation and Helm values|`building/deployment/mecak8s.md`|Feature pages describe shared behavior without restating chart values.|
 |`mecatequi` and GitHub Actions|`building/deployment/mecatequi.md`|Workflow maintainers keep implementation notes in `.github/workflows/README.md`.|
-|Mecatl Studio web UI|`building/deployment/studio.md`|Feature pages describe shared behavior; the Studio page owns the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes.|
+|Mecatl Studio web UI|`building/deployment/studio.md`|Feature pages describe shared behavior; the Studio page owns browser chat workflows, the image, browser login, and its environment variables. The workspace's own `apps/README.md` covers local development modes.|
 |Provider and model selection|`features/choose-models.md`|`building/deployment/mecated.md` owns daemon-specific credential and flag details.|
 |Workspace trust|`features/permissions-and-posture.md`|`features/project-instructions-and-rules.md` describes the project-content consequence.|
 |Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `building/what-you-get/memory.md`|Extension-point pages document the importable interfaces.|
