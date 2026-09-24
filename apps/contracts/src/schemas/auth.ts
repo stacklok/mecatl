@@ -13,11 +13,15 @@ import { z } from "zod";
  * previous account left in this origin's storage. `email` is present only for
  * an authenticated session when a verified ID token provided an accepted claim.
  */
-export const authSessionResponseSchema = z.object({
-  account: z.string().optional(),
-  email: z.string().optional(),
-  mode: z.enum(["oidc", "static", "none"]),
-  status: z.enum(["authenticated", "anonymous", "disabled"]),
-});
+export const authSessionResponseSchema = z.union([
+  z.strictObject({
+    account: z.string().min(1),
+    email: z.string().optional(),
+    mode: z.literal("oidc"),
+    status: z.literal("authenticated"),
+  }),
+  z.strictObject({ mode: z.literal("oidc"), status: z.literal("anonymous") }),
+  z.strictObject({ mode: z.enum(["static", "none"]), status: z.literal("disabled") }),
+]);
 
 export type AuthSessionResponse = z.infer<typeof authSessionResponseSchema>;

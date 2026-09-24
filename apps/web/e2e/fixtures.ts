@@ -16,6 +16,8 @@ export interface OfflineBff {
   on(method: string, pathname: string, handler: BffHandler): void;
   json(method: string, pathname: string, body: unknown, status?: number): void;
   fail(method: string, pathname: string): void;
+  /** Serve the one explicit offline cross-origin issuer used by popup journeys. */
+  onIssuer(pathname: string, handler: BffHandler): void;
   requestsFor(method: string, pathname: string): readonly Request[];
 }
 
@@ -36,6 +38,7 @@ export const test = base.extend<TestFixtures>({
       if (baseURL === undefined) throw new Error("offline BFF fixture requires a baseURL");
       const appOrigin = new URL(baseURL).origin;
       const handlers = new Map<string, BffHandler | "fail">();
+      const issuerHandlers = new Map<string, BffHandler>();
       const requests: Request[] = [];
       const unexpected: string[] = [];
       const external: string[] = [];
@@ -54,6 +57,9 @@ export const test = base.extend<TestFixtures>({
         fail(method, pathname) {
           handlers.set(key(method, pathname), "fail");
         },
+        onIssuer(pathname, handler) {
+          issuerHandlers.set(key("GET", pathname), handler);
+        },
         requestsFor(method, pathname) {
           const expected = key(method, pathname);
           return requests.filter(
@@ -70,6 +76,16 @@ export const test = base.extend<TestFixtures>({
         // journeys stay offline without treating the existing font as BFF traffic.
         if (url.origin === "https://fonts.googleapis.com" && url.pathname === "/css2") {
           await route.fulfill({ body: "", contentType: "text/css", status: 200 });
+          return;
+        }
+        if (url.origin === "https://issuer.offline.invalid") {
+          const handler = issuerHandlers.get(key(request.method(), url.pathname));
+          if (handler === undefined) {
+            unexpected.push(`${request.method()} ${url.href}`);
+            await route.abort("blockedbyclient");
+          } else {
+            await route.fulfill(await handler(request));
+          }
           return;
         }
         if (url.origin !== appOrigin) {

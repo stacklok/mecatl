@@ -56,6 +56,17 @@ describe("authentication routes", () => {
       mode: "oidc",
       status: "anonymous",
     });
+    expect(
+      authSessionResponseSchema.safeParse({ mode: "oidc", status: "authenticated" }).success,
+    ).toBe(false);
+    expect(
+      authSessionResponseSchema.safeParse({ mode: "oidc", status: "authenticated", account: "" })
+        .success,
+    ).toBe(false);
+    expect(
+      authSessionResponseSchema.safeParse({ mode: "static", status: "disabled", account: "x" })
+        .success,
+    ).toBe(false);
   });
 
   it("popup callback returns a constrained CSP-safe result", async () => {
@@ -77,6 +88,8 @@ describe("authentication routes", () => {
     expect(callback.headers.get("content-type")).toContain("text/html");
     expect(callback.headers.get("cache-control")).toBe("private, no-store");
     expect(callback.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(login.headers.get("cross-origin-opener-policy")).toBe("same-origin-allow-popups");
+    expect(callback.headers.get("cross-origin-opener-policy")).toBe("unsafe-none");
     expect(callback.headers.get("content-security-policy")).toContain("script-src 'self'");
     const html = await callback.text();
     expect(html).toContain('data-result="success"');
@@ -175,6 +188,7 @@ describe("authentication routes", () => {
     const before = await app.request(`${publicUrl.origin}/api/v1/auth/session`, {
       headers: { Cookie: session },
     });
+    expect(before.headers.get("cache-control")).toBe("private, no-store");
     expect(await before.json()).toMatchObject({
       account: expect.any(String),
       status: "authenticated",

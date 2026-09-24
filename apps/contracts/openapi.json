@@ -18,34 +18,82 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "account": {
-                      "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "account": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "oidc"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "authenticated"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "account",
+                        "mode",
+                        "status"
+                      ],
+                      "additionalProperties": false
                     },
-                    "email": {
-                      "type": "string"
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "oidc"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "anonymous"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "status"
+                      ],
+                      "additionalProperties": false
                     },
-                    "mode": {
-                      "type": "string",
-                      "enum": [
-                        "oidc",
-                        "static",
-                        "none"
-                      ]
-                    },
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "authenticated",
-                        "anonymous",
-                        "disabled"
-                      ]
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "static",
+                            "none"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "disabled"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "status"
+                      ],
+                      "additionalProperties": false
                     }
-                  },
-                  "required": [
-                    "mode",
-                    "status"
                   ]
                 }
               }

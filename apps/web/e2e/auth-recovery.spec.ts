@@ -156,6 +156,10 @@ function setup(offlineBff: OfflineBff, initial: Partial<OfflineState> = {}): Off
     body: 'window.opener?.postMessage({type:"studio.auth.result",result:document.documentElement.dataset.result},window.location.origin);window.close();',
     contentType: "text/javascript",
   }));
+  offlineBff.on("POST", "/api/v1/auth/logout", () => {
+    state.signedIn = false;
+    return { status: 204 };
+  });
   return state;
 }
 
@@ -176,6 +180,7 @@ test("popup sign-in preserves route and draft", async ({ offlineBff, page }) => 
   await page.goto(draftRoute);
   await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toBeVisible();
   await expireWrite(page, state);
+  const readsBefore = offlineBff.requestsFor("GET", "/api/v1/sessions").length;
   const popupEvent = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await popupEvent;
@@ -187,6 +192,66 @@ test("popup sign-in preserves route and draft", async ({ offlineBff, page }) => 
     draftRoute,
   );
   expect(state.runWrites).toBe(1);
+  await expect
+    .poll(() => offlineBff.requestsFor("GET", "/api/v1/sessions").length)
+    .toBeGreaterThan(readsBefore);
+});
+
+test("cross-origin issuer returns to a popup that can message its opener", async ({
+  offlineBff,
+  page,
+}) => {
+  const state = setup(offlineBff);
+  await page.route("**/workspace/chat**", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      headers: { ...response.headers(), "cross-origin-opener-policy": "same-origin-allow-popups" },
+    });
+  });
+  await page.goto(draftRoute);
+  await expireWrite(page, state);
+  const origin = new URL(page.url()).origin;
+  await page.evaluate(() => {
+    (window as Window & { popupMessages?: unknown[] }).popupMessages = [];
+    window.addEventListener("message", (event) => {
+      (window as Window & { popupMessages?: unknown[] }).popupMessages?.push(event.data);
+    });
+  });
+  // The BFF's 302 is pinned by the server test. A scripted first hop lets
+  // Playwright intercept the popup's issuer document and exercise COOP here.
+  offlineBff.on("GET", "/api/v1/auth/login", () => ({
+    body: '<!doctype html><script>location.replace("https://issuer.offline.invalid/authorize")</script>',
+    contentType: "text/html",
+  }));
+  let issuerVisits = 0;
+  offlineBff.onIssuer("/authorize", () => {
+    issuerVisits += 1;
+    return {
+      body: `<!doctype html><script>location.replace(${JSON.stringify(`${origin}/api/v1/auth/callback?code=code-1`)})</script>`,
+      contentType: "text/html",
+    };
+  });
+  offlineBff.on("GET", "/api/v1/auth/callback", () => {
+    state.signedIn = true;
+    return {
+      body: '<!doctype html><html data-result="success"><script src="/api/v1/auth/callback.js" defer></script></html>',
+      contentType: "text/html",
+      headers: { "Cross-Origin-Opener-Policy": "unsafe-none" },
+    };
+  });
+  const popupEvent = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await popupEvent;
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as Window & { popupMessages?: unknown[] }).popupMessages),
+    )
+    .toEqual([{ type: "studio.auth.result", result: "success" }]);
+  expect(issuerVisits).toBe(1);
+  await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveValue(
+    "Keep this unsent draft",
+  );
 });
 
 test("blocked and closed popups offer a recoverable sign-in", async ({ offlineBff, page }) => {
@@ -274,6 +339,40 @@ test("different account clears the mounted draft before showing its data", async
   expect(scoped).toEqual({ account: "opaque-b", queue: null });
 });
 
+test("accountless session clears mounted private data", async ({ offlineBff, page }) => {
+  const state = setup(offlineBff);
+  await page.clock.install();
+  await page.goto(draftRoute);
+  await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Alice's draft");
+  await page.evaluate(() => localStorage.setItem("studio.chat.queue", "Alice's queued draft"));
+  state.account = "";
+  await page.clock.runFor(60_001);
+  await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Mecatl Studio" })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("studio.chat.queue"))).toBeNull();
+  expect(await page.evaluate(() => localStorage.getItem("studio.account"))).toBeNull();
+});
+
+test("peer-tab sign-out removes the mounted private workspace", async ({
+  context,
+  offlineBff,
+  page,
+}) => {
+  setup(offlineBff);
+  await page.goto(draftRoute);
+  await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Alice's draft");
+  const peer = await context.newPage();
+  await peer.goto("/workspace/settings/about");
+  await peer.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Mecatl Studio" })).toBeVisible();
+  expect(new URL(page.url()).pathname + new URL(page.url()).search + new URL(page.url()).hash).toBe(
+    draftRoute,
+  );
+});
+
 test("anonymous shell shows outage before sign-in", async ({ offlineBff, page }) => {
   setup(offlineBff, { signedIn: false });
   offlineBff.json("GET", "/api/v1/status", { connection: "unavailable", signInRequired: true });
@@ -285,6 +384,13 @@ test("anonymous shell shows outage before sign-in", async ({ offlineBff, page })
   expect(offlineBff.requestsFor("GET", "/api/v1/runtime")).toHaveLength(0);
   expect(offlineBff.requestsFor("GET", "/api/v1/storage/health")).toHaveLength(0);
   expect(offlineBff.requestsFor("GET", "/api/v1/settings/runtime")).toHaveLength(0);
+});
+
+test("failed public status fetch shows BFF unavailable", async ({ offlineBff, page }) => {
+  setup(offlineBff, { signedIn: false });
+  offlineBff.fail("GET", "/api/v1/status");
+  await page.goto(draftRoute);
+  await expect(page.getByRole("status").filter({ hasText: "Studio is unavailable" })).toBeVisible();
 });
 
 test("session check outage keeps the shell and route", async ({ offlineBff, page }) => {

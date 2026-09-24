@@ -115,11 +115,22 @@ describe("Studio auth recovery", () => {
     expect(queryClient.getQueryData(["private", "sessions"])).toBeUndefined();
 
     storage.set("studio.chat.queue", "wrong-account draft");
+    queryClient.setQueryData(["private", "sessions"], { title: "wrong account" });
     const missing = commitRecoveryCheck(ready, { kind: "authenticated" }, queryClient, store);
     expect(missing.clearAccount).toBe(true);
     expect(missing.state.workspaceMounted).toBe(false);
     expect(missing.state.account).toBeUndefined();
     expect(storage.get("studio.chat.queue")).toBeUndefined();
+    expect(queryClient.getQueryData(["private", "sessions"])).toBeUndefined();
+
+    storage.set("studio.account", "opaque-a");
+    storage.set("studio.chat.queue", "signed-out draft");
+    queryClient.setQueryData(["private", "sessions"], { title: "signed-out data" });
+    const signedOut = commitRecoveryCheck(ready, { kind: "signed-out" }, queryClient, store);
+    expect(signedOut.state.workspaceMounted).toBe(false);
+    expect(signedOut.state.phase).toBe("sign-in");
+    expect(storage.get("studio.chat.queue")).toBeUndefined();
+    expect(queryClient.getQueryData(["private", "sessions"])).toBeUndefined();
   });
 
   it("session check failure keeps the mounted draft", () => {

@@ -84,9 +84,13 @@ export function registerAuthRoutes(
   runtime: MecatlRuntime | undefined,
 ) {
   app.openapi(sessionRoute, async (context) => {
+    context.header("Cache-Control", "private, no-store");
     if (authentication === undefined) {
       return context.json(
-        { mode: runtime?.authMode ?? ("none" as const), status: "disabled" as const },
+        {
+          mode: runtime?.authMode === "static" ? ("static" as const) : ("none" as const),
+          status: "disabled" as const,
+        },
         200,
       );
     }

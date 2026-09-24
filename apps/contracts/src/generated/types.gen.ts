@@ -17,10 +17,16 @@ export type GetAuthSessionResponses = {
      * How this deployment identifies callers, and this browser's own state.
      */
     200: {
-        account?: string;
+        account: string;
         email?: string;
-        mode: 'oidc' | 'static' | 'none';
-        status: 'authenticated' | 'anonymous' | 'disabled';
+        mode: 'oidc';
+        status: 'authenticated';
+    } | {
+        mode: 'oidc';
+        status: 'anonymous';
+    } | {
+        mode: 'static' | 'none';
+        status: 'disabled';
     };
 };
 

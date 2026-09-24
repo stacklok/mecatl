@@ -6,6 +6,7 @@ import { LogIn, RefreshCw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ConnectionStatusBanner } from "../../components/shell/connection-status-banner";
 import { Button } from "../../components/ui/button";
+import { accountStorageKey } from "../../lib/account-storage";
 import { onAuthenticationRequired, setRequestRecoveryState } from "../../lib/api-client";
 import { AuthRecoveryContext, useAuthRecovery } from "./auth-recovery-context";
 import {
@@ -101,6 +102,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
       }),
     [applyCheck, session.refetch, status.refetch],
   );
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== accountStorageKey || event.newValue === recoveryRef.current.account) return;
+      // A peer tab explicitly signed out or changed account. Unlike an
+      // expired session, its old workspace must disappear immediately.
+      applyCheck({ kind: "signed-out" });
+      void session.refetch();
+      void status.refetch();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [applyCheck, session.refetch, status.refetch]);
 
   const verifySession = useCallback(
     async (fallbackIssue: "closed" | "failed" = "closed", keepWaiting = false) => {

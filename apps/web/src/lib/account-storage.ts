@@ -8,7 +8,7 @@
  * is a device preference stored under its own key and survives.
  */
 export const userScopedPrefix = "studio.";
-const accountKey = `${userScopedPrefix}account`;
+export const accountStorageKey = `${userScopedPrefix}account`;
 
 type Store = Pick<Storage, "getItem" | "key" | "length" | "removeItem" | "setItem">;
 
@@ -40,10 +40,10 @@ export function reconcileAccount(
   store: Store | undefined = browserStorage(),
 ): boolean {
   if (store === undefined || account === undefined || account === "") return false;
-  const previous = store.getItem(accountKey);
+  const previous = store.getItem(accountStorageKey);
   if (previous === account) return false;
   const cleared = previous !== null;
   if (cleared) clearUserScopedStorage(store);
-  store.setItem(accountKey, account);
+  store.setItem(accountStorageKey, account);
   return cleared;
 }

@@ -40,6 +40,10 @@ export function requestContext(options: SecurityOptions): MiddlewareHandler<AppE
  */
 export function securityHeaders(): MiddlewareHandler<AppEnv> {
   const headers = secureHeaders({
+    // OAuth popups pass through a cross-origin issuer before returning to the
+    // same-origin callback. Keep their opener so the callback can report its
+    // result; origin and popup-source checks remain in the browser.
+    crossOriginOpenerPolicy: "same-origin-allow-popups",
     contentSecurityPolicy: {
       baseUri: ["'self'"],
       connectSrc: ["'self'"],
@@ -64,6 +68,11 @@ export function securityHeaders(): MiddlewareHandler<AppEnv> {
       context.req.path === "/api/v1/auth/callback.js"
     ) {
       context.header("Referrer-Policy", "no-referrer");
+      if (context.req.path !== "/api/v1/auth/callback.js") {
+        // The popup returns from an issuer document with COOP unsafe-none.
+        // Applying allow-popups to the callback would sever its opener here.
+        context.header("Cross-Origin-Opener-Policy", "unsafe-none");
+      }
     }
   };
 }

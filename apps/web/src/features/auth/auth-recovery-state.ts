@@ -16,6 +16,7 @@ export type SessionCheck =
   | { kind: "authenticated"; account?: string }
   | { kind: "disabled" }
   | { kind: "anonymous" }
+  | { kind: "signed-out" }
   | { kind: "session-check-failed" };
 
 export interface RecoveryTransition {
@@ -38,6 +39,18 @@ export function nextRecoveryState(
   });
   if (check.kind === "session-check-failed") return keep("verification-unavailable");
   if (check.kind === "anonymous") return keep("sign-in");
+  if (check.kind === "signed-out") {
+    return {
+      clearAccount: true,
+      refetchReads: false,
+      replayWrites: false,
+      state: {
+        identityEpoch: previous.identityEpoch + 1,
+        phase: "sign-in",
+        workspaceMounted: false,
+      },
+    };
+  }
 
   if (check.kind === "authenticated" && !check.account) {
     return {
