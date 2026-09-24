@@ -3,7 +3,7 @@ package filewatch
 import (
 	"os"
 	"path/filepath"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -165,7 +165,12 @@ func TestWatcherDeliversChange(t *testing.T) {
 	mustWrite(t, path, "initial")
 
 	changes := make(chan struct{}, 1)
-	w, armed := newTestWatcher(t, []string{path}, 30*time.Millisecond, time.Second, func() { changes <- struct{}{} })
+	w, armed := newTestWatcher(t, []string{path}, 30*time.Millisecond, time.Second, func() {
+		select {
+		case changes <- struct{}{}:
+		default:
+		}
+	})
 	defer w.Close()
 
 	mustWrite(t, path, "changed")
@@ -174,33 +179,60 @@ func TestWatcherDeliversChange(t *testing.T) {
 }
 
 func TestWatcherBoundsRepeatedEvents(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "value")
-	mustWrite(t, path, "initial")
-
-	changes := make(chan struct{}, 8)
-	w, _ := newTestWatcher(t, []string{path, path}, 60*time.Millisecond, 150*time.Millisecond, func() { changes <- struct{}{} })
-	defer w.Close()
-
-	started := time.Now()
-	stopWrites := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-		for {
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			debounce    = 100 * time.Millisecond
+			maxDebounce = 3 * debounce
+		)
+		changes := make(chan struct{}, 1)
+		w, events := newSyntheticWatcher(t, debounce, maxDebounce, func() {
 			select {
-			case <-ticker.C:
-				_ = os.WriteFile(path, []byte("again"), 0o600)
-			case <-stopWrites:
-				return
+			case changes <- struct{}{}:
+			default:
 			}
+		})
+		defer w.Close()
+		stopEvents := make(chan struct{})
+		var stopOnce sync.Once
+		stop := func() { stopOnce.Do(func() { close(stopEvents) }) }
+		defer stop()
+
+		events <- fsnotify.Event{}
+		go func() {
+			for {
+				select {
+				case <-time.After(debounce / 2):
+				case <-stopEvents:
+					return
+				}
+				select {
+				case events <- fsnotify.Event{}:
+				case <-stopEvents:
+					return
+				}
+			}
+		}()
+		synctest.Wait()
+
+		time.Sleep(maxDebounce - time.Nanosecond)
+		synctest.Wait()
+		assertNoChange(t, changes, "watcher fired while continuous events were below the cap")
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		time.Sleep(debounce)
+		synctest.Wait()
+		select {
+		case <-changes:
+		default:
+			t.Fatal("continuous events postponed the callback beyond maxDebounce plus one grace interval")
 		}
-	}()
-	awaitChange(t, changes)
-	close(stopWrites)
-	if elapsed := time.Since(started); elapsed > 350*time.Millisecond {
-		t.Fatalf("continuous events were not bounded: callback after %v", elapsed)
-	}
+
+		stop()
+		synctest.Wait()
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestWatcherSeesProjectedSymlinkSwap(t *testing.T) {
@@ -218,7 +250,10 @@ func TestWatcherSeesProjectedSymlinkSwap(t *testing.T) {
 	w, _ := newTestWatcher(t, []string{path}, 30*time.Millisecond, 120*time.Millisecond, func() {
 		body, err := os.ReadFile(path)
 		if err == nil {
-			got <- string(body)
+			select {
+			case got <- string(body):
+			default:
+			}
 		}
 	})
 	defer w.Close()
@@ -241,60 +276,94 @@ func TestWatcherSeesProjectedSymlinkSwap(t *testing.T) {
 }
 
 func TestWatcherCloseCancelsArmedCallback(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "value")
-	mustWrite(t, path, "initial")
-	var calls atomic.Int32
-	armed := make(chan struct{}, 1)
-	w, err := newWatcher([]string{path}, 200*time.Millisecond, 400*time.Millisecond, func() { calls.Add(1) }, func(err error) { t.Errorf("watch error: %v", err) }, armed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, path, "changed")
-	awaitChange(t, armed)
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(250 * time.Millisecond)
-	if got := calls.Load(); got != 0 {
-		t.Fatalf("callback count after shutdown = %d, want 0", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		const debounce = 200 * time.Millisecond
+		changes := make(chan struct{}, 1)
+		w, events := newSyntheticWatcher(t, debounce, 2*debounce, func() { changes <- struct{}{} })
+		defer w.Close()
+
+		events <- fsnotify.Event{}
+		synctest.Wait()
+		assertNoChange(t, changes, "callback fired before Close")
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * debounce)
+		synctest.Wait()
+		assertNoChange(t, changes, "armed callback fired after Close")
+	})
 }
 
 func TestWatcherCloseJoinsInFlightCallback(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "value")
-	mustWrite(t, path, "initial")
-	started := make(chan struct{})
-	release := make(chan struct{})
-	w, armed := newTestWatcher(t, []string{path}, 10*time.Millisecond, 20*time.Millisecond, func() {
-		close(started)
-		<-release
+	synctest.Test(t, func(t *testing.T) {
+		const debounce = 100 * time.Millisecond
+		started := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseCallback := func() { releaseOnce.Do(func() { close(release) }) }
+
+		w, events := newSyntheticWatcher(t, debounce, 2*debounce, func() {
+			close(started)
+			<-release
+		})
+		defer w.Close()
+		// Release is deferred after Close so it runs first if an assertion fails.
+		defer releaseCallback()
+
+		events <- fsnotify.Event{}
+		time.Sleep(debounce)
+		synctest.Wait()
+		select {
+		case <-started:
+		default:
+			t.Fatal("callback did not start")
+		}
+
+		closed := make(chan struct{})
+		go func() {
+			_ = w.Close()
+			close(closed)
+		}()
+		synctest.Wait()
+		assertNoChange(t, closed, "Close returned while callback was still running")
+
+		releaseCallback()
+		synctest.Wait()
+		select {
+		case <-closed:
+		default:
+			t.Fatal("Close did not return after callback completed")
+		}
 	})
-	mustWrite(t, path, "changed")
-	awaitChange(t, armed)
-	awaitChange(t, started)
-	closed := make(chan struct{})
-	go func() {
-		_ = w.Close()
-		close(closed)
-	}()
-	select {
-	case <-closed:
-		t.Fatal("Close returned while callback was still running")
-	case <-time.After(30 * time.Millisecond):
-	}
-	close(release)
-	awaitChange(t, closed)
 }
 
-// newTestWatcher constructs a watcher through the unexported newWatcher entry
-// point so tests can synchronise on the armed channel (the same per-arm signal
-// TestWatcherCloseCancelsArmedCallback uses) instead of racing real wall-clock
-// timing against the watcher goroutine's startup.
+func newSyntheticWatcher(t *testing.T, debounce, maxDebounce time.Duration, onChange func()) (*Watcher, chan<- fsnotify.Event) {
+	t.Helper()
+	events := make(chan fsnotify.Event, 1)
+	errs := make(chan error)
+	w := &Watcher{stop: make(chan struct{}), done: make(chan struct{})}
+	go func() {
+		defer close(w.done)
+		w.run(events, errs, debounce, maxDebounce, onChange, func(err error) { t.Errorf("watch error: %v", err) }, nil)
+	}()
+	return w, events
+}
+
+func assertNoChange(t *testing.T, changes <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-changes:
+		t.Fatal(message)
+	default:
+	}
+}
+
+// newTestWatcher constructs a real watcher through the unexported newWatcher
+// entry point so integration tests can synchronise on each timer arm instead of
+// racing wall-clock timing against the watcher goroutine's startup.
 func newTestWatcher(t *testing.T, paths []string, debounce, maxDebounce time.Duration, onChange func()) (*Watcher, <-chan struct{}) {
 	t.Helper()
 	armed := make(chan struct{}, 1)
