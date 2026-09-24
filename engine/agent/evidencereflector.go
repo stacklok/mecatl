@@ -80,20 +80,10 @@ type EvidenceReflector struct {
 	limits   ReflectionLimits
 }
 
-// NewEvidenceReflector constructs a bounded direct model-backed reflector. A nil
+// NewEvidenceReflector constructs a bounded reflector with the exact
+// composition-selected provider/model identity used for returned usage. A nil
 // counter selects the dependency-free heuristic counter.
-// NewEvidenceReflector constructs a reflector for callers that do not need exact
-// usage attribution. Composition should use NewEvidenceReflectorForProviderModel.
-func NewEvidenceReflector(provider port.LLMProvider, model string, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error) {
-	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("%w: provider and selected model are required", ErrReflectionLimits)
-	}
-	return NewEvidenceReflectorForProviderModel(provider, session.ProviderModelID{ProviderID: unknownAuxiliaryAttribution, ModelID: model}, counter, limits)
-}
-
-// NewEvidenceReflectorForProviderModel constructs a bounded reflector with the
-// exact composition-selected provider/model identity used for returned usage.
-func NewEvidenceReflectorForProviderModel(provider port.LLMProvider, identity session.ProviderModelID, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error) {
+func NewEvidenceReflector(provider port.LLMProvider, identity session.ProviderModelID, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error) {
 	if provider == nil || strings.TrimSpace(identity.ProviderID) == "" || strings.TrimSpace(identity.ModelID) == "" {
 		return nil, fmt.Errorf("%w: provider and selected model are required", ErrReflectionLimits)
 	}

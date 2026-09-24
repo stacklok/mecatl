@@ -362,7 +362,7 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	sourceStore := memstore.New()
 	ledger := automaticStoreForTest(t, t.TempDir(), automatic)
 	cfg := Config{
-		Model: "test-model", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
+		Model: "test-model", auxiliaryProviderID: "test", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
 		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
 		attemptRepository: memattempt.New(wallclock.Clock{}), automaticAdmissionLedger: ledger, learningSourceStore: sourceStore,
 	}
