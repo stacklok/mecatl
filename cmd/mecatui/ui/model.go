@@ -899,7 +899,6 @@ type Model struct {
 	// never the cumulative ResultMsg total. Distinct from usage, which is the
 	// cumulative session total.
 	contextTokens    int64
-	contextKnown     bool
 	contextUnknown   bool
 	contextEstimated bool
 
@@ -1144,7 +1143,6 @@ func New(deps Deps) Model {
 		m.usage = resume.Snapshot.Usage
 		if occupancy := resume.Snapshot.ContextOccupancy; occupancy != nil {
 			m.contextTokens = occupancy.InputTokens
-			m.contextKnown = true
 			m.contextEstimated = occupancy.Estimated
 		} else {
 			m.contextUnknown = true
@@ -1191,7 +1189,6 @@ func (m Model) resetSessionDerived() Model {
 	m = m.resetDocumentProjection()
 	m.usage = client.Usage{}
 	m.contextTokens = 0
-	m.contextKnown = false
 	m.contextUnknown = false
 	m.contextEstimated = false
 	m.activeTool = ""

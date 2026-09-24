@@ -921,6 +921,7 @@ func toProtoTurnEnd(p session.TurnEndPayload) *mecatlv1.TurnEnd {
 	return &mecatlv1.TurnEnd{
 		Usage:      toProtoUsage(p.Usage),
 		DurationMs: p.DurationMs,
+		Estimated:  p.Estimated,
 	}
 }
 

@@ -54,8 +54,8 @@ func TestEventToMsg(t *testing.T) {
 		{
 			"turn.end",
 			&mecatlv1.Event{Type: "turn.end", Turn: 2, TurnEnd: &mecatlv1.TurnEnd{
-				DurationMs: 4100, Usage: &mecatlv1.Usage{InputTokens: 1200, OutputTokens: 340}}},
-			TurnEndMsg{Turn: 2, Usage: Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100},
+				DurationMs: 4100, Estimated: true, Usage: &mecatlv1.Usage{InputTokens: 1200, OutputTokens: 340}}},
+			TurnEndMsg{Turn: 2, Usage: Usage{InputTokens: 1200, OutputTokens: 340}, DurationMs: 4100, Estimated: true},
 		},
 		{"message.delta", &mecatlv1.Event{Type: "message.delta", Turn: 2, Text: "hi"}, AssistantDeltaMsg{Turn: 2, Text: "hi"}},
 		{"reasoning.delta", &mecatlv1.Event{Type: "reasoning.delta", Turn: 2, Text: "pondering"}, ReasoningDeltaMsg{Turn: 2, Text: "pondering"}},

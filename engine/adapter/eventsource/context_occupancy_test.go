@@ -24,6 +24,16 @@ func TestResumableSessionStatusMetrics_Scenario1_EventSourceMetadataRoundTrip(t 
 		t.Fatalf("LatestContextOccupancy = (%+v, %v), want (%+v, true)", got, ok, occupancy)
 	}
 
+	legacyFromEvent, err := eventsource.Fold(meta(), seq([]session.Event{{
+		Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{Usage: session.Usage{InputTokens: 999}},
+	}}))
+	if err != nil {
+		t.Fatalf("Fold event without metadata: %v", err)
+	}
+	if got, ok := legacyFromEvent.LatestContextOccupancy(); ok {
+		t.Fatalf("event-derived LatestContextOccupancy = (%+v, true), want absent", got)
+	}
+
 	legacy, err := eventsource.Fold(meta(), seq(nil))
 	if err != nil {
 		t.Fatalf("Fold legacy metadata: %v", err)

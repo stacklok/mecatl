@@ -1217,9 +1217,8 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// where even the estimate is zero.
 		if msg.Usage.InputTokens > 0 {
 			m.contextTokens = msg.Usage.InputTokens
-			m.contextKnown = true
 			m.contextUnknown = false
-			m.contextEstimated = false
+			m.contextEstimated = msg.Estimated
 		}
 		m.conv.endReasoningStream()
 		if !trivialTurn(msg) {

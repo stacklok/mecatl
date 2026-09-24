@@ -44,6 +44,31 @@ func (f *fakeStartupResumeSource) GetSession(_ context.Context, id string) (clie
 	return client.SessionSnapshot{State: "completed", Placement: client.Placement{Kind: "local", Label: "workspace"}}, nil
 }
 
+func TestStartupResumeLoaderPreservesStatusSnapshot(t *testing.T) {
+	want := client.SessionSnapshot{
+		State:            "completed",
+		ResolvedModel:    client.ResolvedModel{ContextWindow: 200_000},
+		Usage:            client.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000},
+		ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
+	}
+	source := &fakeStartupResumeSource{
+		transcripts: map[string]client.SessionTranscript{
+			"status-chat": {SessionID: "status-chat", Complete: true, Kind: client.SessionKindMain},
+		},
+		snapshots: map[string]client.SessionSnapshot{"status-chat": want},
+	}
+
+	selection, err := loadExactStartupResume(t.Context(), source, "status-chat")
+	if err != nil {
+		t.Fatalf("loadExactStartupResume: %v", err)
+	}
+	if selection.Snapshot.Usage != want.Usage || selection.Snapshot.ResolvedModel != want.ResolvedModel ||
+		selection.Snapshot.ContextOccupancy == nil || *selection.Snapshot.ContextOccupancy != *want.ContextOccupancy {
+		t.Fatalf("startup selection status = %+v, want %+v", selection.Snapshot, want)
+	}
+}
+
+// TestSessionContinuityUX_Scenario6_FlagGrammar pins startup resume flag parsing.
 func TestSessionContinuityUX_Scenario6_FlagGrammar(t *testing.T) {
 	for _, mode := range []transportMode{modeLocal, modeConnect} {
 		for _, args := range [][]string{{"--resume", "opaque-id"}, {"--resume-latest"}} {

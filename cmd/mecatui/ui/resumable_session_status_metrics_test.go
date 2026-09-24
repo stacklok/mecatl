@@ -28,6 +28,11 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeRestoresStatus(t *
 			t.Fatalf("footer = %q, want %q before a prompt", footer, want)
 		}
 	}
+
+	m = applyAll(m, client.TurnEndMsg{Usage: client.Usage{InputTokens: 50_000}, Estimated: true})
+	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "~50K/200K") {
+		t.Fatalf("live estimated footer = %q, want estimated marker", footer)
+	}
 }
 
 func TestResumableSessionStatusMetrics_Scenario3_SessionSwitchRestoresStatus(t *testing.T) {
@@ -41,7 +46,7 @@ func TestResumableSessionStatusMetrics_Scenario3_SessionSwitchRestoresStatus(t *
 	loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "next-main", Complete: true}}
 	m := newSessionsModel(t, conv, &fakeSessionLister{}, loader)
 	m.usage = client.Usage{InputTokens: 9}
-	m.contextTokens, m.contextKnown = 8, true
+	m.contextTokens = 8
 
 	row := client.SessionListItem{ID: "next-main", Title: "next", Kind: client.SessionKindMain}
 	mm, cmd, ok := m.loadSessionTranscript(row, false)
@@ -102,7 +107,7 @@ func TestResumableSessionStatusMetrics_Scenario3_InspectionIsNonDestructive(t *t
 			m := newSessionsModel(t, conv, &fakeSessionLister{}, loader)
 			m.resolvedSessionModel = client.ResolvedModel{ProviderID: "root-provider", ModelID: "root-model", ContextWindow: 200_000}
 			m.usage = client.Usage{InputTokens: 120_000, OutputTokens: 4_000}
-			m.contextTokens, m.contextKnown = 40_000, true
+			m.contextTokens = 40_000
 			rootID, rootModel, rootUsage, rootContext := m.sessionID, m.resolvedSessionModel, m.usage, m.contextTokens
 
 			mm, cmd, ok := m.loadSessionTranscript(row, true)
@@ -131,7 +136,7 @@ func TestResumableSessionStatusMetrics_Scenario3_UnknownAndProvisionalStatus(t *
 		},
 	}
 	m := New(Deps{Resume: resume, Theme: theme.New("aztec", theme.AztecPalette()), NoAltScreen: true})
-	if m.contextKnown {
+	if !m.contextUnknown {
 		t.Fatal("legacy snapshot without occupancy must remain unknown")
 	}
 	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "ctx ?") || strings.Contains(footer, "120K/") {
@@ -142,8 +147,8 @@ func TestResumableSessionStatusMetrics_Scenario3_UnknownAndProvisionalStatus(t *
 	if m.resolvedSessionModel.ContextWindow != 200_000 {
 		t.Fatalf("resolved-model refresh did not heal provisional window: %d", m.resolvedSessionModel.ContextWindow)
 	}
-	if m.usage.InputTokens != 120_000 || m.contextKnown {
-		t.Fatalf("resolved-model refresh applied stale metrics: usage=%+v contextKnown=%t", m.usage, m.contextKnown)
+	if m.usage.InputTokens != 120_000 || !m.contextUnknown {
+		t.Fatalf("resolved-model refresh applied stale metrics: usage=%+v contextUnknown=%t", m.usage, m.contextUnknown)
 	}
 	if footer := stripANSIstr(m.fitFooter("connected", 160)); !strings.Contains(footer, "?/200K") || strings.Contains(footer, "120K/200K") {
 		t.Fatalf("healed legacy footer = %q, want unknown numerator with healed denominator", footer)

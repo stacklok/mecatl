@@ -742,7 +742,7 @@ func (m Model) contextWindow() int64 {
 func (m Model) fitFooter(left string, width int) string {
 	th := m.deps.Theme
 	window := m.contextWindow()
-	contextKnown := !m.contextUnknown || m.contextKnown || m.contextTokens > 0
+	contextKnown := !m.contextUnknown || m.contextTokens > 0
 	meter := renderContextMeterState(th, m.contextTokens, window, contextKnown, m.contextEstimated)
 	meterCompact := renderContextMeterCompact(th, m.contextTokens, window)
 	meterMinimal := renderContextMeterMinimal(th, m.contextTokens, window)

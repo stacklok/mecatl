@@ -125,6 +125,37 @@ func TestGRPCGetServerInfoReturnsSafeDiagnosticsSnapshot(t *testing.T) {
 	}
 }
 
+func TestGRPCGetSessionProjectsContextOccupancy(t *testing.T) {
+	svc := newService(t, mockllm.New(mockllm.TextTurn("done")), allowRules())
+	client, cleanup := dialGRPC(t, svc)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	created, err := client.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	stream, err := client.Converse(ctx)
+	if err != nil {
+		t.Fatalf("Converse: %v", err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: created.GetSessionId(), Text: "go"}}}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	_ = stream.CloseSend()
+	_ = recvAll(t, stream)
+
+	got, err := client.GetSession(ctx, &mecatlv1.GetSessionRequest{SessionId: created.GetSessionId()})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	occupancy := got.GetSession().GetLatestContextOccupancy()
+	if occupancy.GetInputTokens() <= 0 || !occupancy.GetEstimated() {
+		t.Fatalf("latest context occupancy = %+v, want non-zero estimate", occupancy)
+	}
+}
+
 func TestGRPCGetServerInfoNormalizesImplementation(t *testing.T) {
 	for _, implementation := range []string{"mecated", "mecak8s", "mecatui"} {
 		t.Run(implementation, func(t *testing.T) {

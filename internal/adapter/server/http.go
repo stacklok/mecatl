@@ -348,6 +348,11 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 	return &resolvedModelJSON{ProviderID: rm.ProviderID, ModelID: rm.ModelID, ContextWindow: rm.ContextWindow, ReasoningEffort: rm.ReasoningEffort}
 }
 
+type contextOccupancyJSON struct {
+	InputTokens int  `json:"input_tokens"`
+	Estimated   bool `json:"estimated"`
+}
+
 type sessionResp struct {
 	SessionID string                 `json:"session_id"`
 	State     string                 `json:"state"`
@@ -366,9 +371,10 @@ type sessionResp struct {
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
 	// source). Omitted (nil) when no model resolved (older-server-equivalent).
-	ResolvedModel *resolvedModelJSON            `json:"resolved_model,omitempty"`
-	Kind          string                        `json:"kind,omitempty"`
-	Relationship  *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
+	ResolvedModel          *resolvedModelJSON            `json:"resolved_model,omitempty"`
+	LatestContextOccupancy *contextOccupancyJSON         `json:"latest_context_occupancy,omitempty"`
+	Kind                   string                        `json:"kind,omitempty"`
+	Relationship           *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
 }
 
 type sessionTitleJSON struct {
@@ -669,19 +675,28 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
 	scaps := h.svc.sessionCapabilitiesFor(sess)
 	writeJSON(w, status, sessionResp{
-		SessionID:           string(sess.ID),
-		State:               string(sess.State),
-		Mode:                string(sess.Mode),
-		Placement:           placementMetadataToJSON(sess.Placement),
-		Turns:               sess.Counters.Turns,
-		ToolCalls:           sess.Counters.ToolCalls,
-		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
-		TitleMetadata:       sessionTitleToJSON(titlePayload(sess)),
-		TokenUsage:          tokenUsageToJSON(sess.TokenUsageSnapshot()),
-		ResolvedModel:       resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
-		Kind:                string(sess.Kind),
-		Relationship:        toProtoSessionRelationship(sess.Relationship),
+		SessionID:              string(sess.ID),
+		State:                  string(sess.State),
+		Mode:                   string(sess.Mode),
+		Placement:              placementMetadataToJSON(sess.Placement),
+		Turns:                  sess.Counters.Turns,
+		ToolCalls:              sess.Counters.ToolCalls,
+		SessionCapabilities:    &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
+		TitleMetadata:          sessionTitleToJSON(titlePayload(sess)),
+		TokenUsage:             tokenUsageToJSON(sess.TokenUsageSnapshot()),
+		ResolvedModel:          resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
+		LatestContextOccupancy: contextOccupancyToJSON(sess),
+		Kind:                   string(sess.Kind),
+		Relationship:           toProtoSessionRelationship(sess.Relationship),
 	})
+}
+
+func contextOccupancyToJSON(sess *session.Session) *contextOccupancyJSON {
+	occupancy, ok := sess.LatestContextOccupancy()
+	if !ok {
+		return nil
+	}
+	return &contextOccupancyJSON{InputTokens: occupancy.InputTokens, Estimated: occupancy.Estimated}
 }
 
 func tokenUsageToJSON(in map[session.UsageKind]session.TokenUsage) map[string]tokenUsageJSON {

@@ -341,7 +341,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "turn.end",
 			in: session.Event{Type: session.EvTurnEnd, Seq: 12, Turn: 2,
-				TurnEnd: &session.TurnEndPayload{DurationMs: 4100,
+				TurnEnd: &session.TurnEndPayload{DurationMs: 4100, Estimated: true,
 					Usage: session.Usage{InputTokens: 1200, OutputTokens: 340, CacheReadTokens: 800, CacheWriteTokens: 100, ReasoningTokens: 40}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				if got.GetType() != "turn.end" || got.GetTurn() != 2 {
@@ -352,8 +352,8 @@ func TestToProtoTable(t *testing.T) {
 				if te == nil {
 					t.Fatalf("turn.end missing turn_end payload: %+v", got)
 				}
-				if te.GetDurationMs() != 4100 {
-					t.Fatalf("duration_ms = %d, want 4100", te.GetDurationMs())
+				if te.GetDurationMs() != 4100 || !te.GetEstimated() {
+					t.Fatalf("turn_end = %+v, want duration 4100 and estimated", te)
 				}
 				u := te.GetUsage()
 				if u.GetInputTokens() != 1200 || u.GetOutputTokens() != 340 ||

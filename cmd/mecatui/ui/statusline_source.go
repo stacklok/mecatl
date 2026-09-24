@@ -162,7 +162,7 @@ func (m Model) submitStatusLine() {
 func (m Model) statusLineInput(now time.Time) customization.Input {
 	geometry := m.statusLineGeometry()
 	window := m.resolvedSessionModel.ContextWindow
-	contextKnown := !m.contextUnknown || m.contextKnown || m.contextTokens > 0
+	contextKnown := !m.contextUnknown || m.contextTokens > 0
 	contextPercent := 0
 	if contextKnown && window > 0 {
 		contextPercent = int(m.contextTokens * 100 / window)

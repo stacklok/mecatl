@@ -305,7 +305,6 @@ func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded c
 	m.usage = snapshot.Usage
 	if occupancy := snapshot.ContextOccupancy; occupancy != nil {
 		m.contextTokens = occupancy.InputTokens
-		m.contextKnown = true
 		m.contextEstimated = occupancy.Estimated
 	} else {
 		m.contextUnknown = true
