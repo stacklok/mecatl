@@ -404,6 +404,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio chat](studio-chat.md) — the first Studio feature layer: session inventory and lifecycle routes, the run SSE union that preserves unknown SDK kinds, run controls addressed to the exact durable run, and the chat workspace with its ported behaviour tests. Status: landed in the implementation candidate; authoritative on merge.
 
+- [Mecatl Studio session activity](studio-session-activity.md) — distinct browser projections and read-only inline cards and panel content for Subagent, Parallel, and Team events. Status: proposed.
 - [Mecatl Studio chat transcript and composer](studio-chat-transcript-composer.md) — aligns streamed rows, status and input behavior, bounded replay, and BFF-projected title and delivery facts within the existing Studio boundary. Status: proposed.
 - [Mecatl Studio chat approvals, review, and Escape](studio-chat-approvals-review-escape.md) — exact run-and-ask plan verdicts, inline permission and authorization review, one-layer Escape handling, and evidence-bound developer steer trace. Status: in-progress.
 
