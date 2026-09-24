@@ -8,7 +8,7 @@
 **Delivery:** Split docs → implementation. On 2026-09-24 the directing human asked for the design and implementation branches to be pushed and stacked, and confirmed "yes, keep on going", so the implementation proceeds as a stacked PR on this proposed-docs commit before the plan merges. This does not mark the plan approved, authorize any merge, relax contract-drift stops, or remove either human merge gate.
 **Expected tasks:** 1 (implemented on the stacked implementation branch).
 **Issue:** None — directed operator request.
-**Plan PR:** <added when opened>
+**Plan PR:** [#1882](https://github.com/stacklok/mecatl/pull/1882).
 **Approved baseline:** absent until contract approval by merge.
 
 Add an outbound-only `X-Mecatl-Root-Session-ID` alongside the existing active-session
