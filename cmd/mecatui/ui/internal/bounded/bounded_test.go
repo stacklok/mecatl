@@ -210,14 +210,15 @@ func TestListViewWithIndicatorsFullyRevealsFittingSelectionAndPagesOversizedSele
 	list := new(List)
 	list.SetGeometry(20, 4, 1, Clip)
 	list.SetItems([]ListItem{
-		{ID: "before", Text: "before"},
+		{ID: "before-0", Text: "before-0"},
+		{ID: "before-1", Text: "before-1"},
 		{ID: "selected", Text: "selected-0\nselected-1"},
 		{ID: "after-0", Text: "after-0"},
 		{ID: "after-1", Text: "after-1"},
 		{ID: "after-2", Text: "after-2"},
 		{ID: "after-3", Text: "after-3"},
 	})
-	list.SetCursor(1)
+	list.SetCursor(2)
 	view := list.ViewWithIndicators(4, true)
 	selected := 0
 	for _, row := range view.Rows {
