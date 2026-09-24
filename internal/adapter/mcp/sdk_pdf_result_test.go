@@ -49,11 +49,20 @@ func TestSDKPDFArtifacts_Scenario2_MCPAndReplay(t *testing.T) {
 	copy(atLimit, []byte("%PDF-1.7\n"))
 	copy(atLimit[len(atLimit)-len("\n%%EOF"):], []byte("\n%%EOF"))
 	limitURL := newContentServer(t, "limitpdf", nil, &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
+		&mcpsdk.TextContent{Text: "before limit PDF"},
 		&mcpsdk.EmbeddedResource{Resource: &mcpsdk.ResourceContents{MIMEType: "application/pdf", Blob: atLimit}},
+		&mcpsdk.TextContent{Text: "after limit PDF"},
 	}})
 	atLimitResult := callPDFTool(t, limitURL, "pdfcontentlimit", "limitpdf", true)
-	if atLimitResult.IsError || len(atLimitResult.Parts) != 1 || len(atLimitResult.Parts[0].Data) != session.MaxPDFBytes {
-		t.Fatalf("20 MiB PDF rejected: isError=%v parts=%d", atLimitResult.IsError, len(atLimitResult.Parts))
+	if atLimitResult.IsError || len(atLimitResult.Parts) != 3 || atLimitResult.Parts[0].Text != "before limit PDF" ||
+		atLimitResult.Parts[1].BlockKind != session.BlockEmbeddedResource || !bytes.Equal(atLimitResult.Parts[1].Data, atLimit) ||
+		atLimitResult.Parts[2].Text != "after limit PDF" {
+		t.Fatalf("mixed 20 MiB PDF rejected or clamped: isError=%v parts=%d content=%q", atLimitResult.IsError, len(atLimitResult.Parts), atLimitResult.Content)
+	}
+	legacyAtLimit := callPDFTool(t, limitURL, "pdfcontentlimitdisabled", "limitpdf", false)
+	if legacyAtLimit.IsError || len(legacyAtLimit.Parts) != 2 || legacyAtLimit.Parts[0].Text != "before limit PDF" ||
+		legacyAtLimit.Parts[1].Text != "after limit PDF" || !strings.Contains(legacyAtLimit.Content, "exceeds the inline byte cap") {
+		t.Fatalf("storage-disabled mixed result did not retain legacy clamp: isError=%v parts=%d content=%q", legacyAtLimit.IsError, len(legacyAtLimit.Parts), legacyAtLimit.Content)
 	}
 	block, err := session.NewPDFArtifactBlock("pdf-id", "artifact.pdf", int64(len(pdf)), strings.Repeat("a", 64))
 	if err != nil {

@@ -62,3 +62,28 @@ func TestPDFPromptSizeCountsReferences(t *testing.T) {
 		t.Fatal("combined PDF references exceeded 20 MiB but passed")
 	}
 }
+
+func TestValidateToolResultParts_PDFMixedBudget(t *testing.T) {
+	pdf := Content{BlockKind: BlockEmbeddedResource, MIMEType: "application/pdf", Data: make([]byte, MaxPDFBytes)}
+	mixed := []Content{NewTextBlock("before"), pdf, NewTextBlock("after")}
+	if err := ValidateToolResultParts(mixed); err != nil {
+		t.Fatalf("20 MiB PDF with adjacent text rejected: %v", err)
+	}
+	if err := ValidateToolResultParts(append(mixed, Content{BlockKind: BlockImage, Data: []byte{1}})); err == nil {
+		t.Fatal("extra binary byte beyond the 20 MiB PDF budget accepted")
+	}
+	if err := ValidateToolResultParts([]Content{
+		{BlockKind: BlockEmbeddedResource, MIMEType: "application/pdf", Data: pdf.Data[:MaxPDFBytes/2]},
+		{BlockKind: BlockEmbeddedResource, MIMEType: "application/pdf", Data: pdf.Data[:MaxPDFBytes/2+1]},
+	}); err == nil {
+		t.Fatal("multiple PDFs exceeded the shared binary budget but passed")
+	}
+	text := strings.Repeat("x", MaxToolResultTextBytes)
+	tooMuchText := make([]Content, MaxToolResultBytes/len(text)+1)
+	for i := range tooMuchText {
+		tooMuchText[i] = NewTextBlock(text)
+	}
+	if err := ValidateToolResultParts(append([]Content{pdf}, tooMuchText...)); err == nil {
+		t.Fatal("PDF allowed non-PDF text to bypass its aggregate cap")
+	}
+}

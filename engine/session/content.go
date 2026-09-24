@@ -53,11 +53,11 @@ const (
 // module), and toolkit lives under the host repo's internal/adapter tree.
 const MaxToolResultTextBytes = 25 << 10 // 25 KiB (25,600 bytes)
 
-// MaxToolResultBytes is the cap on the SUM of all block bytes in one tool
-// result, mirroring MaxPromptMediaBytes so a tool result cannot collectively
-// blow memory even when each block is under its per-block cap. It counts inline
-// text + blob bytes (URL-sourced resource links contribute none — the provider
-// fetches those).
+// MaxToolResultBytes caps both the SUM of inline binary bytes and the SUM of
+// non-PDF text + blob bytes in one tool result. This lets a 20 MiB PDF reach
+// the artifact processor alongside bounded text without admitting extra binary
+// data. Multiple PDFs share the binary budget. URL-sourced resource links
+// contribute none — the provider fetches those.
 const MaxToolResultBytes = 20 << 20 // 20 MiB
 
 // BlockKind discriminates a Content block variant. The zero value ("")
@@ -384,14 +384,16 @@ func NewStructuredContentBlock(structuredJSON string) Content {
 // ValidateToolResultParts enforces the per-result byte caps (CWE-770) on an
 // already-constructed slice of tool-result blocks: each text block at most
 // MaxToolResultTextBytes, each blob block at most MaxMediaBytes except a PDF
-// embedded resource (MaxPDFBytes), and the SUM of
-// inline text+blob bytes at most MaxToolResultBytes. URL-sourced resource links
-// contribute no bytes. It is called at the wire→domain choke point after the
+// embedded resource (MaxPDFBytes), the SUM of inline binary bytes at most
+// MaxToolResultBytes, and the SUM of non-PDF text+blob bytes at most
+// MaxToolResultBytes. URL-sourced resource links contribute no bytes. It is
+// called at the wire→domain choke point after the
 // blocks are built via the constructors. A nil/empty slice passes. It is
 // DISTINCT from ValidateMediaParts (which caps user-message media) — the two
 // paths are read separately by providers and must not be collapsed.
 func ValidateToolResultParts(parts []Content) error {
-	total := 0
+	nonPDFTotal := 0
+	binaryTotal := 0
 	for i, p := range parts {
 		switch p.BlockKind {
 		case BlockText, BlockStructuredContent:
@@ -399,23 +401,29 @@ func ValidateToolResultParts(parts []Content) error {
 			if n > MaxToolResultTextBytes {
 				return fmt.Errorf("%w: block[%d] text %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxToolResultTextBytes)
 			}
-			total += n
+			nonPDFTotal += n
 		case BlockEmbeddedResource:
 			n := len(p.Data)
 			limit := MaxMediaBytes
-			if strings.EqualFold(p.MIMEType, "application/pdf") && n > 0 {
+			pdfBlob := strings.EqualFold(p.MIMEType, "application/pdf") && n > 0
+			if pdfBlob {
 				limit = MaxPDFBytes
 			}
 			if n > limit {
 				return fmt.Errorf("%w: block[%d] blob %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, limit)
 			}
-			total += n + len(p.Text)
+			binaryTotal += n
+			nonPDFTotal += len(p.Text)
+			if !pdfBlob {
+				nonPDFTotal += n
+			}
 		case BlockImage, BlockAudio:
 			n := len(p.Data)
 			if n > MaxMediaBytes {
 				return fmt.Errorf("%w: block[%d] inline data %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
 			}
-			total += n
+			binaryTotal += n
+			nonPDFTotal += n
 		case BlockResourceLink, BlockPDFArtifact:
 			// Reference only — no inline bytes.
 		case "":
@@ -425,12 +433,16 @@ func ValidateToolResultParts(parts []Content) error {
 			if n > MaxMediaBytes {
 				return fmt.Errorf("%w: block[%d] inline data %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
 			}
-			total += n
+			binaryTotal += n
+			nonPDFTotal += n
 		default:
 			return fmt.Errorf("%w: block[%d] unknown block kind %q", ErrInvalidContent, i, p.BlockKind)
 		}
-		if total > MaxToolResultBytes {
+		if nonPDFTotal > MaxToolResultBytes {
 			return fmt.Errorf("%w: total tool-result bytes exceeds the %d-byte cap", ErrInvalidContent, MaxToolResultBytes)
+		}
+		if binaryTotal > MaxToolResultBytes {
+			return fmt.Errorf("%w: total tool-result binary bytes exceeds the %d-byte cap", ErrInvalidContent, MaxToolResultBytes)
 		}
 	}
 	return nil

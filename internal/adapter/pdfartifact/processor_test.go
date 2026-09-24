@@ -73,6 +73,23 @@ func TestSDKPDFArtifacts_Scenario2_ExternalizeEffectiveResult(t *testing.T) {
 	engineStore := newResultProcessorStore(t, engineObjects)
 	event, snapshot, audit, model := runArtifactResult(t, ResultProcessor{Artifacts: engineStore}, pdfResult(pdf, "ignored://uri"), nil)
 	assertArtifactViews(t, pdf, event, snapshot, audit, model)
+	t.Run("20 MiB PDF with text", func(t *testing.T) {
+		objects := &memoryObjects{data: make(map[string][]byte)}
+		store := newResultProcessorStore(t, objects)
+		atLimit := make([]byte, MaxPDFBytes)
+		copy(atLimit, []byte("%PDF-1.7\n"))
+		copy(atLimit[len(atLimit)-len("\n%%EOF"):], []byte("\n%%EOF"))
+		got, err := (ResultProcessor{Artifacts: store}).ProcessToolResult(t.Context(), "pdf-result-owner", pdfResult(atLimit, ""))
+		if err != nil || got.CallID != "call-1" || got.IsError || len(got.Parts) != 3 {
+			t.Fatalf("processor rejected mixed 20 MiB PDF: callID=%q isError=%v parts=%d err=%v", got.CallID, got.IsError, len(got.Parts), err)
+		}
+		block := got.Parts[1]
+		if block.BlockKind != session.BlockPDFArtifact || block.Size != MaxPDFBytes || len(block.Data) != 0 || len(objects.data) != 1 ||
+			!strings.Contains(got.Content, "plain before PDF") || !strings.Contains(got.Content, "PDF artifact: artifact.pdf") ||
+			!strings.Contains(got.Content, "plain after PDF") || strings.Contains(got.Content, "%PDF-") {
+			t.Fatalf("processor boundary lost artifact or summary: block=%+v objects=%d summary=%q", block, len(objects.data), got.Content)
+		}
+	})
 	t.Run("two PDF blocks", func(t *testing.T) {
 		objects := &memoryObjects{data: make(map[string][]byte)}
 		store := newResultProcessorStore(t, objects)
