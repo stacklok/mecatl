@@ -267819,6 +267819,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790235566195,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2736535fc396bafcbae3d1471ca77f9995a794f3",
+          "message": "fix(toolhive): support v0.50 encrypted LLM credentials (#1813)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-24T10:08:43+02:00",
+          "tree_id": "b7234e24ba5b7f3d51bb8dac7869b905ce7a1af3",
+          "url": "https://github.com/stacklok/mecatl/commit/2736535fc396bafcbae3d1471ca77f9995a794f3"
+        },
+        "date": 1790238051611,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3318,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 112,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -351191,6 +351230,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790238048834,
+  "lastUpdate": 1790238052497,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
