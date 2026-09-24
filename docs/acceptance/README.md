@@ -128,7 +128,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
-- [Resumable session status metrics](resumable-session-status-metrics.md) — restores the authoritative resolved context window, durable main-session token totals, and persisted latest known context occupancy before mecatui submits a resumed chat’s next prompt. Status: proposed.
+- [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
 - [Purpose-attributed auxiliary token usage](auxiliary-token-usage.md) — records every reachable session-associated auxiliary LLM call in the canonical ledger under a purpose-specific provider/model-attributed kind, without changing main-run accounting or budgets. Status: proposed.
 - [Acceptance-proof resolution efficiency](acceptance-proof-resolution-efficiency.md) — keeps plan-proof resolution fail closed while avoiding duplicate task execution within the existing Doc validation runner; Vitest batching is deferred. Status: proposed.
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
