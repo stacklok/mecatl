@@ -4,6 +4,8 @@
 import type {
   RunStreamEvent,
   RuntimeResponse,
+  RuntimeSettingsResponse,
+  SessionDetailResponse,
   SessionTranscriptResponse,
 } from "@mecatl-studio/contracts";
 import { client } from "@mecatl-studio/contracts/client";
@@ -17,7 +19,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { ShortcutProvider } from "../shortcuts/shortcut-provider";
@@ -44,7 +47,11 @@ function runtimeResponse(connection: RuntimeResponse["connection"] = "online"): 
   return json({ capabilities: { image: false, posture: "managed" }, connection });
 }
 
-function detailResponse(sessionId: string, state = "idle"): Response {
+function detailResponse(
+  sessionId: string,
+  state = "idle",
+  overrides: Partial<SessionDetailResponse> = {},
+): Response {
   return json({
     capabilities: { image: false, manualCompaction: false, modelSelection: false },
     id: sessionId,
@@ -57,6 +64,7 @@ function detailResponse(sessionId: string, state = "idle"): Response {
       outputTokens: "0",
       reasoningTokens: "0",
     },
+    ...overrides,
   });
 }
 
@@ -127,6 +135,53 @@ function session(id: string, state = "idle") {
     turns: 0,
     updatedAt: "2026-09-24T12:00:00.000Z",
   };
+}
+
+const inventoryModels = [
+  {
+    contextLimit: "128000",
+    displayName: "Current model",
+    id: "current",
+    image: false,
+    providerId: "provider",
+    reasoning: true,
+  },
+  {
+    contextLimit: "128000",
+    displayName: "Allowed model",
+    id: "allowed",
+    image: true,
+    providerId: "provider",
+    reasoning: true,
+  },
+  {
+    contextLimit: "128000",
+    displayName: "Hidden model",
+    id: "hidden",
+    image: false,
+    providerId: "provider",
+    reasoning: true,
+  },
+] satisfies RuntimeSettingsResponse["models"];
+
+const currentModel = {
+  contextWindow: "128000",
+  id: "current",
+  providerId: "provider",
+  reasoningEffort: "medium",
+} satisfies NonNullable<SessionDetailResponse["model"]>;
+
+function serveModelInventory(bff: BffFixture) {
+  bff.nextReplies.set("/api/v1/settings/runtime", [
+    Promise.resolve(json({ models: inventoryModels, modelsSupported: true })),
+  ]);
+}
+
+function hideModel() {
+  window.localStorage.setItem(
+    "studio.chat.models.disabled",
+    JSON.stringify([JSON.stringify(["provider", "hidden"])]),
+  );
 }
 
 class BffFixture {
@@ -322,6 +377,95 @@ afterEach(() => {
 });
 
 describe("mounted chat workspace BFF boundary", () => {
+  it("creates a draft with its selected controls and excludes a disabled model", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture();
+    hideModel();
+    serveModelInventory(bff);
+    bff.runResponses.push(
+      completedStream(runStarted(), runEvent("result", "1", "", "run-a", { stop: "end_turn" })),
+    );
+    await mountWorkspace(bff);
+
+    await user.click(screen.getByRole("button", { name: "Chat options" }));
+    const options = screen.getByRole("dialog", { name: "Chat options" });
+    expect(within(options).queryByRole("option", { name: "Hidden model" })).toBeNull();
+    await user.selectOptions(within(options).getByLabelText("Model"), '["provider","allowed"]');
+    await user.selectOptions(within(options).getByLabelText("Effort"), "high");
+    await user.selectOptions(within(options).getByLabelText("Mode"), "plan");
+    await user.selectOptions(within(options).getByLabelText("Tools"), "noFilesystem");
+    await user.click(within(options).getByRole("button", { name: "Close chat options" }));
+
+    typePrompt("Create with these options");
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(1));
+    expect(bff.requestsAt("POST", "/api/v1/sessions")[0]?.body).toEqual({
+      mode: "plan",
+      model: { id: "allowed", providerId: "provider" },
+      reasoningEffort: "high",
+      toolAccess: "noFilesystem",
+    });
+  });
+
+  it("changes an existing mode in place but forks to change its model", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    hideModel();
+    serveModelInventory(bff);
+    const capabilities = { image: false, manualCompaction: false, modelSelection: true };
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { capabilities, model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
+
+    bff.nextReplies.set("/api/v1/sessions/chat-a/mode", [Promise.resolve(json({ mode: "plan" }))]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(
+        detailResponse("chat-a", "idle", { capabilities, mode: "plan", model: currentModel }),
+      ),
+    ]);
+    await user.click(within(controls).getByRole("button", { name: "Mode Manual" }));
+    await user.click(screen.getByRole("menuitem", { name: /^Plan/ }));
+    await waitFor(() =>
+      expect(bff.requestsAt("PUT", "/api/v1/sessions/chat-a/mode")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("PUT", "/api/v1/sessions/chat-a/mode")[0]?.body).toEqual({
+      mode: "plan",
+    });
+    expect(await within(controls).findByRole("button", { name: "Mode Plan" })).toBeTruthy();
+
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "chat-b" }, 201)),
+    ]);
+    await user.click(within(controls).getByRole("button", { name: /Model Current model/ }));
+    const modelMenu = screen.getByRole("menuitem", { name: /^Model Current model/ });
+    await user.hover(modelMenu);
+    const allowed = await screen.findByRole("menuitem", { name: "Allowed model" });
+    expect(screen.queryByRole("menuitem", { name: "Hidden model" })).toBeNull();
+    act(() => allowed.focus());
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toEqual({
+      model: { id: "allowed", providerId: "provider" },
+      reasoningEffort: "medium",
+    });
+    expect(
+      bff.requests
+        .filter(
+          (request) =>
+            request.method !== "GET" && request.pathname.startsWith("/api/v1/sessions/chat-a/"),
+        )
+        .map(({ method, pathname }) => ({ method, pathname })),
+    ).toEqual([
+      { method: "PUT", pathname: "/api/v1/sessions/chat-a/mode" },
+      { method: "POST", pathname: "/api/v1/sessions/chat-a/fork" },
+    ]);
+    expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(0);
+  });
+
   it("creates one session and drains one queued prompt only after its run settles", async () => {
     const bff = new BffFixture();
     const first = heldStream();
