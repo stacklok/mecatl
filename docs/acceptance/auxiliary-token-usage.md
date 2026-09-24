@@ -4,7 +4,7 @@
 **Work classification:** Architectural — adds recognized durable session token-accounting purposes, forward-compatible opaque-kind persistence, and their existing public projection while preserving budget and run-usage semantics.
 **Decision record:** [ADR 0354](../adr/0354-returned-auxiliary-usage-results.md)
 **Phase:** canonical auxiliary usage accounting
-**Status:** in-progress, 2026-09-23. Material API revision approved with the issue owner.
+**Status:** landed, 2026-09-23. Material API revision approved with the issue owner.
 **Delivery:** Split. Implementation restarted after amendment approval.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1216](https://github.com/stacklok/mecatl/issues/1216).
