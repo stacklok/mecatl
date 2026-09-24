@@ -33,20 +33,18 @@ func toolCardPresentationFromSnapshot(p scrollback.ToolCardSnapshot) toolCardPre
 // logical snapshot directly into immutable presentation input and keeps cache and
 // frame provenance renderer-owned.
 func (r *renderer) renderToolSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot, expand bool) string {
-	key := blockRenderKey{revision: rendererRevision(s.Revision), context: r.renderContext(expand)}
-	if entry, ok := r.blocks.renderedBlock(idx, key); ok {
-		return entry.out
-	}
-	presentation := toolCardPresentationFromSnapshot(p)
-	prepared := r.prepareTypedToolCard(presentation, expand)
-	out := prepared.Text()
-	if r.width > r.indent {
-		out = r.indentLines(out)
-	}
-	rows := blockProvenanceRows(prepared.Prepared, uint64(s.ID), blockTool, r.indent, r.width)
-	r.blocks.storeRendered(idx, blockEntry{key: key, out: out, rows: rows})
-	r.blockRenders++
-	return out
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		presentation := toolCardPresentationFromSnapshot(p)
+		prepared := r.prepareTypedToolCard(presentation, expand)
+		out := prepared.Text()
+		if r.width > r.indent {
+			out = r.indentLines(out)
+		}
+		return blockRenderOutput{
+			text: out,
+			rows: blockProvenanceRows(prepared.Prepared, blockID, scrollback.KindTool, r.indent, r.width),
+		}
+	})
 }
 
 func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool) preparedToolCard {
@@ -107,7 +105,7 @@ func (r *renderer) renderTypedToolResult(body string, isError bool, artifacts []
 	return out.String()
 }
 
-func (r *renderer) renderTypedToolResultLines(body string, isError, expand bool) ([]toolResultLine, int) {
+func (*renderer) renderTypedToolResultLines(body string, isError, expand bool) ([]toolResultLine, int) {
 	if !expand && !isError {
 		if summary, hiddenFields, ok := summarizeResultDetail(body); ok {
 			return resultLines(summary, resultLineSummary), hiddenFields

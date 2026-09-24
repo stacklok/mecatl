@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
+
 // mdEntry is one memoized assistant-block render: the source text and wrap width
 // it was produced from (the validity key) plus the rendered ANSI output.
 type mdEntry struct {
@@ -31,12 +33,19 @@ type blockEntry struct {
 	rows []renderedRow
 }
 
+// blockRenderOutput is the cache-output protocol for a freshly rendered card.
+// It carries only rendered text and lockstep structural provenance.
+type blockRenderOutput struct {
+	text string
+	rows []renderedRow
+}
+
 // renderPass is the renderer-owned handoff from cache lookup to frame assembly.
 // It retains only cache identity, rendered output, and lockstep provenance.
 type renderPass struct {
 	id       uint64
 	revision int
-	kind     blockKind
+	kind     scrollback.Kind
 	text     string
 	rows     []renderedRow
 }
@@ -186,6 +195,17 @@ func (r *renderer) renderContext(expanded bool) renderContextKey {
 	}
 }
 
-func (r *renderer) blockRenderKey(b *block, expanded bool) blockRenderKey {
-	return blockRenderKey{revision: b.rev, context: r.renderContext(expanded)}
+// renderCachedSnapshot admits a logical card to the renderer-owned cache using
+// only its identity and revision. The family-specific closure is invoked only on
+// a cache miss and returns the complete cache output; no broad conversation
+// record crosses this seam.
+func (r *renderer) renderCachedSnapshot(index int, id uint64, revision int, expanded bool, fresh func(uint64) blockRenderOutput) string {
+	key := blockRenderKey{revision: revision, context: r.renderContext(expanded)}
+	if entry, ok := r.blocks.renderedBlock(index, key); ok {
+		return entry.out
+	}
+	output := fresh(id)
+	r.blocks.storeRendered(index, blockEntry{key: key, out: output.text, rows: output.rows})
+	r.blockRenders++
+	return output.text
 }

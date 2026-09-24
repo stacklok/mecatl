@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestADR_0301_RenderedFrameProvenanceMatchesLines pins ADR 0301's requirement
@@ -454,9 +455,13 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 		}
 
 		want := make([]string, 0, len(frame.lines))
+		kinds := make([]scrollback.Kind, c.scrollback.Len())
+		for i := range kinds {
+			kinds[i] = c.scrollback.MetadataAt(i).Kind
+		}
 		for i := range c.testBlocks() {
 			if i > 0 {
-				for range blockBlankLinesAfter(c.testBlocks(), i) {
+				for range blockBlankLinesAfter(kinds, i) {
 					want = append(want, "")
 				}
 			}

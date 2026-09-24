@@ -632,7 +632,7 @@ func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]rend
 		pass := renderPass{
 			id:       uint64(meta.ID),
 			revision: rendererRevision(meta.Revision),
-			kind:     blockKindFromMetadata(meta.Kind),
+			kind:     meta.Kind,
 		}
 		key := blockRenderKey{revision: pass.revision, context: r.renderContext(expand)}
 		if entry, ok := r.blocks.renderedBlock(i, key); ok {
@@ -656,32 +656,50 @@ func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]rend
 // renderer owns this adaptation: scrollback itself remains a logical model with
 // no dependency on presentation, markdown, or client event types.
 func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bool) string {
-	base := block{id: uint64(s.ID), rev: rendererRevision(s.Revision)}
 	switch p := s.Payload.(type) {
 	case scrollback.UserCardSnapshot:
-		base.kind, base.raw, base.media = blockUser, p.Text, p.Media
+		return r.renderUserSnapshot(idx, s, p, expand)
 	case scrollback.AssistantCardSnapshot:
-		base.kind, base.raw, base.reasoning, base.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
+		return r.renderAssistantSnapshot(idx, s, p, expand)
 	case scrollback.ToolCardSnapshot:
 		return r.renderToolSnapshot(idx, s, p, expand)
 	case scrollback.NoticeCardSnapshot:
-		base.kind, base.raw, base.recover = blockNotice, p.Text, p.Recover
+		return r.renderNoticeSnapshot(idx, s, p, expand)
 	case scrollback.TurnStatCardSnapshot:
-		base.kind, base.raw = blockTurnStat, p.Text
+		return r.renderTurnStatSnapshot(idx, s, p, expand)
 	case scrollback.ErrorCardSnapshot:
-		base.kind, base.raw, base.permanent = blockError, p.Text, p.Permanent
+		return r.renderErrorSnapshot(idx, s, p, expand)
 	case scrollback.HookCardSnapshot:
-		base.kind, base.raw, base.hookPhase, base.hookTool, base.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
+		return r.renderHookSnapshot(idx, s, p, expand)
 	case scrollback.DeliveryCardSnapshot:
-		base.kind, base.raw, base.toolName, base.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
+		return r.renderDeliverySnapshot(idx, s, p, expand)
 	case scrollback.SubagentCardSnapshot:
-		return r.renderBlock(idx, subagentBlockFromSnapshot(s, p), expand)
+		return r.renderDelegationBlock(idx, subagentBlockFromSnapshot(s, p), expand)
 	case scrollback.TeamCardSnapshot:
-		return r.renderBlock(idx, teamBlockFromSnapshot(s, p), expand)
+		return r.renderDelegationBlock(idx, teamBlockFromSnapshot(s, p), expand)
 	default:
 		return ""
 	}
-	return r.renderBlock(idx, &base, expand)
+}
+
+func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.AssistantCardSnapshot, expand bool) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		out := r.renderAssistantSnapshotFresh(idx, p, expand)
+		out = r.indentLines(out)
+		return blockRenderOutput{
+			text: out,
+			rows: r.assistantProvenanceRows(blockID, p, out, expand),
+		}
+	})
+}
+
+func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantCardSnapshot, expand bool) string {
+	label := r.th.Style("assistantLabel").Render("● mecatl")
+	body := padLines(r.markdownAt(idx, p.Text), assistantBodyHang)
+	if reasoning := r.renderReasoningSnapshot(p, expand); reasoning != "" {
+		body = padLines(reasoning, assistantBodyHang) + "\n" + body
+	}
+	return label + "\n\n" + body
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
@@ -712,14 +730,14 @@ const (
 
 // blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
 // before block i+1).
-func blockSepAfter(conversationBlocks []block, i int) string {
-	switch conversationBlocks[i].kind {
-	case blockTool:
+func blockSepAfter(kinds []scrollback.Kind, i int) string {
+	switch kinds[i] {
+	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 		return interBlockSepNone
-	case blockTurnStat:
+	case scrollback.KindTurnStat:
 		return interBlockSepCompact
-	case blockAssistant:
-		if i+1 < len(conversationBlocks) && conversationBlocks[i+1].kind == blockTurnStat {
+	case scrollback.KindAssistant:
+		if i+1 < len(kinds) && kinds[i+1] == scrollback.KindTurnStat {
 			return interBlockSepNone
 		}
 	}
@@ -728,102 +746,39 @@ func blockSepAfter(conversationBlocks []block, i int) string {
 
 // blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
 // number of blank "" lines to insert before block i (i.e. after block i-1).
-func blockBlankLinesAfter(conversationBlocks []block, i int) int {
-	switch conversationBlocks[i-1].kind {
-	case blockTool:
+func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
+	switch kinds[i-1] {
+	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 		return interBlockBlankLinesNone
-	case blockTurnStat:
+	case scrollback.KindTurnStat:
 		return interBlockBlankLinesCompact
-	case blockAssistant:
-		if i < len(conversationBlocks) && conversationBlocks[i].kind == blockTurnStat {
+	case scrollback.KindAssistant:
+		if i < len(kinds) && kinds[i] == scrollback.KindTurnStat {
 			return interBlockBlankLinesNone
 		}
 	}
 	return interBlockBlankLinesCompact
 }
 
-// renderBlock is the CACHED per-block entry point: it returns the memoized
-// render when the block's revision, the wrap width, and the expand toggle all
-// match the cached entry, and otherwise renders fresh, stores the result, and
-// bumps blockRenders (the cache-miss test seam). idx is the block's stable conversation index (blocks are append-only within a
-// conversation; resetBlockCaches handles index reuse across rebuilds).
-// Correctness rests on the typed model revision copied into block.rev: every
-// visible transition advances it, so a cache hit cannot be stale.
-// Update-goroutine-only.
-func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
-	key := r.blockRenderKey(b, expand)
-	if entry, ok := r.blocks.renderedBlock(idx, key); ok {
-		return entry.out
+// renderDelegationBlock retains the existing Subagent and Team presentation
+// path. Ordinary snapshots use their family-specific adapters above.
+func (r *renderer) renderDelegationBlock(idx int, b *block, expand bool) string {
+	kind := scrollback.KindSubagent
+	if b.team {
+		kind = scrollback.KindTeam
 	}
-	var (
-		out  string
-		rows []renderedRow
-	)
-	if prepared, ok := r.prepareStructuredBlock(b, expand); ok {
-		out = prepared.Text()
-		rows = blockProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)
-	} else {
-		out = r.renderBlockFresh(idx, b, expand)
-	}
-	// contentWidth preserves a positive width for a tiny renderer. A tool card uses
-	// that cell for its frameless fallback, so it cannot also carry the usual indent.
-	if b.kind != blockTool || r.width > r.indent {
-		out = r.indentLines(out)
-	}
-	if len(rows) == 0 {
-		rows = r.provenanceRows(b, out, expand)
-	}
-	r.blocks.storeRendered(idx, blockEntry{key: key, out: out, rows: rows})
-	r.blockRenders++
-	return out
-}
-
-// renderBlockFresh renders one block per its kind. Assistant text goes through
-// glamour; everything else is plain themed lipgloss. idx is the block's stable
-// conversation index, used to memoize the (expensive) assistant glamour render
-// across the per-delta full-scrollback re-render — see markdownAt (the inner
-// memo layer below renderBlock's whole-block cache).
-func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
-	switch b.kind {
-	case blockUser:
-		return r.prepareUserBlock(b).Text()
-	case blockAssistant:
-		// Assistant text is rendered through glamour, which neutralises escape
-		// sequences itself — do NOT sanitize here or markdown breaks. The turn's
-		// reasoning summary (if any) renders dim and collapsed ABOVE the answer.
-		// The label "● mecatl" stays at the base indent; the BODY (reasoning summary +
-		// markdown answer) hangs by assistantBodyHang so it sits under "mecatl" — matching
-		// the user block's body-under-"you" alignment. The markdown was already wrapped at
-		// contentWidth()-hang (see markdown), so hang + base never overflows r.width.
-		// ONE blank line separates the label from the body (a little vertical breathing
-		// room under "● mecatl") — within-block spacing, distinct from the inter-turn
-		// 2-line join gap. The user block is deliberately NOT given this gap: its gold rail
-		// visually connects label→body, and a mid-gap would break the rail.
-		label := r.th.Style("assistantLabel").Render("● mecatl")
-		body := padLines(r.markdownAt(idx, b.raw), assistantBodyHang)
-		if reasoning := r.renderReasoning(b, expand); reasoning != "" {
-			body = padLines(reasoning, assistantBodyHang) + "\n" + body
+	return r.renderCachedSnapshot(idx, b.id, b.rev, expand, func(blockID uint64) blockRenderOutput {
+		r.cardPrepares++
+		prepared := r.prepareToolCard(b, expand).Prepared
+		out := prepared.Text()
+		if r.width > r.indent {
+			out = r.indentLines(out)
 		}
-		// label + blank line + body. The blank line is unindented (it is empty).
-		return label + "\n\n" + body
-	case blockTool:
-		return r.renderTool(b, expand)
-	case blockNotice:
-		return r.prepareNoticeBlock(b).Text()
-	case blockHook:
-		return r.prepareHookBlock(b).Text()
-	case blockTurnStat:
-		return r.prepareTurnStatBlock(b).Text()
-	case blockError:
-		if b.permanent {
-			return r.preparePermanentErrorBlock(b, expand).Text()
+		return blockRenderOutput{
+			text: out,
+			rows: blockProvenanceRows(prepared, blockID, kind, r.indent, r.width),
 		}
-		return r.prepareErrorBlock(b).Text()
-	case blockDelivery:
-		return r.prepareDeliveryBlock(b).Text()
-	default:
-		return r.wrapStyled(terminaltext.Sanitize(b.raw), lipgloss.NewStyle())
-	}
+	})
 }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED
@@ -843,16 +798,16 @@ const reasoningCaveat = "— summary of the model's reasoning; may not reflect i
 // asked to see it — matching how resultBody handles tool results). Streamed
 // reasoning is never a trust anchor: hidden unless explicitly asked for, and
 // clearly labelled as a lossy summary.
-func (r *renderer) renderReasoning(b *block, expand bool) string {
-	if b.reasoning == "" {
+func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, expand bool) string {
+	if p.Reasoning == "" {
 		return ""
 	}
 	style := r.th.Style("reasoning")
-	text := terminaltext.Sanitize(strings.TrimRight(b.reasoning, "\n"))
+	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
 	n := lineCount(text)
 	expandMark := r.marks.expandTools
 	if !expand {
-		if b.reasoningStreaming {
+		if p.ReasoningStreaming {
 			return style.Render("reasoning…")
 		}
 		return style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " expand")
@@ -868,7 +823,7 @@ func (r *renderer) renderReasoning(b *block, expand bool) string {
 // it through st. A content width at or below the frame (e.g. the width-0 team focus
 // renderer, team.go) means "unknown/tiny: do not wrap" and the body renders unwrapped.
 // Wrapping against contentWidth (not r.width) keeps the body within budget once
-// renderBlock prefixes each line with `indent` spaces.
+// Whole-card rendering prefixes each line with `indent` spaces.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 	frame := st.GetHorizontalFrameSize()
 	cw := r.contentWidth()

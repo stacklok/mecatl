@@ -58,7 +58,7 @@ type renderedRow struct {
 	sourceOffset int
 	row          int
 	text         bool
-	kind         blockKind
+	kind         scrollback.Kind
 	indent       int
 	// Functional-card rows retain only their structural location in the rendered
 	// line: canonical source offset, leading semantic grapheme, and visible span.
@@ -197,7 +197,7 @@ func (r *renderer) rebuildFramePrefix(passes []renderPass, prefixN int) ([]strin
 	return lines, provenance
 }
 
-func (r *renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, index int) {
+func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, index int) {
 	if index > 0 {
 		for n := 0; n < blockBlankLinesAfterPasses(passes, index); n++ {
 			frame.lines = append(frame.lines, "")
@@ -211,63 +211,43 @@ func (r *renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass,
 	}
 }
 
-func blockKindFromMetadata(kind scrollback.Kind) blockKind {
-	switch kind {
-	case scrollback.KindUser:
-		return blockUser
-	case scrollback.KindAssistant:
-		return blockAssistant
-	case scrollback.KindNotice:
-		return blockNotice
-	case scrollback.KindTurnStat:
-		return blockTurnStat
-	case scrollback.KindError:
-		return blockError
-	case scrollback.KindHook:
-		return blockHook
-	case scrollback.KindDelivery:
-		return blockDelivery
-	default:
-		return blockTool
-	}
-}
-
 func blockBlankLinesAfterPasses(passes []renderPass, i int) int {
 	previous := passes[i-1].kind
 	current := passes[i].kind
 	switch previous {
-	case blockTool:
+	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 		return interBlockBlankLinesNone
-	case blockTurnStat:
+	case scrollback.KindTurnStat:
 		return interBlockBlankLinesCompact
-	case blockAssistant:
-		if current == blockTurnStat {
+	case scrollback.KindAssistant:
+		if current == scrollback.KindTurnStat {
 			return interBlockBlankLinesNone
 		}
 	}
 	return interBlockBlankLinesCompact
 }
 
-func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []renderedRow {
+func (r *renderer) assistantProvenanceRows(blockID uint64, p scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {
+	return r.snapshotProvenanceRows(blockID, scrollback.KindAssistant, p, rendered, expand)
+}
+
+func (r *renderer) snapshotProvenanceRows(blockID uint64, kind scrollback.Kind, assistant scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {
 	lines := strings.Split(rendered, "\n")
 	rows := make([]renderedRow, len(lines))
 	region := conversationRegionChrome
 	textStart := 0
-	switch b.kind {
-	case blockUser:
+	switch kind {
+	case scrollback.KindUser:
 		textStart, region = 1, conversationRegionBody
-	case blockAssistant:
+	case scrollback.KindAssistant:
 		textStart = 2 // label plus its intentional blank row
-		if b.reasoning != "" {
-			reasoning := r.renderReasoning(b, expand)
+		if assistant.Reasoning != "" {
+			reasoning := r.renderReasoningSnapshot(assistant, expand)
 			reasoningRows := len(strings.Split(reasoning, "\n"))
 			for i := textStart; i < min(textStart+reasoningRows, len(rows)); i++ {
-				rows[i] = renderedRow{blockID: b.id, region: conversationRegionReasoning, row: i - textStart}
+				rows[i] = renderedRow{blockID: blockID, region: conversationRegionReasoning, row: i - textStart}
 			}
 			if expand {
-				// The header and caveat describe the presentation. Only the
-				// expanded reasoning body is semantic text that can survive a
-				// reflow by its grapheme offset.
 				caveatRows := len(strings.Split(r.wrapStyled(reasoningCaveat, r.th.Style("reasoning")), "\n"))
 				for i := textStart + 1 + caveatRows; i < min(textStart+reasoningRows, len(rows)); i++ {
 					rows[i].text = true
@@ -283,14 +263,14 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []rend
 		if rows[i].region == conversationRegionReasoning {
 			continue
 		}
-		rows[i] = renderedRow{blockID: b.id, region: conversationRegionChrome, row: i}
+		rows[i] = renderedRow{blockID: blockID, region: conversationRegionChrome, row: i}
 		if i >= textStart {
 			rows[i].region = region
 		}
 	}
-	r.assignVisibleOffsets(b, rows, lines)
+	r.assignVisibleOffsets(kind, rows, lines)
 	for i := range rows {
-		rows[i].kind = b.kind
+		rows[i].kind = kind
 		rows[i].indent = r.indent
 	}
 	return rows
@@ -299,7 +279,7 @@ func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []rend
 // assignVisibleOffsets maps rows to canonical semantic text, not the final panel
 // strings. Indentation, hanging assistant layout, and card framing are presentation
 // only; counting them would make the same text acquire a different offset on reflow.
-func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []string) {
+func (r *renderer) assignVisibleOffsets(kind scrollback.Kind, rows []renderedRow, lines []string) {
 	offsets := map[regionKind]int{}
 	for i := range rows {
 		if rows[i].blockID == 0 || rows[i].region == conversationRegionChrome || rows[i].region == conversationRegionAppendix ||
@@ -308,16 +288,16 @@ func (r *renderer) assignVisibleOffsets(b *block, rows []renderedRow, lines []st
 		}
 		rows[i].text = true
 		rows[i].sourceOffset = offsets[rows[i].region]
-		plain := canonicalRowText(b.kind, ansi.Strip(lines[i]), r.indent)
+		plain := canonicalRowText(kind, ansi.Strip(lines[i]), r.indent)
 		offsets[rows[i].region] += graphemeCount(plain)
 	}
 }
 
-func canonicalRowText(kind blockKind, line string, indent int) string {
+func canonicalRowText(kind scrollback.Kind, line string, indent int) string {
 	if indent > 0 {
 		line = strings.TrimPrefix(line, strings.Repeat(" ", indent))
 	}
-	if kind == blockAssistant {
+	if kind == scrollback.KindAssistant {
 		line = strings.TrimPrefix(line, strings.Repeat(" ", assistantBodyHang))
 	}
 	return strings.TrimRight(line, " ")

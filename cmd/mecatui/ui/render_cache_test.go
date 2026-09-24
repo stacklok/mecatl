@@ -26,6 +26,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // newCacheRenderer builds a renderer at a fixed width, mirroring the model's
@@ -40,12 +41,16 @@ func newCacheRenderer() *renderer {
 // independent test oracle and allocation benchmark for the production frame path.
 func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	var b strings.Builder
-	blocks := c.testBlocks()
-	for i := range blocks {
+	legacyBlocks := c.testBlocks()
+	kinds := make([]scrollback.Kind, c.scrollback.Len())
+	for i := range kinds {
+		kinds[i] = c.scrollback.MetadataAt(i).Kind
+	}
+	for i := range legacyBlocks {
 		if i > 0 {
-			b.WriteString(blockSepAfter(blocks, i-1))
+			b.WriteString(blockSepAfter(kinds, i-1))
 		}
-		b.WriteString(r.renderBlock(i, &blocks[i], expand))
+		b.WriteString(r.renderBlock(i, &legacyBlocks[i], expand))
 		b.WriteByte('\n')
 	}
 	return b.String()

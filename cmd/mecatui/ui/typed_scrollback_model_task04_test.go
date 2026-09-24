@@ -44,9 +44,33 @@ func TestMecatuiTypedScrollbackModel_Scenario2_ProductionUsesTypedTransitions(t 
 
 func TestMecatuiTypedScrollbackModel_Scenario3_ScrollbackBoundaryIsLogicalOnly(t *testing.T) {
 	files := parseUIProductionFiles(t)
+	forbiddenBlockInputs := map[string]bool{
+		"prepareStructuredBlock": true, "prepareUserBlock": true,
+		"prepareNoticeBlock": true, "prepareHookBlock": true,
+		"prepareTurnStatBlock": true, "prepareErrorBlock": true,
+		"preparePermanentErrorBlock": true, "prepareDeliveryBlock": true,
+	}
+	foundFrame, foundCacheSeam, foundReasoningSeam := false, false, false
 	for _, file := range files {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
+			if ok && forbiddenBlockInputs[fn.Name.Name] {
+				t.Errorf("ordinary renderer still accepts ui.block through %s", fn.Name.Name)
+			}
+			if ok && fn.Name.Name == "renderCachedSnapshot" {
+				foundCacheSeam = true
+				ast.Inspect(fn.Type.Params, func(n ast.Node) bool {
+					if star, ok := n.(*ast.StarExpr); ok {
+						if ident, ok := star.X.(*ast.Ident); ok && ident.Name == "block" {
+							t.Error("cache seam accepts broad ui.block")
+						}
+					}
+					return true
+				})
+			}
+			if ok && fn.Name.Name == "renderReasoningSnapshot" {
+				foundReasoningSeam = true
+			}
 			if !ok || fn.Name.Name != "renderConversationFrame" {
 				continue
 			}
@@ -61,10 +85,18 @@ func TestMecatuiTypedScrollbackModel_Scenario3_ScrollbackBoundaryIsLogicalOnly(t
 			if !ok || sel.Sel.Name != "Conversation" {
 				t.Fatalf("renderConversationFrame input is not *scrollback.Conversation: %#v", fn.Type.Params.List[0].Type)
 			}
-			return
+			foundFrame = true
 		}
 	}
-	t.Fatal("renderConversationFrame not found")
+	if !foundFrame {
+		t.Fatal("renderConversationFrame not found")
+	}
+	if !foundCacheSeam {
+		t.Error("renderer has no identity/revision cache-output seam")
+	}
+	if !foundReasoningSeam {
+		t.Error("assistant reasoning has no direct typed-snapshot rendering seam")
+	}
 }
 
 func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolsRenderFromTypedSnapshots(t *testing.T) {
@@ -185,7 +217,7 @@ func TestRenderPassCarriesCachedFrameMetadata(t *testing.T) {
 
 	passes, _ := r.renderPasses(&c.scrollback, false)
 	pass := passes[0]
-	if pass.id == 0 || pass.revision != 0 || pass.kind != blockNotice || pass.text == "" || len(pass.rows) == 0 {
+	if pass.id == 0 || pass.revision != 0 || pass.kind != scrollback.KindNotice || pass.text == "" || len(pass.rows) == 0 {
 		t.Fatalf("render pass omitted cache/frame metadata: %#v", pass)
 	}
 	if got := r.snapshotLoads - loads; got != 0 {

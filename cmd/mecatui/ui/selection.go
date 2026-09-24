@@ -7,6 +7,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // The on-screen height of any region (header, body, transients, input, footer) is
@@ -334,7 +336,7 @@ const selectionContextGraphemes = 16
 
 func selectionRowText(_ renderedFrame, row renderedRow, line string) (text string, leading int) {
 	plain := ansi.Strip(line)
-	if row.kind == blockTool {
+	if row.kind == scrollback.KindTool || row.kind == scrollback.KindSubagent || row.kind == scrollback.KindTeam {
 		return graphemeSlice(plain, row.leading, row.leading+row.span), row.leading
 	}
 	withoutIndent := plain
@@ -342,7 +344,7 @@ func selectionRowText(_ renderedFrame, row renderedRow, line string) (text strin
 		withoutIndent = strings.TrimPrefix(withoutIndent, strings.Repeat(" ", row.indent))
 	}
 	withoutPresentation := withoutIndent
-	if row.kind == blockAssistant {
+	if row.kind == scrollback.KindAssistant {
 		withoutPresentation = strings.TrimPrefix(withoutPresentation, strings.Repeat(" ", assistantBodyHang))
 	}
 	leading = graphemeCount(plain) - graphemeCount(withoutPresentation)

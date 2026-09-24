@@ -1,6 +1,9 @@
 package ui
 
-import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
+import (
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
+)
 
 func (r *renderer) plainBlockLayout(expand bool) blocks.PlainLayout {
 	return blocks.SnapshotPlainLayout(blocks.PlainLayoutInput{
@@ -25,87 +28,64 @@ func (r *renderer) blockTheme() blocks.Theme {
 	}
 }
 
-func userInputFromBlock(b *block) blocks.UserInput {
-	return blocks.UserInput{Text: b.raw, Media: b.media}
-}
-
-func noticeInputFromBlock(b *block) blocks.NoticeInput {
-	return blocks.NoticeInput{Text: b.raw, Recovery: b.recover}
-}
-
-func hookInputFromBlock(b *block) blocks.HookInput {
-	return blocks.HookInput{Text: b.raw, Phase: b.hookPhase, Tool: b.hookTool, Decision: b.hookDecision}
-}
-
-func turnStatInputFromBlock(b *block) blocks.TurnStatInput { return blocks.TurnStatInput{Text: b.raw} }
-
-func errorInputFromBlock(b *block) blocks.ErrorInput { return blocks.ErrorInput{Text: b.raw} }
-
-func permanentErrorInputFromBlock(b *block) blocks.PermanentErrorInput {
-	return blocks.PermanentErrorInput{Text: b.raw}
-}
-
-func deliveryInputFromBlock(b *block) blocks.DeliveryInput {
-	return blocks.DeliveryInput{ScheduleName: b.toolName, FireID: b.deliveryFireID, Text: b.raw}
-}
-
-// prepareStructuredBlock snapshots and prepares every migrated non-Markdown block
-// family. It is called only after renderBlock's cheap revision/layout admission
-// guard misses; settled cache hits therefore do no snapshot or preparation.
-func (r *renderer) prepareStructuredBlock(b *block, expand bool) (blocks.Prepared, bool) {
-	switch b.kind {
-	case blockTool, blockUser, blockNotice, blockHook, blockTurnStat, blockError, blockDelivery:
+func (r *renderer) renderPreparedSnapshot(index int, id scrollback.BlockID, revision uint64, kind scrollback.Kind, expand bool, prepare func() blocks.Prepared) string {
+	return r.renderCachedSnapshot(index, uint64(id), rendererRevision(revision), expand, func(blockID uint64) blockRenderOutput {
 		r.cardPrepares++
-	default:
-		return blocks.Prepared{}, false
-	}
-	switch b.kind {
-	case blockTool:
-		return r.prepareToolCard(b, expand).Prepared, true
-	case blockUser:
-		return r.prepareUserBlock(b), true
-	case blockNotice:
-		return r.prepareNoticeBlock(b), true
-	case blockHook:
-		return r.prepareHookBlock(b), true
-	case blockTurnStat:
-		return r.prepareTurnStatBlock(b), true
-	case blockError:
-		if b.permanent {
-			return r.preparePermanentErrorBlock(b, expand), true
+		prepared := prepare()
+		return blockRenderOutput{
+			text: r.indentLines(prepared.Text()),
+			rows: blockProvenanceRows(prepared, blockID, kind, r.indent, r.width),
 		}
-		return r.prepareErrorBlock(b), true
-	case blockDelivery:
-		return r.prepareDeliveryBlock(b), true
-	default:
-		return blocks.Prepared{}, false
+	})
+}
+
+func (r *renderer) renderUserSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.UserCardSnapshot, expand bool) string {
+	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindUser, expand, func() blocks.Prepared { return r.prepareUserSnapshot(p) })
+}
+
+func (r *renderer) renderNoticeSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.NoticeCardSnapshot, expand bool) string {
+	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindNotice, expand, func() blocks.Prepared { return r.prepareNoticeSnapshot(p) })
+}
+
+func (r *renderer) renderHookSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.HookCardSnapshot, expand bool) string {
+	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindHook, expand, func() blocks.Prepared { return r.prepareHookSnapshot(p) })
+}
+
+func (r *renderer) renderTurnStatSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.TurnStatCardSnapshot, expand bool) string {
+	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindTurnStat, expand, func() blocks.Prepared { return r.prepareTurnStatSnapshot(p) })
+}
+
+func (r *renderer) renderErrorSnapshot(index int, s scrollback.BlockSnapshot, p scrollback.ErrorCardSnapshot, expand bool) string {
+	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindError, expand, func() blocks.Prepared { return r.prepareErrorSnapshot(p, expand) })
+}
+
+func (r *renderer) renderDeliverySnapshot(index int, s scrollback.BlockSnapshot, p scrollback.DeliveryCardSnapshot, expand bool) string {
+	return r.renderPreparedSnapshot(index, s.ID, s.Revision, scrollback.KindDelivery, expand, func() blocks.Prepared { return r.prepareDeliverySnapshot(p) })
+}
+
+func (r *renderer) prepareUserSnapshot(p scrollback.UserCardSnapshot) blocks.Prepared {
+	return blocks.PrepareUser(blocks.SnapshotUser(blocks.UserInput{Text: p.Text, Media: p.Media}), r.plainBlockLayout(false), r.blockTheme())
+}
+
+func (r *renderer) prepareNoticeSnapshot(p scrollback.NoticeCardSnapshot) blocks.Prepared {
+	return blocks.PrepareNotice(blocks.SnapshotNotice(blocks.NoticeInput{Text: p.Text, Recovery: p.Recover}), r.plainBlockLayout(false), r.blockTheme())
+}
+
+func (r *renderer) prepareHookSnapshot(p scrollback.HookCardSnapshot) blocks.Prepared {
+	return blocks.PrepareHook(blocks.SnapshotHook(blocks.HookInput{Text: p.Text, Phase: p.Phase, Tool: p.Tool, Decision: p.Decision}), r.plainBlockLayout(false), r.blockTheme())
+}
+
+func (r *renderer) prepareTurnStatSnapshot(p scrollback.TurnStatCardSnapshot) blocks.Prepared {
+	return blocks.PrepareTurnStat(blocks.SnapshotTurnStat(blocks.TurnStatInput{Text: p.Text}), r.plainBlockLayout(false), r.blockTheme())
+}
+
+func (r *renderer) prepareErrorSnapshot(p scrollback.ErrorCardSnapshot, expand bool) blocks.Prepared {
+	if p.Permanent {
+		return blocks.PreparePermanentError(blocks.SnapshotPermanentError(blocks.PermanentErrorInput{Text: p.Text}), r.plainBlockLayout(expand), r.blockTheme())
 	}
+	return blocks.PrepareError(blocks.SnapshotError(blocks.ErrorInput{Text: p.Text}), r.plainBlockLayout(false), r.blockTheme())
 }
 
-func (r *renderer) prepareUserBlock(b *block) blocks.Prepared {
-	return blocks.PrepareUser(blocks.SnapshotUser(userInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
-}
-
-func (r *renderer) prepareNoticeBlock(b *block) blocks.Prepared {
-	return blocks.PrepareNotice(blocks.SnapshotNotice(noticeInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
-}
-
-func (r *renderer) prepareHookBlock(b *block) blocks.Prepared {
-	return blocks.PrepareHook(blocks.SnapshotHook(hookInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
-}
-
-func (r *renderer) prepareTurnStatBlock(b *block) blocks.Prepared {
-	return blocks.PrepareTurnStat(blocks.SnapshotTurnStat(turnStatInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
-}
-
-func (r *renderer) prepareErrorBlock(b *block) blocks.Prepared {
-	return blocks.PrepareError(blocks.SnapshotError(errorInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
-}
-
-func (r *renderer) preparePermanentErrorBlock(b *block, expand bool) blocks.Prepared {
-	return blocks.PreparePermanentError(blocks.SnapshotPermanentError(permanentErrorInputFromBlock(b)), r.plainBlockLayout(expand), r.blockTheme())
-}
-
-func (r *renderer) prepareDeliveryBlock(b *block) blocks.Prepared {
-	return blocks.PrepareDelivery(blocks.SnapshotDelivery(deliveryInputFromBlock(b)), r.plainBlockLayout(false), r.blockTheme())
+func (r *renderer) prepareDeliverySnapshot(p scrollback.DeliveryCardSnapshot) blocks.Prepared {
+	return blocks.PrepareDelivery(blocks.SnapshotDelivery(blocks.DeliveryInput{ScheduleName: p.ScheduleName, FireID: p.FireID, Text: p.Text}), r.plainBlockLayout(false), r.blockTheme())
 }
