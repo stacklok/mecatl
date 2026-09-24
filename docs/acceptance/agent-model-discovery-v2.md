@@ -25,7 +25,7 @@ names stay out of the stable system prompt; the prompt instead tells the model h
 tool when the provider is unknown. Live data remains in the same composition-owned inventory
 used by `ListModels`, as described by the
 [model-inventory architecture](../architecture/providers.md#multi-provider--registry-per-session-routing--model-inventory)
-and the [phase-1 implementation notes](../design/IMPLEMENTATION-NOTES.md#agent-facing-model-discovery-issue-1064-phase-1).
+and the [phase-1 discovery contract](agent-model-discovery.md).
 
 ## Human decisions
 
