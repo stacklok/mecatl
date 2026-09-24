@@ -270755,6 +270755,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790271489156,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b3e8df843b38ad4db9b20e1a3730287b3f37d09e",
+          "message": "feat(mecatui): bound mention palette (#1833)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T13:34:27-07:00",
+          "tree_id": "2d94ce65236a46f9a8f4faf367fc90e09b65e42f",
+          "url": "https://github.com/stacklok/mecatl/commit/b3e8df843b38ad4db9b20e1a3730287b3f37d09e"
+        },
+        "date": 1790282747198,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3289.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 75,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1156,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -355039,6 +355078,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790282743923,
+  "lastUpdate": 1790282748119,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
