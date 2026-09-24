@@ -18,6 +18,7 @@ if (!Number.isInteger(port) || port < 1024 || port > 65_535) {
   throw new Error("STUDIO_BROWSER_PORT must be an available TCP port between 1024 and 65535");
 }
 const baseURL = `http://127.0.0.1:${port}`;
+const serveBuilt = process.env.STUDIO_BROWSER_SERVE_BUILT === "1";
 
 export default defineConfig({
   expect: { timeout: 5_000 },
@@ -54,7 +55,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `pnpm --filter @mecatl-studio/web exec vite --host 127.0.0.1 --port ${port}`,
+    command: `pnpm --filter @mecatl-studio/web exec vite ${serveBuilt ? "preview" : ""} --host 127.0.0.1 --port ${port}`,
     cwd: appsRoot,
     reuseExistingServer: false,
     timeout: 90_000,

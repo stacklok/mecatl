@@ -74,6 +74,21 @@ set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts**
 from **Settings > About**. The page lists the current browser bindings and
 features enabled by the connected deployment.
 
+### Inspect delegated activity
+
+When a run delegates work, its transcript shows an activity card for each
+observed Subagent, Parallel group, or Team member. Select a card to open that
+work in the activity panel. Select **Activity** in the chat header to open the
+session roster instead. The panel opens only when you select one of these
+controls.
+
+Use the Subagents, Parallel, and Teams tabs to inspect observed states, tool
+summaries, branch winners, team tasks and findings, and stop reasons. A selected
+child, branch, or member shows its 12 most recent trace entries and the number
+of older entries omitted. If replay history is incomplete, Studio marks it as
+incomplete and leaves unobserved outcomes unknown. Close the panel with Escape
+or its close button to return focus to the control that opened it.
+
 ## Review settings
 
 Open `/workspace/settings/profile` for personal preferences. Every settings

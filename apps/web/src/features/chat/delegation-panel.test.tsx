@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -9,7 +10,7 @@ import { type ContentPreview, ContentPreviewPanel } from "./content-preview-pane
 import type { DelegationFocus } from "./delegation-card";
 import { DelegationCardRow } from "./delegation-card";
 import type { SubagentActivity, TeamActivity } from "./delegation-fleet";
-import { createDelegationFleet } from "./delegation-fleet";
+import { applyDelegationDelivery, createDelegationFleet } from "./delegation-fleet";
 import { SessionActivityContent } from "./delegation-panel";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -105,6 +106,77 @@ const subagent: SubagentActivity = {
 };
 
 describe("session activity content", () => {
+  it("keeps activity usable at mobile widths and bounds trace rows", async () => {
+    function delivery(kind: string, seq: number, payload: unknown): RunStreamEvent {
+      return {
+        event: {
+          kind,
+          payload,
+          runId: "run-a",
+          seq: String(seq),
+          text: "",
+          turn: 1,
+          unknown: false,
+        },
+        type: "run.event",
+      };
+    }
+    let fleet = createDelegationFleet("session-a");
+    fleet = applyDelegationDelivery(
+      fleet,
+      delivery("subagent.start", 1, {
+        childId: "child-s",
+        goal: "Read",
+        parentCallId: "call-s",
+      }),
+    );
+    for (let index = 0; index < 16; index += 1) {
+      fleet = applyDelegationDelivery(
+        fleet,
+        delivery("subagent.tool", index + 2, {
+          childId: "child-s",
+          detail: `trace-${index} ${"🧪".repeat(250)}`,
+          innerKind: "tool.result",
+          parentCallId: "call-s",
+          toolCount: index + 1,
+        }),
+      );
+    }
+    const activity = fleet.subagents[0];
+    expect(activity).toBeDefined();
+    if (!activity) throw new Error("subagent activity missing");
+    const node = await mount(
+      <SessionActivityContent
+        fleet={fleet}
+        focus={{ family: "subagent", key: activity.key }}
+        onFocusChange={() => {}}
+      />,
+    );
+    const panel = node.querySelector('[role="tabpanel"]');
+    const trace = node.querySelector('[aria-label="Recent trace"]');
+    expect(node.querySelector('[role="tablist"]')).not.toBeNull();
+    const subagentsTab = node.querySelector('[role="tab"]') as HTMLButtonElement;
+    expect(subagentsTab.getAttribute("aria-label")).toBe("Subagents (1)");
+    expect(subagentsTab.children).toHaveLength(2);
+    expect(subagentsTab.children[0]?.textContent).toBe("Subagents");
+    expect(subagentsTab.children[1]?.textContent).toBe("(1)");
+    expect(panel?.textContent).toContain("Roster");
+    expect(panel?.textContent).toContain("Subagent child-s");
+    expect(trace?.getAttribute("aria-live")).toBe("off");
+    expect(node.querySelector('[aria-live="polite"]')?.textContent).toContain("Running");
+    expect(trace?.textContent).toContain("Older entries omitted: 4");
+    const rows = trace?.querySelectorAll("ol > li") ?? [];
+    expect(rows).toHaveLength(12);
+    expect(rows[0]?.textContent).toContain("trace-4");
+    expect(rows[11]?.textContent).toContain("trace-15");
+    expect(trace?.textContent).not.toContain("trace-3");
+    for (const row of rows) {
+      const detail = row.querySelector("p:last-child")?.textContent ?? "";
+      expect(Array.from(detail.replace(/^Detail: /, ""))).toHaveLength(201);
+      expect(detail.endsWith("…")).toBe(true);
+    }
+  });
+
   it("opens activity from a card and restores focus on close", async () => {
     const fleet = { ...createDelegationFleet("session-a"), subagents: [subagent] };
     function Journey() {

@@ -99,9 +99,10 @@ export function SessionActivityContent({
       >
         {families.map((item) => (
           <button
+            aria-label={`${familyLabels[item]} (${entries(fleet, item).length})`}
             aria-controls={`${id}-panel`}
             aria-selected={family === item}
-            className="min-w-0 rounded-md px-1 py-2 text-center text-xs font-medium leading-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-background data-[active=true]:shadow-sm"
+            className="flex min-w-0 flex-col items-center justify-center rounded-md px-0.5 py-2 text-center text-[11px] font-medium leading-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-background data-[active=true]:shadow-sm"
             data-active={family === item}
             id={`${id}-${item}`}
             key={item}
@@ -114,7 +115,8 @@ export function SessionActivityContent({
             tabIndex={family === item ? 0 : -1}
             type="button"
           >
-            {familyLabels[item]} ({entries(fleet, item).length})
+            <span className="whitespace-nowrap">{familyLabels[item]}</span>
+            <span className="text-muted-foreground">({entries(fleet, item).length})</span>
           </button>
         ))}
       </div>
@@ -474,7 +476,7 @@ function MemberDetails({
 
 function Trace({ trace }: { trace: DelegationTrace }) {
   return (
-    <section className="min-w-0 space-y-2" aria-label="Recent trace">
+    <section aria-label="Recent trace" aria-live="off" className="min-w-0 space-y-2">
       <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Recent trace
       </h4>
