@@ -110,16 +110,18 @@ func TestListIndicatorAdjustedPagingUsesVisibleHeight(t *testing.T) {
 	list.SetItems([]ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}, {ID: "d", Text: "d"}, {ID: "e", Text: "e"}})
 	list.Scroll(LineDown)
 	view := list.ViewWithIndicators(4, false)
-	if view.Above == 0 || view.Below == 0 {
-		t.Fatalf("indicator-adjusted view = %+v, want both above and below indicators", view)
+	// A one-row forward tail does not consume a second chrome row. The retained
+	// above indicator still leaves the list on its three-row visible page.
+	if view.Above == 0 || view.Below != 0 {
+		t.Fatalf("indicator-adjusted view = %+v, want only the above indicator for a short forward tail", view)
 	}
 	list.Move(PageDown)
-	if got := list.CursorID(); got != "d" {
-		t.Fatalf("page down cursor = %q, want d with indicator-adjusted height", got)
+	if got := list.CursorID(); got != "e" {
+		t.Fatalf("page down cursor = %q, want e with the short-tail visible height", got)
 	}
 	list.Move(PageUp)
-	if got := list.CursorID(); got != "b" {
-		t.Fatalf("page up cursor = %q, want b at the start of the immediately preceding indicator-adjusted page", got)
+	if got := list.CursorID(); got != "a" {
+		t.Fatalf("page up cursor = %q, want a at the start of the immediately preceding short-tail page", got)
 	}
 	list.SetCursor(4)
 	view = list.ViewWithIndicators(4, true)
