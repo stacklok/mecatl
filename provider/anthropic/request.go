@@ -653,8 +653,8 @@ func userBlocks(m session.Message, caps port.ProviderCapabilities) ([]sdk.Conten
 			}
 		case session.MediaAudio:
 			return nil, fmt.Errorf("anthropic: audio input not supported by the Messages API")
-		case session.MediaPDF:
-			if !caps.PDF {
+		case pdfMediaKind:
+			if !hasPDFCapability(caps) {
 				return nil, fmt.Errorf("anthropic: PDF input not supported by selected model")
 			}
 			if err := validateHydratedPDF(part); err != nil {
@@ -684,14 +684,15 @@ func validateHydratedPDF(part session.Content) error {
 	if part.BlockKind != "" || part.MIMEType != "application/pdf" || part.URL != "" {
 		return fmt.Errorf("anthropic: invalid PDF input")
 	}
-	if _, err := session.NewPDFContent(part.ArtifactID, part.Name, part.Size, part.SHA256); err != nil {
+	digest, valid := pdfMetadata(part)
+	if !valid {
 		return fmt.Errorf("anthropic: invalid PDF input metadata")
 	}
 	if len(part.Data) == 0 || int64(len(part.Data)) != part.Size {
 		return fmt.Errorf("anthropic: PDF input bytes not resolved")
 	}
 	sum := sha256.Sum256(part.Data)
-	if hex.EncodeToString(sum[:]) != part.SHA256 {
+	if hex.EncodeToString(sum[:]) != digest {
 		return fmt.Errorf("anthropic: PDF input digest mismatch")
 	}
 	return nil

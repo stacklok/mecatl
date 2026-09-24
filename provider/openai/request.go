@@ -358,8 +358,8 @@ func userContentList(m session.Message, caps port.ProviderCapabilities) (respons
 			})
 		case session.MediaAudio:
 			return nil, fmt.Errorf("openai: audio input not supported by Responses API")
-		case session.MediaPDF:
-			if !caps.PDF {
+		case pdfMediaKind:
+			if !hasPDFCapability(caps) {
 				return nil, fmt.Errorf("openai: PDF input not supported by selected model")
 			}
 			if err := validateHydratedPDF(p); err != nil {
@@ -385,14 +385,15 @@ func validateHydratedPDF(p session.Content) error {
 	if p.BlockKind != "" || p.MIMEType != "application/pdf" || p.URL != "" {
 		return fmt.Errorf("openai: invalid PDF input")
 	}
-	if _, err := session.NewPDFContent(p.ArtifactID, p.Name, p.Size, p.SHA256); err != nil {
+	digest, valid := pdfMetadata(p)
+	if !valid {
 		return fmt.Errorf("openai: invalid PDF input metadata")
 	}
 	if len(p.Data) == 0 || int64(len(p.Data)) != p.Size {
 		return fmt.Errorf("openai: PDF input bytes not resolved")
 	}
 	sum := sha256.Sum256(p.Data)
-	if hex.EncodeToString(sum[:]) != p.SHA256 {
+	if hex.EncodeToString(sum[:]) != digest {
 		return fmt.Errorf("openai: PDF input digest mismatch")
 	}
 	return nil

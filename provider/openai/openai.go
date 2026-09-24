@@ -502,7 +502,7 @@ func hasInvalidEncryptedDetail(msg string) bool {
 // port method stays the static transmit authority so modelCapability's AND stays
 // honest.
 func (p *Provider) Capabilities() port.ProviderCapabilities {
-	return port.ProviderCapabilities{Image: true, Audio: false, PDF: p.pdfInput, EmbeddedContext: true}
+	return withPDFCapability(port.ProviderCapabilities{Image: true, Audio: false, EmbeddedContext: true}, p.pdfInput)
 }
 
 // sessionCaps returns the per-session capability intersection the request
@@ -511,14 +511,10 @@ func (p *Provider) Capabilities() port.ProviderCapabilities {
 // Capabilities() (the byte-identical pre-T7 default).
 func (p *Provider) sessionCaps() port.ProviderCapabilities {
 	if p.caps != nil {
-		caps := *p.caps
-		caps.PDF = caps.PDF && p.pdfInput
-		return caps
+		return withPDFCapability(*p.caps, hasPDFCapability(*p.caps) && p.pdfInput)
 	}
-	caps := p.Capabilities()
 	// Static transmit support alone does not qualify an exact selected model.
-	caps.PDF = false
-	return caps
+	return withPDFCapability(p.Capabilities(), false)
 }
 
 // Compile-time assertion that Provider satisfies the port.
