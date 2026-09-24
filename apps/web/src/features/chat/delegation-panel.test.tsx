@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RunStreamEvent } from "@mecatl-studio/contracts";
+import { type RunStreamEvent, runStreamEventSchema } from "@mecatl-studio/contracts";
 import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
 import type { DelegationFocus } from "./delegation-card";
 import { DelegationCardRow } from "./delegation-card";
-import type { SubagentActivity, TeamActivity } from "./delegation-fleet";
+import type { ParallelGroupActivity, SubagentActivity, TeamActivity } from "./delegation-fleet";
 import { applyDelegationDelivery, createDelegationFleet } from "./delegation-fleet";
 import { SessionActivityContent } from "./delegation-panel";
 
@@ -105,6 +105,29 @@ const subagent: SubagentActivity = {
   },
 };
 
+const parallel: ParallelGroupActivity = {
+  key: '["session-a","run-a","parallel","call-p"]',
+  family: "parallel",
+  sessionId: "session-a",
+  runId: "run-a",
+  parentCallId: "call-p",
+  startObserved: true,
+  historyIncomplete: false,
+  state: "running",
+  join: "first",
+  branchCount: 1,
+  branches: [
+    {
+      key: '["session-a","run-a","parallel","call-p",0]',
+      branchIndex: 0,
+      startObserved: true,
+      historyIncomplete: false,
+      state: "running",
+      trace: { entries: [], omitted: 0 },
+    },
+  ],
+};
+
 describe("session activity content", () => {
   it("keeps activity usable at mobile widths and bounds trace rows", async () => {
     function delivery(kind: string, seq: number, payload: unknown): RunStreamEvent {
@@ -178,7 +201,12 @@ describe("session activity content", () => {
   });
 
   it("opens activity from a card and restores focus on close", async () => {
-    const fleet = { ...createDelegationFleet("session-a"), subagents: [subagent] };
+    const fleet = {
+      ...createDelegationFleet("session-a"),
+      subagents: [subagent],
+      parallelGroups: [parallel],
+      teams: [team],
+    };
     function Journey() {
       const [preview, setPreview] = useState<ContentPreview>();
       const [focus, setFocus] = useState<DelegationFocus>();
@@ -203,7 +231,7 @@ describe("session activity content", () => {
             Session activity
           </button>
           <DelegationCardRow
-            activities={[subagent]}
+            activities={[subagent, parallel, team]}
             key={revision}
             onOpen={(next, button) => {
               opener.current = button;
@@ -295,6 +323,180 @@ describe("session activity content", () => {
         ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
     );
     expect(document.activeElement).toBe(control);
+
+    const parallelCard = [...node.querySelectorAll("fieldset button")].find((button) =>
+      button.textContent?.includes("Parallel group"),
+    ) as HTMLButtonElement;
+    parallelCard.focus();
+    await act(async () => parallelCard.click());
+    expect(document.activeElement?.textContent).toBe("Parallel group call-p");
+    expect(node.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      "Parallel",
+    );
+    await act(async () =>
+      node
+        .querySelector('aside[aria-label="Session activity"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    expect(document.activeElement).toBe(parallelCard);
+
+    const workerCard = [...node.querySelectorAll("fieldset button")].find((button) =>
+      button.textContent?.includes("Member worker"),
+    ) as HTMLButtonElement;
+    workerCard.focus();
+    await act(async () => workerCard.click());
+    expect(document.activeElement?.textContent).toBe("Member worker");
+    expect(node.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      "Teams",
+    );
+    expect(node.querySelector('aside[aria-label="Session activity"]')?.textContent).toContain(
+      "Stopped: budget",
+    );
+    await act(async () =>
+      node
+        .querySelector('aside[aria-label="Session activity"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    expect(document.activeElement).toBe(workerCard);
+  });
+
+  it("shows only observed Parallel and Team facts after missing starts", () => {
+    let fleet = createDelegationFleet("session-a");
+    for (const delivery of [
+      {
+        kind: "parallel.branch",
+        payload: {
+          branchIndex: 0,
+          detail: "Observed branch detail",
+          innerKind: "tool.result",
+          kind: "branch_tool",
+          parentCallId: "call-p",
+        },
+      },
+      {
+        kind: "team.member",
+        payload: {
+          innerKind: "tool.call",
+          member: "worker",
+          parentCallId: "call-t",
+          teamId: "team-a",
+          toolName: "Read",
+        },
+      },
+      {
+        kind: "team.tasks",
+        payload: {
+          parentCallId: "call-t",
+          tasks: [
+            {
+              assignee: "worker",
+              deps: [],
+              description: "Observed task",
+              id: "task-1",
+              state: "pending",
+            },
+          ],
+          teamId: "team-a",
+        },
+      },
+      {
+        kind: "team.findings",
+        payload: {
+          findings: [{ body: "Observed finding", member: "worker" }],
+          parentCallId: "call-t",
+          teamId: "team-a",
+        },
+      },
+    ].map(
+      (item, index): RunStreamEvent => ({
+        type: "run.event",
+        event: {
+          ...item,
+          runId: "run-a",
+          seq: String(index + 1),
+          text: "",
+          turn: 1,
+          unknown: false,
+        },
+      }),
+    )) {
+      fleet = applyDelegationDelivery(fleet, delivery);
+    }
+    fleet = applyDelegationDelivery(fleet, { cursor: "", reason: "gap", type: "run.truncated" });
+    const group = fleet.parallelGroups[0];
+    const branch = group?.branches[0];
+    const teamActivity = fleet.teams[0];
+    const member = teamActivity?.members[0];
+    if (!group || !branch || !teamActivity || !member) throw new Error("partial activity missing");
+    const parallelHtml = renderToStaticMarkup(
+      <SessionActivityContent
+        fleet={fleet}
+        focus={{ family: "parallel", key: group.key, branchKey: branch.key }}
+        onFocusChange={() => {}}
+      />,
+    );
+    expect(parallelHtml).toContain("History incomplete: start event not observed");
+    expect(parallelHtml).toContain("Outcome unknown");
+    expect(parallelHtml).toContain("Observed branch detail");
+    expect(parallelHtml).not.toContain("Winner:");
+    expect(parallelHtml).not.toContain("Join:");
+    const teamHtml = renderToStaticMarkup(
+      <SessionActivityContent
+        fleet={fleet}
+        focus={{ family: "team", key: teamActivity.key, memberKey: member.key }}
+        onFocusChange={() => {}}
+      />,
+    );
+    expect(teamHtml).toContain("History incomplete: start event not observed");
+    expect(teamHtml).toContain("Outcome unknown");
+    expect(teamHtml).toContain("Observed task");
+    expect(teamHtml).toContain("Observed finding");
+    expect(teamHtml).toContain("Current tool: Read");
+    expect(teamHtml).not.toContain("Done");
+    expect(teamHtml).not.toContain("Stopped:");
+  });
+
+  it("omits raw event and child location fields from cards and panel", () => {
+    const rawSentinel = "RAW_ONLY_SENTINEL_1849";
+    const workspaceSentinel = "CHILD_WORKSPACE_SENTINEL_1849";
+    const pathSentinel = "CHILD_PATH_SENTINEL_1849";
+    const delivery = runStreamEventSchema.parse({
+      type: "run.event",
+      event: {
+        kind: "subagent.start",
+        runId: "run-a",
+        seq: "1",
+        text: "",
+        turn: 1,
+        unknown: false,
+        raw: { secret: rawSentinel },
+        payload: {
+          childId: "child-a",
+          goal: "Observed goal",
+          parentCallId: "call-a",
+          childWorkspace: workspaceSentinel,
+          childPath: pathSentinel,
+        },
+      },
+    });
+    const fleet = applyDelegationDelivery(createDelegationFleet("session-a"), delivery);
+    const child = fleet.subagents[0];
+    if (!child) throw new Error("subagent activity missing");
+    const card = renderToStaticMarkup(<DelegationCardRow activities={[child]} onOpen={() => {}} />);
+    const panel = renderToStaticMarkup(
+      <SessionActivityContent
+        fleet={fleet}
+        focus={{ family: "subagent", key: child.key }}
+        onFocusChange={() => {}}
+      />,
+    );
+    for (const sentinel of [rawSentinel, workspaceSentinel, pathSentinel]) {
+      expect(JSON.stringify(fleet)).not.toContain(sentinel);
+      expect(card).not.toContain(sentinel);
+      expect(panel).not.toContain(sentinel);
+    }
+    expect(card).toContain("Observed goal");
+    expect(panel).toContain("Observed goal");
   });
   it("renders team roster tasks and findings as plain text", async () => {
     const fleet = { ...createDelegationFleet("session-a"), teams: [team] };

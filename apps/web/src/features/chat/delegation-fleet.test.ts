@@ -27,6 +27,222 @@ function fold(...deliveries: RunStreamEvent[]) {
 }
 
 describe("delegation fleet", () => {
+  it("keeps reused child and call identities separate across run IDs", () => {
+    const fleet = fold(
+      event("subagent.start", "1", { childId: "child-a", goal: "First", parentCallId: "call-a" }),
+      event(
+        "subagent.start",
+        "1",
+        { childId: "child-a", goal: "Second", parentCallId: "call-a" },
+        "run-b",
+      ),
+      event(
+        "subagent.tool",
+        "2",
+        {
+          childId: "child-a",
+          innerKind: "tool.call",
+          parentCallId: "call-a",
+          toolCount: 1,
+          toolName: "Read",
+        },
+        "run-b",
+      ),
+      event("parallel.start", "3", { branchCount: 1, join: "all", parentCallId: "call-p" }),
+      event(
+        "parallel.start",
+        "3",
+        { branchCount: 2, join: "first", parentCallId: "call-p" },
+        "run-b",
+      ),
+      event("parallel.branch", "4", {
+        branchIndex: 0,
+        kind: "branch_start",
+        goal: "First branch",
+        parentCallId: "call-p",
+      }),
+      event(
+        "parallel.branch",
+        "4",
+        { branchIndex: 0, kind: "branch_start", goal: "Second branch", parentCallId: "call-p" },
+        "run-b",
+      ),
+      event("team.start", "5", {
+        parentCallId: "call-t",
+        roster: [{ name: "lead", role: "First" }],
+        teamId: "team-a",
+      }),
+      event(
+        "team.start",
+        "5",
+        { parentCallId: "call-t", roster: [{ name: "lead", role: "Second" }], teamId: "team-a" },
+        "run-b",
+      ),
+      event(
+        "team.tasks",
+        "6",
+        {
+          parentCallId: "call-t",
+          tasks: [
+            {
+              assignee: "lead",
+              deps: [],
+              description: "Second task",
+              id: "task-1",
+              state: "pending",
+            },
+          ],
+          teamId: "team-a",
+        },
+        "run-b",
+      ),
+    );
+    expect(fleet.subagents).toHaveLength(2);
+    expect(fleet.parallelGroups).toHaveLength(2);
+    expect(fleet.teams).toHaveLength(2);
+    const [firstChild, secondChild] = fleet.subagents;
+    expect(firstChild?.key).not.toBe(secondChild?.key);
+    expect(firstChild).toMatchObject({ goal: "First", runId: "run-a" });
+    expect(firstChild?.toolCount).toBeUndefined();
+    expect(secondChild).toMatchObject({ goal: "Second", runId: "run-b", toolCount: 1 });
+    expect(fleet.parallelGroups[0]).toMatchObject({ join: "all", runId: "run-a" });
+    expect(fleet.parallelGroups[0]?.branches[0]?.goal).toBe("First branch");
+    expect(fleet.parallelGroups[1]).toMatchObject({ join: "first", runId: "run-b" });
+    expect(fleet.parallelGroups[1]?.branches[0]?.goal).toBe("Second branch");
+    expect(fleet.teams[0]?.members[0]).toMatchObject({ role: "First" });
+    expect(fleet.teams[0]?.tasks).toEqual([]);
+    expect(fleet.teams[1]?.members[0]).toMatchObject({ role: "Second" });
+    expect(fleet.teams[1]?.tasks[0]?.description).toBe("Second task");
+  });
+
+  it("keeps missing Parallel and Team starts incomplete with only observed facts", () => {
+    const partial = fold(
+      event("parallel.branch", "1", {
+        branchIndex: 0,
+        detail: "Observed branch detail",
+        innerKind: "tool.result",
+        kind: "branch_tool",
+        parentCallId: "call-p",
+        toolCount: 1,
+      }),
+      event("team.member", "2", {
+        innerKind: "tool.call",
+        member: "worker",
+        parentCallId: "call-t",
+        teamId: "team-a",
+        toolName: "Read",
+      }),
+      event("team.tasks", "3", {
+        parentCallId: "call-t",
+        tasks: [
+          {
+            assignee: "worker",
+            deps: [],
+            description: "Observed task",
+            id: "task-1",
+            state: "pending",
+          },
+        ],
+        teamId: "team-a",
+      }),
+      event("team.findings", "4", {
+        findings: [{ body: "Observed finding", member: "worker" }],
+        parentCallId: "call-t",
+        teamId: "team-a",
+      }),
+    );
+    expect(partial.parallelGroups[0]).toMatchObject({
+      startObserved: false,
+      historyIncomplete: true,
+    });
+    expect(partial.parallelGroups[0]?.join).toBeUndefined();
+    expect(partial.parallelGroups[0]?.branchCount).toBeUndefined();
+    expect(partial.parallelGroups[0]?.branches[0]).toMatchObject({
+      startObserved: false,
+      historyIncomplete: true,
+      toolCount: 1,
+    });
+    expect(partial.parallelGroups[0]?.branches[0]?.goal).toBeUndefined();
+    expect(partial.parallelGroups[0]?.branches[0]?.label).toBeUndefined();
+    expect(partial.teams[0]).toMatchObject({ startObserved: false, historyIncomplete: true });
+    expect(partial.teams[0]?.stop).toBeUndefined();
+    expect(partial.teams[0]?.members[0]).toMatchObject({ name: "worker", currentTool: "Read" });
+    expect(partial.teams[0]?.members[0]?.role).toBeUndefined();
+    expect(partial.teams[0]?.tasks[0]?.description).toBe("Observed task");
+    expect(partial.teams[0]?.findings[0]?.body).toBe("Observed finding");
+    const gap = applyDelegationDelivery(partial, {
+      cursor: "",
+      reason: "gap",
+      type: "run.truncated",
+    });
+    expect(gap.incompleteHistory).toBe(true);
+    expect(gap.parallelGroups[0]?.state).toBe("unknown");
+    expect(gap.parallelGroups[0]?.branches[0]?.state).toBe("unknown");
+    expect(gap.teams[0]?.state).toBe("unknown");
+    expect(gap.teams[0]?.members[0]?.state).toBe("unknown");
+    expect(gap.parallelGroups[0]?.winner).toBeUndefined();
+    expect(gap.teams[0]?.members[0]?.disposition).toBeUndefined();
+  });
+
+  it("marks only matching running lanes unknown for result, unfollowed run, and gap", () => {
+    const fleet = fold(
+      event("subagent.start", "1", { childId: "a", parentCallId: "call-s" }),
+      event("parallel.start", "2", { parentCallId: "call-p" }),
+      event("parallel.branch", "3", {
+        branchIndex: 0,
+        kind: "branch_start",
+        parentCallId: "call-p",
+      }),
+      event("team.start", "4", {
+        parentCallId: "call-t",
+        roster: [{ name: "lead" }],
+        teamId: "team-a",
+      }),
+      event("subagent.start", "1", { childId: "b", parentCallId: "call-s" }, "run-b"),
+      event("parallel.start", "2", { parentCallId: "call-p" }, "run-b"),
+      event(
+        "parallel.branch",
+        "3",
+        { branchIndex: 0, kind: "branch_start", parentCallId: "call-p" },
+        "run-b",
+      ),
+      event(
+        "team.start",
+        "4",
+        { parentCallId: "call-t", roster: [{ name: "lead" }], teamId: "team-a" },
+        "run-b",
+      ),
+      event("subagent.end", "5", { childId: "a", parentCallId: "call-s", stop: "end_turn" }),
+    );
+    const result = applyDelegationDelivery(
+      fleet,
+      event("result", "5", { stop: "end_turn" }, "run-b"),
+    );
+    expect(result.incompleteHistory).toBe(false);
+    expect(result.subagents.map((item) => item.state)).toEqual(["finished", "unknown"]);
+    expect(result.parallelGroups.map((item) => item.state)).toEqual(["running", "unknown"]);
+    expect(result.parallelGroups.map((item) => item.branches[0]?.state)).toEqual([
+      "running",
+      "unknown",
+    ]);
+    expect(result.teams.map((item) => item.state)).toEqual(["running", "unknown"]);
+    expect(result.teams.map((item) => item.members[0]?.state)).toEqual(["running", "unknown"]);
+    const unfollowed = markDelegationRunUnfollowed(fleet, "run-a");
+    expect(unfollowed.incompleteHistory).toBe(true);
+    expect(unfollowed.subagents.map((item) => item.state)).toEqual(["finished", "running"]);
+    expect(unfollowed.parallelGroups.map((item) => item.state)).toEqual(["unknown", "running"]);
+    expect(unfollowed.teams.map((item) => item.members[0]?.state)).toEqual(["unknown", "running"]);
+    expect(markDelegationRunUnfollowed(fleet, "")).toBe(fleet);
+    const gap = markDelegationHistoryIncomplete(fleet);
+    expect(gap.incompleteHistory).toBe(true);
+    expect(gap.subagents.map((item) => item.state)).toEqual(["finished", "unknown"]);
+    expect(gap.parallelGroups.map((item) => item.branches[0]?.state)).toEqual([
+      "unknown",
+      "unknown",
+    ]);
+    expect(gap.teams.map((item) => item.members[0]?.state)).toEqual(["unknown", "unknown"]);
+  });
+
   it("separates interleaved delegation families and deduplicates replay by run and sequence", () => {
     const subagent = event("subagent.start", "9007199254740993", {
       childId: "child-a",

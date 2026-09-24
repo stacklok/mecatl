@@ -131,19 +131,7 @@ export function createDelegationFleet(sessionId: string): DelegationFleet {
 
 /** Mark a stream that cannot be followed further (gap, spent budget, or premature close). */
 export function markDelegationHistoryIncomplete(fleet: DelegationFleet): DelegationFleet {
-  return {
-    ...fleet,
-    incompleteHistory: true,
-    subagents: fleet.subagents.map(unknownIfRunning),
-    parallelGroups: fleet.parallelGroups.map((group) => ({
-      ...unknownIfRunning(group),
-      branches: group.branches.map(unknownIfRunning),
-    })),
-    teams: fleet.teams.map((team) => ({
-      ...unknownIfRunning(team),
-      members: team.members.map(unknownIfRunning),
-    })),
-  };
+  return { ...markUnknown(fleet), incompleteHistory: true };
 }
 
 /** Mark only one run after its stream closes before all delegation terminals arrive. */
@@ -152,23 +140,7 @@ export function markDelegationRunUnfollowed(
   runId: string,
 ): DelegationFleet {
   if (!runId) return fleet;
-  return {
-    ...fleet,
-    incompleteHistory: true,
-    subagents: fleet.subagents.map((entry) =>
-      runId === entry.runId ? unknownIfRunning(entry) : entry,
-    ),
-    parallelGroups: fleet.parallelGroups.map((group) =>
-      runId === group.runId
-        ? { ...unknownIfRunning(group), branches: group.branches.map(unknownIfRunning) }
-        : group,
-    ),
-    teams: fleet.teams.map((team) =>
-      runId === team.runId
-        ? { ...unknownIfRunning(team), members: team.members.map(unknownIfRunning) }
-        : team,
-    ),
-  };
+  return { ...markUnknown(fleet, runId), incompleteHistory: true };
 }
 
 /** Fold one Studio BFF delivery into a session-owned, family-specific projection. */
@@ -626,18 +598,22 @@ function appendTrace(trace: DelegationTrace, payload: Record<string, unknown>): 
 }
 
 function markRunOutcomeUnknown(fleet: DelegationFleet, runId: string): DelegationFleet {
+  return markUnknown(fleet, runId);
+}
+
+/** A gap covers every run; a result or lost follower changes only its own run. */
+function markUnknown(fleet: DelegationFleet, runId?: string): DelegationFleet {
+  const matches = (entry: { runId: string }) => runId === undefined || entry.runId === runId;
   return {
     ...fleet,
-    subagents: fleet.subagents.map((entry) =>
-      entry.runId === runId ? unknownIfRunning(entry) : entry,
-    ),
+    subagents: fleet.subagents.map((entry) => (matches(entry) ? unknownIfRunning(entry) : entry)),
     parallelGroups: fleet.parallelGroups.map((group) =>
-      group.runId === runId
+      matches(group)
         ? { ...unknownIfRunning(group), branches: group.branches.map(unknownIfRunning) }
         : group,
     ),
     teams: fleet.teams.map((team) =>
-      team.runId === runId
+      matches(team)
         ? { ...unknownIfRunning(team), members: team.members.map(unknownIfRunning) }
         : team,
     ),
