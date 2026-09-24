@@ -3251,7 +3251,7 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 			e.save(ctx, r, sess)
 		}
 		if err != nil {
-			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)
+			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory usage observer failed", "error", err)
 		}
 		return
 	}
