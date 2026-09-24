@@ -130,7 +130,7 @@ The current [entry point](../../apps/web/src/main.tsx) applies theme after modul
 
 ### Scenario 3 — appearance controls work at the 500px pivot
 
-The existing [settings choice control](../../apps/web/src/features/settings/option-field.tsx), [mobile hook](../../apps/web/src/lib/use-mobile.ts), and [Radix wrappers](../../apps/web/src/components/ui/dialog.tsx) provide the local starting point inside [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md)'s web package.
+The [shared choice control](../../apps/web/src/components/ui/option-field.tsx), [mobile hook](../../apps/web/src/lib/use-mobile.ts), and [Radix wrappers](../../apps/web/src/components/ui/dialog.tsx) provide the local foundation inside [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md)'s web package.
 
 **Acceptance:**
 - AC3.1: The shared OptionField and the reused Button, Input, Dialog, Sheet, DropdownMenu, and Switch expose visible focus and keyboard operation in light and dark; the selected option is announced and focus returns to the trigger after close.
