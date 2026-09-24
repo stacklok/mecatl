@@ -29,6 +29,8 @@ export const sessionSummarySchema = z.object({
   modelId: z.string(),
   state: z.string(),
   title: z.string(),
+  titleProvenance: z.string(),
+  titleRevision: z.string().regex(/^(0|[1-9]\d*)$/),
   turns: z.number().int().nonnegative(),
   updatedAt: z.string(),
 });
@@ -111,6 +113,8 @@ export const renameSessionRequestSchema = z.object({
 
 export const renameSessionResponseSchema = z.object({
   title: z.string(),
+  titleProvenance: z.string(),
+  titleRevision: z.string().regex(/^(0|[1-9]\d*)$/),
 });
 
 export const transcriptToolCallSchema = z.object({
@@ -179,7 +183,15 @@ export const transcriptImageSchema = z.object({
   url: z.string().url().max(2_048).optional(),
 });
 
+export const deliveryNoteSchema = z.object({
+  fireId: z.string(),
+  kind: z.enum(["started", "completed"]),
+  scheduleName: z.string(),
+  stop: z.string().optional(),
+});
+
 export const transcriptMessageSchema = z.object({
+  delivery: deliveryNoteSchema.optional(),
   images: z.array(transcriptImageSchema),
   role: z.string(),
   text: z.string(),
@@ -221,6 +233,7 @@ export const steerRunRequestSchema = z.object({
 export const eventUsageSchema = sessionUsageSchema;
 
 export const serializedMecatlEventSchema = z.object({
+  delivery: deliveryNoteSchema.optional(),
   kind: z.string(),
   payload: z.unknown().optional(),
   raw: z.unknown().optional(),

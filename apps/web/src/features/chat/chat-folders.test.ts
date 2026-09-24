@@ -68,6 +68,8 @@ describe("chat folders", () => {
       modelId: "",
       state: "idle",
       title: id,
+      titleProvenance: "",
+      titleRevision: "0",
       turns: 0,
       updatedAt,
     });

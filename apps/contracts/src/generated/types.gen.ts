@@ -388,6 +388,8 @@ export type ListSessionsResponses = {
             modelId: string;
             state: string;
             title: string;
+            titleProvenance: string;
+            titleRevision: string;
             turns: number;
             updatedAt: string;
         }>;
@@ -493,6 +495,12 @@ export type GetSessionTranscriptResponses = {
     200: {
         complete: boolean;
         messages: Array<{
+            delivery?: {
+                fireId: string;
+                kind: 'started' | 'completed';
+                scheduleName: string;
+                stop?: string;
+            };
             images: Array<{
                 data?: string;
                 mimeType: string;
@@ -674,6 +682,8 @@ export type RenameSessionResponses = {
      */
     200: {
         title: string;
+        titleProvenance: string;
+        titleRevision: string;
     };
 };
 
@@ -732,6 +742,12 @@ export type StartRunResponses = {
         type: 'run.started';
     } | {
         event: {
+            delivery?: {
+                fireId: string;
+                kind: 'started' | 'completed';
+                scheduleName: string;
+                stop?: string;
+            };
             kind: string;
             payload?: unknown;
             raw?: unknown;
@@ -832,6 +848,12 @@ export type WatchSessionActivityResponses = {
         type: 'run.started';
     } | {
         event: {
+            delivery?: {
+                fireId: string;
+                kind: 'started' | 'completed';
+                scheduleName: string;
+                stop?: string;
+            };
             kind: string;
             payload?: unknown;
             raw?: unknown;
@@ -1159,6 +1181,12 @@ export type RetrySessionResponses = {
         type: 'run.started';
     } | {
         event: {
+            delivery?: {
+                fireId: string;
+                kind: 'started' | 'completed';
+                scheduleName: string;
+                stop?: string;
+            };
             kind: string;
             payload?: unknown;
             raw?: unknown;

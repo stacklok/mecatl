@@ -99,6 +99,74 @@ describe("Mecatl chat sessions", () => {
     expect(response.items.map((item) => item.debugTargetSessionId)).toEqual(["session-1", ""]);
   });
 
+  it("projects full-precision title metadata from inventory and rename snapshots", async () => {
+    const revision = 9_007_199_254_740_993n;
+    const list = vi.fn().mockResolvedValue({
+      nextCursor: "",
+      sessions: [
+        {
+          capabilities: { delete: true, rename: true },
+          createdAtUnix: 0n,
+          modifiedAtUnix: 0n,
+          sessionId: "session-1",
+          title: "Legacy title",
+          titleMetadata: { provenance: "generated", revision, title: "Generated title" },
+          turns: 0,
+        },
+        {
+          capabilities: { delete: true, rename: true },
+          createdAtUnix: 0n,
+          modifiedAtUnix: 0n,
+          sessionId: "session-2",
+          title: "Legacy title",
+          turns: 0,
+        },
+      ],
+    });
+    const rename = vi.fn().mockResolvedValue({
+      title: { provenance: "operator", revision: revision + 1n, value: "Operator title" },
+    });
+    const service = createMecatlChatService({
+      sessions: { get: vi.fn().mockResolvedValue({ rename }), list },
+    } as unknown as Client);
+
+    const inventory = await service.listSessions();
+    expect(inventory.items).toMatchObject([
+      {
+        title: "Generated title",
+        titleProvenance: "generated",
+        titleRevision: "9007199254740993",
+      },
+      { title: "Legacy title", titleProvenance: "", titleRevision: "0" },
+    ]);
+    await expect(service.renameSession("session-1", "Operator title")).resolves.toEqual({
+      title: "Operator title",
+      titleProvenance: "operator",
+      titleRevision: "9007199254740994",
+    });
+  });
+
+  it("forwards a session.title event's revision as a JSON-safe decimal string", () => {
+    const event = {
+      kind: "session.title",
+      payload: {
+        generationState: "complete",
+        provenance: "generated",
+        revision: 9_007_199_254_740_993n,
+        title: "Generated title",
+      },
+      runId: "run-1",
+      seq: 2n,
+      text: "",
+      turn: 1,
+    } as Event;
+    expect(serializeEvent(event)).toMatchObject({
+      kind: "session.title",
+      payload: { revision: "9007199254740993", title: "Generated title" },
+      unknown: false,
+    });
+  });
+
   it("maps snapshot configuration, capabilities, and cumulative token usage", async () => {
     const snapshot = vi.fn().mockResolvedValue({
       capabilities: { manualCompaction: true, modelSelection: true },

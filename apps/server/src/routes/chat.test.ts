@@ -70,6 +70,8 @@ const chat = {
           modelId: "test-model",
           state: "idle",
           title: "First chat",
+          titleProvenance: "operator",
+          titleRevision: "9007199254740993",
           turns: 1,
           updatedAt: "2026-09-16T12:01:00.000Z",
         },
@@ -77,7 +79,7 @@ const chat = {
     };
   },
   async renameSession(_sessionId: string, title: string) {
-    return { title };
+    return { title, titleProvenance: "operator", titleRevision: "9007199254740994" };
   },
   async *retry(sessionId: string): AsyncIterable<RunStreamEvent> {
     yield { runId: "run-retry", sessionId, type: "run.started" };
@@ -130,7 +132,21 @@ describe("chat routes", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       complete: true,
-      items: [{ id: "session-1", title: "First chat" }],
+      items: [{ id: "session-1", title: "First chat", titleRevision: "9007199254740993" }],
+    });
+  });
+
+  it("returns the renamed title and its revision through the BFF route", async () => {
+    const response = await request("/api/v1/sessions/session-1", {
+      body: JSON.stringify({ title: "Renamed chat" }),
+      headers: { "Content-Type": "application/json" },
+      method: "PATCH",
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      title: "Renamed chat",
+      titleProvenance: "operator",
+      titleRevision: "9007199254740994",
     });
   });
 

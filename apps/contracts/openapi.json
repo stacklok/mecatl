@@ -987,6 +987,13 @@
                           "title": {
                             "type": "string"
                           },
+                          "titleProvenance": {
+                            "type": "string"
+                          },
+                          "titleRevision": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d*)$"
+                          },
                           "turns": {
                             "type": "integer",
                             "minimum": 0
@@ -1003,6 +1010,8 @@
                           "modelId",
                           "state",
                           "title",
+                          "titleProvenance",
+                          "titleRevision",
                           "turns",
                           "updatedAt"
                         ]
@@ -1290,6 +1299,32 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "delivery": {
+                            "type": "object",
+                            "properties": {
+                              "fireId": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "started",
+                                  "completed"
+                                ]
+                              },
+                              "scheduleName": {
+                                "type": "string"
+                              },
+                              "stop": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fireId",
+                              "kind",
+                              "scheduleName"
+                            ]
+                          },
                           "images": {
                             "type": "array",
                             "items": {
@@ -1721,10 +1756,19 @@
                   "properties": {
                     "title": {
                       "type": "string"
+                    },
+                    "titleProvenance": {
+                      "type": "string"
+                    },
+                    "titleRevision": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d*)$"
                     }
                   },
                   "required": [
-                    "title"
+                    "title",
+                    "titleProvenance",
+                    "titleRevision"
                   ]
                 }
               }
@@ -2003,6 +2047,32 @@
                         "event": {
                           "type": "object",
                           "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
                             "kind": {
                               "type": "string"
                             },
@@ -2266,6 +2336,32 @@
                         "event": {
                           "type": "object",
                           "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
                             "kind": {
                               "type": "string"
                             },
@@ -3270,6 +3366,32 @@
                         "event": {
                           "type": "object",
                           "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
                             "kind": {
                               "type": "string"
                             },
