@@ -95,9 +95,27 @@ func duplicatedPDFPayload(result session.ToolResult, pdfIndex int) bool {
 			// allowed; the guard concerns bytes left in surviving fields.
 			continue
 		}
-		if bytes.Contains(block.Data, blob) || containsPDFBytes(block.Text, blob, encoded) ||
-			containsPDFBytes(block.URL, blob, encoded) || containsPDFBytes(block.Name, blob, encoded) ||
-			containsPDFBytes(block.Title, blob, encoded) || containsPDFBytes(block.Description, blob, encoded) {
+		if blockRepeatsPDF(block, blob, encoded) {
+			return true
+		}
+	}
+	return false
+}
+
+func blockRepeatsPDF(block session.Content, blob []byte, encoded string) bool {
+	// Scan every surviving byte or string field. BlockKind is a validated enum;
+	// Size and Priority cannot hold payload bytes.
+	if bytes.Contains(block.Data, blob) || bytes.Contains(block.Data, []byte(encoded)) ||
+		containsPDFBytes(block.Text, blob, encoded) ||
+		containsPDFBytes(block.URL, blob, encoded) || containsPDFBytes(block.Name, blob, encoded) ||
+		containsPDFBytes(block.Title, blob, encoded) || containsPDFBytes(block.Description, blob, encoded) ||
+		containsPDFBytes(string(block.Kind), blob, encoded) || containsPDFBytes(block.MIMEType, blob, encoded) ||
+		containsPDFBytes(block.ArtifactID, blob, encoded) || containsPDFBytes(block.SHA256, blob, encoded) ||
+		containsPDFBytes(block.LastModified, blob, encoded) {
+		return true
+	}
+	for _, audience := range block.Audience {
+		if containsPDFBytes(audience, blob, encoded) {
 			return true
 		}
 	}

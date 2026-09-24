@@ -4,15 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 )
 
@@ -174,6 +180,125 @@ func TestSDKPDFArtifacts_Scenario2_FailClosed(t *testing.T) {
 			store := newResultProcessorStore(t, tc.objects)
 			event, snapshot, audit, model := runArtifactResult(t, ResultProcessor{Artifacts: store}, tc.result, nil)
 			assertPDFErrorViews(t, tc.blob, event, snapshot, audit, model)
+		})
+	}
+}
+
+func TestPDFResultProcessorSurvivingMetadata(t *testing.T) {
+	pdf := []byte("%PDF-1.7\nprivate contents\n%%EOF")
+	t.Run("base64 in binary block", func(t *testing.T) {
+		objects := &memoryObjects{data: make(map[string][]byte)}
+		store := newResultProcessorStore(t, objects)
+		result := pdfResult(pdf, "")
+		result.Parts[2] = session.Content{
+			BlockKind: session.BlockImage,
+			Kind:      session.MediaImage,
+			MIMEType:  "image/png",
+			Data:      []byte(base64.StdEncoding.EncodeToString(pdf)),
+		}
+		got, err := (ResultProcessor{Artifacts: store}).ProcessToolResult(t.Context(), "pdf-result-owner", result)
+		if err == nil || got.CallID != "" || len(got.Parts) != 0 || len(objects.data) != 0 {
+			t.Fatalf("base64 PDF copy in binary block was accepted: result=%+v err=%v objects=%d", got, err, len(objects.data))
+		}
+	})
+	fields := []struct {
+		name string
+		set  func(*session.Content, string)
+	}{
+		{"MIMEType", func(block *session.Content, payload string) { block.MIMEType = payload }},
+		{"Audience", func(block *session.Content, payload string) { block.Audience = []string{"user", payload} }},
+		{"LastModified", func(block *session.Content, payload string) { block.LastModified = payload }},
+		{"ArtifactID", func(block *session.Content, payload string) { block.ArtifactID = payload }},
+		{"SHA256", func(block *session.Content, payload string) { block.SHA256 = payload }},
+		{"Kind", func(block *session.Content, payload string) { block.Kind = session.MediaKind(payload) }},
+	}
+	for _, field := range fields {
+		for _, encoding := range []struct {
+			name string
+			copy string
+		}{
+			{"raw", string(pdf)},
+			{"base64", base64.StdEncoding.EncodeToString(pdf)},
+		} {
+			t.Run(field.name+"/"+encoding.name, func(t *testing.T) {
+				objects := &memoryObjects{data: make(map[string][]byte)}
+				store := newResultProcessorStore(t, objects)
+				result := pdfResult(pdf, "")
+				result.Parts[2] = session.NewResourceLinkBlock("https://example.test/doc", "doc", "", "", "text/plain", 0, nil)
+				field.set(&result.Parts[2], encoding.copy)
+				got, err := (ResultProcessor{Artifacts: store}).ProcessToolResult(t.Context(), "pdf-result-owner", result)
+				if err == nil || got.CallID != "" || got.Content != "" || got.IsError || len(got.Parts) != 0 || len(objects.data) != 0 {
+					t.Fatalf("surviving %s %s PDF copy was accepted: result=%+v err=%v objects=%d", field.name, encoding.name, got, err, len(objects.data))
+				}
+			})
+		}
+	}
+	for _, field := range fields[:2] {
+		t.Run("engine "+field.name, func(t *testing.T) {
+			objects := &memoryObjects{data: make(map[string][]byte)}
+			store := newResultProcessorStore(t, objects)
+			result := pdfResult(pdf, "")
+			result.Parts[2] = session.NewResourceLinkBlock("https://example.test/doc", "doc", "", "", "text/plain", 0, nil)
+			field.set(&result.Parts[2], base64.StdEncoding.EncodeToString(pdf))
+			event, snapshot, audit, model := runArtifactResult(t, ResultProcessor{Artifacts: store}, result, nil)
+			assertPDFErrorViews(t, pdf, event, snapshot, audit, model)
+			if len(objects.data) != 0 {
+				t.Fatalf("rejected %s copy staged %d objects", field.name, len(objects.data))
+			}
+		})
+	}
+}
+
+func TestPDFResultProcessorMCPMetadataCopies(t *testing.T) {
+	pdf := []byte("%PDF-1.7\nprivate contents\n%%EOF")
+	encoded := base64.StdEncoding.EncodeToString(pdf)
+	for _, tc := range []struct {
+		name string
+		link *mcpsdk.ResourceLink
+		want func(session.Content) bool
+	}{
+		{"MIMEType", &mcpsdk.ResourceLink{URI: "https://example.test/doc", MIMEType: encoded}, func(b session.Content) bool { return b.MIMEType == encoded }},
+		{"Audience", &mcpsdk.ResourceLink{URI: "https://example.test/doc", Annotations: &mcpsdk.Annotations{Audience: []mcpsdk.Role{mcpsdk.Role(encoded)}}}, func(b session.Content) bool { return len(b.Audience) == 1 && b.Audience[0] == encoded }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "pdf-metadata", Version: "v1"}, nil)
+			srv.AddTool(&mcpsdk.Tool{Name: "metadata", InputSchema: map[string]any{"type": "object"}},
+				func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+					return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
+						&mcpsdk.EmbeddedResource{Resource: &mcpsdk.ResourceContents{MIMEType: "application/pdf", Blob: pdf}},
+						tc.link,
+					}}, nil
+				})
+			httpSrv := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
+			t.Cleanup(httpSrv.Close)
+			remote, err := mcp.Connect(t.Context(), mcp.ServerConfig{Name: "pdfmetadata", URL: httpSrv.URL, PDFArtifactResults: true}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = remote.Close() })
+			var mapped session.ToolResult
+			found := false
+			for _, remoteTool := range remote.Tools() {
+				if remoteTool.Spec().Name != "mcp__pdfmetadata__metadata" {
+					continue
+				}
+				found = true
+				mapped, err = remoteTool.Execute(t.Context(), session.NewToolCall("call-1", remoteTool.Spec().Name, json.RawMessage(`{}`)), tool.Environment{})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !found || mapped.IsError || mapped.CallID != "call-1" || len(mapped.Parts) != 2 ||
+				!bytes.Equal(mapped.Parts[0].Data, pdf) || !tc.want(mapped.Parts[1]) {
+				t.Fatalf("MCP metadata copy did not reach the processor: %+v", mapped)
+			}
+			objects := &memoryObjects{data: make(map[string][]byte)}
+			store := newResultProcessorStore(t, objects)
+			event, snapshot, audit, model := runArtifactResult(t, ResultProcessor{Artifacts: store}, mapped, nil)
+			assertPDFErrorViews(t, pdf, event, snapshot, audit, model)
+			if len(objects.data) != 0 {
+				t.Fatalf("rejected MCP %s copy staged %d objects", tc.name, len(objects.data))
+			}
 		})
 	}
 }
