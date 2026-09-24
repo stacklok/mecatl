@@ -5,7 +5,7 @@
 **Decision record:** [ADR 0357](../adr/0357-studio-anonymous-status-and-popup-login.md)
 **Phase:** Studio design parity — sign-in and recovery
 **Status:** proposed, 2026-09-24. Based on issue #1845, the #1779 design baseline, ADR 0351, repository behavior, and the directing human's status, fallback, retry, email, and identity decisions.
-**Delivery:** Split. The new public and security interfaces need their own Plan / Interface review before implementation; the implementation PR will independently target `main`.
+**Delivery:** Split. The Plan / Interface PR targets `main` independently. At the directing human's request, a draft Implementation PR is stacked on this proposed plan for early review; contract approval still occurs when the Plan PR merges.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1845](https://github.com/stacklok/mecatl/issues/1845).
 **Plan PR:** [#1860](https://github.com/stacklok/mecatl/pull/1860)
@@ -23,6 +23,7 @@ An anonymous browser can distinguish a reachable Studio BFF, an unavailable daem
 - [x] Email source and identity boundary. — Decision: show only an optional verified OIDC ID-token `email` claim; make no userinfo request or scope change; retain the opaque `account` key and keep the raw subject inside BFF-readable sealed data, out of browser responses and audit logs.
 - [x] Missing account identity. — Decision: reject an OIDC login without a usable ID-token `sub`, invalidate subjectless legacy OIDC sessions, and clear prior account-scoped browser state if an authenticated response lacks an opaque account key. No accountless OIDC session may render a workspace.
 - [x] Existing callback compatibility. — Decision: bind popup mode in the sealed login transaction while keeping the registered callback URL, local alias, validated `return_to` redirect for ordinary login, and ADR 0351's sealed-cookie, SDK, and one-origin boundaries.
+- [x] Early implementation review and browser proof setup. — Decision: stack a draft Implementation PR on this proposed Plan / Interface PR before merge, and add the smallest offline Playwright runner, fixtures, and proof resolver needed for #1845's named journeys. Record the overlap for #1776.
 
 ## Interface contract
 
@@ -80,7 +81,7 @@ The [Studio bootstrap contract](studio-bootstrap.md) owns PKCE, cookie sealing, 
 
 **Acceptance:**
 - AC2.1: a sign-in action opens `/api/v1/auth/login?flow=popup` synchronously in a popup; the original tab retains its pathname, search, hash, and in-memory draft while a successful callback completes the session.
-  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#cG9wdXAgc2lnbi1pbiBwcmVzZXJ2ZXMgcm91dGUgYW5kIGRyYWZ0 — `apps/web/e2e/auth-recovery.spec.ts :: "popup sign-in preserves route and draft"`, using #1776's offline browser harness.
+  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#cG9wdXAgc2lnbi1pbiBwcmVzZXJ2ZXMgcm91dGUgYW5kIGRyYWZ0 — `apps/web/e2e/auth-recovery.spec.ts :: "popup sign-in preserves route and draft"`, using #1845's focused offline browser setup.
 - AC2.2: a valid popup transaction returns a CSP-compatible same-origin callback page that posts only the declared result with an exact target origin and closes; the opener accepts only an exact active-popup message from its own origin and verifies the session with the BFF.
   - verify: vitest:apps/server/src/routes/auth.test.ts#cG9wdXAgY2FsbGJhY2sgcmV0dXJucyBhIGNvbnN0cmFpbmVkIENTUC1zYWZlIHJlc3VsdA — `apps/server/src/routes/auth.test.ts :: "popup callback returns a constrained CSP-safe result"`.
   - verify: vitest:apps/web/src/features/auth/auth-recovery.test.tsx#cG9wdXAgbWVzc2FnZXMgcmVxdWlyZSBvcmlnaW4gc291cmNlIGFuZCBhY3RpdmUgYXR0ZW1wdA — `apps/web/src/features/auth/auth-recovery.test.tsx :: "popup messages require origin source and active attempt"`.
@@ -91,23 +92,23 @@ The [Studio bootstrap contract](studio-bootstrap.md) owns PKCE, cookie sealing, 
 
 ### Scenario 3 — recovery and banners keep the workspace usable
 
-The current [auth gate](../../apps/web/src/features/auth/auth-gate.tsx) unmounts the workspace when a session disappears, losing the [chat composer's](../../apps/web/src/features/chat/chat-composer.tsx) in-memory draft. #1845 owns recovery state and the banner data contract. #1844 owns the shell band and styling that render it; #1846 owns detailed runtime and settings projections. #1776 supplies the offline browser test infrastructure and `playwright:` resolver for `apps/`.
+The current [auth gate](../../apps/web/src/features/auth/auth-gate.tsx) unmounts the workspace when a session disappears, losing the [chat composer's](../../apps/web/src/features/chat/chat-composer.tsx) in-memory draft. #1845 owns recovery state and the banner data contract. #1844 owns the shell band and styling that render it; #1846 owns detailed runtime and settings projections. #1845 supplies the focused offline browser setup and `playwright:` resolver needed by these journeys; coordinate the overlapping general harness work with #1776.
 
 **Acceptance:**
 - AC3.1: blocked, manually closed, openerless, or message-less popups leave the original tab and draft mounted, show retry and a user-initiated new-tab sign-in link with `noopener`, and recheck the session on focus or popup closure before showing a failure.
   - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#YmxvY2tlZCBhbmQgY2xvc2VkIHBvcHVwcyBvZmZlciBhIHJlY292ZXJhYmxlIHNpZ24taW4 — `apps/web/e2e/auth-recovery.spec.ts :: "blocked and closed popups offer a recoverable sign-in"`, with popup blocking and no-opener fixtures.
 - AC3.2: `401 unauthenticated` or `401 session_expired` moves the tab into a recoverable sign-in state without navigating away or unmounting its draft; after same-account login, reads refetch, while a mutation or stream resumes only after an explicit user action.
   - verify: vitest:apps/web/src/features/auth/auth-recovery.test.tsx#ZXhwaXJlZCBzZXNzaW9uIHByZXNlcnZlcyBhIGRyYWZ0IGFuZCBuZXZlciByZXBsYXlzIHdyaXRlcw — `apps/web/src/features/auth/auth-recovery.test.tsx :: "expired session preserves a draft and never replays writes"`.
-  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#ZXhwaXJlZCBzZXNzaW9uIHJlcXVpcmVzIGV4cGxpY2l0IHJldHJ5IGZvciBhIHdyaXRl — `apps/web/e2e/auth-recovery.spec.ts :: "expired session requires explicit retry for a write"`, using #1776's offline issuer and daemon fixtures.
+  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#ZXhwaXJlZCBzZXNzaW9uIHJlcXVpcmVzIGV4cGxpY2l0IHJldHJ5IGZvciBhIHdyaXRl — `apps/web/e2e/auth-recovery.spec.ts :: "expired session requires explicit retry for a write"`, using #1845's offline BFF fixture.
 - AC3.3: same-account reauthentication preserves the route and draft; a different account or an authenticated response without a usable account key clears user-scoped browser storage, authenticated query data, and the mounted draft before any workspace is rendered for that identity.
   - verify: vitest:apps/web/src/features/auth/auth-recovery.test.tsx#c2FtZSBhY2NvdW50IGtlZXBzIGRyYWZ0IGFuZCBkaWZmZXJlbnQgYWNjb3VudCBjbGVhcnMgaXQ — `apps/web/src/features/auth/auth-recovery.test.tsx :: "same account keeps draft and different account clears it"`.
 - AC3.4: the public shell and #1844 banner render for an initial anonymous tab; the declared banner input treats a failed status fetch as BFF unavailable, `connection: unavailable` as daemon unavailable, a failed session check as a retryable verification outage, then `signInRequired` as auth recovery; `checking` is neutral. Anonymous rendering requests no detailed runtime or storage health; storage health is shown only after authentication.
   - verify: vitest:apps/web/src/components/shell/connection-status-banner.test.tsx#cHVibGljIHN0YXR1cyBiYW5uZXJzIHByaW9yaXRpemUgb3V0YWdlcyBiZWZvcmUgc2lnbi1pbg — `apps/web/src/components/shell/connection-status-banner.test.tsx :: "public status banners prioritize outages before sign-in"`.
   - verify: vitest:apps/web/src/components/shell/connection-status-banner.test.tsx#YW5vbnltb3VzIGJhbm5lcnMgbmV2ZXIgcmVxdWVzdCBzdG9yYWdlIGhlYWx0aA — `apps/web/src/components/shell/connection-status-banner.test.tsx :: "anonymous banners never request storage health"`.
-  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#YW5vbnltb3VzIHNoZWxsIHNob3dzIG91dGFnZSBiZWZvcmUgc2lnbi1pbg — `apps/web/e2e/auth-recovery.spec.ts :: "anonymous shell shows outage before sign-in"`, using #1776's offline daemon transport and authentication fixtures.
+  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#YW5vbnltb3VzIHNoZWxsIHNob3dzIG91dGFnZSBiZWZvcmUgc2lnbi1pbg — `apps/web/e2e/auth-recovery.spec.ts :: "anonymous shell shows outage before sign-in"`, using #1845's offline BFF fixture.
 - AC3.5: a transient `/api/v1/auth/session` check failure never changes a previously mounted workspace into a sign-out frame or discards its route and in-memory draft; it shows the session-verification outage and retry, and pauses new mutations and streams until a successful check. Initial session-check failure keeps the public shell visible with retry and no authenticated data.
   - verify: vitest:apps/web/src/features/auth/auth-recovery.test.tsx#c2Vzc2lvbiBjaGVjayBmYWlsdXJlIGtlZXBzIHRoZSBtb3VudGVkIGRyYWZ0 — `apps/web/src/features/auth/auth-recovery.test.tsx :: "session check failure keeps the mounted draft"`.
-  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#c2Vzc2lvbiBjaGVjayBvdXRhZ2Uga2VlcHMgdGhlIHNoZWxsIGFuZCByb3V0ZQ — `apps/web/e2e/auth-recovery.spec.ts :: "session check outage keeps the shell and route"`, using #1776's offline BFF failure fixture.
+  - verify: playwright:apps/web/e2e/auth-recovery.spec.ts#c2Vzc2lvbiBjaGVjayBvdXRhZ2Uga2VlcHMgdGhlIHNoZWxsIGFuZCByb3V0ZQ — `apps/web/e2e/auth-recovery.spec.ts :: "session check outage keeps the shell and route"`, using #1845's offline BFF failure fixture.
 
 ## Out of scope
 
@@ -115,17 +116,17 @@ The current [auth gate](../../apps/web/src/features/auth/auth-gate.tsx) unmounts
 |---|---|---|
 | Shell band layout, navigation, and responsive styling | #1844 | #1845 supplies the status values, precedence, and auth-recovery actions; #1844 owns placement. |
 | Provider/model, build, and detailed runtime schema changes | #1846 | Keep `/api/v1/runtime` and `/api/v1/settings/runtime` authenticated; coordinate any detailed-runtime overlap before either implementation PR changes it. |
-| Browser-test infrastructure and general web unit coverage | #1776 | #1845 supplies named auth/status journeys; #1776 adds the offline harness, CI task, and Studio `playwright:` resolver. |
+| General browser-test infrastructure and web unit coverage | #1776 | #1845 adds the focused offline Playwright runner, fixtures, proof resolver, and named auth/status journeys it needs; coordinate reuse or consolidation with #1776. |
 | Full-tab login fallback or persisted composer drafts | Later design decision | Retry and manual new-tab recovery preserve the mounted draft without new persistence. |
 | New OIDC scopes, userinfo calls, or issuer-selection controls | Later auth contract | The optional email uses an already issued verified ID-token claim. |
 
 ## Definition of done
 
 1. Source schema, generated OpenAPI/browser client, BFF tests, web state tests, and an adversarial security review prove the public-response allowlist, authenticated routes, callback message checks, cookie/CSRF/origin controls, and absence of the raw subject from browser data and audit logs.
-2. #1776's offline Playwright harness and Studio proof resolver resolve the named popup, blocked/closed, and expired-session journeys; browser runs exercise desktop and mobile widths without live provider calls. Record route/draft and banner interaction evidence for #1779 review.
-3. `task studio:check`, the #1776 browser task, `task docs`, `task site:build`, `task lint`, `task test:race`, and `task ac-trace-strict` pass on the implementation candidate; the offline demo remains green if runtime behavior outside Studio changes.
+2. #1845's focused offline Playwright setup and Studio proof resolver resolve the named popup, blocked/closed, and expired-session journeys; browser runs exercise desktop and mobile widths without live provider calls. Record route/draft and banner interaction evidence for #1779 review and the overlap with #1776.
+3. `task studio:check`, `task studio:browser`, `task docs`, `task site:build`, `task lint`, `task test:race`, and `task ac-trace-strict` pass on the implementation candidate; the offline demo remains green if runtime behavior outside Studio changes.
 4. Update the [Studio architecture owner](../architecture.md#mecatl-studio) for implemented behavior and the [Studio deployment guide](https://github.com/stacklok/mecatl/blob/main/user-docs/building/deployment/studio.md) for browser sign-in and recovery in the implementation PR. The Plan / Interface PR keeps intended behavior here and in ADR 0357.
-5. The implementation PR links this Plan / Interface PR and its merged commit, reports contract conformance and #1844/#1846 coordination, and passes `/panel-review` without ship blockers. Humans alone merge either PR.
+5. The draft Implementation PR links this Plan / Interface PR and its proposed commit, reports contract conformance and #1844/#1846 coordination, and passes `/panel-review` without ship blockers. Record the approved baseline after this plan merges. Humans alone merge either PR.
 
 ## Deferred decisions and known risks
 
