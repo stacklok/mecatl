@@ -485,7 +485,9 @@ describe("GlobalSearch", () => {
     );
     await searchFor("private local query");
     expect(inventoryState.calls).toEqual(["sessions"]);
-    expect(inventoryState.queryArguments.every((argument) => argument === undefined)).toBe(true);
+    for (const argument of inventoryState.queryArguments) {
+      expect(argument).toEqual({ cache: "no-store" });
+    }
   });
 
   it("closes an expired session before stale inventory results can be selected", async () => {

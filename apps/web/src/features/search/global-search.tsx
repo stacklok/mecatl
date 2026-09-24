@@ -130,11 +130,12 @@ function SearchPalette({
   const idPrefix = useId();
   const listboxId = `${idPrefix}-results`;
   const optionId = (index: number) => `${idPrefix}-option-${index}`;
-  const sessionsOptions = listSessionsOptions();
-  const schedulesOptions = listSchedulesOptions();
-  const configuredSkillsOptions = listConfiguredSkillsOptions();
-  const learnedSkillsOptions = listLearnedSkillsOptions();
-  const memoryOptions = listUserMemoryOptions();
+  // Search is revalidated on every open, including at the HTTP cache layer.
+  const sessionsOptions = listSessionsOptions({ cache: "no-store" });
+  const schedulesOptions = listSchedulesOptions({ cache: "no-store" });
+  const configuredSkillsOptions = listConfiguredSkillsOptions({ cache: "no-store" });
+  const learnedSkillsOptions = listLearnedSkillsOptions({ cache: "no-store" });
+  const memoryOptions = listUserMemoryOptions({ cache: "no-store" });
   const sessionsKey = accountQueryKey(sessionsOptions.queryKey, scope);
   const schedulesKey = accountQueryKey(schedulesOptions.queryKey, scope);
   const configuredSkillsKey = accountQueryKey(configuredSkillsOptions.queryKey, scope);
