@@ -4,12 +4,12 @@
 **Work classification:** Bounded — reduces CI work while preserving the repository-local acceptance-proof resolution contract; no public or durable architecture boundary changes.
 **Decision record:** None — this is a repository CI policy and resolver implementation decision, not a durable system architecture decision.
 **Phase:** CI validation efficiency
-**Status:** in-progress, 2026-09-24. User-authorized direct amendment: retain task-proof registration checks and defer the Vitest batch index.
-**Delivery:** Split. Two proof-resolution behaviors change and require separate contract review before implementation.
+**Status:** landed, 2026-09-24. Implementation candidate complete under direct user-authorized amendment; authoritative when PR #1832 merges.
+**Delivery:** Split. The retained task-proof registration behavior was reviewed before implementation; the Vitest index scope was explicitly deferred.
 **Expected tasks:** 1
 **Issue:** None — user-authorized bounded CI improvement.
 **Plan PR:** [#1831](https://github.com/stacklok/mecatl/pull/1831)
-**Approved baseline:** absent until this plan PR merges
+**Approved baseline:** e69247a474cceb84ce878fd5e33cf6236b88f7fc
 
 Acceptance-plan CI must retain fail-closed proof-reference integrity without re-running unrelated implementation workloads for every plan-only pull request. Task proofs establish that their allowlisted verification target remains registered; their execution remains the responsibility of the target's existing relevant CI job. The change stays inside the existing `Doc validation` runner and does not add jobs or runners.
 
