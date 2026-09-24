@@ -136,6 +136,13 @@ func TestMecatuiMentionBoundedList_Scenario1_SelectionPresentationAndPaging(t *t
 	if !strings.Contains(plain, "▶ @path-00.txt") || !strings.Contains(plain, "  @path-01.txt") {
 		t.Fatalf("mention rows lack standard equal-width gutters:\n%s", plain)
 	}
+	// Mention has no independent physical-scroll action, so a render must restore
+	// selection visibility even after an earlier measurement advanced the viewport.
+	st.list.Scroll(bounded.PageDown)
+	plain = ansi.Strip(renderMentionSized(testTheme(), st, 32, 4))
+	if !strings.Contains(plain, "▶ @path-00.txt") || !strings.Contains(plain, "↓") {
+		t.Fatalf("render lost selected path while rows remained below:\n%s", plain)
+	}
 	st.list.Move(bounded.LineDown)
 	if st.list.Cursor() != 1 {
 		t.Fatalf("Down selected %d, want 1", st.list.Cursor())

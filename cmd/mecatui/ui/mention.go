@@ -355,7 +355,9 @@ func renderMentionSized(th theme.Theme, st mentionState, width, bodyRows int) st
 	if !st.list.Valid() {
 		return ""
 	}
-	view := st.list.ViewWithIndicators(bodyRows, st.list.RevealPending())
+	// Mention has no independent physical-scroll action: every supported navigation
+	// changes selection, so every rendered frame must keep that selection visible.
+	view := st.list.ViewWithIndicators(bodyRows, true)
 	header := "files"
 	if bodyRows == 1 {
 		view = st.list.View()
