@@ -199,7 +199,9 @@ describe("settings responsive accessibility", () => {
       client,
     );
     for (const name of ["Theme", "Decrease interface scale", "Increase interface scale"]) {
-      const button = appearance.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+      const selector =
+        name === "Theme" ? 'button[aria-label^="Theme: "]' : `button[aria-label="${name}"]`;
+      const button = appearance.querySelector<HTMLButtonElement>(selector);
       expect(button?.classList.contains("min-h-11"), name).toBe(true);
     }
     expect(
