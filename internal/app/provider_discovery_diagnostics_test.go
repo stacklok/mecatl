@@ -74,6 +74,9 @@ func TestProviderDiscoveryDiagnosticsDoNotBlockSameProviderRefresh(t *testing.T)
 	if got := d.snapshot().providers[providerA]; got.outcome.State != statusOK || got.inFlight {
 		t.Fatalf("same-provider refresh not published: %+v", got)
 	}
+	if got := d.CurrentModelSnapshot().Models; len(got) != 1 || got[0].GetProviderId() != providerA || got[0].GetId() != modelA || got[0].GetContextLimit() != 222222 {
+		t.Fatalf("same-provider public projection before diagnostic release = %v, want %s/%s with context limit 222222", got, providerA, modelA)
+	}
 }
 
 func TestProviderDiscoveryDiagnosticsDoNotBlockPublicationOrAdmission(t *testing.T) {
