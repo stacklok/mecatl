@@ -22,6 +22,37 @@ function child(key: string, parentCallId: string, runId = "run-a"): SubagentActi
 }
 
 describe("delegation card placement", () => {
+  it("does not infer a reused call's run from one surviving tool row", () => {
+    const first = child("child-a", "call-shared", "run-a");
+    const second = child("child-b", "call-shared", "run-b");
+    const fleet = { ...createDelegationFleet("session-a"), subagents: [first, second] };
+    const messages: ChatMessage[] = [
+      {
+        content: "First turn",
+        id: "assistant-a",
+        role: "assistant",
+        tools: [{ args: "{}", id: "call-shared", name: "Subagent" }],
+      },
+      { content: "Second turn", id: "assistant-b", role: "assistant" },
+    ];
+    const firstRunAnchor = JSON.stringify(["session-a", "run-a", "subagent", "call-shared"]);
+    const stale = placeDelegationCards(messages, fleet, {
+      [firstRunAnchor]: { assistantId: "former-assistant" },
+    });
+    expect(stale.byMessageId["assistant-a"]).toBeUndefined();
+    expect(stale.byMessageId["assistant-b"]).toBeUndefined();
+    expect(stale.unanchored.map((entry) => entry.key)).toEqual([first.key, second.key]);
+
+    const partlyObserved = placeDelegationCards(messages, fleet, {
+      [firstRunAnchor]: { assistantId: "assistant-a" },
+    });
+    expect(partlyObserved.byMessageId["assistant-a"]?.map((entry) => entry.key)).toEqual([
+      first.key,
+    ]);
+    expect(partlyObserved.byMessageId["assistant-b"]).toBeUndefined();
+    expect(partlyObserved.unanchored.map((entry) => entry.key)).toEqual([second.key]);
+  });
+
   it("keeps reused parent calls with their observed assistant turns and leaves ambiguity visible", () => {
     const first = child("child-a", "call-shared", "run-a");
     const second = child("child-b", "call-shared", "run-b");
