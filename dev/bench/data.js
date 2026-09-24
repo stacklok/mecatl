@@ -271122,6 +271122,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790282747198,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c582affcb834bfeb169d90cf5edce06a667ea7f",
+          "message": "test(mecatui): synchronize graceful shutdown output (#1894)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T14:53:53-07:00",
+          "tree_id": "ed18c8879b85dbd3602fcfb1edc77399d546cdd9",
+          "url": "https://github.com/stacklok/mecatl/commit/3c582affcb834bfeb169d90cf5edce06a667ea7f"
+        },
+        "date": 1790287527560,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3317,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 108.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -355520,6 +355559,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790287524349,
+  "lastUpdate": 1790287528490,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
