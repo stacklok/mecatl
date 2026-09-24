@@ -244674,6 +244674,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790282742558,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c582affcb834bfeb169d90cf5edce06a667ea7f",
+          "message": "test(mecatui): synchronize graceful shutdown output (#1894)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T14:53:53-07:00",
+          "tree_id": "ed18c8879b85dbd3602fcfb1edc77399d546cdd9",
+          "url": "https://github.com/stacklok/mecatl/commit/3c582affcb834bfeb169d90cf5edce06a667ea7f"
+        },
+        "date": 1790287522888,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -355486,6 +355520,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790287519888,
+  "lastUpdate": 1790287524349,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
