@@ -21,8 +21,10 @@ import (
 
 // runOwnedHook installs a synchronous reporter only for this HookRunner request.
 // The callback is deactivated before return, so a hook cannot retain or replay it.
-func (e *Engine) runOwnedHook(ctx context.Context, sess *session.Session, ev governance.HookEvent) (governance.HookOutcome, error) {
-	ctx, deactivate := port.WithAuxiliaryUsageReporter(ctx, sess.RecordAuxiliaryUsage)
+func (e *Engine) runOwnedHook(ctx context.Context, r *Run, sess *session.Session, ev governance.HookEvent) (governance.HookOutcome, error) {
+	ctx, deactivate := port.WithAuxiliaryUsageReporter(ctx, func(usage session.AuxiliaryUsage) {
+		r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, usage))
+	})
 	defer deactivate()
 	return e.deps.Hooks.Run(ctx, ev)
 }
@@ -47,7 +49,7 @@ func (e *Engine) fireSessionStart(ctx context.Context, r *Run, sess *session.Ses
 		Phase:     governance.PhaseSessionStart,
 		SessionID: string(sess.ID),
 	}
-	outcome, err := e.runOwnedHook(ctx, sess, ev)
+	outcome, err := e.runOwnedHook(ctx, r, sess, ev)
 	if err != nil {
 		// A hook execution fault aborts the run: a vetoing phase whose verdict is
 		// unknown cannot be assumed to allow.
@@ -91,7 +93,7 @@ func (e *Engine) fireUserPromptSubmit(ctx context.Context, r *Run, sess *session
 		Input:     input,
 		SessionID: string(sess.ID),
 	}
-	outcome, err := e.runOwnedHook(ctx, sess, ev)
+	outcome, err := e.runOwnedHook(ctx, r, sess, ev)
 	if err != nil {
 		// A hook execution fault rejects the prompt: the run cannot proceed past a
 		// vetoing phase whose verdict is unknown.
@@ -152,7 +154,7 @@ func (e *Engine) fireStop(ctx context.Context, r *Run, sess *session.Session, re
 		Input:     input,
 		SessionID: string(sess.ID),
 	}
-	outcome, err := e.runOwnedHook(hookCtx, sess, ev)
+	outcome, err := e.runOwnedHook(hookCtx, r, sess, ev)
 	if err == nil && outcome.Block && outcome.Message != "" {
 		// Stop is terminal — a Block can't veto an already-ended run, so this is an
 		// informational notice, not a blocking one.

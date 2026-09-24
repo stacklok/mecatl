@@ -977,7 +977,7 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 		SessionID: string(sess.ID),
 		CallID:    string(c.ID),
 	}
-	outcome, herr := e.runOwnedHook(ctx, sess, ev)
+	outcome, herr := e.runOwnedHook(ctx, r, sess, ev)
 
 	// Normalize the hook's producer-influenced output to valid UTF-8 HERE — the
 	// one point both values arrive (issue #402). A hook is a subprocess and its
@@ -1597,7 +1597,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	// snapshot it before any detach), never inside a detached background goroutine.
 	// nil when no parent session is threaded (plain Execute) — fork then unsupported.
 	if sess != nil {
-		caps.recordAuxiliaryUsage = sess.RecordAuxiliaryUsage
+		caps.recordAuxiliaryUsage = func(usage session.AuxiliaryUsage) { r.recordAuxiliaryUsage(sess, usage) }
 		caps.forkHistory = func() []session.Message {
 			return session.ForkSnapshot(sess.Conversation)
 		}
@@ -1644,7 +1644,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 			ctx, cancel := context.WithTimeout(context.Background(), askReviewTimeout)
 			defer cancel()
 			review, usage, err := reviewer.Review(ctx, ChildAskReviewRequest{Ask: ask, Isolated: isolated})
-			sess.RecordAuxiliaryUsage(usage)
+			r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindAskReviewer, usage))
 			switch {
 			case errors.Is(err, ErrNotReviewable):
 				// ABSTENTION: the reviewer cannot judge THIS ask. Fall through to the
@@ -1687,7 +1687,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	if e.deps.SubagentModelRouter != nil && r.router != nil {
 		// Pre-build a nil-safe usage-fold func to keep the closure branch-free (#92 fix,
 		// avoids +1 cyclomatic complexity inside the already-branchy closure).
-		foldUsage := foldClassifierUsage(sess)
+		foldUsage := foldClassifierUsage(r, sess)
 		// The classification body lives in a package-level func (routeTaskBody) so this
 		// already-branchy constructor stays under the gocyclo budget; the closure here is
 		// a one-line adapter capturing the run-scoped breaker/hardAbort/diag/foldUsage.
@@ -1757,12 +1757,12 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 // purpose-attributed usage on the invoking session. The separate router bucket is
 // included by the loop's budget calculation without changing main usage. When sess
 // is nil (plain Execute with no parent session threaded), the returned func is a no-op.
-func foldClassifierUsage(sess *session.Session) func(session.AuxiliaryUsage) {
+func foldClassifierUsage(r *Run, sess *session.Session) func(session.AuxiliaryUsage) {
 	if sess == nil {
 		return func(session.AuxiliaryUsage) {} // nil-safe nop: plain Execute, no parent session.
 	}
 	return func(u session.AuxiliaryUsage) {
-		sess.RecordAuxiliaryUsage(u)
+		r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(context.Background(), r.diag, session.UsageKindRouter, u))
 	}
 }
 
@@ -1955,7 +1955,7 @@ func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, tu
 		SessionID: string(sess.ID),
 		CallID:    string(c.ID),
 	}
-	outcome, err := e.runOwnedHook(ctx, sess, ev)
+	outcome, err := e.runOwnedHook(ctx, r, sess, ev)
 	if err != nil {
 		// Best-effort: a PostToolUse execution error never aborts and never alters
 		// the result.

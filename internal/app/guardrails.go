@@ -101,7 +101,7 @@ type engineGuardrailsChecker struct {
 // drives + parses.
 func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	text, usage, err := agent.RunGuardrailCheck(ctx, c.engine, req.Prompt)
-	usage = attributedAuxiliaryUsage(session.UsageKindGuardrail, c.identity, usage.Buckets[session.UsageKindGuardrail].Total)
+	usage = attributedAuxiliaryUsage(session.UsageKindGuardrail, c.identity, usage)
 	if err != nil {
 		return modelhook.CheckResult{Usage: usage}, err
 	}

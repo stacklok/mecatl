@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,9 +13,25 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+type auxiliaryRecordingDiagnostics struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (d *auxiliaryRecordingDiagnostics) Log(_ context.Context, _ port.Level, msg string, _ ...any) {
+	d.mu.Lock()
+	d.msgs = append(d.msgs, msg)
+	d.mu.Unlock()
+}
+func (d *auxiliaryRecordingDiagnostics) With(...any) port.Diagnostics { return d }
+
 func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	usage := session.Usage{InputTokens: 7, OutputTokens: 3}
-	aux := auxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: "provider-r", ModelID: "classifier"}, usage)
+	injected := session.Usage{InputTokens: 2, OutputTokens: 1}
+	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindMain:   {Models: map[string]session.Usage{"provider-r/classifier": injected}},
+		session.UsageKindRouter: {Models: map[string]session.Usage{"provider-r/classifier": usage}},
+	}}
 	engine := NewEngine(Deps{
 		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
 		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
@@ -22,7 +39,8 @@ func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 		}},
 	})
 	parent := runningAuxiliaryParent(t, "router-parent")
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	diag := &auxiliaryRecordingDiagnostics{}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), diag: diag}
 
 	got := engine.parentCaps(run, parent, 0).routeDecision(t.Context(), "classify")
 	if !got.ok {
@@ -31,8 +49,24 @@ func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	if main := parent.UsageFor(session.UsageKindMain); main != (session.Usage{}) {
 		t.Fatalf("main usage = %+v, want zero", main)
 	}
-	if router := parent.UsageFor(session.UsageKindRouter); router != usage {
-		t.Fatalf("router usage = %+v, want %+v", router, usage)
+	wantRouter := usage.Add(injected)
+	if router := parent.UsageFor(session.UsageKindRouter); router != wantRouter {
+		t.Fatalf("router usage = %+v, want remapped total %+v", router, wantRouter)
+	}
+	bucket := parent.TokenUsageSnapshot()[session.UsageKindRouter]
+	if got := bucket.Models["provider-r/classifier"]; got != wantRouter {
+		t.Fatalf("router attribution = %+v, want %+v", bucket.Models, wantRouter)
+	}
+	diag.mu.Lock()
+	defer diag.mu.Unlock()
+	normalized := 0
+	for _, msg := range diag.msgs {
+		if msg == "auxiliary usage result normalized" {
+			normalized++
+		}
+	}
+	if normalized != 1 {
+		t.Fatalf("normalization diagnostics = %v, want one bounded normalization line", diag.msgs)
 	}
 }
 
@@ -46,6 +80,23 @@ func (h *replayingUsageHook) Run(ctx context.Context, _ governance.HookEvent) (g
 	if h.reporter != nil {
 		h.reporter(h.usage)
 	}
+	return governance.HookOutcome{}, nil
+}
+
+type fixedUsageReviewer struct {
+	usage session.AuxiliaryUsage
+}
+
+func (r fixedUsageReviewer) Review(context.Context, ChildAskReviewRequest) (ChildAskReview, session.AuxiliaryUsage, error) {
+	return ChildAskReview{Allowed: true}, r.usage, nil
+}
+
+type concurrentUsageHook struct {
+	usage session.AuxiliaryUsage
+}
+
+func (h concurrentUsageHook) Run(ctx context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
+	port.AuxiliaryUsageReporterFromContext(ctx)(h.usage)
 	return governance.HookOutcome{}, nil
 }
 
@@ -64,6 +115,7 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	}
 
 	guardrailUsage := session.Usage{InputTokens: 6, OutputTokens: 2}
+	unexpectedGuardrailUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
 	checker := reviewerEngine(mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
 		{Kind: port.ChunkText, Text: `{"safe":true}`},
 		{Kind: port.ChunkUsage, Usage: &guardrailUsage},
@@ -74,11 +126,27 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 		t.Fatal(err)
 	}
 
+	checkedUsage = checkedUsage.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindMain: {Models: map[string]session.Usage{"provider-g/checker": unexpectedGuardrailUsage}},
+	}})
 	parent := runningAuxiliaryParent(t, "safety-parent")
-	parent.RecordAuxiliaryUsage(reviewUsage)
+	reviewUsage = reviewUsage.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindMain: {Models: map[string]session.Usage{"provider-a/reviewer": {InputTokens: 2}}},
+	}})
+	reviewEngine := NewEngine(Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
+		ChildAskReviewer: fixedUsageReviewer{usage: reviewUsage},
+	})
+	reviewRun := &Run{
+		askReview: &askReviewBreaker{max: DefaultAskReviewMaxDenies}, hardAbort: make(chan struct{}),
+		diag: port.NopDiagnostics{}, children: newChildRunRegistry(),
+	}
+	if outcome := reviewEngine.parentCaps(reviewRun, parent, 0).adjudicate(shellAsk("git status"), true); !outcome.allowed {
+		t.Fatalf("review outcome = %+v, want allowed", outcome)
+	}
 	hook := &replayingUsageHook{usage: checkedUsage}
 	hookEngine := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main", Hooks: hook})
-	if _, err := hookEngine.runOwnedHook(t.Context(), parent, governance.HookEvent{Phase: governance.PhasePreToolUse}); err != nil {
+	if _, err := hookEngine.runOwnedHook(t.Context(), &Run{diag: port.NopDiagnostics{}}, parent, governance.HookEvent{Phase: governance.PhasePreToolUse}); err != nil {
 		t.Fatal(err)
 	}
 	if hook.reporter == nil {
@@ -86,14 +154,40 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	}
 	// A retained callback is inert as soon as HookRunner.Run returns.
 	hook.reporter(checkedUsage)
-	if got := parent.UsageFor(session.UsageKindAskReviewer); got != reviewerUsage {
-		t.Fatalf("ask reviewer usage = %+v, want %+v", got, reviewerUsage)
+	wantReview := reviewerUsage.Add(session.Usage{InputTokens: 2})
+	if got := parent.UsageFor(session.UsageKindAskReviewer); got != wantReview {
+		t.Fatalf("ask reviewer usage = %+v, want remapped %+v", got, wantReview)
 	}
-	if got := parent.UsageFor(session.UsageKindGuardrail); got != guardrailUsage {
-		t.Fatalf("guardrail usage = %+v, want %+v", got, guardrailUsage)
+	wantGuardrail := guardrailUsage.Add(unexpectedGuardrailUsage)
+	if got := parent.UsageFor(session.UsageKindGuardrail); got != wantGuardrail {
+		t.Fatalf("guardrail usage = %+v, want remapped %+v", got, wantGuardrail)
 	}
 	if got := parent.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
 		t.Fatalf("main usage = %+v, want zero", got)
+	}
+
+	// PostToolUse guardrails run in read-parallel dispatch goroutines. Exercise that
+	// exact concurrent reporting shape against one run-owned Session under -race.
+	concurrentParent := runningAuxiliaryParent(t, "concurrent-guardrail-parent")
+	concurrentRun := &Run{diag: port.NopDiagnostics{}}
+	one := session.Usage{InputTokens: 1}
+	concurrentEngine := NewEngine(Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
+		Hooks: concurrentUsageHook{usage: auxiliaryUsage(session.UsageKindGuardrail, session.ProviderModelID{ProviderID: "provider-g", ModelID: "checker"}, one)},
+	})
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := concurrentEngine.runOwnedHook(t.Context(), concurrentRun, concurrentParent, governance.HookEvent{Phase: governance.PhasePostToolUse}); err != nil {
+				t.Errorf("runOwnedHook: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := concurrentParent.UsageFor(session.UsageKindGuardrail); got.InputTokens != 32 {
+		t.Fatalf("concurrent guardrail usage = %+v, want 32 input tokens", got)
 	}
 }
 
