@@ -5,36 +5,172 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
-func TestWatcherCoalescesBurst(t *testing.T) {
+func TestDebouncerCoalescesQueuedEvents(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const debounce = 150 * time.Millisecond
+		events := make(chan fsnotify.Event, 1)
+		d := &debouncer{debounce: debounce, maxDebounce: time.Second}
+		defer d.stop()
+
+		d.arm(time.Now())
+		time.Sleep(debounce / 2)
+		d.arm(time.Now())
+		events <- fsnotify.Event{}
+		time.Sleep(debounce / 2)
+		select {
+		case <-d.timerC:
+			t.Fatal("debouncer fired before a later event's quiet interval elapsed")
+		default:
+		}
+		time.Sleep(debounce / 2)
+		select {
+		case <-d.timerC:
+		default:
+			t.Fatal("debouncer did not fire at the first quiet interval")
+		}
+		if open, ready := d.fire(events); !open || ready {
+			t.Fatalf("fire with a queued event = (open=%t, ready=%t), want (true, false)", open, ready)
+		}
+
+		time.Sleep(debounce - time.Nanosecond)
+		select {
+		case <-d.timerC:
+			t.Fatal("debouncer fired before the quiet interval elapsed")
+		default:
+		}
+		time.Sleep(time.Nanosecond)
+		select {
+		case <-d.timerC:
+		default:
+			t.Fatal("queued event did not rearm the quiet interval")
+		}
+		if open, ready := d.fire(events); !open || !ready {
+			t.Fatalf("fire after the quiet interval = (open=%t, ready=%t), want (true, true)", open, ready)
+		}
+
+		d.arm(time.Now())
+		time.Sleep(debounce)
+		select {
+		case <-d.timerC:
+		default:
+			t.Fatal("new burst did not arm a timer")
+		}
+		if open, ready := d.fire(events); !open || !ready {
+			t.Fatalf("fire for a new burst = (open=%t, ready=%t), want (true, true)", open, ready)
+		}
+	})
+}
+
+func TestDebouncerCappedBurstGrantsOneGrace(t *testing.T) {
+	for _, lateEvent := range []bool{false, true} {
+		name := "quiet"
+		if lateEvent {
+			name = "late_event"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const debounce = 100 * time.Millisecond
+				events := make(chan fsnotify.Event, 1)
+				d := &debouncer{debounce: debounce, maxDebounce: 2 * debounce}
+				defer d.stop()
+
+				d.arm(time.Now())
+				for range 2 {
+					time.Sleep(3 * debounce / 4)
+					d.arm(time.Now())
+				}
+				time.Sleep(debounce/2 - time.Nanosecond)
+				select {
+				case <-d.timerC:
+					t.Fatal("timer fired before the cap")
+				default:
+				}
+				time.Sleep(time.Nanosecond)
+				select {
+				case <-d.timerC:
+				default:
+					t.Fatal("timer did not fire at the cap")
+				}
+				if open, ready := d.fire(events); !open || ready {
+					t.Fatalf("first capped fire = (open=%t, ready=%t), want (true, false)", open, ready)
+				}
+
+				time.Sleep(debounce / 2)
+				if lateEvent {
+					// A kernel event arriving during grace can still be queued
+					// when the timer is selected by the watcher loop.
+					events <- fsnotify.Event{}
+				}
+				time.Sleep(debounce/2 - time.Nanosecond)
+				select {
+				case <-d.timerC:
+					t.Fatal("grace expired before one debounce interval")
+				default:
+				}
+				time.Sleep(time.Nanosecond)
+				select {
+				case <-d.timerC:
+				default:
+					t.Fatal("grace exceeded one debounce interval")
+				}
+				if lateEvent {
+					if open, ready := d.fire(events); !open || ready {
+						t.Fatalf("fire with late event = (open=%t, ready=%t), want (true, false)", open, ready)
+					}
+					// Rearming past the cap is immediate, not another grace.
+					select {
+					case <-d.timerC:
+					default:
+						t.Fatal("late event did not rearm at the elapsed cap")
+					}
+				}
+				if open, ready := d.fire(events); !open || !ready {
+					t.Fatalf("fire after grace = (open=%t, ready=%t), want (true, true); no second grace", open, ready)
+				}
+				if d.timerC != nil || !d.firstAt.IsZero() || d.capped || d.graced {
+					t.Fatal("completed burst did not reset debounce state")
+				}
+
+				time.Sleep(debounce)
+				d.arm(time.Now())
+				time.Sleep(debounce - time.Nanosecond)
+				select {
+				case <-d.timerC:
+					t.Fatal("new burst reused the previous cap")
+				default:
+				}
+				time.Sleep(time.Nanosecond)
+				select {
+				case <-d.timerC:
+				default:
+					t.Fatal("new burst did not expire after debounce")
+				}
+				if open, ready := d.fire(events); !open || !ready {
+					t.Fatalf("new burst fire = (open=%t, ready=%t), want (true, true)", open, ready)
+				}
+			})
+		})
+	}
+}
+
+func TestWatcherDeliversChange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "value")
 	mustWrite(t, path, "initial")
 
-	// debounce/maxDebounce/the tail-wait below are deliberately generous (well
-	// beyond sibling tests in this file): the loop below round-trips through a
-	// real write + real fsnotify delivery + goroutine scheduling 8 times, and
-	// under -race on a loaded CI runner that round-trip can occasionally take
-	// tens of ms. A tight debounce here does not test coalescing more
-	// strictly -- it just makes an inter-write scheduling delay look like
-	// real quiescence, correctly (by design) splitting the burst into two
-	// callbacks and failing the test on a false positive.
-	changes := make(chan struct{}, 4)
-	w, armed := newTestWatcher(t, []string{path}, 150*time.Millisecond, 3*time.Second, func() { changes <- struct{}{} })
+	changes := make(chan struct{}, 1)
+	w, armed := newTestWatcher(t, []string{path}, 30*time.Millisecond, time.Second, func() { changes <- struct{}{} })
 	defer w.Close()
 
-	for i := 0; i < 8; i++ {
-		mustWrite(t, path, "changed")
-		awaitChange(t, armed)
-	}
+	mustWrite(t, path, "changed")
+	awaitChange(t, armed)
 	awaitChange(t, changes)
-	select {
-	case <-changes:
-		t.Fatal("burst produced more than one callback")
-	case <-time.After(300 * time.Millisecond):
-	}
 }
 
 func TestWatcherBoundsRepeatedEvents(t *testing.T) {
