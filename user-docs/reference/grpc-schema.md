@@ -47,7 +47,8 @@ the bidi Converse stream that drives one agent run.
 | `ReadMcpResource` | `ReadMcpResourceRequest` | `ReadMcpResourceResponse` | No | No | ReadMcpResource reads a single resource by URI from the named server. |
 | `ListMcpPrompts` | `ListMcpPromptsRequest` | `ListMcpPromptsResponse` | No | No | ListMcpPrompts returns the static prompt snapshots advertised by the connected MCP servers. An empty `server` returns the union across every server. |
 | `GetMcpPrompt` | `GetMcpPromptRequest` | `GetMcpPromptResponse` | No | No | GetMcpPrompt expands a named prompt with the given arguments on the named server and returns the rendered messages. |
-| `ListMcpSources` | `ListMcpSourcesRequest` | `ListMcpSourcesResponse` | No | No | ListMcpSources returns the resolved MCP source inventory snapshot: each configured source (static / ToolHive), the servers it contributed, and any diagnostics it raised. Derived from the resolution snapshot taken at startup; it performs no live discovery. |
+| `ListMcpSources` | `ListMcpSourcesRequest` | `ListMcpSourcesResponse` | No | No | ListMcpSources returns the cached published/pre-shadow source inventory and reconciler status. It performs no independent upstream probe. |
+| `RefreshMcpSources` | `RefreshMcpSourcesRequest` | `RefreshMcpSourcesResponse` | No | No | RefreshMcpSources explicitly reconciles direct MCP sources for an owned eligible ordinary-root session and unions newly active direct names. |
 | `ListSessionMcpConnectors` | `ListSessionMcpConnectorsRequest` | `ListSessionMcpConnectorsResponse` | No | No | ListSessionMcpConnectors inspects the owned session&#39;s broker-local catalogue. This read neither probes upstreams nor progresses enrollment. |
 | `ListToolHiveGroups` | `ListToolHiveGroupsRequest` | `ListToolHiveGroupsResponse` | No | No | ListToolHiveGroups returns the distinct, non-empty ToolHive groups present in the resolved source inventory. Derived from the snapshot — it does NOT call ToolHive. |
 | `ListAgents` | `ListAgentsRequest` | `ListAgentsResponse` | No | No | ListAgents returns the resolved agent-definition registry snapshot: each discovered agent def&#39;s routing metadata (name/description), its resolved model, its effective read-only tool scope, permission mode, and UX color. Derived from the snapshot taken at startup; it performs no live discovery. |
@@ -1707,6 +1708,9 @@ ListMcpSourcesResponse carries the resolved source inventory.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `sources` | `McpSource` | repeated |  | sources are the (possibly empty) resolved sources. |
+| `revision` | `uint64` |  |  | revision is the current published direct-runtime revision. |
+| `stale` | `bool` |  |  | stale is true when source or candidate degradation retained an older runtime. |
+| `reconciling` | `bool` |  |  | reconciling is true while the shared reconciler is processing a cycle. |
 
 
 
@@ -2201,6 +2205,7 @@ Which fields are set depends on the event kind:
 | `text` | `string` |  |  | text is a BOUNDED preview of the branch&#39;s message/result text (branch_tool, for the message.delta / result inner kinds) — control-byte scrubbed and rune-capped upstream in engine/agent, never the raw, unbounded body. |
 | `detail` | `string` |  |  | detail is a BOUNDED preview of a branch tool call&#39;s args (tool.call) or a tool result&#39;s body (tool.result) — control-byte scrubbed and rune-capped upstream, never the raw, unbounded args/result body (branch_tool). |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this branch was NOT routed by the semantic model router (branch_start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;aborted&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the branch prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no branch content crosses). Clamped at the emit site. Mirrors session.ParallelPayload.RoutingReason. |
+| `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on branch_start. Historical events and deployments without a router omit it. |
 
 
 
@@ -2420,6 +2425,30 @@ RecheckMcpAuthorizationResponse wraps one authoritative status or continuation e
 
 
 
+#### `mecatl.v1.RefreshMcpSourcesRequest`
+
+RefreshMcpSourcesRequest names the owned session whose direct-name authority
+may be widened after reconciliation.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `session_id` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.RefreshMcpSourcesResponse`
+
+RefreshMcpSourcesResponse identifies the request-pinned runtime snapshot.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `revision` | `uint64` |  |  |  |
+| `changed` | `bool` |  |  |  |
+
+
+
+
 #### `mecatl.v1.RenameSessionRequest`
 
 
@@ -2564,6 +2593,28 @@ event stream.
 
 
 
+#### `mecatl.v1.RoutingDecision`
+
+RoutingDecision is bounded configured-router evidence attached to a delegation
+start projection. Existing model/routed_*/routing_reason fields remain authoritative
+for the child that actually ran and the final routing result.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `backend` | `string` |  |  |  |
+| `classifier_model` | `string` |  |  |  |
+| `candidate_category` | `string` |  |  |  |
+| `candidate_model` | `string` |  |  |  |
+| `confidence` | `double` | optional |  |  |
+| `minimum_confidence` | `double` | optional |  |  |
+| `outcome` | `string` |  |  |  |
+| `consecutive_misses` | `int32` |  |  |  |
+| `miss_limit` | `int32` |  |  |  |
+| `breaker_open` | `bool` |  |  |  |
+
+
+
+
 #### `mecatl.v1.RunTeamRequest`
 
 RunTeamRequest drives a team to quiescence, streaming member events.
@@ -2665,6 +2716,7 @@ old clients ignore and new clients reading an old server see as false.
 | `debug_mcp` | `bool` |  |  | debug_mcp is true when debug sessions may explicitly borrow selected direct tools from configured server-global streaming-HTTP MCP servers. |
 | `workspace_enrollment` | `bool` |  |  | workspace_enrollment is true when protected workspace services must be admitted as one complete bundle before the first prompt. |
 | `mcp_connector_status` | `bool` |  |  | mcp_connector_status requires a wired broker inspector, enforced ownership and a verified caller. It does not enable direct MCP resources or prompts. |
+| `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
 
 
 
@@ -3124,6 +3176,7 @@ Which fields are set depends on the event kind:
 | `detail` | `string` |  |  | detail is a BOUNDED preview of a child tool call&#39;s args (tool.call) or a tool result&#39;s body (tool.result) — control-byte scrubbed and rune-capped upstream, never the raw, unbounded args/result body (subagent.tool). |
 | `cause` | `string` |  |  | cause is the child run&#39;s FAILURE DETAIL (subagent.end only, and only when stop is &#34;error&#34; — empty otherwise): the harness/provider error the loop recorded on the terminal result. METADATA about how the delegation failed — a transport/loop error string, never child-authored model output — so it is context-isolation safe (gauntlet #7: no child content crosses). Clamped at the emit site. Mirrors session.SubagentPayload.Cause. |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this delegation was NOT routed by the semantic model router (subagent.start only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;pinned-model&#34;, &#34;agent-def-pinned-model&#34;, &#34;resume&#34;, &#34;fork&#34;, &#34;router-disabled&#34;, &#34;route-target-unavailable&#34;, &#34;breaker-open&#34;, &#34;aborted&#34;, &#34;empty-model&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the task prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7). Clamped at the emit site. Mirrors session.SubagentPayload.RoutingReason. |
+| `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured on subagent.start. Historical events and deployments without a router omit it. |
 
 
 
@@ -3244,6 +3297,7 @@ shape — never any member content (no prompt body, no transcript).
 | `routed_model` | `string` |  |  | routed_model is the concrete MODEL id the routed member&#39;s engine was minted on (team.start roster only), paired with routed_category. BARE METADATA — a model id, never model-influenced free text — so it is context-isolation safe (gauntlet #7). Mirrors session.TeamMemberSpec.RoutedModel. |
 | `model` | `string` |  |  | model is the concrete MODEL id this member&#39;s engine ACTUALLY runs on (team.start roster only), regardless of how it was chosen — inherited default member model, agent-def pin, or the opt-in router. BARE METADATA — a model id, never member content — so it is context-isolation safe (gauntlet #7: no member content crosses). When the router classified this member, model == routed_model. Mirrors session.TeamMemberSpec.Model. |
 | `routing_reason` | `string` |  |  | routing_reason is a BOUNDED harness/composition reason string explaining WHY this member was NOT routed by the semantic model router (team.start roster only) — empty on a routed HIT (routed_category/routed_model carry the hit). A short label (e.g. &#34;agent-def-pinned-model&#34;, &#34;router-disabled&#34;, or a RouterMiss* classifier miss) — BARE METADATA, never the member&#39;s role/prompt or classifier reasoning — so it is context-isolation safe (gauntlet #7: no member content crosses). Clamped at the emit site. Mirrors session.TeamMemberSpec.RoutingReason. |
+| `routing_decision` | `RoutingDecision` | optional |  | routing_decision is the optional bounded configured-router evidence captured for this member on team.start. Historical roster entries omit it. |
 
 
 
