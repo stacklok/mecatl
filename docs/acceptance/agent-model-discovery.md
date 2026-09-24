@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes one model-facing tool contract and its composition-owned projection, but preserves provider identity, selection, trust, persistence, transport, and module boundaries.
 **Decision record:** None — provider facets, bounded literal search, and stateless continuation replace the alpha tool contract without changing the durable provider identity or selection architecture.
 **Phase:** alpha contract replacement
-**Status:** in-progress, 2026-09-24 — implementation is proceeding in a PR stacked on amendment PR #1864 under the operator's explicit waiver of the merged-plan prerequisite; both PRs retain human merge gates.
+**Status:** landed, 2026-09-24 — stacked implementation candidate passed aggregate gates, strict AC tracing, and panel review; this transition becomes authoritative only after human merge of amendment PR #1864 followed by the implementation PR.
 **Delivery:** Split. The replacement model-facing schema, disclosure boundary, search semantics, and stale-continuation behavior require amended contract review before implementation resumes.
 **Expected tasks:** deferred to orchestration
 **Issue:** [#1064](https://github.com/stacklok/mecatl/issues/1064)
