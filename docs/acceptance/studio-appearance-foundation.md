@@ -8,7 +8,7 @@
 **Delivery:** Split. The token and control contract is reviewed before the independent implementation PR and the dependent shell and settings work.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1843](https://github.com/stacklok/mecatl/issues/1843).
-**Plan PR:** added when opened
+**Plan PR:** [stacklok/mecatl#1861](https://github.com/stacklok/mecatl/pull/1861)
 **Approved baseline:** absent until this Plan / Interface PR merges
 
 Studio presents one local appearance vocabulary across its shell and feature pages. Light, dark, and system theme are independent of the Default, Aztec, Mono, and Solar palettes. The named palettes change brand and shell accents while semantic surfaces and status roles retain their light or dark meaning. The 2026-09-24 [design review](https://github.com/stacklok/mecatl/issues/1779) is the frozen visual baseline; implementation records approved contrast corrections there.
