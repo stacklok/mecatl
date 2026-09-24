@@ -130,6 +130,7 @@ import { ContinueLatestChip } from "./continue-latest-chip";
 import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
 import { DraftGreeting } from "./draft-greeting";
 import { FailedTurnCard } from "./failed-turn-card";
+import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
 import { pickLatestEligibleChat } from "./latest-chat";
 import { appendCanvasQuote, useLocalCanvas } from "./local-canvas";
 import {
@@ -1897,49 +1898,4 @@ function addUsage(
       BigInt(baseline.reasoningTokens) + BigInt(currentRun.reasoningTokens)
     ).toString(),
   };
-}
-
-function failedRunStorageKey(sessionId: string) {
-  return `studio.chat.failedRun.${sessionId}`;
-}
-
-function saveFailedRun(sessionId: string, failure: RunFailure) {
-  try {
-    window.sessionStorage.setItem(failedRunStorageKey(sessionId), JSON.stringify(failure));
-  } catch {
-    // Failure recovery remains available in memory when browser storage is unavailable.
-  }
-}
-
-function clearFailedRun(sessionId: string) {
-  try {
-    window.sessionStorage.removeItem(failedRunStorageKey(sessionId));
-  } catch {
-    // Browser storage is an optional durability layer.
-  }
-}
-
-function readFailedRun(sessionId: string): RunFailure | undefined {
-  try {
-    const raw = window.sessionStorage.getItem(failedRunStorageKey(sessionId));
-    if (!raw) return undefined;
-    const value: unknown = JSON.parse(raw);
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      !("message" in value) ||
-      !("prompt" in value) ||
-      typeof value.message !== "string" ||
-      typeof value.prompt !== "string"
-    ) {
-      return undefined;
-    }
-    return {
-      message: value.message,
-      permanent: "permanent" in value && value.permanent === true,
-      prompt: value.prompt,
-    };
-  } catch {
-    return undefined;
-  }
 }

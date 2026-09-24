@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useState } from "react";
+import { readUserScopedItem, writeUserScopedItem } from "../../lib/account-storage";
 
 export interface QueuedMessage {
   createdAt: number;
@@ -102,20 +103,11 @@ function storageKey(sessionId: string) {
 
 function readQueue(sessionId: string) {
   if (!sessionId) return [];
-  try {
-    return parseQueuedMessages(window.localStorage.getItem(storageKey(sessionId)));
-  } catch {
-    return [];
-  }
+  return parseQueuedMessages(readUserScopedItem(storageKey(sessionId)));
 }
 
 function writeQueue(sessionId: string, items: QueuedMessage[]) {
   if (!sessionId) return;
-  try {
-    if (items.length > 0) window.localStorage.setItem(storageKey(sessionId), JSON.stringify(items));
-    else window.localStorage.removeItem(storageKey(sessionId));
-  } catch {
-    // Keep running even when browser storage is disabled or full.
-  }
+  writeUserScopedItem(storageKey(sessionId), items.length > 0 ? JSON.stringify(items) : null);
   window.dispatchEvent(new CustomEvent(queueChangedEvent, { detail: sessionId }));
 }
