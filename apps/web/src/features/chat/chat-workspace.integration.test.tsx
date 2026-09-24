@@ -23,10 +23,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
+import { setRequestRecoveryState } from "../../lib/api-client";
+import { AuthRecoveryContext, type AuthRecoveryContextValue } from "../auth/auth-recovery-context";
 import { ShortcutProvider } from "../shortcuts/shortcut-provider";
 import { ChatWorkspace } from "./chat-workspace";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+const readyRecovery: AuthRecoveryContextValue = {
+  banner: { authenticated: true, publicStatusFailed: false, sessionCheckFailed: false },
+  loginUrl: "/api/v1/auth/login",
+  phase: "ready",
+  popupIssue: null,
+  retrySession: () => {},
+  startPopupLogin: () => {},
+};
 
 interface RecordedRequest {
   body: unknown;
@@ -275,6 +286,7 @@ class BffFixture {
 }
 
 async function mountWorkspace(bff: BffFixture, sessionId?: string) {
+  setRequestRecoveryState({ identityEpoch: 0, phase: "ready", workspaceMounted: true });
   vi.stubGlobal("fetch", bff.fetch);
   client.setConfig({ baseUrl: "http://studio.test" });
   const queryClient = new QueryClient({
@@ -309,7 +321,9 @@ async function mountWorkspace(bff: BffFixture, sessionId?: string) {
   await act(async () => {
     render(
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <AuthRecoveryContext.Provider value={readyRecovery}>
+          <RouterProvider router={router} />
+        </AuthRecoveryContext.Provider>
       </QueryClientProvider>,
     );
     await router.load();

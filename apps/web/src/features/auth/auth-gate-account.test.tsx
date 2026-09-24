@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import type { GetAuthSessionResponse } from "@mecatl-studio/contracts/generated";
 import { getAuthSessionOptions, listSessionsQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -94,10 +95,14 @@ function scopedData() {
   >;
 }
 
+function authenticated(account: string): GetAuthSessionResponse {
+  return { account, mode: "oidc", status: "authenticated" };
+}
+
 it("drops account data and prior BFF snapshots before the next account renders", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const authKey = getAuthSessionOptions().queryKey;
-  client.setQueryData(authKey, { account: "alice", mode: "oidc", status: "authenticated" });
+  client.setQueryData(authKey, authenticated("alice"));
   client.setQueryData(listSessionsQueryKey(), {
     complete: true,
     items: [{ id: "same", title: "Alice" }],
@@ -117,7 +122,7 @@ it("drops account data and prior BFF snapshots before the next account renders",
   );
   expect(screen.getByTestId("account-data").textContent).toBe("Alice's folder");
 
-  client.setQueryData(authKey, { account: "bob", mode: "oidc", status: "authenticated" });
+  client.setQueryData(authKey, authenticated("bob"));
   await waitFor(() => expect(screen.getByTestId("account-data").textContent).toBe("cleared"));
   expect(window.sessionStorage.getItem("studio.chat.failed.same")).toBeNull();
   expect(client.getQueryData(listSessionsQueryKey())).toBeUndefined();
@@ -133,7 +138,7 @@ it("quarantines every account-scoped caller after partial removal, including sto
     folders: [{ id: "alice-folder", name: "Alice folder" }],
   });
   const oldThreads = JSON.stringify({ root: { sessionId: "alice-thread" } });
-  client.setQueryData(authKey, { account: "alice", mode: "oidc", status: "authenticated" });
+  client.setQueryData(authKey, authenticated("alice"));
   for (const [key, value] of Object.entries({
     "studio.account": "alice",
     "studio.profile.user-name": "Alice",
@@ -183,7 +188,7 @@ it("quarantines every account-scoped caller after partial removal, including sto
     }
     remove(key);
   });
-  client.setQueryData(authKey, { account: "bob", mode: "oidc", status: "authenticated" });
+  client.setQueryData(authKey, authenticated("bob"));
   await waitFor(() => expect(scopedData().userName).toBe(""));
   expect(scopedData()).toMatchObject({
     agentAvatar: "",
