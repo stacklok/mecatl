@@ -22,7 +22,7 @@ func TestNetworkCorrelationDigestIsOneWayFixedAndDomainSeparated(t *testing.T) {
 	}
 }
 
-func TestADR_0346_Scenario2_InvalidEvidenceRejected(t *testing.T) {
+func TestADR_0347_Scenario2_InvalidEvidenceRejected(t *testing.T) {
 	terminal := true
 	base := NetworkAttemptPayload{
 		Attempt: 1, MaxAttempts: 1, RetryDisposition: "unknown", StreamProgress: "complete",

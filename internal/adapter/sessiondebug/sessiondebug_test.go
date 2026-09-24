@@ -286,7 +286,7 @@ func (errorLog) Read(context.Context, session.SessionID) iter.Seq2[session.Event
 
 var _ port.EventLog = errorLog{}
 
-func TestADR_0346_Scenario4_DebuggerProjection(t *testing.T) {
+func TestADR_0347_Scenario4_DebuggerProjection(t *testing.T) {
 	store, target := seededTarget(t, nil)
 	log := memstore.NewEventLog()
 	terminal := true
