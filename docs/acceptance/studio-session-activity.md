@@ -8,7 +8,7 @@
 **Delivery:** Split. The three event families, replay behavior, and panel content boundary warrant a separate Plan / Interface review.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1849](https://github.com/stacklok/mecatl/issues/1849).
-**Plan PR:** absent until opened
+**Plan PR:** [stacklok/mecatl#1885](https://github.com/stacklok/mecatl/pull/1885)
 **Approved baseline:** absent until this Plan / Interface PR merges
 
 Delegated work appears as compact cards under its assistant turn and in a session activity panel. The panel keeps Subagents, Parallel groups, and Teams separate and shows only facts projected by their events. This plan consumes the flat transcript and stream ownership seam proposed by [#1847](https://github.com/stacklok/mecatl/pull/1880). Implementation follows that approved and landed chat layout; the plan can be reviewed independently. The [Studio architecture topic](../architecture.md#mecatl-studio), [chat contract](studio-chat.md), and [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) remain the browser/BFF boundary.
