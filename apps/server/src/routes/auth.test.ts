@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { runInNewContext } from "node:vm";
+import { authSessionResponseSchema } from "@mecatl-studio/contracts";
 import { MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.js";
@@ -42,6 +44,208 @@ async function completeLogin(
 }
 
 describe("authentication routes", () => {
+  it("auth session source schema retains optional verified email", () => {
+    const authenticated = {
+      account: "opaque-account",
+      email: "ada@example.com",
+      mode: "oidc",
+      status: "authenticated",
+    };
+    expect(authSessionResponseSchema.parse(authenticated)).toEqual(authenticated);
+    expect(authSessionResponseSchema.parse({ mode: "oidc", status: "anonymous" })).toEqual({
+      mode: "oidc",
+      status: "anonymous",
+    });
+  });
+
+  it("popup callback returns a constrained CSP-safe result", async () => {
+    const publicUrl = new URL("https://studio.example.com");
+    const app = createApp({
+      authentication: await service(publicUrl),
+      runtime: fakeRuntime(),
+      security: { publicUrl },
+    });
+    const login = await app.request("https://studio.example.com/api/v1/auth/login?flow=popup");
+    expect(login.status).toBe(302);
+    const location = new URL(login.headers.get("location") ?? "");
+    const state = location.searchParams.get("state");
+    const callback = await app.request(
+      `https://studio.example.com/api/v1/auth/callback?code=code-1&state=${state}`,
+      { headers: { Cookie: cookieHeader(login.headers.getSetCookie()) } },
+    );
+    expect(callback.status).toBe(200);
+    expect(callback.headers.get("content-type")).toContain("text/html");
+    expect(callback.headers.get("cache-control")).toBe("private, no-store");
+    expect(callback.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(callback.headers.get("content-security-policy")).toContain("script-src 'self'");
+    const html = await callback.text();
+    expect(html).toContain('data-result="success"');
+    expect(html).toContain('src="/api/v1/auth/callback.js"');
+    expect(html).not.toMatch(/<script(?![^>]*src=)/u);
+    for (const sensitive of [
+      "code-1",
+      state,
+      "subject-1",
+      "access-",
+      "refresh-",
+      "email",
+      "account",
+    ]) {
+      expect(html).not.toContain(sensitive);
+    }
+    const scriptResponse = await app.request("https://studio.example.com/api/v1/auth/callback.js");
+    expect(scriptResponse.status).toBe(200);
+    expect(scriptResponse.headers.get("content-type")).toContain("javascript");
+    expect(scriptResponse.headers.get("cache-control")).toBe("private, no-store");
+    expect(scriptResponse.headers.get("referrer-policy")).toBe("no-referrer");
+    const script = await scriptResponse.text();
+    for (const sensitive of [
+      "code-1",
+      "subject-1",
+      "access-",
+      "refresh-",
+      "email",
+      "account",
+      "searchParams",
+    ]) {
+      expect(script).not.toContain(sensitive);
+    }
+    const messages: Array<{ value: unknown; target: string }> = [];
+    let closed = false;
+    runInNewContext(script, {
+      document: { documentElement: { dataset: { result: "success" } } },
+      window: {
+        close: () => {
+          closed = true;
+        },
+        location: { origin: publicUrl.origin },
+        opener: {
+          postMessage: (value: unknown, target: string) => {
+            messages.push({ value, target });
+          },
+        },
+      },
+    });
+    expect(messages).toEqual([
+      { value: { type: "studio.auth.result", result: "success" }, target: publicUrl.origin },
+    ]);
+    expect(closed).toBe(true);
+
+    const rejecting = createApp({
+      authentication: await service(publicUrl),
+      runtime: fakeRuntime({
+        verifyCredential: async () => {
+          throw new Error("rejected");
+        },
+      }),
+      security: { publicUrl },
+    });
+    const rejectedLogin = await rejecting.request(
+      "https://studio.example.com/api/v1/auth/login?flow=popup",
+    );
+    const rejectedState = new URL(rejectedLogin.headers.get("location") ?? "").searchParams.get(
+      "state",
+    );
+    const failed = await rejecting.request(
+      `https://studio.example.com/api/v1/auth/callback?code=code-1&state=${rejectedState}`,
+      { headers: { Cookie: cookieHeader(rejectedLogin.headers.getSetCookie()) } },
+    );
+    expect(failed.status).toBe(200);
+    expect(await failed.text()).toContain('data-result="failure"');
+    expect(
+      failed.headers
+        .getSetCookie()
+        .some(
+          (cookie) => cookie.startsWith("studio_access=") && !cookie.startsWith("studio_access=;"),
+        ),
+    ).toBe(false);
+  });
+
+  it("direct callback keeps redirect and invalid state preserves session", async () => {
+    const publicUrl = new URL("https://studio.example.com");
+    const app = createApp({
+      authentication: await service(publicUrl),
+      runtime: fakeRuntime(),
+      security: { publicUrl },
+    });
+    const established = await completeLogin(app, publicUrl.origin);
+    expect(established.callback.status).toBe(302);
+    expect(established.callback.headers.get("location")).toBe("/workspace/x");
+    const session = cookieHeader(established.callback.headers.getSetCookie());
+    const before = await app.request(`${publicUrl.origin}/api/v1/auth/session`, {
+      headers: { Cookie: session },
+    });
+    expect(await before.json()).toMatchObject({
+      account: expect.any(String),
+      status: "authenticated",
+    });
+
+    const fresh = await app.request(
+      `${publicUrl.origin}/api/v1/auth/login?return_to=${encodeURIComponent("//evil.example/")}`,
+      { headers: { Cookie: session } },
+    );
+    expect(fresh.status).toBe(302);
+    const url = new URL(fresh.headers.get("location") ?? "");
+    const transaction = cookieHeader(fresh.headers.getSetCookie());
+    const state = url.searchParams.get("state");
+    const callbackUrl = `${publicUrl.origin}/api/v1/auth/callback?code=code-1&state=${state}`;
+    const cases = [
+      { name: "missing", cookie: session, url: callbackUrl },
+      {
+        name: "mismatched",
+        cookie: `${session}; ${transaction}`,
+        url: `${publicUrl.origin}/api/v1/auth/callback?code=code-1&state=wrong`,
+      },
+    ];
+    for (const scenario of cases) {
+      const invalid = await app.request(scenario.url, { headers: { Cookie: scenario.cookie } });
+      expect(invalid.status, scenario.name).toBe(400);
+      await expect(invalid.json()).resolves.toMatchObject({ code: "login_state_mismatch" });
+      expect(
+        invalid.headers
+          .getSetCookie()
+          .some(
+            (cookie) =>
+              cookie.startsWith("studio_access=") ||
+              cookie.startsWith("studio_refresh=") ||
+              (cookie.startsWith("studio_csrf=;") && cookie.includes("Max-Age=0")),
+          ),
+        scenario.name,
+      ).toBe(false);
+      const stillSignedIn = await app.request(`${publicUrl.origin}/api/v1/auth/session`, {
+        headers: { Cookie: session },
+      });
+      expect(await stillSignedIn.json(), scenario.name).toMatchObject({
+        account: expect.any(String),
+        status: "authenticated",
+      });
+    }
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11 * 60_000);
+    try {
+      const expired = await app.request(callbackUrl, {
+        headers: { Cookie: `${session}; ${transaction}` },
+      });
+      expect(expired.status).toBe(400);
+      expect(
+        expired.headers
+          .getSetCookie()
+          .some(
+            (cookie) =>
+              cookie.startsWith("studio_access=") ||
+              cookie.startsWith("studio_refresh=") ||
+              (cookie.startsWith("studio_csrf=;") && cookie.includes("Max-Age=0")),
+          ),
+      ).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+    const valid = await app.request(callbackUrl, {
+      headers: { Cookie: `${session}; ${transaction}` },
+    });
+    expect(valid.status).toBe(302);
+    expect(valid.headers.get("location")).toBe("/workspace");
+  });
+
   it("the callback URL is derived from STUDIO_PUBLIC_URL", async () => {
     const publicUrl = new URL("https://studio.example.com");
     const hosted = createApp({
@@ -108,7 +312,11 @@ describe("authentication routes", () => {
     const me = await app.request("https://studio.example.com/api/v1/auth/session", {
       headers: { Cookie: session },
     });
-    await expect(me.json()).resolves.toEqual({ mode: "oidc", status: "authenticated" });
+    await expect(me.json()).resolves.toEqual({
+      account: expect.any(String),
+      mode: "oidc",
+      status: "authenticated",
+    });
 
     const logout = await app.request("https://studio.example.com/api/v1/auth/logout", {
       headers: csrfHeaders("t", { Cookie: `${session}; studio_csrf=t` }),
@@ -307,6 +515,7 @@ describe("authentication routes", () => {
       noteLoginComplete: () => undefined,
       noteLoginFailure: () => undefined,
       save: async () => undefined,
+      signInRequired: async () => true,
       startLogin: async () => "https://issuer.example.com/authorize",
     });
     const account = async (subject: string) => {

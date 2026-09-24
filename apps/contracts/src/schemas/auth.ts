@@ -10,10 +10,12 @@ import { z } from "zod";
  * whenever `mode` is not `oidc`. `account`, present only when authenticated,
  * is an opaque, stable key for the signed-in identity (a hash of the issuer
  * subject, never the subject itself); the browser compares it to drop data a
- * previous account left in this origin's storage.
+ * previous account left in this origin's storage. `email` is present only for
+ * an authenticated session when a verified ID token provided an accepted claim.
  */
 export const authSessionResponseSchema = z.object({
   account: z.string().optional(),
+  email: z.string().optional(),
   mode: z.enum(["oidc", "static", "none"]),
   status: z.enum(["authenticated", "anonymous", "disabled"]),
 });

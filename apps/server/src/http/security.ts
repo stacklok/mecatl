@@ -39,7 +39,7 @@ export function requestContext(options: SecurityOptions): MiddlewareHandler<AppE
  * anywhere in Studio, so no response ever carries `Access-Control-Allow-Origin`.
  */
 export function securityHeaders(): MiddlewareHandler<AppEnv> {
-  return secureHeaders({
+  const headers = secureHeaders({
     contentSecurityPolicy: {
       baseUri: ["'self'"],
       connectSrc: ["'self'"],
@@ -54,6 +54,18 @@ export function securityHeaders(): MiddlewareHandler<AppEnv> {
     },
     referrerPolicy: "same-origin",
   }) as MiddlewareHandler<AppEnv>;
+  return async (context, next) => {
+    await headers(context, next);
+    // The callback URL contains an authorization code. The global same-origin
+    // policy is overridden after secureHeaders has finished writing headers.
+    if (
+      context.req.path === "/api/v1/auth/callback" ||
+      context.req.path === "/oauth/callback" ||
+      context.req.path === "/api/v1/auth/callback.js"
+    ) {
+      context.header("Referrer-Policy", "no-referrer");
+    }
+  };
 }
 
 /** Issues the double-submit CSRF cookie on safe requests when the browser has none yet. */

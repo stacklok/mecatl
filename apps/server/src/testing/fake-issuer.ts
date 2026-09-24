@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { generateKeyPairSync, sign } from "node:crypto";
+
 /**
  * A fake mecatl protected resource + OIDC issuer behind a `fetch` function, so
  * discovery, PKCE login, refresh, and revocation exercise the real
@@ -7,6 +9,26 @@
  */
 export const issuerUrl = "https://issuer.example.com";
 export const resourceUrl = "https://mecatl.example.com";
+
+const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const publicJwk = {
+  ...publicKey.export({ format: "jwk" }),
+  alg: "RS256",
+  kid: "fixture-key",
+  use: "sig",
+};
+
+function idToken(claims: Record<string, unknown>): string {
+  const now = Math.floor(Date.now() / 1_000);
+  const header = Buffer.from(
+    JSON.stringify({ alg: "RS256", kid: "fixture-key", typ: "JWT" }),
+  ).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({ aud: "studio", exp: now + 3_600, iat: now, iss: issuerUrl, ...claims }),
+  ).toString("base64url");
+  const signed = `${header}.${payload}`;
+  return `${signed}.${sign("RSA-SHA256", Buffer.from(signed), privateKey).toString("base64url")}`;
+}
 
 export interface FakeIssuerOptions {
   /** Access-token size in characters for the code exchange; large values trip the cookie bound. */
@@ -17,6 +39,10 @@ export interface FakeIssuerOptions {
   readonly rotateRefreshTokens?: boolean;
   /** Milliseconds a fresh access token lives; short values force refresh. */
   readonly expiresIn?: number;
+  /** Verified claims in the authorization-code ID token; defaults to a usable subject. */
+  readonly idTokenClaims?: Record<string, unknown>;
+  /** When present, include a new ID token in the refresh response. */
+  readonly refreshIdTokenClaims?: Record<string, unknown>;
 }
 
 export interface FakeIssuer {
@@ -69,10 +95,12 @@ export function fakeIssuer(options: FakeIssuerOptions = {}): FakeIssuer {
         token_endpoint_auth_methods_supported: ["none"],
       });
     }
+    if (path === `${issuerUrl}/jwks`) return json({ keys: [publicJwk] });
     if (path === `${issuerUrl}/token` && request.method === "POST") {
       const form = new URLSearchParams(await request.text());
+      const refreshing = form.get("grant_type") === "refresh_token";
       tokenCalls += 1;
-      if (form.get("grant_type") === "refresh_token") {
+      if (refreshing) {
         refreshCalls += 1;
         if (options.refreshFails === true) {
           return json({ error: "invalid_grant" }, 400);
@@ -92,6 +120,11 @@ export function fakeIssuer(options: FakeIssuerOptions = {}): FakeIssuer {
         expires_in: Math.max(1, Math.floor((options.expiresIn ?? 3_600_000) / 1_000)),
         refresh_token: `refresh-${accessCounter}`,
         token_type: "Bearer",
+        ...(refreshing
+          ? options.refreshIdTokenClaims === undefined
+            ? {}
+            : { id_token: idToken(options.refreshIdTokenClaims) }
+          : { id_token: idToken(options.idTokenClaims ?? { sub: "subject-1" }) }),
       });
     }
     if (path === `${issuerUrl}/revoke` && request.method === "POST") {
