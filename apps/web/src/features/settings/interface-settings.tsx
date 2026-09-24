@@ -17,7 +17,9 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { paletteSwatch } from "../../components/palette-swatch";
 import { Button } from "../../components/ui/button";
+import { OptionField } from "../../components/ui/option-field";
 import { Switch } from "../../components/ui/switch";
 import {
   type BrowserNotificationPermission,
@@ -25,6 +27,7 @@ import {
   requestBrowserNotifications,
   sendBrowserNotification,
 } from "../../lib/browser-notifications";
+import { BUILT_IN_PALETTES, type Palette, usePalette } from "../../lib/palettes";
 import {
   type EnterSendBehavior,
   type SessionListSide,
@@ -38,13 +41,19 @@ import {
   useUiScale,
 } from "../../lib/profile-preferences";
 import { type Theme, useTheme } from "../../lib/theme";
-import { OptionField } from "./option-field";
 
 const THEME_OPTIONS = [
-  { icon: Sun, label: "Light", value: "light" },
-  { icon: Moon, label: "Dark", value: "dark" },
-  { icon: MonitorCog, label: "System", value: "system" },
+  { icon: Sun, label: "Light", description: "Always light.", value: "light" },
+  { icon: Moon, label: "Dark", description: "Always dark.", value: "dark" },
+  { icon: MonitorCog, label: "System", description: "Follow this device.", value: "system" },
 ] as const;
+
+const PALETTE_OPTIONS = BUILT_IN_PALETTES.map((palette) => ({
+  icon: paletteSwatch(palette.swatch),
+  label: palette.label,
+  description: palette.description,
+  value: palette.id,
+}));
 
 const SIDE_OPTIONS = [
   { icon: PanelLeft, label: "Left", value: "left" },
@@ -63,6 +72,7 @@ const START_ON_OPTIONS = [
 
 export function InterfaceSettings() {
   const theme = useTheme();
+  const palette = usePalette();
   const scale = useUiScale();
   const sessionListSide = useSessionListSide();
   const showToolCalls = useShowToolCalls();
@@ -76,7 +86,7 @@ export function InterfaceSettings() {
           <MonitorCog aria-hidden="true" className="size-5" />
         </span>
         <div>
-          <h2 className="text-lg font-semibold">Interface</h2>
+          <h2 className="text-lg font-semibold">Appearance</h2>
           <p className="text-sm text-muted-foreground">
             Source: browser appearance and chat preferences. Owner: personal.
           </p>
@@ -90,6 +100,17 @@ export function InterfaceSettings() {
             onChange={(value) => theme.setTheme(value as Theme)}
             options={THEME_OPTIONS}
             value={theme.theme}
+          />
+        </PreferenceRow>
+        <PreferenceRow
+          description="Choose Studio's color palette for this browser."
+          label="Palette"
+        >
+          <OptionField
+            label="Palette"
+            onChange={(value) => palette.setPalette(value as Palette)}
+            options={PALETTE_OPTIONS}
+            value={palette.palette}
           />
         </PreferenceRow>
         <PreferenceRow description="Sizes text and controls together." label="Interface scale">

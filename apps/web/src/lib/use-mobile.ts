@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const MOBILE_BREAKPOINT = 500;
+const mobileQuery = `(max-width: ${MOBILE_BREAKPOINT - 1}px)`;
+
+function isMobileViewport(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.(mobileQuery).matches ?? window.innerWidth < MOBILE_BREAKPOINT;
+}
+
+function subscribe(listener: () => void): () => void {
+  const query = window.matchMedia?.(mobileQuery);
+  query?.addEventListener?.("change", listener);
+  window.addEventListener("resize", listener);
+  return () => {
+    query?.removeEventListener?.("change", listener);
+    window.removeEventListener("resize", listener);
+  };
+}
 
 /** True below the mobile breakpoint (matches the app's own `min-[500px]` convention). */
 export function useIsMobile(): boolean {
-  const [isMobile, setIsMobile] = useState<boolean | undefined>(undefined);
-
-  useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
-    mql.addEventListener("change", onChange);
-    onChange();
-    return () => mql.removeEventListener("change", onChange);
-  }, []);
-
-  return Boolean(isMobile);
+  return useSyncExternalStore(subscribe, isMobileViewport, () => false);
 }
