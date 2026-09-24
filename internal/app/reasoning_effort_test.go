@@ -153,7 +153,7 @@ func TestModelReasoningSupport(t *testing.T) {
 			providerMock: {id: providerMock, provider: mockllm.New(mockllm.TextTurn("x")), available: true},
 		},
 		defaultID: providerMock,
-		meta:      newLiveMetaStore(),
+		meta:      newMetadataFixture(),
 	}
 	// Mock → known-incapable.
 	if sup, known := modelReasoningSupport(reg, providerMock, "anything"); !known || sup {
@@ -216,7 +216,7 @@ func regWithRemintRecorder(defaultReply string) (*providerRegistry, *mockllm.Pro
 			},
 		},
 		defaultID: providerOpenAI,
-		meta:      newLiveMetaStore(),
+		meta:      newMetadataFixture(),
 	}
 	return reg, def, &reminted
 }
@@ -261,7 +261,7 @@ func TestFactoryDegradesOnNoReasoningModel(t *testing.T) {
 	reg, _, reminted := regWithRemintRecorder("DEFAULT-REPLY")
 	rec := &recordingDiag{}
 	// The live source describes "no-reason-model" as Reasoning:false (known-incapable).
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: "no-reason-model", Reasoning: false}},
 	})
 	cfg := Config{Model: "gpt-5", Diagnostics: rec}

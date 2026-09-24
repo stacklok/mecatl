@@ -30,6 +30,9 @@ func modelSnapshot(reg *providerRegistry) []*mecatlv1.ModelInfo {
 	if reg == nil {
 		return nil
 	}
+	if reg.discovery != nil {
+		return reg.discovery.CurrentModelSnapshot().Models
+	}
 	var out []*mecatlv1.ModelInfo
 	for _, pid := range reg.Available() { // available providers ONLY
 		if pid == providerMock {
@@ -38,7 +41,7 @@ func modelSnapshot(reg *providerRegistry) []*mecatlv1.ModelInfo {
 		// The seed is the configured inventory floor for custom providers and the
 		// embedded floor for built-ins (no live fetch at Build).
 		for _, m := range providerInventoryFloor(reg, pid) {
-			out = append(out, projectModelEntry(reg, pid, m))
+			out = append(out, projectModelEntry(reg, Config{ContextWindowOverride: reg.contextWindowOverride, contextWindows: reg.contextWindows}, reg.meta.current(), pid, m))
 		}
 	}
 	sortModelInfos(out)

@@ -1273,13 +1273,10 @@ func (h *HarnessServer) ListSkills(ctx context.Context, _ *mecatlv1.ListSkillsRe
 	return &mecatlv1.ListSkillsResponse{Skills: h.svc.ListSkills(ctx)}, nil
 }
 
-// ListModels returns the resolved selectable-model inventory snapshot plus
-// (issue #262) the per-provider live-listing status. ListModels itself
-// triggers the on-demand refresh (when installed), so ProviderStatuses is read
-// AFTER it to reflect the just-completed refresh.
+// ListModels returns models and provider statuses from one completed publication.
 func (h *HarnessServer) ListModels(ctx context.Context, _ *mecatlv1.ListModelsRequest) (*mecatlv1.ListModelsResponse, error) {
-	models := h.svc.ListModels(ctx)
-	return &mecatlv1.ListModelsResponse{Models: models, ProviderStatus: h.svc.ProviderStatuses()}, nil
+	view := h.svc.ListModelSnapshot(ctx)
+	return &mecatlv1.ListModelsResponse{Models: view.Models, ProviderStatus: view.ProviderStatus}, nil
 }
 
 // GetSoul returns the resolved soul (persona) snapshot.

@@ -53,34 +53,11 @@ import (
 // authority bit in P0. ModelInfo.reasoning stays catalog-sourced. If P1 wants
 // reasoning intersected, add the adapter bit then (anti-speculative).
 func modelCapability(reg *providerRegistry, providerID, modelID string) port.ProviderCapabilities {
-	adapterCaps := modelAdapterCaps(reg, providerID)
-
-	// (1) Live-first: a provider with a live lister (openrouter) carries authoritative
-	// per-model input_modalities in the meta store — the SAME modelEntry.InputModalities
-	// the picker reads. nil-guarded (modalitiesFor → lookup is nil-safe).
-	if reg != nil && reg.meta != nil {
-		if liveMods, found := reg.meta.modalitiesFor(providerID, modelID); found {
-			return port.ProviderCapabilities{
-				Image:           adapterCaps.Image && hasImageModality(liveMods),
-				Audio:           adapterCaps.Audio && hasAudioModality(liveMods),
-				EmbeddedContext: adapterCaps.EmbeddedContext,
-			}
-		}
+	var view *discoverySnapshot
+	if reg != nil {
+		view = reg.meta.current()
 	}
-
-	// (2) Catalog floor: no live entry, but the embedded catalog knows the model.
-	catImage, catAudio, catalogued := catalogModalities(providerID, modelID)
-	if !catalogued {
-		// (3) Passthrough / uncatalogued model: catalog AND live are silent, so trust
-		// the adapter alone. Zeroing here would strip image from every uncatalogued model.
-		return adapterCaps
-	}
-
-	return port.ProviderCapabilities{
-		Image:           adapterCaps.Image && catImage,
-		Audio:           adapterCaps.Audio && catAudio,
-		EmbeddedContext: adapterCaps.EmbeddedContext,
-	}
+	return modelCapabilityCandidate(reg, view, providerID, modelID)
 }
 
 // modelReasoningSupport reports whether the (provider, model) is known to support
@@ -100,6 +77,13 @@ func modelReasoningSupport(reg *providerRegistry, providerID, modelID string) (s
 	if reg != nil && reg.meta != nil {
 		if entry, ok := reg.meta.lookup(providerID, modelID); ok {
 			return entry.Reasoning, true
+		}
+	}
+	// Preserve the configured default's existing inventory-floor presence without
+	// storing that floor as a live observation.
+	if reg != nil && modelID != "" {
+		if entry, ok := reg.Lookup(providerID); ok && entry.defaultModel == modelID {
+			return false, true
 		}
 	}
 	// (2) Catalog floor.

@@ -27,15 +27,15 @@ import (
 )
 
 type discoveryResult struct {
-	Models     []discoveryModel    `json:"models"`
-	Providers  []discoveryProvider `json:"providers"`
-	Returned   int                 `json:"returned"`
-	Available  int                 `json:"available"`
-	Truncated  bool                `json:"truncated"`
-	NextCursor string              `json:"next_cursor"`
+	Models     []discoveryModel          `json:"models"`
+	Providers  []discoveryProviderResult `json:"providers"`
+	Returned   int                       `json:"returned"`
+	Available  int                       `json:"available"`
+	Truncated  bool                      `json:"truncated"`
+	NextCursor string                    `json:"next_cursor"`
 }
 
-type discoveryProvider struct {
+type discoveryProviderResult struct {
 	ProviderID string `json:"provider_id"`
 	ModelCount int    `json:"model_count"`
 }
@@ -49,7 +49,7 @@ type discoveryModel struct {
 	ContextLimit int64  `json:"context_limit"`
 }
 
-func executeDiscovery(t *testing.T, inventory *resolvedModelInventory, args string) (session.ToolResult, discoveryResult) {
+func executeDiscovery(t *testing.T, inventory server.ModelInventory, args string) (session.ToolResult, discoveryResult) {
 	t.Helper()
 	call := session.ToolCall{ID: "call-1", Name: agentModelDiscoveryToolName, Args: json.RawMessage(args)}
 	result, err := newAgentModelDiscoveryTool(inventory).Execute(context.Background(), call, tool.Environment{})
@@ -76,6 +76,18 @@ func fixtureModels() []*mecatlv1.ModelInfo {
 	}
 }
 
+func copyDiscoveryModelInfo(model *mecatlv1.ModelInfo) mecatlv1.ModelInfo {
+	return mecatlv1.ModelInfo{
+		Id:           model.GetId(),
+		ProviderId:   model.GetProviderId(),
+		DisplayName:  model.GetDisplayName(),
+		Image:        model.GetImage(),
+		Reasoning:    model.GetReasoning(),
+		ContextLimit: model.GetContextLimit(),
+		PromptCached: model.GetPromptCached(),
+	}
+}
+
 func requireSuccess(t *testing.T, result session.ToolResult) {
 	t.Helper()
 	if result.IsError {
@@ -98,9 +110,9 @@ func mutateDiscoveryCursor(t *testing.T, cursor string, mutate func(*agentModelD
 }
 
 func TestInvariant_agent_model_discovery_Scenario1_SelectableProviderFacets(t *testing.T) {
-	result, got := executeDiscovery(t, newResolvedModelInventory(fixtureModels()), `{}`)
+	result, got := executeDiscovery(t, newTestModelInventory(fixtureModels()), `{}`)
 	requireSuccess(t, result)
-	want := []discoveryProvider{{ProviderID: "alpha", ModelCount: 1}, {ProviderID: "beta", ModelCount: 2}}
+	want := []discoveryProviderResult{{ProviderID: "alpha", ModelCount: 1}, {ProviderID: "beta", ModelCount: 2}}
 	if fmt.Sprint(got.Providers) != fmt.Sprint(want) {
 		t.Fatalf("providers = %+v, want %+v", got.Providers, want)
 	}
@@ -110,7 +122,7 @@ func TestInvariant_agent_model_discovery_Scenario1_SelectableProviderFacets(t *t
 }
 
 func TestInvariant_agent_model_discovery_Scenario1_FacetsAreInitialAndSafe(t *testing.T) {
-	inventory := newResolvedModelInventory(fixtureModels())
+	inventory := newTestModelInventory(fixtureModels())
 	for _, args := range []string{`{"provider_id":"beta"}`, `{"model_id":"shared-model"}`, `{"query":"shared"}`} {
 		result, _ := executeDiscovery(t, inventory, args)
 		requireSuccess(t, result)
@@ -125,7 +137,7 @@ func TestInvariant_agent_model_discovery_Scenario1_FacetsAreInitialAndSafe(t *te
 	if strings.Contains(continuedResult.Content, `"providers"`) {
 		t.Fatalf("continuation repeated provider facet: %s", continuedResult.Content)
 	}
-	emptyResult, empty := executeDiscovery(t, newResolvedModelInventory(nil), `{}`)
+	emptyResult, empty := executeDiscovery(t, newTestModelInventory(nil), `{}`)
 	requireSuccess(t, emptyResult)
 	if !strings.Contains(emptyResult.Content, `"providers":[]`) || len(empty.Providers) != 0 || len(empty.Models) != 0 {
 		t.Fatalf("empty inventory result is dishonest: %s", emptyResult.Content)
@@ -164,7 +176,7 @@ func TestInvariant_agent_model_discovery_Scenario2_LiteralTermSearch(t *testing.
 		{ProviderId: "unicode", Id: "é", DisplayName: "composed"},
 		{ProviderId: "unicode", Id: "e\u0301", DisplayName: "decomposed"},
 	}
-	inventory := newResolvedModelInventory(models)
+	inventory := newTestModelInventory(models)
 	result, got := executeDiscovery(t, inventory, `{"query":"  vision\u2003REASON  "}`)
 	requireSuccess(t, result)
 	if len(got.Models) != 1 || got.Models[0].ModelID != "Vision-One" {
@@ -185,7 +197,7 @@ func TestInvariant_agent_model_discovery_Scenario2_NoQueryLanguage(t *testing.T)
 		{ProviderId: "literal", Id: "x>10", DisplayName: "comparison"},
 		{ProviderId: "literal", Id: `"quoted"`, DisplayName: "quotes"},
 	}
-	inventory := newResolvedModelInventory(models)
+	inventory := newTestModelInventory(models)
 	for _, term := range []string{"a.*", "field:value", "-fast", "x>10", `"quoted"`} {
 		result, got := executeDiscovery(t, inventory, fmt.Sprintf(`{"query":%q}`, term))
 		requireSuccess(t, result)
@@ -200,7 +212,7 @@ func TestInvariant_agent_model_discovery_Scenario2_NoQueryLanguage(t *testing.T)
 }
 
 func TestInvariant_agent_model_discovery_Scenario2_QueryValidationAndNonDisclosure(t *testing.T) {
-	inventory := newResolvedModelInventory(fixtureModels())
+	inventory := newTestModelInventory(fixtureModels())
 	for _, omitted := range []string{`{"query":""}`, `{"query":" \u2003 "}`} {
 		result, got := executeDiscovery(t, inventory, omitted)
 		requireSuccess(t, result)
@@ -228,7 +240,7 @@ func TestInvariant_agent_model_discovery_Scenario2_QueryValidationAndNonDisclosu
 }
 
 func TestInvariant_agent_model_discovery_Scenario2_AllProviderAndExactProviderSearch(t *testing.T) {
-	inventory := newResolvedModelInventory(fixtureModels())
+	inventory := newTestModelInventory(fixtureModels())
 	_, all := executeDiscovery(t, inventory, `{"query":"shared"}`)
 	_, beta := executeDiscovery(t, inventory, `{"provider_id":"beta","query":"shared"}`)
 	unknownResult, unknown := executeDiscovery(t, inventory, `{"provider_id":"missing","query":"shared"}`)
@@ -242,7 +254,7 @@ func TestInvariant_agent_model_discovery_Scenario2_AllProviderAndExactProviderSe
 }
 
 func TestInvariant_agent_model_discovery_Scenario2_ExactFilterValidation(t *testing.T) {
-	inventory := newResolvedModelInventory(fixtureModels())
+	inventory := newTestModelInventory(fixtureModels())
 	for _, args := range []string{
 		`{"provider_id":" beta"}`,
 		`{"provider_id":"beta "}`,
@@ -278,7 +290,7 @@ func TestInvariant_agent_model_discovery_Scenario3_CursorTraversal(t *testing.T)
 	for i := 6; i >= 0; i-- {
 		models = append(models, &mecatlv1.ModelInfo{ProviderId: "p", Id: fmt.Sprintf("m-%d", i)})
 	}
-	inventory := newResolvedModelInventory(models)
+	inventory := newTestModelInventory(models)
 	args := `{"limit":2}`
 	var ids []string
 	for page := 0; page < 10; page++ {
@@ -305,12 +317,12 @@ func TestInvariant_agent_model_discovery_Scenario3_CursorTraversal(t *testing.T)
 
 func TestInvariant_agent_model_discovery_Scenario3_InventoryBoundCursor(t *testing.T) {
 	original := fixtureModels()[:3]
-	inventory := newResolvedModelInventory(original)
+	inventory := newTestModelInventory(original)
 	_, first := executeDiscovery(t, inventory, `{"limit":1}`)
 	if first.NextCursor == "" {
 		t.Fatal("first page did not return cursor")
 	}
-	inventory.SetModels([]*mecatlv1.ModelInfo{original[2], original[0], original[1]})
+	inventory.publish([]*mecatlv1.ModelInfo{original[2], original[0], original[1]})
 	sameResult, same := executeDiscovery(t, inventory, fmt.Sprintf(`{"cursor":%q}`, first.NextCursor))
 	requireSuccess(t, sameResult)
 	if len(same.Models) != 1 {
@@ -322,7 +334,7 @@ func TestInvariant_agent_model_discovery_Scenario3_InventoryBoundCursor(t *testi
 	}
 	for _, field := range []string{"provider_id", "model_id", "display_name", "image", "reasoning", "context_limit"} {
 		changed := append([]*mecatlv1.ModelInfo(nil), original...)
-		modelCopy := copyModelInfo(original[0])
+		modelCopy := copyDiscoveryModelInfo(original[0])
 		changed[0] = &modelCopy
 		switch field {
 		case "provider_id":
@@ -341,7 +353,7 @@ func TestInvariant_agent_model_discovery_Scenario3_InventoryBoundCursor(t *testi
 		variants[field] = changed
 	}
 	for name, changed := range variants {
-		inventory.SetModels(changed)
+		inventory.publish(changed)
 		stale, _ := executeDiscovery(t, inventory, fmt.Sprintf(`{"cursor":%q}`, first.NextCursor))
 		if !stale.IsError || !strings.Contains(stale.Content, "restart without a cursor") || strings.Contains(stale.Content, first.NextCursor) {
 			t.Errorf("%s did not produce fixed restart error: %+v", name, stale)
@@ -350,7 +362,7 @@ func TestInvariant_agent_model_discovery_Scenario3_InventoryBoundCursor(t *testi
 }
 
 func TestInvariant_agent_model_discovery_Scenario3_CursorValidation(t *testing.T) {
-	inventory := newResolvedModelInventory(fixtureModels())
+	inventory := newTestModelInventory(fixtureModels())
 	_, first := executeDiscovery(t, inventory, `{"provider_id":"beta","query":"beta","limit":1}`)
 	cursor := first.NextCursor
 	if cursor == "" {
@@ -408,7 +420,7 @@ func TestInvariant_agent_model_discovery_Scenario3_CursorValidation(t *testing.T
 		}
 	}
 	oversizedFilter := strings.Repeat("<", maxAgentModelDiscoveryFilterBytes)
-	oversizedInventory := newResolvedModelInventory([]*mecatlv1.ModelInfo{{ProviderId: oversizedFilter, Id: "one"}, {ProviderId: oversizedFilter, Id: "two"}})
+	oversizedInventory := newTestModelInventory([]*mecatlv1.ModelInfo{{ProviderId: oversizedFilter, Id: "one"}, {ProviderId: oversizedFilter, Id: "two"}})
 	unrepresentableCursor, _ := executeDiscovery(t, oversizedInventory, fmt.Sprintf(`{"provider_id":%q,"limit":1}`, oversizedFilter))
 	if !unrepresentableCursor.IsError || unrepresentableCursor.Content != agentModelDiscoveryOutputError {
 		t.Fatalf("overlong emitted cursor was usable instead of rejected: %+v", unrepresentableCursor)
@@ -425,7 +437,7 @@ func TestInvariant_agent_model_discovery_Scenario3_ByteBoundMakesProgress(t *tes
 	for i := range 50 {
 		models = append(models, &mecatlv1.ModelInfo{ProviderId: "p", Id: fmt.Sprintf("m-%02d", i), DisplayName: strings.Repeat("x", 1200)})
 	}
-	inventory := newResolvedModelInventory(models)
+	inventory := newTestModelInventory(models)
 	result, first := executeDiscovery(t, inventory, `{"limit":50}`)
 	requireSuccess(t, result)
 	if len(result.Content) > maxAgentModelDiscoveryOutputBytes || first.Returned == 0 || first.Returned >= 50 || first.NextCursor == "" || !first.Truncated {
@@ -440,7 +452,7 @@ func TestInvariant_agent_model_discovery_Scenario3_ByteBoundMakesProgress(t *tes
 	for i := range 1000 {
 		facetModels = append(facetModels, &mecatlv1.ModelInfo{ProviderId: fmt.Sprintf("p%04d", i), Id: "same"})
 	}
-	facetInventory := newResolvedModelInventory(facetModels)
+	facetInventory := newTestModelInventory(facetModels)
 	facetOnly, _ := executeDiscovery(t, facetInventory, `{"limit":1}`)
 	if !facetOnly.IsError || facetOnly.Content != agentModelDiscoveryOutputError {
 		t.Fatalf("unrepresentable provider facet did not return bounded error: %+v", facetOnly)
@@ -454,7 +466,7 @@ func TestInvariant_agent_model_discovery_Scenario3_ByteBoundMakesProgress(t *tes
 	if continuedFacet.IsError || strings.Contains(continuedFacet.Content, `"providers"`) {
 		t.Fatalf("cursor page did not remain usable without facets: %+v", continuedFacet)
 	}
-	unrepresentable := newResolvedModelInventory([]*mecatlv1.ModelInfo{{ProviderId: strings.Repeat("p", maxAgentModelDiscoveryOutputBytes), Id: "m"}})
+	unrepresentable := newTestModelInventory([]*mecatlv1.ModelInfo{{ProviderId: strings.Repeat("p", maxAgentModelDiscoveryOutputBytes), Id: "m"}})
 	tooLarge, _ := executeDiscovery(t, unrepresentable, `{}`)
 	if !tooLarge.IsError || len(tooLarge.Content) > maxAgentModelDiscoveryErrorBytes {
 		t.Fatalf("unrepresentable page did not return bounded error: %+v", tooLarge)
@@ -472,7 +484,7 @@ func TestInvariant_agent_model_discovery_Scenario4_SystemPromptContainsWorkflowN
 	var captured prompt.Layered
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req.System })}, mockllm.TextTurn("ok"))
 	reg := regForTest(provider, providerOpenAI, model)
-	assets := catalogAssets{modelInventory: newResolvedModelInventory(liveInventory)}
+	assets := catalogAssets{modelInventory: newTestModelInventory(liveInventory)}
 	factory := sessionEngineFactory(Config{Model: model}, reg, provider, memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, assets, nil)
 	built, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
@@ -496,7 +508,7 @@ func TestInvariant_agent_model_discovery_Scenario4_SystemPromptContainsWorkflowN
 }
 
 func TestInvariant_agent_model_discovery_Scenario4_ToolSpecificationContract(t *testing.T) {
-	spec := newAgentModelDiscoveryTool(newResolvedModelInventory(nil)).Spec()
+	spec := newAgentModelDiscoveryTool(newTestModelInventory(nil)).Spec()
 	for _, clause := range []string{"strings.Fields", "strings.ToLower", "all selectable providers", "exact", "cursor", "restart without a cursor", "providers", "32 KiB", "never probes", "never selects"} {
 		if !strings.Contains(spec.Description, clause) {
 			t.Errorf("tool description missing actionable contract clause %q: %s", clause, spec.Description)
@@ -520,14 +532,14 @@ func TestInvariant_agent_model_discovery_Scenario4_ToolSpecificationContract(t *
 
 func TestInvariant_agent_model_discovery_Scenario4_SharedLiveInventory(t *testing.T) {
 	published := &mecatlv1.ModelInfo{ProviderId: "p", Id: "m", DisplayName: "original", Image: true, Reasoning: true, ContextLimit: 42, PromptCached: true}
-	inventory := newResolvedModelInventory([]*mecatlv1.ModelInfo{published})
+	inventory := newTestModelInventory([]*mecatlv1.ModelInfo{published})
 	published.ProviderId, published.Id, published.DisplayName, published.Image, published.Reasoning, published.ContextLimit, published.PromptCached = "mutated", "mutated", "mutated", false, false, 0, false
-	first := inventory.CurrentModels()
+	first := inventory.CurrentModelSnapshot().Models
 	if len(first) != 1 || first[0].ProviderId != "p" || first[0].Id != "m" || first[0].DisplayName != "original" || !first[0].Image || !first[0].Reasoning || first[0].ContextLimit != 42 || !first[0].PromptCached {
 		t.Fatalf("publisher mutation changed inventory: %+v", first)
 	}
 	first[0].ProviderId, first[0].DisplayName = "reader-mutated", "reader-mutated"
-	second := inventory.CurrentModels()
+	second := inventory.CurrentModelSnapshot().Models
 	if second[0].ProviderId != "p" || second[0].DisplayName != "original" {
 		t.Fatalf("reader mutation changed inventory: %+v", second)
 	}
@@ -537,7 +549,7 @@ func TestInvariant_agent_model_discovery_Scenario4_SharedLiveInventory(t *testin
 		go func() {
 			defer wg.Done()
 			for range 100 {
-				rows := inventory.CurrentModels()
+				rows := inventory.CurrentModelSnapshot().Models
 				rows[0].DisplayName = "concurrent-reader-mutation"
 				result, got := executeDiscovery(t, inventory, `{}`)
 				if result.IsError || len(got.Models) != 1 || got.Models[0].DisplayName != "original" {
@@ -551,7 +563,7 @@ func TestInvariant_agent_model_discovery_Scenario4_SharedLiveInventory(t *testin
 }
 
 func TestInvariant_agent_model_discovery_Scenario4_PermissionPostureUnchanged(t *testing.T) {
-	discovery := newAgentModelDiscoveryTool(newResolvedModelInventory(nil))
+	discovery := newAgentModelDiscoveryTool(newTestModelInventory(nil))
 	if !discovery.ReadOnly() {
 		t.Fatal("DiscoverModels must remain read-only")
 	}

@@ -221,6 +221,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"IsDraining",
 		"IsLive",
 		"LeaseSweepDisabled",
+		"ListModels", // models-only Go projection; wire handlers capture ListModelSnapshot
 		"ListSessions",
 		"LoadACPSession",
 		"LoadSession",

@@ -10,13 +10,13 @@ import (
 	"io"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 const (
@@ -38,69 +38,12 @@ const (
 	agentModelDiscoveryOutputError   = "model inventory cannot make progress within the safe output bound"
 )
 
-// resolvedModelInventory is the composition-owned resolved inventory shared by
-// ListModels and the model-facing discovery tool. Published and returned values
-// never share mutable protobuf pointers.
-type resolvedModelInventory struct {
-	models atomic.Pointer[[]mecatlv1.ModelInfo]
-}
-
-func newResolvedModelInventory(models []*mecatlv1.ModelInfo) *resolvedModelInventory {
-	inventory := &resolvedModelInventory{}
-	inventory.SetModels(models)
-	return inventory
-}
-
-func (i *resolvedModelInventory) SetModels(models []*mecatlv1.ModelInfo) {
-	owned := make([]mecatlv1.ModelInfo, 0, len(models))
-	for _, model := range models {
-		if model == nil {
-			owned = append(owned, mecatlv1.ModelInfo{})
-			continue
-		}
-		owned = append(owned, copyModelInfo(model))
-	}
-	i.models.Store(&owned)
-}
-
-func (i *resolvedModelInventory) CurrentModels() []*mecatlv1.ModelInfo {
-	if i == nil {
-		return nil
-	}
-	models := i.models.Load()
-	if models == nil {
-		return nil
-	}
-	out := make([]*mecatlv1.ModelInfo, len(*models))
-	for index := range *models {
-		model := copyModelInfo(&(*models)[index])
-		out[index] = &model
-	}
-	return out
-}
-
-func copyModelInfo(model *mecatlv1.ModelInfo) mecatlv1.ModelInfo {
-	return mecatlv1.ModelInfo{
-		Id:           model.GetId(),
-		ProviderId:   model.GetProviderId(),
-		DisplayName:  model.GetDisplayName(),
-		Image:        model.GetImage(),
-		Reasoning:    model.GetReasoning(),
-		ContextLimit: model.GetContextLimit(),
-		PromptCached: model.GetPromptCached(),
-	}
-}
-
-// Models is retained as a composition-local convenience for tests and callers
-// that do not need the server adapter's inventory interface name.
-func (i *resolvedModelInventory) Models() []*mecatlv1.ModelInfo { return i.CurrentModels() }
-
-func modelDiscoveryAvailable(reg *providerRegistry, inventory *resolvedModelInventory) bool {
-	return len(inventory.CurrentModels()) > 0 || anyProviderHasLister(reg)
+func modelDiscoveryAvailable(reg *providerRegistry, inventory server.ModelInventory) bool {
+	return (inventory != nil && len(inventory.CurrentModelSnapshot().Models) > 0) || anyProviderHasLister(reg)
 }
 
 type agentModelDiscoveryTool struct {
-	inventory *resolvedModelInventory
+	inventory server.ModelInventory
 }
 
 type agentModelDiscoveryArgs struct {
@@ -144,7 +87,7 @@ type agentModelDiscoveryCursor struct {
 	Digest     string   `json:"digest"`
 }
 
-func newAgentModelDiscoveryTool(inventory *resolvedModelInventory) agentModelDiscoveryTool {
+func newAgentModelDiscoveryTool(inventory server.ModelInventory) agentModelDiscoveryTool {
 	return agentModelDiscoveryTool{inventory: inventory}
 }
 
@@ -186,7 +129,7 @@ func (t agentModelDiscoveryTool) Execute(_ context.Context, call session.ToolCal
 		return session.NewToolError(call.ID, errMessage), nil
 	}
 
-	projection := discoveryProjection(t.inventory.CurrentModels())
+	projection := discoveryProjection(t.inventory.CurrentModelSnapshot().Models)
 	digest := discoveryProjectionDigest(projection)
 	scope, errMessage := resolveAgentModelDiscoveryScope(args, digest)
 	if errMessage != "" {

@@ -985,7 +985,7 @@ const rpcCatalogRows = [
     service: "HarnessService",
     method: "ListModels",
     shape: "unary",
-    backingService: "ListModels",
+    backingService: "ListModelSnapshot",
     grpc: grpc(HarnessService.method.listModels),
     http: http("GET", "/v1/models", [], [], "none", "json"),
   }),

@@ -237,22 +237,15 @@ type SessionEngineFactory func(ctx context.Context, sel ProviderSelector, specs 
 // authorized target incarnation; neither may be projected to the model or wire.
 type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, target session.SessionID, targetFingerprint string, targetOwner *session.Principal, selectedServers, toolCeiling []string) (SessionEngineResult, error)
 
-// ModelInventory is the resolved composition-owned inventory shared by
-// ListModels and model-facing discovery. Implementations must provide atomic reads
-// and swaps. Nil retains the Service-owned compatibility path.
-type ModelInventory interface {
-	CurrentModels() []*mecatlv1.ModelInfo
-	SetModels([]*mecatlv1.ModelInfo)
+// ModelSnapshot captures model rows and provider statuses from one publication.
+type ModelSnapshot struct {
+	Models         []*mecatlv1.ModelInfo
+	ProviderStatus []*mecatlv1.ProviderStatus
 }
 
-func seedModelInventory(cfg Config) []*mecatlv1.ModelInfo {
-	if cfg.ModelInventory == nil {
-		return cfg.Models
-	}
-	if cfg.Models != nil {
-		cfg.ModelInventory.SetModels(cfg.Models)
-	}
-	return cfg.ModelInventory.CurrentModels()
+// ModelInventory is a pure reader of one composition-owned publication.
+type ModelInventory interface {
+	CurrentModelSnapshot() ModelSnapshot
 }
 
 // SessionEngineWithToolsFactory is the explicit per-session catalogue seam used
@@ -419,9 +412,9 @@ type Config struct {
 	// It carries public ModelInfo metadata only and remains the compatibility path
 	// when ModelInventory is nil.
 	Models []*mecatlv1.ModelInfo
-	// ModelInventory optionally supplies the composition-owned atomic inventory
-	// shared by ListModels and model-facing discovery. When set, SetModels updates
-	// this source and the Service's local scheduling projection in one operation.
+	// ModelInventory is the read-only composition-owned models/status publication
+	// shared by wire responses, model-facing discovery and schedule validation.
+	// When supplied, compatibility setters do not write another local snapshot.
 	ModelInventory ModelInventory
 
 	// DefaultCapabilities is the NEUTRAL per-(default provider+default model) input
@@ -1512,15 +1505,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 			svc.cursorLog = cl
 		}
 	}
-	// Seed the model inventory from the static snapshot. ListModels and the
-	// ModelSelection cap read this atomic so a later live-catalog SetModels swap is
-	// race-free. A nil cfg.Models seeds an empty (non-nil) slice so the pointer is
-	// never nil.
-	seed := seedModelInventory(cfg)
-	svc.models.Store(&seed)
-	// providerStatus starts empty — no intent-driven provider has been probed
-	// yet at construction time; Build's post-construction SetProviderStatus
-	// call (from the Build-time probe) supplies the initial value.
+	// Standalone fixtures retain a local status snapshot; Build reads its owner.
 	var statusSeed []*mecatlv1.ProviderStatus
 	svc.providerStatus.Store(&statusSeed)
 	// Construct the embedded schedule manager (ADR 0076): the store-shaped
@@ -1542,18 +1527,33 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 	// SetScheduler after NewService).
 	if cfg.ScheduleManager != nil {
 		svc.schedMgr = cfg.ScheduleManager
-		svc.schedMgr.setModelsPointer(&svc.models)
 	} else {
 		svc.schedMgr = NewScheduleManager(ScheduleManagerConfig{
 			Store:             cfg.Store,
 			Now:               cfg.Now,
 			Models:            &svc.models,
+			ModelInventory:    cfg.ModelInventory,
 			Diagnostics:       cfg.Diagnostics,
 			OwnershipEnforced: cfg.OwnershipEnforced,
 		})
 	}
+	svc.bindModelInventory()
 	svc.wireScheduleManager(cfg)
 	return svc, nil
+}
+
+func (s *Service) bindModelInventory() {
+	if s.cfg.ModelInventory != nil {
+		if s.schedMgr != nil {
+			s.schedMgr.inventory = s.cfg.ModelInventory
+		}
+		return
+	}
+	seed := s.cfg.Models
+	s.models.Store(&seed)
+	if s.schedMgr != nil {
+		s.schedMgr.setModelsPointer(&s.models)
+	}
 }
 
 func (s *Service) placementDiscoveryAvailable() bool {
@@ -1625,21 +1625,14 @@ func (s *Service) wireScheduleManager(cfg Config) {
 	s.schedMgr.setPlacementForCreate(s.resolveSchedulePlacement)
 }
 
-// SetModels atomically swaps the selectable-model inventory. It is the composition
-// layer's seam for the background live-catalog refresh: Build seeds the embedded
-// snapshot synchronously (via Config.Models) and, once the live fetch completes,
-// calls SetModels with the merged result. ListModels and the ModelSelection
-// capability then reflect the new set on their next read. It is concurrency-safe
-// (atomic store) and carries only the projected proto slice — no registry/catalog/
-// lister type crosses this boundary. A nil argument stores an empty (non-nil)
-// slice so the pointer is never nil.
+// SetModels swaps the standalone inventory when Config.ModelInventory is nil.
+// It cannot write a Build-owned inventory. Nil stores an empty slice.
 func (s *Service) SetModels(models []*mecatlv1.ModelInfo) {
 	if models == nil {
 		models = []*mecatlv1.ModelInfo{}
 	}
 	if s.cfg.ModelInventory != nil {
-		s.cfg.ModelInventory.SetModels(models)
-		models = s.cfg.ModelInventory.CurrentModels()
+		return // Build-owned inventories have no compatibility writer.
 	}
 	s.models.Store(&models)
 }
@@ -1649,7 +1642,7 @@ func (s *Service) SetModels(models []*mecatlv1.ModelInfo) {
 // ModelSelection capability so they cannot disagree.
 func (s *Service) currentModels() []*mecatlv1.ModelInfo {
 	if s.cfg.ModelInventory != nil {
-		return s.cfg.ModelInventory.CurrentModels()
+		return s.cfg.ModelInventory.CurrentModelSnapshot().Models
 	}
 	if p := s.models.Load(); p != nil {
 		return *p
@@ -1657,35 +1650,33 @@ func (s *Service) currentModels() []*mecatlv1.ModelInfo {
 	return nil
 }
 
-// SetProviderStatus atomically swaps the per-provider live-listing status
-// (issue #262). It is the composition layer's seam: the Build-time probe
-// supplies the initial value, and the background + on-demand live-model
-// refreshes re-project it on every re-fetch. Mirrors SetModels exactly (a nil
-// argument stores an empty, non-nil slice so the pointer is never nil).
+// SetProviderStatus swaps standalone status rows when ModelInventory is nil.
+// It cannot write a Build-owned publication. Nil stores an empty slice.
 func (s *Service) SetProviderStatus(status []*mecatlv1.ProviderStatus) {
+	if s.cfg.ModelInventory != nil {
+		return
+	}
 	if status == nil {
 		status = []*mecatlv1.ProviderStatus{}
 	}
 	s.providerStatus.Store(&status)
 }
 
-// ProviderStatuses returns the current per-provider live-listing status
-// snapshot (never nil after NewService). ListModels' gRPC/HTTP callers thread
-// it onto ListModelsResponse.provider_status alongside the model list.
+// ProviderStatuses is the status-only projection for Go callers. Wire handlers
+// use ListModelSnapshot so models and statuses share one captured generation.
 func (s *Service) ProviderStatuses() []*mecatlv1.ProviderStatus {
+	if s.cfg.ModelInventory != nil {
+		return s.cfg.ModelInventory.CurrentModelSnapshot().ProviderStatus
+	}
 	if p := s.providerStatus.Load(); p != nil {
 		return *p
 	}
 	return nil
 }
 
-// SetModelsRefresher installs the OPTIONAL on-demand model-list refresher
-// (issue #262, R1.4: "proxy started after boot ⇒ models appear on next
-// /models open, no restart"). ListModels calls it (bounded — the refresher
-// owns its own timeout/cooldown/which-providers-are-stale logic) before
-// returning its snapshot. nil (the default — set once in Build, only when at
-// least one intent-driven provider exists) makes ListModels a pure snapshot
-// read, byte-identical to every deployment without this feature.
+// SetModelsRefresher installs the optional bounded demand callback. Composition
+// owns provider eligibility, active attempts and cooldown; nil leaves list reads
+// pure. The callback is wired once when any available provider has a lister.
 func (s *Service) SetModelsRefresher(fn func(context.Context)) {
 	s.modelsRefresher.Store(&fn)
 }
@@ -8282,10 +8273,18 @@ func (s *Service) ListSkills(ctx context.Context) []*mecatlv1.SkillInfo {
 // with no restart; with no refresher installed (the byte-identical default)
 // this is a pure read of the injected snapshot, exactly as before.
 func (s *Service) ListModels(ctx context.Context) []*mecatlv1.ModelInfo {
+	return s.ListModelSnapshot(ctx).Models
+}
+
+// ListModelSnapshot refreshes once, then captures models and statuses together.
+func (s *Service) ListModelSnapshot(ctx context.Context) ModelSnapshot {
 	if p := s.modelsRefresher.Load(); p != nil && *p != nil {
 		(*p)(ctx)
 	}
-	return s.currentModels()
+	if s.cfg.ModelInventory != nil {
+		return s.cfg.ModelInventory.CurrentModelSnapshot()
+	}
+	return ModelSnapshot{Models: s.currentModels(), ProviderStatus: s.ProviderStatuses()}
 }
 
 // --- Soul + user-model inspection --------------------------------------------

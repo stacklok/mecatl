@@ -147,7 +147,7 @@ type catalogAssets struct {
 	attemptRepository        learning.AttemptRepository
 	automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	rootCatalog              *tool.Catalog
-	modelInventory           *resolvedModelInventory
+	modelInventory           server.ModelInventory
 	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
 }
 

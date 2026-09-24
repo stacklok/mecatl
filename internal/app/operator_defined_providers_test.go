@@ -167,7 +167,7 @@ func TestOperatorDefinedLLMProviders_Scenario4_LiveListing(t *testing.T) {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
 
-	models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
+	models := discoverProviderModels(t, reg, definition.ID)
 	ids := make([]string, 0, len(models))
 	for _, model := range models {
 		ids = append(ids, model.ID)
@@ -203,7 +203,7 @@ func TestOperatorDefinedLLMProviders_Scenario4_LiveListing(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildProviderRegistry: %v", err)
 			}
-			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, "gateway")
+			models := discoverProviderModels(t, reg, "gateway")
 			if len(models) != 2 || models[0].ID != tc.defaultModel || models[1].ID == "" {
 				t.Errorf("inventory = %v, want default floor plus live model", models)
 			}
@@ -259,7 +259,7 @@ func TestOperatorDefinedLLMProviders_Scenario4_ListingFallback(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildProviderRegistry: %v", err)
 			}
-			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
+			models := discoverProviderModels(t, reg, definition.ID)
 			if len(models) != 1 || models[0].ID != definition.DefaultModel {
 				t.Errorf("fallback inventory = %v, want selectable configured default model %q", models, definition.DefaultModel)
 			}
@@ -267,7 +267,7 @@ func TestOperatorDefinedLLMProviders_Scenario4_ListingFallback(t *testing.T) {
 				t.Fatalf("validateDefaultModel rejected configured default after listing failure: %v", err)
 			}
 
-			rows := providerStatusProto(reg)
+			rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 			if len(rows) != 1 {
 				t.Fatalf("provider_status = %+v, want one custom-provider row", rows)
 			}
@@ -299,11 +299,11 @@ func TestOperatorDefinedLLMProviders_EmptyListingPreservesFloorAndStatus(t *test
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
+	models := discoverProviderModels(t, reg, definition.ID)
 	if len(models) != 1 || models[0].ID != definition.DefaultModel {
 		t.Fatalf("empty listing inventory = %v, want configured floor %q", models, definition.DefaultModel)
 	}
-	rows := providerStatusProto(reg)
+	rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 	if len(rows) != 1 || rows[0].GetProviderId() != definition.ID || rows[0].GetState() != statusEmpty || rows[0].GetHint() != customProviderStatusHints[statusEmpty] {
 		t.Fatalf("provider_status = %+v, want one safe custom empty row with the generic hint", rows)
 	}
@@ -337,11 +337,11 @@ func TestOperatorDefinedLLMProviders_AnthropicListingFailureStatus(t *testing.T)
 			if err != nil {
 				t.Fatalf("buildProviderRegistry: %v", err)
 			}
-			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, "gateway-anthropic")
+			models := discoverProviderModels(t, reg, "gateway-anthropic")
 			if len(models) != 1 || models[0].ID != "gateway-default" {
 				t.Fatalf("fallback inventory = %v, want custom default floor", models)
 			}
-			rows := providerStatusProto(reg)
+			rows := reg.discovery.CurrentModelSnapshot().ProviderStatus
 			if len(rows) != 1 || rows[0].GetState() != tc.wantState {
 				t.Fatalf("provider_status = %+v, want custom Anthropic %s", rows, tc.wantState)
 			}
@@ -417,12 +417,11 @@ func TestInvariant_custom_provider_omitted_live_modalities_use_adapter(t *testin
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	fresh := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, definition.ID)
-	reg.meta.mergeSwap(map[string][]modelEntry{definition.ID: fresh})
+	fresh := discoverProviderModels(t, reg, definition.ID)
 	if caps := modelCapability(reg, definition.ID, definition.DefaultModel); !caps.Image || caps.Audio {
 		t.Errorf("unknown custom live metadata capabilities = %+v, want adapter image capability", caps)
 	}
-	if info := projectModelEntry(reg, definition.ID, fresh[0]); info.GetContextLimit() != defaultContextWindowTokens {
+	if info := projectModelEntry(reg, cfg, reg.discovery.snapshot(), definition.ID, fresh[0]); info.GetContextLimit() != defaultContextWindowTokens {
 		t.Errorf("unknown custom live metadata context limit = %d, want conservative floor %d", info.GetContextLimit(), defaultContextWindowTokens)
 	}
 }

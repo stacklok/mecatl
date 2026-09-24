@@ -1211,6 +1211,10 @@ type Config struct {
 	// blocks on the network. Unexported: not an operator knob.
 	liveModelRefreshSync bool
 
+	// modelDiscoveryNow injects observation/cooldown time for offline tests.
+	// Fetch and caller contexts retain their fixed duration bounds.
+	modelDiscoveryNow func() time.Time
+
 	// liveModelRefreshDelay artificially delays the ASYNC live-model refresh: when
 	// > 0, the background goroutine sleeps this long BEFORE fetching/swapping, so the
 	// live-catalog swap lands `delay` after startup. It is a DIAGNOSTIC/TEST seam ONLY
@@ -1477,7 +1481,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			nativeEndpointCredentialLifecycle = lifecycle
 		}
 	}
+	var discovery *providerDiscovery
 	closeProfiles := sync.OnceFunc(func() {
+		discovery.Close()
 		cfg.MCPProfileLifecycle = mcpProfileLifecycle
 		closeMCPProfileLifecycle(ctx, cfg)
 		if providerCredentialLifecycle != nil {
@@ -1798,6 +1804,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, err
 	}
+	discovery = reg.discovery
 	reg.contextWindows = cfg.contextWindows
 	reg.contextWindowOverride = cfg.ContextWindowOverride
 	// Server-configured deployment-wide default (issue #21): validate
@@ -2195,8 +2202,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		previousClose := mcpClose
 		mcpClose = func() { attempts.Close(); previousClose() }
 	}
-	modelsRefreshState := &refreshStaleModelsState{}
-	var modelSwap modelSwapper
 	var mcpRefresh func(context.Context) (server.MCPRefreshSnapshot, error)
 	var mcpStatus func() server.MCPSourceStatus
 	if assets.mcpReconciler != nil {
@@ -2303,7 +2308,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// available (the zero-keys / mock case). Secret-free (modelSnapshot projects no
 		// key/env/base-URL); the projection lives in modelsnapshot.go so the server
 		// adapter never imports providercatalog or the registry.
-		Models:         assets.modelInventory.CurrentModels(),
 		ModelInventory: assets.modelInventory,
 		// DefaultCapabilities: the catalog ∩ adapter INTERSECTION for the DEFAULT
 		// provider + cfg.Model, computed ONCE here in composition (the single source).
@@ -2649,7 +2653,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// Live-first context-window resolver for the resolved_model echo (issue #66,
 		// PROMOTED to all branches by the resolve-at-use unification). It is the ECHO
 		// resolver (reg.echoWindowResolver), NOT the engine resolver: it shares the
-		// override->live->catalog precedence core (resolveWindowCore) with the engine's
+		// override->live->catalog precedence core (resolveModelWindow) with the engine's
 		// reg.windowResolver, so any override/catalogued/live window agrees byte-for-byte,
 		// but differs in ONE branch -- a session whose model is in the live listing but
 		// NOT the curated catalog echoes a deliberate PROVISIONAL 0 while the one-shot
@@ -2666,7 +2670,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if cfg.awaitContextWindowObserver != nil {
 				cfg.awaitContextWindowObserver(p, m)
 			}
-			return awaitContextWindow(awaitCtx, cfg.diag(), reg, modelSwap, modelsRefreshState, p, m)
+			return awaitContextWindow(awaitCtx, reg, p, m)
 		},
 		// Session lease (cloud-native Phase 4): nil unless a backend was selected,
 		// so the default path takes no lease, starts no renewer, and releases
@@ -2710,31 +2714,17 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
-	modelSwap = svc
 
-	// LIVE model listing: Build seeded svcCfg.Models with the EMBEDDED snapshot
-	// synchronously above (so the ModelSelection cap is honest from t=0). A default
-	// Codex provider without an explicit model may already have performed its one
-	// bounded entitlement lookup; that result is reused below. Now kick a SINGLE
-	// background refresh that fetches each remaining available provider's live
-	// catalog and atomically SWAPS the merged result into the
-	// service via SetModels. The refresh is owned by COMPOSITION (it holds the
-	// registry + listers); the service just stores the projected proto slice. It is
-	// cancelled by Close so a shutdown mid-fetch does not leak the goroutine (the
-	// goleak suite catches a leak). startLiveModelRefresh is a no-op when no provider
-	// has a lister (e.g. mock/openai-only), so the goroutine + ctx are skipped.
-	// ToolHive LLM gateway (issue #262): the initial provider_status came from
-	// the Build-time probe (probeToolhive, run inside buildProviderRegistry);
-	// project it onto the service now. SetModelsRefresher wires the on-demand
-	// /models-open refresh (R1.4) — refreshStaleModels is scoped to
-	// intent-driven providers and self-cooldown-gated, so wiring it
-	// unconditionally costs nothing for a deployment with no toolhive entry.
-	svc.SetProviderStatus(providerStatusProto(reg))
-	svc.SetModelsRefresher(func(refreshCtx context.Context) {
-		refreshStaleModels(refreshCtx, cfg.diag(), reg, svc, modelsRefreshState)
-	})
-
-	refreshClose := startLiveModelRefresh(cfg.diag(), reg, svc, cfg.liveModelRefreshSync, liveRefreshDelay(cfg))
+	// Bootstrap, one-shot startup, picker demand and run admission share the
+	// same owner. Startup skips completed attempts and native authentication;
+	// picker demand includes every available lister and joins active attempts.
+	if anyProviderHasLister(reg) {
+		svc.SetModelsRefresher(func(refreshCtx context.Context) {
+			reg.discovery.refresh(refreshCtx, discoveryPicker)
+		})
+	}
+	reg.discovery.start(cfg.liveModelRefreshSync, liveRefreshDelay(cfg))
+	refreshClose := reg.discovery.Close
 
 	// Scheduled tasks (issue #189, Phase 1f): build + wire + start the in-process
 	// scheduler over the SAME store + session-lease backend. The FireFunc is
@@ -3478,6 +3468,7 @@ func buildProvider(ctx context.Context, cfg Config) (*providerRegistry, port.LLM
 	if !ok {
 		// Defensive: buildProviderRegistry never returns a non-nil registry with an
 		// empty/absent default (it errors on zero providers), so this is unreachable.
+		reg.discovery.Close()
 		return nil, nil, errNoProvider
 	}
 	return reg, entry.provider, nil
@@ -5741,7 +5732,7 @@ func buildCatalog(ctx context.Context, cfg Config, reg *providerRegistry, provid
 		skillOwner:           skillOwner,
 		forkReaper:           forkReaper,
 		autoMerger:           autoMerger,
-		modelInventory:       newResolvedModelInventory(modelSnapshot(reg)),
+		modelInventory:       reg.discovery,
 		// WebSearch provider (issue #26): resolved ONCE here via the backend ladder
 		// (kill switch > --websearch-url > SEARXNG_URL > BRAVE_API_KEY > Exa default)
 		// and threaded onto the assets so every per-session catalog reuses the SAME

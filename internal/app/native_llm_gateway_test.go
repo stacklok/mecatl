@@ -12,7 +12,6 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -154,13 +153,13 @@ func TestNativeLLMGatewayLogin_Scenario3_NoCredentialedBuildDiscovery(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	inventory := newResolvedModelInventory(modelSnapshot(reg))
-	closeRefresh := startLiveModelRefresh(port.NopDiagnostics{}, reg, inventory, true, 0)
-	closeRefresh()
+	inventory := reg.discovery
+	inventory.start(true, 0)
+	defer inventory.Close()
 	if requests != 0 {
 		t.Fatalf("Build refresh made %d authenticated endpoint requests", requests)
 	}
-	models := nativeModels(inventory.CurrentModels())
+	models := nativeModels(inventory.CurrentModelSnapshot().Models)
 	if len(models) != 1 || models[0].GetProviderId() != "native" || models[0].GetId() != "native-model" {
 		t.Fatalf("inventory floor = %#v", models)
 	}
@@ -175,9 +174,9 @@ func TestNativeLLMGatewayLogin_Scenario3_DeploymentWideInventoryConsistency(t *t
 		t.Fatal(err)
 	}
 	models := nativeModels(modelSnapshot(reg))
-	inventory := newResolvedModelInventory(models)
+	inventory := newTestModelInventory(models)
 	result := newAgentModelDiscoveryTool(inventory)
-	if len(inventory.CurrentModels()) != 1 || !modelDiscoveryAvailable(reg, inventory) {
+	if len(inventory.CurrentModelSnapshot().Models) != 1 || !modelDiscoveryAvailable(reg, inventory) {
 		t.Fatal("resolved inventory diverged")
 	}
 	if result.inventory != inventory {
@@ -202,9 +201,10 @@ func TestNativeLLMGatewayLogin_Scenario3_GlobalLiveInventory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inventory := newResolvedModelInventory(modelSnapshot(reg))
-	refreshStaleModels(context.Background(), port.NopDiagnostics{}, reg, inventory, &refreshStaleModelsState{})
-	models := nativeModels(inventory.CurrentModels())
+	inventory := reg.discovery
+	defer inventory.Close()
+	inventory.refresh(context.Background(), discoveryPicker)
+	models := nativeModels(inventory.CurrentModelSnapshot().Models)
 	if len(models) != 2 || models[0].GetId() != "live-model" || models[1].GetId() != "native-model" {
 		t.Fatalf("global live inventory = %#v", models)
 	}
@@ -227,7 +227,7 @@ func TestNativeLLMGatewayLogin_Scenario3_MissingCredentialBehavior(t *testing.T)
 	if _, ok := reg.Lookup("native"); ok {
 		t.Fatal("not-enrolled provider is usable")
 	}
-	statuses := providerStatusProto(reg)
+	statuses := reg.discovery.CurrentModelSnapshot().ProviderStatus
 	if len(statuses) != 1 || statuses[0].GetProviderId() != "native" || statuses[0].GetState() != "not-enrolled" {
 		t.Fatalf("statuses = %#v", statuses)
 	}

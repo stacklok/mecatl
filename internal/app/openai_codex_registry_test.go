@@ -420,24 +420,33 @@ func TestADR_0104_OpenAICodexNeverFallsBackToAPIInventory(t *testing.T) {
 			if !ok || entry.lister == nil {
 				t.Fatal("openai-codex did not install its native entitlement lister")
 			}
-			models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerOpenAICodex)
+			models := discoverProviderModels(t, reg, providerOpenAICodex)
 			if len(models) != 0 {
 				t.Fatalf("Codex inventory fell back to %d API models: %#v", len(models), models)
 			}
-			outcome, ok := reg.outcomes.getStatus(providerOpenAICodex)
-			if !ok || outcome.State != tc.wantState {
-				t.Fatalf("outcome = (%#v, %t), want state %q", outcome, ok, tc.wantState)
+			outcome := reg.discovery.snapshot().providers[providerOpenAICodex].outcome
+			if outcome.State != tc.wantState {
+				t.Fatalf("outcome = %#v, want state %q", outcome, tc.wantState)
 			}
 		})
 	}
 }
 
-func TestOpenAICodexMetadataEnrichmentIsNotInventory(t *testing.T) {
+func TestProviderModelDiscovery_Scenario2_CodexCatalogProvenance(t *testing.T) {
 	apiModels := embeddedModels(providerOpenAI)
 	if len(apiModels) == 0 {
 		t.Fatal("test requires one embedded OpenAI metadata row")
 	}
-	match := apiModels[0]
+	var match modelEntry
+	for _, candidate := range apiModels {
+		if candidate.ContextLimit > 0 {
+			match = candidate
+			break
+		}
+	}
+	if match.ID == "" {
+		t.Fatal("test requires a positive OpenAI catalog window")
+	}
 	unknownID := "codex-entitled-unknown"
 	body := fmt.Sprintf(`{"models":[
 		{"slug":%q,"display_name":"","visibility":"list"},
@@ -448,13 +457,26 @@ func TestOpenAICodexMetadataEnrichmentIsNotInventory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	models := resolveProviderModels(context.Background(), port.NopDiagnostics{}, reg, providerOpenAICodex)
+	models := discoverProviderModels(t, reg, providerOpenAICodex)
 	if len(models) != 2 {
 		t.Fatalf("Codex inventory length = %d, want exactly entitlement length 2: %#v", len(models), models)
 	}
-	if models[0].ID != match.ID || models[0].ContextLimit != match.ContextLimit ||
+	if models[0].ID != match.ID || models[0].ContextLimit != 0 ||
 		!reflect.DeepEqual(models[0].InputModalities, match.InputModalities) {
 		t.Fatalf("matching entitlement metadata = %#v, want enrichment from %#v", models[0], match)
+	}
+	resolved := resolveModelWindow(Config{}, reg.discovery.snapshot(), providerOpenAICodex, match.ID)
+	if resolved.source != windowCatalog || resolved.tokens != match.ContextLimit {
+		t.Fatalf("omitted Codex window provenance=%+v, want catalog/%d", resolved, match.ContextLimit)
+	}
+	projection := reg.discovery.CurrentModelSnapshot().Models
+	if len(projection) != 2 {
+		t.Fatalf("unentitled models advertised: %v", projection)
+	}
+	for _, row := range projection {
+		if row.Id == match.ID && row.ContextLimit != int64(match.ContextLimit) {
+			t.Fatalf("resolved catalog window not displayed: %v", row)
+		}
 	}
 	if models[1].ID != unknownID || !reflect.DeepEqual(models[1].InputModalities, []string{"text", "image"}) {
 		t.Fatalf("unknown entitlement = %#v, want selectable with adapter-static modalities", models[1])
@@ -484,8 +506,9 @@ func TestOpenAICodexDefaultBootstrap(t *testing.T) {
 		if transport.callCount() != 1 {
 			t.Fatalf("bootstrap calls = %d, want 1", transport.callCount())
 		}
-		byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-		if got := byProvider[providerOpenAICodex]; len(got) != 2 || got[0].ID != "server-first" {
+		reg.discovery.start(true, 0)
+		t.Cleanup(reg.discovery.Close)
+		if got := reg.discovery.snapshot().providers[providerOpenAICodex].observations; len(got) != 2 || got[0].ID != "server-first" {
 			t.Fatalf("initial live snapshot = %#v, want bootstrapped entitlements", got)
 		}
 		if transport.callCount() != 1 {
@@ -592,9 +615,7 @@ func TestOpenAICodexLiveMetadataConverges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	byProvider := liveModelSnapshot(context.Background(), port.NopDiagnostics{}, reg)
-	reg.meta.Swap(byProvider)
-	picker := projectAll(reg, byProvider)
+	picker := discoverAllModels(t, reg)
 	if len(picker) != 2 {
 		t.Fatalf("picker metadata did not converge: %#v", picker)
 	}

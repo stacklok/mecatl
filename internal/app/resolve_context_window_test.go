@@ -18,10 +18,10 @@ func TestResolveContextWindowClosureLiveFirst(t *testing.T) {
 	const liveOnlyModel = "openai/gpt-99-future"
 	const liveCtx = 1_050_000 // below maxLiveContextLimit (2_000_000), so unclamped
 
-	s := newLiveMetaStore()
+	s := newMetadataFixture()
 	// Seed from the curated catalog for OpenRouter. The live-only model is NOT in the
 	// curated catalog, so its catalog floor is 0.
-	s.seedFromCatalog([]string{providerOpenRouter})
+	s.setEligibilityFixture([]string{providerOpenRouter})
 
 	// The injected closure, identical in shape to the one in build.go.
 	resolve := func(p, m string) int64 { return int64(s.contextWindowFor(p, m)) }
@@ -33,7 +33,7 @@ func TestResolveContextWindowClosureLiveFirst(t *testing.T) {
 	}
 
 	// The background live refresh lands: the live listing carries the model + its window.
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerOpenRouter: {{ID: liveOnlyModel, ContextLimit: liveCtx}},
 	})
 
@@ -51,8 +51,8 @@ func TestResolveContextWindowClosureLiveFirst(t *testing.T) {
 func TestResolveContextWindowClosureNeverLowersCatalogued(t *testing.T) {
 	const cataloguedModel = "openai/gpt-5"
 
-	s := newLiveMetaStore()
-	s.seedFromCatalog([]string{providerOpenRouter})
+	s := newMetadataFixture()
+	s.setEligibilityFixture([]string{providerOpenRouter})
 
 	resolve := func(p, m string) int64 { return int64(s.contextWindowFor(p, m)) }
 
@@ -63,7 +63,7 @@ func TestResolveContextWindowClosureNeverLowersCatalogued(t *testing.T) {
 
 	// A live swap that DROPS the catalogued model (only an unrelated id present) must
 	// not erase the catalog floor.
-	s.Swap(map[string][]modelEntry{
+	s.setMetadataFixture(map[string][]modelEntry{
 		providerOpenRouter: {{ID: "some-other-live-model", ContextLimit: 12345}},
 	})
 	if got := resolve(providerOpenRouter, cataloguedModel); got != floor {
