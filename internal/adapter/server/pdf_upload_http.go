@@ -36,3 +36,14 @@ func (h *HTTPHandler) uploadPDF(w http.ResponseWriter, r *http.Request) {
 		SHA256     string `json:"sha256"`
 	}{ArtifactID: artifact.ID, Name: artifact.Name, Size: artifact.Size, SHA256: artifact.SHA256})
 }
+
+// downloadPDF reserves the reviewed binary route. The download slice replaces
+// this fail-closed handler with a streaming reader; ownership is already checked
+// by Service.DownloadPdf before any content could be returned.
+func (h *HTTPHandler) downloadPDF(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.DownloadPdf(r.Context(), session.SessionID(r.PathValue("id")), r.PathValue("artifact_id")); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeServiceError(w, ErrPDFArtifactsUnavailable)
+}

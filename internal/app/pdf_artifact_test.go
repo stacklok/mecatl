@@ -30,8 +30,18 @@ func (pdfResultProcessorFixture) ProcessToolResult(_ context.Context, _ session.
 	return result, nil
 }
 
-func (f *pdfLifecycleFixture) Stage(context.Context, session.SessionID, string, io.Reader) (server.PDFArtifact, error) {
-	return server.PDFArtifact{}, nil
+func (f *pdfLifecycleFixture) Stage(_ context.Context, id session.SessionID, name string, source io.Reader) (server.PDFArtifact, error) {
+	if id != "s-pdf" {
+		return server.PDFArtifact{}, server.ErrNotFound
+	}
+	data, err := io.ReadAll(source)
+	if err != nil {
+		return server.PDFArtifact{}, err
+	}
+	digest := sha256.Sum256(data)
+	f.data = data
+	f.metadata = server.PDFArtifact{ID: strings.Repeat("f", 48), Name: name, Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:])}
+	return f.metadata, nil
 }
 func (f *pdfLifecycleFixture) Resolve(_ context.Context, id session.SessionID, artifactID string) (server.PDFArtifact, error) {
 	if id != "s-pdf" || artifactID != f.metadata.ID {

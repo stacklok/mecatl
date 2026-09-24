@@ -10,11 +10,15 @@ import (
 
 // UploadPdf stages a private PDF only after the caller owns the exact session.
 func (s *Service) UploadPdf(ctx context.Context, id session.SessionID, name string, source io.Reader) (PDFArtifact, error) {
-	if _, err := s.GetSession(ctx, id); err != nil {
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
 		return PDFArtifact{}, err
 	}
 	if s.cfg.PDFArtifacts == nil {
 		return PDFArtifact{}, ErrPDFArtifactsUnavailable
+	}
+	if !s.sessionCapabilitiesFor(sess).PDF {
+		return PDFArtifact{}, ErrInvalidArgument
 	}
 	artifact, err := s.cfg.PDFArtifacts.Stage(ctx, id, name, source)
 	if err == nil {

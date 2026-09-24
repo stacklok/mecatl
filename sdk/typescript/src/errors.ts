@@ -48,6 +48,7 @@ export const MECATL_ERROR_CODES = [
   "no_schedule_store",
   "not_awaiting_plan",
   "not_found",
+  "pdf_artifacts_unavailable",
   "placement_binding_invalid",
   "placement_changed",
   "placement_selector_invalid",

@@ -61,6 +61,7 @@ const completeCapabilities = {
   mcpConnectorStatus: true,
   memory: true,
   modelSelection: true,
+  pdfArtifacts: false,
   posture: "future-posture",
   reflection: true,
   scheduling: true,
