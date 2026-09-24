@@ -383,6 +383,8 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 		})
 	}
 
+	// A visible palette owns the first Escape even while a run streams. Its dismissal
+	// must leave the run untouched; only the next Escape reaches running cancellation.
 	running, _ := newQueueModel(t)
 	running = startRunning(t, running, "first")
 	running.prompt.Rewrite("/")
@@ -395,10 +397,16 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_PreservesInteractionOwnership(
 			t.Fatalf("running palette did not retain %q: open=%t prompt=%q", keyMsg.String(), running.palette.open, running.prompt.Value())
 		}
 	}
-	mm, _ := running.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	status := running.statusMsg
+	mm, cancel := running.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	running = mm.(Model)
-	if running.statusMsg != "cancelling…" || !running.palette.open {
-		t.Fatalf("running Escape did not remain run-cancel: status=%q open=%t", running.statusMsg, running.palette.open)
+	if cancel != nil || running.palette.open || !running.palette.dismissed || running.statusMsg != status {
+		t.Fatalf("visible running palette Escape did not only dismiss: cancel=%t open=%t dismissed=%t status=%q want=%q", cancel != nil, running.palette.open, running.palette.dismissed, running.statusMsg, status)
+	}
+	mm, cancel = running.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	running = mm.(Model)
+	if cancel == nil || running.statusMsg != "cancelling…" {
+		t.Fatalf("dismissed running palette Escape did not cancel: cancel=%t status=%q", cancel != nil, running.statusMsg)
 	}
 
 	short := newPaletteModel(t, sampleCommands())

@@ -2796,12 +2796,14 @@ func (m Model) pasteGateOpen() bool {
 // stays focused so the user can compose a steer or queued follow-up. It mirrors
 // onIdleKey's precedence so the input behaves the same mid-run as at idle, with
 // two differences — bare local built-ins still run locally, then enter steers or
-// enqueues ordinary input; esc cancels the in-flight run directly:
+// enqueues ordinary input; a visible slash-command palette owns esc dismissal before
+// a subsequent esc cancels the in-flight run:
 //
-//	(1) an open palette claims its navigation and completion keys (↑/↓/tab/enter)
-//	    so builtins dispatch through the same path and workspace rows complete;
-//	    esc is handled by the cancel path below;
-//	(2) esc/Cancel sends Cancel and leaves the draft, staged queue, and steer state intact;
+//	(1) an open palette claims its navigation, completion, and dismissal keys
+//	    (↑/↓/tab/enter/esc) so builtins dispatch through the same path and workspace
+//	    rows complete;
+//	(2) esc/Cancel after palette dismissal sends Cancel and leaves the draft, staged queue,
+//	    and steer state intact;
 //	(3) any bound Newline chord (shift+enter, ctrl+j, ctrl+enter, alt+enter by
 //	    default) → insert a newline;
 //	(4) enter (Submit) → run a bare local built-in, or enqueuePrompt for model-facing
@@ -2811,10 +2813,10 @@ func (m Model) pasteGateOpen() bool {
 //
 // ctrl+t (expand) and ctrl+c (quit) are handled globally in onKey before this.
 func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	// Let the palette claim its navigation and completion keys while running. A
-	// selected builtin dispatches locally; a workspace row completes into the
-	// textarea. Esc stays with the layered cancel path below.
-	if m.paletteVisible() && !key.Matches(msg, m.keys.Cancel) {
+	// Let the palette claim its navigation, completion, and dismissal keys while
+	// running. A selected builtin dispatches locally; a workspace row completes into
+	// the textarea. Once Esc dismisses the palette, the next Esc reaches cancel below.
+	if m.paletteVisible() {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
