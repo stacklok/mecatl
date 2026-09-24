@@ -229,68 +229,76 @@ func (l *List) View() ListView {
 	return ListView{Rows: rows, Above: w.start, Below: len(layout.rows) - w.end}
 }
 
-// overflowIndicatorThreshold keeps a tiny tail visible instead of spending a row
-// on chrome that would obscure it.
-const overflowIndicatorThreshold = 2
-
-// ViewWithIndicators applies the one canonical indicator-adjusted geometry.
+// ViewWithIndicators applies the shared logical-item indicator policy. Indicators
+// report only complete items outside the physical window; partial oversized-item
+// segments remain reachable through normal paging rather than becoming overflow.
 func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 	if capacity <= 0 {
 		l.viewport.height = 0
 		l.reveal = false
 		return ListView{}
 	}
-	reserved := 0
+
+	layout := l.layout()
+	reservedAbove, reservedBelow := false, false
 	for range 3 {
+		reserved := 0
+		if reservedAbove {
+			reserved++
+		}
+		if reservedBelow {
+			reserved++
+		}
+		// Always retain one physical row for content. Tiny surfaces may present the
+		// returned indicator metadata in their header instead of as chrome rows.
+		reserved = min(reserved, capacity-1)
 		l.viewport.height = max(1, capacity-reserved)
 		if reveal {
-			l.revealCursor(l.layout())
+			l.revealCursor(layout)
 		}
-		v := l.View()
-		needed := 0
-		if v.Above > 0 {
-			needed++
-		}
-		// Reserving the lower indicator hides one additional content row. Plan for
-		// that row so the final projection shows the indicator exactly when its
-		// final below count exceeds the threshold.
-		if v.Below+1 > overflowIndicatorThreshold {
-			needed++
-		}
-		next := min(needed, capacity-1)
-		if next == reserved {
+		l.clamp(layout)
+		w := l.viewport.window(len(layout.rows))
+		above, below := hiddenCompleteItems(layout, w.start, w.end)
+		nextAbove, nextBelow := above > 1, below > 1
+		if nextAbove == reservedAbove && nextBelow == reservedBelow {
 			break
 		}
-		reserved = next
+		reservedAbove, reservedBelow = nextAbove, nextBelow
 	}
-	l.viewport.height = max(1, capacity-reserved)
+
+	reserved := 0
+	if reservedAbove {
+		reserved++
+	}
+	if reservedBelow {
+		reserved++
+	}
+	l.viewport.height = max(1, capacity-min(reserved, capacity-1))
 	if reveal {
-		l.revealCursor(l.layout())
+		l.revealCursor(layout)
 	}
 	v := l.View()
-	// A lone forward row is more useful than an above indicator. Returning that
-	// indicator's row to content reveals the tail rather than leaving a reachable,
-	// unannounced item below the viewport.
-	if v.Below == 1 && v.Above > 0 && l.viewport.height < capacity {
-		l.viewport.height++
-		if reveal {
-			l.revealCursor(l.layout())
-		}
-		v = l.View()
-	}
-	available := max(0, capacity-len(v.Rows))
-	// When one chrome row remains, tell the operator about the forward tail: it
-	// contains the next reachable content, whereas the above count is historical.
-	if v.Below > overflowIndicatorThreshold && available > 0 {
-		available--
-	} else {
-		v.Below = 0
-	}
-	if v.Above > 0 && available == 0 {
+	v.Above, v.Below = hiddenCompleteItems(layout, l.viewport.window(len(layout.rows)).start, l.viewport.window(len(layout.rows)).end)
+	if v.Above <= 1 {
 		v.Above = 0
+	}
+	if v.Below <= 1 {
+		v.Below = 0
 	}
 	l.reveal = false
 	return v
+}
+
+func hiddenCompleteItems(layout listLayout, start, end int) (above, below int) {
+	for i := range layout.starts {
+		if layout.ends[i] <= start {
+			above++
+		}
+		if layout.starts[i] >= end {
+			below++
+		}
+	}
+	return above, below
 }
 
 func (l *List) layout() listLayout {

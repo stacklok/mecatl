@@ -360,7 +360,8 @@ func renderMentionSized(th theme.Theme, st mentionState, width, bodyRows int) st
 	view := st.list.ViewWithIndicators(bodyRows, true)
 	header := "files"
 	if bodyRows == 1 {
-		view = st.list.View()
+		// One-row cards present the shared logical overflow metadata in their header
+		// rather than displacing their only selectable row with chrome.
 		var overflow []string
 		if view.Above > 0 {
 			overflow = append(overflow, fmt.Sprintf("↑%d above", view.Above))

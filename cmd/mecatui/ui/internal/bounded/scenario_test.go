@@ -206,19 +206,6 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 	if len(view.Rows) != 3 || view.Below != 3 {
 		t.Fatalf("three-row final tail did not retain lower indicator: %#v", view)
 	}
-
-	forward := new(List)
-	forward.SetGeometry(12, 2, 1, Clip)
-	forwardItems := make([]ListItem, 10)
-	for i := range forwardItems {
-		forwardItems[i] = ListItem{ID: string(rune('a' + i)), Text: string(rune('a' + i))}
-	}
-	forward.SetItems(forwardItems)
-	forward.Scroll(LineDown)
-	view = forward.ViewWithIndicators(2, false)
-	if view.Above != 0 || view.Below <= overflowIndicatorThreshold {
-		t.Fatalf("single chrome row did not prioritize forward overflow: %#v", view)
-	}
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t *testing.T) {

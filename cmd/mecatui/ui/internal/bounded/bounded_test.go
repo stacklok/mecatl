@@ -133,6 +133,114 @@ func TestListIndicatorAdjustedPagingUsesVisibleHeight(t *testing.T) {
 	}
 }
 
+func TestListViewWithIndicatorsCountsHiddenLogicalItemsIndependently(t *testing.T) {
+	items := make([]ListItem, 9)
+	for i := range items {
+		items[i] = ListItem{ID: string(rune('a' + i)), Text: string(rune('a' + i))}
+	}
+	for _, tc := range []struct {
+		name         string
+		offset       int
+		wantAbove    int
+		wantBelow    int
+		wantRowCount int
+	}{
+		{name: "below only", offset: 0, wantBelow: 6, wantRowCount: 3},
+		{name: "above only", offset: 6, wantAbove: 5, wantRowCount: 3},
+		{name: "both sides", offset: 3, wantAbove: 3, wantBelow: 4, wantRowCount: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			list := new(List)
+			list.SetGeometry(20, 4, 1, Clip)
+			list.SetItems(items)
+			list.viewport.offset = tc.offset
+
+			view := list.ViewWithIndicators(4, false)
+			if view.Above != tc.wantAbove || view.Below != tc.wantBelow || len(view.Rows) != tc.wantRowCount {
+				t.Fatalf("indicator projection = above=%d below=%d rows=%d, want above=%d below=%d rows=%d", view.Above, view.Below, len(view.Rows), tc.wantAbove, tc.wantBelow, tc.wantRowCount)
+			}
+		})
+	}
+}
+
+func TestListViewWithIndicatorsCountsWrappedLogicalItems(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(20, 4, 1, Clip)
+	list.SetItems([]ListItem{
+		{ID: "a", Text: "a-0\na-1"},
+		{ID: "b", Text: "b-0\nb-1"},
+		{ID: "c", Text: "c-0\nc-1"},
+		{ID: "d", Text: "d-0\nd-1"},
+		{ID: "e", Text: "e-0\ne-1"},
+		{ID: "f", Text: "f-0\nf-1"},
+	})
+	list.viewport.offset = 4
+
+	view := list.ViewWithIndicators(4, false)
+	if view.Above != 2 || view.Below != 3 || len(view.Rows) != 2 || view.Rows[0].ID != "c" || view.Rows[1].ID != "c" {
+		t.Fatalf("wrapped logical projection = %#v, want c's complete rows with independent above/below counts", view)
+	}
+}
+
+func TestListViewWithIndicatorsPromotesLoneHiddenItemWithoutChrome(t *testing.T) {
+	items := []ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}, {ID: "d", Text: "d"}, {ID: "e", Text: "e"}}
+	for _, tc := range []struct {
+		name   string
+		offset int
+		wantID string
+	}{
+		{name: "below", wantID: "a"},
+		{name: "above", offset: 1, wantID: "b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			list := new(List)
+			list.SetGeometry(20, 4, 1, Clip)
+			list.SetItems(items)
+			list.viewport.offset = tc.offset
+
+			view := list.ViewWithIndicators(4, false)
+			if view.Above != 0 || view.Below != 0 || len(view.Rows) != 4 || view.Rows[0].ID != tc.wantID {
+				t.Fatalf("lone hidden item consumed indicator chrome: %#v", view)
+			}
+		})
+	}
+}
+
+func TestListViewWithIndicatorsFullyRevealsFittingSelectionAndPagesOversizedSelection(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(20, 4, 1, Clip)
+	list.SetItems([]ListItem{
+		{ID: "before", Text: "before"},
+		{ID: "selected", Text: "selected-0\nselected-1"},
+		{ID: "after-0", Text: "after-0"},
+		{ID: "after-1", Text: "after-1"},
+		{ID: "after-2", Text: "after-2"},
+		{ID: "after-3", Text: "after-3"},
+	})
+	list.SetCursor(1)
+	view := list.ViewWithIndicators(4, true)
+	selected := 0
+	for _, row := range view.Rows {
+		if row.ID == "selected" {
+			selected++
+		}
+	}
+	if selected != 2 {
+		t.Fatalf("fitting selected item rendered %d of 2 lines: %#v", selected, view.Rows)
+	}
+
+	list = new(List)
+	list.SetGeometry(20, 2, 1, Clip)
+	list.SetItems([]ListItem{{ID: "selected", Text: "0\n1\n2\n3"}, {ID: "after", Text: "after"}})
+	for _, wantOffset := range []int{0, 2} {
+		view = list.ViewWithIndicators(2, true)
+		if list.Offset() != wantOffset || len(view.Rows) != 2 || view.Rows[0].ID != "selected" || view.Rows[0].ItemLine != wantOffset || view.Rows[1].ID != "selected" || view.Rows[1].ItemLine != wantOffset+1 {
+			t.Fatalf("oversized selected segment at offset %d = offset %d rows %#v", wantOffset, list.Offset(), view.Rows)
+		}
+		list.Move(PageDown)
+	}
+}
+
 func TestListPageDownThenPageUpReturnsToImmediatelyPrecedingPage(t *testing.T) {
 	list := new(List)
 	list.SetGeometry(20, 3, 1, Clip)

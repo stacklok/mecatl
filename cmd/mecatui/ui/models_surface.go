@@ -96,7 +96,7 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 	}
 	regions := make([]ClickableRegion, 0, len(view.Rows))
 	if view.Above > 0 {
-		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↑ %d lines", view.Above)))
+		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↑ %d items", view.Above)))
 	}
 	if len(view.Rows) > 0 {
 		for _, row := range view.Rows {
@@ -114,7 +114,7 @@ func (s *modelsState) Render(width, height int) (string, []ClickableRegion) {
 		}
 	}
 	if view.Below > 0 {
-		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↓ %d lines", view.Below)))
+		appendChrome(s.deps.theme.Style("muted").Render(fmt.Sprintf("↓ %d items", view.Below)))
 	}
 	for _, line := range suffix {
 		appendChrome(line)

@@ -908,8 +908,8 @@ func TestAgentsKeyboardPagingUsesPhysicalRowsAndIndicators(t *testing.T) {
 	}
 	afterList := subagentSelectableList(th, m.subagents, m.conv.subagentFleet, hk, width)
 	after := afterList.boundedView(th, height)
-	if after.Above == 0 || after.Below == 0 || m.subagents.roster.Height() >= capacity-1 {
-		t.Fatalf("paged physical view must reserve both overflow indicators: capacity=%d height=%d view=%#v", capacity, m.subagents.roster.Height(), after)
+	if after.Above == 0 || after.Below != 0 || m.subagents.roster.Height() != capacity-1 {
+		t.Fatalf("paged physical view must retain only logical-item overflow indicators: capacity=%d height=%d view=%#v", capacity, m.subagents.roster.Height(), after)
 	}
 	out := stripANSIstr(m.View().Content)
 	if !strings.Contains(out, "▶") || !strings.Contains(out, wantID) {

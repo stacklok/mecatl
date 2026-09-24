@@ -1936,7 +1936,8 @@ func TestModelsPickerFilteredGolden(t *testing.T) {
 
 // TestModelsPickerScrolledGolden locks a mid-list physical window: a 30-row list at
 // a small height with a wrapped final row and the cursor at the bottom, proving the
-// list clips physical lines (not logical rows) and follows the cursor.
+// list clips physical lines (not logical rows), follows the cursor, and reports
+// complete hidden logical items in its overflow indicator.
 func TestModelsPickerScrolledGolden(t *testing.T) {
 	models := manyModels(30)
 	models.models[len(models.models)-1].DisplayName = strings.Repeat("wrapped model label ", 8)
@@ -1945,8 +1946,8 @@ func TestModelsPickerScrolledGolden(t *testing.T) {
 	m = feedCmd(t, mm.(Model), cmd)
 	m = pressModelsKey(t, m, tea.KeyPressMsg{Code: tea.KeyEnd})
 	got := stripANSI([]byte(m.View().Content))
-	if !bytes.Contains(got, []byte("↑ 26 lines")) {
-		t.Fatalf("scrolled picker must count wrapped physical lines in its overflow indicator:\n%s", got)
+	if !bytes.Contains(got, []byte("↑ 26 items")) {
+		t.Fatalf("scrolled picker must count complete hidden logical items in its overflow indicator:\n%s", got)
 	}
 	compareGolden(t, "models_scrolled.golden", got)
 }

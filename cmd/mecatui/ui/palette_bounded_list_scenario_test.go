@@ -61,11 +61,11 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testi
 		t.Fatal("suppressed palette retained valid list geometry")
 	}
 
-	// A one-row body still exposes both sides of a middle physical row without
-	// borrowing a second body row for indicator chrome.
-	st = scenarioPaletteState(scenarioPaletteCommands(3))
+	// A one-row body presents the shared logical overflow projection in its header,
+	// preserving the selectable row without re-counting physical lines locally.
+	st = scenarioPaletteState(scenarioPaletteCommands(5))
 	st.list.SetGeometry(20, 1, 1, bounded.Wrap)
-	st.list.SetCursor(1)
+	st.list.SetCursor(2)
 	got := ansi.Strip(renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 24, 1))
 	if !strings.Contains(got, "above") || !strings.Contains(got, "below") {
 		t.Fatalf("one-row body lost bidirectional overflow indicators:\n%s", got)

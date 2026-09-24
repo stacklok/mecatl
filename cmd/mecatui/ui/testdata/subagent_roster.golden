@@ -14,7 +14,7 @@
   ┃      Shell… · 11 tools · ↑0 ↓0                                                               ┃
   ┃    ✓ map test coverage #r-d0c4                                                               ┃
   ┃      done · 9 tools · ↑15K ↓4K                                                               ┃
-  ┃    · +1 rows below                                                                           ┃
+  ┃    ✗ check error handling #r-e9b5                                                            ┃
   ┃                                                                                              ┃
   ┃  ↑/↓ select · pgup/pgdn · home/end · enter focus · x cancel · tab switch · esc close         ┃
   ┃                                                                                              ┃

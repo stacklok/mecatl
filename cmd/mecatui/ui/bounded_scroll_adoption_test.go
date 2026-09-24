@@ -629,21 +629,21 @@ func assertModelsOverflowIndicatorClickMisses(t *testing.T) {
 		t.Fatal("Models setup did not create an overflow indicator")
 	}
 	out := m.View().Content
-	if !strings.Contains(stripANSIstr(out), "↑ ") {
-		t.Fatalf("Models render did not show the expected overflow indicator:\n%s", stripANSIstr(out))
+	if !strings.Contains(stripANSIstr(out), "↓ 3 items") {
+		t.Fatalf("Models render did not show the expected logical-item overflow indicator:\n%s", stripANSIstr(out))
 	}
 
-	var first renderedHitRegion
+	var last renderedHitRegion
 	for _, region := range m.hits.frame {
-		if _, ok := s.hitItems[region.id]; ok && (first.id == 0 || region.rect.y0 < first.rect.y0) {
-			first = region
+		if _, ok := s.hitItems[region.id]; ok && region.rect.y1 > last.rect.y1 {
+			last = region
 		}
 	}
-	if first.id == 0 || first.rect.y0 == 0 {
-		t.Fatalf("cannot locate a rendered Models row below its overflow indicator: %#v", first)
+	if last.id == 0 {
+		t.Fatalf("cannot locate a rendered Models row before its overflow indicator: %#v", last)
 	}
 	before := s.list.Cursor()
-	x, y := m.metrics.localToGlobal(first.rect.x0, first.rect.y0-1)
+	x, y := m.metrics.localToGlobal(last.rect.x0, last.rect.y1)
 	mm, _ = m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: x, Y: y})
 	m = mm.(Model)
 	s = modelsSurface(t, m)

@@ -8,7 +8,7 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  ↑ 26 lines                                                                                         ┃
+┃  ↑ 26 items                                                                                         ┃
 ┃      prov · model-026                                                                               ┃
 ┃      prov · model-027                                                                               ┃
 ┃      prov · model-028                                                                               ┃
