@@ -82,7 +82,7 @@ func (p *structuralAttemptProvider) Stream(ctx context.Context, _ port.LLMReques
 	}, nil
 }
 
-func TestADR_0347_Scenario3_RetryCorrelation(t *testing.T) {
+func TestADR_0357_Scenario3_RetryCorrelation(t *testing.T) {
 	provider := &structuralAttemptProvider{}
 	var observations []session.NetworkAttemptPayload
 	ctx := port.WithAttemptObserver(context.Background(), func(row session.NetworkAttemptPayload) {

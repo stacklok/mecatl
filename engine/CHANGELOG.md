@@ -32,7 +32,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
-- **Durable model-stream structural evidence (ADR 0347)** — extends `session.NetworkAttemptPayload` with optional `ProviderTerminalObserved` and closed `StreamOutcome` fields for successful and incomplete outer provider attempts, while retaining legacy failed-attempt evidence and debugger-only visibility. Added (minor).
+- **Durable model-stream structural evidence (ADR 0357)** — extends `session.NetworkAttemptPayload` with optional `ProviderTerminalObserved` and closed `StreamOutcome` fields for successful and incomplete outer provider attempts, while retaining legacy failed-attempt evidence and debugger-only visibility. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
   its closed not-pending/resolved/plan-originated outcomes, and

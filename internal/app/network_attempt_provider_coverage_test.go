@@ -15,7 +15,7 @@ import (
 	openaichatprovider "github.com/stacklok/mecatl/provider/openaichat"
 )
 
-func TestADR_0347_Scenario1_SuccessfulProviderFixtures(t *testing.T) {
+func TestADR_0357_Scenario1_SuccessfulProviderFixtures(t *testing.T) {
 	tests := []struct {
 		name, model, body string
 		entry             func(Config, string, *http.Client) providerEntry
