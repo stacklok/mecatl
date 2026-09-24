@@ -222,9 +222,10 @@
     },
     "broker": {
       "type": "object", "additionalProperties": false,
-      "required": ["image", "tls", "clientCA", "workloadJWT", "resources"],
+      "required": ["image", "logging", "tls", "clientCA", "workloadJWT", "resources"],
       "properties": {
         "image": {"type": "object", "additionalProperties": false, "required": ["repository", "digest", "tag", "pullPolicy"], "properties": {"repository": {"type": "string", "minLength": 1}, "digest": {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}, "tag": {"type": "string"}, "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}}},
+        "logging": {"type": "object", "additionalProperties": false, "required": ["level"], "properties": {"level": {"type": "string", "enum": ["debug", "info", "warn", "error"]}}},
         "tls": {"type": "object", "additionalProperties": false, "required": ["secretName", "certKey", "keyKey"], "properties": {"secretName": {"type": "string"}, "certKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}, "keyKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}}},
         "clientCA": {"type": "object", "additionalProperties": false, "required": ["secretName", "key", "serverName"], "properties": {"secretName": {"type": "string"}, "key": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}, "serverName": {"type": "string"}}},
         "workloadJWT": {"type": "object", "additionalProperties": false, "required": ["audience", "lifetimeSeconds"], "properties": {"audience": {"type": "string", "minLength": 1}, "lifetimeSeconds": {"type": "integer", "minimum": 600, "maximum": 3600}}},

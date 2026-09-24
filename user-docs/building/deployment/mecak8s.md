@@ -450,7 +450,10 @@ endpoints. The legacy OAuth `network` controls remain unsupported except for the
 explicit empty policy (`additionalOrigins: []`, `privateOrigins: []`,
 `maxRedirects: 0`); enforce non-default egress/origin policy in the platform.
 
-The broker remains a one-replica `Recreate` workload. Treat upgrades and changes
+The broker remains a one-replica `Recreate` workload. Its process log threshold is
+configured independently of the agent with `broker.logging.level` (`info` by
+default; `debug`, `warn`, and `error` are also valid). `logging.level` continues
+to configure only the mecak8s agent. Treat upgrades and changes
 to OAuth client Secrets as maintenance, explicitly restarting the broker after
 Secret projection. Browser callbacks, in-flight authorizations, and outer broker
 attachment state are not migrated; users must re-enroll after replacement.

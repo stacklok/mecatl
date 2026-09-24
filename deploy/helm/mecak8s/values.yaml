@@ -69,6 +69,10 @@ broker:
     digest: ""
     tag: ""
     pullPolicy: IfNotPresent
+  logging:
+    # The singleton broker has its own process-level slog threshold. It defaults
+    # to info independently of logging.level, which configures only mecak8s.
+    level: info
   tls:
     secretName: mecabroker-tls
     certKey: tls.crt

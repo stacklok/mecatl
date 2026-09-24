@@ -1892,27 +1892,37 @@ extraVolumeMounts:
 	}
 }
 
-func TestMecak8sHelmChart_LoggingLevel(t *testing.T) {
+func TestMecak8sHelmChart_LoggingLevels(t *testing.T) {
 	rendered, err := renderMCPValues(t, `
 logging:
   level: debug
+broker:
+  logging:
+    level: warn
 `)
 	if err != nil {
-		t.Fatalf("render logging level: %v", err)
+		t.Fatalf("render logging levels: %v", err)
 	}
-	args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
-	if !slices.Contains(args, "--log-level=debug") {
-		t.Fatalf("container args missing configured log level: %#v", args)
+	agentArgs := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+	if !slices.Contains(agentArgs, "--log-level=debug") {
+		t.Fatalf("agent args missing configured log level: %#v", agentArgs)
+	}
+	brokerArgs := brokerDeploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+	if !slices.Contains(brokerArgs, "--log-level=warn") {
+		t.Fatalf("broker args missing configured log level: %#v", brokerArgs)
 	}
 
 	defaultRendered, err := helm(t, productionArgs()...)
 	if err != nil {
-		t.Fatalf("render default logging level: %v", err)
+		t.Fatalf("render default logging levels: %v", err)
 	}
 	for _, arg := range deploymentFromRender(t, defaultRendered).Spec.Template.Spec.Containers[0].Args {
 		if strings.HasPrefix(arg, "--log-level=") {
-			t.Fatalf("default render unexpectedly set log level: %q", arg)
+			t.Fatalf("default agent render unexpectedly set log level: %q", arg)
 		}
+	}
+	if !slices.Contains(brokerDeploymentFromRender(t, defaultRendered).Spec.Template.Spec.Containers[0].Args, "--log-level=info") {
+		t.Fatalf("default broker args = %#v", brokerDeploymentFromRender(t, defaultRendered).Spec.Template.Spec.Containers[0].Args)
 	}
 }
 
@@ -1923,6 +1933,7 @@ func TestMecak8sHelmChart_NewValuesAreSchemaValidated(t *testing.T) {
 	}{
 		{name: "unknown root key", set: "unknownConfigMountValue=true"},
 		{name: "invalid logging level", set: "logging.level=trace"},
+		{name: "invalid broker logging level", set: "broker.logging.level=trace"},
 		{name: "extraArgs scalar", set: "extraArgs=--no-user-model"},
 		{name: "skills auto-discover string", set: "skills.autoDiscover=not-a-bool"},
 		{name: "unknown skills setting", set: "skills.unknown=true"},

@@ -33,7 +33,7 @@ spec:
         - name: broker
           image: {{ if .Values.broker.image.digest }}{{ .Values.broker.image.repository }}@{{ .Values.broker.image.digest }}{{ else }}{{ .Values.broker.image.repository }}:{{ default (printf "v%s" .Chart.Version) .Values.broker.image.tag }}{{ end }}
           imagePullPolicy: {{ .Values.broker.image.pullPolicy }}
-          args: ["--config=/etc/mecabroker/broker.json", "--log-level=info"]
+          args: ["--config=/etc/mecabroker/broker.json", "--log-level={{ .Values.broker.logging.level }}"]
           ports:
             - {name: public, containerPort: 8443}
           startupProbe:
