@@ -377,11 +377,15 @@ test("side-thread SSE expiry preserves its draft until an explicit retry", async
   const rootMessage = { content: "Root message", role: "user" };
   const messageKey = threadKeyForMessage(rootMessage);
   await page.addInitScript(
-    ({ key }) =>
+    ({ key }) => {
+      // This saved thread belongs to the account returned by the BFF.
+      localStorage.setItem("studio.account", "opaque-a");
+      sessionStorage.setItem("studio.account", "opaque-a");
       localStorage.setItem(
         "studio.chat.threads.s1",
         JSON.stringify({ [key]: { sessionId: "s2" } }),
-      ),
+      );
+    },
     { key: messageKey },
   );
   offlineBff.json("GET", "/api/v1/sessions/s1/transcript", {
