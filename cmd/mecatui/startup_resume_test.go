@@ -44,7 +44,7 @@ func (f *fakeStartupResumeSource) GetSession(_ context.Context, id string) (clie
 	return client.SessionSnapshot{State: "completed", Placement: client.Placement{Kind: "local", Label: "workspace"}}, nil
 }
 
-func TestStartupResumeLoaderPreservesStatusSnapshot(t *testing.T) {
+func TestResumeLatestLoaderPreservesStatusSnapshot(t *testing.T) {
 	want := client.SessionSnapshot{
 		State:            "completed",
 		ResolvedModel:    client.ResolvedModel{ContextWindow: 200_000},
@@ -52,15 +52,21 @@ func TestStartupResumeLoaderPreservesStatusSnapshot(t *testing.T) {
 		ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
 	}
 	source := &fakeStartupResumeSource{
+		rows: []client.SessionListItem{
+			{ID: "status-chat", ModifiedAt: 1, Kind: client.SessionKindMain, State: "completed", Capabilities: client.SessionInventoryCapabilities{PublicChat: true}},
+		},
 		transcripts: map[string]client.SessionTranscript{
-			"status-chat": {SessionID: "status-chat", Complete: true, Kind: client.SessionKindMain},
+			"status-chat": {SessionID: "status-chat", Complete: true, Kind: client.SessionKindMain, Messages: []client.ConversationMessage{{Role: "user", Text: "resume"}}},
 		},
 		snapshots: map[string]client.SessionSnapshot{"status-chat": want},
 	}
 
-	selection, err := loadExactStartupResume(t.Context(), source, "status-chat")
+	selection, _, err := startupResumeConfig(t.Context(), source, config{resumeLatest: true})
 	if err != nil {
-		t.Fatalf("loadExactStartupResume: %v", err)
+		t.Fatalf("startupResumeConfig: %v", err)
+	}
+	if selection == nil || selection.Row.ID != "status-chat" {
+		t.Fatalf("resume-latest selection = %+v, want status-chat", selection)
 	}
 	if selection.Snapshot.Usage != want.Usage || selection.Snapshot.ResolvedModel != want.ResolvedModel ||
 		selection.Snapshot.ContextOccupancy == nil || *selection.Snapshot.ContextOccupancy != *want.ContextOccupancy {

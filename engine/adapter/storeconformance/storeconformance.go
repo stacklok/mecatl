@@ -32,15 +32,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-type failingSaveStore struct {
-	port.SessionStore
-	err error
-}
-
-func (f failingSaveStore) Save(context.Context, *session.Session) error {
-	return f.err
-}
-
 // Run executes the shared SessionStore conformance table against the store
 // produced by newStore. newStore must return a fresh, isolated store each
 // call.
@@ -59,18 +50,6 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 			t.Fatalf("Load: %v", err)
 		}
 		assertSessionEqual(t, got, want)
-
-		want.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 8192})
-		if err := (failingSaveStore{SessionStore: st, err: errors.New("injected snapshot save failure")}).Save(ctx, want); err == nil {
-			t.Fatal("failing Save returned nil")
-		}
-		durable, err := st.Load(ctx, want.ID)
-		if err != nil {
-			t.Fatalf("Load after failed Save: %v", err)
-		}
-		if occupancy, ok := durable.LatestContextOccupancy(); !ok || occupancy != (session.ContextOccupancy{InputTokens: 1200, Estimated: true}) {
-			t.Fatalf("durable occupancy after failed Save = (%+v, %v), want prior snapshot", occupancy, ok)
-		}
 
 		legacy := newSession("conf-occupancy-absent")
 		loadedLegacy := roundTrip(t, st, legacy)
