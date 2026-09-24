@@ -801,7 +801,7 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 		var usage session.AuxiliaryUsage
 		winner, rationale, usage = t.judgeWinner(ctx, results, succeeded, criteria)
 		if caps.recordAuxiliaryUsage != nil {
-			caps.recordAuxiliaryUsage(usage)
+			caps.recordAuxiliaryUsage(remapAuxiliaryUsage(ctx, caps.diag, session.UsageKindParallelJudge, usage))
 		}
 	}
 	// The judge's rationale is judge-LLM prose written DIRECTLY beneath the join report's
