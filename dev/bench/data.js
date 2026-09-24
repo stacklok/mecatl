@@ -241394,6 +241394,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790230954304,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c572271a7e6046851e8ddf2b1d72681e6364c337",
+          "message": "docs(models): explain plan-mode model slot (#1840)\n\nDocument plan-mode model slot configuration.",
+          "timestamp": "2026-09-24T10:28:28+03:00",
+          "tree_id": "b098149d424682f2942bc0d7fdb81952438298d4",
+          "url": "https://github.com/stacklok/mecatl/commit/c572271a7e6046851e8ddf2b1d72681e6364c337"
+        },
+        "date": 1790235562535,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -350676,6 +350710,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790235559616,
+  "lastUpdate": 1790235563499,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
