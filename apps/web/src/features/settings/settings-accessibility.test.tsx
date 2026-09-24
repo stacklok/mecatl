@@ -12,6 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { routeTree } from "../../routeTree.gen";
 import { ShortcutReference } from "../shortcuts/shortcut-reference";
+import { AvatarPicker } from "./avatar-picker";
 import { MemoryFactDetail } from "./memory-settings";
 import { ProviderDetail } from "./provider-detail";
 import { SettingsWorkspace } from "./settings-workspace";
@@ -221,5 +222,22 @@ describe("settings responsive accessibility", () => {
         .querySelector('select[aria-label="Completed session"]')
         ?.classList.contains("min-h-11"),
     ).toBe(true);
+  });
+
+  it("exposes a 44px picture removal target without hover on mobile", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      <AvatarPicker
+        alt="Ava"
+        avatarUrl="data:image/png;base64,aA=="
+        fallback={<span />}
+        onChange={() => {}}
+      />,
+    );
+    const remove = host.querySelector<HTMLButtonElement>('button[aria-label="Remove Ava picture"]');
+    expect(remove).not.toBeNull();
+    expect(remove?.classList.contains("size-11")).toBe(true);
+    expect(remove?.classList.contains("opacity-100")).toBe(true);
+    expect(remove?.className).toContain("focus-visible:");
   });
 });

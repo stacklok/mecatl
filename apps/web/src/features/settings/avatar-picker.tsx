@@ -47,11 +47,13 @@ export function AvatarPicker({
           {avatarUrl && (
             <button
               aria-label={`Remove ${alt} picture`}
-              className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full border bg-background text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              className="absolute -right-5 -top-5 flex size-11 items-center justify-center rounded-full text-muted-foreground opacity-100 transition-opacity hover:text-foreground focus-visible:outline-2 focus-visible:outline-brand min-[500px]:opacity-0 min-[500px]:focus-visible:opacity-100 min-[500px]:group-hover:opacity-100"
               onClick={() => onChange("")}
               type="button"
             >
-              <X aria-hidden="true" className="size-3" />
+              <span className="flex size-6 items-center justify-center rounded-full border bg-background shadow-sm">
+                <X aria-hidden="true" className="size-3" />
+              </span>
             </button>
           )}
         </div>
