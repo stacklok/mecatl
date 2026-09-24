@@ -4,7 +4,7 @@
 **Work classification:** Bounded — reduces CI work while preserving the repository-local acceptance-proof resolution contract; no public or durable architecture boundary changes.
 **Decision record:** None — this is a repository CI policy and resolver implementation decision, not a durable system architecture decision.
 **Phase:** CI validation efficiency
-**Status:** proposed, 2026-09-24. User-authorized amendment: retain task-proof registration checks and defer the Vitest batch index.
+**Status:** in-progress, 2026-09-24. User-authorized direct amendment: retain task-proof registration checks and defer the Vitest batch index.
 **Delivery:** Split. Two proof-resolution behaviors change and require separate contract review before implementation.
 **Expected tasks:** 1
 **Issue:** None — user-authorized bounded CI improvement.
