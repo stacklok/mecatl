@@ -4,8 +4,8 @@
  * Everything Studio keeps in browser storage for a user — chat folders,
  * queued prompts, failed runs, canvases, profile names and avatars — lives
  * under this prefix. A sign-out or account change clears it from both storage
- * areas before the next person's chat renders. The theme is a device
- * preference stored under its own key and survives.
+ * areas before the next person's chat renders. Theme and palette are device
+ * preferences stored under their own keys and survive.
  */
 export const userScopedPrefix = "studio.";
 export const accountStorageKey = `${userScopedPrefix}account`;

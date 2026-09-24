@@ -48,6 +48,7 @@ describe("account-scoped browser storage", () => {
   it("clears account data from both browser stores", () => {
     const local = memoryStore({
       "mecatl-studio-theme": "dark",
+      "mecatl-studio.palette": "solar",
       "studio.account": "alice",
       "studio.chat.folders": "alice-folder",
       "studio.chat.queue.s1": "alice-queue",
@@ -61,6 +62,7 @@ describe("account-scoped browser storage", () => {
     expect(reconcileAccount("bob", local, session)).toBe(true);
     expect([...local.data.entries()]).toEqual([
       ["mecatl-studio-theme", "dark"],
+      ["mecatl-studio.palette", "solar"],
       ["studio.account", "bob"],
     ]);
     expect([...session.data.entries()]).toEqual([
@@ -69,7 +71,7 @@ describe("account-scoped browser storage", () => {
     ]);
 
     clearUserScopedStorage(local, session);
-    expect([...local.data.keys()]).toEqual(["mecatl-studio-theme"]);
+    expect([...local.data.keys()]).toEqual(["mecatl-studio-theme", "mecatl-studio.palette"]);
     expect([...session.data.keys()]).toEqual(["unrelated"]);
   });
 

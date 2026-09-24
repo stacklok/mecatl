@@ -183,7 +183,7 @@ can be sent after the current run ends.
 
 Folders, queued messages, and account preferences survive a reload for the same
 account. Studio clears them when you sign out or switch accounts. The device
-theme remains.
+theme and palette remain.
 
 ### Return to a chat
 
