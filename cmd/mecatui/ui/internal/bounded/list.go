@@ -268,6 +268,16 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 		l.revealCursor(l.layout())
 	}
 	v := l.View()
+	// A lone forward row is more useful than an above indicator. Returning that
+	// indicator's row to content reveals the tail rather than leaving a reachable,
+	// unannounced item below the viewport.
+	if v.Below == 1 && v.Above > 0 && l.viewport.height < capacity {
+		l.viewport.height++
+		if reveal {
+			l.revealCursor(l.layout())
+		}
+		v = l.View()
+	}
 	available := max(0, capacity-len(v.Rows))
 	// When one chrome row remains, tell the operator about the forward tail: it
 	// contains the next reachable content, whereas the above count is historical.

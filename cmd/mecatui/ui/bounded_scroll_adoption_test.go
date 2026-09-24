@@ -621,7 +621,7 @@ func assertModelsOverflowIndicatorClickMisses(t *testing.T) {
 	_ = m.View()
 
 	s := modelsSurface(t, m)
-	s.filtered[0].DisplayName = strings.Repeat("wrapped model identity ", 5)
+	s.filtered[0].DisplayName = strings.Repeat("wrapped model identity ", 20)
 	s.catalog.models = s.filtered
 	_ = m.View()
 	s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})

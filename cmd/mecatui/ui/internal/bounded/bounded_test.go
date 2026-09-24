@@ -110,10 +110,10 @@ func TestListIndicatorAdjustedPagingUsesVisibleHeight(t *testing.T) {
 	list.SetItems([]ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}, {ID: "d", Text: "d"}, {ID: "e", Text: "e"}})
 	list.Scroll(LineDown)
 	view := list.ViewWithIndicators(4, false)
-	// A one-row forward tail does not consume a second chrome row. The retained
-	// above indicator still leaves the list on its three-row visible page.
-	if view.Above == 0 || view.Below != 0 {
-		t.Fatalf("indicator-adjusted view = %+v, want only the above indicator for a short forward tail", view)
+	// A lone forward row replaces the historical above indicator and becomes
+	// ordinary visible content, leaving no unannounced scroll target.
+	if view.Above != 0 || view.Below != 0 || len(view.Rows) != 4 || view.Rows[len(view.Rows)-1].ID != "e" {
+		t.Fatalf("indicator-adjusted view = %+v, want the complete short forward tail", view)
 	}
 	list.Move(PageDown)
 	if got := list.CursorID(); got != "e" {
