@@ -4,7 +4,7 @@
 **Work classification:** Bounded — extracts a client-local typed scrollback state model and preserves established rendering, cache, and navigation behavior without changing public APIs, persistence, authority, or deployment behavior.
 **Decision record:** None — the package boundary and its migration rationale are internal to `cmd/mecatui/ui`; no durable architectural decision is introduced.
 **Phase:** scrollback-model follow-up to functional conversation-card rendering
-**Status:** in-progress, 2026-09-23. Plan / Interface PR [#1818](https://github.com/stacklok/mecatl/pull/1818) merged at `0b447fcd23d191e076c1ba94695b1d33b4326c1b`; implementation began from that approved baseline.
+**Status:** landed, 2026-09-23. Implementation candidate on `impl/mecatui-typed-scrollback-model`; authoritative when its implementation PR merges. Plan / Interface PR [#1818](https://github.com/stacklok/mecatl/pull/1818) merged at `0b447fcd23d191e076c1ba94695b1d33b4326c1b`.
 **Delivery:** Split. The new UI-internal state-model contract, typed transition boundary, and preserved scrollback invariants need Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration after the Plan / Interface review.
 **Issue:** [stacklok/mecatl#1789](https://github.com/stacklok/mecatl/issues/1789).
