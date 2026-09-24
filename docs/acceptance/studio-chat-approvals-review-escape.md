@@ -4,7 +4,7 @@
 **Work classification:** Architectural — an exact plan-ask verdict crosses the engine, daemon, public protocol, published SDK, and Studio BFF, replacing session-only authority for this browser path.
 **Decision record:** [ADR 0366](../adr/0366-exact-plan-ask-control.md)
 **Phase:** Studio design alignment
-**Status:** proposed, 2026-09-24. Reconciled with #1847's proposed #1880 interface and validated for Plan / Interface review.
+**Status:** in-progress, 2026-09-24. The directing human waived the Plan / Interface merge gate for implementation on the #1886 stack and authorized the call-ID projection amendment in #1888.
 **Delivery:** Split. Review this public control and the Studio interaction contract in an independent Plan / Interface PR before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1848](https://github.com/stacklok/mecatl/issues/1848).
