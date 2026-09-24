@@ -929,6 +929,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			}
 			return m, m.refreshCmd(), true
 		}
+		if m.ownsAdmission() && client.IsContextWindowUnavailable(msg.Err) {
+			m = m.rejectAdmission()
+			return m, nil, true
+		}
+		m.admissionSubmission = nil
 		if msg.AuthReason != "" {
 			mm, cmd := m.reduceLiveAuthRecovery(msg.AuthReason)
 			return mm, cmd, true
@@ -1144,6 +1149,7 @@ func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
 func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case client.SessionInitMsg:
+		m.admissionSubmission = nil
 		if m.startupFirstPromptPending {
 			m.startupFirstPromptPending = false
 			m.startupAdopted = false
@@ -2290,6 +2296,10 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // /models picker is the only SELECTING one (cursor + enter); the rest are read-only
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if s, ok := m.modal.(*admissionRecoveryState); ok {
+		mm, cmd := m.onAdmissionKey(msg, s)
+		return mm, cmd, true
+	}
 	if m.startupRunEntryFailed {
 		mm, cmd := m.onStartupRunEntryKey(msg)
 		return mm, cmd, true
@@ -2545,6 +2555,7 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // staged input clears it (no arm); a first press on an empty prompt arms the guard,
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
@@ -3454,6 +3465,9 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	}
+	if text != "" || len(media.Parts) > 0 {
+		m.retainAdmission(text, media)
+	}
 	if hadStaged {
 		m.stagedMedia = nil
 		m.nextMediaN = 0
@@ -4021,6 +4035,7 @@ func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
 func (m Model) endRun(stop string) Model {
+	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()
 		m.cancelRun = nil
@@ -4821,6 +4836,10 @@ func sumUsage(a, b client.Usage) client.Usage {
 
 func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool) (Model, tea.Cmd) {
 	cancel()
+	if m.ownsAdmission() && client.IsContextWindowUnavailable(err) {
+		return m.rejectAdmission(), nil
+	}
+	m.admissionSubmission = nil
 	streamErr := authStreamErr(m, err)
 	if streamErr.AuthReason != "" {
 		mm, connectCmd := m.reduceLiveAuthRecovery(streamErr.AuthReason)

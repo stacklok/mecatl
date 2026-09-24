@@ -89,6 +89,7 @@ func sessionsSurface(m *Model) *sessionsState {
 
 func (m Model) bindSessionID(id string) Model {
 	if id != m.sessionID {
+		m.admissionSubmission = nil
 		m.freshSessionBinding = false
 		m.compactPending = false
 		m.compactRequestToken++

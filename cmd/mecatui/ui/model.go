@@ -864,6 +864,9 @@ type Model struct {
 	// transport failures restore a draft and clear the record instead.
 	promptRecovery *promptRecovery
 
+	// admissionSubmission owns one validated prepared send until SessionInit or disposal.
+	admissionSubmission *admissionSubmission
+
 	// Startup-adopted chats remain protected until their first prompt reaches the
 	// server stream. A pre-SessionInit failure restores the authoritative transcript
 	// as a read-only retry/back view; no fallback session is ever created.
@@ -1168,6 +1171,7 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
+	m.admissionSubmission = nil
 	m = m.resetDocumentProjection()
 	m.usage = client.Usage{}
 	m.contextTokens = 0

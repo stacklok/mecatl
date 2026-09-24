@@ -6,8 +6,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
+
+	"google.golang.org/protobuf/proto"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -47,6 +50,17 @@ type MediaResult struct {
 	// the model sees the file content inline (Gemini-style), since text is not a
 	// media part.
 	InlineText []string
+}
+
+// Clone detaches prepared content and display metadata from their source owner.
+func (r MediaResult) Clone() MediaResult {
+	r.Parts = slices.Clone(r.Parts)
+	for i, part := range r.Parts {
+		r.Parts[i] = proto.CloneOf(part)
+	}
+	r.Descriptors = slices.Clone(r.Descriptors)
+	r.InlineText = slices.Clone(r.InlineText)
+	return r
 }
 
 // CheckAggregateCaps re-validates the per-PROMPT media aggregate (part count and
