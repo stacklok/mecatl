@@ -241722,6 +241722,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790235562535,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2736535fc396bafcbae3d1471ca77f9995a794f3",
+          "message": "fix(toolhive): support v0.50 encrypted LLM credentials (#1813)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-24T10:08:43+02:00",
+          "tree_id": "b7234e24ba5b7f3d51bb8dac7869b905ce7a1af3",
+          "url": "https://github.com/stacklok/mecatl/commit/2736535fc396bafcbae3d1471ca77f9995a794f3"
+        },
+        "date": 1790238047971,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -351157,6 +351191,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790238045110,
+  "lastUpdate": 1790238048834,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
