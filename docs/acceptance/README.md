@@ -194,14 +194,10 @@ PR after verification. There is no cleanup or status-only PR.
 - [Local mecak8s Kind fixture](mecak8s-kind-fixture.md) — cleanly separates an
   operator-run mock/real-provider mecak8s fixture, optional Keycloak caller
   identity, and the deferred ToolHive/vMCP delegation extension. Status: draft.
-- [Agent model discovery](agent-model-discovery.md) — a bounded, read-only,
-  model-facing view of the existing resolved inventory, presenting exact
-  `(provider_id, model_id)` selection handles without redesigning provider identity.
-  Status: landed.
-- [Agent model discovery search and continuation](agent-model-discovery-v2.md) — extends the
-  same safe resolved inventory with selectable-provider facets, bounded literal-term search,
-  opaque snapshot-bound continuation, and stable model-visible workflow guidance. Status:
-  proposed.
+- [Agent model discovery](agent-model-discovery.md) — replaces the alpha `DiscoverModels`
+  contract in place with selectable-provider facets, bounded literal-term search, opaque
+  snapshot-bound continuation, and stable model-visible workflow guidance while preserving
+  exact `(provider_id, model_id)` selection identity. Status: proposed amendment.
 - [Jev delegated-model router](jev-model-router.md) — adds an explicitly selected,
   bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
   existing delegation event, mecatui, and session-debugger paths. Status: landed implementation
