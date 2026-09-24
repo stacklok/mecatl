@@ -12,8 +12,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  BookOpen,
   BrainCircuit,
   Cloud,
+  Copy,
   ExternalLink,
   Keyboard,
   Laptop,
@@ -466,6 +468,23 @@ function ModelCard({
   );
 }
 
+function reported(value: string | undefined): string {
+  return value?.trim() || "Not reported";
+}
+
+/** Only the BFF's safe build and runtime projections go into copied diagnostics. */
+function supportSummary(runtime: GetRuntimeResponse, settings: GetRuntimeSettingsResponse): string {
+  return [
+    `Studio build: ${reported(runtime.studioBuildId)}`,
+    `SDK version: ${reported(runtime.sdkVersion)}`,
+    `Daemon build: ${reported(settings.buildId)}`,
+    `Daemon implementation: ${reported(settings.serverImplementation)}`,
+    `Runtime source: ${runtime.source}`,
+    `Connection: ${runtime.connection}`,
+    `Deployment: ${reported(runtime.deployment)}`,
+  ].join("\n");
+}
+
 function AboutAgent({
   runtime,
   settings,
@@ -473,35 +492,70 @@ function AboutAgent({
   runtime: GetRuntimeResponse;
   settings: GetRuntimeSettingsResponse;
 }) {
-  const online = runtime.connection === "online";
+  const [copyStatus, setCopyStatus] = useState("");
   return (
     <Section icon={runtime.source === "local" ? Laptop : Cloud} title="About">
-      <dl className="grid gap-3 sm:grid-cols-3">
-        <Fact label="Status">
-          <Badge variant={online ? "success" : "warning"}>
-            {online ? "Connected" : "Needs attention"}
-          </Badge>
-        </Fact>
-        <Fact label="Location">
-          {runtime.source === "local" ? "On this device" : "Remote workspace"}
-        </Fact>
-        <Fact label="Agent version">{settings.buildId || "Not reported"}</Fact>
+      <SourceNote source="authenticated BFF runtime and settings inventory" owner="deployment and Studio build" />
+      <p className="mt-3 text-sm text-muted-foreground">
+        Studio is the browser client. Its build and installed SDK are reported separately from the
+        connected daemon.
+      </p>
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Fact label="Studio build">{reported(runtime.studioBuildId)}</Fact>
+        <Fact label="SDK version">{reported(runtime.sdkVersion)}</Fact>
+        <Fact label="Daemon build">{reported(settings.buildId)}</Fact>
+        <Fact label="Daemon implementation">{reported(settings.serverImplementation)}</Fact>
+        <Fact label="Runtime source">{runtime.source}</Fact>
+        <Fact label="Connection">{runtime.connection}</Fact>
+        <Fact label="Deployment">{reported(runtime.deployment)}</Fact>
       </dl>
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button asChild className="rounded-full" size="sm" variant="outline">
+        <Button
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(supportSummary(runtime, settings));
+              setCopyStatus("Support summary copied.");
+            } catch {
+              setCopyStatus("Could not copy the support summary.");
+            }
+          }}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          <Copy aria-hidden="true" />
+          Copy support summary
+        </Button>
+        <Button asChild size="sm" variant="outline">
+          <a
+            href="https://mecatl.dev/docs/building/deployment/studio"
+            rel="noreferrer"
+            target="_blank"
+          >
+            <BookOpen aria-hidden="true" />
+            Documentation
+            <ExternalLink aria-hidden="true" className="size-3 text-muted-foreground" />
+          </a>
+        </Button>
+        <Button asChild size="sm" variant="outline">
           <a href={supportUrl} rel="noreferrer" target="_blank">
             <LifeBuoy aria-hidden="true" />
             Report a problem
             <ExternalLink aria-hidden="true" className="size-3 text-muted-foreground" />
           </a>
         </Button>
-        <Button asChild className="rounded-full" size="sm" variant="outline">
+        <Button asChild size="sm" variant="outline">
           <Link to="/workspace/shortcuts">
             <Keyboard aria-hidden="true" />
             Keyboard shortcuts
           </Link>
         </Button>
       </div>
+      {copyStatus && (
+        <p className="mt-2 text-sm" role="status">
+          {copyStatus}
+        </p>
+      )}
       <div className="mt-2 divide-y border-t">
         <AuthControl />
       </div>

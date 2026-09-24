@@ -66,12 +66,54 @@ connected deployment does not enable:
   builder and fire history, when the deployment enables scheduling.
 - **Skills**: configured and learned skills, learning proposals, and session
   reflection, when the deployment enables them.
-- **Settings**: profile and appearance preferences stored in the browser, memory
-  consolidation, the model inventory, and storage health. Provider credentials
-  and model routing stay with the deployment and are shown read-only.
+- **Settings**: personal browser preferences and memory decisions alongside
+  read-only facts about the connected deployment, its providers, and its models.
 
 A global search palette and a keyboard-shortcuts reference page complete the
-set.
+set. Open `/workspace/shortcuts` directly or follow **Keyboard shortcuts**
+from **Settings > About**. The page lists the current browser bindings and
+features enabled by the connected deployment.
+
+## Review settings
+
+Open `/workspace/settings/profile` for personal preferences. Every settings
+section has its own URL, so you can bookmark or reload it. The section list is
+available in the desktop sidebar and the mobile selector.
+
+|Section|Source|Owner and available action|
+|-|-|-|
+|Profile|Browser preferences; signed-in account from the BFF session|Personal display choices; account identity is read-only.|
+|Appearance|Browser preferences|Personal theme and interface choices.|
+|Agent|Browser display preferences; BFF runtime capabilities|Personal name and avatar; deployment-managed behavior is read-only.|
+|Permissions|BFF runtime capability|Deployment-managed posture, read-only.|
+|Providers|BFF settings inventory and provider detail|Deployment-managed provider facts, read-only.|
+|Models|BFF settings inventory; browser visibility preference|Personal picker visibility; deployment-managed default and routing are read-only.|
+|MCP tools|BFF runtime capabilities|Deployment-managed availability, read-only.|
+|Storage|BFF storage health|Deployment-managed health, read-only.|
+|Memory|BFF user-memory reads|Personal facts and approved consolidation actions; store settings are deployment-managed.|
+|Learning|BFF learning and reflection reads|Personal proposal decisions; learning configuration is deployment-managed.|
+|Diagnostics|BFF runtime, settings inventory, and storage health|Deployment-managed facts, read-only.|
+|Labs|Studio availability and BFF runtime capabilities|Deployment-managed availability, read-only.|
+|About|BFF runtime, settings inventory, and sign-in session|Deployment and Studio build facts are read-only; the signed-in user can sign out.|
+
+**Providers** shows each provider's status and model count. A provider detail
+page shows its models and a sanitized display endpoint when the daemon reports
+one. **Models** shows IDs, providers, context limits, and image and reasoning
+support. The **Visible** switch affects model pickers in this browser. Provider
+credentials, the default model, and routing remain under deployment control.
+
+**Memory** lists the user's facts. A fact detail opens at
+`/workspace/memory?item=<KEY>`; existing links using
+`/workspace/settings/memory?item=<KEY>` lead to the same fact. A key containing
+`/` stays intact in the `item` query value.
+
+**About** identifies three separate builds: the Studio image release tag,
+the installed TypeScript SDK version, and the connected daemon's build ID. It
+also shows the daemon implementation, runtime source, connection, and deployment
+label reported by the BFF. A fact the BFF cannot report appears as **Not
+reported**. Local Studio builds have no image release tag. The **Copy support
+summary** action includes these displayed build and runtime facts. About links
+to this documentation, problem reporting, and the shortcuts reference.
 
 ## Install Studio in your browser
 

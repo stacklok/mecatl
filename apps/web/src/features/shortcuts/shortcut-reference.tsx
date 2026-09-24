@@ -3,7 +3,6 @@
 import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Keyboard } from "lucide-react";
-import { Badge } from "../../components/ui/badge";
 import { Kbd } from "../../components/ui/kbd";
 import { deriveHelpFeatures } from "./help-features";
 import { keycaps, shortcutGroups, shortcutRegistry } from "./shortcut-registry";
@@ -29,7 +28,10 @@ const USAGE_LEGEND: ReadonlyArray<{ label: string; note: string }> = [
 export function ShortcutReference() {
   const mac = navigator.platform.includes("Mac");
   const runtime = useQuery(getRuntimeOptions());
-  const features = runtime.data ? deriveHelpFeatures(runtime.data.capabilities) : undefined;
+  const features =
+    runtime.data?.connection === "online"
+      ? deriveHelpFeatures(runtime.data.capabilities).filter((row) => row.enabled)
+      : undefined;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -81,14 +83,15 @@ export function ShortcutReference() {
             <p className="mt-3 text-sm text-muted-foreground">
               Connect to an agent to see which features are turned on.
             </p>
+          ) : features.length === 0 ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              No help features are enabled on this agent.
+            </p>
           ) : (
             <ul className="mt-3 grid gap-x-8 gap-y-2.5 sm:grid-cols-2">
               {features.map((row) => (
-                <li className={row.enabled ? "" : "text-muted-foreground"} key={row.id}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{row.label}</span>
-                    {!row.enabled && <Badge variant="outline">not enabled</Badge>}
-                  </div>
+                <li key={row.id}>
+                  <p className="text-sm font-medium">{row.label}</p>
                   <p className="text-xs text-muted-foreground">{row.hint}</p>
                 </li>
               ))}
