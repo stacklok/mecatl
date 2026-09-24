@@ -153,7 +153,6 @@ import {
   abortsOnSessionSwitch,
   acceptsDelivery,
   CATCHING_UP_NOTICE,
-  canRetryFailedRun,
   controlTarget,
   createActivityDeduplicator,
   decideTruncation,
@@ -990,7 +989,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   }
 
   async function retryFailedRun() {
-    if (!canRetryFailedRun(failedRun, sessionId, isRunning) || !sessionId || !failedRun) return;
+    if (!sessionId || !failedRun || failedRun.permanent || isRunning) return;
     setError(undefined);
     setNotice(undefined);
     setFailedRun(undefined);
@@ -1268,7 +1267,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (!unfollowed && owns()) {
       setNotice((current) => (current === CATCHING_UP_NOTICE ? undefined : current));
     }
-    return runStreamEnd({ failure, sawResult }, unfollowed, prompt);
+    return runStreamEnd({ failure, sawResult }, unfollowed);
   }
 
   async function refreshSession(

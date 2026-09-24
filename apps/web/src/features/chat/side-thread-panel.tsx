@@ -569,7 +569,7 @@ function useSideThreadRun(sessionId: string) {
     if (!unfollowed) {
       setNotice((current) => (current === CATCHING_UP_NOTICE ? undefined : current));
     }
-    return runStreamEnd(state, unfollowed, prompt);
+    return runStreamEnd(state, unfollowed);
   }
 
   async function sendPrompt(prompt: string, onAccepted?: (accepted: boolean) => void) {

@@ -5,7 +5,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
-import { canRetryFailedRun, controlTarget, drainsQueue, isStaleRunControl } from "./run-stream";
+import { controlTarget, drainsQueue, isStaleRunControl } from "./run-stream";
 
 afterEach(() => {
   cleanup();
@@ -46,11 +46,5 @@ describe("chat workspace run ownership", () => {
     expect(isStaleRunControl({ code: "stale_run_control", status: 409 })).toBe(true);
     expect(isStaleRunControl({ code: "runtime_unavailable", status: 503 })).toBe(false);
 
-    const failure = { message: "provider error", permanent: false, prompt: "original" };
-    expect(canRetryFailedRun(failure, "chat-a", false)).toBe(true);
-    expect(canRetryFailedRun({ ...failure, permanent: true }, "chat-a", false)).toBe(false);
-    expect(canRetryFailedRun(failure, "chat-a", true)).toBe(false);
-    expect(canRetryFailedRun(undefined, "chat-a", false)).toBe(false);
-    expect(canRetryFailedRun(failure, undefined, false)).toBe(false);
   });
 });

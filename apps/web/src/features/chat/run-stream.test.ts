@@ -64,13 +64,13 @@ describe("decideTruncation", () => {
 
 describe("runStreamEnd", () => {
   it("reports no failure for a stream the view stopped following", () => {
-    expect(runStreamEnd({ sawResult: false }, true, "prompt")).toEqual({ kind: "unfollowed" });
+    expect(runStreamEnd({ sawResult: false }, true)).toEqual({ kind: "unfollowed" });
   });
 
   it("keeps an abrupt close uncertain until a result or run.error arrives", () => {
-    expect(runStreamEnd({ sawResult: false }, false, "prompt")).toEqual({ kind: "uncertain" });
+    expect(runStreamEnd({ sawResult: false }, false)).toEqual({ kind: "uncertain" });
     expect(drainsQueue({ kind: "uncertain" }, "chat-a", "chat-a", false)).toBe(false);
-    expect(runStreamEnd({ sawResult: true }, false, "prompt")).toEqual({
+    expect(runStreamEnd({ sawResult: true }, false)).toEqual({
       failure: undefined,
       kind: "settled",
     });
@@ -79,10 +79,10 @@ describe("runStreamEnd", () => {
   it("keeps gaps and abrupt closes separate from results", () => {
     const gap = decideTruncation({ cursor: "", reason: "gap", type: "run.truncated" }, 0);
     expect(gap.action).toBe("missing-history");
-    expect(runStreamEnd({ sawResult: false }, true, "prompt")).toEqual({ kind: "unfollowed" });
-    expect(runStreamEnd({ sawResult: false }, false, "prompt")).toEqual({ kind: "uncertain" });
+    expect(runStreamEnd({ sawResult: false }, true)).toEqual({ kind: "unfollowed" });
+    expect(runStreamEnd({ sawResult: false }, false)).toEqual({ kind: "uncertain" });
     const failure = { message: "provider down", permanent: false, prompt: "prompt" };
-    expect(runStreamEnd({ failure, sawResult: false }, false, "prompt")).toEqual({
+    expect(runStreamEnd({ failure, sawResult: false }, false)).toEqual({
       failure,
       kind: "settled",
     });

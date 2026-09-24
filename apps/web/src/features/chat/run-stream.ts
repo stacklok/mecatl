@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RunStreamEvent, RunTruncated } from "@mecatl-studio/contracts";
-import { finalRunFailure, type RunDeliveryState, type RunFailure } from "./chat-state";
+import type { RunDeliveryState, RunFailure } from "./chat-state";
 
 /**
  * How many times one open of a chat may reattach the activity stream after a
@@ -69,11 +69,10 @@ export type RunStreamEnd =
 export function runStreamEnd(
   state: Pick<RunDeliveryState, "failure" | "sawResult">,
   unfollowed: boolean,
-  _fallbackPrompt: string,
 ): RunStreamEnd {
   if (unfollowed) return { kind: "unfollowed" };
   if (!state.sawResult && !state.failure) return { kind: "uncertain" };
-  return { failure: finalRunFailure(state), kind: "settled" };
+  return { failure: state.failure, kind: "settled" };
 }
 
 /**
@@ -164,15 +163,6 @@ export function isStaleRunControl(error: unknown): boolean {
     "code" in error &&
     error.code === "stale_run_control"
   );
-}
-
-/** Retry is a BFF session action, offered only for an authoritative failed run. */
-export function canRetryFailedRun(
-  failure: RunFailure | undefined,
-  sessionId: string | undefined,
-  isRunning: boolean,
-): boolean {
-  return Boolean(sessionId && failure && !failure.permanent && !isRunning);
 }
 
 /** True when a queue for `queueSessionId` may start its next run in the current view. */

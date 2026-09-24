@@ -7,7 +7,6 @@ import {
   enqueueApproval,
   errorMessage,
   failureFromResult,
-  finalRunFailure,
   initialRunDeliveryState,
   messagesFromTranscript,
   payloadImages,
@@ -436,20 +435,5 @@ describe("applyRunDelivery", () => {
       },
     ]);
     expect(replay.activePrompt).toBe("hi");
-  });
-});
-
-describe("finalRunFailure", () => {
-  it("preserves an explicit failure", () => {
-    const failure = { message: "boom", permanent: false, prompt: "hello" };
-    expect(finalRunFailure({ failure, sawResult: false })).toEqual(failure);
-  });
-
-  it("does not turn an unexplained stream close into a retryable failure", () => {
-    expect(finalRunFailure({ failure: undefined, sawResult: false })).toBeUndefined();
-  });
-
-  it("reports no failure once a result was seen and nothing failed", () => {
-    expect(finalRunFailure({ failure: undefined, sawResult: true })).toBeUndefined();
   });
 });

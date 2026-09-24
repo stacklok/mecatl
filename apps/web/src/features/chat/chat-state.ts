@@ -415,13 +415,6 @@ export function applyRunDelivery(
   return next;
 }
 
-/** Only an explicit run.error or failing result proves that a run failed. */
-export function finalRunFailure(
-  state: Pick<RunDeliveryState, "failure" | "sawResult">,
-): RunFailure | undefined {
-  return state.failure;
-}
-
 function updateOrAppendMessage(
   messages: ChatMessage[],
   id: string,
