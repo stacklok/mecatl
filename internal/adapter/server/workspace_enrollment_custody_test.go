@@ -31,6 +31,11 @@ type custodyRecorder struct {
 	// makes that write durable before reporting the error.
 	failCustodySave bool
 	landThenFail    bool
+	// attachErr makes expected-binding attach fail (e.g. structured instance loss).
+	attachErr error
+	// recoverWith supplies the fresh B2 attachment; nil makes Recover unavailable.
+	recoverWith func(context.Context, session.SessionID) (brokercontract.SessionHandle, error)
+	recovers    int
 }
 
 func (r *custodyRecorder) add(event string) {
@@ -92,6 +97,16 @@ func (b *custodyBroker) AttachSession(ctx context.Context, id session.SessionID)
 	return b.wrapped, brokercontract.AttachReattached, nil
 }
 
+func (b *custodyBroker) AttachSessionExpectedBinding(ctx context.Context, id session.SessionID, _ session.ExternalBinding) (brokercontract.SessionHandle, brokercontract.AttachOutcome, error) {
+	b.rec.mu.Lock()
+	attachErr := b.rec.attachErr
+	b.rec.mu.Unlock()
+	if attachErr != nil {
+		return nil, "", attachErr
+	}
+	return b.AttachSession(ctx, id)
+}
+
 func (b *custodyBroker) CommitCredentialCustody(context.Context, brokercontract.CustodyAssertion) error {
 	b.rec.mu.Lock()
 	defer b.rec.mu.Unlock()
@@ -105,8 +120,20 @@ func (b *custodyBroker) CommitCredentialCustody(context.Context, brokercontract.
 	return nil
 }
 
-func (*custodyBroker) RecoverCredentialAttachment(context.Context, brokercontract.CustodyAssertion, string) (brokercontract.RecoveredCredentialAttachment, error) {
-	return brokercontract.RecoveredCredentialAttachment{}, brokercontract.ErrContinuityUnavailable
+func (b *custodyBroker) RecoverCredentialAttachment(ctx context.Context, assertion brokercontract.CustodyAssertion, _ string) (brokercontract.RecoveredCredentialAttachment, error) {
+	b.rec.mu.Lock()
+	b.rec.recovers++
+	b.rec.events = append(b.rec.events, "recover")
+	recoverWith := b.rec.recoverWith
+	b.rec.mu.Unlock()
+	if recoverWith == nil {
+		return brokercontract.RecoveredCredentialAttachment{}, brokercontract.ErrContinuityUnavailable
+	}
+	attachment, err := recoverWith(ctx, assertion.Guard.SessionID)
+	if err != nil {
+		return brokercontract.RecoveredCredentialAttachment{}, err
+	}
+	return brokercontract.RecoveredCredentialAttachment{Attachment: attachment}, nil
 }
 
 func (b *custodyBroker) TombstoneCredentialCustody(context.Context, brokercontract.CustodyAssertion) error {
@@ -381,5 +408,125 @@ func TestWorkspaceEnrollmentAmbiguousCustodySaveContinuesWhenDurable(t *testing.
 	joined := strings.Join(events, ",")
 	if commits != 1 || strings.Contains(joined, "tombstone") {
 		t.Fatalf("events = %v, commits = %d; want Commit and no Tombstone", events, commits)
+	}
+}
+
+var errInstanceLost = errors.Join(brokercontract.ErrStateUnavailable, brokercontract.ErrBrokerIncarnationLost)
+
+// replacementBroker returns attachments from a second, independent runtime, so
+// every recovered binding carries a fresh process prefix like a real B2.
+func replacementBroker(t *testing.T) func(context.Context, session.SessionID) (brokercontract.SessionHandle, error) {
+	t.Helper()
+	b2 := testBrokerRuntime(t)
+	t.Cleanup(func() { _ = b2.Close() })
+	return func(ctx context.Context, id session.SessionID) (brokercontract.SessionHandle, error) {
+		handle, _, err := b2.AttachSession(ctx, id)
+		return handle, err
+	}
+}
+
+// pendingCustodySession leaves the fixture session durably pending+custody by
+// failing the first custody Commit, the state a B1 loss before Commit leaves.
+func (f *custodyFixture) pendingCustodySession(t *testing.T) {
+	t.Helper()
+	f.begin(t)
+	f.rec.mu.Lock()
+	f.rec.commitErrs = []error{brokercontract.ErrContinuityUnavailable}
+	f.rec.mu.Unlock()
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil {
+		t.Fatal("first completion unexpectedly succeeded")
+	}
+	f.svc.closeSessionLocal(f.session.ID)
+}
+
+func TestBrokerRecoveryCompletesPendingCustodySessionWithFreshBinding(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.pendingCustodySession(t)
+	before, _ := f.store.Load(t.Context(), f.session.ID)
+	f.rec.mu.Lock()
+	f.rec.attachErr, f.rec.recoverWith, f.rec.events = errInstanceLost, replacementBroker(t), nil
+	f.rec.mu.Unlock()
+
+	connected, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID)
+	if err != nil || connected.Status != brokercontract.WorkspaceEnrollmentConnected {
+		t.Fatalf("recovery connect = %#v, %v", connected, err)
+	}
+	events, stageIDs, _ := f.rec.snapshot()
+	joined := strings.Join(events, ",")
+	if !strings.Contains(joined, "commit,recover") || len(stageIDs) != 1 {
+		t.Fatalf("events = %v stage=%v; want still-staged custody committed before Recover and no new Stage", events, stageIDs)
+	}
+	after, err := f.store.Load(t.Context(), f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, pending := after.PendingWorkspaceEnrollment(); pending {
+		t.Fatal("recovered pending enrollment was not completed")
+	}
+	if after.ExternalBinding == "" || after.ExternalBinding == before.ExternalBinding {
+		t.Fatalf("binding = %q (was %q); want the fresh B2 binding persisted", after.ExternalBinding, before.ExternalBinding)
+	}
+	if _, custody := after.BrokerCredentialCustody(); !custody {
+		t.Fatal("recovery dropped custody")
+	}
+}
+
+func TestBrokerRecoveryAdoptsFreshBindingForCompletedSession(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.begin(t)
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err != nil {
+		t.Fatalf("initial enrollment: %v", err)
+	}
+	f.svc.closeSessionLocal(f.session.ID)
+	before, _ := f.store.Load(t.Context(), f.session.ID)
+	oldBinding := before.ExternalBinding
+	oldTools := strings.Join(before.Authority.CapabilitySet.Tools, ",")
+	f.rec.mu.Lock()
+	f.rec.attachErr, f.rec.recoverWith = errInstanceLost, replacementBroker(t)
+	f.rec.mu.Unlock()
+
+	sel := ProviderSelector{ProviderID: before.ProviderID, ModelID: before.ModelID, ReasoningEffort: before.ReasoningEffort}
+	if _, err := f.svc.buildAndRegisterSessionEngine(t.Context(), before, sel, profileForSession(before), before.Mode, true); err != nil {
+		t.Fatalf("run-entry engine build after broker loss: %v", err)
+	}
+	after, _ := f.store.Load(t.Context(), f.session.ID)
+	if after.ExternalBinding == "" || after.ExternalBinding == oldBinding {
+		t.Fatalf("binding = %q, want a fresh B2 binding replacing %q", after.ExternalBinding, oldBinding)
+	}
+	if got := strings.Join(after.Authority.CapabilitySet.Tools, ","); got != oldTools {
+		t.Fatalf("adopted tools = %v, want %v", got, oldTools)
+	}
+}
+
+func TestBrokerRecoveryOnlyAfterStructuredInstanceLoss(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.pendingCustodySession(t)
+	f.rec.mu.Lock()
+	f.rec.attachErr, f.rec.recoverWith = brokercontract.ErrStateUnavailable, replacementBroker(t)
+	f.rec.mu.Unlock()
+	if connected, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil && connected.Status == brokercontract.WorkspaceEnrollmentConnected {
+		t.Fatal("generic broker unavailability recovered the session")
+	}
+	f.rec.mu.Lock()
+	recovers := f.rec.recovers
+	f.rec.mu.Unlock()
+	if recovers != 0 {
+		t.Fatalf("Recover called %d times without structured instance loss", recovers)
+	}
+}
+
+func TestBrokerRecoveryFailureLeavesDurableStateUntouched(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.pendingCustodySession(t)
+	before, _ := f.store.Load(t.Context(), f.session.ID)
+	f.rec.mu.Lock()
+	f.rec.attachErr, f.rec.recoverWith = errInstanceLost, nil
+	f.rec.mu.Unlock()
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil {
+		t.Fatal("recovery succeeded although Recover failed")
+	}
+	after, _ := f.store.Load(t.Context(), f.session.ID)
+	if _, pending := after.PendingWorkspaceEnrollment(); !pending || after.ExternalBinding != before.ExternalBinding {
+		t.Fatalf("failed recovery changed durable state: pending=%v binding %q -> %q", pending, before.ExternalBinding, after.ExternalBinding)
 	}
 }

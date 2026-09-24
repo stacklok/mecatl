@@ -13,6 +13,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Pending broker enrollment recovery binding adoption** — adds `Session.CompleteWorkspaceEnrollmentWithBinding` so replacement recovery atomically persists the fresh B2 external binding together with the recovered authority. Added (minor).
+
 - **Broker credential custody** — adds immutable `session.BrokerCredentialCustody`, exact-pending custody lifecycle methods, and `Session.AdoptRecoveredBrokerCatalogue`. Custody snapshots and trusted event-source metadata preserve only the recovery reference, session-incarnation guard, one-way partitions, profile digest, provider set, and fixed expiry; `ExternalBinding` remains the sole broker-process comparator. Added (minor).
 
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,

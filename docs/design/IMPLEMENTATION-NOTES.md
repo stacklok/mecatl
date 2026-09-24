@@ -5930,9 +5930,15 @@ continuity (`AttachResponse.credential_continuity`, set only when encrypted cust
 configured): an offered enrollment without an owner or workload identity fails closed,
 and a broker without protected storage keeps the legacy enrollment path. After Stage, a
 Save error reloads the session and continues only if the exact custody is durable,
-otherwise it best-effort Tombstones the staged row. Fresh B2 authority, the replacement
-transaction, and invalidation ordering are not yet shipped; no caller may infer recovery
-from custody alone.
+otherwise it best-effort Tombstones the staged row. After structured broker-instance loss,
+a session holding custody runs the replacement transaction (`recoverBrokerAttachment`):
+recompute partitions, replace the client, Commit still-staged custody, Recover fresh B2
+authority (an access-only bearer of at most two minutes, reissued by the logical session
+until custody expires), then adopt or complete with the fresh binding, Save, and Commit.
+Any other attach failure never enters recovery. Authenticated discovery runs outside the
+attachment lock with single-flight per handle and an exact-compare before publishing.
+Invalidation ordering and the composed Scenario 2/3 proof are not yet shipped; no caller
+may infer recovery from custody alone.
 The intended boundary remains that encrypted ToolHive custody is subordinate evidence: only
 the current durable Mecatl session plus the presenting verified workload may authorize a
 confirmed pre-prompt replacement after structured broker-instance loss. The replacement

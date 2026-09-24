@@ -105,6 +105,28 @@ func (b *enrollmentBroker) AttachSession(ctx context.Context, id session.Session
 	return b.attachment, outcome, nil
 }
 
+// AttachSessionExpectedBinding forwards the real broker's binding
+// classification, as mcpbroker.Process does in production, so a binding from a
+// replaced broker instance surfaces as structured instance loss.
+func (b *enrollmentBroker) AttachSessionExpectedBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (brokercontract.SessionHandle, brokercontract.AttachOutcome, error) {
+	if b.attachErr != nil {
+		return nil, "", b.attachErr
+	}
+	attacher, ok := b.Service.(brokercontract.ExpectedBindingAttacher)
+	if !ok {
+		return nil, "", brokercontract.ErrContinuityUnavailable
+	}
+	attachment, outcome, err := attacher.AttachSessionExpectedBinding(ctx, id, binding)
+	if err != nil {
+		return nil, outcome, err
+	}
+	if b.attachment == nil {
+		ref := brokercontract.WorkspaceEnrollmentRef{ID: "enrollment-1", RequiredServices: 1, ExpiresAt: time.Now().Add(time.Hour)}
+		b.attachment = &enrollmentAttachment{SessionHandle: attachment, ref: ref, result: brokercontract.WorkspaceEnrollmentResult{Ref: ref, Status: brokercontract.WorkspaceEnrollmentPending}}
+	}
+	return b.attachment, outcome, nil
+}
+
 type enrollmentTool struct{ name string }
 
 func (t enrollmentTool) Spec() tool.ToolSpec {

@@ -19,6 +19,7 @@
     method func (*Session).ClearBrokerCredentialCustody(expectedRecoveryReference string) (BrokerCredentialCustody, error)
     method func (*Session).Complete() error
     method func (*Session).CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment, exactTools []string) error
+    method func (*Session).CompleteWorkspaceEnrollmentWithBinding(pending PendingWorkspaceEnrollment, binding ExternalBinding, exactTools []string) error
     method func (*Session).Fail() error
     method func (*Session).FailedStepRetryPending() (RetryDisposition, StreamProgress, bool)
     method func (*Session).FailureMetadata() (RetryDisposition, StreamProgress)

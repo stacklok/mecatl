@@ -676,6 +676,10 @@ type SessionHandle struct {
 	operationsDone       chan struct{}
 	verifiedTSID         string
 	catalogue            *attachmentCatalogue
+	// freezing is closed when the in-flight authenticated catalogue freeze on
+	// this handle finishes; concurrent freezes wait on it instead of repeating
+	// upstream discovery.
+	freezing chan struct{}
 }
 
 func (a *SessionHandle) detachLogical() {

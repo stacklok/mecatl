@@ -871,6 +871,8 @@ type Service struct {
 	// hold it while attaching or deleting so replacement cannot close a generation
 	// underneath an in-flight operation.
 	brokerGenerationMu sync.RWMutex
+	brokerRecoveryMu   sync.Mutex
+	brokerRecovery     map[session.SessionID]brokerRecoveryAttempt
 
 	// placementBinder is the sole creation/successor placement binding seam.
 	// It is nil only for legacy hand-built configurations that have not migrated.
@@ -1402,6 +1404,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		teams:                      make(map[string]*teamState),
 		sessionEngines:             make(map[session.SessionID]*sessionEngine),
 		brokerAttachments:          make(map[session.SessionID]brokercontract.SessionHandle),
+		brokerRecovery:             make(map[session.SessionID]brokerRecoveryAttempt),
 		brokerAttachmentGeneration: make(map[session.SessionID]uint64),
 		authorizationExpiry:        make(map[session.SessionID]*authorizationExpiry),
 		sessionEnvironments:        make(map[session.SessionID]tool.Environment),
@@ -3512,6 +3515,9 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
+	if err := s.invalidateBrokerCustody(ctx, sess); err != nil {
+		return err
+	}
 	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
 			// The durable record is already gone: still attempt broker cleanup
@@ -3652,6 +3658,9 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
+	if err := s.invalidateBrokerCustody(ctx, sess); err != nil {
+		return err
+	}
 	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
 			if brokerErr := s.deleteBrokerSessionLocked(ctx, id, ""); brokerErr != nil {
@@ -5237,10 +5246,29 @@ func (s *Service) buildPersistAndRegisterSessionEngine(ctx context.Context, sess
 		res, err = s.callSessionEngine(ctx, sel, nil, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
+		if err != nil && errors.Is(err, brokercontract.ErrBrokerIncarnationLost) {
+			if _, pendingAsk := sess.PendingAsk(); pendingAsk {
+				return nil, fmt.Errorf("%w: broker recovery is unavailable during a pending approval", ErrFailedPrecondition)
+			}
+			if _, pendingAuthorization := sess.PendingAuthorization(); pendingAuthorization {
+				return nil, fmt.Errorf("%w: broker recovery is unavailable during a pending authorization", ErrFailedPrecondition)
+			}
+			if _, hasCustody := sess.BrokerCredentialCustody(); hasCustody {
+				broker, err = s.recoverBrokerAttachment(ctx, sess, s.brokerAttachmentGenerationFor(id))
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
 		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
+		if broker != nil && broker.outcome == brokercontract.AttachRecoveredProvisional {
+			commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+			commitErr := s.commitBrokerAttachment(commitCtx, id, broker)
+			cancelCommit()
+			if commitErr != nil {
+				return nil, fmt.Errorf("%w: settle recovered broker attachment: %v", ErrInternal, commitErr)
+			}
+		}
 		workspace, workspaceErr := s.privateWorkspace(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr

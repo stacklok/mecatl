@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -19,9 +20,15 @@ import (
 // it rather than silently resolving the authorization as interrupted.
 var ErrBrokerBindingMismatch = errors.New("MCP broker binding mismatch")
 
+type brokerRecoveryAttempt struct {
+	requestID string
+	deadline  time.Time
+}
+
 type localBrokerAttachment struct {
 	attachment brokercontract.SessionHandle
 	generation uint64
+	outcome    brokercontract.AttachOutcome
 	owned      bool
 }
 
@@ -95,13 +102,31 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 		if expectedBinding != "" && existing.Binding() != expectedBinding {
 			return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
 		}
-		return &localBrokerAttachment{attachment: existing, generation: existingGeneration}, nil
+		return &localBrokerAttachment{attachment: existing, generation: existingGeneration, outcome: brokercontract.AttachReattached}, nil
 	}
-	attachment, _, err := broker.AttachSession(ctx, id)
+	var attachment brokercontract.SessionHandle
+	var outcome brokercontract.AttachOutcome
+	var err error
+	if expectedBinding != "" {
+		if attacher, ok := broker.(brokercontract.ExpectedBindingAttacher); ok {
+			attachment, outcome, err = attacher.AttachSessionExpectedBinding(ctx, id, expectedBinding)
+		} else {
+			attachment, outcome, err = broker.AttachSession(ctx, id)
+		}
+		if err != nil && errors.Is(err, brokercontract.ErrContinuityUnavailable) {
+			// Same broker instance, but the persisted generation is gone. Never
+			// create state here: report the mismatch so callers take their
+			// explicit rebind (legacy) or fail-closed (custody) path.
+			return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
+		}
+	} else {
+		attachment, outcome, err = broker.AttachSession(ctx, id)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("attach MCP broker session %q: %w", id, err)
 	}
-	local := &localBrokerAttachment{attachment: attachment, generation: s.brokerGeneration, owned: true}
+	_, generation := s.brokerSnapshot()
+	local := &localBrokerAttachment{attachment: attachment, generation: generation, outcome: outcome, owned: true}
 	if expectedBinding == "" || attachment.Binding() == expectedBinding {
 		return local, nil
 	}

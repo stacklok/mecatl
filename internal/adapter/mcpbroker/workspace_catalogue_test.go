@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
@@ -224,4 +226,61 @@ func toolNames(tools []tool.Tool) []string {
 		names[i] = candidate.Spec().Name
 	}
 	return names
+}
+
+// Authenticated discovery runs without the attachment lock: other operations on
+// the handle proceed while a provider is slow, and a catalogue that changed
+// during discovery is never overwritten by the stale result.
+func TestFreezeAuthenticatedCatalogueDoesNotHoldAttachmentLockAcrossDiscovery(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, &orderedCapabilityQueries{}, "github")
+	entered, release := make(chan struct{}), make(chan struct{})
+	runtime.process.queryAuthenticated = func(context.Context, oauth2.TokenSource, string) (AuthenticatedCapabilities, error) {
+		close(entered)
+		<-release
+		return AuthenticatedCapabilities{Backend: "github", Tools: []ToolDefinition{
+			{Backend: "github", Name: "mcp__github__list", Description: "list", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true},
+		}}, nil
+	}
+	attached, _, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := attached.(*SessionHandle)
+	presentation := beginAndGrantWorkspaceEnrollment(t, runtime, handle)
+
+	observed := make(chan contract.WorkspaceEnrollmentStatus, 1)
+	go func() {
+		result, _ := handle.ObserveWorkspaceEnrollment(context.Background(), presentation.Ref)
+		observed <- result.Status
+	}()
+	<-entered
+
+	tools := make(chan int, 1)
+	go func() { tools <- len(handle.Tools()) }()
+	select {
+	case <-tools:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("handle operation blocked behind upstream discovery")
+	}
+
+	handle.mu.Lock()
+	replacement := *handle.catalogue
+	handle.catalogue = &replacement
+	handle.mu.Unlock()
+	close(release)
+	if status := <-observed; status == contract.WorkspaceEnrollmentConnected {
+		t.Fatal("freeze reported connected over a catalogue that changed during discovery")
+	}
+	handle.mu.RLock()
+	published := handle.catalogue.frozen
+	handle.mu.RUnlock()
+	if published != nil {
+		t.Fatal("stale discovery result replaced the changed catalogue")
+	}
 }
