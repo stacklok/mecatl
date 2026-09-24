@@ -23,13 +23,19 @@ if (separator <= 0 || separator === proof.length - 1) {
 }
 
 const relativePath = normalize(proof.slice(0, separator));
+const sdkPrefix = `sdk${sep}typescript${sep}`;
+const studioPrefix = `apps${sep}web${sep}e2e${sep}`;
+const studioFile = relativePath.slice(studioPrefix.length);
 if (
   isAbsolute(relativePath) ||
   relativePath === ".." ||
   relativePath.startsWith(`..${sep}`) ||
-  !relativePath.startsWith(`sdk${sep}typescript${sep}`)
+  !(relativePath.startsWith(sdkPrefix) ||
+    (relativePath.startsWith(studioPrefix) &&
+      !studioFile.includes(sep) &&
+      studioFile.endsWith(".spec.ts")))
 ) {
-  reject("test path must stay under sdk/typescript/");
+  reject("test path must stay under sdk/typescript/ or apps/web/e2e/*.spec.ts");
 }
 
 const encodedTitle = proof.slice(separator + 1);
@@ -43,11 +49,15 @@ if (expectedTitle.length === 0) {
 
 let ts;
 try {
-  const compilerPath = resolve("sdk/typescript/node_modules/typescript/lib/typescript.js");
+  const compilerPath = resolve(
+    relativePath.startsWith(sdkPrefix)
+      ? "sdk/typescript/node_modules/typescript/lib/typescript.js"
+      : "apps/node_modules/typescript/lib/typescript.js",
+  );
   ts = (await import(pathToFileURL(compilerPath).href)).default;
 } catch (error) {
   reject(
-    `TypeScript is unavailable; run task sdk:install first (${error instanceof Error ? error.message : String(error)})`,
+    `TypeScript is unavailable; run task sdk:install or task studio:install first (${error instanceof Error ? error.message : String(error)})`,
   );
 }
 

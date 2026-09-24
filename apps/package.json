@@ -15,11 +15,14 @@
     "format": "biome check --write .",
     "generate": "pnpm --filter @mecatl-studio/server run generate:openapi && pnpm --filter @mecatl-studio/contracts run generate",
     "generated:check": "pnpm generate && git diff --exit-code -- contracts/openapi.json contracts/src/generated",
+    "test:browser": "playwright test --config web/playwright.config.ts",
     "test": "pnpm -r --if-present run test",
     "typecheck": "pnpm -r --if-present run typecheck"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.13.3",
     "typescript": "6.0.3"
   }
 }

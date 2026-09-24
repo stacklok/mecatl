@@ -8,8 +8,8 @@
     "build": "vite build",
     "dev": "vite",
     "generate:routes": "tsr generate",
-    "test": "vitest run",
-    "typecheck": "tsr generate && tsc --noEmit"
+    "test": "vitest run src",
+    "typecheck": "tsr generate && tsc --noEmit && tsc --noEmit -p tsconfig.browser.json"
   },
   "dependencies": {
     "@mecatl-studio/contracts": "workspace:*",
