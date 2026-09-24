@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  getAuthSessionOptions,
   listConfiguredSkillsOptions,
   listLearnedSkillsOptions,
   listSchedulesOptions,
   listSessionsOptions,
   listUserMemoryOptions,
 } from "@mecatl-studio/contracts/query";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRight,
@@ -20,7 +21,15 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "../../components/ui/dialog";
 import { Kbd } from "../../components/ui/kbd";
 import { cn } from "../../lib/utils";
@@ -36,7 +45,7 @@ import {
 } from "./search-index";
 import {
   clampActiveIndex,
-  isImeComposing,
+  createSearchCompositionGuard,
   moveActiveIndex,
   shouldActivateResult,
 } from "./search-keyboard";
@@ -50,26 +59,93 @@ import {
 const paletteShortcuts: readonly ShortcutId[] = [
   "search.open",
   "settings.open",
+  "shortcuts.open",
   "shortcuts.open.mod",
 ];
 
+// Generated query functions read only queryKey[0]. React Query may use a
+// trailing account key for cache partitioning without changing the request.
+function accountQueryKey<T extends readonly [unknown]>(queryKey: T, scope: string): T {
+  return [...queryKey, scope] as unknown as T;
+}
+
+function isUnauthorized(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ("status" in error && error.status === 401) return true;
+  if ("response" in error && error.response && typeof error.response === "object") {
+    return "status" in error.response && error.response.status === 401;
+  }
+  return false;
+}
+
 export function GlobalSearch() {
+  const auth = useQuery(getAuthSessionOptions());
+  const scope =
+    auth.data?.status === "authenticated" && auth.data.account
+      ? `account:${auth.data.account}`
+      : auth.data?.status === "disabled" && auth.data.mode !== "oidc"
+        ? `shared:${auth.data.mode}`
+        : undefined;
+
+  // A changed account remounts the palette closed. Its inventory queries get
+  // separate keys, so React Query never offers the prior account's cache.
+  if (!scope) return null;
+  return <SearchPalette key={scope} scope={scope} />;
+}
+
+function SearchPalette({ scope }: { scope: string }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const invokingElement = useRef<HTMLElement | null>(null);
+  const navigating = useRef(false);
+  const navigationDone = useRef(false);
+  const dialogClosed = useRef(false);
+  const composition = useRef(createSearchCompositionGuard());
   const scrollActiveIntoView = useRef(false);
+  const [visualViewport, setVisualViewport] = useState<{ height: number; top: number } | null>(
+    null,
+  );
   const idPrefix = useId();
   const listboxId = `${idPrefix}-results`;
   const optionId = (index: number) => `${idPrefix}-option-${index}`;
-  const sessions = useQuery({ ...listSessionsOptions(), enabled: open });
-  const schedules = useQuery({ ...listSchedulesOptions(), enabled: open });
-  const configuredSkills = useQuery({ ...listConfiguredSkillsOptions(), enabled: open });
-  const learnedSkills = useQuery({ ...listLearnedSkillsOptions(), enabled: open });
-  const memory = useQuery({ ...listUserMemoryOptions(), enabled: open });
+  const sessionsOptions = listSessionsOptions();
+  const schedulesOptions = listSchedulesOptions();
+  const configuredSkillsOptions = listConfiguredSkillsOptions();
+  const learnedSkillsOptions = listLearnedSkillsOptions();
+  const memoryOptions = listUserMemoryOptions();
+  const sessionsKey = accountQueryKey(sessionsOptions.queryKey, scope);
+  const schedulesKey = accountQueryKey(schedulesOptions.queryKey, scope);
+  const configuredSkillsKey = accountQueryKey(configuredSkillsOptions.queryKey, scope);
+  const learnedSkillsKey = accountQueryKey(learnedSkillsOptions.queryKey, scope);
+  const memoryKey = accountQueryKey(memoryOptions.queryKey, scope);
+  const accountKeys = useRef([
+    sessionsKey,
+    schedulesKey,
+    configuredSkillsKey,
+    learnedSkillsKey,
+    memoryKey,
+  ]);
+  const sessions = useQuery({ ...sessionsOptions, enabled: open, queryKey: sessionsKey });
+  const schedules = useQuery({ ...schedulesOptions, enabled: open, queryKey: schedulesKey });
+  const configuredSkills = useQuery({
+    ...configuredSkillsOptions,
+    enabled: open,
+    queryKey: configuredSkillsKey,
+  });
+  const learnedSkills = useQuery({
+    ...learnedSkillsOptions,
+    enabled: open,
+    queryKey: learnedSkillsKey,
+  });
+  const memory = useQuery({ ...memoryOptions, enabled: open, queryKey: memoryKey });
   const threadSessionIds = useThreadSessionIds();
   const inventories = [sessions, schedules, configuredSkills, learnedSkills, memory];
+  const accessExpired = inventories.some((inventory) => isUnauthorized(inventory.error));
+  const paletteOpen = open && !accessExpired;
 
   const index = useMemo(
     () =>
@@ -97,24 +173,97 @@ export function GlobalSearch() {
   // Inventories load while the user types, so the stored index can outrun the list.
   const highlighted = clampActiveIndex(activeIndex, flatResults.length);
   const activeResult = flatResults[highlighted];
-  const expanded = flatResults.length > 0;
   const loading = inventories.some((inventory) => inventory.isPending);
   const partialError = inventories.some((inventory) => inventory.isError);
   const mac = navigator.platform.includes("Mac");
 
-  useShortcutSuppression(open, paletteShortcuts);
-  useShortcut("search.open", () => setOpen((current) => !current));
-  useShortcut("settings.open", () => {
+  useEffect(() => {
+    if (!open || !window.visualViewport) return;
+    const viewport = window.visualViewport;
+    const update = () => setVisualViewport({ height: viewport.height, top: viewport.offsetTop });
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, [open]);
+  const viewportStyle = visualViewport
+    ? ({
+        "--search-viewport-height": `${visualViewport.height}px`,
+        "--search-viewport-top": `${visualViewport.top}px`,
+      } as CSSProperties)
+    : undefined;
+
+  // Queries outlive a dialog close for quick reopening by the same account,
+  // but never outlive this keyed palette's account scope.
+  useEffect(() => {
+    return () => {
+      for (const queryKey of accountKeys.current)
+        queryClient.removeQueries({ exact: true, queryKey });
+    };
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (!accessExpired) return;
     setOpen(false);
-    void navigate({ to: "/workspace/settings" });
+    setQuery("");
+    setActiveIndex(0);
+    void queryClient.invalidateQueries({ queryKey: getAuthSessionOptions().queryKey });
+  }, [accessExpired, queryClient]);
+
+  function openSearch(invoker: HTMLElement | null) {
+    if (accessExpired) return;
+    invokingElement.current = invoker;
+    navigating.current = false;
+    navigationDone.current = false;
+    dialogClosed.current = false;
+    setOpen(true);
+  }
+
+  function closeSearch() {
+    setOpen(false);
+    setQuery("");
+    setActiveIndex(0);
+  }
+
+  function focusNavigatedRoute() {
+    if (!navigating.current || !navigationDone.current || !dialogClosed.current) return;
+    requestAnimationFrame(() => {
+      const main = document.querySelector<HTMLElement>("main");
+      const target = main?.querySelector<HTMLElement>("h1") ?? main;
+      if (target) {
+        target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      }
+      navigating.current = false;
+    });
+  }
+
+  async function navigateFromSearch(destination: () => Promise<unknown>) {
+    navigating.current = true;
+    navigationDone.current = false;
+    dialogClosed.current = false;
+    closeSearch();
+    await destination();
+    navigationDone.current = true;
+    focusNavigatedRoute();
+  }
+
+  useShortcutSuppression(paletteOpen, paletteShortcuts);
+  useShortcut("search.open", () => {
+    if (open) closeSearch();
+    else openSearch(document.activeElement as HTMLElement | null);
+  });
+  useShortcut("settings.open", () => {
+    void navigateFromSearch(() => navigate({ to: "/workspace/settings" }));
   });
   useShortcut("shortcuts.open", () => {
-    setOpen(false);
-    void navigate({ to: "/workspace/shortcuts" });
+    void navigateFromSearch(() => navigate({ to: "/workspace/shortcuts" }));
   });
   useShortcut("shortcuts.open.mod", () => {
-    setOpen(false);
-    void navigate({ to: "/workspace/shortcuts" });
+    void navigateFromSearch(() => navigate({ to: "/workspace/shortcuts" }));
   });
 
   useEffect(() => {
@@ -126,43 +275,47 @@ export function GlobalSearch() {
   }, [highlighted, idPrefix]);
 
   async function choose(target: GlobalSearchTarget) {
-    setOpen(false);
-    setQuery("");
-    if (target.kind === "chat") {
-      await navigate({ search: { sessionId: target.sessionId }, to: "/workspace/chat" });
-    } else if (target.kind === "schedule") {
-      await navigate({
-        params: { scheduleName: target.scheduleName },
-        to: "/workspace/schedules/$scheduleName",
-      });
-    } else if (target.kind === "page") {
-      await navigate({ to: target.to });
-    } else if (target.kind === "settingsSection") {
-      await navigate({
-        params: { section: target.section },
-        search: { item: undefined },
-        to: "/workspace/settings/$section",
-      });
-    } else if (target.kind === "memory") {
-      await navigate({
-        params: { section: "memory" },
-        search: { item: target.item },
-        to: "/workspace/settings/$section",
-      });
-    } else if (target.item) {
-      await navigate({
-        params: { item: target.item, view: target.view },
-        to: "/workspace/skills/$view/$item",
-      });
-    } else {
-      await navigate({ search: { item: undefined, view: target.view }, to: "/workspace/skills" });
-    }
+    await navigateFromSearch(async () => {
+      if (target.kind === "chat") {
+        await navigate({ search: { sessionId: target.sessionId }, to: "/workspace/chat" });
+      } else if (target.kind === "schedule") {
+        await navigate({
+          params: { scheduleName: target.scheduleName },
+          to: "/workspace/schedules/$scheduleName",
+        });
+      } else if (target.kind === "page") {
+        await navigate({ to: target.to });
+      } else if (target.kind === "settingsSection") {
+        await navigate({
+          params: { section: target.section },
+          search: { item: undefined },
+          to: "/workspace/settings/$section",
+        });
+      } else if (target.kind === "memory") {
+        await navigate({
+          params: { section: "memory" },
+          search: { item: target.item },
+          to: "/workspace/settings/$section",
+        });
+      } else if (target.item) {
+        await navigate({
+          params: { item: target.item, view: target.view },
+          to: "/workspace/skills/$view/$item",
+        });
+      } else {
+        await navigate({ search: { item: undefined, view: target.view }, to: "/workspace/skills" });
+      }
+    });
   }
 
   function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    const composition = { isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode };
+    const keyState = {
+      isComposing: event.nativeEvent.isComposing,
+      key: event.key,
+      keyCode: event.keyCode,
+    };
     // Keys an input method editor consumes (candidate navigation, commit) are its own.
-    if (isImeComposing(composition)) return;
+    if (composition.current.ownsKeyDown(keyState)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const next = moveActiveIndex(
@@ -172,7 +325,7 @@ export function GlobalSearch() {
       );
       scrollActiveIntoView.current = next !== highlighted;
       setActiveIndex(next);
-    } else if (activeResult && shouldActivateResult({ ...composition, key: event.key }, true)) {
+    } else if (activeResult && shouldActivateResult(keyState, true)) {
       event.preventDefault();
       void choose(activeResult.target);
     }
@@ -185,8 +338,9 @@ export function GlobalSearch() {
       <button
         aria-keyshortcuts="Control+K Meta+K"
         aria-label="Search"
-        className="flex h-9 items-center gap-2 rounded-full px-2.5 text-[#a5b8b4] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 min-[900px]:px-3"
-        onClick={() => setOpen(true)}
+        disabled={accessExpired}
+        className="flex size-11 items-center justify-center gap-2 rounded-full px-2.5 text-[#a5b8b4] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 min-[500px]:w-full min-[900px]:justify-start min-[900px]:px-3"
+        onClick={(event) => openSearch(event.currentTarget)}
         type="button"
       >
         <Search aria-hidden="true" className="size-[17px]" />
@@ -200,15 +354,25 @@ export function GlobalSearch() {
         </span>
       </button>
 
-      <Dialog onOpenChange={setOpen} open={open}>
+      <Dialog onOpenChange={setOpen} open={paletteOpen}>
         <DialogContent
           aria-describedby={undefined}
-          className="top-[max(4rem,12dvh)] block max-w-[min(42rem,calc(100%-1.5rem))] translate-y-0 gap-0 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-2xl sm:max-w-[min(42rem,calc(100%-1.5rem))]"
+          className="top-[max(4rem,12dvh)] flex max-h-[min(36rem,calc(100dvh-4rem))] max-w-[min(42rem,calc(100%-1.5rem))] translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-2xl max-[499px]:top-[var(--search-viewport-top,0px)] max-[499px]:left-0 max-[499px]:h-[var(--search-viewport-height,100dvh)] max-[499px]:max-h-none max-[499px]:max-w-none max-[499px]:translate-x-0 max-[499px]:rounded-none max-[499px]:border-0 max-[499px]:pt-[env(safe-area-inset-top)] max-[499px]:pb-[env(safe-area-inset-bottom)] sm:max-w-[min(42rem,calc(100%-1.5rem))]"
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             inputRef.current?.focus();
           }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (navigating.current) {
+              dialogClosed.current = true;
+              focusNavigatedRoute();
+            } else if (invokingElement.current?.isConnected) {
+              invokingElement.current.focus({ preventScroll: true });
+            }
+          }}
           showCloseButton={false}
+          style={viewportStyle}
         >
           <DialogTitle className="sr-only">Search Mecatl</DialogTitle>
           <div className="flex items-center gap-3 border-b px-4">
@@ -224,7 +388,7 @@ export function GlobalSearch() {
               aria-activedescendant={activeResult ? optionId(highlighted) : undefined}
               aria-autocomplete="list"
               aria-controls={listboxId}
-              aria-expanded={expanded}
+              aria-expanded={true}
               aria-label="Search chats, schedules, skills, and memory"
               autoComplete="off"
               className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
@@ -233,6 +397,9 @@ export function GlobalSearch() {
                 setActiveIndex(0);
               }}
               onKeyDown={onInputKeyDown}
+              onKeyUp={(event) => composition.current.keyUp(event)}
+              onCompositionStart={() => composition.current.start()}
+              onCompositionEnd={() => composition.current.end()}
               placeholder="Search chats, schedules, skills, and memory…"
               ref={inputRef}
               role="combobox"
@@ -242,13 +409,13 @@ export function GlobalSearch() {
             />
             <DialogClose
               aria-label="Close search"
-              className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X aria-hidden="true" className="size-4" />
             </DialogClose>
           </div>
 
-          <div className="max-h-[min(28rem,65dvh)] overflow-y-auto p-2">
+          <div className="min-h-0 flex-1 overflow-y-auto p-2 max-[499px]:max-h-none">
             {!query.trim() ? (
               <SearchPrompt />
             ) : flatResults.length === 0 && !loading ? (
@@ -298,9 +465,11 @@ export function GlobalSearch() {
             <span aria-live="polite">
               {partialError
                 ? "Some inventories could not be searched"
-                : query.trim() && !loading
-                  ? `${flatResults.length} result${flatResults.length === 1 ? "" : "s"}`
-                  : "Results stay in this browser"}
+                : loading
+                  ? "Loading searchable inventories"
+                  : query.trim() && !loading
+                    ? `${flatResults.length} result${flatResults.length === 1 ? "" : "s"}`
+                    : "Results stay in this browser"}
             </span>
             <span className="hidden sm:inline">↑↓ select · Enter open · Esc close</span>
           </div>
@@ -339,6 +508,7 @@ function SearchResult({
   onChoose: () => void;
   onHover: () => void;
 }) {
+  const touchStart = useRef<{ moved: boolean; x: number; y: number } | null>(null);
   const Icon =
     item.target.kind === "chat"
       ? MessageCircle
@@ -358,9 +528,32 @@ function SearchResult({
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
       )}
       id={id}
-      onClick={onChoose}
+      onClick={(event) => {
+        if (touchStart.current?.moved) {
+          event.preventDefault();
+          touchStart.current = null;
+          return;
+        }
+        touchStart.current = null;
+        onChoose();
+      }}
       onMouseDown={(event) => event.preventDefault()}
       onMouseMove={active ? undefined : onHover}
+      onTouchCancel={() => {
+        touchStart.current = null;
+      }}
+      onTouchMove={(event) => {
+        const touch = event.touches[0];
+        const start = touchStart.current;
+        if (!touch || !start) return;
+        if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 8) {
+          start.moved = true;
+        }
+      }}
+      onTouchStart={(event) => {
+        const touch = event.touches[0];
+        if (touch) touchStart.current = { moved: false, x: touch.clientX, y: touch.clientY };
+      }}
       role="option"
       tabIndex={-1}
     >

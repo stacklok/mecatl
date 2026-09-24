@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampActiveIndex,
+  createSearchCompositionGuard,
   isImeComposing,
   moveActiveIndex,
   shouldActivateResult,
@@ -31,6 +32,29 @@ describe("shouldActivateResult", () => {
     expect(shouldActivateResult({ isComposing: false, key: "Enter", keyCode: 229 }, true)).toBe(
       false,
     );
+
+    const beforeKeyDown = createSearchCompositionGuard();
+    beforeKeyDown.start();
+    expect(beforeKeyDown.ownsKeyDown({ key: "ArrowDown" })).toBe(true);
+    beforeKeyDown.end();
+    // Safari can clear isComposing before dispatching the committing Enter.
+    expect(beforeKeyDown.ownsKeyDown({ isComposing: false, key: "Enter", keyCode: 13 })).toBe(true);
+    expect(beforeKeyDown.ownsKeyDown({ isComposing: false, key: "Enter", keyCode: 13 })).toBe(
+      false,
+    );
+
+    const afterKeyDown = createSearchCompositionGuard();
+    afterKeyDown.start();
+    expect(afterKeyDown.ownsKeyDown({ isComposing: true, key: "Enter", keyCode: 13 })).toBe(true);
+    afterKeyDown.end();
+    afterKeyDown.keyUp({ key: "Enter" });
+    expect(afterKeyDown.ownsKeyDown({ key: "Enter", keyCode: 13 })).toBe(false);
+
+    const processCodeAfterEnd = createSearchCompositionGuard();
+    processCodeAfterEnd.start();
+    processCodeAfterEnd.end();
+    expect(processCodeAfterEnd.ownsKeyDown({ key: "Enter", keyCode: 229 })).toBe(true);
+    expect(processCodeAfterEnd.ownsKeyDown({ key: "Enter", keyCode: 13 })).toBe(false);
   });
 
   it("ignores other keys and an empty result list", () => {

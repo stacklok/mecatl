@@ -101,6 +101,35 @@ describe("global search index", () => {
     ]);
   });
 
+  it("never indexes a memory value or learned skill body", () => {
+    const learnedSkill = {
+      body: "private-learned-body",
+      description: "Incident triage",
+      id: "skill-1",
+      name: "triage",
+      ownerAgent: "operator",
+      state: "staged",
+      version: "1",
+    };
+    const memoryEntry = {
+      description: "Writing preference",
+      key: "style",
+      value: "private-memory-value",
+    };
+    const index = buildGlobalSearchIndex({
+      configuredSkills: [],
+      learnedSkills: [learnedSkill],
+      memory: [memoryEntry],
+      schedules: [],
+      sessions: [],
+    });
+
+    expect(searchGlobalIndex(index, "private-memory-value")).toEqual([]);
+    expect(searchGlobalIndex(index, "private-learned-body")).toEqual([]);
+    expect(JSON.stringify(index)).not.toContain("private-memory-value");
+    expect(JSON.stringify(index)).not.toContain("private-learned-body");
+  });
+
   it("ranks exact and title-prefix matches ahead of description matches", () => {
     const item = (id: string, title: string, description = ""): GlobalSearchItem => ({
       description,

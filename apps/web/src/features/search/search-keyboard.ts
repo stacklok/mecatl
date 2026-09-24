@@ -11,11 +11,49 @@ export interface CompositionKeyState {
   keyCode?: number;
 }
 
+export interface SearchKeyState extends CompositionKeyState {
+  key: string;
+}
+
 const IME_PROCESS_KEY_CODE = 229;
 
 /** Whether an input method editor currently owns the keystroke. */
 export function isImeComposing(event: CompositionKeyState): boolean {
   return event.isComposing === true || event.keyCode === IME_PROCESS_KEY_CODE;
+}
+
+/**
+ * Composition events and the committing keydown arrive in different orders
+ * across browsers. Keep ownership with the IME until that key has passed.
+ */
+export function createSearchCompositionGuard() {
+  let composing = false;
+  let awaitingCommitKey = false;
+
+  return {
+    start() {
+      composing = true;
+      awaitingCommitKey = false;
+    },
+    end() {
+      composing = false;
+      awaitingCommitKey = true;
+    },
+    ownsKeyDown(event: SearchKeyState): boolean {
+      if (composing || isImeComposing(event)) {
+        if (awaitingCommitKey && ["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) {
+          awaitingCommitKey = false;
+        }
+        return true;
+      }
+      const pending = awaitingCommitKey;
+      awaitingCommitKey = false;
+      return pending && ["Enter", "ArrowDown", "ArrowUp"].includes(event.key);
+    },
+    keyUp(event: Pick<SearchKeyState, "key">) {
+      if (["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) awaitingCommitKey = false;
+    },
+  };
 }
 
 /**
