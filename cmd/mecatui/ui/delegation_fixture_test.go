@@ -25,7 +25,8 @@ func testBlockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
 	case scrollback.AssistantCardSnapshot:
 		b.kind, b.raw, b.reasoning, b.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
 	case scrollback.ToolCardSnapshot:
-		b = toolBlockFromSnapshot(s, p)
+		b.kind, b.toolID, b.toolName, b.toolArgs = blockTool, p.Call.ID, p.Call.Name, p.Call.Arguments
+		b.resolved, b.resultBody, b.resultError, b.resultBlocks = p.Resolved, p.Result.Body, p.Result.IsError, contentBlocks(p.Result.Artifacts)
 	case scrollback.NoticeCardSnapshot:
 		b.kind, b.raw, b.recover = blockNotice, p.Text, p.Recover
 	case scrollback.TurnStatCardSnapshot:

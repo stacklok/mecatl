@@ -663,7 +663,7 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 	case scrollback.AssistantCardSnapshot:
 		base.kind, base.raw, base.reasoning, base.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
 	case scrollback.ToolCardSnapshot:
-		base = toolBlockFromSnapshot(s, p)
+		return r.renderToolSnapshot(idx, s, p, expand)
 	case scrollback.NoticeCardSnapshot:
 		base.kind, base.raw, base.recover = blockNotice, p.Text, p.Recover
 	case scrollback.TurnStatCardSnapshot:

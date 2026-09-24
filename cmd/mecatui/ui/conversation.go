@@ -404,21 +404,6 @@ func rendererRevision(revision uint64) int {
 	return int(revision)
 }
 
-func toolBlockFromSnapshot(s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot) block {
-	return block{
-		id:           uint64(s.ID),
-		rev:          rendererRevision(s.Revision),
-		kind:         blockTool,
-		toolID:       p.Call.ID,
-		toolName:     p.Call.Name,
-		toolArgs:     p.Call.Arguments,
-		resolved:     p.Resolved,
-		resultBody:   p.Result.Body,
-		resultError:  p.Result.IsError,
-		resultBlocks: contentBlocks(p.Result.Artifacts),
-	}
-}
-
 func artifacts(blocks []client.ContentBlock) []scrollback.Artifact {
 	out := make([]scrollback.Artifact, len(blocks))
 	for i, b := range blocks {

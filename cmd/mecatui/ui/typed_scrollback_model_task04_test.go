@@ -6,6 +6,9 @@ import (
 	"go/token"
 	"os"
 	"testing"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 func TestMecatuiTypedScrollbackModel_Scenario2_ProductionUsesTypedTransitions(t *testing.T) {
@@ -62,6 +65,54 @@ func TestMecatuiTypedScrollbackModel_Scenario3_ScrollbackBoundaryIsLogicalOnly(t
 		}
 	}
 	t.Fatal("renderConversationFrame not found")
+}
+
+func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolsRenderFromTypedSnapshots(t *testing.T) {
+	files := parseUIProductionFiles(t)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Name.Name == "toolBlockFromSnapshot" {
+				t.Fatal("ordinary tool snapshots are still converted through ui.block")
+			}
+		}
+	}
+}
+
+func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolSnapshotAdapterPreservesPresentation(t *testing.T) {
+	artifact := client.ContentBlock{Kind: client.ContentBlockResourceLink, Name: "report", URL: "https://example.test/report"}
+	cases := []struct {
+		name, tool, args, result string
+		isError                  bool
+		artifacts                []client.ContentBlock
+	}{
+		{name: "error artifact", tool: "WebFetch", args: `{"url":"https://example.test"}`, result: "request failed", isError: true, artifacts: []client.ContentBlock{artifact}},
+		{name: "edit diff", tool: "Edit", args: `{"path":"a.txt","old_string":"old\nline","new_string":"new\nline"}`},
+	}
+	for _, width := range []int{1, 48} {
+		for _, tc := range cases {
+			for _, expand := range []bool{false, true} {
+				t.Run(tc.name, func(t *testing.T) {
+					var c conversation
+					c.addTool("call", tc.tool, tc.args)
+					if tc.result != "" && !c.resolveTool("call", tc.result, tc.isError, tc.artifacts...) {
+						t.Fatal("resolve typed tool")
+					}
+					snapshot := c.scrollback.SnapshotAt(0)
+					payload := snapshot.Payload.(scrollback.ToolCardSnapshot)
+					typed := newTestRenderer()
+					typed.setWidth(width)
+					legacy := newTestRenderer()
+					legacy.setWidth(width)
+					want := legacy.renderBlock(0, &block{id: uint64(snapshot.ID), rev: rendererRevision(snapshot.Revision), kind: blockTool, toolID: payload.Call.ID, toolName: payload.Call.Name, toolArgs: payload.Call.Arguments, resolved: payload.Resolved, resultBody: payload.Result.Body, resultError: payload.Result.IsError, resultBlocks: contentBlocks(payload.Result.Artifacts)}, expand)
+					got := typed.renderSnapshot(0, snapshot, expand)
+					if got, want := stripANSIstr(got), stripANSIstr(want); got != want {
+						t.Fatalf("typed snapshot adapter changed tool presentation\n got: %q\nwant: %q", got, want)
+					}
+				})
+			}
+		}
+	}
 }
 
 func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryCardsUseSealedSnapshotAdapters(t *testing.T) {
