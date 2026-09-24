@@ -5969,9 +5969,7 @@ func (s *Service) resolvedModelFor(sess *session.Session) ResolvedModel {
 
 func (s *Service) resolveModelWindow(rm ResolvedModel) ResolvedModel {
 	if s.cfg.ResolveContextWindow != nil {
-		if w := s.cfg.ResolveContextWindow(rm.ProviderID, rm.ModelID); w > 0 {
-			rm.ContextWindow = w
-		}
+		rm.ContextWindow = s.cfg.ResolveContextWindow(rm.ProviderID, rm.ModelID)
 	}
 	return rm
 }
@@ -5999,15 +5997,10 @@ func (s *Service) resolveModelWindow(rm ResolvedModel) ResolvedModel {
 // GetSession after the live model-catalog swap reflects the live window, not the
 // curated-catalog floor a live-only model lacks) — mirroring the live-first modality
 // input SessionCapabilities already consumes. The injected resolver is the ECHO
-// resolver (echoWindowResolver), which differs from the engine's resolve-at-use
-// Deps.ContextWindow in ONE deliberate way: while the one-shot live refresh is still
-// in flight it returns a PROVISIONAL 0 for a live-only model not yet in the catalog
-// (the client treats 0 as "refetch on turn-end" — the issue #66 footer-heal gate),
-// whereas the engine always floors to 128k (it can never run on a 0 window). This
-// provisional 0 is DISTINCT from "resolver not wired (nil)": nil ⇒ no window scalar at
-// all (the identity-only ResolvedModel); a wired resolver returning 0 is the honest
-// "live answer not in yet" signal. Post-completion the resolver floors an uncatalogued
-// model to 128k, so the echo settles and the heal gate closes (no-network boundedness).
+// resolver (echoWindowResolver): blocked discovery without positive exact metadata
+// returns 0, whereas the engine always has a defensive 128k floor. A wired zero
+// is authoritative even over a positive seed; a nil resolver retains the supplied
+// value. Policy-admitted unknown windows echo 128k.
 func (s *Service) ResolvedModel(id session.SessionID) ResolvedModel {
 	s.mu.Lock()
 	se, ok := s.sessionEngines[id]
