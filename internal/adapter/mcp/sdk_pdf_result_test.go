@@ -80,11 +80,27 @@ func TestSDKPDFArtifacts_Scenario2_MCPAndReplay(t *testing.T) {
 	oversized := append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("x"), session.MaxPDFBytes)...)
 	oversized = append(oversized, []byte("\n%%EOF")...)
 	oversizedURL := newContentServer(t, "oversizedpdf", nil, &mcpsdk.CallToolResult{Content: []mcpsdk.Content{
+		&mcpsdk.TextContent{Text: "before oversized PDF"},
 		&mcpsdk.EmbeddedResource{Resource: &mcpsdk.ResourceContents{URI: "", MIMEType: "application/pdf", Blob: oversized}},
+		&mcpsdk.ResourceLink{URI: "https://example.test/survivor", Name: "survivor"},
+		&mcpsdk.TextContent{Text: "after oversized PDF"},
 	}})
 	tooLarge := callPDFTool(t, oversizedURL, "pdfcontent2", "oversizedpdf", true)
-	if !tooLarge.IsError || tooLarge.CallID != "call-1" || len(tooLarge.Parts) != 0 {
-		t.Fatalf("oversized PDF = %+v, want bounded tool error", tooLarge)
+	if !tooLarge.IsError || tooLarge.CallID != "call-1" || len(tooLarge.Parts) != 0 || !strings.Contains(tooLarge.Content, "20 MiB") || len(tooLarge.Content) > 256 {
+		t.Fatalf("enabled oversized PDF: isError=%v callID=%q parts=%d content=%q, want bounded tool error", tooLarge.IsError, tooLarge.CallID, len(tooLarge.Parts), tooLarge.Content)
+	}
+	legacyOversized := callPDFTool(t, oversizedURL, "pdfcontent3", "oversizedpdf", false)
+	if legacyOversized.IsError || legacyOversized.CallID != "call-1" || len(legacyOversized.Parts) != 3 {
+		t.Fatalf("disabled oversized PDF: isError=%v callID=%q parts=%d content=%q, want legacy clamp with mixed blocks", legacyOversized.IsError, legacyOversized.CallID, len(legacyOversized.Parts), legacyOversized.Content)
+	}
+	if legacyOversized.Parts[0].BlockKind != session.BlockText || legacyOversized.Parts[0].Text != "before oversized PDF" ||
+		legacyOversized.Parts[1].BlockKind != session.BlockResourceLink || legacyOversized.Parts[1].URL != "https://example.test/survivor" ||
+		legacyOversized.Parts[2].BlockKind != session.BlockText || legacyOversized.Parts[2].Text != "after oversized PDF" {
+		t.Fatalf("disabled oversized PDF lost surviving mixed blocks: %+v", legacyOversized.Parts)
+	}
+	if !strings.Contains(legacyOversized.Content, "before oversized PDF") || !strings.Contains(legacyOversized.Content, "after oversized PDF") ||
+		!strings.Contains(legacyOversized.Content, "exceeds the inline byte cap") {
+		t.Fatalf("disabled oversized PDF lost text or clamp note: %q", legacyOversized.Content)
 	}
 	legacy := callPDFTool(t, url, "legacy", "largepdf", false)
 	if legacy.IsError || len(legacy.Parts) != 2 {

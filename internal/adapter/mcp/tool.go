@@ -175,7 +175,7 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 	}
 
 	modelStr, blocks := mapContent(res.Content)
-	if hasOversizedPDFBlob(blocks) {
+	if t.server.cfg.PDFArtifactResults && hasOversizedPDFBlob(blocks) {
 		return session.NewToolError(in.ID, "PDF tool result exceeds the 20 MiB limit"), nil
 	}
 
