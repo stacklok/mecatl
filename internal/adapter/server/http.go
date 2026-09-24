@@ -458,10 +458,10 @@ func toContentParts(parts []promptContentBody) ([]session.Content, error) {
 		var kind session.MediaKind
 		switch p.Kind {
 		case string(session.MediaPDF):
-			if p.MimeType != "application/pdf" || len(p.Data) != 0 || p.URL != "" || p.Name != "" || p.Size != 0 || p.SHA256 != "" || !validPDFArtifactID(p.ArtifactID) {
+			if p.MimeType != pdfMIMEType || len(p.Data) != 0 || p.URL != "" || p.Name != "" || p.Size != 0 || p.SHA256 != "" || !validPDFArtifactID(p.ArtifactID) {
 				return nil, fmt.Errorf("parts[%d]: invalid PDF artifact reference", i)
 			}
-			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: "application/pdf", ArtifactID: p.ArtifactID})
+			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: pdfMIMEType, ArtifactID: p.ArtifactID})
 			continue
 		case string(session.MediaImage):
 			kind = session.MediaImage

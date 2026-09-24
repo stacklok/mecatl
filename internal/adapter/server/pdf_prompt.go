@@ -9,6 +9,8 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
+const pdfMIMEType = "application/pdf"
+
 func hasPDFPromptPart(parts []session.Content) bool {
 	for _, part := range parts {
 		if part.Kind == session.MediaPDF {
@@ -35,7 +37,7 @@ func (s *Service) resolvePDFPromptParts(ctx context.Context, sess *session.Sessi
 		if part.Kind != session.MediaPDF {
 			continue
 		}
-		if part.BlockKind != "" || part.MIMEType != "application/pdf" || len(part.Data) != 0 || part.URL != "" || !validPDFArtifactID(part.ArtifactID) {
+		if part.BlockKind != "" || part.MIMEType != pdfMIMEType || len(part.Data) != 0 || part.URL != "" || !validPDFArtifactID(part.ArtifactID) {
 			return nil, fmt.Errorf("%w: invalid PDF artifact reference", ErrInvalidArgument)
 		}
 		meta, err := s.cfg.PDFArtifacts.Resolve(ctx, sess.ID, part.ArtifactID)

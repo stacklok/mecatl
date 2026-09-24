@@ -56,10 +56,10 @@ func contentFromProto(parts []*mecatlv1.Content) ([]session.Content, error) {
 		case mecatlv1.Content_KIND_AUDIO:
 			kind = session.MediaAudio
 		case mecatlv1.Content_KIND_PDF:
-			if p.GetMimeType() != "application/pdf" || len(p.GetData()) != 0 || p.GetUrl() != "" || p.GetName() != "" || p.GetSize() != 0 || p.GetSha256() != "" || !validPDFArtifactID(p.GetArtifactId()) {
+			if p.GetMimeType() != pdfMIMEType || len(p.GetData()) != 0 || p.GetUrl() != "" || p.GetName() != "" || p.GetSize() != 0 || p.GetSha256() != "" || !validPDFArtifactID(p.GetArtifactId()) {
 				return nil, fmt.Errorf("prompt parts[%d]: invalid PDF artifact reference", i)
 			}
-			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: "application/pdf", ArtifactID: p.GetArtifactId()})
+			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: pdfMIMEType, ArtifactID: p.GetArtifactId()})
 			continue
 		case mecatlv1.Content_KIND_UNSPECIFIED:
 			return nil, fmt.Errorf("prompt parts[%d]: kind is required (KIND_UNSPECIFIED)", i)

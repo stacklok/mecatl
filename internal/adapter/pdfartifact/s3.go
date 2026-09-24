@@ -21,6 +21,7 @@ type S3Config struct {
 	Endpoint string
 }
 
+// Validate rejects incomplete S3 settings and non-HTTPS custom endpoints.
 func (cfg S3Config) Validate() error {
 	if cfg.Bucket == "" || cfg.Region == "" || strings.TrimSpace(cfg.Bucket) != cfg.Bucket || strings.TrimSpace(cfg.Region) != cfg.Region {
 		return ErrStorage
@@ -38,11 +39,12 @@ func (cfg S3Config) Validate() error {
 type S3Objects struct {
 	bucket   string
 	client   *s3.Client
-	uploader *manager.Uploader
+	uploader *manager.Uploader //nolint:staticcheck // Multipart upload streams bounded, unknown-length readers.
 }
 
 var _ ObjectStore = (*S3Objects)(nil)
 
+// NewS3 constructs a private S3 object adapter using the AWS credential chain.
 func NewS3(ctx context.Context, cfg S3Config) (*S3Objects, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -57,7 +59,7 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3Objects, error) {
 			options.UsePathStyle = true
 		}
 	})
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+	uploader := manager.NewUploader(client, func(u *manager.Uploader) { //nolint:staticcheck // Keep unknown-length streaming with bounded multipart buffers.
 		u.PartSize = 5 << 20
 		u.Concurrency = 1
 		u.LeavePartsOnError = false
@@ -68,14 +70,16 @@ func NewS3(ctx context.Context, cfg S3Config) (*S3Objects, error) {
 	return &S3Objects{bucket: cfg.Bucket, client: client, uploader: uploader}, nil
 }
 
+// Put streams a PDF into the private bucket.
 func (o *S3Objects) Put(ctx context.Context, key string, source io.Reader) error {
-	_, err := o.uploader.Upload(ctx, &s3.PutObjectInput{Bucket: aws.String(o.bucket), Key: aws.String(key), Body: source, ContentType: aws.String("application/pdf")})
+	_, err := o.uploader.Upload(ctx, &s3.PutObjectInput{Bucket: aws.String(o.bucket), Key: aws.String(key), Body: source, ContentType: aws.String("application/pdf")}) //nolint:staticcheck // The uploader preserves streaming and cancellation for unknown-length input.
 	if err != nil {
 		return ErrStorage
 	}
 	return nil
 }
 
+// Open returns a streaming reader for a private object.
 func (o *S3Objects) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	result, err := o.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(o.bucket), Key: aws.String(key)})
 	if err != nil {
@@ -84,6 +88,7 @@ func (o *S3Objects) Open(ctx context.Context, key string) (io.ReadCloser, error)
 	return result.Body, nil
 }
 
+// Delete removes one private object.
 func (o *S3Objects) Delete(ctx context.Context, key string) error {
 	_, err := o.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(o.bucket), Key: aws.String(key)})
 	if err != nil {
@@ -92,6 +97,7 @@ func (o *S3Objects) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// ListPrefix lists private objects under a session prefix.
 func (o *S3Objects) ListPrefix(ctx context.Context, prefix string) ([]string, error) {
 	pager := s3.NewListObjectsV2Paginator(o.client, &s3.ListObjectsV2Input{Bucket: aws.String(o.bucket), Prefix: aws.String(prefix)})
 	var keys []string

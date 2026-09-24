@@ -68,29 +68,8 @@ func (h *HarnessServer) UploadPdf(stream grpc.ClientStreamingServer[mecatlv1.Upl
 		<-done
 		return err
 	}
-	var total int64
-	for {
-		frame, recvErr := stream.Recv()
-		if recvErr == io.EOF {
-			break
-		}
-		if recvErr != nil {
-			return fail(recvErr)
-		}
-		chunkFrame, ok := frame.GetPayload().(*mecatlv1.UploadPdfRequest_Chunk)
-		if !ok || len(chunkFrame.Chunk) == 0 || len(chunkFrame.Chunk) > maxPDFUploadChunk {
-			return fail(status.Error(codes.InvalidArgument, "invalid PDF upload chunk"))
-		}
-		total += int64(len(chunkFrame.Chunk))
-		if total > maxPDFUploadBytes {
-			return fail(status.Error(codes.ResourceExhausted, "PDF upload exceeds 20 MiB"))
-		}
-		if _, writeErr := writer.Write(chunkFrame.Chunk); writeErr != nil {
-			return fail(toStatus(ErrInvalidArgument))
-		}
-	}
-	if total == 0 {
-		return fail(status.Error(codes.InvalidArgument, "PDF upload is empty"))
+	if err := receivePDFUploadChunks(stream, writer); err != nil {
+		return fail(err)
 	}
 	_ = writer.Close()
 	result := <-done
@@ -98,4 +77,32 @@ func (h *HarnessServer) UploadPdf(stream grpc.ClientStreamingServer[mecatlv1.Upl
 		return toStatus(result.err)
 	}
 	return stream.SendAndClose(&mecatlv1.UploadPdfResponse{ArtifactId: result.artifact.ID, Name: result.artifact.Name, Size: result.artifact.Size, Sha256: result.artifact.SHA256})
+}
+
+func receivePDFUploadChunks(stream grpc.ClientStreamingServer[mecatlv1.UploadPdfRequest, mecatlv1.UploadPdfResponse], writer *io.PipeWriter) error {
+	var total int64
+	for {
+		frame, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			return recvErr
+		}
+		chunkFrame, ok := frame.GetPayload().(*mecatlv1.UploadPdfRequest_Chunk)
+		if !ok || len(chunkFrame.Chunk) == 0 || len(chunkFrame.Chunk) > maxPDFUploadChunk {
+			return status.Error(codes.InvalidArgument, "invalid PDF upload chunk")
+		}
+		total += int64(len(chunkFrame.Chunk))
+		if total > maxPDFUploadBytes {
+			return status.Error(codes.ResourceExhausted, "PDF upload exceeds 20 MiB")
+		}
+		if _, writeErr := writer.Write(chunkFrame.Chunk); writeErr != nil {
+			return toStatus(ErrInvalidArgument)
+		}
+	}
+	if total == 0 {
+		return status.Error(codes.InvalidArgument, "PDF upload is empty")
+	}
+	return nil
 }
