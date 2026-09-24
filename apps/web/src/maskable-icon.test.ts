@@ -31,25 +31,22 @@ function rgbaPixels(png: Buffer) {
   }
   const rows = inflateSync(Buffer.concat(chunks));
   const stride = width * 4;
+  expect(rows.length).toBe(height * (stride + 1));
   const pixels = Buffer.alloc(stride * height);
   let read = 0;
   for (let y = 0; y < height; y++) {
-    const filter = rows[read++];
+    const filter = rows[read++] ?? -1;
     expect(filter).toBeGreaterThanOrEqual(0);
     expect(filter).toBeLessThanOrEqual(4);
     for (let x = 0; x < stride; x++) {
       const position = y * stride + x;
-      const left = x >= 4 ? pixels[position - 4] : 0;
-      const above = y > 0 ? pixels[position - stride] : 0;
-      const upperLeft = y > 0 && x >= 4 ? pixels[position - stride - 4] : 0;
-      const predictor = [
-        0,
-        left,
-        above,
-        Math.floor((left + above) / 2),
-        paeth(left, above, upperLeft),
-      ][filter];
-      pixels[position] = (rows[read++] + predictor) & 255;
+      const left = x >= 4 ? (pixels[position - 4] ?? 0) : 0;
+      const above = y > 0 ? (pixels[position - stride] ?? 0) : 0;
+      const upperLeft = y > 0 && x >= 4 ? (pixels[position - stride - 4] ?? 0) : 0;
+      const predictor =
+        [0, left, above, Math.floor((left + above) / 2), paeth(left, above, upperLeft)][filter] ??
+        0;
+      pixels[position] = ((rows[read++] ?? 0) + predictor) & 255;
     }
   }
   expect(read).toBe(rows.length);
