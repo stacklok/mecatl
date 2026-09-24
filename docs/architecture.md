@@ -1412,7 +1412,7 @@ backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
 **Harness context design.** The [domain model](architecture/mecatl.modelith.md#harnesscontext)
 defines source authority independently from execution. The [acceptance contract](acceptance/harness-context.md)
-owns the source-binding and inventory design; [ADR 0359](adr/0359-harness-context-source-authority.md)
+owns the source-binding design; [ADR 0359](adr/0359-harness-context-source-authority.md)
 records its rationale. Contract approval does not establish runtime availability.
 
 **Server-owned placement.** Trusted composition installs one placement provider and

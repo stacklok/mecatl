@@ -1,6 +1,6 @@
 # ADR 0359 - Harness context source authority is independent of execution
 
-- Status: Proposed amendment to the decision approved in #1814; directing-user choices resolved, exact interfaces await approval by merge; implementation has not landed
+- Status: Proposed amendment to the decision approved in #1814; exact source-acquisition interfaces await approval by merge
 - Date: 2026-09-24
 - Scope: project instructions, commands, rules, skills, agent definitions, source admission, and deployment composition
 - Supersedes: none
@@ -48,41 +48,24 @@ The latter is intentional sharing, not an exception for MicroVM or Redis. A loca
 deployment can select host files, while a Kubernetes deployment can select APIs or other drivers.
 Changing the execution backend alone does not select another context source.
 
-### Acquire a selected session source by exact authority
+### Acquire selected execution files by exact session authority
 
-Two sessions can share an owner and profile while using different execution
-worktrees. A binder receiving only that owner/profile pair cannot select the
-correct worktree. Capturing one workspace before session creation proves backend
-preservation but does not establish dynamic per-session acquisition.
+Two sessions may have the same principal and profile but different worktrees. Those values alone
+cannot select the right source. A principal-scoped binding therefore receives the authoritative
+session ID. A trusted registration may opt in to execution-file acquisition only when it has fixed
+project provenance and is selected and admitted by operator policy.
 
-A trusted registration explicitly declares whether it needs session execution
-files. Only selected, admitted registrations receive a lazy capability capturing
-the server-authorized source session and exact environment reference. The
-capability accepts no root or selector. It supplies read-only files and a
-source-owned release, not the execution owner's cleanup, a runner, or read evidence.
-Independent sources never need to exercise it. During creation it can borrow an
-authorized provisional binding before the session is persisted; failed binding or
-publication releases attempt-owned resources without destroying retained execution.
+The opt-in registration receives a lazy capability that captures the exact server-authorized source
+placement. It accepts no session, root, environment reference, or other selector and exposes only a
+read-only workspace, a source-owned release, no runner, and no execution read evidence. Process,
+unselected, and independent registrations receive no capability and do not attach execution.
 
-The [interface contract](../acceptance/harness-context.md#interface-contract)
-defines the internal request, registration, acquisition, and lifetime signatures.
-It keeps execution workspaces out of the engine's per-call prompt interfaces.
-
-### Show the context selected for the session
-
-Skill and agent inventories are session-effective, like command discovery.
-Human discovery and model consumption borrow the same resolved binding and retain
-its winning metadata/body pairs. Principal sources are never published by adding
-them to a process-wide snapshot. Learned skills use the same session-specific
-catalog and owner/project partitions as the Skill tool, without rediscovering
-external sources.
-
-Existing inventory RPCs require the target session ID and authorize ownership
-before binding. Empty IDs fail instead of selecting global defaults. The client
-uses its active session and discards stale replies after switching sessions.
-Inventory membership describes admitted definitions, not available execution tools
-or permission to invoke them. This allows a restricted native session to inspect
-context without enabling delegation. No extra global inventory API is introduced.
+Acquisition supports a newly reserved root or scheduled-fire ID before session publication; it does
+not require that unpublished ID to be loadable from the session store. The source retains its own
+borrow and releases only that borrow. Failure or cancellation releases attempt-owned resources
+without closing the execution owner's binding or deleting retained placement. Actual execution is
+still acquired independently. The exact internal shape is defined by the
+[interface contract](../acceptance/harness-context.md#interface-contract).
 
 ### Compose sources and resolve each content kind explicitly
 
@@ -163,131 +146,60 @@ No-FS describes execution capability, not the storage used by a logical context 
 not prohibit an admitted source from reading host files. Conversely, an adapter explicitly bound
 to unavailable execution files still depends on that backend and follows its source error policy.
 
-Command, skill, and agent listing first load and owner-authorize the session,
-then borrow its effective binding from authoritative session/source metadata.
-Independent sources do not reattach execution. The Build-owned resolver checks
-consumer identity, owner/profile, and the exact source anchor on reuse. It creates
-a generation single-flight, retries failed creation, and snapshots each source at
-its defined lifetime. Retirement rejects new borrows but drains existing users.
-Supported owner-authorized reload prepares a private candidate, constructs its
-engine against that candidate, and commits both under the session publication
-barrier only after construction and registration preconditions succeed. Failure
-aborts the candidate and preserves the prior engine/inventory pair. Retirement
-checks the expected binding's exact generation identity, so delayed teardown,
-cleanup, and release cannot retire or close replacements. Stale borrows cannot
-reactivate retirement. Build shutdown separately retires all owned generations,
-cancels pending acquisition, and permanently closes admission; a successfully bound source
-outlives its initiating request. The exact internal interfaces live in the
-acceptance contract, not a parallel signature specification here.
+Command discovery first loads and owner-authorizes an existing session, then binds from its
+stored ID, owner, and profile; it does not reattach an unrelated execution backend. Initial creation
+uses the server-reserved ID and authorized placement before publication rather than requiring a store
+load. Build owns a concurrency-safe per-session binding cache: first creation is single-flight, failed
+creation is retryable, and reuse verifies session/principal/profile consistency. Retirement closes a
+binding generation, not the durable session ID forever. It rejects new borrows of that generation
+and delays cleanup until its existing borrowers release. Explicit owner-authorized supported reload calls the consumer-local
+`CommandSourceResolver.Activate(context.Context, session.SessionID, *session.Principal, string) error`
+under the Service's existing per-session lifecycle serialization. It verifies the stored owner/profile
+and current source authorization before publishing a fresh generation; failure leaves retirement
+intact, and an already-active matching generation remains unchanged. Ordinary or stale queued Borrow
+cannot reactivate a retired generation. Each release targets its exact generation, so draining old
+borrowers and old cleanup cannot close or evict a replacement. Actual session teardown retires the
+current generation; Build shutdown retires all generations and permanently prevents both borrowing
+and activation. This preserves existing close/reload compatibility without a public or durable
+generation identity. An explicitly execution-file-backed source may still authorize and bind that
+source backend. Actual runs separately admit the execution capabilities they need.
 
 Keep existing command precedence as the compatibility default and preserve established miss and
 fail-soft behavior within an explicitly configured composition. A missing optional source can
 remain empty. Failure to resolve a required source must not silently add execution files, process
 cwd, or another unconfigured namespace as fallback.
 
-A child inherits source authority only within its existing specialist, profile,
-trust, and tool restrictions. A lifecycle callback on the selected child engine
-registers its effective binding and holds an independent source borrow after its
-identity and restrictions are known. It retains the parent's external snapshots
-rather than rebinding changed sources. Live commands and per-Run instructions keep
-their freshness semantics. Parent cleanup cannot release a still-borrowed source
-or invalidate its backing files. An isolated execution fork does not change the
-source anchor. Reconstructed child inventories require the actual attenuated child
-binding, not a broader parent or global snapshot. Source reads never create
-execution read evidence, even when storage is shared.
-
-In-place resume preserves the child identity and original parent lifetime and
-requires current source authorization and containment of the saved capability set.
-The directing user selected durable recovery for default, named-specialist, and
-fork-created children. A minimal private creation recipe records semantic engine
-selection and whether creation used eligible managed authority; existing labels carry
-profile, explicit-versus-floating model selection, limits, and capabilities. Reconstruction
-uses current authorized configuration rather than compactable messages or inherited
-identity labels. Only eligible operator-managed definitions add authority ceilings;
-ordinary definitions constrain the engine catalog without converting it into a grant
-set. A managed definition cannot be replaced by a same-name lower-tier definition on
-resume. Check saved authority before applying this call's requested read-only/writable
-view, then use the fully attenuated specialist engine without a generic-engine swap.
-Current content can change but saved rights cannot expand. Missing/revoked definitions
-or narrower eligible authority refuse without fallback. Floating model defaults remain
-floating across restart, while saved explicit selections retain precedence. Forked
-history is not a reason to refuse reconstruction.
-
-The same amendment provides explicit new-child history transfer. The receiving
-parent independently authorizes new delegation; source capabilities neither grant
-nor veto it. This permits a read-only investigation to inform explicitly authorized
-read-write implementation without pretending to resume the original child. Source
-context grants, approvals, read evidence, usage, and recipe are not imported as
-current authority. An eligible owned transcript does not need its old parent,
-backend, context grant, or capability record merely to serve as historical data.
-The recovery rationale of [ADR 0200](./0200-resume-a-failed-subagent.md) is preserved
-without retargeting the saved child or triggering automatic fallback.
-
-Capture and durable child start/resume share exclusive session access with a real
-commit/takeover fence. Context checks, refcounted liveness, and same-owner lease
-acquisition do not fence a write already admitted before expiry. The local store
-pairs its lease domain with stable OS exclusion retained through all admitted IO;
-expiry cannot transfer ownership beneath it. Expiring remote pairs require atomic
-current-epoch validation in the same backend transaction as every mutation, including
-metadata/events and deletion. Unfenced drivers or split backends without that guarantee
-remain unsupported. The plan owns exact availability, interfaces, and proof obligations.
-
-Work cancellation and persistence ownership are distinct. A cancelled child retains
-its valid exclusive hold through bounded terminal persistence so it remains resumable;
-real lease loss instead forbids detached writes. Shutdown stops work/admission first,
-drains still-authorized persistence, then closes ownership. Guarded source reload
-and incarnation comparison prevent capture from adopting a replacement. Stable local
-lock identities and backend fence records retain their safety role across cleanup
-and restart; the implementation records their lifecycle in ADR 0027.
-
-Initial transfer content is bounded text/structured text with Parts precedence and
-inert resource links. Media and oversized seeds are explicit errors, not silent loss,
-asset fetches, or an unbounded fallback. Bounded preflight precedes copying/encoding;
-canonical framing keeps roles, instructions, and tool records historical. Copy-local
-pairing projection retains completed pairs and assistant text when another call in
-the final batch is unanswered, without repairing the source.
-
-New delegation consumes the normal receiving-parent hop and starts fresh destination
-usage. Imported input and new output count against destination limits; old usage
-remains on the source. Parent own limits and per-call admission remain ordinary.
-Subagent usage reporting does not imply folding all child spend into the parent main
-session's budget; this amendment adds no descendant aggregate/reservation accounting.
-Existing Team/Parallel aggregate rules remain local to their existing paths.
-Same-ID resume preserves cumulative usage and consumes no extra hop, following
-[ADR 0234](./0234-authority-evaluator-port.md).
-
-Legacy missing lineage never licenses retroactive parent adoption or transcript
-deletion. Missing recipes prevent cold in-place reconstruction, but authorized
-terminal Subagent history remains transferable; unknown producer kinds and active
-or idle records remain ineligible. This is not universal legacy recovery.
-Original-source cross-parent reconstruction remains outside this amendment.
+A fresh child inherits source authority only within its existing specialist, profile, trust, and tool
+restrictions. Isolated and direct-write Subagents, Parallel branches, and parented Team members retain
+the parent's source through the existing binding references; they do not retarget context to child
+execution files. Context inheritance does not copy a parent's broader tool catalog, and parent teardown
+cannot invalidate a source still held by an existing child reference. This amendment adds no child
+binding callback framework and no new cold-reconstruction or original-anchor recovery contract.
+Source reads do not create file-mutation evidence in the execution `ReadLedger`, even when the backing
+files are shared.
 
 ## Restart and reconfiguration
 
 Harness context is deployment-controlled and intentionally rebound after process restart. `app.Build`
 compiles the current operator policy and process-scoped registrations once. A registration is either
 process-scoped or principal-scoped. Process sharing is allowed only for a caller-neutral,
-concurrency-safe adapter. A principal-scoped registration binds the owned session's principal and
-profile and cannot share its source, snapshot, live lookup, or cache with another principal. Snapshot
-sources bind once for the current Build or principal binding; command sources remain live only inside
-that binding. Build-owned resources close from `Built.Close`, and principal/session resources close
-only after their generation retires and its final borrower releases, including during Build shutdown.
-The implementation inventories every long-lived
-connection, cache, and binding in ADR 0027.
+concurrency-safe adapter and receives a zero scope. A principal-scoped registration binds the
+owned session's authoritative ID, principal, and profile. Independent sessions cannot reuse each
+other's source binding, snapshot, live lookup, or cache. Explicitly inherited child references retain
+the parent's source binding and acquisition anchor within their existing restrictions, as described
+above. Only an admitted execution-file registration receives the
+lazy exact-authorized acquisition capability; independent registrations never attach execution.
+Snapshot sources bind once for the current Build or principal binding; command sources remain live
+only inside that binding. Build-owned resources close from `Built.Close`, and principal/session
+resources close when their binding retires or Build shuts down. The implementation inventories every
+long-lived connection, cache, and binding in ADR 0027.
 
 Existing sessions and scheduled fires create fresh bindings from the current composition and current
 authorization after restart, so an operator configuration change can change the context seen by a
 resumed conversation. Per-call code does not accidentally rebuild snapshot sources.
 
-This amendment authorizes one additive private Subagent creation recipe in snapshots
-and event-source creation metadata, reusing existing profile/provider and authority
-fields. No durable `HarnessContextRef`, frozen external snapshot, or public source
-selector is added. Recipe absence is preserved, never reconstructed from historical
-text; new children stamp their own selections. History-transfer provenance uses
-existing tool calls/results and the seeded conversation, while the new child's normal
-relationship names only its receiving parent. No destructive migration is required.
-Missing lineage/recipe/authority can prevent in-place continuation without preventing
-authorized inspection or eligible history transfer.
+This decision adds no durable `HarnessContextRef`, source selector, event, or snapshot field. Existing
+sessions and schedules require no migration and are not rejected because they predate this contract.
 Stored execution placement never supplies a fallback context binding. Rebinding owner-authorizes the
 session or schedule under current policy; it cannot preserve a revoked source grant. The existing
 local/system-principal behavior remains valid when an unauthenticated local deployment has no external
@@ -306,24 +218,20 @@ The model separates source selection from execution while allowing explicit stor
 Both palette listing and invocation consult the same admitted source chain. File tools retain
 the exact execution backend, and source reads retain their own admission and freshness rules.
 
-The model defines domain responsibilities; the acceptance plan owns exact
-interfaces, approval status, and backend proof obligations. Its dependency stack
-is the shared amendment, #1875, then sibling MicroVM #580, Redis #1811, and native
-Kubernetes #1614 integrations. #1875 delivers same-parent resume enforcement and
-explicit new-child history transfer together, including model-visible recovery
-instructions; it does not defer the replacement for cross-parent recovery.
-Native plan #1579 must replace backend-selected
-context restrictions with explicit source policy. A first native slice can leave
-PVC context unselected while admitting independent deployment/API sources.
+The approved model defines the domain; this proposed amendment changes only the session-bound
+execution-file acquisition interface needed by MicroVM #580 and native Kubernetes #1579 / #1614.
+The native plan amendment may proceed in parallel with shared implementation #1875. Redis #1811 is
+a separate sibling and does not block either backend. Shared reference proofs do not qualify a live
+backend; each integration owns its concrete evidence and retains its separate permission,
+governance, placement, and fencing obligations.
 
-The directing operator authorized amending this decision in place before
-implementation lands. It is renumbered from the colliding 0357 to 0359; the
-unrelated model-stream ADR retains 0357. Shared reference proofs do not establish
-real-backend qualification. Plan approval and implementation merge remain separate
-human checkpoints.
+Existing inventory APIs, persistence, `SessionLease`, ADR 0294 behavior, resume semantics, and child
+lifecycle machinery remain unchanged. This amendment introduces no session-effective inventory
+migration, durable recovery recipe, history-transfer framework, `SessionAccess`, or new session lock,
+fencing, or store mutation protocol.
 
 Any implementation adding long-lived connections, caches, or bindings must record their owner,
-cleanup, and restart behavior in ADR 0027's inventories. This model-only PR adds no such runtime
+cleanup, and restart behavior in ADR 0027's inventories. This docs-only amendment adds no runtime
 resource and no production code.
 
 ## See also
