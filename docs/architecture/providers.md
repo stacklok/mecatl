@@ -82,16 +82,22 @@ directly from recorded fixtures by `decodeSSE` in tests):
 and abandons the underlying stream; a deliberate `ctx` cancel is **not** reported
 as a stream error.
 
-**Per-request session correlation.** The shared run-entry path binds the exact active
-`session.SessionID` to the context passed through `LLMProvider.Stream`. The OpenAI
-Responses, OpenAI Chat Completions, and Anthropic adapters project it as
-`X-Mecatl-Session-ID` on each HTTP request. It is correlation-only: child/member/
-auxiliary engines bind their own IDs, while compaction inherits the parent run's ID.
-Provider clients never hold it globally, so concurrent sessions cannot cross-stamp.
-An absent or Go-illegal HTTP field value omits the header without failing inference;
-the value is otherwise byte-exact. It is not auth, tracing, idempotency, provider
-state, safety/user identity, or a cache key. See
-[ADR 0216](../adr/0216-provider-session-correlation-header.md).
+**Per-request session correlation.** The shared run-entry path binds two identities to
+provider request context. `X-Mecatl-Session-ID` carries the exact active
+`session.SessionID`; child, member, and auxiliary engines therefore carry their own IDs,
+while compaction inherits the parent run's ID. `X-Mecatl-Root-Session-ID` carries the
+causal root across nested runs, so provider logs can group delegated work without erasing
+the active child identity. Main-run requests carry the same value in both fields.
+
+OpenAI Responses, OpenAI Chat Completions, and Anthropic requests receive the root field
+through the final composition-owned HTTP transport. The transport accepts 1–256 bytes of
+printable ASCII without boundary spaces, removes any caller-supplied root field, and omits
+an absent or invalid value without failing inference. Provider clients never hold either
+identity globally, so concurrent sessions cannot cross-stamp. The active field remains the
+only client/server affinity hint; the root field is outbound-only. Neither field grants
+authentication, authorization, tracing, idempotency, provider state, safety/user identity,
+or cache identity. See [ADR 0216](../adr/0216-provider-session-correlation-header.md) and
+[ADR 0359](../adr/0359-root-session-provider-correlation.md).
 
 **The provider-neutral seam**: the loop only ever sees `port.Chunk`; no OpenAI
 type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`,
