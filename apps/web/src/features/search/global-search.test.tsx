@@ -511,9 +511,53 @@ describe("GlobalSearch", () => {
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.disabled).toBe(
-      true,
+      false,
     );
   });
+
+  it.each(["trigger", "shortcut"])(
+    "rechecks authorization and retries inventories via %s after a transient inventory 401",
+    async (retryWith) => {
+      inventoryState.sessions = [
+        { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+      ];
+      const client = await mount();
+      const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+      await act(async () => trigger?.click());
+      await searchFor("Private Alpha");
+      expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
+      );
+
+      inventoryState.failSessionsUnauthorized = true;
+      await act(async () => trigger?.click());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(inventoryState.calls).toEqual(["sessions", "sessions"]);
+      expect(client.getQueryData(["sessions", "account:account-a"])).toBeUndefined();
+      expect(document.body.textContent).not.toContain("Private Alpha");
+      expect(navigation).not.toHaveBeenCalled();
+
+      inventoryState.failSessionsUnauthorized = false;
+      inventoryState.sessions = [
+        { id: "session-b", modelId: "model", state: "idle", title: "Private Beta" },
+      ];
+      await act(async () => {
+        if (retryWith === "trigger") trigger?.click();
+        else keydown(document, "k", { ctrlKey: true });
+      });
+      expect(inventoryState.authCalls).toBe(3);
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+      expect(inventoryState.calls).toEqual(["sessions", "sessions", "sessions"]);
+      await searchFor("Private Alpha");
+      expect(document.querySelector('[role="option"]')).toBeNull();
+      await searchFor("Private Beta");
+      expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Beta");
+    },
+  );
 
   it("treats a touch scroll as scrolling and a later tap as one choice", async () => {
     await mount();
@@ -722,6 +766,21 @@ describe("GlobalSearch", () => {
     expect(navigation).not.toHaveBeenCalled();
     await act(async () => keydown(input as HTMLInputElement, "Enter"));
     expect(navigation).toHaveBeenCalledOnce();
+  });
+
+  it("accepts a distinct Enter after a Space keyup commits an IME candidate", async () => {
+    await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    const input = await searchFor("shortcuts");
+    await act(async () => {
+      input?.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      input?.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      input?.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
+      keydown(input as HTMLInputElement, "Enter");
+    });
+    expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
   });
 
   it.each(["pointerdown", "touchstart"])(

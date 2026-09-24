@@ -60,7 +60,15 @@ export function createSearchCompositionGuard() {
       return pending && ["Enter", "ArrowDown", "ArrowUp"].includes(event.key);
     },
     keyUp(event: Pick<SearchKeyState, "key">) {
-      if (["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) awaitingCommitKey = false;
+      // A candidate can commit with Space or a digit after compositionend,
+      // without a committing Enter keydown. That keyup completes the IME
+      // action, leaving the next distinct Enter for the palette.
+      if (
+        ["Enter", "ArrowDown", "ArrowUp", " ", "Spacebar"].includes(event.key) ||
+        /^[0-9]$/.test(event.key)
+      ) {
+        awaitingCommitKey = false;
+      }
     },
   };
 }

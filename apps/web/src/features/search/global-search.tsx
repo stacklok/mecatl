@@ -282,11 +282,15 @@ function SearchPalette({
     setOpen(false);
     setQuery("");
     setActiveIndex(0);
+    // A 401 may arrive after other inventories succeeded. Drop every scoped
+    // result before a fresh identity check can reopen this palette.
+    for (const queryKey of accountKeys.current)
+      queryClient.removeQueries({ exact: true, queryKey });
     void queryClient.invalidateQueries({ queryKey: getAuthSessionOptions().queryKey });
   }, [accessExpired, queryClient]);
 
   async function openSearch(invoker: HTMLElement | null) {
-    if (accessExpired || opening.current) return;
+    if (opening.current) return;
     opening.current = true;
     setCheckingAuth(true);
     const authKey = getAuthSessionOptions().queryKey;
@@ -442,7 +446,7 @@ function SearchPalette({
       <button
         aria-keyshortcuts="Control+K Meta+K"
         aria-label="Search"
-        disabled={accessExpired || checkingAuth}
+        disabled={checkingAuth}
         className="flex size-11 items-center justify-center gap-2 rounded-full px-2.5 text-[#a5b8b4] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 min-[500px]:w-full min-[900px]:justify-start min-[900px]:px-3"
         onClick={(event) => void openSearch(event.currentTarget)}
         type="button"

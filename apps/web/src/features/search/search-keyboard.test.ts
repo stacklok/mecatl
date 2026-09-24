@@ -71,6 +71,17 @@ describe("shouldActivateResult", () => {
     expect(touchAfterEnd.ownsKeyDown({ key: "Enter" })).toBe(false);
   });
 
+  it.each([" ", "Spacebar", "1"])(
+    "allows a distinct Enter after an IME candidate commits with %s keyup",
+    (key) => {
+      const guard = createSearchCompositionGuard();
+      guard.start();
+      guard.end();
+      guard.keyUp({ key });
+      expect(guard.ownsKeyDown({ key: "Enter" })).toBe(false);
+    },
+  );
+
   it("ignores other keys and an empty result list", () => {
     expect(shouldActivateResult({ key: "ArrowDown" }, true)).toBe(false);
     expect(shouldActivateResult({ key: "Enter" }, false)).toBe(false);
