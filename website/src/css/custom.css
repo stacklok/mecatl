@@ -220,13 +220,19 @@ td, th {
   vertical-align: top;
 }
 
-.grpc-description summary {
-  cursor: pointer;
-  list-style: none;
+.grpc-description {
+  display: block;
+  position: relative;
 }
 
-.grpc-description summary::-webkit-details-marker {
-  display: none;
+.grpc-description-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .grpc-description-preview {
@@ -236,41 +242,18 @@ td, th {
   overflow: hidden;
 }
 
-.grpc-description-expand,
-.grpc-description-collapse {
+.grpc-description-toggle {
+  display: block;
+  margin-top: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--ifm-link-color);
+  font: inherit;
   font-weight: 600;
+  text-align: left;
   text-decoration: underline;
-}
-
-.grpc-description-expand {
-  display: inline-block;
-  margin-top: 0.3rem;
-}
-
-.grpc-description-collapse,
-.grpc-description[open] .grpc-description-preview,
-.grpc-description[open] .grpc-description-expand {
-  display: none;
-}
-
-.grpc-description[open] .grpc-description-collapse {
-  display: inline;
-}
-
-.grpc-description[open] summary {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-}
-
-.grpc-description[open] {
-  position: relative;
-  padding-bottom: 1.6rem;
-}
-
-.grpc-description-full {
-  margin-top: 0.3rem;
+  cursor: pointer;
 }
 
 tr:nth-child(even) {
