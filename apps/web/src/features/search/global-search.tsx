@@ -152,26 +152,31 @@ function SearchPalette({
     ...sessionsOptions,
     enabled: open && canSearchInventory,
     queryKey: sessionsKey,
+    staleTime: 0,
   });
   const schedules = useQuery({
     ...schedulesOptions,
     enabled: open && canSearchInventory,
     queryKey: schedulesKey,
+    staleTime: 0,
   });
   const configuredSkills = useQuery({
     ...configuredSkillsOptions,
     enabled: open && canSearchInventory,
     queryKey: configuredSkillsKey,
+    staleTime: 0,
   });
   const learnedSkills = useQuery({
     ...learnedSkillsOptions,
     enabled: open && canSearchInventory,
     queryKey: learnedSkillsKey,
+    staleTime: 0,
   });
   const memory = useQuery({
     ...memoryOptions,
     enabled: open && canSearchInventory,
     queryKey: memoryKey,
+    staleTime: 0,
   });
   const threadSessionIds = useThreadSessionIds();
   const inventories = [sessions, schedules, configuredSkills, learnedSkills, memory];
@@ -183,11 +188,17 @@ function SearchPalette({
     () =>
       canSearchInventory
         ? buildGlobalSearchIndex({
-            configuredSkills: configuredSkills.data?.supported ? configuredSkills.data.items : [],
-            learnedSkills: learnedSkills.data?.supported ? learnedSkills.data.items : [],
-            memory: memory.data?.supported ? memory.data.items : [],
-            schedules: schedules.data?.supported ? schedules.data.items : [],
-            sessions: (sessions.data?.items ?? []).filter(
+            configuredSkills:
+              !configuredSkills.isError && configuredSkills.data?.supported
+                ? configuredSkills.data.items
+                : [],
+            learnedSkills:
+              !learnedSkills.isError && learnedSkills.data?.supported
+                ? learnedSkills.data.items
+                : [],
+            memory: !memory.isError && memory.data?.supported ? memory.data.items : [],
+            schedules: !schedules.isError && schedules.data?.supported ? schedules.data.items : [],
+            sessions: (sessions.isError ? [] : (sessions.data?.items ?? [])).filter(
               (session) => !threadSessionIds.has(session.id),
             ),
           })
@@ -195,10 +206,15 @@ function SearchPalette({
     [
       canSearchInventory,
       configuredSkills.data,
+      configuredSkills.isError,
       learnedSkills.data,
+      learnedSkills.isError,
       memory.data,
+      memory.isError,
       schedules.data,
+      schedules.isError,
       sessions.data,
+      sessions.isError,
       threadSessionIds,
     ],
   );
@@ -266,7 +282,7 @@ function SearchPalette({
       // This is a new BFF request, independent of React Query's cached or
       // in-flight auth query. A different tab may have changed the shared
       // cookie since this tab last rendered its search trigger.
-      const { data } = await getAuthSession({ throwOnError: true });
+      const { data } = await getAuthSession({ cache: "no-store", throwOnError: true });
       if (!mounted.current) return;
       if (searchScope(queryClient.getQueryData<GetAuthSessionResponse>(authKey)) !== scope) return;
       queryClient.setQueryData(authKey, data);

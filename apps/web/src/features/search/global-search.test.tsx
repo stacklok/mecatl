@@ -16,6 +16,7 @@ type AuthSession = {
 };
 const inventoryState = vi.hoisted(() => ({
   authCalls: 0,
+  authRequestOptions: [] as unknown[],
   authPending: undefined as Promise<void> | undefined,
   authSession: {
     account: "account-a",
@@ -30,6 +31,7 @@ const inventoryState = vi.hoisted(() => ({
   failSessionsUnauthorized: false,
   queryArguments: [] as unknown[],
   schedulePending: false,
+  schedules: [] as Array<{ modelId: string; name: string; owner: string; status: string }>,
   sessions: [] as Array<{ id: string; modelId: string; state: string; title: string }>,
 }));
 
@@ -37,8 +39,9 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigation }));
 vi.mock("@mecatl-studio/contracts/generated", () => ({
-  getAuthSession: async () => {
+  getAuthSession: async (options?: unknown) => {
     inventoryState.authCalls += 1;
+    inventoryState.authRequestOptions.push(options);
     await inventoryState.authPending;
     if (inventoryState.failAuth) {
       if (inventoryState.authErrorStatus) throw { status: inventoryState.authErrorStatus };
@@ -68,7 +71,7 @@ vi.mock("@mecatl-studio/contracts/query", () => {
         inventoryState.inventoryCalls.push("schedules");
         if (inventoryState.failSchedules) throw new Error("schedule inventory failed");
         if (inventoryState.schedulePending) await new Promise(() => {});
-        return { items: [], supported: true };
+        return { items: inventoryState.schedules, supported: true };
       },
       queryKey: ["schedules"],
     }),
@@ -164,6 +167,7 @@ afterEach(async () => {
   document.body.replaceChildren();
   navigation.mockClear();
   inventoryState.authCalls = 0;
+  inventoryState.authRequestOptions = [];
   inventoryState.authPending = undefined;
   inventoryState.authSession = {
     account: "account-a",
@@ -178,6 +182,7 @@ afterEach(async () => {
   inventoryState.failSessionsUnauthorized = false;
   inventoryState.queryArguments = [];
   inventoryState.schedulePending = false;
+  inventoryState.schedules = [];
   inventoryState.sessions = [];
 });
 
@@ -362,6 +367,59 @@ describe("GlobalSearch", () => {
     expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Beta");
   });
 
+  it("bypasses the browser HTTP cache for the pre-open identity check", async () => {
+    await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    expect(inventoryState.authRequestOptions).toEqual([{ cache: "no-store", throwOnError: true }]);
+  });
+
+  it("evicts private inventory on sign-out before the same account can reopen search", async () => {
+    inventoryState.sessions = [
+      { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+    ];
+    const client = await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    const accountSessionsKey = ["sessions", "account:account-a"];
+    expect(client.getQueryData(accountSessionsKey)).toBeDefined();
+
+    inventoryState.authSession = { mode: "oidc", status: "anonymous" };
+    await act(async () => {
+      client.setQueryData(["auth"], inventoryState.authSession);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("Private Alpha");
+    expect(client.getQueryData(accountSessionsKey)).toBeUndefined();
+
+    inventoryState.sessions = [
+      { id: "session-b", modelId: "model", state: "idle", title: "Private Beta" },
+    ];
+    inventoryState.authSession = {
+      account: "account-a",
+      mode: "oidc",
+      status: "authenticated",
+    };
+    await act(async () => {
+      client.setQueryData(["auth"], inventoryState.authSession);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(client.getQueryData(accountSessionsKey)).toBeUndefined();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')).toBeNull();
+    await searchFor("Private Beta");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Beta");
+    expect(inventoryState.calls).toEqual(["sessions", "sessions"]);
+  });
+
   it("shows only local help when a fresh identity check loses the BFF", async () => {
     inventoryState.sessions = [
       { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
@@ -525,6 +583,38 @@ describe("GlobalSearch", () => {
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
       "Some inventories could not be searched",
     );
+  });
+
+  it("revalidates cached inventory on reopen and reports a daemon inventory outage", async () => {
+    inventoryState.sessions = [
+      { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+    ];
+    inventoryState.schedules = [
+      { modelId: "model", name: "Retired schedule", owner: "agent", status: "enabled" },
+    ];
+    await mount();
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+    await act(async () => trigger?.click());
+    await searchFor("Retired schedule");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Retired schedule");
+    expect(inventoryState.inventoryCalls.filter((key) => key === "schedules")).toHaveLength(1);
+
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
+    );
+    inventoryState.failSchedules = true;
+    await act(async () => trigger?.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      "Some inventories could not be searched",
+    );
+    expect(inventoryState.inventoryCalls.filter((key) => key === "schedules")).toHaveLength(2);
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    await searchFor("Retired schedule");
+    expect(document.querySelector('[role="option"]')).toBeNull();
   });
 
   it("announces loading while an inventory remains pending", async () => {
