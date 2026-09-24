@@ -57,6 +57,20 @@ describe("shouldActivateResult", () => {
     expect(processCodeAfterEnd.ownsKeyDown({ key: "Enter", keyCode: 13 })).toBe(false);
   });
 
+  it("allows a distinct Enter after an observable pointer or touch candidate choice", () => {
+    const pointerBeforeEnd = createSearchCompositionGuard();
+    pointerBeforeEnd.start();
+    pointerBeforeEnd.pointerChoice();
+    pointerBeforeEnd.end();
+    expect(pointerBeforeEnd.ownsKeyDown({ key: "Enter" })).toBe(false);
+
+    const touchAfterEnd = createSearchCompositionGuard();
+    touchAfterEnd.start();
+    touchAfterEnd.end();
+    touchAfterEnd.pointerChoice();
+    expect(touchAfterEnd.ownsKeyDown({ key: "Enter" })).toBe(false);
+  });
+
   it("ignores other keys and an empty result list", () => {
     expect(shouldActivateResult({ key: "ArrowDown" }, true)).toBe(false);
     expect(shouldActivateResult({ key: "Enter" }, false)).toBe(false);

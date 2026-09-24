@@ -11,6 +11,7 @@ import { GlobalSearch } from "./global-search";
 const navigation = vi.hoisted(() => vi.fn(async () => undefined));
 const inventoryState = vi.hoisted(() => ({
   calls: [] as string[],
+  inventoryCalls: [] as string[],
   failSchedules: false,
   failSessionsUnauthorized: false,
   queryArguments: [] as unknown[],
@@ -23,7 +24,10 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigation }));
 vi.mock("@mecatl-studio/contracts/query", () => {
   const options = (key: string, data: unknown) => () => ({
-    queryFn: async () => data,
+    queryFn: async () => {
+      if (key !== "auth") inventoryState.inventoryCalls.push(key);
+      return data;
+    },
     queryKey: [key],
   });
   return {
@@ -36,6 +40,7 @@ vi.mock("@mecatl-studio/contracts/query", () => {
     listLearnedSkillsOptions: options("learned-skills", { items: [], supported: true }),
     listSchedulesOptions: () => ({
       queryFn: async () => {
+        inventoryState.inventoryCalls.push("schedules");
         if (inventoryState.failSchedules) throw new Error("schedule inventory failed");
         if (inventoryState.schedulePending) await new Promise(() => {});
         return { items: [], supported: true };
@@ -48,6 +53,7 @@ vi.mock("@mecatl-studio/contracts/query", () => {
       return {
         queryFn: async () => {
           inventoryState.calls.push("sessions");
+          inventoryState.inventoryCalls.push("sessions");
           if (inventoryState.failSessionsUnauthorized) throw { status: 401 };
           return { items: inventoryState.sessions };
         },
@@ -130,6 +136,7 @@ afterEach(async () => {
   document.body.replaceChildren();
   navigation.mockClear();
   inventoryState.calls = [];
+  inventoryState.inventoryCalls = [];
   inventoryState.failSchedules = false;
   inventoryState.failSessionsUnauthorized = false;
   inventoryState.queryArguments = [];
@@ -215,6 +222,41 @@ describe("GlobalSearch", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("keeps help search available without an account and never reuses private results", async () => {
+    inventoryState.sessions = [
+      { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+    ];
+    const client = await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    expect(inventoryState.calls).toEqual(["sessions"]);
+    const callsBeforeAccountLoss = [...inventoryState.inventoryCalls];
+    expect(callsBeforeAccountLoss).toHaveLength(5);
+
+    await act(async () => {
+      client.setQueryData(["auth"], { mode: "oidc", status: "authenticated" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+    expect(trigger).not.toBeNull();
+    await act(async () => keydown(document, "k", { ctrlKey: true }));
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')).toBeNull();
+    await searchFor("shortcuts");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Keyboard shortcuts");
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      "Workspace inventories unavailable",
+    );
+    expect(inventoryState.calls).toEqual(["sessions"]);
+    expect(inventoryState.inventoryCalls).toEqual(callsBeforeAccountLoss);
   });
 
   it("fetches only after an authorized session opens the palette and keeps the query local", async () => {
@@ -313,6 +355,24 @@ describe("GlobalSearch", () => {
     );
   });
 
+  it("retains successful dynamic results when a different inventory fails", async () => {
+    inventoryState.sessions = [
+      { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+    ];
+    inventoryState.failSchedules = true;
+    await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    await searchFor("Private Alpha");
+    await vi.waitFor(() =>
+      expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha"),
+    );
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      "Some inventories could not be searched",
+    );
+  });
+
   it("announces loading while an inventory remains pending", async () => {
     inventoryState.schedulePending = true;
     await mount();
@@ -359,6 +419,71 @@ describe("GlobalSearch", () => {
     expect(navigation).toHaveBeenCalledOnce();
   });
 
+  it.each(["pointerdown", "touchstart"])(
+    "allows Enter after an observable %s candidate choice without a committing keydown",
+    async (type) => {
+      await mount();
+      await act(async () =>
+        document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+      );
+      const input = await searchFor("shortcuts");
+      await act(async () => {
+        input?.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        if (type === "pointerdown") {
+          input?.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerType: "mouse" }));
+        } else {
+          touch(input as HTMLInputElement, type, 40, 100);
+        }
+        input?.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      });
+      await act(async () => keydown(input as HTMLInputElement, "Enter"));
+      expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
+    },
+  );
+
+  it("respects native isComposing and key code 229 in the combobox handler", async () => {
+    await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    const input = await searchFor("help");
+    const initialOption = input?.getAttribute("aria-activedescendant");
+    expect(document.querySelectorAll('[role="option"]').length).toBeGreaterThan(1);
+    await act(async () => {
+      keydown(input as HTMLInputElement, "ArrowDown", { isComposing: true });
+      const processKey = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+      });
+      Object.defineProperty(processKey, "keyCode", { value: 229 });
+      input?.dispatchEvent(processKey);
+    });
+    expect(input?.getAttribute("aria-activedescendant")).toBe(initialOption);
+    expect(navigation).not.toHaveBeenCalled();
+  });
+
+  it("moves the active option with arrow keys and activates it only once", async () => {
+    await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    const input = await searchFor("help");
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    expect(options.length).toBeGreaterThan(1);
+    expect(input?.getAttribute("aria-activedescendant")).toBe(options[0]?.id);
+    await act(async () => keydown(input as HTMLInputElement, "ArrowDown"));
+    expect(input?.getAttribute("aria-activedescendant")).toBe(options[1]?.id);
+    expect(navigation).not.toHaveBeenCalled();
+    await act(async () => keydown(input as HTMLInputElement, "ArrowUp"));
+    expect(input?.getAttribute("aria-activedescendant")).toBe(options[0]?.id);
+    await act(async () => {
+      keydown(input as HTMLInputElement, "Enter");
+      keydown(input as HTMLInputElement, "Enter");
+    });
+    expect(navigation).toHaveBeenCalledOnce();
+  });
+
   it("restores focus after Escape and keeps pointer hover separate from activation", async () => {
     await mount();
     const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
@@ -378,6 +503,31 @@ describe("GlobalSearch", () => {
     });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("closes from the close control or an outside pointer and restores the trigger", async () => {
+    await mount();
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+    trigger?.focus();
+    await act(async () => trigger?.click());
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
+    );
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+
+    await act(async () => trigger?.click());
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      document.body.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "mouse" }),
+      );
+    });
+    await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(navigation).not.toHaveBeenCalled();
   });
 
   it("navigates through a palette shortcut once and closes search", async () => {

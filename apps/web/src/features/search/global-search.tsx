@@ -40,6 +40,7 @@ import {
   buildGlobalSearchIndex,
   type GlobalSearchItem,
   type GlobalSearchTarget,
+  globalSearchPages,
   groupSearchResults,
   searchGlobalIndex,
 } from "./search-index";
@@ -80,20 +81,29 @@ function isUnauthorized(error: unknown): boolean {
 
 export function GlobalSearch() {
   const auth = useQuery(getAuthSessionOptions());
+  const staticOnly = auth.data?.status === "authenticated" && !auth.data.account;
   const scope =
     auth.data?.status === "authenticated" && auth.data.account
       ? `account:${auth.data.account}`
-      : auth.data?.status === "disabled" && auth.data.mode !== "oidc"
-        ? `shared:${auth.data.mode}`
-        : undefined;
+      : staticOnly
+        ? "static-help:account-unavailable"
+        : auth.data?.status === "disabled" && auth.data.mode !== "oidc"
+          ? `shared:${auth.data.mode}`
+          : undefined;
 
   // A changed account remounts the palette closed. Its inventory queries get
   // separate keys, so React Query never offers the prior account's cache.
   if (!scope) return null;
-  return <SearchPalette key={scope} scope={scope} />;
+  return <SearchPalette inventoryAuthorized={!staticOnly} key={scope} scope={scope} />;
 }
 
-function SearchPalette({ scope }: { scope: string }) {
+function SearchPalette({
+  inventoryAuthorized,
+  scope,
+}: {
+  inventoryAuthorized: boolean;
+  scope: string;
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -129,36 +139,52 @@ function SearchPalette({ scope }: { scope: string }) {
     learnedSkillsKey,
     memoryKey,
   ]);
-  const sessions = useQuery({ ...sessionsOptions, enabled: open, queryKey: sessionsKey });
-  const schedules = useQuery({ ...schedulesOptions, enabled: open, queryKey: schedulesKey });
+  const sessions = useQuery({
+    ...sessionsOptions,
+    enabled: open && inventoryAuthorized,
+    queryKey: sessionsKey,
+  });
+  const schedules = useQuery({
+    ...schedulesOptions,
+    enabled: open && inventoryAuthorized,
+    queryKey: schedulesKey,
+  });
   const configuredSkills = useQuery({
     ...configuredSkillsOptions,
-    enabled: open,
+    enabled: open && inventoryAuthorized,
     queryKey: configuredSkillsKey,
   });
   const learnedSkills = useQuery({
     ...learnedSkillsOptions,
-    enabled: open,
+    enabled: open && inventoryAuthorized,
     queryKey: learnedSkillsKey,
   });
-  const memory = useQuery({ ...memoryOptions, enabled: open, queryKey: memoryKey });
+  const memory = useQuery({
+    ...memoryOptions,
+    enabled: open && inventoryAuthorized,
+    queryKey: memoryKey,
+  });
   const threadSessionIds = useThreadSessionIds();
   const inventories = [sessions, schedules, configuredSkills, learnedSkills, memory];
-  const accessExpired = inventories.some((inventory) => isUnauthorized(inventory.error));
+  const accessExpired =
+    inventoryAuthorized && inventories.some((inventory) => isUnauthorized(inventory.error));
   const paletteOpen = open && !accessExpired;
 
   const index = useMemo(
     () =>
-      buildGlobalSearchIndex({
-        configuredSkills: configuredSkills.data?.supported ? configuredSkills.data.items : [],
-        learnedSkills: learnedSkills.data?.supported ? learnedSkills.data.items : [],
-        memory: memory.data?.supported ? memory.data.items : [],
-        schedules: schedules.data?.supported ? schedules.data.items : [],
-        sessions: (sessions.data?.items ?? []).filter(
-          (session) => !threadSessionIds.has(session.id),
-        ),
-      }),
+      inventoryAuthorized
+        ? buildGlobalSearchIndex({
+            configuredSkills: configuredSkills.data?.supported ? configuredSkills.data.items : [],
+            learnedSkills: learnedSkills.data?.supported ? learnedSkills.data.items : [],
+            memory: memory.data?.supported ? memory.data.items : [],
+            schedules: schedules.data?.supported ? schedules.data.items : [],
+            sessions: (sessions.data?.items ?? []).filter(
+              (session) => !threadSessionIds.has(session.id),
+            ),
+          })
+        : globalSearchPages,
     [
+      inventoryAuthorized,
       configuredSkills.data,
       learnedSkills.data,
       memory.data,
@@ -173,8 +199,8 @@ function SearchPalette({ scope }: { scope: string }) {
   // Inventories load while the user types, so the stored index can outrun the list.
   const highlighted = clampActiveIndex(activeIndex, flatResults.length);
   const activeResult = flatResults[highlighted];
-  const loading = inventories.some((inventory) => inventory.isPending);
-  const partialError = inventories.some((inventory) => inventory.isError);
+  const loading = inventoryAuthorized && inventories.some((inventory) => inventory.isPending);
+  const partialError = inventoryAuthorized && inventories.some((inventory) => inventory.isError);
   const mac = navigator.platform.includes("Mac");
 
   useEffect(() => {
@@ -242,6 +268,7 @@ function SearchPalette({ scope }: { scope: string }) {
   }
 
   async function navigateFromSearch(destination: () => Promise<unknown>) {
+    if (navigating.current) return;
     navigating.current = true;
     navigationDone.current = false;
     dialogClosed.current = false;
@@ -389,7 +416,11 @@ function SearchPalette({ scope }: { scope: string }) {
               aria-autocomplete="list"
               aria-controls={listboxId}
               aria-expanded={true}
-              aria-label="Search chats, schedules, skills, and memory"
+              aria-label={
+                inventoryAuthorized
+                  ? "Search chats, schedules, skills, and memory"
+                  : "Search help and pages"
+              }
               autoComplete="off"
               className="h-14 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground"
               onChange={(event) => {
@@ -400,7 +431,13 @@ function SearchPalette({ scope }: { scope: string }) {
               onKeyUp={(event) => composition.current.keyUp(event)}
               onCompositionStart={() => composition.current.start()}
               onCompositionEnd={() => composition.current.end()}
-              placeholder="Search chats, schedules, skills, and memory…"
+              onPointerDownCapture={() => composition.current.pointerChoice()}
+              onTouchStartCapture={() => composition.current.pointerChoice()}
+              placeholder={
+                inventoryAuthorized
+                  ? "Search chats, schedules, skills, and memory…"
+                  : "Search help and pages…"
+              }
               ref={inputRef}
               role="combobox"
               spellCheck={false}
@@ -417,7 +454,7 @@ function SearchPalette({ scope }: { scope: string }) {
 
           <div className="min-h-0 flex-1 overflow-y-auto p-2 max-[499px]:max-h-none">
             {!query.trim() ? (
-              <SearchPrompt />
+              <SearchPrompt inventoryAuthorized={inventoryAuthorized} />
             ) : flatResults.length === 0 && !loading ? (
               <p className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No results for “{query.trim()}”
@@ -463,13 +500,15 @@ function SearchPalette({ scope }: { scope: string }) {
 
           <div className="flex min-h-9 items-center justify-between gap-3 border-t px-4 py-2 text-[11px] text-muted-foreground">
             <span aria-live="polite">
-              {partialError
-                ? "Some inventories could not be searched"
-                : loading
-                  ? "Loading searchable inventories"
-                  : query.trim() && !loading
-                    ? `${flatResults.length} result${flatResults.length === 1 ? "" : "s"}`
-                    : "Results stay in this browser"}
+              {!inventoryAuthorized
+                ? "Workspace inventories unavailable; search help and pages"
+                : partialError
+                  ? "Some inventories could not be searched"
+                  : loading
+                    ? "Loading searchable inventories"
+                    : query.trim() && !loading
+                      ? `${flatResults.length} result${flatResults.length === 1 ? "" : "s"}`
+                      : "Results stay in this browser"}
             </span>
             <span className="hidden sm:inline">↑↓ select · Enter open · Esc close</span>
           </div>
@@ -479,12 +518,16 @@ function SearchPalette({ scope }: { scope: string }) {
   );
 }
 
-function SearchPrompt() {
+function SearchPrompt({ inventoryAuthorized }: { inventoryAuthorized: boolean }) {
   return (
     <div className="px-4 py-10 text-center">
-      <p className="text-sm font-medium">Find anything in your workspace</p>
+      <p className="text-sm font-medium">
+        {inventoryAuthorized ? "Find anything in your workspace" : "Search help and pages"}
+      </p>
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
-        Search titles, names, descriptions, owners, models, and statuses.
+        {inventoryAuthorized
+          ? "Search titles, names, descriptions, owners, models, and statuses."
+          : "Workspace items are unavailable until your account is known."}
       </p>
     </div>
   );

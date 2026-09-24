@@ -29,15 +29,24 @@ export function isImeComposing(event: CompositionKeyState): boolean {
 export function createSearchCompositionGuard() {
   let composing = false;
   let awaitingCommitKey = false;
+  let pointerDuringComposition = false;
 
   return {
     start() {
       composing = true;
       awaitingCommitKey = false;
+      pointerDuringComposition = false;
     },
     end() {
       composing = false;
-      awaitingCommitKey = true;
+      awaitingCommitKey = !pointerDuringComposition;
+      pointerDuringComposition = false;
+    },
+    pointerChoice() {
+      // An observable pointer/touch choice may end composition without a
+      // committing keydown. A subsequent Enter is then a new user action.
+      if (composing) pointerDuringComposition = true;
+      awaitingCommitKey = false;
     },
     ownsKeyDown(event: SearchKeyState): boolean {
       if (composing || isImeComposing(event)) {
