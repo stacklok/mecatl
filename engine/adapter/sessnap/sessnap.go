@@ -99,6 +99,9 @@ type Snapshot struct {
 	// TokenUsage is the canonical durable usage ledger. The writer always emits it;
 	// an omitted empty ledger decodes to the zero value.
 	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage"`
+	// LatestContextOccupancy is the optional, display-only context-meter numerator
+	// from the last completed turn. A missing field remains unknown for legacy snapshots.
+	LatestContextOccupancy *session.ContextOccupancy `json:"latest_context_occupancy,omitempty"`
 	// RetryDisposition and StreamProgress are the typed terminal facts for a failed
 	// model stream. Missing fields decode conservatively to unknown.
 	RetryDisposition session.RetryDisposition `json:"retry_disposition,omitempty"`
@@ -315,6 +318,9 @@ func Of(s *session.Session) (Snapshot, error) {
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
 	}
+	if occupancy, ok := s.LatestContextOccupancy(); ok {
+		snap.LatestContextOccupancy = &occupancy
+	}
 	if s.Conversation != nil {
 		snap.Messages = make([]messageDTO, len(s.Conversation.Messages))
 		for i, m := range s.Conversation.Messages {
@@ -407,6 +413,9 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	}
 	if err := RestoreState(restored, data); err != nil {
 		return nil, err
+	}
+	if s.LatestContextOccupancy != nil {
+		restored.RecordLatestContextOccupancy(*s.LatestContextOccupancy)
 	}
 	if s.PendingWorkspaceEnrollment != nil {
 		if err := restored.BeginWorkspaceEnrollment(*s.PendingWorkspaceEnrollment); err != nil {

@@ -39,7 +39,7 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 	t.Helper()
 	ctx := context.Background()
 
-	t.Run("save-load round trip", func(t *testing.T) {
+	t.Run("TestResumableSessionStatusMetrics_Scenario1_StoreRoundTripAndFailure", func(t *testing.T) {
 		st := newStore(t)
 		want := representativeSession(t, "conf-roundtrip")
 		if err := st.Save(ctx, want); err != nil {
@@ -50,9 +50,15 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 			t.Fatalf("Load: %v", err)
 		}
 		assertSessionEqual(t, got, want)
+
+		legacy := newSession("conf-occupancy-absent")
+		loadedLegacy := roundTrip(t, st, legacy)
+		if occupancy, ok := loadedLegacy.LatestContextOccupancy(); ok {
+			t.Errorf("legacy LatestContextOccupancy = (%+v, true), want absent", occupancy)
+		}
 	})
 
-	t.Run("kind relationship round trip", func(t *testing.T) {
+	t.Run("TestResumableSessionStatusMetrics_Scenario1_AllSessionKindsRoundTrip", func(t *testing.T) {
 		cases := []struct {
 			id   session.SessionID
 			kind session.SessionKind
@@ -69,12 +75,17 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 			t.Run(string(tc.kind), func(t *testing.T) {
 				st := newStore(t)
 				want := newSession(tc.id)
+				want.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: len(tc.id), Estimated: tc.kind == session.SessionKindDebug})
 				if err := want.RestoreSessionMetadata(tc.kind, tc.rel); err != nil {
 					t.Fatalf("RestoreSessionMetadata: %v", err)
 				}
 				got := roundTrip(t, st, want)
 				if got.Kind != tc.kind || !reflect.DeepEqual(got.Relationship, tc.rel) {
 					t.Errorf("metadata = (%q, %+v), want (%q, %+v)", got.Kind, got.Relationship, tc.kind, tc.rel)
+				}
+				wantOccupancy := session.ContextOccupancy{InputTokens: len(tc.id), Estimated: tc.kind == session.SessionKindDebug}
+				if occupancy, ok := got.LatestContextOccupancy(); !ok || occupancy != wantOccupancy {
+					t.Errorf("LatestContextOccupancy = (%+v, %v), want (%+v, true)", occupancy, ok, wantOccupancy)
 				}
 			})
 		}
@@ -751,6 +762,7 @@ func representativeSession(t *testing.T, id session.SessionID) *session.Session 
 	mustOK(t, "RecordUsage", s.RecordUsage(session.Usage{
 		InputTokens: 1200, OutputTokens: 340, CacheReadTokens: 800, CacheWriteTokens: 200,
 	}))
+	s.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 1200, Estimated: true})
 	calls := []session.ToolCall{
 		// Keep Args COMPACT JSON: json.RawMessage round-trips verbatim only
 		// for already-compact payloads.
@@ -819,6 +831,11 @@ func assertSessionEqual(t *testing.T, got, want *session.Session) {
 	}
 	if got.UsageFor(session.UsageKindMain) != want.UsageFor(session.UsageKindMain) {
 		t.Errorf("main usage = %+v want %+v", got.UsageFor(session.UsageKindMain), want.UsageFor(session.UsageKindMain))
+	}
+	gotOccupancy, gotPresent := got.LatestContextOccupancy()
+	wantOccupancy, wantPresent := want.LatestContextOccupancy()
+	if gotPresent != wantPresent || gotOccupancy != wantOccupancy {
+		t.Errorf("LatestContextOccupancy = (%+v, %v), want (%+v, %v)", gotOccupancy, gotPresent, wantOccupancy, wantPresent)
 	}
 	if !got.CreatedAt.Equal(want.CreatedAt) {
 		t.Errorf("CreatedAt = %v want %v", got.CreatedAt, want.CreatedAt)
