@@ -188,6 +188,16 @@ func TestMecatuiBoundedScrollCursor_Scenario1_ClampsContentAndDegenerateBounds(t
 	if len(view.Rows)+chrome > 2 {
 		t.Fatalf("content plus indicators use %d rows, want <= 2: %#v", len(view.Rows)+chrome, view)
 	}
+
+	// A short tail is more useful as content than as a second overflow line.
+	tail := new(List)
+	tail.SetGeometry(12, 4, 1, Clip)
+	tail.SetItems([]ListItem{{ID: "a", Text: "a"}, {ID: "b", Text: "b"}, {ID: "c", Text: "c"}, {ID: "d", Text: "d"}, {ID: "e", Text: "e"}, {ID: "f", Text: "f"}})
+	tail.Scroll(LineDown)
+	view = tail.ViewWithIndicators(4, false)
+	if len(view.Rows) != 3 || view.Rows[2].ID != "d" || view.Below != 0 {
+		t.Fatalf("small below tail consumed content or retained indicator: %#v", view)
+	}
 }
 
 func TestMecatuiBoundedScrollCursor_Scenario1_RefreshPreservesSemanticAnchors(t *testing.T) {

@@ -229,6 +229,10 @@ func (l *List) View() ListView {
 	return ListView{Rows: rows, Above: w.start, Below: len(layout.rows) - w.end}
 }
 
+// overflowIndicatorThreshold keeps a tiny tail visible instead of spending a row
+// on chrome that would obscure it.
+const overflowIndicatorThreshold = 2
+
 // ViewWithIndicators applies the one canonical indicator-adjusted geometry.
 func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 	if capacity <= 0 {
@@ -247,7 +251,7 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 		if v.Above > 0 {
 			needed++
 		}
-		if v.Below > 0 {
+		if v.Below > overflowIndicatorThreshold {
 			needed++
 		}
 		next := min(needed, capacity-1)
@@ -267,7 +271,7 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 	} else {
 		v.Above = 0
 	}
-	if v.Below > 0 && available == 0 {
+	if v.Below <= overflowIndicatorThreshold || available == 0 {
 		v.Below = 0
 	}
 	l.reveal = false

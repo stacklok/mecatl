@@ -30,7 +30,7 @@ func scenarioPaletteState(commands []client.Command) paletteState {
 func TestMecatuiSlashPaletteBoundedList_Scenario1_GeometryAndIndicators(t *testing.T) {
 	for _, width := range []int{24, 48, 80} {
 		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
-			st := scenarioPaletteState(scenarioPaletteCommands(maxPaletteRows + 2))
+			st := scenarioPaletteState(scenarioPaletteCommands(maxPaletteRows + 3))
 			got := renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", width, maxPaletteRows)
 			if got == "" {
 				t.Fatal("usable geometry suppressed the palette")
