@@ -674,9 +674,9 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 	case scrollback.DeliveryCardSnapshot:
 		return r.renderDeliverySnapshot(idx, s, p, expand)
 	case scrollback.SubagentCardSnapshot:
-		return r.renderDelegationBlock(idx, subagentBlockFromSnapshot(s, p), expand)
+		return r.renderSubagentSnapshot(idx, s, p, expand)
 	case scrollback.TeamCardSnapshot:
-		return r.renderDelegationBlock(idx, teamBlockFromSnapshot(s, p), expand)
+		return r.renderTeamSnapshot(idx, s, p, expand)
 	default:
 		return ""
 	}
@@ -758,27 +758,6 @@ func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
 		}
 	}
 	return interBlockBlankLinesCompact
-}
-
-// renderDelegationBlock retains the existing Subagent and Team presentation
-// path. Ordinary snapshots use their family-specific adapters above.
-func (r *renderer) renderDelegationBlock(idx int, b *block, expand bool) string {
-	kind := scrollback.KindSubagent
-	if b.team {
-		kind = scrollback.KindTeam
-	}
-	return r.renderCachedSnapshot(idx, b.id, b.rev, expand, func(blockID uint64) blockRenderOutput {
-		r.cardPrepares++
-		prepared := r.prepareToolCard(b, expand).Prepared
-		out := prepared.Text()
-		if r.width > r.indent {
-			out = r.indentLines(out)
-		}
-		return blockRenderOutput{
-			text: out,
-			rows: blockProvenanceRows(prepared, blockID, kind, r.indent, r.width),
-		}
-	})
 }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED

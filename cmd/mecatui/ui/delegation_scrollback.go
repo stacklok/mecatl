@@ -226,6 +226,74 @@ func clientRouting(in scrollback.RoutingDecision) *client.RoutingDecision {
 	return out
 }
 
+// subagentCardPresentation is the renderer-owned, immutable adaptation of a
+// Subagent snapshot. It intentionally contains only the fields its card renders.
+type subagentCardPresentation struct {
+	name, arguments, result string
+	resolved, isError       bool
+	artifacts               []client.ContentBlock
+	goal, current           string
+	trace                   []teamTrace
+	toolCount               int
+	usage                   client.Usage
+	stop                    string
+	durationMS              int64
+	done                    bool
+	routedCategory          string
+	routedModel             string
+	routingReason           string
+	model                   string
+	routing                 *client.RoutingDecision
+}
+
+func subagentCardPresentationFromSnapshot(p scrollback.SubagentCardSnapshot) subagentCardPresentation {
+	return subagentCardPresentation{
+		name: p.Call.Name, arguments: p.Call.Arguments, resolved: p.Resolved,
+		result: p.Result.Body, isError: p.Result.IsError, artifacts: contentBlocks(p.Result.Artifacts),
+		goal: p.Start.Goal, current: p.Update.Current, trace: traceFromScroll(p.Update.Trace),
+		toolCount: p.Update.ToolCount, usage: clientUsage(p.Update.Usage), stop: p.Update.Stop,
+		durationMS: p.Update.DurationMS, done: p.Update.Done,
+		routedCategory: p.Start.RoutedCategory, routedModel: p.Start.RoutedModel,
+		routingReason: p.Start.RoutingReason, model: p.Start.Model, routing: clientRouting(p.Start.Routing),
+	}
+}
+
+// teamCardPresentation is the renderer-owned, immutable adaptation of a Team
+// snapshot. Team overlay consumers deliberately retain their separate ui.block path.
+type teamCardPresentation struct {
+	name, arguments, result string
+	resolved, isError       bool
+	artifacts               []client.ContentBlock
+	teamID                  string
+	lanes                   []teamLane
+	tasks                   []teamTask
+	findings                []teamFinding
+	rounds                  int
+	stop                    string
+	usage                   client.Usage
+	done                    bool
+}
+
+func teamCardPresentationFromSnapshot(p scrollback.TeamCardSnapshot) teamCardPresentation {
+	out := teamCardPresentation{
+		name: p.Call.Name, arguments: p.Call.Arguments, resolved: p.Resolved,
+		result: p.Result.Body, isError: p.Result.IsError, artifacts: contentBlocks(p.Result.Artifacts),
+		teamID: p.Update.TeamID, rounds: p.Update.Rounds, stop: p.Update.Stop,
+		usage: clientUsage(p.Update.Usage), done: p.Update.Done,
+		lanes: make([]teamLane, len(p.Update.Lanes)), tasks: make([]teamTask, len(p.Update.Tasks)), findings: make([]teamFinding, len(p.Update.Findings)),
+	}
+	for i, lane := range p.Update.Lanes {
+		out.lanes[i] = teamLane{name: lane.Name, sessionID: lane.SessionID, role: lane.Role, mutating: lane.Mutating, lead: lane.Lead, routedCategory: lane.RoutedCategory, routedModel: lane.RoutedModel, routingReason: lane.RoutingReason, routingDecision: clientRouting(lane.Routing), model: lane.Model, current: lane.Current, toolCount: lane.ToolCount, usage: clientUsage(lane.Usage), trace: traceFromScroll(lane.Trace), idle: lane.Idle, stopped: lane.Stopped, stopReason: lane.StopReason, errorRounds: lane.ErrorRounds, cause: lane.Cause, ctxUsed: lane.ContextUsed, ctxWindow: lane.ContextWindow}
+	}
+	for i, task := range p.Update.Tasks {
+		out.tasks[i] = teamTask{id: task.ID, desc: task.Description, state: task.State, assignee: task.Assignee, deps: append([]string(nil), task.Dependencies...)}
+	}
+	for i, finding := range p.Update.Findings {
+		out.findings[i] = teamFinding{member: finding.Member, body: finding.Body}
+	}
+	return out
+}
+
 func subagentBlockFromSnapshot(s scrollback.BlockSnapshot, p scrollback.SubagentCardSnapshot) *block {
 	b := &block{id: uint64(s.ID), rev: rendererRevision(s.Revision), kind: blockTool}
 	b.toolID, b.toolName, b.toolArgs, b.resolved, b.resultBody, b.resultError = p.Call.ID, p.Call.Name, p.Call.Arguments, p.Resolved, p.Result.Body, p.Result.IsError

@@ -239,6 +239,64 @@ func TestMecatuiTypedScrollbackModel_Scenario3_DelegationCardsUseTypedPresentati
 			if ok && fn.Name.Name == "delegationBlockFromSnapshot" {
 				t.Fatal("Subagent and Team snapshots are still converted through a generic union adapter")
 			}
+			if !ok || fn.Name.Name != "renderSnapshot" {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				ident, ok := call.Fun.(*ast.Ident)
+				if ok && (ident.Name == "subagentBlockFromSnapshot" || ident.Name == "teamBlockFromSnapshot") {
+					t.Errorf("delegation renderer still routes typed snapshot through ui.block: %s", ident.Name)
+				}
+				return true
+			})
+		}
+	}
+}
+
+func TestMecatuiTypedScrollbackModel_Scenario3_DelegationSnapshotPresentationParity(t *testing.T) {
+	var c conversation
+	c.addTool("subagent", "Subagent", `{"prompt":"inspect"}`)
+	if !c.setSubagentStart("subagent", "inspect", "", "", "", "model") {
+		t.Fatal("start subagent")
+	}
+	if !c.addSubagentTool(client.SubagentMsg{ParentCallID: "subagent", Kind: client.SubagentTool, InnerKind: "tool.call", ToolName: "Read", Detail: "src/main.go", ToolCount: 1}) {
+		t.Fatal("update subagent")
+	}
+	c.addTool("team", "Team", `{}`)
+	if !c.setTeamStart("team", "team-1", []client.TeamMemberSpec{{Name: "lead", Lead: true, Model: "model"}}) {
+		t.Fatal("start team")
+	}
+	if !c.addTeamMember(client.TeamMsg{ParentCallID: "team", Member: "lead", InnerKind: "tool.call", ToolName: "Read", Detail: "src/main.go"}) {
+		t.Fatal("update team")
+	}
+
+	for _, expand := range []bool{false, true} {
+		for i := 0; i < c.scrollback.Len(); i++ {
+			snapshot := c.scrollback.SnapshotAt(i)
+			var legacy *block
+			switch payload := snapshot.Payload.(type) {
+			case scrollback.SubagentCardSnapshot:
+				legacy = subagentBlockFromSnapshot(snapshot, payload)
+			case scrollback.TeamCardSnapshot:
+				legacy = teamBlockFromSnapshot(snapshot, payload)
+			default:
+				continue
+			}
+			typed := newTestRenderer()
+			legacyRenderer := newTestRenderer()
+			for _, width := range []int{1, 48} {
+				typed.setWidth(width)
+				legacyRenderer.setWidth(width)
+				got := typed.renderSnapshot(i, snapshot, expand)
+				want := legacyRenderer.renderBlock(i, legacy, expand)
+				if got, want := stripANSIstr(got), stripANSIstr(want); got != want {
+					t.Fatalf("%T width=%d expand=%t changed delegation presentation\n got: %q\nwant: %q", snapshot.Payload, width, expand, got, want)
+				}
+			}
 		}
 	}
 }
