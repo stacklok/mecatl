@@ -269654,6 +269654,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790263889323,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "545ffc6ba21ec409017ec456b4bee451dd5f0de6",
+          "message": "feat(studio): add public status and popup sign-in recovery (#1871)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>",
+          "timestamp": "2026-09-24T17:49:14+02:00",
+          "tree_id": "926560a8588ad39eb093153b4533bfe3e27ce3aa",
+          "url": "https://github.com/stacklok/mecatl/commit/545ffc6ba21ec409017ec456b4bee451dd5f0de6"
+        },
+        "date": 1790265644113,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3318.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -353596,6 +353635,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790265638774,
+  "lastUpdate": 1790265645173,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
