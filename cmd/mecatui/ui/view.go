@@ -742,9 +742,16 @@ func (m Model) contextWindow() int64 {
 func (m Model) fitFooter(left string, width int) string {
 	th := m.deps.Theme
 	window := m.contextWindow()
-	meter := renderContextMeter(th, m.contextTokens, window)
+	contextKnown := !m.contextUnknown || m.contextKnown || m.contextTokens > 0
+	meter := renderContextMeterState(th, m.contextTokens, window, contextKnown, m.contextEstimated)
 	meterCompact := renderContextMeterCompact(th, m.contextTokens, window)
 	meterMinimal := renderContextMeterMinimal(th, m.contextTokens, window)
+	if !contextKnown {
+		meterCompact, meterMinimal = meter, meter
+	} else if m.contextEstimated {
+		meterCompact = "ctx ~" + strings.TrimPrefix(meterCompact, "ctx ")
+		meterMinimal = "ctx ~" + strings.TrimPrefix(meterMinimal, "ctx ")
+	}
 
 	// The agents prefix is the combined team + subagent-fleet advertisement, prepended
 	// to the right side at three tiers (full/medium/compact). Each is built from up to

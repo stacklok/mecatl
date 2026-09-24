@@ -16,14 +16,20 @@ import (
 
 // SessionSnapshot is the proto-free subset of a server session snapshot mecatui needs.
 type SessionSnapshot struct {
-	Mode            string
-	State           string
-	Placement       Placement
-	CreatedAt       int64
-	ResolvedModel   ResolvedModel
-	Title           string
-	TitleProvenance string
-	TitleRevision   uint64
+	Mode          string
+	State         string
+	Placement     Placement
+	CreatedAt     int64
+	ResolvedModel ResolvedModel
+	// Usage is the canonical cumulative main-session ledger. It is distinct from
+	// ContextOccupancy, which is only the latest context-meter display state.
+	Usage Usage
+	// ContextOccupancy is nil when a legacy or pre-turn snapshot has no known
+	// context-meter numerator.
+	ContextOccupancy *ContextOccupancy
+	Title            string
+	TitleProvenance  string
+	TitleRevision    uint64
 	// Capabilities is the server's feature-advertisement snapshot from the Session
 	// proto (the SAME global value CreateSessionResponse carries), with per-session
 	// media overlaid when SessionCapabilities is present. A client that reloads or
@@ -33,20 +39,36 @@ type SessionSnapshot struct {
 	Capabilities Capabilities
 }
 
+// ContextOccupancy is the optional latest context-meter display value from a
+// session snapshot. It is neither lifetime usage nor a model budget.
+type ContextOccupancy struct {
+	InputTokens int64
+	Estimated   bool
+}
+
+func contextOccupancyFrom(occupancy *mecatlv1.ContextOccupancy) *ContextOccupancy {
+	if occupancy == nil {
+		return nil
+	}
+	return &ContextOccupancy{InputTokens: occupancy.GetInputTokens(), Estimated: occupancy.GetEstimated()}
+}
+
 func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 	if s == nil {
 		return SessionSnapshot{Mode: ModeDefaultString}
 	}
 	return SessionSnapshot{
-		Mode:            ModeString(s.GetMode()),
-		State:           s.GetState(),
-		Placement:       placementFrom(s.GetPlacement()),
-		CreatedAt:       s.GetCreatedAtUnix(),
-		ResolvedModel:   resolvedModelFrom(s.GetResolvedModel()),
-		Title:           titleFromProto(s),
-		TitleProvenance: titleProvenanceFromProto(s),
-		TitleRevision:   s.GetTitleMetadata().GetRevision(),
-		Capabilities:    capabilitiesWithSessionMedia(nil, s.GetSessionCapabilities()),
+		Mode:             ModeString(s.GetMode()),
+		State:            s.GetState(),
+		Placement:        placementFrom(s.GetPlacement()),
+		CreatedAt:        s.GetCreatedAtUnix(),
+		ResolvedModel:    resolvedModelFrom(s.GetResolvedModel()),
+		Usage:            usageFrom(s.GetTokenUsage()["main"].GetTotal()),
+		ContextOccupancy: contextOccupancyFrom(s.GetLatestContextOccupancy()),
+		Title:            titleFromProto(s),
+		TitleProvenance:  titleProvenanceFromProto(s),
+		TitleRevision:    s.GetTitleMetadata().GetRevision(),
+		Capabilities:     capabilitiesWithSessionMedia(nil, s.GetSessionCapabilities()),
 	}
 }
 

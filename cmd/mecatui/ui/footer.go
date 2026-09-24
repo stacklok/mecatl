@@ -144,23 +144,34 @@ func ctxLabel(frac float64) string {
 	return label
 }
 
-// renderContextMeter renders the FULL-fidelity context segment: a per-band bar +
-// percentage (+ ⚠ in danger) + used/total, e.g.
-// "ctx ▓▓▓▓▓▓░░ 70% · 140K/200K". With an unknown window (window<=0) it degrades
-// to just the current size ("ctx 7.9K"). The bar/percentage carry the
-// ctxOk/ctxWarn/ctxDanger colour AND a per-band glyph so pressure is legible
-// without colour.
+// renderContextMeter renders the FULL-fidelity context segment for a known
+// numerator. renderContextMeterState additionally handles legacy snapshots where
+// the numerator is honestly unknown.
 func renderContextMeter(th theme.Theme, used, window int64) string {
+	return renderContextMeterState(th, used, window, true, false)
+}
+
+func renderContextMeterState(th theme.Theme, used, window int64, known, estimated bool) string {
+	if !known {
+		if window <= 0 {
+			return "ctx ?"
+		}
+		return "ctx ?/" + humanizeTokens(window)
+	}
 	if used < 0 {
 		used = 0
 	}
+	prefix := ""
+	if estimated {
+		prefix = "~"
+	}
 	if window <= 0 {
-		return "ctx " + humanizeTokens(used)
+		return "ctx " + prefix + humanizeTokens(used)
 	}
 	frac := ctxFraction(used, window)
 	style := th.Style(ctxPressureSlot(frac))
 	meter := style.Render(ctxBar(frac) + " " + ctxLabel(frac))
-	return "ctx " + meter + " · " + humanizeTokens(used) + "/" + humanizeTokens(window)
+	return "ctx " + meter + " · " + prefix + humanizeTokens(used) + "/" + humanizeTokens(window)
 }
 
 // renderContextMeterCompact is the mid-fidelity tier: the coloured per-band bar +
