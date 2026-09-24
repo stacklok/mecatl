@@ -240738,6 +240738,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790229618584,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2b70b44c656914818422ff8f5ee6fa37fde841c4",
+          "message": "docs: model provider discovery and model metadata (#1800)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T09:00:19+03:00",
+          "tree_id": "037b7db2b9e4ee7d9ce78d5add644d082dd0ed4b",
+          "url": "https://github.com/stacklok/mecatl/commit/2b70b44c656914818422ff8f5ee6fa37fde841c4"
+        },
+        "date": 1790230312959,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -349714,6 +349748,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790230310283,
+  "lastUpdate": 1790230314204,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
