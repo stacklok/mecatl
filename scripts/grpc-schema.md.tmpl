@@ -4,10 +4,18 @@
 {{- define "table-safe" -}}
 {{- . | nobr | replace "\r" " " | replace "\n" " " | html | replace "|" "&#124;" | replace "{" "&#123;" | replace "}" "&#125;" -}}
 {{- end -}}
+{{- define "rpc-description" -}}
+{{- if gt (len .Description) 240 -}}
+<details className="grpc-description"><summary aria-label="Toggle description for {{.Name}}"><span aria-hidden="true" className="grpc-description-preview">{{template "table-safe" .Description}}</span><span aria-hidden="true" className="grpc-description-expand">Read more</span><span aria-hidden="true" className="grpc-description-collapse">Read less</span></summary><div className="grpc-description-full">{{template "table-safe" .Description}}</div></details>
+{{- else -}}
+{{template "table-safe" .Description}}
+{{- end -}}
+{{- end -}}
 ---
 title: gRPC schema reference
 description: Look up Mecatl gRPC services, RPCs, messages, enums, and fields.
 sidebar_position: 3
+hide_table_of_contents: true
 ---
 
 # gRPC schema reference
@@ -30,11 +38,15 @@ HTTP/SSE, see [Connect with gRPC or HTTP](/building/deployment/grpc-http.md).
 
 {{template "safe" .Description}}
 
-| RPC | Request | Response | Client streaming | Server streaming | Description |
-|---|---|---|---|---|---|
+<div className="grpc-service-table">
+
+| RPC details | Client streaming | Server streaming | Description |
+|---|---|---|---|
 {{range .Methods -}}
-| `{{.Name}}` | `{{.RequestLongType}}` | `{{.ResponseLongType}}` | {{if .RequestStreaming}}Yes{{else}}No{{end}} | {{if .ResponseStreaming}}Yes{{else}}No{{end}} | {{template "table-safe" .Description}} |
+| **RPC:** `{{.Name}}`<br />**Request:** `{{.RequestLongType}}`<br />**Response:** `{{.ResponseLongType}}` | {{if .RequestStreaming}}Yes{{else}}No{{end}} | {{if .ResponseStreaming}}Yes{{else}}No{{end}} | {{template "rpc-description" .}} |
 {{end}}
+</div>
+
 {{end -}}
 {{end}}
 ## Messages and enums

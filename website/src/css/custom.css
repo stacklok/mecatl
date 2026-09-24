@@ -216,6 +216,63 @@ td, th {
   padding: 0.6rem 0.85rem;
 }
 
+.grpc-service-table td {
+  vertical-align: top;
+}
+
+.grpc-description summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.grpc-description summary::-webkit-details-marker {
+  display: none;
+}
+
+.grpc-description-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.grpc-description-expand,
+.grpc-description-collapse {
+  color: var(--ifm-link-color);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.grpc-description-expand {
+  display: inline-block;
+  margin-top: 0.3rem;
+}
+
+.grpc-description-collapse,
+.grpc-description[open] .grpc-description-preview,
+.grpc-description[open] .grpc-description-expand {
+  display: none;
+}
+
+.grpc-description[open] .grpc-description-collapse {
+  display: inline;
+}
+
+.grpc-description[open] summary {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+}
+
+.grpc-description[open] {
+  position: relative;
+  padding-bottom: 1.6rem;
+}
+
+.grpc-description-full {
+  margin-top: 0.3rem;
+}
+
 tr:nth-child(even) {
   background: rgba(255, 255, 255, 0.02);
 }
