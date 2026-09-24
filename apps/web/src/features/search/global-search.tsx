@@ -447,7 +447,7 @@ function SearchPalette({
         aria-keyshortcuts="Control+K Meta+K"
         aria-label="Search"
         disabled={checkingAuth}
-        className="flex size-11 items-center justify-center gap-2 rounded-full px-2.5 text-nav-search-text transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nav-search-text min-[500px]:w-full min-[900px]:justify-start min-[900px]:px-3"
+        className="flex size-11 items-center justify-center gap-2 rounded-full border border-nav-search-border px-2.5 text-nav-search-text transition-colors hover:border-nav-search-text hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-nav-search-text min-[500px]:w-full min-[900px]:justify-start min-[900px]:px-3"
         onClick={(event) => void openSearch(event.currentTarget)}
         type="button"
       >
