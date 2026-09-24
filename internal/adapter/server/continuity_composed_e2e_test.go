@@ -17,9 +17,12 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -49,6 +52,8 @@ type continuityFixture struct {
 	gateway  *httptest.Server
 	profiles []mcpbroker.ToolHiveProfile
 	switcher *rebindSwitchConn
+	calls    *failingConn
+	store    *flakyStore
 	workload *session.Principal
 	owner    context.Context
 	service  *Service
@@ -92,20 +97,22 @@ func newContinuityFixture(t *testing.T) *continuityFixture {
 		{Name: "backend-b", URL: f.mcpB.server.URL, Auth: "oauth", OAuth: &mcpbroker.ToolHiveOAuth{Issuer: f.issuerB.server.URL, ClientID: f.issuerB.clientID, Scopes: []string{"openid"}, RequestRefreshToken: true}},
 	}
 	f.switcher = &rebindSwitchConn{}
+	f.calls = &failingConn{next: f.switcher}
 	f.startBroker()
-	pinned, err := mcpbrokergrpc.NewClientWithConfig(f.switcher, mcpbrokergrpc.DefaultConfig())
+	pinned, err := mcpbrokergrpc.NewClientWithConfig(f.calls, mcpbrokergrpc.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.store = &flakyStore{SessionStore: memstore.New()}
 	svc, err := NewService(Config{
-		Engine: brokerEngineResult().Engine, Store: memstore.New(),
+		Engine: brokerEngineResult().Engine, Store: f.store,
 		PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test", NewID: func() session.SessionID { return "continuity-e2e" },
 		MCPBroker: pinned, MCPBrokerClose: func() error { return nil }, WorkspaceEnrollment: true,
 		MCPBrokerFactory: func(context.Context) (brokercontract.Service, func() error, error) {
 			f.mu.Lock()
 			f.factoryCalls++
 			f.mu.Unlock()
-			fresh, freshErr := mcpbrokergrpc.NewClientWithConfig(f.switcher, mcpbrokergrpc.DefaultConfig())
+			fresh, freshErr := mcpbrokergrpc.NewClientWithConfig(f.calls, mcpbrokergrpc.DefaultConfig())
 			return fresh, func() error { return nil }, freshErr
 		},
 		BrokerWorkloadIdentity: f.workload,
@@ -348,5 +355,203 @@ func TestBrokerCredentialContinuity_RemoteProfileChangeInvalidatesCustody(t *tes
 	}
 	if _, custody := f.stored().BrokerCredentialCustody(); custody {
 		t.Fatal("custody survived a remote broker profile change")
+	}
+}
+
+// failingConn fails the next call to one gRPC method, simulating a broker lost
+// or unreachable at an exact point in the host's sequence.
+type failingConn struct {
+	next  grpc.ClientConnInterface
+	mu    sync.Mutex
+	fail  string
+	count map[string]int
+}
+
+func (c *failingConn) calls(method string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.count[method]
+}
+
+func (c *failingConn) failNext(method string) {
+	c.mu.Lock()
+	c.fail = method
+	c.mu.Unlock()
+}
+
+func (c *failingConn) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
+	c.mu.Lock()
+	if c.count == nil {
+		c.count = map[string]int{}
+	}
+	c.count[method]++
+	fail := c.fail == method
+	if fail {
+		c.fail = ""
+	}
+	c.mu.Unlock()
+	if fail {
+		return status.Error(codes.Unavailable, "injected broker loss")
+	}
+	return c.next.Invoke(ctx, method, args, reply, opts...)
+}
+
+func (c *failingConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	return c.next.NewStream(ctx, desc, method, opts...)
+}
+
+// B1 is lost after the host durably saved pending+custody but before custody
+// Commit. B2 must Commit the still-staged custody, then Recover, and complete
+// the original enrollment with a fresh binding and no second browser flow.
+func TestBrokerCredentialContinuity_Scenario2_SaveCommitCrashOrdering(t *testing.T) {
+	f := newContinuityFixture(t)
+	started, err := f.service.ConnectWorkspaceServices(t.Context(), f.session.ID)
+	if err != nil || started.Status != brokercontract.WorkspaceEnrollmentPending {
+		t.Fatalf("start = %#v, %v", started, err)
+	}
+	client := f.gateway.Client()
+	client.Timeout = 8 * time.Second
+	response, err := client.Get(started.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	f.calls.failNext("/mecatl.broker.v1.BrokerService/CommitCredentialCustody")
+	if _, err := f.service.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil {
+		t.Fatal("completion succeeded although custody Commit was lost")
+	}
+	pending := f.stored()
+	if _, stillPending := pending.PendingWorkspaceEnrollment(); !stillPending {
+		t.Fatal("lost Commit completed the enrollment")
+	}
+	if _, custody := pending.BrokerCredentialCustody(); !custody {
+		t.Fatal("staged custody was not durable before Commit")
+	}
+	oldBinding := pending.ExternalBinding
+	initialA, _ := f.issuerA.counts()
+
+	f.replaceBroker()
+	f.service.closeSessionLocal(f.session.ID)
+	connected, err := f.service.ConnectWorkspaceServices(t.Context(), f.session.ID)
+	if err != nil || connected.Status != brokercontract.WorkspaceEnrollmentConnected || connected.Ref.ID != started.Ref.ID {
+		t.Fatalf("recovery after lost Commit = %#v, %v; want the original enrollment connected", connected, err)
+	}
+	recovered := f.stored()
+	if _, stillPending := recovered.PendingWorkspaceEnrollment(); stillPending || recovered.ExternalBinding == oldBinding {
+		t.Fatalf("pending=%v binding %q -> %q; want completed with a fresh binding", stillPending, oldBinding, recovered.ExternalBinding)
+	}
+	if a, _ := f.issuerA.counts(); a != initialA {
+		t.Fatal("recovery repeated the browser authorization")
+	}
+}
+
+// Recovery itself never re-executes a protected call: upstream sees no calls
+// until the host explicitly runs one on the recovered catalogue.
+func TestBrokerCredentialContinuity_Scenario3_NoOuterOrExecutionRecovery(t *testing.T) {
+	f := newContinuityFixture(t)
+	f.enroll()
+	whoami := toolFromFixture(t, f.latestTools(), "mcp__backend-a__whoami")
+	if result, err := whoami.Execute(t.Context(), session.NewToolCall("before-replacement", whoami.Spec().Name, json.RawMessage(`{}`)), tool.Environment{}); err != nil || result.IsError {
+		t.Fatalf("pre-replacement call = %+v, %v", result, err)
+	}
+	_, callsBefore := f.mcpA.snapshot()
+	f.replaceBroker()
+	f.rebuildEngineAfterReplacement()
+	if _, callsAfter := f.mcpA.snapshot(); callsAfter != callsBefore {
+		t.Fatalf("recovery dispatched %d upstream tool calls on its own", callsAfter-callsBefore)
+	}
+}
+
+// flakyStore can make the next Save land and still report an error, the
+// ambiguous outcome a store gives when its reply is lost.
+type flakyStore struct {
+	port.SessionStore
+	mu               sync.Mutex
+	landThenFailNext bool
+}
+
+func (s *flakyStore) Save(ctx context.Context, sess *session.Session) error {
+	s.mu.Lock()
+	ambiguous := s.landThenFailNext
+	s.landThenFailNext = false
+	s.mu.Unlock()
+	if err := s.SessionStore.Save(ctx, sess); err != nil {
+		return err
+	}
+	if ambiguous {
+		return errors.New("store reply lost")
+	}
+	return nil
+}
+
+const recoverMethod = "/mecatl.broker.v1.BrokerService/RecoverCredentialAttachment"
+
+// The recovered-authority Save lands but reports an error. The host must
+// reload, see the persisted B2 binding, keep ownership (never Abort), Commit,
+// and finish; the session keeps working on B2.
+func TestBrokerCredentialContinuity_Scenario2_AmbiguousAdoptionSaveCommits(t *testing.T) {
+	f := newContinuityFixture(t)
+	f.enroll()
+	oldBinding := f.stored().ExternalBinding
+	f.replaceBroker()
+	f.store.mu.Lock()
+	f.store.landThenFailNext = true
+	f.store.mu.Unlock()
+	f.rebuildEngineAfterReplacement()
+	if got := f.stored().ExternalBinding; got == oldBinding {
+		t.Fatalf("binding stayed %q after an ambiguous but durable adoption save", got)
+	}
+	whoami := toolFromFixture(t, f.latestTools(), "mcp__backend-a__whoami")
+	if result, err := whoami.Execute(t.Context(), session.NewToolCall("after-ambiguous-save", whoami.Spec().Name, json.RawMessage(`{}`)), tool.Environment{}); err != nil || result.IsError {
+		t.Fatalf("recovered tool after ambiguous save = %+v, %v", result, err)
+	}
+}
+
+// Host assertion boundary: if the host's own workload identity changed since
+// custody was staged, the host invalidates custody and never asks B2 to recover.
+func TestBrokerCredentialContinuity_Scenario2_HostAssertionBoundary(t *testing.T) {
+	f := newContinuityFixture(t)
+	f.enroll()
+	f.replaceBroker()
+	f.service.cfg.BrokerWorkloadIdentity = &session.Principal{Issuer: f.workload.Issuer, Subject: "system:serviceaccount:agents:rotated"}
+	f.service.closeSessionLocal(f.session.ID)
+	sess := f.stored()
+	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	if _, err := f.service.buildAndRegisterSessionEngine(t.Context(), sess, sel, profileForSession(sess), sess.Mode, true); err == nil {
+		t.Fatal("recovery succeeded after the host workload identity changed")
+	}
+	if got := f.calls.calls(recoverMethod); got != 0 {
+		t.Fatalf("host sent %d Recover RPCs after its workload identity changed", got)
+	}
+	if _, custody := f.stored().BrokerCredentialCustody(); custody {
+		t.Fatal("custody survived a host workload identity change")
+	}
+}
+
+// A session past its first prompt keeps its protected continuations
+// interrupted: after broker replacement the host refuses recovery, never
+// contacts B2 for it, and does not destroy the custody.
+func TestBrokerCredentialContinuity_Scenario2_ProtectedContinuationNeverRecovers(t *testing.T) {
+	f := newContinuityFixture(t)
+	f.enroll()
+	sess := f.stored()
+	if err := sess.RecordUserPrompt("already started", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.cfg.Store.Save(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	f.replaceBroker()
+	f.service.closeSessionLocal(f.session.ID)
+	sess = f.stored()
+	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	if _, err := f.service.buildAndRegisterSessionEngine(t.Context(), sess, sel, profileForSession(sess), sess.Mode, true); err == nil {
+		t.Fatal("a session with history recovered broker authority")
+	}
+	if got := f.calls.calls(recoverMethod); got != 0 {
+		t.Fatalf("host sent %d Recover RPCs for a session past its first prompt", got)
+	}
+	if _, custody := f.stored().BrokerCredentialCustody(); !custody {
+		t.Fatal("refusing recovery destroyed custody")
 	}
 }

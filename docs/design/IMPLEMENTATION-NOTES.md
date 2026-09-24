@@ -5940,8 +5940,12 @@ attachment lock with single-flight per handle and an exact-compare before publis
 Invalidation ordering is shipped. A composed offline proof
 (`internal/adapter/server/continuity_composed_e2e_test.go`) runs two independent broker
 processes over one encrypted miniredis through the real broker gRPC adapter, real ToolHive
-browser enrollment and middleware, and recovered tool execution; the remaining named
-Scenario 2/3 cases are component-level and the gRPC peer is not JWT-verified there.
+browser enrollment and middleware, and recovered tool execution. It covers replacement
+recovery, fresh outer state, fixed retention, interrupted browser flows, a Commit lost before
+B1 died, an ambiguous adoption Save, the host assertion boundary, sessions past their first
+prompt never recovering, no execution replay, and remote profile changes. The gRPC peer
+there is a fixed workload principal rather than a verified workload JWT, and parked-call
+interruption across replacement is proven by the internal/app restart-boundary test.
 No caller may infer recovery from custody alone. A missing or unreadable host workload
 identity fails closed without destroying custody (it is unknown, not rotated).
 Invalidation captures the stored custody guard and exact B2 binding, clears and saves host
