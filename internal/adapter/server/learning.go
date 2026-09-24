@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
@@ -109,7 +110,7 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	r, err := s.cfg.ReflectSession(accountingCtx, sess)
 	if len(r.Usage.Buckets) > 0 {
 		if stillOwner() {
-			sess.RecordAuxiliaryUsage(r.Usage)
+			sess.RecordAuxiliaryUsage(agent.RemapAuxiliaryUsage(accountingCtx, s.cfg.Diagnostics, session.UsageKindReflection, r.Usage))
 			if saveErr := s.saveSession(accountingCtx, sess); saveErr != nil {
 				s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "reflection usage dropped")
 			}

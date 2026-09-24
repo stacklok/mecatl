@@ -210,3 +210,55 @@ func TestReflectSessionAuxiliaryUsageRequiresCurrentOwnership(t *testing.T) {
 		}
 	})
 }
+
+func TestAuxiliaryTokenUsage_Scenario2_ReflectionRecordsSelectedModel(t *testing.T) {
+	reflectionUsage := session.Usage{InputTokens: 5, OutputTokens: 2}
+	secondModelUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
+	injectedUsage := session.Usage{InputTokens: 13, OutputTokens: 8}
+	reflector := func(context.Context, *session.Session) (ReflectionReceipt, error) {
+		return ReflectionReceipt{Disposition: "completed", Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+			session.UsageKindReflection: {Models: map[string]session.Usage{
+				"reflection-provider/reflection-model": reflectionUsage,
+				"second-provider/second-model":         secondModelUsage,
+			}},
+			session.UsageKindMain:   {Models: map[string]session.Usage{"injected/main": injectedUsage}},
+			session.UsageKindRouter: {Models: map[string]session.Usage{"injected/router": injectedUsage}},
+		}}}, nil
+	}
+	store := &auxiliaryUsageStore{SessionStore: memstore.New()}
+	id := session.SessionID("reflection-usage-purpose")
+	if err := store.Save(t.Context(), completedAuxiliaryUsageSession(t, id)); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{cfg: Config{
+		Store: store, ReflectSession: reflector, Diagnostics: port.NopDiagnostics{},
+		MutationCapability: NewSessionMutationCapability(false),
+	}}
+	if _, err := svc.ReflectSession(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Load(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := persisted.TokenUsageSnapshot()
+	reflection := ledger[session.UsageKindReflection]
+	if got, want := reflection.Models["reflection-provider/reflection-model"], reflectionUsage; got != want {
+		t.Fatalf("reflection model usage = %+v, want %+v", got, want)
+	}
+	if got, want := reflection.Models["second-provider/second-model"], secondModelUsage; got != want {
+		t.Fatalf("second reflection model usage = %+v, want %+v", got, want)
+	}
+	if got, want := reflection.Models["injected/main"], injectedUsage; got != want {
+		t.Fatalf("remapped main model usage = %+v, want %+v", got, want)
+	}
+	if got, want := reflection.Models["injected/router"], injectedUsage; got != want {
+		t.Fatalf("remapped router model usage = %+v, want %+v", got, want)
+	}
+	if got, want := reflection.Total, reflectionUsage.Add(secondModelUsage).Add(injectedUsage).Add(injectedUsage); got != want {
+		t.Fatalf("reflection total = %+v, want %+v", got, want)
+	}
+	if len(ledger) != 1 {
+		t.Fatalf("usage ledger = %#v, want reflection only", ledger)
+	}
+}
