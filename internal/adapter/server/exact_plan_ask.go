@@ -38,8 +38,9 @@ func (s *Service) ResolvePlanAsk(ctx context.Context, id session.SessionID, expe
 	}
 	s.mu.Lock()
 	st := s.runs[id]
+	live := st != nil && st.run != nil
 	s.mu.Unlock()
-	if st != nil && st.run != nil {
+	if live {
 		return s.resolveLivePlanAsk(ctx, id, st, expectedRunID, askID, verdict, generation)
 	}
 	return s.resolvePersistedPlanAsk(ctx, id, expectedRunID, askID, verdict, generation)
@@ -112,8 +113,9 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 	}
 	s.mu.Lock()
 	st := s.runs[id]
+	live := st != nil && st.run != nil
 	s.mu.Unlock()
-	if st != nil && st.run != nil {
+	if live {
 		return s.resolveLivePlanAsk(ctx, id, st, expectedRunID, askID, verdict, generation)
 	}
 	sess, err := s.GetSession(ctx, id)
