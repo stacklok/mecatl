@@ -251,7 +251,10 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 		if v.Above > 0 {
 			needed++
 		}
-		if v.Below > overflowIndicatorThreshold {
+		// Reserving the lower indicator hides one additional content row. Plan for
+		// that row so the final projection shows the indicator exactly when its
+		// final below count exceeds the threshold.
+		if v.Below+1 > overflowIndicatorThreshold {
 			needed++
 		}
 		next := min(needed, capacity-1)
