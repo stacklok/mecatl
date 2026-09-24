@@ -224,10 +224,10 @@ func (d *providerDiscovery) fetch(pid string, lister modelLister, attempt *disco
 
 func (d *providerDiscovery) complete(pid string, attempt *discoveryAttempt, models []modelEntry, err error) {
 	d.tail.Lock()
-	defer d.tail.Unlock()
 	d.mu.Lock()
 	if d.closed || d.attempts[pid] != attempt || attempt.terminal {
 		d.mu.Unlock()
+		d.tail.Unlock()
 		return
 	}
 	if !time.Now().Before(attempt.deadline) || attempt.ctx.Err() != nil {
@@ -250,11 +250,9 @@ func (d *providerDiscovery) complete(pid string, attempt *discoveryAttempt, mode
 	}
 	state.outcome.Hint = statusHintFor(d.entries[pid], state.outcome.State)
 	next.providers[pid] = state
+	var healed *diagFact
 	if err == nil && len(models) > 0 {
-		d.reg.healDefaultModelCandidate(d.diag, pid, next)
-	}
-	if err != nil {
-		d.diag.Log(d.ctx, port.LevelDebug, "live model listing failed; retaining last-good metadata or catalog floor", "provider", pid, "state", state.outcome.State)
+		healed = d.reg.healDefaultModelCandidate(pid, next)
 	}
 	d.project(next)
 	// Cooldown starts at publication, not lister return or the beginning of the
@@ -275,7 +273,16 @@ func (d *providerDiscovery) complete(pid string, attempt *discoveryAttempt, mode
 	attempt.terminal = true
 	close(attempt.ready)
 	d.mu.Unlock()
+	d.tail.Unlock()
 	attempt.cancel()
+	// Sink delivery may block; publication and waiter notification must not.
+	// Delivery remains on the owned worker, which Close joins.
+	if healed != nil {
+		d.diag.Log(context.Background(), healed.level, healed.msg, healed.args...)
+	}
+	if err != nil {
+		d.diag.Log(d.ctx, port.LevelDebug, "live model listing failed; retaining last-good metadata or catalog floor", "provider", pid, "state", state.outcome.State)
+	}
 }
 
 func cloneModelEntries(models []modelEntry) []modelEntry {

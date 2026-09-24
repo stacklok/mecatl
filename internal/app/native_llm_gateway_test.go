@@ -173,7 +173,7 @@ func TestNativeLLMGatewayLogin_Scenario3_DeploymentWideInventoryConsistency(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	models := nativeModels(modelSnapshot(reg))
+	models := nativeModels(reg.discovery.CurrentModelSnapshot().Models)
 	inventory := newTestModelInventory(models)
 	result := newAgentModelDiscoveryTool(inventory)
 	if len(inventory.CurrentModelSnapshot().Models) != 1 || !modelDiscoveryAvailable(reg, inventory) {

@@ -50,17 +50,6 @@ func (d *toolhiveLevelDiag) hasAtLevel(level port.Level, sub string) bool {
 	return false
 }
 
-func (d *toolhiveLevelDiag) has(sub string) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, l := range d.lines {
-		if strings.Contains(l.msg, sub) {
-			return true
-		}
-	}
-	return false
-}
-
 // toolhiveModelsClient serves a canned OpenAI-shaped /v1/models response over
 // an injected transport — never a real network call.
 func toolhiveModelsClient(t *testing.T, body string) *http.Client {
@@ -305,14 +294,14 @@ func TestToolhiveSole_ProbeDown_BootsThenHeals(t *testing.T) {
 		t.Fatal("toolhive entry missing before heal")
 	}
 
-	reg.healDefaultModelCandidate(diag, providerToolhive, &discoverySnapshot{providers: map[string]discoveryProvider{
+	healed := reg.healDefaultModelCandidate(providerToolhive, &discoverySnapshot{providers: map[string]discoveryProvider{
 		providerToolhive: {observations: []modelEntry{{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6"}}},
 	}})
 	if want := "claude-sonnet-4-6"; reg.ResolvedDefaultModel() != want {
 		t.Errorf("ResolvedDefaultModel() after heal = %q, want %q", reg.ResolvedDefaultModel(), want)
 	}
-	if !diag.has("auto-selected") {
-		t.Error("expected an 'auto-selected' INFO after healing")
+	if healed == nil || healed.level != port.LevelInfo {
+		t.Error("expected an auto-selection INFO fact after healing")
 	}
 
 	// Issue #262 review finding 4: the runtime heal must re-mint the entry's
@@ -420,7 +409,6 @@ func TestHealDefaultModel_ConcurrentWithResolvedDefaultModel(t *testing.T) {
 		defaultID: providerToolhive,
 	}
 	view := &discoverySnapshot{providers: map[string]discoveryProvider{providerToolhive: {observations: []modelEntry{{ID: "claude-sonnet-4-6"}}}}}
-	diag := port.NopDiagnostics{}
 
 	var wg sync.WaitGroup
 	// Many concurrent healers (simulating the async refresh + refreshStaleModels racing).
@@ -428,7 +416,7 @@ func TestHealDefaultModel_ConcurrentWithResolvedDefaultModel(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			reg.healDefaultModelCandidate(diag, providerToolhive, view)
+			reg.healDefaultModelCandidate(providerToolhive, view)
 		}()
 	}
 	// Many concurrent Lookup/Available readers (entriesMu — review finding 4).
@@ -462,7 +450,7 @@ func TestHealDefaultModel_NoOpWhenAlreadySet(t *testing.T) {
 		entries:   map[string]providerEntry{providerToolhive: {id: providerToolhive, intentDriven: true}},
 		defaultID: providerToolhive, defaultModel: "pinned-model",
 	}
-	reg.healDefaultModelCandidate(&toolhiveLevelDiag{}, providerToolhive, &discoverySnapshot{providers: map[string]discoveryProvider{
+	reg.healDefaultModelCandidate(providerToolhive, &discoverySnapshot{providers: map[string]discoveryProvider{
 		providerToolhive: {observations: []modelEntry{{ID: "other-model"}}},
 	}})
 	if reg.defaultModel != "pinned-model" {

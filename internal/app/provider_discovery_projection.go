@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"sort"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
@@ -59,30 +58,30 @@ func providerStatusProto(reg *providerRegistry, view *discoverySnapshot) []*meca
 	return out
 }
 
-func (r *providerRegistry) healDefaultModelCandidate(diag port.Diagnostics, pid string, view *discoverySnapshot) {
+func (r *providerRegistry) healDefaultModelCandidate(pid string, view *discoverySnapshot) *diagFact {
 	if pid != r.Default() {
-		return
+		return nil
 	}
 	entry, ok := r.Lookup(pid)
 	if !ok || (!entry.intentDriven && pid != providerOpenAICodex) {
-		return
+		return nil
 	}
 	models := view.providers[pid].observations
 	if len(models) == 0 {
-		return
+		return nil
 	}
 	r.defaultModelMu.Lock()
 	if r.defaultModel != "" {
 		r.defaultModelMu.Unlock()
-		return
+		return nil
 	}
 	model := models[0].ID
 	r.defaultModel = model
 	r.defaultModelAutoSelected = true
 	r.defaultModelMu.Unlock()
 	r.remintEntryCandidate(pid, model, view)
-	diag.Log(context.Background(), port.LevelInfo, "provider default model (auto-selected) after live refresh",
-		"provider", pid, "model", model, "base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL)
+	return &diagFact{level: port.LevelInfo, msg: "provider default model (auto-selected) after live refresh",
+		args: []any{"provider", pid, "model", model, "base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL}}
 }
 
 func (r *providerRegistry) remintEntryCandidate(pid, model string, view *discoverySnapshot) {

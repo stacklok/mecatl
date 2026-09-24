@@ -222,7 +222,7 @@ func TestInvariant_custom_provider_default_model_inventory_floor(t *testing.T) {
 	if err := validateDefaultModel(cfg, reg); err != nil {
 		t.Fatalf("validateDefaultModel rejected custom inventory floor: %v", err)
 	}
-	models := modelSnapshot(reg)
+	models := reg.discovery.CurrentModelSnapshot().Models
 	if len(models) != 1 || models[0].GetId() != "gateway-default" || models[0].GetProviderId() != "gateway-responses" {
 		t.Errorf("seed inventory = %v, want custom default model", models)
 	}
