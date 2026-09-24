@@ -6,6 +6,7 @@ import {
   providerSettingsResponseSchema,
   runtimeSettingsResponseSchema,
 } from "@mecatl-studio/contracts";
+import { MecatlError } from "@stacklok-oss/mecatl-sdk";
 import type { AppEnv } from "../http/env.js";
 import { problem } from "../http/problem.js";
 import { ModelsUnsupportedError, type SettingsService } from "../mecatl/settings.js";
@@ -115,6 +116,12 @@ export function registerSettingsRoutes(
           "Model selection unavailable",
           "This Mecatl deployment does not support model selection.",
         );
+      }
+      if (
+        error instanceof MecatlError &&
+        (error.code === "unauthenticated" || error.code === "authentication")
+      ) {
+        throw error;
       }
       return problem(
         context,

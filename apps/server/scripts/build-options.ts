@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-/** esbuild replaces this expression in the bundle, so runtime env cannot alter it. */
+/** esbuild defines a build-only identifier that source mode cannot read from runtime env. */
 export function serverBuildDefinitions(environment: {
   readonly STUDIO_BUILD_ID?: string | undefined;
 }) {
-  return { "process.env.STUDIO_BUILD_ID": JSON.stringify(environment.STUDIO_BUILD_ID ?? "") };
+  return { __STUDIO_BUILD_ID__: JSON.stringify(environment.STUDIO_BUILD_ID ?? "") };
 }

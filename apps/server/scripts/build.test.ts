@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fakeRuntime } from "../src/testing/fakes.js";
 import { installedSdkPackageVersion } from "../src/testing/sdk-package.js";
 import { serverBuildDefinitions } from "./build-options.js";
@@ -55,6 +55,24 @@ async function bundledApp(releaseTag: string | undefined) {
 }
 
 describe("Studio image build stamp", () => {
+  it("omits the stamp in source mode even when the runtime environment sets it", async () => {
+    const original = process.env.STUDIO_BUILD_ID;
+    try {
+      process.env.STUDIO_BUILD_ID = "runtime-impostor";
+      vi.resetModules();
+      const { studioBuildId } = await import("../src/build-info.js");
+      expect(studioBuildId).toBeUndefined();
+      const { createApp } = await import("../src/app.js");
+      const response = await createApp({ runtime: fakeRuntime() }).request("/api/v1/runtime");
+      expect(response.status).toBe(200);
+      expect(await response.json()).not.toHaveProperty("studioBuildId");
+    } finally {
+      if (original === undefined) Reflect.deleteProperty(process.env, "STUDIO_BUILD_ID");
+      else process.env.STUDIO_BUILD_ID = original;
+      vi.resetModules();
+    }
+  });
+
   it("bakes the release tag into the BFF and omits it in local builds", async () => {
     const original = process.env.STUDIO_BUILD_ID;
     try {

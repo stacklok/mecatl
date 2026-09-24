@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Client } from "@stacklok-oss/mecatl-sdk";
+import { type Client, MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app";
+import { type AuthenticationService, createAuthenticationService } from "../auth/service";
 import { RuntimeNotReadyError } from "../mecatl/runtime";
 import type { SettingsService } from "../mecatl/settings";
 import { createMecatlSettingsService } from "../mecatl/settings";
-import { fakeRuntime } from "../testing/fakes";
+import { fakeIssuer, resourceUrl } from "../testing/fake-issuer";
+import { cookieHeader, fakeRuntime } from "../testing/fakes";
 
 const settings: SettingsService = {
   async getProvider(providerId) {
@@ -71,6 +73,102 @@ const settings: SettingsService = {
 };
 
 describe("settings routes", () => {
+  it.each(["unauthenticated", "authentication"] as const)(
+    "clears a still-live OIDC session when provider info rejects it with %s",
+    async (code) => {
+      const publicUrl = new URL("https://studio.example.com");
+      const issuer = fakeIssuer();
+      const authentication = (await createAuthenticationService(
+        { baseUrl: resourceUrl, resourceUrl, source: "external" },
+        {
+          fetch: issuer.fetch,
+          publicUrl,
+          sessionSecret: "0123456789abcdef0123456789abcdef",
+        },
+      )) as AuthenticationService;
+      let activeToken: string | undefined;
+      const list = vi.fn(async () => {
+        expect(activeToken).toMatch(/^access-1-/);
+        return {
+          models: [
+            {
+              contextLimit: 128_000n,
+              displayName: "Visible",
+              id: "visible",
+              image: false,
+              providerId: "visible/provider",
+              reasoning: false,
+            },
+          ],
+          providerStatus: [],
+        };
+      });
+      const info = vi.fn().mockRejectedValue(
+        new MecatlError("Bearer revoked-secret rejected", {
+          code,
+          status: 16,
+          transport: "grpc",
+        }),
+      );
+      const client = { models: { list }, server: { info } } as unknown as Client;
+      const app = createApp({
+        authentication,
+        runtime: fakeRuntime({
+          runWithCredential: async (token, operation) => {
+            activeToken = token;
+            try {
+              return await operation();
+            } finally {
+              activeToken = undefined;
+            }
+          },
+        }),
+        security: { publicUrl },
+        settings: createMecatlSettingsService(client, {
+          modelSelection: true,
+          serverInfo: true,
+        }),
+      });
+      const login = await app.request("https://studio.example.com/api/v1/auth/login");
+      const transaction = cookieHeader(login.headers.getSetCookie());
+      const state = new URL(login.headers.get("location") ?? "").searchParams.get("state");
+      const callback = await app.request(
+        `https://studio.example.com/api/v1/auth/callback?code=code-1&state=${state}`,
+        { headers: { Cookie: transaction } },
+      );
+      expect(callback.status).toBe(302);
+      const session = cookieHeader(callback.headers.getSetCookie());
+      const request = (providerId: string) =>
+        app.request(
+          `https://studio.example.com/api/v1/settings/provider?providerId=${encodeURIComponent(providerId)}`,
+          {
+            headers: { Cookie: session },
+          },
+        );
+
+      const hidden = await request("hidden/provider");
+      expect(hidden.status).toBe(404);
+      await expect(hidden.json()).resolves.toMatchObject({ code: "provider_not_found" });
+      expect(info).not.toHaveBeenCalled();
+
+      const rejected = await request("visible/provider");
+      expect(rejected.status).toBe(401);
+      const body = await rejected.json();
+      expect(body).toMatchObject({ code: "session_expired" });
+      expect(JSON.stringify(body)).not.toContain("revoked-secret");
+      expect(info).toHaveBeenCalledExactlyOnceWith({ providerId: "visible/provider" });
+      expect(issuer.refreshCalls()).toBe(0);
+      for (const name of ["studio_access", "studio_refresh"]) {
+        expect(
+          rejected.headers
+            .getSetCookie()
+            .some((cookie) => cookie.startsWith(`${name}=;`) && cookie.includes("Max-Age=0")),
+          name,
+        ).toBe(true);
+      }
+    },
+  );
+
   it("does not expose provider details to anonymous callers", async () => {
     const list = vi.fn().mockResolvedValue({
       models: [
@@ -196,10 +294,18 @@ describe("settings routes", () => {
     expect(pending.status).toBe(503);
     await expect(pending.json()).resolves.toMatchObject({ code: "runtime_unavailable" });
 
-    info.mockRejectedValueOnce(new Error("Bearer secret at https://private.example"));
+    info.mockRejectedValueOnce(
+      new MecatlError("Bearer secret at https://private.example", {
+        code: "internal",
+        status: 13,
+        transport: "grpc",
+      }),
+    );
     const failed = await shared.request("/api/v1/settings/provider?providerId=team%2Fprovider");
     expect(failed.status).toBe(503);
-    expect(JSON.stringify(await failed.json())).not.toContain("secret");
+    const failedBody = await failed.json();
+    expect(failedBody).toMatchObject({ code: "runtime_unavailable" });
+    expect(JSON.stringify(failedBody)).not.toContain("secret");
   });
   it("returns only safe runtime and model inventory", async () => {
     const response = await createApp({ settings }).request("/api/v1/settings/runtime");
