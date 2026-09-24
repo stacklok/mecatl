@@ -1,0 +1,157 @@
+# Mecatl Studio chat transcript and composer — acceptance plan
+
+**Contract:** human-reviewed/v2
+**Work classification:** Bounded — aligns one existing Studio feature's presentation and browser interaction, with additive BFF projections of facts already supplied by the published SDK. It adds no daemon, trust, or deployment boundary.
+**Decision record:** None — [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) already owns the one-origin browser/BFF and published-SDK boundary; this plan keeps it and makes bounded product-interface choices within it.
+**Phase:** Studio design alignment
+**Status:** proposed, 2026-09-24. The design baseline and all material behavior and interface choices below are resolved for Plan / Interface review.
+**Delivery:** Split. Review the additive BFF and browser interaction contract in an independent Plan / Interface PR before an implementation PR.
+**Expected tasks:** deferred to orchestration
+**Issue:** [stacklok/mecatl#1847](https://github.com/stacklok/mecatl/issues/1847).
+**Plan PR:** added when opened
+**Approved baseline:** absent until this Plan / Interface PR merges
+
+The existing chat retains its durable streamed run, bounded replay, queue, and controls while the transcript becomes a flat, readable conversation and the composer remains usable from desktop to a 320 px viewport. The same BFF owns SDK access and projects the few additional title and scheduled-delivery facts needed for honest live UI. The [Studio architecture topic](../architecture.md#mecatl-studio), [original chat contract](studio-chat.md), and [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) govern the boundary.
+
+The proposed [appearance contract](https://github.com/stacklok/mecatl/pull/1861) owns semantic tokens, fonts, palettes, and shared controls; the proposed [shell contract](https://github.com/stacklok/mecatl/pull/1858) owns navigation, route framing, and its status bands. Both use a 500 px control pivot. Chat consumes those contracts for colors, focus, typography, and responsive layout without amending their roles or moving their controls into this plan. Implementation rebases after their approved versions land. The 2026-09-24 [design review](https://github.com/stacklok/mecatl/issues/1779) owns desktop/mobile visual review. `user-docs/building/deployment/studio.md` is the public behavior owner when this plan is implemented; this plan does not publish unimplemented behavior there.
+
+## Human decisions
+
+- [x] Browser identifiers. — Decision: keep opaque BFF session IDs in chat URLs and opaque BFF run IDs in controls. The browser imports only Studio contracts and the generated BFF client; the BFF alone holds SDK objects and calls the daemon.
+- [x] Sending attachments. — Decision: retain image-only sending: at most 16 images, 10 MiB per image, and 20 MiB total, available only for an image-capable selected model. Other files are outside the send contract.
+- [x] Return notice. — Decision: use a same-open-tab, in-memory hide/return snapshot after at least 20 seconds, refresh run and connection facts before a single eight-second toast, and show nothing after reload or a changed chat. Wording claims only states the BFF and current tab have verified.
+- [x] Foundation ownership. — Decision: #1843's tokens/shared controls and #1844's shell/status bands need no amendment for this feature. Chat uses their 500 px pivot and supplies its own transcript and composer composition.
+- [x] Live title and delivery facts. — Decision: expose SDK title revision and provenance as additive BFF data on inventory and rename responses, and annotate only canonical fenced scheduled-delivery prompts in the BFF. Do not infer an origin-chat delivery from `schedule.*` events in a separate fire session.
+- [x] Browser data. — Decision: preserve the current folder and queue keys; clear all `studio.` account data in both browser storage areas on sign-out or account change. The return notice adds no persisted read marker.
+- [x] Arrival links. — Decision: `?prompt=...&send=1` displays the validated prompt for an explicit Send click. Opening a link never executes the agent; Edit or dismissal leaves a normal editable draft.
+
+## Interface contract
+
+- **gRPC / protobuf:** None — the daemon's session, title, transcript, event, and run-control protocol remains unchanged. Studio reads it through the released SDK.
+- **Exported Go APIs / interfaces:** None — no Go source or exported symbol changes.
+- **Tool schemas:** None — no model-facing tool, permission verdict, or tool argument schema changes.
+- **CLI / config:** None — no flag, environment variable, deployment setting, or replay limit changes. The existing `STUDIO_ACTIVITY_REPLAY_MAX` and `STUDIO_ACTIVITY_MAX_STREAMS` still bound activity reads.
+- **Events / persistence:** Keep the existing `/api/v1/sessions`, `/api/v1/sessions/{sessionId}`, `/transcript`, `/runs`, `/activity`, `/retry`, `/mode`, and `/runs/{runId}/{cancel|steer}` routes and the `run.started | run.event | run.truncated | run.error` SSE union in [chat schemas](../../apps/contracts/src/schemas/chat.ts). Add `titleRevision: string` (unsigned decimal, `"0"` for absent legacy metadata) and `titleProvenance: string` (empty when absent) to each `sessionSummarySchema` row and to `renameSessionResponseSchema` alongside its existing `title`. Map them from the published SDK's list title metadata and SDK rename snapshot; never convert a revision to a JavaScript number. `session.title` remains a `run.event` with `{title, provenance, generationState, revision}` in its JSON-safe payload; no new SSE kind is introduced. Add `deliveryNoteSchema = {kind: "started"|"completed", scheduleName: string, fireId: string, stop?: string}` and optional `delivery?: deliveryNoteSchema` to `transcriptMessageSchema` and `serializedMecatlEventSchema`. Only a user-role transcript message or `user_prompt` event with the canonical paired `<<<UNTRUSTED` fence and one of the renderer's headers, `[scheduled task NAME started (fire FIRE_ID)]` or `[scheduled task NAME (fire FIRE_ID) completed with stop reason: STOP]` (where the uppercase words stand for values), gets this annotation; its projected `text` is the note body without the fence/header. Browser rendering uses that annotation ahead of the event's raw prompt payload. Other text, including malformed markers, remains ordinary text. The unchanged `run.event` shape continues to forward unknown SDK kinds. Regenerate OpenAPI and the browser BFF client from these schemas. While a connected chat view is visible, refetch session inventory every 20 seconds, with no background interval; an idle row whose `updatedAt` advances triggers a transcript check for unseen delivery notes. Browser storage keeps `studio.chat.folders`, the `studio.chat.queue.` prefix plus the URL-encoded session ID, and the existing per-session failed-run key; it adds no durable run, title, away, or delivery marker. Account transition cleanup covers both `localStorage` and `sessionStorage` `studio.` keys.
+- **Security / authority:** All browser requests remain same-origin, authenticated BFF requests; mutations, including POST SSE, retain origin and CSRF enforcement. The BFF uses the published `@stacklok-oss/mecatl-sdk`, binds credentials per request, and guards run controls by the exact session/run pair. A seed URL never creates a session or executes a prompt before the explicit Send click. Only image attachments pass `startRun`; the BFF enforces the existing count, decoded-size, aggregate-size, and request-body bounds before calling the SDK. Render user/model markdown as inert content: no raw HTML execution, external image fetch, embedded object, inline script, or CSP relaxation. Inline images use `data:`/`blob:`; a persisted HTTP(S) image URL is an explicit external link, not an image fetch. Speech recognition starts only from a user gesture in a supporting browser; permission denial, API failure, or unsupported browsers leave an editable text composer with a visible reason where an attempt failed. The shipped [CSP](../../apps/server/src/http/security.ts) remains `connect-src 'self'`, `img-src 'self' data: blob:`, `object-src 'none'`, `script-src 'self'`, and `style-src 'self' 'unsafe-inline'`.
+- **Compatibility / migration:** Keep `/workspace/chat` with its `sessionId` search parameter containing the opaque BFF ID, generated BFF client calls, `mode = default|plan|acceptEdits`, `toolAccess = all|noFilesystem`, `reasoningEffort = default|low|medium|high|xhigh|max`, model selection `{id, providerId}`, image-only `startRun`, and the existing queue/steer preference. A new arrival `prompt` and optional `send=1` query are browser-only inputs: strip C0/DEL except newline and tab, trim, cap at 32 Ki UTF-16 code units without splitting a surrogate, ignore an empty prompt, and consume once by replacing only those seed parameters while retaining the path, session ID, and unrelated search parameters. A starter chip still only fills the composer. No server-side migration or new SDK release is needed. Existing folder assignments, queued prompts, failed-run recovery, and the device-wide appearance preferences retain their keys and behavior. #1777 owns any mechanical `apps/` relocation; move proof paths with it without changing these behaviors.
+
+The browser view model retains `ChatMessage.id`, `role`, `content`, images, tool calls/results, stop reason, failure, and turn statistics. Stable per-render message anchors and the existing `onPreviewImage`/`onPreviewTool` callbacks are the seam #1850 can consume, without a durable message-ID claim. The composer retains `seedText`/`onSeedConsumed` as the draft-insertion seam #1851 can consume. #1848 consumes the exact active `{sessionId, runId}` target plus `permission.ask`, `permission.retract`, and `approval` deliveries for inline controls; #1849 consumes the distinct `subagent.*`, `parallel.*`, and `team.*` event families. Those features own their rendering and BFF extensions. This plan adds no MCP inventory route, delegated-activity reducer, side panel, plan-review interaction, or Escape-layer policy.
+
+## In scope — 7 scenarios, in implementation order
+
+### Scenario 1 — streamed conversation stays readable and honest
+
+The [current reducer and transcript view](../../apps/web/src/features/chat/chat-state.ts) consume only BFF events under [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md). #1843 supplies semantic styling and #1844 supplies the frame; chat composes flat, left-aligned rows at desktop and below the 500 px pivot.
+
+**Acceptance:**
+- AC1.1: user and assistant rows, GFM markdown, links, tables, inline/fenced code, reasoning disclosure, image parts, and tool call/result pairs render in reading order. Known code languages highlight, unknown languages remain readable plain text, unmatched tool results do not crash the transcript, and text/long code does not create page-level horizontal scrolling at 320 px.
+  - verify: vitest:apps/web/src/features/chat/chat-transcript.test.tsx#cmVuZGVycyBtYXJrZG93biBjb2RlIGFuZCB0b29sIHJlc3VsdHMgaW4gZmxhdCByb3dz — `chat-transcript.test.tsx :: "renders markdown code and tool results in flat rows"`
+  - verify: inspection — focused transcript, markdown, code, and tool component tests plus 320/500/1280 px light/dark screenshots and keyboard reading order show the rendered content and overflow behavior.
+- AC1.2: one message status line shows Sending before `run.started`, Working while a run is known active, Waiting for approval only on a known ask or authoritative awaiting state, and a terminal success, cancelled, stopped, or failed state only from a `result` stop/failure or `run.error`. A broken stream without a result reports uncertainty rather than success; a bounded replay or gap is a history/following notice, not a run outcome. Status and stop reason are readable without color alone and announced without repeating every token.
+  - verify: vitest:apps/web/src/features/chat/chat-status.test.tsx#ZGVyaXZlcyBzdGF0dXMgb25seSBmcm9tIGtub3duIHJ1biBmYWN0cw — `chat-status.test.tsx :: "derives status only from known run facts"`
+  - verify: inspection — focused event-to-status component tests cover start, ask/retract, result stop reasons, `run.error`, abrupt close, bounded replay, and gap; screen-reader inspection checks announcements.
+- AC1.3: a long stream appends deltas without re-rendering settled historical rows on each token. Auto-scroll follows only while the reader is near the bottom; scrolling up preserves the reading position and offers an operable jump to latest. A 2,000-plus-event catch-up and a live continuation stay usable at desktop and mobile widths.
+  - verify: vitest:apps/web/src/features/chat/chat-transcript.test.tsx#cHJlc2VydmVzIHJlYWRpbmcgcG9zaXRpb24gYW5kIHNldHRsZWQgcm93cyBkdXJpbmcgc3RyZWFtaW5n — `chat-transcript.test.tsx :: "preserves reading position and settled rows during streaming"`
+  - verify: inspection — component render-count and scroll-anchor tests, then a browser journey with more than one replay bound records settled-row renders, scroll position, jump action, and continued live output.
+
+### Scenario 2 — responsive composer sends an intentional prompt
+
+The [composer](../../apps/web/src/features/chat/chat-composer.tsx) uses the existing draft session request and live session-mode route in [chat schemas](../../apps/contracts/src/schemas/chat.ts), within [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md).
+
+**Acceptance:**
+- AC2.1: the composer, Send, image, voice, model/effort, permission-mode, and draft tool-access controls remain visible or reachable through an accessible mobile options surface at 320, 500, and desktop widths. Focus and touch targets follow #1843; the composer stays above the on-screen keyboard and safe area without obscuring the newest message. Draft selectors apply to the session being created; an existing session's mode uses `PUT /mode`, and a model change uses the existing fork action rather than mutating its model in place. Unavailable model choices are not offered.
+  - verify: vitest:apps/web/src/features/chat/chat-composer.test.tsx#a2VlcHMgY29tcG9zZXIgY29udHJvbHMgcmVhY2hhYmxlIGF0IG5hcnJvdyB3aWR0aHM — `chat-composer.test.tsx :: "keeps composer controls reachable at narrow widths"`
+  - verify: inspection — focused picker/component tests and desktop/mobile keyboard and touch recordings include draft creation, existing-mode change, model fork, focus return, and the software keyboard.
+- AC2.2: idle Enter sends once and Shift+Enter inserts a newline; during a run the saved queue/steer preference sets Enter and Shift reverses it. From `compositionstart` through the key event committing an IME candidate, Enter, `isComposing`, and key code 229 never send, queue, or steer; a distinct subsequent Enter can act. Pending submission cannot double-send.
+  - verify: vitest:apps/web/src/features/chat/chat-composer.test.tsx#bmV2ZXIgc3VibWl0cyB0aGUgSU1FIGNvbW1pdCBrZXk — `chat-composer.test.tsx :: "never submits the IME commit key"`
+  - verify: inspection — focused composer keyboard tests cover native composition, key code 229, commit-key ordering, both run preferences, and duplicate submit; desktop/mobile IME evidence shows a committed candidate stays in the draft.
+- AC2.3: starter prompts and a validated arrival `?prompt=` seed only fill the draft. An arrival `send=1` seed remains visible until the user chooses Send or Edit; it never executes on navigation, reload, Back, or duplicate render. An unavailable or busy chat cannot confirm Send, but Edit still restores the text. Consuming the seed removes its query without removing the current BFF session ID.
+  - verify: vitest:apps/web/src/features/chat/chat-seed.test.ts#Y29uc3VtZXMgYXJyaXZhbCBwcm9tcHRzIG9uY2UgYmVoaW5kIHNlbmQgY29uZmlybWF0aW9u — `chat-seed.test.ts :: "consumes arrival prompts once behind send confirmation"`
+  - verify: inspection — route and seed-dialog tests cover ordinary, oversize, control-character, empty, duplicate, offline, busy, and `send=1` links; a browser navigation recording confirms the URL and one-click gate.
+
+### Scenario 3 — image and voice input honor the real browser boundary
+
+The image request and the shipped [CSP](../../apps/server/src/http/security.ts) are already bounded by the [original chat plan](studio-chat.md) and [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md); this scenario proves the UI works within them.
+
+**Acceptance:**
+- AC3.1: only image-capable model selections offer Attach images. Picker and preview handle at most 16 valid images, 10 MiB each and 20 MiB together; oversize, unreadable, unsupported, and model-switch-invalidated selections explain the rejection without losing typed text. Images cannot be queued or steered during an active run. The BFF rejects invalid JSON/image sizes before an SDK call.
+  - verify: vitest:apps/web/src/features/chat/chat-composer.test.tsx#bGltaXRzIGltYWdlIHNlbmRpbmcgdG8gdGhlIHNlbGVjdGVkIG1vZGVsIGNhcGFiaWxpdHk — `chat-composer.test.tsx :: "limits image sending to the selected model capability"`
+  - verify: inspection — focused attachment and route tests cover each bound, model capability change, failed read, and no SDK call on rejection; browser inspection under the served CSP shows inline previews and no blocked image request.
+- AC3.2: a supporting secure-context browser can start and stop `SpeechRecognition`/`webkitSpeechRecognition` from the mic control and edit the resulting text before sending. Denied microphone permission, recognition error, unsupported API, and CSP/browser refusal leave typing and Send usable; an attempted failure gives a visible, accessible fallback message without deleting the draft or silently submitting interim speech.
+  - verify: vitest:apps/web/src/features/chat/use-voice-input.test.tsx#a2VlcHMgdGhlIHR5cGVkIGRyYWZ0IGFmdGVyIGRlbmllZCBzcGVlY2ggcmVjb2duaXRpb24 — `use-voice-input.test.tsx :: "keeps the typed draft after denied speech recognition"`
+  - verify: inspection — focused hook/composer tests exercise supported, denied, error, and absent APIs; an offline browser journey against the real BFF headers records actual CSP, mic grant/deny states, and a typed fallback at desktop/mobile widths. Browser-dependent speech results are not a required fixed transcript.
+
+### Scenario 4 — send, queue, steer, cancel, and retry keep run ownership
+
+The BFF's [chat service](../../apps/server/src/mecatl/chat.ts) already addresses controls to durable SDK run handles; the [browser run owner](../../apps/web/src/features/chat/run-stream.ts) gates updates to the viewed session under [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md).
+
+**Acceptance:**
+- AC4.1: sending a draft creates one session, uses its opaque BFF ID in the URL, and starts one streamed run. Queue adds text only to that session's account-scoped browser queue; edit/delete work; one queued prompt drains only after a known settled run while the same session remains viewed and authorized. A view switch, aborted follow, or replay gap leaves the queue parked for that account and session; an account change clears it under AC4.3.
+  - verify: vitest:apps/web/src/features/chat/chat-workspace.test.tsx#ZHJhaW5zIG9ubHkgdGhlIHZpZXdlZCBzZXNzaW9uIHF1ZXVlIGFmdGVyIHNldHRsZW1lbnQ — `chat-workspace.test.tsx :: "drains only the viewed session queue after settlement"`
+  - verify: inspection — focused workspace/queue tests and a two-chat browser journey assert create count, URL, storage key, edit/delete, terminal drain, and switch isolation.
+- AC4.2: steer sends text only to the currently viewed `{sessionId, runId}` and clears it after acknowledgement; a stale-run `409` queues the text once for that session and reports the fallback instead of claiming a steer succeeded. Stop invokes cancel for that exact active run. Leaving the chat aborts its browser stream without sending a separate cancel control, makes no claim that the daemon run continued, and reattaches through activity if the run is still active on return. Retry uses `POST /sessions/{sessionId}/retry` only for a retryable failed run, without re-submitting the user prompt or duplicating a turn.
+  - verify: vitest:apps/web/src/features/chat/chat-workspace.test.tsx#YWRkcmVzc2VzIHN0ZWVyIGNhbmNlbCBhbmQgcmV0cnkgdG8gdGhlIGV4YWN0IHJ1bg — `chat-workspace.test.tsx :: "addresses steer cancel and retry to the exact run"`
+  - verify: inspection — focused BFF-control and workspace tests assert exact IDs, stale acknowledgement, explicit cancel versus stream abort, permanent-failure disablement, and retry call count; the browser journey checks visible outcomes.
+- AC4.3: folder assignments and queued prompts survive a same-account reload under their current keys. Switching accounts or signing out clears all `studio.` data in both local and session storage, including folders, queues, and failed-run prompts, before the next account's chat renders. Theme/palette device preferences stay outside that prefix. A storage exception falls back to in-memory interaction and never exposes the previous account's data.
+  - verify: vitest:apps/web/src/lib/account-storage.test.ts#Y2xlYXJzIGFjY291bnQgZGF0YSBmcm9tIGJvdGggYnJvd3NlciBzdG9yZXM — `account-storage.test.ts :: "clears account data from both browser stores"`
+  - verify: inspection — account-storage and auth-transition component tests cover local/session storage, blocked storage, sign-out, and account switch with same session-looking IDs; browser proof verifies the second account sees no first-account folder, queue, or failed prompt.
+
+### Scenario 5 — bounded replay catches up without inventing a result
+
+The [existing activity contract](studio-chat.md) bounds old events and resumes from an opaque cursor within [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md). Chat changes presentation and folding while preserving that contract.
+
+**Acceptance:**
+- AC5.1: a no-cursor attach replays saved events, `run.truncated {reason:"bound"}` loads the authoritative transcript and resumes after its cursor, up to the existing 50-reattach limit, then follows live deltas without duplicate visible prompts, tools, or messages. A resumed stream with no `run.started` still keeps the correct run control target; a later run moves that target.
+  - verify: vitest:apps/web/src/features/chat/run-stream.test.ts#Y29udGludWVzIGJvdW5kZWQgcmVwbGF5IHdpdGhvdXQgZHVwbGljYXRlIG1lc3NhZ2Vz — `run-stream.test.ts :: "continues bounded replay without duplicate messages"`
+  - verify: inspection — focused reducer/stream tests with a replay bound crossing two runs and a browser long-history journey assert exactly-once rows, cursor continuation, and the active target.
+- AC5.2: `reason:"gap"`, unusable cursors, exhausted reattach attempts, and view changes stop following with truthful saved-history notice; none marks the run complete or drains the queue. Closing a run stream before a terminal event cannot manufacture a success or a retryable failure without evidence.
+  - verify: vitest:apps/web/src/features/chat/run-stream.test.ts#a2VlcHMgZ2FwcyBhbmQgYWJydXB0IGNsb3NlcyBzZXBhcmF0ZSBmcm9tIHJlc3VsdHM — `run-stream.test.ts :: "keeps gaps and abrupt closes separate from results"`
+  - verify: inspection — focused stream tests cover each truncation and abrupt-close branch, plus a browser reconnection journey showing saved transcript and available controls.
+
+### Scenario 6 — live titles and return notices use authoritative facts
+
+The SDK's [title event](../../sdk/typescript/src/events.ts) and [session title projection](../../sdk/typescript/src/session-projections.ts) already carry source and revision. The BFF projects those values under [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) without exposing SDK objects to the browser.
+
+**Acceptance:**
+- AC6.1: a `session.title` event, rename response, or inventory response updates only its own chat row/header when its unsigned decimal revision is newer than the cached revision; a stale fetch, older replay, or delayed generated title cannot replace an operator rename. The rename response supplies the operator's new revision immediately. If the generated title arrives after the run stream closes, the next visible, connected 20-second inventory refresh or a focus/reopen refresh adopts its newer revision. Polling stops when the chat view closes, the tab hides, the account changes, or the connection is unavailable. Empty or legacy metadata keeps the prior title fallback.
+  - verify: vitest:apps/web/src/features/chat/session-title.test.ts#YWRvcHRzIG9ubHkgbmV3ZXIgdGl0bGUgcmV2aXNpb25z — `session-title.test.ts :: "adopts only newer title revisions"`
+  - verify: inspection — focused BFF projection and browser title-cache tests cover large revisions, out-of-order events, operator rename, generation after result, no-result close, stale inventory, and poll cleanup; a browser journey shows the header and folder row adopting the same title.
+- AC6.2: when this open tab was hidden for at least 20 seconds, returning to the same chat refetches runtime connection, session inventory, and detail before deriving one eight-second notice from the hidden and current phases. It may report current working, awaiting, idle, or offline state, and may say a run finished or an approval resolved only if this tab received the corresponding event. A quick tab switch, changed chat, failed refresh without verified state, repeated visibility flip, close, or reload produces no stale or persisted notice.
+  - verify: vitest:apps/web/src/features/chat/away-notice.test.ts#c2hvd3Mgb25lIHZlcmlmaWVkIHNhbWUtdGFiIHJldHVybiBub3RpY2U — `away-notice.test.ts :: "shows one verified same-tab return notice"`
+  - verify: inspection — fake-clock visibility component tests cover 19/20 seconds, each verified transition, failed refresh, chat switch, and reload; a real browser hide/return recording proves one toast and no storage marker.
+
+### Scenario 7 — scheduled delivery appears as a note only when recorded
+
+The daemon's [delivery renderer](../../internal/app/scheduler_delivery.go) records a fenced origin-chat `user_prompt`; [the server relay](../../internal/adapter/server/grpc.go) recognizes the same opener/header. The BFF projects the marker under [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md). `schedule.*` belongs to the fire session and cannot prove a note exists in the origin chat.
+
+**Acceptance:**
+- AC7.1: the BFF recognizes only the canonical paired fence and start/completion header, projects the name, fire ID, kind, optional stop reason, and body, and preserves malformed or ordinary user text. The browser renders the projected note once in live replay and persisted transcript, with readable attribution and no raw fence; the note body is plain, inert text. An unknown event kind or fire-session `schedule.*` never becomes an origin note.
+  - verify: vitest:apps/server/src/mecatl/delivery-note.test.ts#cHJvamVjdHMgb25seSBjYW5vbmljYWwgZmVuY2VkIGRlbGl2ZXJ5IG5vdGVz — `delivery-note.test.ts :: "projects only canonical fenced delivery notes"`
+  - verify: inspection — focused BFF parser/projection and chat-state tests cover start, completion, empty output, unfenced/malformed lookalikes, names with punctuation and newlines, replay/transcript deduplication, and unrelated events; browser inspection checks readable inert rendering.
+- AC7.2: a short delivery run that begins and ends between 20-second visible, connected inventory polls appears when the open idle chat's authoritative `updatedAt` advances: refetch the transcript, add only previously unseen delivery keys `(fireId, kind)`, and retain richer live rows from the current tab's own run. No synthetic note appears merely because a schedule fired; reopening shows the saved note even if a live follow was missed.
+  - verify: vitest:apps/web/src/features/chat/use-delivery-follow.test.ts#ZmluZHMgYSBzaG9ydCByZWNvcmRlZCBkZWxpdmVyeSBhZnRlciBpbnZlbnRvcnkgY2hhbmdlcw — `use-delivery-follow.test.ts :: "finds a short recorded delivery after inventory changes"`
+  - verify: inspection — focused follow tests distinguish an idle `updatedAt` advance from an own-run write and assert no duplicate or overwritten live rows; an offline browser journey delivers a short fire between polls and checks the origin transcript.
+
+## Out of scope
+
+| Item | Defer-to | Decision |
+|---|---|---|
+| Inline approvals, plan review, authorization presentation, Escape layering | #1848 | Consume the existing ask/retract/control seam; this plan reserves readable status and control space. |
+| Subagent, parallel, and team activity cards | #1849 | Consume their distinct serialized event families; no fabricated combined event shape. |
+| Minimap, reply threads, local canvas, file/tool side panels, session inspection | #1850 | Consume message anchors and preview callbacks; no side-panel work here. |
+| MCP inventory and insertion UI | #1851 | Consume the composer draft insertion seam; inventory and BFF MCP routes belong there. |
+| Browser-test infrastructure and mechanical app moves | #1776 and #1777 | Use their approved runner and paths; do not duplicate them. |
+| PDF/text-file sending, remote image embeds, persisted away/read markers, cross-reload notices | later approved contracts | Image-only sending and same-tab notices are the selected bounds. |
+
+## Definition of done
+
+1. The implementation candidate passes focused BFF projection/route and web reducer/component tests, `task studio:check`, `task docs`, `task site:build`, and `task ac-trace-strict`; applicable repository `task lint`, `task test:race`, and offline demo gates remain green.
+2. #1776's offline browser runner, or an equivalent recorded browser inspection until it lands, proves the desktop/mobile journeys above against the served BFF and actual CSP. Maintainers review before/after 320/500/1280 px light/dark screenshots, pointer/keyboard/touch/IME interaction, focus, and contrast through #1779.
+3. The implementation PR updates the owning `user-docs/building/deployment/studio.md`, links this Plan / Interface PR and approved commit, and reports conformance to all seven interface categories. `/panel-review` reports no ship blockers or unwaived reviewer failures. Humans alone merge the implementation PR.
+
+## Deferred decisions and known risks
+
+- The two foundation contracts are proposed, not yet approved. If either changes its 500 px pivot, semantic roles, shared-control props, or shell placement before merge, amend this chat contract before implementation rather than silently diverging.
+- Speech recognition availability and recognition text vary by browser and OS. The browser proof requires a usable permission failure path and typed fallback, not identical recognized words.
+- #1777 may relocate `apps/` and proof paths. Rebase paths without changing the BFF or behavior contract.
+- The existing stream identifies origin-chat delivery by fenced `user_prompt` text, not by an authenticated event kind. A byte-identical user-authored prompt is indistinguishable in saved transcript and may receive the same inert note presentation; stronger provenance requires a separate daemon and SDK contract.
