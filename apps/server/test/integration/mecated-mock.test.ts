@@ -146,7 +146,10 @@ describe.skipIf(!available)("Studio BFF against a spawned mecated --mock", () =>
       headers: csrf,
       method: "PATCH",
     });
-    expect(renamed).toEqual({ body: { title: "Integration chat" }, status: 200 });
+    expect(renamed).toEqual({
+      body: { title: "Integration chat", titleProvenance: "operator", titleRevision: "2" },
+      status: 200,
+    });
 
     const removed = await request(`/api/v1/sessions/${id}`, { headers: csrf, method: "DELETE" });
     expect(removed.status).toBe(204);
