@@ -18,6 +18,7 @@ export type GetAuthSessionResponses = {
      */
     200: {
         account?: string;
+        email?: string;
         mode: 'oidc' | 'static' | 'none';
         status: 'authenticated' | 'anonymous' | 'disabled';
     };
@@ -29,6 +30,7 @@ export type StartAuthLoginData = {
     body?: never;
     path?: never;
     query?: {
+        flow?: 'popup';
         return_to?: string;
     };
     url: '/api/v1/auth/login';
@@ -139,6 +141,15 @@ export type CompleteAuthLoginErrors = {
 
 export type CompleteAuthLoginError = CompleteAuthLoginErrors[keyof CompleteAuthLoginErrors];
 
+export type CompleteAuthLoginResponses = {
+    /**
+     * A popup completion page that reports only the authentication result.
+     */
+    200: string;
+};
+
+export type CompleteAuthLoginResponse = CompleteAuthLoginResponses[keyof CompleteAuthLoginResponses];
+
 export type LogoutAuthSessionData = {
     body?: never;
     path?: never;
@@ -189,6 +200,25 @@ export type GetHealthResponses = {
 };
 
 export type GetHealthResponse = GetHealthResponses[keyof GetHealthResponses];
+
+export type GetPublicStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/status';
+};
+
+export type GetPublicStatusResponses = {
+    /**
+     * Coarse Mecatl connection and browser sign-in facts.
+     */
+    200: {
+        connection: 'checking' | 'reachable' | 'unavailable';
+        signInRequired: boolean;
+    };
+};
+
+export type GetPublicStatusResponse = GetPublicStatusResponses[keyof GetPublicStatusResponses];
 
 export type GetRuntimeData = {
     body?: never;

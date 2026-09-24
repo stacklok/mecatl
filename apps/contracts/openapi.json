@@ -23,6 +23,9 @@
                     "account": {
                       "type": "string"
                     },
+                    "email": {
+                      "type": "string"
+                    },
                     "mode": {
                       "type": "string",
                       "enum": [
@@ -55,6 +58,17 @@
       "get": {
         "operationId": "startAuthLogin",
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "popup"
+              ]
+            },
+            "required": false,
+            "name": "flow",
+            "in": "query"
+          },
           {
             "schema": {
               "type": "string"
@@ -197,6 +211,16 @@
       "get": {
         "operationId": "completeAuthLogin",
         "responses": {
+          "200": {
+            "description": "A popup completion page that reports only the authentication result.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "302": {
             "description": "Continue the browser authentication flow.",
             "headers": {
@@ -477,6 +501,41 @@
                     "service",
                     "status"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "operationId": "getPublicStatus",
+        "responses": {
+          "200": {
+            "description": "Coarse Mecatl connection and browser sign-in facts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "enum": [
+                        "checking",
+                        "reachable",
+                        "unavailable"
+                      ]
+                    },
+                    "signInRequired": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "connection",
+                    "signInRequired"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }
