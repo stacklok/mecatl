@@ -8,6 +8,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { stringSearchParams } from "../../lib/search-params";
 import { SettingsSectionPage } from "../../routes/workspace.settings_.$section";
 import { routeTree } from "../../routeTree.gen";
 import { AuthGate } from "../auth/auth-gate";
@@ -18,6 +19,7 @@ async function load(path: string) {
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: [path] }),
     routeTree,
+    ...stringSearchParams,
   });
   await router.load();
   return router;

@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { stringSearchParams } from "../../lib/search-params";
 import { routeTree } from "../../routeTree.gen";
 import { authLoginUrl } from "../auth/auth-gate";
 import { MemoryFactDetail, MemorySettings } from "./memory-settings";
@@ -19,6 +20,7 @@ async function load(path: string) {
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: [path] }),
     routeTree,
+    ...stringSearchParams,
   });
   await router.load();
   return router;
@@ -189,6 +191,37 @@ describe("settings routes", () => {
     const absent = await load("/workspace/provider");
     expect(redirectLocation(absent)).toBe("/workspace/settings/providers");
   });
+
+  it.each(["2024", "true", "false", "null", "1e3", "-0", "[]"])(
+    "preserves the exact JSON-looking key %s in direct and legacy URLs",
+    async (key) => {
+      const encoded = encodeURIComponent(key);
+      const memoryUrl = `/workspace/memory?item=${encoded}`;
+      const memory = await load(memoryUrl);
+      expect(memory.state.location.search).toMatchObject({ item: key });
+      expect(memory.buildLocation({ search: { item: key }, to: "/workspace/memory" }).href).toBe(
+        memoryUrl,
+      );
+      expect((await load(memory.state.location.href)).state.location.search).toMatchObject({
+        item: key,
+      });
+
+      const legacy = await load(`/workspace/settings/memory?item=${encoded}`);
+      expect(redirectLocation(legacy)).toBe(memoryUrl);
+
+      const provider = await load(`/workspace/provider?providerId=${encoded}`);
+      expect(provider.state.location.search).toMatchObject({ providerId: key });
+      expect(
+        provider.buildLocation({
+          search: { providerId: key },
+          to: "/workspace/provider",
+        }).href,
+      ).toBe(`/workspace/provider?providerId=${encoded}`);
+      expect((await load(provider.state.location.href)).state.location.search).toMatchObject({
+        providerId: key,
+      });
+    },
+  );
 
   it("returns to the requested settings detail after interactive login", async () => {
     const location = (await load("/workspace/memory?item=team%2Fvoice")).state.location;

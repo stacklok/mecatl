@@ -8,6 +8,7 @@ import { RootErrorBoundary, studioRouterOptions } from "./components/error-page/
 import { AuthGate } from "./features/auth/auth-gate";
 import { installCsrfInterceptor } from "./lib/api-client";
 import { initializeProfilePreferences } from "./lib/profile-preferences";
+import { stringSearchParams } from "./lib/search-params";
 import { initializeTheme } from "./lib/theme";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
@@ -29,6 +30,7 @@ const queryClient = new QueryClient({
 const router = createRouter({
   ...studioRouterOptions,
   routeTree,
+  ...stringSearchParams,
 });
 
 declare module "@tanstack/react-router" {

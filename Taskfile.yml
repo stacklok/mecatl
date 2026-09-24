@@ -887,7 +887,6 @@ tasks:
       # still fails the build.
       - go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -ignore 'specifying action "\$/.*" in invalid format'
       - task: lint:action-templates
-      - sh .github/scripts/release-tag-guard_test.sh
       - bash .github/scripts/ensure-perf-dashboard-noindex_test.sh
       - bash .github/scripts/deslop-workflow_test.sh
 

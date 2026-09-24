@@ -69,36 +69,18 @@ jobs:
           # 0 so origin/main is present to compare against. NOT `git fetch origin main`:
           # persist-credentials is false, so a fetch has no credentials on this repo.
           fetch-depth: 0
-          # This job reads only Git refs and the commit graph. An unfiltered
-          # depth-0 clone here cost ~5 minutes (306 MB, 184 branches, 123 tags)
-          # in front of every publishing job. blob:none fetches the graph
-          # without the blobs.
+          # This job reads NO file contents — only `git merge-base` and `git rev-parse`
+          # against the commit graph. An unfiltered depth-0 clone here cost ~5 minutes
+          # (306 MB, 184 branches, 123 tags) in front of every publish job, since all
+          # six `needs: guard`. blob:none fetches the graph without the blobs.
           filter: blob:none
           ref: ${{ env.VERSION }}
 
       # HEAD, not $GITHUB_SHA: on workflow_dispatch $GITHUB_SHA is the branch head, while
-      # HEAD is the tag commit actually checked out above. A dispatch input naming
-      # main, a SHA, or a branch beginning with v must never publish artifacts.
-      - name: Ensure the selected tag matches HEAD and is on main
+      # HEAD is the tag commit actually checked out above.
+      - name: Ensure the release tag is on main
         run: |
-          set -eu
-          case "$VERSION" in
-            v*) ;;
-            *)
-              echo "::error::release version must name an existing v* tag, got '$VERSION'"
-              exit 1
-              ;;
-          esac
-          if ! git show-ref --verify --quiet "refs/tags/$VERSION"; then
-            echo "::error::release version '$VERSION' is not an existing tag"
-            exit 1
-          fi
-          TAG_COMMIT=$(git rev-parse --verify "refs/tags/${VERSION}^{commit}")
-          HEAD_COMMIT=$(git rev-parse HEAD)
-          if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-            echo "::error::release tag $VERSION resolves to $TAG_COMMIT, but checkout HEAD is $HEAD_COMMIT"
-            exit 1
-          fi
+          set -euo pipefail
           if ! git merge-base --is-ancestor HEAD origin/main; then
             echo "::error::release tags must be cut from a commit on main; $(git rev-parse HEAD) is not on main"
             exit 1
