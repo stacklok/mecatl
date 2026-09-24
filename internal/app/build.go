@@ -1821,7 +1821,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the server-configured --default-model when set, else the per-provider
 	// builtin (e.g. openai => "gpt-5", openrouter => "openai/gpt-5") — so EVERY
 	// downstream consumer below — buildEngine, buildCompactor, buildTokenCounter,
-	// modelSnapshot, and DefaultCapabilities — uses the provider-appropriate model
+	// providerDiscovery projection, and DefaultCapabilities — uses the provider-appropriate model
 	// rather than one valid only for OpenAI. cfg is a local value here, so this single
 	// assignment propagates to all of them. An explicit --model is untouched
 	// (resolveDefaultModel returns it verbatim, so reg.ResolvedDefaultModel() == cfg.Model).
@@ -2305,8 +2305,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// embedded catalog and project each model into the proto form. The registry and
 		// catalog are both fixed for the process lifetime, so this is a startup snapshot
 		// (like Agents/Skills), not a live lister. Empty when zero providers are
-		// available (the zero-keys / mock case). Secret-free (modelSnapshot projects no
-		// key/env/base-URL); the projection lives in modelsnapshot.go so the server
+		// available (the zero-keys / mock case). Secret-free: the provider discovery projection omits
+		// key/env/base-URL; provider_discovery.go owns the projection so the server
 		// adapter never imports providercatalog or the registry.
 		ModelInventory: assets.modelInventory,
 		// DefaultCapabilities: the catalog ∩ adapter INTERSECTION for the DEFAULT
@@ -3454,7 +3454,7 @@ func catalogContextWindow(providerID, modelID string) int {
 //
 // S3 returns the registry ALONGSIDE the default provider (it was discarded in S1)
 // so the composition can thread it into the per-session engine factory (for
-// per-session provider/model routing) and into modelSnapshot (for the ListModels
+// per-session provider/model routing) and into the provider discovery projection (for the ListModels
 // projection). The default provider is still returned so every other downstream
 // consumer (buildEngine's shared engine, child/fork/team/dream/reviewer engines)
 // keeps receiving the single default provider exactly as before — one construction,

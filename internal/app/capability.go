@@ -18,7 +18,7 @@ import (
 // registry type crosses into the server/acp adapters — they receive this computed
 // value only. This ONE value feeds three sinks so they CANNOT disagree:
 //
-//	(a) ModelInfo.Image in modelSnapshot (ListModels),
+//	(a) ModelInfo.Image in the provider discovery projection (ListModels),
 //	(b) the CreateSessionResponse.session_capabilities echo (per-session), and
 //	(c) the ACP gate via Service.ProviderCapabilities() (default caps).
 //

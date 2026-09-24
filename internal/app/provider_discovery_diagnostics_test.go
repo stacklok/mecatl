@@ -23,6 +23,59 @@ func (d *heldDiscoveryDiagnostics) Log(_ context.Context, level port.Level, msg 
 	d.delivered <- diagFact{level: level, msg: msg, args: args}
 }
 
+func TestProviderDiscoveryDiagnosticsDoNotBlockSameProviderRefresh(t *testing.T) {
+	const providerA = "a"
+	const modelA = "a-model"
+
+	diag := &heldDiscoveryDiagnostics{entered: make(chan struct{}), release: make(chan struct{}), delivered: make(chan diagFact, 1)}
+	lister := &fakeLister{err: errors.New("offline fixture")}
+	reg := &providerRegistry{defaultID: "b", entries: map[string]providerEntry{
+		providerA: {id: providerA, available: true, lister: lister},
+		"b":       {id: "b", available: true},
+	}}
+	now := time.Now()
+	d := newProviderDiscovery(reg, Config{Diagnostics: diag, modelDiscoveryNow: func() time.Time { return now }})
+	reg.discovery = d
+	t.Cleanup(func() {
+		close(diag.release)
+		d.Close()
+		select {
+		case <-diag.delivered:
+		default:
+			t.Error("Close did not join diagnostic delivery")
+		}
+	})
+
+	firstDone := make(chan error, 1)
+	go func() { _, err := d.request(context.Background(), providerA, discoveryPicker); firstDone <- err }()
+	select {
+	case <-diag.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("A did not reach diagnostic sink")
+	}
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("A waiter was not notified before diagnostic delivery")
+	}
+
+	lister.err = nil
+	lister.models = []modelEntry{{ID: modelA, ContextLimit: 222222}}
+	now = now.Add(discoveryCooldown + time.Nanosecond)
+	if err := awaitContextWindowWithin(context.Background(), reg, providerA, modelA, time.Second); err != nil {
+		t.Fatalf("same-provider refresh blocked behind its prior diagnostic: %v", err)
+	}
+	if got := lister.calls.Load(); got != 2 {
+		t.Fatalf("same-provider listing calls=%d, want 2", got)
+	}
+	if got := d.snapshot().providers[providerA]; got.outcome.State != statusOK || got.inFlight {
+		t.Fatalf("same-provider refresh not published: %+v", got)
+	}
+}
+
 func TestProviderDiscoveryDiagnosticsDoNotBlockPublicationOrAdmission(t *testing.T) {
 	for _, heal := range []bool{false, true} {
 		name := "listing failure"

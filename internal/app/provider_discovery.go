@@ -212,14 +212,14 @@ func (d *providerDiscovery) fetch(pid string, lister modelLister, attempt *disco
 		d.complete(pid, attempt, nil, attempt.ctx.Err())
 	})
 	models, err := lister.ListModels(attempt.ctx)
+	d.mu.Lock()
+	attempt.returned = true
+	d.mu.Unlock()
 	d.complete(pid, attempt, models, err)
 	if !stop() {
 		<-deadlineDone
 	}
 	attempt.cancel()
-	d.mu.Lock()
-	attempt.returned = true
-	d.mu.Unlock()
 }
 
 func (d *providerDiscovery) complete(pid string, attempt *discoveryAttempt, models []modelEntry, err error) {
