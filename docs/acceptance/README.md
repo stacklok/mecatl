@@ -173,7 +173,11 @@ PR after verification. There is no cleanup or status-only PR.
 - [Agent model discovery](agent-model-discovery.md) — a bounded, read-only,
   model-facing view of the existing resolved inventory, presenting exact
   `(provider_id, model_id)` selection handles without redesigning provider identity.
-  Status: draft.
+  Status: landed.
+- [Agent model discovery search and continuation](agent-model-discovery-v2.md) — extends the
+  same safe resolved inventory with selectable-provider facets, bounded literal-term search,
+  opaque snapshot-bound continuation, and stable model-visible workflow guidance. Status:
+  proposed.
 - [Jev delegated-model router](jev-model-router.md) — adds an explicitly selected,
   bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
   existing delegation event, mecatui, and session-debugger paths. Status: landed implementation
