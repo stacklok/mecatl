@@ -61,6 +61,10 @@ type Provider struct {
 	// (zero-value) intersection is distinguishable from "unset". A tool result with
 	// no Parts always takes the legacy string path regardless.
 	caps *port.ProviderCapabilities
+	// pdfInput is an explicit native-OpenAI opt-in. This Responses adapter is
+	// also used for OpenRouter and other compatible endpoints, which do not
+	// inherit native PDF support from the wire dialect alone.
+	pdfInput bool
 	// cacheDialect selects which provider-side prompt-cache wire dialect
 	// (ADR 0100) buildParams (method) emits. "" (CacheDialectNone, the zero
 	// value) emits no cache hints at all — the byte-identical pre-ADR-0100
@@ -99,6 +103,7 @@ type config struct {
 	baseURL        string
 	effort         string
 	caps           *port.ProviderCapabilities
+	pdfInput       bool
 	extra          []option.RequestOption
 	httpClient     *http.Client
 	cacheDialect   CacheDialect
@@ -149,6 +154,14 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 		cc := caps
 		c.caps = &cc
 	}
+}
+
+// WithNativePDFInput enables the native OpenAI Responses PDF input member for
+// this provider entry. Compatible endpoints stay PDF-false by default. A model
+// call additionally requires a positive per-session PDF capability supplied
+// through WithProviderCapabilities.
+func WithNativePDFInput() Option {
+	return func(c *config) { c.pdfInput = true }
 }
 
 // WithHTTPClient sets the final *http.Client the SDK issues requests through
@@ -252,6 +265,7 @@ func New(opts ...Option) *Provider {
 		client:         client.Responses,
 		effort:         c.effort,
 		caps:           c.caps,
+		pdfInput:       c.pdfInput,
 		cacheDialect:   c.cacheDialect,
 		cacheKeySalt:   c.cacheKeySalt,
 		breakpoints:    c.breakpoints,
@@ -487,8 +501,8 @@ func hasInvalidEncryptedDetail(msg string) bool {
 // and is consulted ONLY by the request builder's tool-result projection; the
 // port method stays the static transmit authority so modelCapability's AND stays
 // honest.
-func (*Provider) Capabilities() port.ProviderCapabilities {
-	return port.ProviderCapabilities{Image: true, Audio: false, EmbeddedContext: true}
+func (p *Provider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{Image: true, Audio: false, PDF: p.pdfInput, EmbeddedContext: true}
 }
 
 // sessionCaps returns the per-session capability intersection the request
@@ -497,9 +511,14 @@ func (*Provider) Capabilities() port.ProviderCapabilities {
 // Capabilities() (the byte-identical pre-T7 default).
 func (p *Provider) sessionCaps() port.ProviderCapabilities {
 	if p.caps != nil {
-		return *p.caps
+		caps := *p.caps
+		caps.PDF = caps.PDF && p.pdfInput
+		return caps
 	}
-	return p.Capabilities()
+	caps := p.Capabilities()
+	// Static transmit support alone does not qualify an exact selected model.
+	caps.PDF = false
+	return caps
 }
 
 // Compile-time assertion that Provider satisfies the port.

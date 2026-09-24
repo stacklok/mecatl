@@ -2,7 +2,9 @@ package anthropic
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -528,7 +530,7 @@ func buildMessages(msgs []session.Message, caps port.ProviderCapabilities) ([]sd
 			// an empty text block on the wire is the same permanent-brick poison.
 			out = append(out, sdk.NewUserMessage(sdk.NewTextBlock(cmp.Or(m.Text, emptyMessagePlaceholder))))
 		case session.RoleUser:
-			blocks, err := userBlocks(m)
+			blocks, err := userBlocks(m, caps)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -633,7 +635,7 @@ func toolResultBlock(tr session.ToolResult, caps port.ProviderCapabilities) sdk.
 // inline as base64 only when bytes are present — Parts carrying a remote URL with
 // no bytes are not supported here (the harness flattens inline media). An audio
 // Part is an honest hard error (Audio:false gates it upstream).
-func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
+func userBlocks(m session.Message, caps port.ProviderCapabilities) ([]sdk.ContentBlockParamUnion, error) {
 	var blocks []sdk.ContentBlockParamUnion
 	if m.Text != "" {
 		blocks = append(blocks, sdk.NewTextBlock(m.Text))
@@ -651,6 +653,16 @@ func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
 			}
 		case session.MediaAudio:
 			return nil, fmt.Errorf("anthropic: audio input not supported by the Messages API")
+		case session.MediaPDF:
+			if !caps.PDF {
+				return nil, fmt.Errorf("anthropic: PDF input not supported by selected model")
+			}
+			if err := validateHydratedPDF(part); err != nil {
+				return nil, err
+			}
+			doc := sdk.NewDocumentBlock(sdk.Base64PDFSourceParam{Data: encodeBase64(part.Data)})
+			doc.OfDocument.Title = sdk.String(part.Name)
+			blocks = append(blocks, doc)
 		default:
 			return nil, fmt.Errorf("anthropic: unsupported media kind %q", part.Kind)
 		}
@@ -664,6 +676,25 @@ func userBlocks(m session.Message) ([]sdk.ContentBlockParamUnion, error) {
 		blocks = append(blocks, sdk.NewTextBlock(emptyMessagePlaceholder))
 	}
 	return blocks, nil
+}
+
+// validateHydratedPDF accepts only a temporary, session-resolved PDF part. The
+// native Messages request carries its bytes, never a private artifact key or URL.
+func validateHydratedPDF(part session.Content) error {
+	if part.BlockKind != "" || part.MIMEType != "application/pdf" || part.URL != "" {
+		return fmt.Errorf("anthropic: invalid PDF input")
+	}
+	if _, err := session.NewPDFContent(part.ArtifactID, part.Name, part.Size, part.SHA256); err != nil {
+		return fmt.Errorf("anthropic: invalid PDF input metadata")
+	}
+	if len(part.Data) == 0 || int64(len(part.Data)) != part.Size {
+		return fmt.Errorf("anthropic: PDF input bytes not resolved")
+	}
+	sum := sha256.Sum256(part.Data)
+	if hex.EncodeToString(sum[:]) != part.SHA256 {
+		return fmt.Errorf("anthropic: PDF input digest mismatch")
+	}
+	return nil
 }
 
 // assistantBlocks expands an assistant message into its ordered content blocks,
