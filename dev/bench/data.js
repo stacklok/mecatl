@@ -240410,6 +240410,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790226037550,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fc7c967bc95dd6daa428c09af0787e07a949be7a",
+          "message": "perf(ci): batch acceptance proof resolution (#1832)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T22:49:46-07:00",
+          "tree_id": "34b8fff67cd703cd58ec0f5f27469f37d827f517",
+          "url": "https://github.com/stacklok/mecatl/commit/fc7c967bc95dd6daa428c09af0787e07a949be7a"
+        },
+        "date": 1790229618584,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -349233,6 +349267,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790229615906,
+  "lastUpdate": 1790229619826,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
