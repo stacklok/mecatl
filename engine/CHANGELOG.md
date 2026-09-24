@@ -28,6 +28,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `agent.AskResolutionNotPlan`. The new method consumes only a root
   plan-originated ask and reports ordinary asks without changing them.
   `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
+
+- **Auxiliary-usage purpose normalization** — adds `agent.RemapAuxiliaryUsage`,
+  allowing owner-side adapters to retain producer-reported model totals while
+  confining the returned result to their authorized auxiliary-purpose bucket.
   Added (minor).
 
 - **Auxiliary provider/model identity** — adds `session.ProviderModelID`, the
