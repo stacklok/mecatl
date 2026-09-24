@@ -243362,6 +243362,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790263882386,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "545ffc6ba21ec409017ec456b4bee451dd5f0de6",
+          "message": "feat(studio): add public status and popup sign-in recovery (#1871)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>",
+          "timestamp": "2026-09-24T17:49:14+02:00",
+          "tree_id": "926560a8588ad39eb093153b4533bfe3e27ce3aa",
+          "url": "https://github.com/stacklok/mecatl/commit/545ffc6ba21ec409017ec456b4bee451dd5f0de6"
+        },
+        "date": 1790265637583,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -353562,6 +353596,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790265632980,
+  "lastUpdate": 1790265638774,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
