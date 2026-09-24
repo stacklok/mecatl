@@ -17,10 +17,10 @@ func TestMecatuiTypedScrollbackModel_Scenario2_ProductionUsesTypedTransitions(t 
 		"syncSnapshot": true, "syncBlock": true, "syncCall": true,
 		"changedFiles": true, "changedFilesAppendixID": true,
 		"subagentBlock": true, "teamBlock": true, "walkBlocks": true,
-		"setSubagentStart": true, "setSubagentRoutingDecision": true,
-		"addSubagentTool": true, "setSubagentEnd": true,
-		"setTeamStart": true, "addTeamMember": true, "setTeamEnd": true,
-		"setTeamTasks": true, "setTeamFindings": true,
+		"startSubagentCard": true, "setSubagentCardRouting": true,
+		"updateSubagentCard": true, "finishSubagentCard": true,
+		"startTeamCard": true, "updateTeamCardMember": true, "finishTeamCard": true,
+		"updateTeamCardTasks": true, "updateTeamCardFindings": true,
 	}
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -53,6 +53,13 @@ func TestMecatuiTypedScrollbackModel_Scenario3_ScrollbackBoundaryIsLogicalOnly(t
 	foundFrame, foundCacheSeam, foundReasoningSeam := false, false, false
 	for _, file := range files {
 		for _, decl := range file.Decls {
+			if gen, ok := decl.(*ast.GenDecl); ok {
+				for _, spec := range gen.Specs {
+					if typeSpec, ok := spec.(*ast.TypeSpec); ok && (typeSpec.Name.Name == "block" || typeSpec.Name.Name == "blockKind") {
+						t.Errorf("legacy broad union %s still exists", typeSpec.Name.Name)
+					}
+				}
+			}
 			fn, ok := decl.(*ast.FuncDecl)
 			if ok && forbiddenBlockInputs[fn.Name.Name] {
 				t.Errorf("ordinary renderer still accepts ui.block through %s", fn.Name.Name)
@@ -136,7 +143,10 @@ func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryToolSnapshotAdapterPreser
 					typed.setWidth(width)
 					legacy := newTestRenderer()
 					legacy.setWidth(width)
-					want := legacy.renderBlock(0, &block{id: uint64(snapshot.ID), rev: rendererRevision(snapshot.Revision), kind: blockTool, toolID: payload.Call.ID, toolName: payload.Call.Name, toolArgs: payload.Call.Arguments, resolved: payload.Resolved, resultBody: payload.Result.Body, resultError: payload.Result.IsError, resultBlocks: contentBlocks(payload.Result.Artifacts)}, expand)
+					want := legacy.prepareTypedToolCard(toolCardPresentationFromSnapshot(payload), expand).render()
+					if legacy.width > legacy.indent {
+						want = legacy.indentLines(want)
+					}
 					got := typed.renderSnapshot(0, snapshot, expand)
 					if got, want := stripANSIstr(got), stripANSIstr(want); got != want {
 						t.Fatalf("typed snapshot adapter changed tool presentation\n got: %q\nwant: %q", got, want)
@@ -260,39 +270,44 @@ func TestMecatuiTypedScrollbackModel_Scenario3_DelegationCardsUseTypedPresentati
 func TestMecatuiTypedScrollbackModel_Scenario3_DelegationSnapshotPresentationParity(t *testing.T) {
 	var c conversation
 	c.addTool("subagent", "Subagent", `{"prompt":"inspect"}`)
-	if !c.setSubagentStart("subagent", "inspect", "", "", "", "model") {
+	if !c.startSubagentCard("subagent", "inspect", "", "", "", "model") {
 		t.Fatal("start subagent")
 	}
-	if !c.addSubagentTool(client.SubagentMsg{ParentCallID: "subagent", Kind: client.SubagentTool, InnerKind: "tool.call", ToolName: "Read", Detail: "src/main.go", ToolCount: 1}) {
+	if !c.updateSubagentCard(client.SubagentMsg{ParentCallID: "subagent", Kind: client.SubagentTool, InnerKind: "tool.call", ToolName: "Read", Detail: "src/main.go", ToolCount: 1}) {
 		t.Fatal("update subagent")
 	}
 	c.addTool("team", "Team", `{}`)
-	if !c.setTeamStart("team", "team-1", []client.TeamMemberSpec{{Name: "lead", Lead: true, Model: "model"}}) {
+	if !c.startTeamCard("team", "team-1", []client.TeamMemberSpec{{Name: "lead", Lead: true, Model: "model"}}) {
 		t.Fatal("start team")
 	}
-	if !c.addTeamMember(client.TeamMsg{ParentCallID: "team", Member: "lead", InnerKind: "tool.call", ToolName: "Read", Detail: "src/main.go"}) {
+	if !c.updateTeamCardMember(client.TeamMsg{ParentCallID: "team", Member: "lead", InnerKind: "tool.call", ToolName: "Read", Detail: "src/main.go"}) {
 		t.Fatal("update team")
 	}
 
 	for _, expand := range []bool{false, true} {
 		for i := 0; i < c.scrollback.Len(); i++ {
 			snapshot := c.scrollback.SnapshotAt(i)
-			var legacy *block
+			var prepare func(*renderer) string
 			switch payload := snapshot.Payload.(type) {
 			case scrollback.SubagentCardSnapshot:
-				legacy = subagentBlockFromSnapshot(snapshot, payload)
+				presentation := subagentCardPresentationFromSnapshot(payload)
+				prepare = func(r *renderer) string { return r.prepareSubagentCard(presentation, expand).render() }
 			case scrollback.TeamCardSnapshot:
-				legacy = teamBlockFromSnapshot(snapshot, payload)
+				presentation := teamCardPresentationFromSnapshot(payload)
+				prepare = func(r *renderer) string { return r.prepareTeamCard(presentation, expand).render() }
 			default:
 				continue
 			}
 			typed := newTestRenderer()
-			legacyRenderer := newTestRenderer()
+			presentationRenderer := newTestRenderer()
 			for _, width := range []int{1, 48} {
 				typed.setWidth(width)
-				legacyRenderer.setWidth(width)
+				presentationRenderer.setWidth(width)
 				got := typed.renderSnapshot(i, snapshot, expand)
-				want := legacyRenderer.renderBlock(i, legacy, expand)
+				want := prepare(presentationRenderer)
+				if presentationRenderer.width > presentationRenderer.indent {
+					want = presentationRenderer.indentLines(want)
+				}
 				if got, want := stripANSIstr(got), stripANSIstr(want); got != want {
 					t.Fatalf("%T width=%d expand=%t changed delegation presentation\n got: %q\nwant: %q", snapshot.Payload, width, expand, got, want)
 				}

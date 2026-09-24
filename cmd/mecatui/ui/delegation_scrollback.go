@@ -259,7 +259,7 @@ func subagentCardPresentationFromSnapshot(p scrollback.SubagentCardSnapshot) sub
 }
 
 // teamCardPresentation is the renderer-owned, immutable adaptation of a Team
-// snapshot. Team overlay consumers deliberately retain their separate ui.block path.
+// snapshot. The Team overlay has its own narrower detached projection.
 type teamCardPresentation struct {
 	name, arguments, result string
 	resolved, isError       bool
@@ -294,33 +294,27 @@ func teamCardPresentationFromSnapshot(p scrollback.TeamCardSnapshot) teamCardPre
 	return out
 }
 
-func subagentBlockFromSnapshot(s scrollback.BlockSnapshot, p scrollback.SubagentCardSnapshot) *block {
-	b := &block{id: uint64(s.ID), rev: rendererRevision(s.Revision), kind: blockTool}
-	b.toolID, b.toolName, b.toolArgs, b.resolved, b.resultBody, b.resultError = p.Call.ID, p.Call.Name, p.Call.Arguments, p.Resolved, p.Result.Body, p.Result.IsError
-	b.resultBlocks = contentBlocks(p.Result.Artifacts)
-	b.subagent, b.subGoal, b.subCurrent, b.subTrace = true, p.Start.Goal, p.Update.Current, traceFromScroll(p.Update.Trace)
-	b.subToolCount, b.subUsage, b.subStop, b.subDurationMs, b.subDone = p.Update.ToolCount, clientUsage(p.Update.Usage), p.Update.Stop, p.Update.DurationMS, p.Update.Done
-	b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel = p.Start.RoutedCategory, p.Start.RoutedModel, p.Start.RoutingReason, p.Start.Model
-	b.subRoutingDecision = clientRouting(p.Start.Routing)
-	return b
+// teamOverlaySnapshot is the detached Team-only input consumed by the Agents
+// overlay. cardID is the stable scrollback identity used to keep a focused
+// overlay pinned while later teams arrive.
+type teamOverlaySnapshot struct {
+	cardID       scrollback.BlockID
+	callID       string
+	teamID       string
+	teamLanes    []teamLane
+	teamTasks    []teamTask
+	teamFindings []teamFinding
+	teamRounds   int
+	teamStop     string
+	teamUsage    client.Usage
+	teamDone     bool
 }
 
-func teamBlockFromSnapshot(s scrollback.BlockSnapshot, p scrollback.TeamCardSnapshot) *block {
-	b := &block{id: uint64(s.ID), rev: rendererRevision(s.Revision), kind: blockTool}
-	b.toolID, b.toolName, b.toolArgs, b.resolved, b.resultBody, b.resultError = p.Call.ID, p.Call.Name, p.Call.Arguments, p.Resolved, p.Result.Body, p.Result.IsError
-	b.resultBlocks = contentBlocks(p.Result.Artifacts)
-	b.team, b.teamID, b.teamRounds, b.teamStop, b.teamUsage, b.teamDone = true, p.Update.TeamID, p.Update.Rounds, p.Update.Stop, clientUsage(p.Update.Usage), p.Update.Done
-	b.teamLanes = make([]teamLane, len(p.Update.Lanes))
-	for i, lane := range p.Update.Lanes {
-		b.teamLanes[i] = teamLane{name: lane.Name, sessionID: lane.SessionID, role: lane.Role, mutating: lane.Mutating, lead: lane.Lead, routedCategory: lane.RoutedCategory, routedModel: lane.RoutedModel, routingReason: lane.RoutingReason, routingDecision: clientRouting(lane.Routing), model: lane.Model, current: lane.Current, toolCount: lane.ToolCount, usage: clientUsage(lane.Usage), trace: traceFromScroll(lane.Trace), idle: lane.Idle, stopped: lane.Stopped, stopReason: lane.StopReason, errorRounds: lane.ErrorRounds, cause: lane.Cause, ctxUsed: lane.ContextUsed, ctxWindow: lane.ContextWindow}
+func teamOverlaySnapshotFromSnapshot(id scrollback.BlockID, p scrollback.TeamCardSnapshot) *teamOverlaySnapshot {
+	presentation := teamCardPresentationFromSnapshot(p)
+	return &teamOverlaySnapshot{
+		cardID: id, callID: p.Call.ID, teamID: presentation.teamID,
+		teamLanes: presentation.lanes, teamTasks: presentation.tasks, teamFindings: presentation.findings,
+		teamRounds: presentation.rounds, teamStop: presentation.stop, teamUsage: presentation.usage, teamDone: presentation.done,
 	}
-	b.teamTasks = make([]teamTask, len(p.Update.Tasks))
-	for i, task := range p.Update.Tasks {
-		b.teamTasks[i] = teamTask{id: task.ID, desc: task.Description, state: task.State, assignee: task.Assignee, deps: append([]string(nil), task.Dependencies...)}
-	}
-	b.teamFindings = make([]teamFinding, len(p.Update.Findings))
-	for i, finding := range p.Update.Findings {
-		b.teamFindings[i] = teamFinding{member: finding.Member, body: finding.Body}
-	}
-	return b
 }

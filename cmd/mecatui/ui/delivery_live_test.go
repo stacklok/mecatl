@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -149,15 +150,15 @@ func TestFireDelivery_Scenario5_ConnectedTUIRendersDeliveryLive(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block (the delivery card), got %d: %+v", len(blocks), blocks)
 	}
-	if blocks[0].kind != blockDelivery {
-		t.Fatalf("block kind = %v, want blockDelivery", blocks[0].kind)
+	delivery, ok := blocks[0].Payload.(scrollback.DeliveryCardSnapshot)
+	if !ok {
+		t.Fatalf("card payload = %T, want delivery", blocks[0].Payload)
 	}
-	// The schedule name is carried as toolName on the block.
-	if blocks[0].toolName != "nightly-sync" {
-		t.Errorf("delivery block schedule name = %q, want nightly-sync", blocks[0].toolName)
+	if delivery.ScheduleName != "nightly-sync" {
+		t.Errorf("delivery card schedule name = %q, want nightly-sync", delivery.ScheduleName)
 	}
-	if blocks[0].raw != deliveryProvenanceText {
-		t.Errorf("delivery block raw = %q, want %q", blocks[0].raw, deliveryProvenanceText)
+	if delivery.Text != deliveryProvenanceText {
+		t.Errorf("delivery card text = %q, want %q", delivery.Text, deliveryProvenanceText)
 	}
 }
 
@@ -199,30 +200,15 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 		t.Fatalf("replay path: expected 1 block, got %d", len(replayBlocks))
 	}
 
-	lb := liveBlocks[0]
-	rb := replayBlocks[0]
-
-	// AC6.4: both paths produce an equivalent delivery-card block — same
-	// kind, same schedule name, same raw text.
-	if lb.kind != blockDelivery {
-		t.Errorf("live block kind = %v, want blockDelivery", lb.kind)
+	lb, liveOK := liveBlocks[0].Payload.(scrollback.DeliveryCardSnapshot)
+	rb, replayOK := replayBlocks[0].Payload.(scrollback.DeliveryCardSnapshot)
+	if !liveOK || !replayOK {
+		t.Fatalf("delivery payloads = %T/%T", liveBlocks[0].Payload, replayBlocks[0].Payload)
 	}
-	if rb.kind != blockDelivery {
-		t.Errorf("replay block kind = %v, want blockDelivery", rb.kind)
+	if lb.ScheduleName != rb.ScheduleName || lb.ScheduleName != "nightly-sync" {
+		t.Errorf("schedule names = %q/%q, want nightly-sync", lb.ScheduleName, rb.ScheduleName)
 	}
-	if lb.kind != rb.kind {
-		t.Errorf("kind mismatch: live=%v replay=%v", lb.kind, rb.kind)
-	}
-	if lb.toolName != rb.toolName {
-		t.Errorf("schedule name mismatch: live=%q replay=%q", lb.toolName, rb.toolName)
-	}
-	if lb.toolName != "nightly-sync" {
-		t.Errorf("live schedule name = %q, want nightly-sync", lb.toolName)
-	}
-	if lb.raw != rb.raw {
-		t.Errorf("raw text mismatch:\n  live: %q\nreplay: %q", lb.raw, rb.raw)
-	}
-	if lb.raw != deliveryProvenanceText {
-		t.Errorf("live raw text = %q, want %q", lb.raw, deliveryProvenanceText)
+	if lb.Text != rb.Text || lb.Text != deliveryProvenanceText {
+		t.Errorf("delivery text mismatch: live=%q replay=%q", lb.Text, rb.Text)
 	}
 }

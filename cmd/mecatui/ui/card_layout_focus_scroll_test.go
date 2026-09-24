@@ -30,7 +30,7 @@ func TestMecatuiCardLayout_Scenario3_FocusAndScrollableViewsRemainUsable(t *test
 
 	t.Run("focused team trace remains selected and height-bounded", func(t *testing.T) {
 		lanes := []teamLane{{name: "selected", trace: []teamTrace{{kind: teamTraceTool, name: long, detail: long}, {kind: teamTraceTool, name: long, detail: long}, {kind: teamTraceTool, name: long, detail: long}, {kind: teamTraceTool, name: long, detail: long}}}}
-		block := &block{teamLanes: lanes}
+		block := &teamOverlaySnapshot{teamLanes: lanes}
 		out := renderTeamFocus(th, block, "selected", hk, width, 15)
 		assertFits(t, "team focus", out)
 		if !strings.Contains(stripANSIstr(out), "selected") {

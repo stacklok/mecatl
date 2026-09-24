@@ -1010,40 +1010,6 @@ func wrapToolCardRegion(region string, bodyWidth int) string {
 // diff, or — for an ordinary tool — the compact key:value summary when collapsed
 // and the full pretty JSON when expanded. Returns "" when there is nothing to
 // show. See renderTool for the per-branch rationale.
-func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
-	var args string
-	switch {
-	case b.team:
-		// Delegation rows must be bounded while still raw. renderTeam applies styles
-		// only after preparing its body-width rows, so no ANSI padding can induce a
-		// second wrap below the card frame.
-		return r.renderTeam(b, expand, bodyWidth)
-	case b.subagent:
-		// See the Team path above; Subagent has the same styled metadata/trace body.
-		return r.renderSubagent(b, expand, bodyWidth)
-	default:
-		if diff, ok := r.renderToolDiffAtWidth(b.toolName, b.toolArgs, expand, bodyWidth); ok {
-			// Edit/Write render their change as a diff in place of the raw JSON args.
-			return diff
-		}
-		if expand {
-			// Expanded: always the FULL pretty-printed JSON (the inspect path; the summary
-			// is collapsed-only, so ctrl+t reveals everything). Wrap raw JSON before its
-			// style so the card row budget is ANSI-independent.
-			if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-				return renderToolCardText(r.th.Style("toolArgs"), jsonArgs, bodyWidth)
-			}
-		} else if summary, ok := r.summarizeArgs(b.toolArgs); ok {
-			// Collapsed: the compact key:value summary in place of raw JSON (issue #24).
-			args = summary
-		} else if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-			// Collapsed but the args aren't a JSON object (bare array/scalar/odd shape):
-			// fall back to the existing pretty-JSON behaviour.
-			args = r.th.Style("toolArgs").Render(jsonArgs)
-		}
-	}
-	return wrapToolCardRegion(args, bodyWidth)
-}
 
 // renderToolResult renders the RESULT region of a resolved tool card. Collapsed,
 // a LARGE JSON result is summarized to prominent fields + a size line (issue #24,
@@ -1058,27 +1024,6 @@ func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
 // represented in the model-facing resultBody, so they are not double-rendered. A nil
 // resultBlocks (the common text-only case) leaves the existing render path
 // byte-unchanged.
-func (r *renderer) renderToolResult(b *block, expand bool, bodyWidth int) string {
-	lines, hiddenSummaryFields := r.renderToolResultLines(b, expand)
-	for _, blk := range b.resultBlocks {
-		if line, ok := renderResultBlockLine(blk); ok {
-			lines = append(lines, toolResultLine{text: line, style: resultLineArtifact})
-		}
-	}
-	if !expand {
-		lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
-	} else {
-		lines = wrapResultDisplayLines(lines, bodyWidth)
-	}
-	var out strings.Builder
-	for i, line := range lines {
-		if i > 0 {
-			out.WriteByte('\n')
-		}
-		out.WriteString(r.renderToolResultLine(line))
-	}
-	return out.String()
-}
 
 type resultLineStyle uint8
 
@@ -1098,20 +1043,6 @@ type toolResultLine struct {
 // renderToolResultLines returns unwrapped, terminal-safe result rows. The enclosing
 // renderToolResult combines these with typed artifact rows before applying the shared
 // collapsed display-row budget.
-func (r *renderer) renderToolResultLines(b *block, expand bool) ([]toolResultLine, int) {
-	if summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, expand); ok {
-		return resultLines(summary, resultLineSummary), hiddenFields
-	}
-	body := terminaltext.Sanitize(strings.TrimRight(b.resultBody, "\n"))
-	if body == "" {
-		return nil, 0
-	}
-	style := resultLineBody
-	if b.resultError {
-		style = resultLineError
-	}
-	return resultLines(body, style), 0
-}
 
 func resultLines(text string, style resultLineStyle) []toolResultLine {
 	lines := strings.Split(text, "\n")
@@ -1190,45 +1121,6 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 // The goal title always leads (a muted line) so a card is self-contained and
 // legible even with several concurrent subagents interleaved. All subagent-derived
 // strings (goal, tool names, previews) are terminal-sanitized.
-func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
-	muted := r.th.Style("muted")
-	var out strings.Builder
-	if b.subGoal != "" {
-		out.WriteString(renderDelegationToolCardText(muted, "↳ "+terminaltext.Sanitize(b.subGoal), bodyWidth))
-		out.WriteString("\n")
-	}
-	modelLabel := delegationModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel, b.subRoutingDecision)
-	if expand && b.subRoutingDecision != nil {
-		modelLabel = ""
-	}
-	if modelLabel != "" {
-		out.WriteString(renderDelegationToolCardText(muted, modelLabel, bodyWidth))
-		out.WriteString("\n")
-	}
-	if expand {
-		if detail := routingDecisionDetail(b.subRoutingDecision, b.subModel, b.subRoutingReason); detail != "" {
-			out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
-			out.WriteString("\n")
-		}
-	}
-
-	if b.subDone {
-		out.WriteString(renderDelegationToolCardText(muted, subagentResolvedLine(b), bodyWidth))
-		return strings.TrimRight(out.String(), "\n")
-	}
-
-	if expand {
-		out.WriteString(renderDelegationToolCardText(muted, "subagent · "+boundedPreviewsSubNote, bodyWidth))
-		if trace := r.renderTraceAtWidth(b.subTrace, bodyWidth); trace != "" {
-			out.WriteString("\n")
-			out.WriteString(trace)
-		}
-		return strings.TrimRight(out.String(), "\n")
-	}
-
-	out.WriteString(renderDelegationToolCardText(muted, r.subagentLiveLine(b), bodyWidth))
-	return strings.TrimRight(out.String(), "\n")
-}
 
 // subagentModelLabel renders the model surface for a delegation as a muted one-line
 // cue. It shows the OPT-IN router's bare metadata as "routed: <category> → <model>"
@@ -1366,29 +1258,9 @@ func routingDecisionDetail(decision *client.RoutingDecision, actualModel, reason
 // (ADR 0079 AC3.1). The tool name is sanitized (server-derived). The trace chord
 // reads the LIVE ExpandTools marking (r.marks.expandTools) so an override propagates
 // (issue #457).
-func (r *renderer) subagentLiveLine(b *block) string {
-	current := "…"
-	if b.subCurrent != "" {
-		current = terminaltext.Sanitize(b.subCurrent)
-	}
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace",
-		current,
-		humanizeTokens(b.subUsage.InputTokens),
-		humanizeTokens(b.subUsage.OutputTokens),
-		plural(b.subToolCount, "tool"),
-		r.marks.expandTools)
-}
 
 // subagentResolvedLine is the muted one-line summary shown once the child run has
 // finished: duration, token totals, final tool count, and the stop reason.
-func subagentResolvedLine(b *block) string {
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · stop:%s",
-		humanizeDuration(b.subDurationMs),
-		humanizeTokens(b.subUsage.InputTokens),
-		humanizeTokens(b.subUsage.OutputTokens),
-		plural(b.subToolCount, "tool"),
-		subagentStopLabel(b.subStop))
-}
 
 // chipSep is the two-space gap between adjacent child-tool chips in the expanded
 // trace row.
@@ -1524,67 +1396,12 @@ func teamLaneOrder(lanes []teamLane) []int {
 //
 // All member-derived text (names, message lines, tool names, previews) is
 // terminal-sanitized before it reaches lipgloss.
-func (r *renderer) renderTeam(b *block, expand bool, bodyWidth int) string {
-	muted := r.th.Style("muted")
-	var out strings.Builder
-
-	if b.teamDone {
-		out.WriteString(renderDelegationToolCardText(muted, teamResolvedLine(b), bodyWidth))
-		if !expand {
-			return out.String()
-		}
-	} else {
-		out.WriteString(renderDelegationToolCardText(muted, r.teamHeader(b, expand), bodyWidth))
-	}
-
-	order := teamLaneOrder(b.teamLanes)
-	shown := order
-	if len(shown) > maxTeamLanes {
-		shown = order[:maxTeamLanes]
-	}
-	nameW := teamNameWidth(b.teamLanes, shown)
-	for n, idx := range shown {
-		ln := &b.teamLanes[idx]
-		if expand && n > 0 {
-			// A blank line between members' blocks so boundaries read clearly at 3+.
-			out.WriteString("\n")
-		}
-		out.WriteString("\n")
-		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(ln, nameW, b.teamDone), bodyWidth))
-		if expand {
-			if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
-				out.WriteString("\n")
-				out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
-			}
-			if tr := r.renderTraceAtWidth(ln.trace, bodyWidth); tr != "" {
-				out.WriteString("\n")
-				out.WriteString(tr)
-			}
-		}
-	}
-	if extra := len(order) - len(shown); extra > 0 {
-		// The inline card caps at maxTeamLanes; the rest live in the agents overlay.
-		// Advertise it on the roll-up so a capped card is the discovery point for the
-		// full, windowed roster. The chord reads the LIVE Agents marking so an override
-		// propagates (issue #457).
-		out.WriteString("\n")
-		out.WriteString(renderDelegationToolCardText(muted, fmt.Sprintf("  · +%d more · %s", extra, r.marks.agents), bodyWidth))
-	}
-	return out.String()
-}
 
 // teamHeader is the muted lead line summarising the team's shape: the member count
 // and the expand-tools affordance, whose verb tracks the toggle (trace when collapsed,
 // collapse when expanded). The round count is carried only on team.end, so it is
 // shown on the resolved line rather than fabricated live. The chord reads the LIVE
 // ExpandTools marking (r.marks.expandTools) so an override propagates (issue #457).
-func (r *renderer) teamHeader(b *block, expand bool) string {
-	verb := r.marks.expandTools + " trace"
-	if expand {
-		verb = r.marks.expandTools + " collapse"
-	}
-	return "team · " + plural(len(b.teamLanes), "member") + " · " + verb
-}
 
 // teamNameWidth is the column width member BARE names are padded to on the
 // collapsed lane lines: the longest shown bare name, capped at maxTeamNameWidth,
@@ -1835,22 +1652,11 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 // stopped non-resumably — a "N stopped" count tell. The count is the calm inline
 // card's only signal of a stopped member (the per-member glyph lives in the modal
 // overlay), so it appears only when stopped > 0.
-func teamResolvedLine(b *block) string {
-	line := fmt.Sprintf("team · %s · ↑%s ↓%s · stop:%s",
-		plural(b.teamRounds, "round"),
-		humanizeTokens(b.teamUsage.InputTokens),
-		humanizeTokens(b.teamUsage.OutputTokens),
-		subagentStopLabel(b.teamStop))
-	if n := teamStoppedCount(b); n > 0 {
-		line += fmt.Sprintf(" · %d stopped", n)
-	}
-	return line
-}
 
 // teamStoppedCount reports how many member lanes ended STOPPED (non-resumable /
 // budget-exhausted). It drives the inline-card "N stopped" tell and the overlay
 // roster sub-header count.
-func teamStoppedCount(b *block) int {
+func teamStoppedCount(b *teamOverlaySnapshot) int {
 	n := 0
 	for i := range b.teamLanes {
 		if b.teamLanes[i].stopped {
@@ -2592,17 +2398,6 @@ func (*renderer) summarizeResult(body string) (string, bool) {
 // object/array). The expanded view, an error result, and a non-JSON/line-shaped
 // result all return ok=false so renderTool falls through to the existing styled,
 // line-capped/full body path (Read and prose results unchanged).
-func (r *renderer) summarizeResolvedResult(b *block, expand bool) (string, bool) {
-	summary, _, ok := r.summarizeResolvedResultDetail(b, expand)
-	return summary, ok
-}
-
-func (*renderer) summarizeResolvedResultDetail(b *block, expand bool) (string, int, bool) {
-	if expand || b.resultError {
-		return "", 0, false
-	}
-	return summarizeResultDetail(b.resultBody)
-}
 
 // collapseMarker formats the "+N more line(s) · <expand> expand" affordance shown
 // when a tool result or diff side is line-capped. The verb matches the footer

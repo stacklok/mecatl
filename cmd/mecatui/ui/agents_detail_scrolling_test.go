@@ -31,12 +31,12 @@ func testAgentsDetailScrolling(t *testing.T) {
 			return m
 		}, 0},
 		{"team tasks", func(m Model) Model {
-			m.conv.addTeamFixture(block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "lead"}}, teamTasks: tasks})
+			m.conv.addTeamFixture(teamOverlaySnapshot{teamLanes: []teamLane{{name: "lead"}}, teamTasks: tasks})
 			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
 			return m
 		}, 't'},
 		{"team findings", func(m Model) Model {
-			m.conv.addTeamFixture(block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "lead"}}, teamFindings: findings})
+			m.conv.addTeamFixture(teamOverlaySnapshot{teamLanes: []teamLane{{name: "lead"}}, teamFindings: findings})
 			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
 			return m
 		}, 'f'},

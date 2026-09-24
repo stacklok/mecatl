@@ -15,6 +15,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -304,11 +305,12 @@ func TestReconnectUI_TriggerOnStreamCloseAndError(t *testing.T) {
 	if len(m.conv.testBlocks()) != 1 {
 		t.Fatalf("expected 1 delivery block, got %d: %+v", len(m.conv.testBlocks()), m.conv.testBlocks())
 	}
-	if m.conv.testBlocks()[0].kind != blockDelivery {
-		t.Errorf("block kind = %v, want blockDelivery", m.conv.testBlocks()[0].kind)
+	delivery, ok := m.conv.testBlocks()[0].Payload.(scrollback.DeliveryCardSnapshot)
+	if !ok {
+		t.Fatalf("payload = %T, want delivery", m.conv.testBlocks()[0].Payload)
 	}
-	if m.conv.testBlocks()[0].deliveryFireID != "sched--fire-gap" {
-		t.Errorf("fire id = %q, want sched--fire-gap", m.conv.testBlocks()[0].deliveryFireID)
+	if delivery.FireID != "sched--fire-gap" {
+		t.Errorf("fire id = %q, want sched--fire-gap", delivery.FireID)
 	}
 
 	// Degraded state cleared.
@@ -446,8 +448,9 @@ func TestReconnectUI_CatchUpDoesNotDuplicateTranscript(t *testing.T) {
 	if len(m.conv.testBlocks()) != 1 {
 		t.Fatalf("expected exactly 1 block (the delivery note) — the replay re-rendered history; got %d blocks: %+v", len(m.conv.testBlocks()), m.conv.testBlocks())
 	}
-	if m.conv.testBlocks()[0].kind != blockDelivery || m.conv.testBlocks()[0].deliveryFireID != "fire-only-me" {
-		t.Errorf("block = kind %v fire %q, want the delivery note fire-only-me", m.conv.testBlocks()[0].kind, m.conv.testBlocks()[0].deliveryFireID)
+	delivery, ok := m.conv.testBlocks()[0].Payload.(scrollback.DeliveryCardSnapshot)
+	if !ok || delivery.FireID != "fire-only-me" {
+		t.Errorf("card = %#v, want delivery fire-only-me", m.conv.testBlocks()[0])
 	}
 }
 
@@ -611,7 +614,7 @@ func TestReconnectUI_RegressionUnfencedPromptNotDelivery(t *testing.T) {
 	}
 	// No delivery block; the prompt was NOT misclassified.
 	for _, b := range m.conv.testBlocks() {
-		if b.kind == blockDelivery {
+		if _, ok := b.Payload.(scrollback.DeliveryCardSnapshot); ok {
 			t.Errorf("un-fenced prompt misclassified as a delivery block")
 		}
 	}

@@ -56,7 +56,7 @@ func TestSessionTitleGeneration_Scenario1_BareTitleCommandReadsAndClearsInput(t 
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
-	if cmd != nil || len(m.conv.testBlocks()) != 1 || !strings.Contains(m.conv.testBlocks()[0].raw, "Fallback") || !strings.Contains(m.conv.testBlocks()[0].raw, "unknown") {
+	if cmd != nil || len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "Fallback") || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "unknown") {
 		t.Fatalf("notice/cmd = %#v/%v, want local provenance notice", m.conv.testBlocks(), cmd != nil)
 	}
 	if got := m.prompt.Value(); got != "" {
@@ -73,7 +73,7 @@ func TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandReadsAndClearsIn
 
 			mm, cmd := m.submitPrompt()
 			m = mm.(Model)
-			if cmd != nil || m.sessionTitle != "Fallback" || len(m.conv.testBlocks()) != 1 || !strings.Contains(m.conv.testBlocks()[0].raw, "Fallback") || !strings.Contains(m.conv.testBlocks()[0].raw, "generated") {
+			if cmd != nil || m.sessionTitle != "Fallback" || len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "Fallback") || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "generated") {
 				t.Fatalf("%q title/notice/cmd = %q/%#v/%v, want local title notice", input, m.sessionTitle, m.conv.testBlocks(), cmd != nil)
 			}
 			if got := m.prompt.Value(); got != "" {
@@ -188,7 +188,7 @@ func TestSessionTitleGeneration_Scenario4_QuietFailureOffersManualTitle(t *testi
 	m := titleModel(t, &titleRenamer{})
 	failed := client.SessionTitleMsg{Title: "Fallback", Provenance: "fallback", GenerationState: "exhausted", LatestAttempt: client.TitleAttemptSummary{ID: "a1"}}
 	m = applyAll(m, failed, failed)
-	if len(m.conv.testBlocks()) != 1 || !strings.Contains(m.conv.testBlocks()[0].raw, "/title <text>") || strings.Contains(m.conv.testBlocks()[0].raw, "provider") {
+	if len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "/title <text>") || strings.Contains(testCardText(m.conv.testBlocks()[0]), "provider") {
 		t.Fatalf("failure notices = %#v", m.conv.testBlocks())
 	}
 }

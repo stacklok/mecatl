@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 func TestSessionsNextTabCyclesVisibleTabsWhenDraftsAreHidden(t *testing.T) {
@@ -138,7 +139,7 @@ func TestSessionsTranscriptCloseReopenSameIDDropsStaleRequestToken(t *testing.T)
 		t.Fatalf("stale same-ID response changed reopened load: empty=%v loading=%v", st.transcript.isEmpty(), st.loading)
 	}
 	st.HandleMsg(fresh)
-	if st.loading || len(st.transcript.testBlocks()) != 1 || st.transcript.testBlocks()[0].raw != "fresh transcript" {
+	if st.loading || len(st.transcript.testBlocks()) != 1 || testCardText(st.transcript.testBlocks()[0]) != "fresh transcript" {
 		t.Fatalf("fresh response not accepted: loading=%v blocks=%+v", st.loading, st.transcript.testBlocks())
 	}
 }
@@ -390,11 +391,12 @@ func TestSyntheticUserPromptReplay_Scenario2_TranscriptRendersNoticeNotUserBubbl
 	if len(st.transcript.testBlocks()) != 2 {
 		t.Fatalf("blocks = %d, want 2", len(st.transcript.testBlocks()))
 	}
-	notice, user := st.transcript.testBlocks()[0], st.transcript.testBlocks()[1]
-	if notice.kind != blockNotice || notice.raw != "harness continuation" {
-		t.Fatalf("synthetic replay block = %+v, want persistent notice", notice)
+	notice, noticeOK := st.transcript.testBlocks()[0].Payload.(scrollback.NoticeCardSnapshot)
+	user, userOK := st.transcript.testBlocks()[1].Payload.(scrollback.UserCardSnapshot)
+	if !noticeOK || notice.Text != "harness continuation" {
+		t.Fatalf("synthetic replay card = %+v", notice)
 	}
-	if user.kind != blockUser || user.raw != "operator prompt" || len(user.media) != 1 || user.media[0] != "image/png (inline)" {
-		t.Fatalf("genuine replay block = %+v, want user bubble with media descriptor", user)
+	if !userOK || user.Text != "operator prompt" || len(user.Media) != 1 || user.Media[0] != "image/png (inline)" {
+		t.Fatalf("genuine replay card = %+v", user)
 	}
 }

@@ -19,7 +19,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	m.conv.addUser("second")
 	m.conv.addUser("third")
 	m.refreshView()
-	priorID := m.conv.testBlocks()[0].id
+	priorID := uint64(m.conv.testBlocks()[0].ID)
 	priorRow := m.conversationView.frame.firstRegionRow(priorID, conversationRegionBody)
 	if priorRow < 0 {
 		t.Fatal("first block has no body row")
@@ -216,7 +216,7 @@ func TestADR_0301_InterBlockSeparatorAnchorsAdjacentContent(t *testing.T) {
 	m.conv.addTool("third", "Read", `{"path":"third"}`)
 	m.refreshView()
 
-	wantID := m.conv.testBlocks()[1].id
+	wantID := uint64(m.conv.testBlocks()[1].ID)
 	separator := -1
 	for i, row := range m.conversationView.frame.provenance {
 		if !row.separator {

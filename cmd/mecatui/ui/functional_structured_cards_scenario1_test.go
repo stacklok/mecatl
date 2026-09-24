@@ -36,7 +36,8 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	c := &conversation{}
 	c.addTool("call-1", "Read", `{"path":"README.md"}`)
 	r := newCacheRenderer()
-	base := r.blockRenderKey(&c.testBlocks()[0], false)
+	baseSnapshot := c.testBlocks()[0]
+	base := blockRenderKey{revision: rendererRevision(baseSnapshot.Revision), context: r.renderContext(false)}
 	if base.context != (renderContextKey{
 		width: r.width,
 	}) {
@@ -53,28 +54,21 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	if !c.resolveTool("call-1", "done", false) {
 		t.Fatal("resolve tool")
 	}
-	assertChanged("content revision", r.blockRenderKey(&c.testBlocks()[0], false))
+	changedSnapshot := c.testBlocks()[0]
+	assertChanged("content revision", blockRenderKey{revision: rendererRevision(changedSnapshot.Revision), context: r.renderContext(false)})
 
-	block := block{rev: base.revision}
 	r.width++
-	assertChanged("width", r.blockRenderKey(&block, false))
+	assertChanged("width", blockRenderKey{revision: base.revision, context: r.renderContext(false)})
 	r.width--
-	assertChanged("expanded state", r.blockRenderKey(&block, true))
+	assertChanged("expanded state", blockRenderKey{revision: base.revision, context: r.renderContext(true)})
 }
 
 func TestMecatuiFunctionalConversationCards_Scenario1_PreparedRowsCarryStructuralProvenance(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(defaultBlockIndent + 34)
-	b := &block{
-		kind:       blockTool,
-		toolID:     "provenance",
-		toolName:   "Read",
-		toolArgs:   `{"path":"ARGUMENT-PROVENANCE-MARKER-with-a-long-value.txt"}`,
-		resolved:   true,
-		resultBody: "RESULT-PROVENANCE-MARKER",
-	}
+	presentation := toolCardPresentation{name: "Read", arguments: `{"path":"ARGUMENT-PROVENANCE-MARKER-with-a-long-value.txt"}`, resolved: true, result: "RESULT-PROVENANCE-MARKER"}
 
-	prepared := r.prepareToolCard(b, true)
+	prepared := r.prepareTypedToolCard(presentation, true)
 	if len(prepared.Lines) != len(prepared.Rows) {
 		t.Fatalf("StyledTool lines/rows = %d/%d, want lockstep", len(prepared.Lines), len(prepared.Rows))
 	}

@@ -41,16 +41,16 @@ func newCacheRenderer() *renderer {
 // independent test oracle and allocation benchmark for the production frame path.
 func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	var b strings.Builder
-	legacyBlocks := c.testBlocks()
+	snapshots := c.testBlocks()
 	kinds := make([]scrollback.Kind, c.scrollback.Len())
 	for i := range kinds {
 		kinds[i] = c.scrollback.MetadataAt(i).Kind
 	}
-	for i := range legacyBlocks {
+	for i := range snapshots {
 		if i > 0 {
 			b.WriteString(blockSepAfter(kinds, i-1))
 		}
-		b.WriteString(r.renderBlock(i, &legacyBlocks[i], expand))
+		b.WriteString(r.renderSnapshot(i, snapshots[i], expand))
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -82,7 +82,7 @@ func assertCacheMatchesFresh(t *testing.T, step string, cached *renderer, c *con
 // oracleSteps is the scripted sequence exercising EVERY conversation mutator.
 // Each step's name is the conversation method it exercises (the reflection
 // tripwire below checks the method set against these names); a step may call
-// other already-covered methods as setup (e.g. addTool before setSubagentStart).
+// other already-covered methods as setup (e.g. addTool before startSubagentCard).
 var oracleSteps = []struct {
 	name string
 	fn   func(c *conversation)
@@ -127,21 +127,21 @@ var oracleSteps = []struct {
 		c.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: "typed-team", TeamID: "typed-team", Roster: []client.TeamMemberSpec{{Name: "member"}}})
 		c.applyTeamTyped(client.TeamMsg{Kind: client.TeamEnd, ParentCallID: "typed-team", Rounds: 1, Stop: "end_turn"})
 	}},
-	{"setSubagentStart", func(c *conversation) {
+	{"startSubagentCard", func(c *conversation) {
 		c.addTool("call-sub", "Subagent", `{"goal":"dig"}`)
-		c.setSubagentStart("call-sub", "dig into the code", "", "", "", "")
+		c.startSubagentCard("call-sub", "dig into the code", "", "", "", "")
 	}},
-	{"setSubagentRoutingDecision", func(c *conversation) {
+	{"setSubagentCardRouting", func(c *conversation) {
 		confidence := 0.42
-		c.setSubagentRoutingDecision("call-sub", "child-1", &client.RoutingDecision{Backend: "jev", Confidence: &confidence, Outcome: "fallback"})
+		c.setSubagentCardRouting("call-sub", "child-1", &client.RoutingDecision{Backend: "jev", Confidence: &confidence, Outcome: "fallback"})
 	}},
-	{"addSubagentTool", func(c *conversation) {
-		c.addSubagentTool(client.SubagentMsg{
+	{"updateSubagentCard", func(c *conversation) {
+		c.updateSubagentCard(client.SubagentMsg{
 			Kind: client.SubagentTool, ParentCallID: "call-sub", ToolName: "Grep", ToolCount: 1,
 		})
 	}},
-	{"setSubagentEnd", func(c *conversation) {
-		c.setSubagentEnd("call-sub", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
+	{"finishSubagentCard", func(c *conversation) {
+		c.finishSubagentCard("call-sub", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", 4200)
 	}},
 	// The fleet accumulators mutate conversation state OFF the blocks (footer /
 	// f6 roster); they must leave the block render untouched.
@@ -154,51 +154,51 @@ var oracleSteps = []struct {
 	{"fleetEnd", func(c *conversation) {
 		c.fleetEnd("child-1", client.Usage{InputTokens: 1200, OutputTokens: 340}, 3, "end_turn", "", 4200)
 	}},
-	{"setTeamStart", func(c *conversation) {
+	{"startTeamCard", func(c *conversation) {
 		c.addTool("call-team", "Team", `{"goal":"review"}`)
-		c.setTeamStart("call-team", "team-p1", []client.TeamMemberSpec{
+		c.startTeamCard("call-team", "team-p1", []client.TeamMemberSpec{
 			{Name: "alpha", Role: "researcher", Lead: true},
 			{Name: "beta", Role: "reviewer", Mutating: true},
 		})
 	}},
-	// addTeamMember: all five InnerKinds routed to the lanes.
-	{"addTeamMember", func(c *conversation) {
+	// updateTeamCardMember: all five InnerKinds routed to the lanes.
+	{"updateTeamCardMember", func(c *conversation) {
 		base := client.TeamMsg{ParentCallID: "call-team", TeamID: "team-p1", Member: "alpha"}
 		msg := base
 		msg.InnerKind = "message.delta"
 		msg.Text = "scanning the diff"
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "tool.call"
 		msg.ToolName = "Grep"
 		msg.Detail = "pattern: foo"
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "tool.result"
 		msg.ToolName = "Grep"
 		msg.Detail = "3 matches"
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "turn.end"
 		msg.Usage = client.Usage{InputTokens: 800, OutputTokens: 120}
 		msg.ContextWindow = 200000
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 		msg = base
 		msg.InnerKind = "result"
 		msg.Text = "round done"
 		msg.Usage = client.Usage{InputTokens: 100, OutputTokens: 40}
-		c.addTeamMember(msg)
+		c.updateTeamCardMember(msg)
 	}},
-	{"setTeamTasks", func(c *conversation) {
-		c.setTeamTasks("call-team", []client.TeamTask{
+	{"updateTeamCardTasks", func(c *conversation) {
+		c.updateTeamCardTasks("call-team", []client.TeamTask{
 			{ID: "t1", Description: "scan", State: "done", Assignee: "alpha", Deps: []string{"t0"}},
 		})
 	}},
-	{"setTeamFindings", func(c *conversation) {
-		c.setTeamFindings("call-team", []client.TeamFinding{{Member: "alpha", Body: "found it"}})
+	{"updateTeamCardFindings", func(c *conversation) {
+		c.updateTeamCardFindings("call-team", []client.TeamFinding{{Member: "alpha", Body: "found it"}})
 	}},
-	{"setTeamEnd", func(c *conversation) {
-		c.setTeamEnd("call-team", "team-p1", 2, "end_turn",
+	{"finishTeamCard", func(c *conversation) {
+		c.finishTeamCard("call-team", "team-p1", 2, "end_turn",
 			client.Usage{InputTokens: 2000, OutputTokens: 600},
 			[]client.TeamMemberDisposition{{Name: "beta", Stopped: true, Reason: "budget"}})
 	}},

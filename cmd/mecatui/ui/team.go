@@ -163,7 +163,7 @@ func (m Model) onTeamKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // matching what the user sees. The bounded List is the single source of truth — the
 // visible window is derived from it at render time, so a roster that grows under the
 // overlay never desyncs a stored scroll offset.
-func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cmd) {
+func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *teamOverlaySnapshot) (tea.Model, tea.Cmd) {
 	th, hk, width, _ := m.agentsListGeometry()
 	switch {
 	case key.Matches(msg, m.keys.Close):
@@ -205,7 +205,7 @@ func (m Model) onTeamRosterKey(msg tea.KeyPressMsg, b *block) (tea.Model, tea.Cm
 // hinted for live teams; the finished-as-you-pressed race is benign (the server
 // ignores a done id). Confirm-less, mirroring cancelSubagentLane: a cancelled member
 // is de-scheduled, its tasks released, and its session persists for inspection.
-func (m Model) cancelTeamLane(b *block, ln *teamLane) (tea.Model, tea.Cmd) {
+func (m Model) cancelTeamLane(b *teamOverlaySnapshot, ln *teamLane) (tea.Model, tea.Cmd) {
 	if ln == nil || b == nil || b.teamDone || ln.stopped {
 		return m, nil
 	}
@@ -270,11 +270,11 @@ const teamMinRosterRows = 3
 // uncapped overlay the same height-safety the inline card has (cap + roll-up):
 // at 20–32 members the card never grows taller than the terminal and clips its
 // footer or the selected row. height<=0 (size unknown) shows all rows.
-func teamLaneListID(b *block, member string) string {
+func teamLaneListID(b *teamOverlaySnapshot, member string) string {
 	return aggregateScopedID(teamBlockIdentity(b), member)
 }
 
-func selectedTeamLane(b *block, list *bounded.List) *teamLane {
+func selectedTeamLane(b *teamOverlaySnapshot, list *bounded.List) *teamLane {
 	if b == nil {
 		return nil
 	}
@@ -286,7 +286,7 @@ func selectedTeamLane(b *block, list *bounded.List) *teamLane {
 	return teamLaneByID(b, selectedListID(list, ids))
 }
 
-func teamLaneByID(b *block, id string) *teamLane {
+func teamLaneByID(b *teamOverlaySnapshot, id string) *teamLane {
 	if b == nil {
 		return nil
 	}
@@ -298,7 +298,7 @@ func teamLaneByID(b *block, id string) *teamLane {
 	return nil
 }
 
-func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth int) agentsSelectableList {
+func teamSelectableList(th theme.Theme, st teamState, b *teamOverlaySnapshot, hk helpKeys, bodyWidth int) agentsSelectableList {
 	muted := th.Style("muted")
 	header := renderDelegationRows(th.Style("askTitle"), "", teamRosterHeader(b), bodyWidth)
 	if sub := teamRosterSubhead(b); sub != "" {
@@ -321,7 +321,7 @@ func teamSelectableList(th theme.Theme, st teamState, b *block, hk helpKeys, bod
 	return list
 }
 
-func renderTeamRoster(th theme.Theme, st teamState, b *block, hk helpKeys, height int, widths ...int) string {
+func renderTeamRoster(th theme.Theme, st teamState, b *teamOverlaySnapshot, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
@@ -382,13 +382,13 @@ func renderContextMeterPlain(used, window int64) string {
 const maxTeamRoleLen = 20
 
 // teamRosterHeader is the roster's title line: "agents · N members".
-func teamRosterHeader(b *block) string {
+func teamRosterHeader(b *teamOverlaySnapshot) string {
 	return "agents · " + plural(len(b.teamLanes), "member")
 }
 
 // teamRosterSubhead is the muted sub-header: the resolved round count + stop
 // reason once the team has ended, else empty (the team is still live).
-func teamRosterSubhead(b *block) string {
+func teamRosterSubhead(b *teamOverlaySnapshot) string {
 	if !b.teamDone {
 		return ""
 	}
@@ -413,15 +413,15 @@ func teamRosterSubhead(b *block) string {
 // header and trace are height-bounded, not width-wrapped. A focused name with no
 // matching lane (the member vanished — defensive) falls back to a muted note. All
 // text is sanitized.
-func renderTeamFocus(th theme.Theme, b *block, member string, hk helpKeys, bodyWidth, height int) string {
+func renderTeamFocus(th theme.Theme, b *teamOverlaySnapshot, member string, hk helpKeys, bodyWidth, height int) string {
 	return renderTeamFocusAt(th, b, member, new(bounded.Viewport), hk, bodyWidth, height)
 }
 
-func renderTeamFocusAt(th theme.Theme, b *block, member string, detail *bounded.Viewport, hk helpKeys, bodyWidth, height int) string {
+func renderTeamFocusAt(th theme.Theme, b *teamOverlaySnapshot, member string, detail *bounded.Viewport, hk helpKeys, bodyWidth, height int) string {
 	return prepareTeamFocusAt(th, b, member, detail, hk, bodyWidth)(height)
 }
 
-func prepareTeamFocusAt(th theme.Theme, b *block, member string, detail *bounded.Viewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareTeamFocusAt(th theme.Theme, b *teamOverlaySnapshot, member string, detail *bounded.Viewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	if detail == nil {
 		detail = new(bounded.Viewport)
 	}
@@ -522,7 +522,7 @@ func teamFailureLineAtWidth(ln *teamLane, bodyWidth int) string {
 // teamFindLane returns the lane named member off the team block, or nil. Names
 // are unique per team (lanes are keyed by name when routing events), so the first
 // match is the lane.
-func teamFindLane(b *block, member string) *teamLane {
+func teamFindLane(b *teamOverlaySnapshot, member string) *teamLane {
 	for i := range b.teamLanes {
 		if b.teamLanes[i].name == member {
 			return &b.teamLanes[i]
@@ -612,7 +612,7 @@ func teamSubViewHint(hk helpKeys, flip string) string {
 // task (glyph · id · state · assignee · deps). An empty list reads as a muted
 // "(no tasks)". All task-derived strings are terminal-sanitized. It mirrors the
 // roster's height-window math so a long task list never clips the footer.
-func renderedTaskLines(th theme.Theme, b *block, bodyWidth int) []string {
+func renderedTaskLines(th theme.Theme, b *teamOverlaySnapshot, bodyWidth int) []string {
 	byID := make(map[string]string, len(b.teamTasks))
 	for _, task := range b.teamTasks {
 		byID[task.id] = task.state
@@ -632,11 +632,11 @@ func agentsDetailHint(hk helpKeys, w renderedLineWindowBounds, lead string) stri
 	return hint + lead + " · " + hk.navUp + "/" + hk.navDown + " scroll · " + hk.scroll + " · " + hk.jumpTop + "/" + hk.jumpEnd
 }
 
-func renderTeamTasks(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
+func renderTeamTasks(th theme.Theme, b *teamOverlaySnapshot, hk helpKeys, height int, widths ...int) string {
 	return renderTeamTasksAt(th, b, new(bounded.Viewport), hk, height, widths...)
 }
 
-func renderTeamTasksAt(th theme.Theme, b *block, detail *bounded.Viewport, hk helpKeys, height int, widths ...int) string {
+func renderTeamTasksAt(th theme.Theme, b *teamOverlaySnapshot, detail *bounded.Viewport, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
@@ -644,7 +644,7 @@ func renderTeamTasksAt(th theme.Theme, b *block, detail *bounded.Viewport, hk he
 	return prepareTeamTasksAt(th, b, detail, hk, bodyWidth)(height)
 }
 
-func prepareTeamTasksAt(th theme.Theme, b *block, detail *bounded.Viewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareTeamTasksAt(th theme.Theme, b *teamOverlaySnapshot, detail *bounded.Viewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	if detail == nil {
 		detail = new(bounded.Viewport)
 	}
@@ -753,7 +753,7 @@ func teamFindingsRows(height int) int {
 // (member · body). An empty ledger reads as a muted "(no findings)". All
 // finding-derived strings are terminal-sanitized. It mirrors renderTeamTasks's
 // chrome and height-window math so a long ledger never clips the footer.
-func renderedFindingLines(th theme.Theme, b *block, bodyWidth int) []string {
+func renderedFindingLines(th theme.Theme, b *teamOverlaySnapshot, bodyWidth int) []string {
 	var lines []string
 	for _, finding := range b.teamFindings {
 		lines = append(lines, strings.Split(renderDynamicCardChromeLine(th.Style("muted"), "  ", findingRow(finding), bodyWidth), "\n")...)
@@ -761,11 +761,11 @@ func renderedFindingLines(th theme.Theme, b *block, bodyWidth int) []string {
 	return lines
 }
 
-func renderTeamFindings(th theme.Theme, b *block, hk helpKeys, height int, widths ...int) string {
+func renderTeamFindings(th theme.Theme, b *teamOverlaySnapshot, hk helpKeys, height int, widths ...int) string {
 	return renderTeamFindingsAt(th, b, new(bounded.Viewport), hk, height, widths...)
 }
 
-func renderTeamFindingsAt(th theme.Theme, b *block, detail *bounded.Viewport, hk helpKeys, height int, widths ...int) string {
+func renderTeamFindingsAt(th theme.Theme, b *teamOverlaySnapshot, detail *bounded.Viewport, hk helpKeys, height int, widths ...int) string {
 	bodyWidth := 0
 	if len(widths) > 0 {
 		bodyWidth = widths[0]
@@ -773,7 +773,7 @@ func renderTeamFindingsAt(th theme.Theme, b *block, detail *bounded.Viewport, hk
 	return prepareTeamFindingsAt(th, b, detail, hk, bodyWidth)(height)
 }
 
-func prepareTeamFindingsAt(th theme.Theme, b *block, detail *bounded.Viewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareTeamFindingsAt(th theme.Theme, b *teamOverlaySnapshot, detail *bounded.Viewport, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	if detail == nil {
 		detail = new(bounded.Viewport)
 	}

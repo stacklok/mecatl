@@ -16,13 +16,13 @@ func TestADR_0301_UIBlockIdentityResetsWithConversation(t *testing.T) {
 	c.startAssistant()
 	c.appendAssistant("answer")
 
-	if got, want := c.testBlocks()[0].id, uint64(1); got != want {
+	if got, want := uint64(c.testBlocks()[0].ID), uint64(1); got != want {
 		t.Fatalf("first block ID = %d, want %d", got, want)
 	}
-	if got, want := c.testBlocks()[1].id, uint64(2); got != want {
+	if got, want := uint64(c.testBlocks()[1].ID), uint64(2); got != want {
 		t.Fatalf("second block ID = %d, want %d", got, want)
 	}
-	if got, want := c.testBlocks()[1].id, uint64(2); got != want {
+	if got, want := uint64(c.testBlocks()[1].ID), uint64(2); got != want {
 		t.Fatalf("mutated block ID = %d, want %d", got, want)
 	}
 
@@ -38,7 +38,7 @@ func TestADR_0301_UIBlockIdentityResetsWithConversation(t *testing.T) {
 
 	rebuilt := conversationFromTranscript([]client.ConversationMessage{{Role: "user", Text: "fresh document"}})
 	rebuilt.recordFileChange("fresh.go")
-	if got, want := rebuilt.testBlocks()[0].id, uint64(1); got != want {
+	if got, want := uint64(rebuilt.testBlocks()[0].ID), uint64(1); got != want {
 		t.Fatalf("rebuilt first block ID = %d, want %d", got, want)
 	}
 	if got, want := rebuilt.testAppendixID(), uint64(2); got != want {

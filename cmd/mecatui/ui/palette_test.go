@@ -311,7 +311,7 @@ func TestPaletteCompleteTitleForArguments(t *testing.T) {
 		}
 		mm, cmd := m.submitPrompt()
 		m = mm.(Model)
-		if cmd != nil || len(m.conv.testBlocks()) != 1 || !strings.Contains(m.conv.testBlocks()[0].raw, "Session title:") {
+		if cmd != nil || len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "Session title:") {
 			t.Fatalf("enter after palette completion = blocks=%#v cmd=%v, want title read", m.conv.testBlocks(), cmd != nil)
 		}
 		if got := m.prompt.Value(); got != "" {

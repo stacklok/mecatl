@@ -17,6 +17,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // visibleLineWidths returns the per-line cell width (under both width methods) of
@@ -42,8 +43,8 @@ func TestUserBlockWraps(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(40)
 	long := strings.TrimSpace(strings.Repeat("the quick brown fox jumps over the lazy dog ", 6))
-	b := block{kind: blockUser, raw: long}
-	out := r.renderBlock(0, &b, false)
+	b := testSnapshot(0, scrollback.UserCardSnapshot{Text: long})
+	out := r.renderSnapshot(0, b, false)
 	lines := strings.Split(out, "\n")
 	if len(lines) <= 1 {
 		t.Fatalf("expected the long prompt to wrap to multiple lines, got %d", len(lines))
@@ -64,19 +65,20 @@ func TestNoticeAndErrorWrap(t *testing.T) {
 	long := strings.TrimSpace(strings.Repeat("compaction collapsed the early turns to keep the window bounded ", 4))
 
 	for _, tc := range []struct {
-		name   string
-		kind   blockKind
-		marker string
+		name    string
+		payload scrollback.PayloadSnapshot
+		marker  string
 	}{
-		{"notice", blockNotice, "•"},
-		{"error", blockError, "✗"},
+		{"notice", scrollback.NoticeCardSnapshot{Text: long}, "•"},
+		{"error", scrollback.ErrorCardSnapshot{Text: long}, "✗"},
 	} {
-		b := block{kind: tc.kind, raw: long}
+		b := testSnapshot(0, tc.payload)
 		// renderBlockFresh: two DIFFERENT logical blocks share this renderer at a
 		// dummy index, which would alias in renderBlock's per-block cache (its
 		// contract is one stable conversation index per block; render_cache_test.go
 		// covers the cached path).
-		out := r.renderBlockFresh(0, &b, false)
+		r.blocks.reset()
+		out := r.renderSnapshot(0, b, false)
 		lines := strings.Split(out, "\n")
 		if len(lines) <= 1 {
 			t.Fatalf("%s: expected wrapping to multiple lines, got %d", tc.name, len(lines))
@@ -119,19 +121,20 @@ func TestUnbreakableTokenForceBreaks(t *testing.T) {
 	r.setWidth(40)
 	token := strings.Repeat("a", 200)
 	for _, tc := range []struct {
-		name string
-		kind blockKind
+		name    string
+		payload scrollback.PayloadSnapshot
 	}{
-		{"user", blockUser},
-		{"error", blockError},
+		{"user", scrollback.UserCardSnapshot{Text: token}},
+		{"error", scrollback.ErrorCardSnapshot{Text: token}},
 	} {
-		b := block{kind: tc.kind, raw: token}
+		b := testSnapshot(0, tc.payload)
 		// renderBlockFresh: two DIFFERENT logical blocks share this renderer at a
 		// dummy index — through renderBlock the second case would cache-HIT the
 		// first's entry (same idx/rev/width/expand) and silently unpin the error
 		// force-break path (renderBlock's contract is one stable conversation index
 		// per block; render_cache_test.go covers the cached path).
-		out := r.renderBlockFresh(0, &b, false)
+		r.blocks.reset()
+		out := r.renderSnapshot(0, b, false)
 		for i, ln := range strings.Split(out, "\n") {
 			if w := maxLineWidth(ln); w > r.width {
 				t.Errorf("%s: line %d exceeds width %d (got %d): %q", tc.name, i, r.width, w, stripANSIstr(ln))
@@ -145,12 +148,12 @@ func TestUnbreakableTokenForceBreaks(t *testing.T) {
 func TestWrapResizeSafe(t *testing.T) {
 	r := newTestRenderer()
 	long := strings.TrimSpace(strings.Repeat("the quick brown fox jumps over the lazy dog ", 6))
-	b := block{kind: blockUser, raw: long}
+	b := testSnapshot(0, scrollback.UserCardSnapshot{Text: long})
 
 	r.setWidth(100)
-	wide := r.renderBlock(0, &b, false)
+	wide := r.renderSnapshot(0, b, false)
 	r.setWidth(30)
-	narrow := r.renderBlock(0, &b, false)
+	narrow := r.renderSnapshot(0, b, false)
 
 	if wide == narrow {
 		t.Fatal("expected the wide and narrow renders to differ after resize")
@@ -169,8 +172,8 @@ func TestWrapWidthZeroNoWrap(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	r := &renderer{th: th, marks: defaultHelpKeys()} // width 0
 	long := strings.TrimSpace(strings.Repeat("the quick brown fox jumps over the lazy dog ", 6))
-	b := block{kind: blockUser, raw: long}
-	out := r.renderBlock(0, &b, false)
+	b := testSnapshot(0, scrollback.UserCardSnapshot{Text: long})
+	out := r.renderSnapshot(0, b, false)
 	// The label is on its own line; the body must remain one logical line (no
 	// forced breaks were inserted at width 0).
 	plain := stripANSIstr(out)
@@ -195,8 +198,8 @@ func TestUserBlockInsetTracksStyle(t *testing.T) {
 		t.Fatalf("userBlock horizontal frame = %d, want 2 (the wrap-budget contract)", got)
 	}
 	long := strings.TrimSpace(strings.Repeat("the quick brown fox jumps over the lazy dog ", 6))
-	b := block{kind: blockUser, raw: long}
-	out := r.renderBlock(0, &b, false)
+	b := testSnapshot(0, scrollback.UserCardSnapshot{Text: long})
+	out := r.renderSnapshot(0, b, false)
 	for i, ln := range strings.Split(out, "\n") {
 		if w := maxLineWidth(ln); w > r.width {
 			t.Errorf("line %d exceeds width %d (got %d): %q", i, r.width, w, stripANSIstr(ln))
@@ -217,10 +220,10 @@ func TestReasoningExpandedShowsFullBody(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("reasoning step %d", i+1))
 	}
 	reasoning := strings.Join(lines, "\n")
-	b := block{kind: blockAssistant, raw: "the answer", reasoning: reasoning}
+	b := testSnapshot(0, scrollback.AssistantCardSnapshot{Text: "the answer", Reasoning: reasoning})
 
 	// Collapsed: only the header, none of the body lines.
-	collapsed := stripANSIstr(r.renderBlock(0, &b, false))
+	collapsed := stripANSIstr(r.renderSnapshot(0, b, false))
 	if !strings.Contains(collapsed, "reasoning summary · 58 lines · ctrl+t expand") {
 		t.Errorf("collapsed should report 58 lines:\n%s", collapsed)
 	}
@@ -232,7 +235,7 @@ func TestReasoningExpandedShowsFullBody(t *testing.T) {
 	}
 
 	// Expanded: EVERY reasoning line present, no truncation tail.
-	expanded := stripANSIstr(r.renderBlock(0, &b, true))
+	expanded := stripANSIstr(r.renderSnapshot(0, b, true))
 	if strings.Contains(expanded, "…(truncated)") {
 		t.Errorf("expanded reasoning must NOT truncate (issue #96):\n%s", expanded)
 	}
@@ -253,8 +256,8 @@ func TestReasoningExpandedWraps(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(60)
 	long := strings.TrimSpace(strings.Repeat("first I considered the options then weighed the tradeoffs carefully ", 4))
-	b := block{kind: blockAssistant, raw: "the answer", reasoning: long}
-	out := r.renderBlock(0, &b, true)
+	b := testSnapshot(0, scrollback.AssistantCardSnapshot{Text: "the answer", Reasoning: long})
+	out := r.renderSnapshot(0, b, true)
 	lines := strings.Split(out, "\n")
 	if len(lines) <= 3 {
 		t.Fatalf("expected expanded reasoning to wrap the body to multiple lines, got %d", len(lines))
@@ -291,8 +294,8 @@ func TestTurnStatWraps(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(40)
 	long := strings.TrimSpace(strings.Repeat("turn 7 · 1234 in 5678 out · 12.3s elapsed · model gpt-4o · compacted once ", 3))
-	b := block{kind: blockTurnStat, raw: long}
-	out := r.renderBlock(0, &b, false)
+	b := testSnapshot(0, scrollback.TurnStatCardSnapshot{Text: long})
+	out := r.renderSnapshot(0, b, false)
 	lines := strings.Split(out, "\n")
 	if len(lines) <= 1 {
 		t.Fatalf("expected the long stat line to wrap, got %d lines", len(lines))
@@ -342,8 +345,8 @@ func TestUserMediaLineWraps(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(40)
 	longPath := "/some/deeply/nested/workspace/assets/images/screenshots/very-long-capture-filename.png"
-	b := block{kind: blockUser, raw: "see attached", media: []string{longPath}}
-	out := r.renderBlock(0, &b, false)
+	b := testSnapshot(0, scrollback.UserCardSnapshot{Text: "see attached", Media: []string{longPath}})
+	out := r.renderSnapshot(0, b, false)
 	for i, ln := range strings.Split(out, "\n") {
 		if w := maxLineWidth(ln); w > r.width {
 			t.Errorf("line %d exceeds width %d (got %d): %q", i, r.width, w, stripANSIstr(ln))
@@ -360,12 +363,12 @@ func TestUserMediaLineWraps(t *testing.T) {
 func TestAssistantResizeRerenders(t *testing.T) {
 	r := newTestRenderer()
 	long := strings.TrimSpace(strings.Repeat("the quick brown fox jumps over the lazy dog and keeps running ", 6))
-	b := block{kind: blockAssistant, raw: long}
+	b := testSnapshot(0, scrollback.AssistantCardSnapshot{Text: long})
 
 	r.setWidth(100)
-	wide := r.renderBlock(0, &b, false)
+	wide := r.renderSnapshot(0, b, false)
 	r.setWidth(40)
-	narrow := r.renderBlock(0, &b, false)
+	narrow := r.renderSnapshot(0, b, false)
 
 	if wide == narrow {
 		t.Fatal("expected the assistant render to differ after resize (memo must re-render on width change)")

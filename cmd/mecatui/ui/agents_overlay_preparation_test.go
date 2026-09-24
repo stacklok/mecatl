@@ -11,7 +11,7 @@ import (
 // repeatedPreparationAgentsOverlay is the differential baseline: it re-prepares
 // the current renderers for each call. The comparison measures reuse versus
 // re-preparation, not independence from a historical full renderer.
-func repeatedPreparationAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height, terminal int) string {
+func repeatedPreparationAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *teamOverlaySnapshot, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height, terminal int) string {
 	if terminal > 0 && terminal < 24 {
 		return renderCompactAgentsOverlay(th, tab, sub, par, team, hk, width)
 	}
@@ -34,7 +34,7 @@ func repeatedPreparationAgentsOverlay(th theme.Theme, tab agentsTab, sub subagen
 	return centerAgentsCard(th, layout.tabStrip+"\n"+body, layout.outerWidth, width, height)
 }
 
-func overlayPreparationFixtures() (fleet []subagentLane, groups []parallelGroup, team *block) {
+func overlayPreparationFixtures() (fleet []subagentLane, groups []parallelGroup, team *teamOverlaySnapshot) {
 	trace := make([]teamTrace, 20)
 	tasks := make([]teamTask, 20)
 	findings := make([]teamFinding, 20)
@@ -54,7 +54,7 @@ func overlayPreparationFixtures() (fleet []subagentLane, groups []parallelGroup,
 			{index: 1, childID: "branch-1", label: "winner", trace: trace, done: true},
 		},
 	}}
-	team = &block{teamLanes: []teamLane{{name: "worker", sessionID: "member-1", trace: trace}}, teamTasks: tasks, teamFindings: findings}
+	team = &teamOverlaySnapshot{teamLanes: []teamLane{{name: "worker", sessionID: "member-1", trace: trace}}, teamTasks: tasks, teamFindings: findings}
 	return fleet, groups, team
 }
 
@@ -66,7 +66,7 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 		sub  subagentState
 		par  parallelState
 		team teamState
-		b    *block
+		b    *teamOverlaySnapshot
 		f    []subagentLane
 		g    []parallelGroup
 	}
@@ -83,9 +83,9 @@ func TestAgentsOverlayPreparedRenderingMatchesRepeatedPreparation(t *testing.T) 
 		{name: "team focus", tab: tabTeams, team: teamState{view: teamFocus, member: "worker", detail: agentsTestViewport(4)}, b: teamBlock},
 		{name: "team missing", tab: tabTeams, team: teamState{view: teamFocus, member: "missing"}, b: teamBlock},
 		{name: "team tasks", tab: tabTeams, team: teamState{view: teamTasks, detail: agentsTestViewport(2)}, b: teamBlock},
-		{name: "team tasks empty", tab: tabTeams, team: teamState{view: teamTasks}, b: &block{}},
+		{name: "team tasks empty", tab: tabTeams, team: teamState{view: teamTasks}, b: &teamOverlaySnapshot{}},
 		{name: "team findings", tab: tabTeams, team: teamState{view: teamFindings, detail: agentsTestViewport(2)}, b: teamBlock},
-		{name: "team findings empty", tab: tabTeams, team: teamState{view: teamFindings}, b: &block{}},
+		{name: "team findings empty", tab: tabTeams, team: teamState{view: teamFindings}, b: &teamOverlaySnapshot{}},
 		{name: "team absent", tab: tabTeams},
 	}
 	geometries := []struct{ width, height, terminal int }{

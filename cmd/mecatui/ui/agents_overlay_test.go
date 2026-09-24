@@ -127,11 +127,11 @@ func TestSubagentFleetLiveUsage(t *testing.T) {
 	if ln.usage.InputTokens != 1200 || ln.usage.OutputTokens != 340 {
 		t.Fatalf("fleet lane live usage = %+v, want {1200 340} mid-run", ln.usage)
 	}
-	// The inline card's live usage (subagentLiveLine reads b.subUsage) advances too.
-	if b := m.conv.testSubagentBlock("p1"); b == nil {
+	// The inline card's live usage (subagentLiveLine reads b.usage) advances too.
+	if b := m.conv.testSubagentCard("p1"); b == nil {
 		t.Fatal("inline subagent block p1 missing")
-	} else if b.subUsage.InputTokens != 1200 || b.subUsage.OutputTokens != 340 {
-		t.Fatalf("inline card subUsage = %+v, want {1200 340} mid-run", b.subUsage)
+	} else if b.usage.InputTokens != 1200 || b.usage.OutputTokens != 340 {
+		t.Fatalf("inline card subUsage = %+v, want {1200 340} mid-run", b.usage)
 	}
 }
 
@@ -168,10 +168,10 @@ func TestSubagentLiveUsageDoesNotResetToolCount(t *testing.T) {
 	if ln.usage.InputTokens != 500 || ln.usage.OutputTokens != 120 {
 		t.Fatalf("fleet lane usage = %+v, want the cumulative {500 120}", ln.usage)
 	}
-	if b := m.conv.testSubagentBlock("p1"); b == nil {
+	if b := m.conv.testSubagentCard("p1"); b == nil {
 		t.Fatal("inline card p1 missing")
-	} else if b.subToolCount != 2 {
-		t.Fatalf("inline card subToolCount = %d, want 2 (monotonic)", b.subToolCount)
+	} else if b.toolCount != 2 {
+		t.Fatalf("inline card subToolCount = %d, want 2 (monotonic)", b.toolCount)
 	}
 }
 
@@ -325,8 +325,8 @@ func TestFooterFleetTierSelection(t *testing.T) {
 func TestFooterFleetAndTeamCoexist(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "team-x", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	m = seedSubagents(m, "p1", startSub("p1", "c1", "audit auth"))
 	out := stripANSIstr(m.fitFooter(m.deps.Theme.Style("muted").Render("connected"), 200))
@@ -370,8 +370,8 @@ func TestF6OpensSubagentsTabWhenNoTeam(t *testing.T) {
 func TestF6OpensTeamsTabWhenTeamLive(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "team-x", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	m = seedSubagents(m, "p1", startSub("p1", "c1", "audit auth"))
 	mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
@@ -418,8 +418,8 @@ func TestPreferredAgentsTab(t *testing.T) {
 func TestTabSwitchesSubagentsToTeams(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "team-x", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	m = seedSubagents(m, "p1", startSub("p1", "c1", "audit auth"))
 	// Open: team live → Teams tab.
@@ -794,7 +794,7 @@ func TestRosterRouteNavigation(t *testing.T) {
 		{
 			name: "team",
 			seed: func(m Model) Model {
-				return seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "", roster()) })
+				return seedTeam(m, func(c *conversation) { c.startTeamCard("t1", "", roster()) })
 			},
 			cursor:  func(m Model) int { return boundedListCursor(m.team.roster) },
 			wantTab: tabTeams,
@@ -1092,11 +1092,11 @@ func TestDelegationFocusLongToolDataFitsViewport(t *testing.T) {
 			name: "team",
 			build: func(m Model) Model {
 				m = seedTeam(m, func(c *conversation) {
-					c.setTeamStart("t1", "", roster())
+					c.startTeamCard("t1", "", roster())
 					for _, tool := range bareTools {
-						c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: tool}))
+						c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: tool}))
 					}
-					c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: long, Detail: long}))
+					c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: long, Detail: long}))
 				})
 				m.agentsTab = tabTeams
 				m.team = teamState{view: teamFocus, member: "scout"}
@@ -1353,9 +1353,9 @@ func TestAgentsActionsFollowStableSelectionAfterRefresh(t *testing.T) {
 
 	t.Run("team member cancel", func(t *testing.T) {
 		m := seedTeam(newMCPModel(t, aztec(), nil), func(c *conversation) {
-			c.setTeamStart("t1", "team:one", []client.TeamMemberSpec{{Name: "first"}, {Name: "wanted:member"}})
-			c.addTeamMember(client.TeamMsg{ParentCallID: "t1", Member: "first", MemberSessionID: "child-first"})
-			c.addTeamMember(client.TeamMsg{ParentCallID: "t1", Member: "wanted:member", MemberSessionID: "child-wanted"})
+			c.startTeamCard("t1", "team:one", []client.TeamMemberSpec{{Name: "first"}, {Name: "wanted:member"}})
+			c.updateTeamCardMember(client.TeamMsg{ParentCallID: "t1", Member: "first", MemberSessionID: "child-first"})
+			c.updateTeamCardMember(client.TeamMsg{ParentCallID: "t1", Member: "wanted:member", MemberSessionID: "child-wanted"})
 		})
 		m = resize(m, 100, 30)
 		mm, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyF6})
@@ -1407,9 +1407,9 @@ func TestTeamAggregateSubviewsPinTheirLedgerUntilRoster(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := resize(newMCPModel(t, aztec(), nil), 100, 30)
 			m.conv.addTool("first", "Team", `{}`)
-			m.conv.setTeamStart("first", "", []client.TeamMemberSpec{{Name: "first-member"}})
-			m.conv.setTeamTasks("first", []client.TeamTask{{ID: "first-task"}})
-			m.conv.setTeamFindings("first", []client.TeamFinding{{Member: "first-member", Body: "first-finding"}})
+			m.conv.startTeamCard("first", "", []client.TeamMemberSpec{{Name: "first-member"}})
+			m.conv.updateTeamCardTasks("first", []client.TeamTask{{ID: "first-task"}})
+			m.conv.updateTeamCardFindings("first", []client.TeamFinding{{Member: "first-member", Body: "first-finding"}})
 			m.team, m.agentsTab = newTeamState(), tabTeams
 
 			first := m.teamBlockForOverlay()
@@ -1420,11 +1420,11 @@ func TestTeamAggregateSubviewsPinTheirLedgerUntilRoster(t *testing.T) {
 			}
 
 			m.conv.addTool("newer", "Team", `{}`)
-			m.conv.setTeamStart("newer", "", []client.TeamMemberSpec{{Name: "new-member"}})
-			m.conv.setTeamTasks("newer", []client.TeamTask{{ID: "new-task"}})
-			m.conv.setTeamFindings("newer", []client.TeamFinding{{Member: "new-member", Body: "new-finding"}})
+			m.conv.startTeamCard("newer", "", []client.TeamMemberSpec{{Name: "new-member"}})
+			m.conv.updateTeamCardTasks("newer", []client.TeamTask{{ID: "new-task"}})
+			m.conv.updateTeamCardFindings("newer", []client.TeamFinding{{Member: "new-member", Body: "new-finding"}})
 			pinned := m.teamBlockForOverlay()
-			if pinned == nil || pinned.toolID != "first" {
+			if pinned == nil || pinned.callID != "first" {
 				t.Fatalf("%s ledger followed newer team: %#v", tc.name, pinned)
 			}
 			if tc.view == teamTasks && pinned.teamTasks[0].id != "first-task" {
@@ -1439,7 +1439,7 @@ func TestTeamAggregateSubviewsPinTheirLedgerUntilRoster(t *testing.T) {
 			if m.team.view != teamRoster || m.team.aggregate != "" {
 				t.Fatalf("return to roster = view %v, aggregate %q", m.team.view, m.team.aggregate)
 			}
-			if got := m.teamBlockForOverlay(); got == nil || got.toolID != "newer" {
+			if got := m.teamBlockForOverlay(); got == nil || got.callID != "newer" {
 				t.Fatalf("roster did not resume latest team: %#v", got)
 			}
 		})
@@ -1628,7 +1628,7 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedRowsUseSessionsTreatment(t *t
 
 	assertRows("subagent", renderSubagentRoster(th, subagentState{}, []subagentLane{{childID: "one", goal: "selected"}, {childID: "two", goal: "unselected"}}, hk, 0, 120), "◐ selected", "◐ unselected")
 	assertRows("parallel group", renderParallelRoster(th, parallelState{}, []parallelGroup{{parentCallID: "one", branchCount: 1}, {parentCallID: "two", branchCount: 1}}, hk, 0, 120), "◐ all", "◐ all")
-	assertRows("team", renderTeamRoster(th, teamState{}, &block{teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}}, hk, 0, 120), "◆ · selected", "◆ · unselected")
+	assertRows("team", renderTeamRoster(th, teamState{}, &teamOverlaySnapshot{teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}}, hk, 0, 120), "◆ · selected", "◆ · unselected")
 
 	branches := []parallelBranch{{index: 0, label: "selected"}, {index: 1, label: "unselected"}}
 	assertRows("parallel branch", renderParallelGroupFocus(th, parallelState{view: parallelGroupView, group: "group"}, []parallelGroup{{parentCallID: "group", winner: -1, branches: branches}}, hk, 120, 0), " ◐ selected", " ◐ unselected")
@@ -1657,7 +1657,7 @@ func TestMecatuiAgentsOverlayFit_Scenario1_SelectedRowsUseSessionsTreatment(t *t
 		}, "▶  ◐ selected"},
 		{"team", func(m Model) Model {
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
-			m.conv.addTeamFixture(block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}})
+			m.conv.addTeamFixture(teamOverlaySnapshot{teamLanes: []teamLane{{name: "selected"}, {name: "unselected"}}})
 			return m
 		}, "▶ ◆ · selected"},
 	}
@@ -1713,9 +1713,8 @@ func TestMecatuiAgentsOverlayFit_Scenario2_CompactFallbackFitsShortViewport(t *t
 		name, want string
 		setup      func(Model) Model
 	}
-	teamBlock := func() block {
-		return block{
-			kind: blockTool, team: true,
+	teamBlock := func() teamOverlaySnapshot {
+		return teamOverlaySnapshot{
 			teamLanes:    []teamLane{{name: "ann"}},
 			teamTasks:    []teamTask{{id: "task-focus", state: taskStatePending}},
 			teamFindings: []teamFinding{{member: "ann", body: "finding-focus"}},
@@ -1846,8 +1845,8 @@ func TestMecatuiAgentsOverlayFit_Scenario2_AllSubviewsFitViewport(t *testing.T) 
 		tasks[i] = teamTask{id: fmt.Sprintf("task-%02d-%s", i, strings.Repeat("wide", 8)), state: taskStatePending}
 		findings[i] = teamFinding{member: "ann", body: fmt.Sprintf("finding-%02d-%s", i, strings.Repeat("wide", 8))}
 	}
-	teamBlock := func() block {
-		return block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "ann", role: strings.Repeat("role ", 12), trace: trace}}, teamTasks: tasks, teamFindings: findings}
+	teamBlock := func() teamOverlaySnapshot {
+		return teamOverlaySnapshot{teamLanes: []teamLane{{name: "ann", role: strings.Repeat("role ", 12), trace: trace}}, teamTasks: tasks, teamFindings: findings}
 	}
 	cases := []normalCase{
 		{"subagent roster", "▶ ◐ selected", "esc close|↑/↓ select|lines 1", func(m Model) Model {
@@ -2006,9 +2005,9 @@ func TestMecatuiAgentsOverlayFit_Scenario2_RosterPagingMatchesRenderedWindow(t *
 			for i := range members {
 				members[i] = client.TeamMemberSpec{Name: fmt.Sprintf("T%02d-long-member", i), Role: "long wrapped worker role"}
 			}
-			m.conv.setTeamStart("t1", "", members)
+			m.conv.startTeamCard("t1", "", members)
 			for i := range members {
-				m.conv.addTeamMember(client.TeamMsg{ParentCallID: "t1", Member: members[i].Name, MemberSessionID: fmt.Sprintf("team-child-%02d", i)})
+				m.conv.updateTeamCardMember(client.TeamMsg{ParentCallID: "t1", Member: members[i].Name, MemberSessionID: fmt.Sprintf("team-child-%02d", i)})
 			}
 			m.team, m.agentsTab = teamState{view: teamRoster}, tabTeams
 			return m

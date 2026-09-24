@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -251,11 +252,8 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
 		t.Fatalf("transcript blocks = %d after the fork, want %d (regression: resetSession re-introduced?)", len(m.conv.testBlocks()), len(before.testBlocks()))
 	}
-	for i := range before.testBlocks() {
-		if m.conv.testBlocks()[i].raw != before.testBlocks()[i].raw || m.conv.testBlocks()[i].kind != before.testBlocks()[i].kind {
-			t.Errorf("block %d changed across the fork: (%v,%q) → (%v,%q)", i,
-				before.testBlocks()[i].kind, before.testBlocks()[i].raw, m.conv.testBlocks()[i].kind, m.conv.testBlocks()[i].raw)
-		}
+	if !reflect.DeepEqual(m.conv.testBlocks(), before.testBlocks()) {
+		t.Errorf("typed scrollback snapshots changed across the fork")
 	}
 	// … the session id rebinds to the fork id …
 	if m.sessionID != "sess-fork-1" {

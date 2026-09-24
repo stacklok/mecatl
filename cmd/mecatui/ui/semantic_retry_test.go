@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
 
@@ -30,7 +31,7 @@ func retryFrameCount(frames []*mecatlv1.ConverseRequest) int {
 func userBlockCount(c conversation) int {
 	n := 0
 	for _, b := range c.testBlocks() {
-		if b.kind == blockUser {
+		if _, ok := b.Payload.(scrollback.UserCardSnapshot); ok {
 			n++
 		}
 	}

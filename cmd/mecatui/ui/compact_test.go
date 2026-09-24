@@ -107,7 +107,7 @@ func TestCompactCompletionPreservesStateAndNextPromptSession(t *testing.T) {
 	msg := cmd().(client.SessionCompactedMsg)
 	mm, _ = m.Update(msg)
 	m = mm.(Model)
-	if m.compactPending || len(m.conv.testBlocks()) != beforeBlocks+1 || !strings.Contains(m.conv.testBlocks()[len(m.conv.testBlocks())-1].raw, "Model history compacted.") {
+	if m.compactPending || len(m.conv.testBlocks()) != beforeBlocks+1 || !strings.Contains(testCardText(m.conv.testBlocks()[len(m.conv.testBlocks())-1]), "Model history compacted.") {
 		t.Fatalf("pending=%v blocks=%#v", m.compactPending, m.conv.testBlocks())
 	}
 	if m.prompt.Value() != "do not overtake" || len(m.queued) != 1 || m.resolvedSessionModel.ModelID != "model" {
@@ -134,8 +134,8 @@ func TestCompactNoOpErrorAndStaleCompletion(t *testing.T) {
 	m.compactRequestToken = 4
 	mm, _ := m.Update(client.SessionCompactedMsg{SessionID: m.sessionID, RequestToken: 4})
 	m = mm.(Model)
-	if !strings.Contains(m.conv.testBlocks()[len(m.conv.testBlocks())-1].raw, "already compact") {
-		t.Fatalf("notice = %q", m.conv.testBlocks()[len(m.conv.testBlocks())-1].raw)
+	if !strings.Contains(testCardText(m.conv.testBlocks()[len(m.conv.testBlocks())-1]), "already compact") {
+		t.Fatalf("notice = %q", testCardText(m.conv.testBlocks()[len(m.conv.testBlocks())-1]))
 	}
 
 	m.compactPending = true

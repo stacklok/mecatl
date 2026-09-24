@@ -1,50 +1,74 @@
 package ui
 
 import (
-	"fmt"
-
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
-func (c *conversation) testBlocks() []block {
-	blocks := make([]block, 0, c.scrollback.Len())
-	for i := 0; i < c.scrollback.Len(); i++ {
-		if b, ok := testBlockFromSnapshot(c.scrollback.SnapshotAt(i)); ok {
-			blocks = append(blocks, b)
-		}
+func (c *conversation) testBlocks() []scrollback.BlockSnapshot {
+	cards := make([]scrollback.BlockSnapshot, c.scrollback.Len())
+	for i := range cards {
+		cards[i] = c.scrollback.SnapshotAt(i)
 	}
-	return blocks
+	return cards
 }
 
-func testBlockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
-	b := block{id: uint64(s.ID), rev: rendererRevision(s.Revision)}
+func (c *conversation) testSubagentCard(callID string) *subagentCardPresentation {
+	s, ok := c.scrollback.SnapshotForCall(callID)
+	if !ok {
+		return nil
+	}
+	p, ok := s.Payload.(scrollback.SubagentCardSnapshot)
+	if !ok {
+		return nil
+	}
+	out := subagentCardPresentationFromSnapshot(p)
+	return &out
+}
+
+func (c *conversation) addTeamFixture(in teamOverlaySnapshot) {
+	callID := in.callID
+	if callID == "" {
+		callID = "team-fixture"
+	}
+	c.addTool(callID, "Team", `{}`)
+	lanes := make([]scrollback.TeamLane, len(in.teamLanes))
+	for i, lane := range in.teamLanes {
+		lanes[i] = scrollback.TeamLane{Name: lane.name, SessionID: lane.sessionID, Role: lane.role, Mutating: lane.mutating, Lead: lane.lead, RoutedCategory: lane.routedCategory, RoutedModel: lane.routedModel, RoutingReason: lane.routingReason, Model: lane.model, Current: lane.current, ToolCount: lane.toolCount, Usage: scrollUsage(lane.usage), Trace: scrollTrace(lane.trace), Idle: lane.idle, Stopped: lane.stopped, StopReason: lane.stopReason, Cause: lane.cause, ErrorRounds: lane.errorRounds, ContextUsed: lane.ctxUsed, ContextWindow: lane.ctxWindow}
+	}
+	if !c.scrollback.Teams().Start(callID, scrollback.TeamStart{TeamID: in.teamID, Lanes: lanes}) {
+		return
+	}
+	tasks := make([]scrollback.Task, len(in.teamTasks))
+	for i, task := range in.teamTasks {
+		tasks[i] = scrollback.Task{ID: task.id, Description: task.desc, State: task.state, Assignee: task.assignee, Dependencies: append([]string(nil), task.deps...)}
+	}
+	findings := make([]scrollback.Finding, len(in.teamFindings))
+	for i, finding := range in.teamFindings {
+		findings[i] = scrollback.Finding{Member: finding.member, Body: finding.body}
+	}
+	c.scrollback.Teams().Update(callID, scrollback.TeamUpdate{TeamID: in.teamID, Lanes: lanes, Tasks: tasks, Findings: findings, Rounds: in.teamRounds, Stop: in.teamStop, Usage: scrollUsage(in.teamUsage), Done: in.teamDone})
+}
+
+func testCardText(s scrollback.BlockSnapshot) string {
 	switch p := s.Payload.(type) {
 	case scrollback.UserCardSnapshot:
-		b.kind, b.raw, b.media = blockUser, p.Text, p.Media
+		return p.Text
 	case scrollback.AssistantCardSnapshot:
-		b.kind, b.raw, b.reasoning, b.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
-	case scrollback.ToolCardSnapshot:
-		b.kind, b.toolID, b.toolName, b.toolArgs = blockTool, p.Call.ID, p.Call.Name, p.Call.Arguments
-		b.resolved, b.resultBody, b.resultError, b.resultBlocks = p.Resolved, p.Result.Body, p.Result.IsError, contentBlocks(p.Result.Artifacts)
+		return p.Text
 	case scrollback.NoticeCardSnapshot:
-		b.kind, b.raw, b.recover = blockNotice, p.Text, p.Recover
+		return p.Text
 	case scrollback.TurnStatCardSnapshot:
-		b.kind, b.raw = blockTurnStat, p.Text
+		return p.Text
 	case scrollback.ErrorCardSnapshot:
-		b.kind, b.raw, b.permanent = blockError, p.Text, p.Permanent
+		return p.Text
 	case scrollback.HookCardSnapshot:
-		b.kind, b.raw, b.hookPhase, b.hookTool, b.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
+		return p.Text
 	case scrollback.DeliveryCardSnapshot:
-		b.kind, b.raw, b.toolName, b.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
-	case scrollback.SubagentCardSnapshot:
-		return *subagentBlockFromSnapshot(s, p), true
-	case scrollback.TeamCardSnapshot:
-		return *teamBlockFromSnapshot(s, p), true
+		return p.Text
 	default:
-		return block{}, false
+		return ""
 	}
-	return b, true
 }
 
 func (c *conversation) testChangedFiles() []string {
@@ -54,7 +78,6 @@ func (c *conversation) testChangedFiles() []string {
 	}
 	return appendix.Files
 }
-
 func (c *conversation) testAppendixID() uint64 {
 	appendix, ok := c.scrollback.AppendixSnapshot()
 	if !ok {
@@ -62,61 +85,10 @@ func (c *conversation) testAppendixID() uint64 {
 	}
 	return uint64(appendix.ID)
 }
-
-func (c *conversation) testSubagentBlock(callID string) *block {
-	snapshot, ok := c.scrollback.SnapshotForCall(callID)
-	if !ok {
-		return nil
-	}
-	payload, ok := snapshot.Payload.(scrollback.SubagentCardSnapshot)
-	if !ok {
-		return nil
-	}
-	return subagentBlockFromSnapshot(snapshot, payload)
+func (c *conversation) startSubagentCard(parentCallID, goal, routedCategory, routedModel, routingReason, model string) bool {
+	return c.scrollback.Subagents().Start(parentCallID, scrollback.SubagentStart{Goal: goal, RoutedCategory: routedCategory, RoutedModel: routedModel, RoutingReason: routingReason, Model: model})
 }
-
-// addTeamFixture adapts presentation fixtures through the typed model.
-func (c *conversation) addTeamFixture(b block) {
-	callID := b.toolID
-	if callID == "" {
-		callID = fmt.Sprintf("team-fixture-%d", c.scrollback.Len())
-	}
-	c.addTool(callID, "Team", b.toolArgs)
-	roster := make([]client.TeamMemberSpec, len(b.teamLanes))
-	for i, lane := range b.teamLanes {
-		roster[i] = client.TeamMemberSpec{Name: lane.name, Role: lane.role, Mutating: lane.mutating, Lead: lane.lead, RoutedCategory: lane.routedCategory, RoutedModel: lane.routedModel, RoutingReason: lane.routingReason, Model: lane.model, RoutingDecision: lane.routingDecision}
-	}
-	c.setTeamStart(callID, b.teamID, roster)
-	p, ok := c.teamCard(callID)
-	if !ok {
-		return
-	}
-	u := p.Update
-	u.Rounds, u.Stop, u.Usage, u.Done = b.teamRounds, b.teamStop, scrollUsage(b.teamUsage), b.teamDone
-	u.Lanes = make([]scrollback.TeamLane, len(b.teamLanes))
-	for i, lane := range b.teamLanes {
-		u.Lanes[i] = scrollback.TeamLane{Name: lane.name, SessionID: lane.sessionID, Role: lane.role, Mutating: lane.mutating, Lead: lane.lead, RoutedCategory: lane.routedCategory, RoutedModel: lane.routedModel, RoutingReason: lane.routingReason, Model: lane.model, Routing: scrollRouting(lane.routingDecision), Current: lane.current, ToolCount: lane.toolCount, Usage: scrollUsage(lane.usage), Trace: scrollTrace(lane.trace), Idle: lane.idle, Stopped: lane.stopped, StopReason: lane.stopReason, ErrorRounds: lane.errorRounds, Cause: lane.cause, ContextUsed: lane.ctxUsed, ContextWindow: lane.ctxWindow}
-	}
-	u.Tasks = make([]scrollback.Task, len(b.teamTasks))
-	for i, task := range b.teamTasks {
-		u.Tasks[i] = scrollback.Task{ID: task.id, Description: task.desc, State: task.state, Assignee: task.assignee, Dependencies: append([]string(nil), task.deps...)}
-	}
-	u.Findings = make([]scrollback.Finding, len(b.teamFindings))
-	for i, finding := range b.teamFindings {
-		u.Findings[i] = scrollback.Finding{Member: finding.member, Body: finding.body}
-	}
-	c.scrollback.Teams().Update(callID, u)
-}
-
-// Focused transition helpers belong to tests rather than the production adapter.
-
-// setSubagentStart is a typed transition seam retained for focused presentation tests.
-func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, routedModel, routingReason, model string) bool {
-	ok := c.scrollback.Subagents().Start(parentCallID, scrollback.SubagentStart{Goal: goal, RoutedCategory: routedCategory, RoutedModel: routedModel, RoutingReason: routingReason, Model: model})
-	return ok
-}
-
-func (c *conversation) setSubagentRoutingDecision(parentCallID, childID string, decision *client.RoutingDecision) {
+func (c *conversation) setSubagentCardRouting(parentCallID, childID string, decision *client.RoutingDecision) {
 	if p, ok := c.subagentCard(parentCallID); ok {
 		p.Start.Routing = scrollRouting(decision)
 		c.scrollback.Subagents().UpdateStart(parentCallID, p.Start)
@@ -125,34 +97,28 @@ func (c *conversation) setSubagentRoutingDecision(parentCallID, childID string, 
 		c.fleetLane(childID).routingDecision = cloneRoutingDecision(decision)
 	}
 }
-
-// addSubagentTool is a typed transition seam retained for focused presentation tests.
-func (c *conversation) addSubagentTool(msg client.SubagentMsg) bool {
+func (c *conversation) updateSubagentCard(msg client.SubagentMsg) bool {
 	if _, ok := c.subagentCard(msg.ParentCallID); !ok {
 		return false
 	}
 	c.applySubagentTyped(msg)
 	return true
 }
-
-// setSubagentEnd is a typed transition seam retained for focused presentation tests.
-func (c *conversation) setSubagentEnd(parentCallID string, usage client.Usage, toolCount int, stop string, durationMs int64) bool {
+func (c *conversation) finishSubagentCard(parentCallID string, usage client.Usage, toolCount int, stop string, durationMS int64) bool {
 	if _, ok := c.subagentCard(parentCallID); !ok {
 		return false
 	}
-	c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: parentCallID, Usage: usage, ToolCount: toolCount, Stop: stop, DurationMs: durationMs})
+	c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: parentCallID, Usage: usage, ToolCount: toolCount, Stop: stop, DurationMs: durationMS})
 	return true
 }
-
-func (c *conversation) setTeamStart(parentCallID, teamID string, roster []client.TeamMemberSpec) bool {
+func (c *conversation) startTeamCard(parentCallID, teamID string, roster []client.TeamMemberSpec) bool {
 	if !c.ensureTeamCard(parentCallID, teamID, roster) {
 		return false
 	}
 	c.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: parentCallID, TeamID: teamID, Roster: roster})
 	return true
 }
-
-func (c *conversation) addTeamMember(msg client.TeamMsg) bool {
+func (c *conversation) updateTeamCardMember(msg client.TeamMsg) bool {
 	if !c.ensureTeamCard(msg.ParentCallID, msg.TeamID, nil) {
 		return false
 	}
@@ -160,8 +126,7 @@ func (c *conversation) addTeamMember(msg client.TeamMsg) bool {
 	c.applyTeamTyped(msg)
 	return true
 }
-
-func (c *conversation) setTeamEnd(parentCallID, teamID string, rounds int, stop string, usage client.Usage, dispositions []client.TeamMemberDisposition) bool {
+func (c *conversation) finishTeamCard(parentCallID, teamID string, rounds int, stop string, usage client.Usage, dispositions []client.TeamMemberDisposition) bool {
 	p, ok := c.teamCard(parentCallID)
 	if !ok {
 		return false
@@ -178,8 +143,7 @@ func (c *conversation) setTeamEnd(parentCallID, teamID string, rounds int, stop 
 	}
 	return c.scrollback.Teams().Update(parentCallID, u)
 }
-
-func (c *conversation) setTeamTasks(parentCallID string, tasks []client.TeamTask) bool {
+func (c *conversation) updateTeamCardTasks(parentCallID string, tasks []client.TeamTask) bool {
 	if !c.ensureTeamCard(parentCallID, "", nil) {
 		return false
 	}
@@ -190,8 +154,7 @@ func (c *conversation) setTeamTasks(parentCallID string, tasks []client.TeamTask
 	p.Update.Tasks = scrollTasks(tasks)
 	return c.scrollback.Teams().Update(parentCallID, p.Update)
 }
-
-func (c *conversation) setTeamFindings(parentCallID string, findings []client.TeamFinding) {
+func (c *conversation) updateTeamCardFindings(parentCallID string, findings []client.TeamFinding) {
 	if !c.ensureTeamCard(parentCallID, "", nil) {
 		return
 	}
@@ -201,4 +164,23 @@ func (c *conversation) setTeamFindings(parentCallID string, findings []client.Te
 	}
 	p.Update.Findings = scrollFindings(findings)
 	c.scrollback.Teams().Update(parentCallID, p.Update)
+}
+
+func (c *conversation) testTeamOverlay(i int) *teamOverlaySnapshot {
+	s := c.scrollback.SnapshotAt(i)
+	p, ok := s.Payload.(scrollback.TeamCardSnapshot)
+	if !ok {
+		return nil
+	}
+	return teamOverlaySnapshotFromSnapshot(s.ID, p)
+}
+
+func (c *conversation) testSubagentPresentationAt(i int) *subagentCardPresentation {
+	s := c.scrollback.SnapshotAt(i)
+	p, ok := s.Payload.(scrollback.SubagentCardSnapshot)
+	if !ok {
+		return nil
+	}
+	out := subagentCardPresentationFromSnapshot(p)
+	return &out
 }

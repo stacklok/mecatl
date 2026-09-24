@@ -14,7 +14,7 @@ func TestRenderUserBlockWithMediaPlaceholders(t *testing.T) {
 	c := &conversation{}
 	c.addUserWithMedia("describe these", []string{"image/png (inline)", "audio/wav (url)"})
 
-	out := stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 
 	if !strings.Contains(out, "describe these") {
 		t.Errorf("user text missing from render: %q", out)
@@ -34,7 +34,7 @@ func TestRenderUserBlockTextOnlyNoPlaceholders(t *testing.T) {
 	c := &conversation{}
 	c.addUser("just text")
 
-	out := stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 	if strings.Contains(out, "📎") {
 		t.Errorf("text-only prompt should have no media placeholder, got %q", out)
 	}

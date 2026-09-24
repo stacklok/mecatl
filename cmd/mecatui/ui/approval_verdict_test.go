@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // approvalModel builds a connected, awaiting-approval Model with the given ask. The
@@ -26,8 +27,8 @@ func approvalModel(t *testing.T, ask pendingAsk) Model {
 // lastNotice returns the raw text of the last notice block, or "".
 func lastNotice(m Model) string {
 	for i := len(m.conv.testBlocks()) - 1; i >= 0; i-- {
-		if m.conv.testBlocks()[i].kind == blockNotice {
-			return m.conv.testBlocks()[i].raw
+		if notice, ok := m.conv.testBlocks()[i].Payload.(scrollback.NoticeCardSnapshot); ok {
+			return notice.Text
 		}
 	}
 	return ""

@@ -467,13 +467,13 @@ func TestTeamWorkingCounts(t *testing.T) {
 func TestFooterCountsIdleAsNotWorking(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", roster())
+	c.startTeamCard("t1", "", roster())
 	// lead works; scout finishes its round (idle), team still live.
-	c.addTeamMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
-	c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
-	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
+	c.updateTeamCardMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{}))
 
-	lanes := c.testBlocks()[0].teamLanes
+	lanes := c.testTeamOverlay(0).teamLanes
 	if !lanes[1].idle {
 		t.Fatalf("scout lane must be idle after its per-round result, got %+v", lanes[1])
 	}

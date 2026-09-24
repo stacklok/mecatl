@@ -156,55 +156,6 @@ func (p preparedToolCard) render() string {
 // stateless blocks package. Dynamic rows are already bounded to bodyWidth before
 // their styles are applied; the blocks package owns only final decoration and
 // lockstep structural provenance.
-func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
-	r.toolCardPrepares++
-	_, _, bodyWidth := r.toolCardLayout()
-	theme := r.blockTheme()
-
-	var glyph, glyphText string
-	switch {
-	case !b.resolved:
-		glyphText = "…"
-		glyph = r.th.Style("toolName").Render(glyphText)
-	case b.resultError:
-		glyphText = "✗"
-		glyph = r.th.Style("toolErr").Render(glyphText)
-	default:
-		glyphText = "✓"
-		glyph = r.th.Style("toolOk").Render(glyphText)
-	}
-
-	mcpName, isMCP := mcpTitle(b.toolName)
-	headLabel := terminaltext.Sanitize(b.toolName)
-	if isMCP {
-		headLabel = mcpName
-	}
-	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
-	if isMCP && expand {
-		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(b.toolName), bodyWidth)
-	}
-
-	sections := []preparedToolSection{{Region: blocks.RegionChrome, Text: head}}
-	if args := r.renderToolArgs(b, expand, bodyWidth); args != "" {
-		sections = append(sections, preparedToolSection{Region: blocks.RegionArguments, Text: args})
-	}
-	if b.resolved {
-		if result := r.renderToolResult(b, expand, bodyWidth); result != "" {
-			sections = append(sections, preparedToolSection{
-				Region:   blocks.RegionResult,
-				Text:     result,
-				Trailing: len(b.resultBody) - len(strings.TrimRight(b.resultBody, " ")),
-			})
-		}
-	}
-
-	input := blocks.SnapshotStyledTool(blocks.StyledToolInput{Sections: sections})
-	return preparedToolCard{Prepared: blocks.PrepareStyledTool(input, theme)}
-}
-
-func (r *renderer) renderTool(b *block, expand bool) string {
-	return r.prepareToolCard(b, expand).render()
-}
 
 // renderSubagentSnapshot adapts only the sealed Subagent payload to its renderer
 // presentation value. Cache storage and frame provenance remain renderer-owned.
@@ -236,15 +187,15 @@ func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 
 func (r *renderer) prepareSubagentCard(p subagentCardPresentation, expand bool) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.arguments, p.resolved, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand)
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand)
 }
 
 func (r *renderer) prepareTeamCard(p teamCardPresentation, expand bool) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.arguments, p.resolved, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand)
+	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand)
 }
 
-func (r *renderer) prepareDelegationCard(name, arguments string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool) preparedToolCard {
+func (r *renderer) prepareDelegationCard(name string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool) preparedToolCard {
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
 	var glyph, glyphText string

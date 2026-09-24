@@ -43,10 +43,10 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 			t.Errorf("row %d has no semantic region", i)
 		}
 	}
-	if !frame.hasRegion(c.testBlocks()[1].id, conversationRegionReasoning) || !frame.hasRegion(c.testBlocks()[1].id, conversationRegionBody) {
+	if !frame.hasRegion(uint64(c.testBlocks()[1].ID), conversationRegionReasoning) || !frame.hasRegion(uint64(c.testBlocks()[1].ID), conversationRegionBody) {
 		t.Fatal("assistant reasoning and body must retain distinct semantic regions")
 	}
-	if !frame.hasRegion(c.testBlocks()[2].id, conversationRegionArguments) || !frame.hasRegion(c.testBlocks()[2].id, conversationRegionResult) {
+	if !frame.hasRegion(uint64(c.testBlocks()[2].ID), conversationRegionArguments) || !frame.hasRegion(uint64(c.testBlocks()[2].ID), conversationRegionResult) {
 		t.Fatal("tool arguments and result must retain distinct semantic regions")
 	}
 	for i, line := range frame.lines {
@@ -74,12 +74,13 @@ func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
 		t.Fatalf("provenance rows = %d, rendered lines = %d", got, want)
 	}
 
-	assistant := &c.testBlocks()[0]
-	wantReasoningRows := len(strings.Split(r.renderReasoning(assistant, true), "\n"))
+	assistant := c.testBlocks()[0]
+	assistantPayload := assistant.Payload.(scrollback.AssistantCardSnapshot)
+	wantReasoningRows := len(strings.Split(r.renderReasoningSnapshot(assistantPayload, true), "\n"))
 	if wantReasoningRows <= 3 {
 		t.Fatalf("narrow reasoning render has %d rows, want wrapping beyond the unwrapped rows", wantReasoningRows)
 	}
-	firstReasoning := frame.firstRegionRow(assistant.id, conversationRegionReasoning)
+	firstReasoning := frame.firstRegionRow(uint64(assistant.ID), conversationRegionReasoning)
 	if firstReasoning < 0 {
 		t.Fatal("expanded reasoning rows missing from provenance")
 	}
@@ -112,7 +113,7 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	anchorRow := -1
 	for i, line := range narrow.lines {
 		row := narrow.provenance[i]
-		if row.blockID == assistant.id && row.region == conversationRegionReasoning && strings.Contains(stripANSIstr(line), "REASONING-ANCHOR") {
+		if row.blockID == uint64(assistant.ID) && row.region == conversationRegionReasoning && strings.Contains(stripANSIstr(line), "REASONING-ANCHOR") {
 			if !row.text {
 				t.Fatal("expanded reasoning text row must be text-bearing")
 			}
@@ -125,7 +126,7 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	}
 	for i, line := range narrow.lines {
 		row := narrow.provenance[i]
-		if row.blockID == assistant.id && row.region == conversationRegionReasoning &&
+		if row.blockID == uint64(assistant.ID) && row.region == conversationRegionReasoning &&
 			(strings.Contains(stripANSIstr(line), "reasoning summary") || strings.Contains(stripANSIstr(line), reasoningCaveat)) && row.text {
 			t.Fatalf("reasoning presentation row %q must not be text-bearing", line)
 		}
@@ -308,7 +309,7 @@ func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 	var anchor readingAnchor
 	found := false
 	for i, line := range narrow.lines {
-		if row := narrow.provenance[i]; row.blockID == c.testBlocks()[1].id && row.region == conversationRegionBody && row.text && strings.Contains(stripANSIstr(line), "eight") {
+		if row := narrow.provenance[i]; row.blockID == uint64(c.testBlocks()[1].ID) && row.region == conversationRegionBody && row.text && strings.Contains(stripANSIstr(line), "eight") {
 			anchor, found = narrow.anchorForRow(i)
 			break
 		}
@@ -465,7 +466,7 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 					want = append(want, "")
 				}
 			}
-			want = append(want, strings.Split(r.renderBlock(i, &c.testBlocks()[i], false), "\n")...)
+			want = append(want, strings.Split(r.renderSnapshot(i, c.testBlocks()[i], false), "\n")...)
 		}
 		want = append(want, "")
 		if !slices.Equal(frame.lines, want) {
@@ -487,9 +488,9 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 			region  regionKind
 			name    string
 		}{
-			{c.testBlocks()[0].id, conversationRegionArguments, "unresolved arguments"},
-			{c.testBlocks()[1].id, conversationRegionArguments, "resolved arguments"},
-			{c.testBlocks()[1].id, conversationRegionResult, "resolved result"},
+			{uint64(c.testBlocks()[0].ID), conversationRegionArguments, "unresolved arguments"},
+			{uint64(c.testBlocks()[1].ID), conversationRegionArguments, "resolved arguments"},
+			{uint64(c.testBlocks()[1].ID), conversationRegionResult, "resolved result"},
 		} {
 			if !seen[tc.blockID][tc.region] {
 				t.Fatalf("width %d: %s has no provenance row", width, tc.name)

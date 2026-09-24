@@ -198,140 +198,6 @@ type teamFinding struct {
 	body   string
 }
 
-// blockKind classifies a scrollback block so the renderer knows how to style it.
-type blockKind int
-
-const (
-	blockUser      blockKind = iota // a user prompt
-	blockAssistant                  // streamed assistant markdown (+ optional reasoning summary)
-	blockTool                       // a tool call (+ its resolved result)
-	blockNotice                     // compaction / muted info
-	blockTurnStat                   // muted per-turn usage + elapsed stat line
-	blockError                      // an error notice
-	blockHook                       // a structured hook notice (phase + decision)
-	blockDelivery                   // a fire-result delivery note (scheduled-task affordance + outcome)
-)
-
-// block is the renderer-owned, detached presentation input for one typed
-// scrollback snapshot. It is never retained as conversation state.
-type block struct {
-	id   uint64
-	kind blockKind
-
-	// rev is copied from the typed snapshot and participates in the render key.
-	rev int
-
-	raw string // user text, assistant markdown buffer, or notice text
-
-	// media holds one placeholder line per non-text part attached to a USER block
-	// (blockUser), e.g. "image/png (inline)". It is populated when a prompt
-	// attaches media via the @-mention menu (mention.go → client.ExpandMentions):
-	// each part renders a clear "📎 …" placeholder line below the text so a
-	// multimodal prompt is never silently shown as text-only. Empty for a text-only
-	// prompt.
-	media []string
-
-	// Reasoning is an ATTRIBUTE of the assistant block, not a sibling: a turn's
-	// reasoning-summary deltas and answer-text deltas can interleave on the wire
-	// (separate SSE events), so all of a turn's reasoning accumulates here and
-	// renders as one dim, collapsed header above the merged answer. reasoning is
-	// the accumulated summary text; reasoningStreaming is true while reasoning is
-	// still arriving and the answer text has not started (drives the live
-	// "reasoning…" affordance).
-	reasoning          string
-	reasoningStreaming bool
-
-	// Tool-block fields.
-	toolID      string
-	toolName    string
-	toolArgs    string
-	resolved    bool
-	resultBody  string
-	resultError bool
-	// permanent marks a blockError as a PERMANENT provider rejection — retrying
-	// cannot succeed. When true, the renderer shows a one-line human summary
-	// instead of the raw error text, with the raw payload available on expand
-	// (ctrl+t). Meangless for non-error blocks.
-	permanent bool
-	// recover marks a blockNotice as a recover-notice advisory (a session that
-	// failed on a PERMANENT provider error was recovered for re-entry). The
-	// renderer styles it as a WARNING (⚠ glyph) rather than a muted compaction
-	// notice, so it stands out as actionable. It is a DURABLE scrollback block
-	// (not a transient statusMsg) so the run's first event does not overwrite it
-	// before the user reads it. Meaningful only for blockNotice.
-	recover bool
-	// resultBlocks carries the typed content blocks relayed from the server for a tool
-	// result (when the result carried structured Parts — resource links, images, …).
-	// The renderer surfaces user-audience artifacts (resource links, images) IN
-	// ADDITION to the model-facing resultBody text, so e.g. a github MCP resource_link
-	// shows as a distinct artifact line rather than buried in/below the text body.
-	// nil (the common text-only case) leaves the existing render path byte-unchanged.
-	resultBlocks []client.ContentBlock
-
-	// deliveryFireID is the fire id of a blockDelivery note (empty for every
-	// other block kind). It labels the delivery card's subtitle so the operator
-	// can correlate the card to a `sched--<name>-…` fire session without it being
-	// buried in the fenced body.
-	deliveryFireID string
-
-	// Subagent fields (attached to a Subagent tool block): the BOUNDED projection
-	// of the Subagent's child run (ADR 0079). subagent is true once a subagent.start
-	// has been attributed to this block; subGoal is the card title; subCurrent is
-	// the child's live current-tool name; subTrace is the capped shared trace of
-	// child tool chips + message lines; subToolCount is the running/final child
-	// tool count; subUsage, subStop, and subDurationMs are the resolved end stats
-	// (subDone gates them). The previews are bounded/scrubbed/client-only — they
-	// never enter the parent conversation (gauntlet #7).
-	subagent      bool
-	subGoal       string
-	subCurrent    string // latest child tool name, "" when none yet
-	subTrace      []teamTrace
-	subToolCount  int
-	subUsage      client.Usage
-	subStop       string
-	subDurationMs int64
-	subDone       bool
-	// subRoutedCategory/subRoutedModel are the opt-in model router's bare metadata
-	// for this delegation (a category label + a model id), set on subagent.start
-	// only when the router classified it (ADR 0031). Empty when no router ran. BARE
-	// metadata — never child content — so gauntlet #7 holds.
-	subRoutedCategory string
-	subRoutedModel    string
-	// subRoutingReason names WHY the opt-in router did NOT classify this delegation
-	// (issue #397 / ADR 0083): empty on a routed hit, else a bounded gate/miss string.
-	// BARE metadata — never child content — so gauntlet #7 holds.
-	subRoutingReason   string
-	subRoutingDecision *client.RoutingDecision
-	// subModel is the concrete model id the child ACTUALLY ran on (issue #112 /
-	// ADR 0035), regardless of how it was chosen. When routed, equals subRoutedModel.
-	// BARE metadata — never child content — so gauntlet #7 holds.
-	subModel string
-
-	// Team fields (attached to a Team tool block): the BOUNDED projection of an
-	// in-process team's run. team is true once a team.start has been attributed to
-	// this block; teamLanes are the per-member lanes in roster order (the order the
-	// model formed the team), looked up by name when routing team.member events;
-	// teamRounds/teamStop/teamUsage are the resolved end stats (teamDone gates
-	// them). Member content lives in each lane's capped trace; nothing here enters
-	// the parent conversation.
-	team         bool
-	teamID       string // the team's stable id (e.g. "team-p1"), shown in the live footer summary segment
-	teamLanes    []teamLane
-	teamTasks    []teamTask    // the team's shared task list (f6 task sub-view)
-	teamFindings []teamFinding // the team's shared findings ledger (f6 findings view)
-	teamRounds   int
-	teamStop     string
-	teamUsage    client.Usage
-	teamDone     bool
-
-	// Hook-block fields (blockHook): the structured phase/tool/decision used to
-	// render a hook notice distinctly from a compaction notice and colour a
-	// blocked hook.
-	hookPhase    string
-	hookTool     string
-	hookDecision string // "info" | "blocked" | "modified"
-}
-
 // subagentLane is the flat, fleet-level projection of ONE Subagent child run, keyed by
 // ChildID. It mirrors the per-Subagent-block subagent fields (subGoal/subTrace/…) but is
 // collected ACROSS all Subagent cards into conversation.subagentFleet, so the footer
@@ -844,11 +710,11 @@ func (c *conversation) liveParallel() bool {
 // pointer so the overlay reads the live, accumulating lane state (it never
 // mutates it). A team card with no lanes yet (team.start not seen, or empty
 // roster) is skipped so the overlay never opens onto an empty roster.
-func (c *conversation) latestTeamBlock() *block {
+func (c *conversation) latestTeamBlock() *teamOverlaySnapshot {
 	for i := c.scrollback.Len() - 1; i >= 0; i-- {
 		snapshot := c.scrollback.SnapshotAt(i)
 		if payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot); ok {
-			b := teamBlockFromSnapshot(snapshot, payload)
+			b := teamOverlaySnapshotFromSnapshot(snapshot.ID, payload)
 			if len(b.teamLanes) > 0 {
 				return b
 			}
@@ -861,7 +727,7 @@ func (c *conversation) latestTeamBlock() *block {
 // teamDone) — the footer's live-activity signal. Distinct from latestTeamBlock,
 // which returns the most-recent team done-or-not so the f6 overlay can still
 // review a finished roster.
-func (c *conversation) liveTeamBlock() *block {
+func (c *conversation) liveTeamBlock() *teamOverlaySnapshot {
 	b := c.latestTeamBlock()
 	if b == nil || b.teamDone {
 		return nil

@@ -57,26 +57,26 @@ type parallelState struct {
 	branches *bounded.List
 }
 
-func teamBlockIdentity(b *block) string {
+func teamBlockIdentity(b *teamOverlaySnapshot) string {
 	if b == nil {
 		return ""
 	}
 	// The tool call and block identities exist when the block is created. teamID is
 	// stream metadata that may arrive later, so it must never participate in UI state.
-	if b.toolID != "" {
-		return aggregateScopedID("call", b.toolID)
+	if b.callID != "" {
+		return aggregateScopedID("call", b.callID)
 	}
-	return aggregateScopedID("block", strconv.FormatUint(b.id, 10))
+	return aggregateScopedID("block", strconv.FormatUint(uint64(b.cardID), 10))
 }
 
-func (m Model) teamBlockForOverlay() *block {
+func (m Model) teamBlockForOverlay() *teamOverlaySnapshot {
 	if m.team.aggregate == "" {
 		return m.conv.latestTeamBlock()
 	}
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
 		snapshot := m.conv.scrollback.SnapshotAt(i)
 		if payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot); ok {
-			b := teamBlockFromSnapshot(snapshot, payload)
+			b := teamOverlaySnapshotFromSnapshot(snapshot.ID, payload)
 			if teamBlockIdentity(b) == m.team.aggregate {
 				return b
 			}
@@ -702,7 +702,7 @@ func renderedTraceLines(th theme.Theme, hk helpKeys, width int, trace []teamTrac
 // active tab highlighted) above the active tab's body, then frames the whole thing in the
 // shared card. The team block may be nil (no team yet) — the Teams tab then shows an
 // honest empty note rather than borrowing another tab's body.
-func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int, terminalHeight ...int) string {
+func renderAgentsOverlay(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *teamOverlaySnapshot, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width, height int, terminalHeight ...int) string {
 	// The conversation viewport can be shorter than the terminal because of the
 	// surrounding chrome. Compact is a terminal-height fallback, not a viewport
 	// fallback: a 24-row terminal still receives the normal layout attempt.
@@ -794,7 +794,7 @@ type agentsEssentialBody struct {
 
 type agentsEssentialLine func(lipgloss.Style, string, string) string
 
-func renderEssentialAgentsBody(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width int) string {
+func renderEssentialAgentsBody(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *teamOverlaySnapshot, fleet []subagentLane, groups []parallelGroup, hk helpKeys, width int) string {
 	line := func(style lipgloss.Style, prefix, text string) string {
 		return renderDynamicCardChromeLine(style, prefix, text, width)
 	}
@@ -866,7 +866,7 @@ func essentialParallelBody(th theme.Theme, st parallelState, groups []parallelGr
 	return body
 }
 
-func essentialTeamBody(th theme.Theme, st teamState, b *block, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
+func essentialTeamBody(th theme.Theme, st teamState, b *teamOverlaySnapshot, hk helpKeys, line agentsEssentialLine) agentsEssentialBody {
 	body := agentsEssentialBody{
 		title:  line(th.Style("askTitle"), "", "agents"),
 		footer: line(th.Style("muted"), "", agentsEmptyHint(hk)),
@@ -1046,7 +1046,7 @@ func agentsTabBar(th theme.Theme, tab agentsTab) string {
 
 type agentsBodyRenderer func(height int) string
 
-func prepareAgentsTabBody(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *block, fleet []subagentLane, groups []parallelGroup, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareAgentsTabBody(th theme.Theme, tab agentsTab, sub subagentState, par parallelState, team teamState, b *teamOverlaySnapshot, fleet []subagentLane, groups []parallelGroup, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	switch tab {
 	case tabSubagents:
 		return prepareSubagentTab(th, sub, fleet, hk, bodyWidth)
@@ -1062,11 +1062,11 @@ func prepareAgentsTabBody(th theme.Theme, tab agentsTab, sub subagentState, par 
 // block (no team has run) reads as an honest empty note so the tab is never blank.
 // bodyWidth is the final card's usable row budget; callers derive it once from
 // askCard and never ask a row renderer to subtract card chrome again.
-func renderTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth, height int) string {
+func renderTeamsTab(th theme.Theme, st teamState, b *teamOverlaySnapshot, hk helpKeys, bodyWidth, height int) string {
 	return prepareTeamsTab(th, st, b, hk, bodyWidth)(height)
 }
 
-func prepareTeamsTab(th theme.Theme, st teamState, b *block, hk helpKeys, bodyWidth int) agentsBodyRenderer {
+func prepareTeamsTab(th theme.Theme, st teamState, b *teamOverlaySnapshot, hk helpKeys, bodyWidth int) agentsBodyRenderer {
 	if b == nil {
 		muted := th.Style("muted")
 		body := renderDynamicCardChromeLine(muted, "", "no team has run this session", bodyWidth) + "\n\n" +
