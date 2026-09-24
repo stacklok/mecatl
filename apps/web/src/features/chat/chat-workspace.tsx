@@ -690,6 +690,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         providerId: model.providerId,
       })) ?? [];
   const watchable = isActiveSessionState(selectedSession?.state);
+  const settledState = selectedSession?.state ?? sessionDetail.data?.state;
+  const settled =
+    settledState === "idle" ||
+    settledState === "completed" ||
+    settledState === "failed" ||
+    settledState === "cancelled";
   const imageAttachmentsSupported = sessionId
     ? sessionDetail.data?.capabilities.image === true
     : draftConfiguration.model
@@ -869,6 +875,81 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       }
     };
   }, [reconnectGeneration, reattachEpoch, sessionId, watchable]);
+
+  // Finished chats keep their saved transcript. Rebuild only the delegation
+  // projection from the bounded activity replay, with no live run owner or
+  // controls. A session switch or new run aborts this read before it can fold.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: helpers are stable; the replay lifetime follows session and running state
+  useEffect(() => {
+    if (!sessionId || !settled || isRunning || activeRun.current || protectedRequestsPaused()) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const owner: RunOwner = { controller, sessionId };
+    const owns = () =>
+      !controller.signal.aborted &&
+      viewedSessionId.current === sessionId &&
+      activeRun.current === undefined;
+    const updateFleet = (update: (fleet: DelegationFleet) => DelegationFleet) =>
+      setDelegationFleet((current) =>
+        owns() && current.sessionId === sessionId ? update(current) : current,
+      );
+    void (async () => {
+      const streamFailure: StreamFailure = {};
+      const observedRuns = new Set<string>();
+      let reattaches = 0;
+      try {
+        let stream: AsyncIterable<RunStreamEvent> | undefined = await watchActivity(
+          owner,
+          streamFailure,
+        );
+        while (stream && owns()) {
+          let resumeFrom: string | undefined;
+          for await (const delivery of stream) {
+            if (!owns()) break;
+            if (delivery.type === "run.started" && delivery.sessionId !== sessionId) continue;
+            if (delivery.type === "run.event" && delivery.event.runId) {
+              observedRuns.add(delivery.event.runId);
+            }
+            updateFleet((current) => foldDelegationDelivery(current, delivery));
+            if (delivery.type !== "run.truncated") continue;
+            const decision = decideTruncation(delivery, reattaches);
+            if (decision.action === "reattach") {
+              resumeFrom = decision.cursor;
+            } else {
+              updateFleet(markDelegationHistoryIncomplete);
+            }
+            break;
+          }
+          stream = undefined;
+          if (resumeFrom && !streamFailure.error && owns()) {
+            reattaches += 1;
+            stream = await watchActivity(owner, streamFailure, resumeFrom);
+          }
+        }
+        if (streamFailure.error) throw streamFailure.error;
+      } catch {
+        if (owns()) {
+          updateFleet(markDelegationHistoryIncomplete);
+        }
+      } finally {
+        if (owns()) {
+          updateFleet((current) => {
+            let next = current;
+            for (const runId of observedRuns) {
+              if (hasUnsettledDelegation(next, runId)) {
+                next = markDelegationRunUnfollowed(next, runId);
+              }
+            }
+            return next;
+          });
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }, [sessionId, settled, isRunning]);
 
   async function selectSession(id: string) {
     setSidebarOpen(false);

@@ -134,6 +134,280 @@ afterEach(async () => {
 });
 
 describe("mounted delegated activity", () => {
+  it("replays settled delegation without replacing the saved transcript or showing run controls", async () => {
+    const requests: string[] = [];
+    const fetcher = async (request: Request): Promise<Response> => {
+      const path = new URL(request.url).pathname;
+      requests.push(path);
+      if (path === "/api/v1/runtime") {
+        return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
+      }
+      if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
+      if (path === "/api/v1/sessions") {
+        // A direct link can open a saved chat outside the current list page.
+        return json({ complete: true, items: [] });
+      }
+      if (path === "/api/v1/sessions/session-a") {
+        return json({
+          capabilities: { image: false, manualCompaction: false, modelSelection: false },
+          id: "session-a",
+          mode: "default",
+          state: "idle",
+          usage: {
+            cacheReadTokens: "0",
+            cacheWriteTokens: "0",
+            inputTokens: "0",
+            outputTokens: "0",
+            reasoningTokens: "0",
+          },
+        });
+      }
+      if (path === "/api/v1/sessions/session-a/transcript") {
+        return json({
+          complete: true,
+          messages: [
+            { images: [], role: "user", text: "Keep my saved question", toolCalls: [] },
+            {
+              images: [],
+              role: "assistant",
+              text: "Keep my saved answer",
+              toolCalls: [
+                { args: "{}", id: "call-a", name: "Subagent" },
+                { args: "{}", id: "call-p", name: "Parallel" },
+                { args: "{}", id: "call-t", name: "Team" },
+              ],
+            },
+          ],
+          sessionId: "session-a",
+        });
+      }
+      if (path === "/api/v1/sessions/session-a/activity") {
+        return completedStream(
+          { runId: "run-a", sessionId: "session-a", type: "run.started" },
+          event("subagent.start", "1", {
+            childId: "child-a",
+            goal: "Inspect",
+            parentCallId: "call-a",
+          }),
+          event("parallel.start", "2", {
+            branchCount: 1,
+            join: "first",
+            parentCallId: "call-p",
+          }),
+          event("team.start", "3", {
+            parentCallId: "call-t",
+            roster: [{ lead: true, name: "lead", role: "Reviewer" }],
+            teamId: "team-a",
+          }),
+          event("subagent.tool", "4", {
+            childId: "child-a",
+            parentCallId: "call-a",
+            toolCount: 1,
+            toolName: "Read",
+          }),
+          event("parallel.branch", "5", {
+            branchIndex: 0,
+            branchLabel: "branch-a",
+            kind: "branch_start",
+            parentCallId: "call-p",
+          }),
+          event("parallel.branch", "6", {
+            branchIndex: 0,
+            kind: "branch_end",
+            parentCallId: "call-p",
+            stop: "end_turn",
+          }),
+          event("team.tasks", "7", {
+            parentCallId: "call-t",
+            tasks: [
+              { assignee: "lead", deps: [], description: "Review", id: "task-a", state: "done" },
+            ],
+            teamId: "team-a",
+          }),
+          event("subagent.end", "8", {
+            childId: "child-a",
+            parentCallId: "call-a",
+            stop: "error",
+          }),
+          event("parallel.end", "9", {
+            branchCount: 1,
+            join: "first",
+            parentCallId: "call-p",
+            winner: 0,
+          }),
+          event("team.end", "10", {
+            dispositions: [{ errorRounds: 0, name: "lead", reason: 0, stopped: false }],
+            findings: [{ body: "Found evidence", member: "lead" }],
+            parentCallId: "call-t",
+            tasks: [
+              { assignee: "lead", deps: [], description: "Review", id: "task-a", state: "done" },
+            ],
+            teamId: "team-a",
+          }),
+          event("result", "11", { stop: "end_turn" }),
+        );
+      }
+      throw new Error(`Unexpected request ${path}`);
+    };
+
+    await mountWorkspace(fetcher, () => <ChatWorkspace sessionId="session-a" />);
+    await act(async () =>
+      vi.waitFor(() => expect(requests).toContain("/api/v1/sessions/session-a/activity")),
+    );
+    await act(async () => {});
+    expect(container?.textContent).toContain("Subagent child-a");
+    expect(container?.textContent).toContain("Parallel group");
+    expect(container?.textContent).toContain("Team team-a");
+    expect(container?.textContent).toContain("Keep my saved question");
+    expect(container?.textContent).toContain("Keep my saved answer");
+    expect(container?.textContent).toContain("Winner: Branch 1");
+    expect(container?.textContent).toContain("Failed");
+    expect(container?.textContent).not.toContain("Reconnected to run");
+    expect(container?.textContent).not.toContain("Mecatl is working");
+    expect(
+      [...(container?.querySelectorAll("header button") ?? [])].some(
+        (button) => button.textContent?.trim() === "Stop",
+      ),
+    ).toBe(false);
+    expect(container?.querySelector('aside[aria-label="Session activity"]')).toBeNull();
+    await act(async () =>
+      container
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Open session activity"]')
+        ?.click(),
+    );
+    await act(async () =>
+      container
+        ?.querySelector<HTMLButtonElement>('button[role="tab"][aria-label^="Teams"]')
+        ?.click(),
+    );
+    await act(async () =>
+      [
+        ...(container?.querySelectorAll<HTMLButtonElement>(
+          'aside[aria-label="Session activity"] button',
+        ) ?? []),
+      ]
+        .find((button) => button.textContent?.includes("Team team-a"))
+        ?.click(),
+    );
+    expect(container?.textContent).toContain("Found evidence");
+  });
+
+  it("aborts settled replay when switching sessions and rejects the old activity", async () => {
+    const oldStream = heldStream();
+    let oldSignal: AbortSignal | undefined;
+    const fetcher = async (request: Request): Promise<Response> => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/v1/runtime") {
+        return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
+      }
+      if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
+      if (path === "/api/v1/sessions") {
+        return json({
+          complete: true,
+          items: ["session-a", "session-b"].map((id) => ({
+            capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+            createdAt: "2026-09-24T12:00:00Z",
+            debugTargetSessionId: "",
+            id,
+            modelId: "test",
+            state: "idle",
+            title: id,
+            titleProvenance: "",
+            titleRevision: "0",
+            turns: 1,
+            updatedAt: "2026-09-24T12:00:00Z",
+          })),
+        });
+      }
+      if (path.endsWith("/transcript")) {
+        return json({ complete: true, messages: [], sessionId: path.split("/")[4] });
+      }
+      if (path === "/api/v1/sessions/session-a" || path === "/api/v1/sessions/session-b") {
+        return json({
+          capabilities: { image: false, manualCompaction: false, modelSelection: false },
+          id: path.endsWith("session-a") ? "session-a" : "session-b",
+          mode: "default",
+          state: "idle",
+          usage: {
+            cacheReadTokens: "0",
+            cacheWriteTokens: "0",
+            inputTokens: "0",
+            outputTokens: "0",
+            reasoningTokens: "0",
+          },
+        });
+      }
+      if (path === "/api/v1/sessions/session-a/activity") {
+        oldSignal = request.signal;
+        return oldStream.response;
+      }
+      if (path === "/api/v1/sessions/session-b/activity") {
+        return completedStream(
+          { runId: "run-b", sessionId: "session-b", type: "run.started" },
+          {
+            event: {
+              kind: "subagent.start",
+              payload: { childId: "new-child", parentCallId: "call-b" },
+              runId: "run-b",
+              seq: "1",
+              text: "",
+              turn: 1,
+              unknown: false,
+            },
+            type: "run.event",
+          },
+        );
+      }
+      throw new Error(`Unexpected request ${path}`);
+    };
+    function Switchable() {
+      const [sessionId, setSessionId] = useState("session-a");
+      return (
+        <>
+          <button onClick={() => setSessionId("session-b")} type="button">
+            Switch to B
+          </button>
+          <ChatWorkspace sessionId={sessionId} />
+        </>
+      );
+    }
+
+    await mountWorkspace(fetcher, Switchable);
+    await act(async () => vi.waitFor(() => expect(oldSignal).toBeDefined()));
+    await act(async () => {
+      oldStream.send({ runId: "run-a", sessionId: "session-a", type: "run.started" });
+      oldStream.send(
+        event("subagent.start", "1", { parentCallId: "call-a", childId: "old-child" }),
+      );
+    });
+    expect(container?.textContent).toContain("Subagent old-child");
+    await act(async () =>
+      [...(container?.querySelectorAll("button") ?? [])]
+        .find((button) => button.textContent === "Switch to B")
+        ?.click(),
+    );
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () =>
+      vi.waitFor(() => expect(container?.textContent).toContain("Subagent new-child")),
+    );
+    expect(container?.textContent).toContain("Outcome unknown");
+    expect(container?.textContent).not.toContain("Subagent old-child");
+    try {
+      await act(async () =>
+        oldStream.send(
+          event("subagent.end", "2", {
+            parentCallId: "call-a",
+            childId: "old-child",
+            stop: "end_turn",
+          }),
+        ),
+      );
+    } catch {
+      // The aborted SSE reader may already have closed the test stream.
+    }
+    expect(container?.textContent).not.toContain("Subagent old-child");
+  });
+
   it("keeps inline activity through a transcript refresh and opens only on request", async () => {
     const stream = heldStream();
     const requests: string[] = [];
@@ -393,98 +667,104 @@ describe("mounted delegated activity", () => {
     expect(container?.textContent).not.toContain("Subagent old-child");
   });
 
-  for (const terminal of ["gap", "budget"] as const) {
-    it(`keeps a card across bound reattach and reports unknown outcome after ${terminal}`, async () => {
-      const cursors: string[] = [];
-      const fetcher = async (request: Request): Promise<Response> => {
-        const url = new URL(request.url);
-        const path = url.pathname;
-        if (path === "/api/v1/runtime") {
-          return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
-        }
-        if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
-        if (path === "/api/v1/sessions") {
-          return json({
-            complete: true,
-            items: [
-              {
-                capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
-                createdAt: "2026-09-24T12:00:00Z",
-                debugTargetSessionId: "",
-                id: "session-a",
-                modelId: "test",
-                state: "running",
-                title: "Session A",
-                titleProvenance: "",
-                titleRevision: "0",
-                turns: 0,
-                updatedAt: "2026-09-24T12:00:00Z",
+  for (const sessionState of ["running", "idle"] as const) {
+    for (const terminal of ["gap", "budget"] as const) {
+      it(`keeps a ${sessionState} card across bound reattach and reports unknown outcome after ${terminal}`, async () => {
+        const cursors: string[] = [];
+        const fetcher = async (request: Request): Promise<Response> => {
+          const url = new URL(request.url);
+          const path = url.pathname;
+          if (path === "/api/v1/runtime") {
+            return json({
+              capabilities: { image: false, posture: "managed" },
+              connection: "online",
+            });
+          }
+          if (path === "/api/v1/settings/runtime")
+            return json({ models: [], modelsSupported: true });
+          if (path === "/api/v1/sessions") {
+            return json({
+              complete: true,
+              items: [
+                {
+                  capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+                  createdAt: "2026-09-24T12:00:00Z",
+                  debugTargetSessionId: "",
+                  id: "session-a",
+                  modelId: "test",
+                  state: sessionState,
+                  title: "Session A",
+                  titleProvenance: "",
+                  titleRevision: "0",
+                  turns: 0,
+                  updatedAt: "2026-09-24T12:00:00Z",
+                },
+              ],
+            });
+          }
+          if (path === "/api/v1/sessions/session-a/transcript") {
+            return json({ complete: true, messages: [], sessionId: "session-a" });
+          }
+          if (path === "/api/v1/sessions/session-a") {
+            return json({
+              capabilities: { image: false, manualCompaction: false, modelSelection: false },
+              id: "session-a",
+              mode: "default",
+              state: sessionState,
+              usage: {
+                cacheReadTokens: "0",
+                cacheWriteTokens: "0",
+                inputTokens: "0",
+                outputTokens: "0",
+                reasoningTokens: "0",
               },
-            ],
-          });
-        }
-        if (path === "/api/v1/sessions/session-a/transcript") {
-          return json({ complete: true, messages: [], sessionId: "session-a" });
-        }
-        if (path === "/api/v1/sessions/session-a") {
-          return json({
-            capabilities: { image: false, manualCompaction: false, modelSelection: false },
-            id: "session-a",
-            mode: "default",
-            state: "running",
-            usage: {
-              cacheReadTokens: "0",
-              cacheWriteTokens: "0",
-              inputTokens: "0",
-              outputTokens: "0",
-              reasoningTokens: "0",
-            },
-          });
-        }
-        if (path === "/api/v1/sessions/session-a/activity") {
-          const cursor = url.searchParams.get("resumeFrom") ?? "";
-          cursors.push(cursor);
-          if (!cursor) {
-            return completedStream(
-              { runId: "run-a", sessionId: "session-a", type: "run.started" },
-              event("subagent.start", "1", { parentCallId: "call-a", childId: "child-a" }),
-              { cursor: "cursor-1", reason: "bound", type: "run.truncated" },
-            );
+            });
           }
-          if (terminal === "gap") {
-            return completedStream(
-              event("subagent.tool", "2", {
-                parentCallId: "call-a",
-                childId: "child-a",
-                toolCount: 1,
-              }),
-              { cursor: "", reason: "gap", type: "run.truncated" },
-            );
+          if (path === "/api/v1/sessions/session-a/activity") {
+            const cursor = url.searchParams.get("resumeFrom") ?? "";
+            cursors.push(cursor);
+            if (!cursor) {
+              return completedStream(
+                { runId: "run-a", sessionId: "session-a", type: "run.started" },
+                event("subagent.start", "1", { parentCallId: "call-a", childId: "child-a" }),
+                { cursor: "cursor-1", reason: "bound", type: "run.truncated" },
+              );
+            }
+            if (terminal === "gap") {
+              return completedStream(
+                event("subagent.tool", "2", {
+                  parentCallId: "call-a",
+                  childId: "child-a",
+                  toolCount: 1,
+                }),
+                { cursor: "", reason: "gap", type: "run.truncated" },
+              );
+            }
+            return completedStream({
+              cursor: `cursor-${cursors.length}`,
+              reason: "bound",
+              type: "run.truncated",
+            });
           }
-          return completedStream({
-            cursor: `cursor-${cursors.length}`,
-            reason: "bound",
-            type: "run.truncated",
-          });
-        }
-        throw new Error(`Unexpected request ${path}`);
-      };
-      await mountWorkspace(fetcher, () => <ChatWorkspace sessionId="session-a" />);
-      await act(async () =>
-        vi.waitFor(() => expect(cursors.length).toBe(terminal === "gap" ? 2 : 51), {
-          timeout: 5000,
-        }),
-      );
-      expect(cursors[1]).toBe("cursor-1");
-      expect(container?.querySelector('aside[aria-label="Session activity"]')).toBeNull();
-      expect(container?.textContent).toContain("Subagent child-a");
-      const activityControl = container?.querySelector<HTMLButtonElement>(
-        'button[aria-label="Open session activity"]',
-      );
-      expect(activityControl).toBeDefined();
-      await act(async () => activityControl?.click());
-      expect(container?.textContent).toContain("Activity history incomplete");
-      expect(container?.textContent).toContain("Outcome unknown");
-    });
+          throw new Error(`Unexpected request ${path}`);
+        };
+        await mountWorkspace(fetcher, () => <ChatWorkspace sessionId="session-a" />);
+        await act(async () =>
+          vi.waitFor(() => expect(cursors.length).toBe(terminal === "gap" ? 2 : 51), {
+            timeout: 5000,
+          }),
+        );
+        expect(cursors[1]).toBe("cursor-1");
+        expect(container?.querySelector('aside[aria-label="Session activity"]')).toBeNull();
+        expect(container?.textContent).toContain("Subagent child-a");
+        const activityControl = container?.querySelector<HTMLButtonElement>(
+          'button[aria-label="Open session activity"]',
+        );
+        expect(activityControl).toBeDefined();
+        await act(async () => activityControl?.click());
+        expect(container?.textContent).toContain("Activity history incomplete");
+        expect(container?.textContent).toContain("Outcome unknown");
+      });
+    }
   }
 });
