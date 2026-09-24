@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -70,6 +71,9 @@ var (
 	// holds a member of that name (a duplicate at the supervisor layer, distinct
 	// from team.ErrMemberExists at the aggregate layer). It is a bad-request error.
 	ErrMemberAlreadyAdded = errors.New("agent: member already added")
+	// ErrSupervisorClosed is returned when enrolment is attempted after Close or Run
+	// has claimed the supervisor lifecycle.
+	ErrSupervisorClosed = errors.New("agent: team supervisor is closed")
 	// ErrNoForker is returned by AddMember when a Mutating member is requested but
 	// no EnvironmentForker is configured. This is a server MISCONFIGURATION (the
 	// composition root did not wire a forker), not a bad client request.
@@ -346,6 +350,14 @@ type Supervisor struct {
 	// transcript out of band. Nil disables persistence. The supervisor consumes the
 	// port.SessionStore interface — never a concrete adapter (layering holds).
 	store port.SessionStore
+
+	lifecycleMu sync.Mutex
+	runStarted  bool
+	runDone     chan struct{}
+	runCancel   context.CancelFunc
+	closed      bool
+	cleanupOnce sync.Once
+	cleanupDone chan struct{}
 	// leadName caches the first Lead member's name (set in AddMember) so the
 	// synthesis phase and persistence find the lead without re-scanning the roster.
 	leadName string
@@ -740,6 +752,8 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 		idPrefix:           strings.TrimSuffix(TeamSessionPrefix, "-"), // the exported convention is the source
 		teamID:             strings.TrimSuffix(TeamSessionPrefix, "-"),
 		members:            make(map[string]*memberRT),
+		runDone:            make(chan struct{}),
+		cleanupDone:        make(chan struct{}),
 	}
 	for _, o := range opts {
 		o(s)
@@ -759,6 +773,11 @@ func NewSupervisor(t *team.Team, base tool.Environment, factory MemberEngine, op
 //
 //nolint:gocyclo // Enrolment ordering keeps authority derivation before runtime acquisition.
 func (s *Supervisor) AddMember(ctx context.Context, spec MemberSpec) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.runStarted {
+		return ErrSupervisorClosed
+	}
 	if strings.TrimSpace(spec.Name) == "" {
 		return ErrMemberNameRequired
 	}
@@ -1232,11 +1251,77 @@ type turnInput struct {
 	prompt string
 }
 
+// Close cancels an active run and waits until every enrolled member has stopped
+// and its resources have been torn down. Event callbacks may still be draining;
+// Run waits for every ordered callback before it returns. Close is safe to call
+// repeatedly, concurrently, and from an event callback.
+//
+// Member factories and cleanup callbacks must not synchronously call Close: they
+// are part of the resource construction/destruction that Close joins, so recursive
+// teardown cannot complete.
+//
+// A supervisor is single-use: AddMember after Close or after Run starts returns
+// ErrSupervisorClosed, and a second Run returns an empty outcome.
+func (s *Supervisor) Close() {
+	s.lifecycleMu.Lock()
+	if !s.closed {
+		s.closed = true
+	}
+	cancel := s.runCancel
+	started := s.runStarted
+	cleanupDone := s.cleanupDone
+	s.lifecycleMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if !started {
+		s.settleCleanup()
+	}
+	<-cleanupDone
+}
+
+func (s *Supervisor) settleCleanup() {
+	s.cleanupOnce.Do(func() {
+		s.cleanupAll()
+		close(s.cleanupDone)
+	})
+}
+
+func (s *Supervisor) beginRun(ctx context.Context) (context.Context, bool) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed || s.runStarted {
+		return ctx, false
+	}
+	s.runStarted = true
+	runCtx, cancel := context.WithCancel(ctx)
+	s.runCancel = cancel
+	return runCtx, true
+}
+
+func (s *Supervisor) finishRun() {
+	s.settleCleanup()
+	s.lifecycleMu.Lock()
+	s.closed = true
+	if s.runCancel != nil {
+		s.runCancel()
+		s.runCancel = nil
+	}
+	close(s.runDone)
+	s.lifecycleMu.Unlock()
+}
+
 // Run drives the team to quiescence (or the round cap), invoking sink for every
 // member event as it is produced, and returns the outcome. sink may be nil. The
 // run is bounded by ctx: cancelling it stops scheduling further rounds and lets the
 // in-flight round finish. Forked member workspaces are cleaned up on return.
 func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome {
+	var ok bool
+	ctx, ok = s.beginRun(ctx)
+	if !ok {
+		return TeamOutcome{}
+	}
+	defer s.finishRun()
 	// Direct Service RunTeam has no parent child registry by design. Register its
 	// members through the independent lifecycle capability before planning can run;
 	// registrations remain held through idle rounds and lead synthesis.
@@ -1260,7 +1345,6 @@ func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome 
 			m.releaseLiveness = release
 		}
 	}
-	defer s.cleanupAll()
 	if sink == nil {
 		sink = func(TeamEvent) {}
 	}
@@ -1327,10 +1411,15 @@ func (s *Supervisor) Run(ctx context.Context, sink func(TeamEvent)) TeamOutcome 
 		rounds++
 	}
 
-	close(evCh)
-	<-done
 	o := s.outcome(rounds)
 	o.Report = report
+	// Member work and teardown settle before callback draining. This lets an event
+	// callback call Close without forming Close -> runDone -> callback deadlock;
+	// Run still waits below until every already-queued callback has returned. Capture
+	// the outcome first because cleanup attributes any never-driven members.
+	s.settleCleanup()
+	close(evCh)
+	<-done
 	return o
 }
 

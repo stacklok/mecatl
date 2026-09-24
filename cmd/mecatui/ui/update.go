@@ -17,6 +17,7 @@ import (
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -752,6 +753,18 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case workspaceEnrollmentPollTickMsg:
 		mm, cmd := m.applyWorkspaceEnrollmentPollTick(msg)
 		return mm, cmd, true
+	case client.MCPRefreshMsg:
+		if msg.RequestToken != m.mcpRefreshRequestToken || msg.SessionID != m.sessionID {
+			return m, nil, true
+		}
+		if msg.Err != nil {
+			m.statusMsg = m.deps.Theme.Style("warning").Render("MCP refresh failed: " + terminaltext.Sanitize(msg.Err.Error()))
+		} else if msg.Result.Changed {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("MCP tools refreshed (revision %d)", msg.Result.Revision))
+		} else {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("MCP tools already current (revision %d)", msg.Result.Revision))
+		}
+		return m, nil, true
 	case client.SessionCompactedMsg:
 		if msg.RequestToken != m.compactRequestToken || msg.SessionID != m.sessionID || !m.compactPending {
 			return m, nil, true
@@ -1740,6 +1753,7 @@ func noticeLine(msg tea.Msg) string {
 // subagent event only costs the trace, never correctness or isolation.
 func (m *Model) applySubagent(msg client.SubagentMsg) {
 	applySubagentTo(&m.conv, msg)
+	m.reconcileAgentsLists()
 	// A BACKGROUND child finishing is otherwise invisible (its Subagent card
 	// resolved long ago with the started-result), so surface a brief transient
 	// footer notice — the same advisory channel as team-done / no-progress, never
@@ -1784,6 +1798,7 @@ func applySubagentTo(c *conversation, msg client.SubagentMsg) {
 // are bounded/scrubbed/client-only (gauntlet #7).
 func (m *Model) applyParallel(msg client.ParallelMsg) {
 	applyParallelTo(&m.conv, msg)
+	m.reconcileAgentsLists()
 }
 
 // applyParallelTo is the pure conversation-projection half of applyParallel: it
@@ -1822,6 +1837,7 @@ func (m *Model) applyTeam(msg client.TeamMsg) {
 		// the team card + the run's ResultMsg.
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("team done · %s", plural(msg.Rounds, "round")))
 	}
+	m.reconcileAgentsLists()
 }
 
 // applyTeamTo is the pure conversation-projection half of applyTeam: it routes a
@@ -2032,7 +2048,7 @@ func (m Model) hasDoubleEscapeDraft() bool {
 // gets Escape first. Only the focused, plain idle composer can use the gesture.
 func (m Model) doubleEscapeEligible() bool {
 	return m.keyboardEventTypes && m.phase == phaseIdle && m.prompt.Focused() && m.hasDoubleEscapeDraft() &&
-		!m.sel.active && !m.prompt.HasSelection() && !m.palette.open && !m.mention.open &&
+		!m.sel.active && !m.prompt.HasSelection() && !m.paletteVisible() && !m.mention.open &&
 		m.queuePaused == "" && !bodyOwnerOpen(m)
 }
 
@@ -2798,7 +2814,7 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Let the palette claim its navigation and completion keys while running. A
 	// selected builtin dispatches locally; a workspace row completes into the
 	// textarea. Esc stays with the layered cancel path below.
-	if m.palette.open && !key.Matches(msg, m.keys.Cancel) {
+	if m.paletteVisible() && !key.Matches(msg, m.keys.Cancel) {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
@@ -3102,7 +3118,7 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 // content — so it appears the moment the input becomes "/…" and tracks the
 // typed prefix.
 func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.palette.open {
+	if m.paletteVisible() {
 		if mm, cmd, handled := m.onPaletteKey(msg); handled {
 			return mm, cmd
 		}
@@ -3228,19 +3244,28 @@ func (m Model) onIdleSubmit() (tea.Model, tea.Cmd) {
 // enter/tab over a BUILT-IN row, which runs the built-in directly (it may issue
 // a command, e.g. opening an overlay).
 func (m Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
-	switch msg.String() {
-	case keyMenuUp:
+	if !m.paletteVisible() {
+		return m, nil, false
+	}
+	switch {
+	case msg.String() == keyMenuUp:
 		m.paletteMoveUp()
 		return m, nil, true
-	case keyMenuDown:
+	case msg.String() == keyMenuDown:
 		m.paletteMoveDown()
 		return m, nil, true
-	case keyMenuTab, keyMenuEnter:
+	case key.Matches(msg, m.keys.ScrollU):
+		m.palette.list.Move(bounded.PageUp)
+		return m, nil, true
+	case key.Matches(msg, m.keys.ScrollD):
+		m.palette.list.Move(bounded.PageDown)
+		return m, nil, true
+	case msg.String() == keyMenuTab || msg.String() == keyMenuEnter:
 		if mm, cmd, ran := m.dispatchSelectedBuiltin(); ran {
 			return mm, cmd, true
 		}
 		return m.paletteComplete(), nil, true
-	case keyMenuDismiss:
+	case msg.String() == keyMenuDismiss:
 		return m.paletteDismiss(), nil, true
 	}
 	return m, nil, false
@@ -3273,10 +3298,10 @@ func (m Model) onMentionKey(msg tea.KeyPressMsg) (Model, bool) {
 // dispatches the equivalent canonical bare command. Non-builtin workspace rows
 // return ran=false so the caller can complete them into the model-facing input.
 func (m Model) dispatchSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
-	if !m.palette.open || m.palette.cursor >= len(m.palette.filtered) {
+	row := m.palette.selected()
+	if !m.palette.open || row.Name == "" {
 		return m, nil, false
 	}
-	row := m.palette.filtered[m.palette.cursor]
 	if !row.Builtin {
 		return m, nil, false
 	}
@@ -4022,6 +4047,9 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd
+	}
+	if m.team.view != teamNone {
+		return m.onAgentsWheel(msg)
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)

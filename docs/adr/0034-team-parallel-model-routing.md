@@ -117,5 +117,5 @@ uses, NEVER a clone-and-swap. `engine/agent` stays model-string-only.
 - [ADR 0030](./0030-model-selection-heuristics.md) — the layered model-selection scheme.
 - [ADR 0027](./0027-cloud-native.md) — the resource inventory (List 1 "no new resource" note).
 - [docs/architecture/providers.md](../architecture/providers.md) — the living router section.
-- [docs/design/IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md) — the member/branch routing mechanics.
+- [docs/design/IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the member/branch routing mechanics.
 - The lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

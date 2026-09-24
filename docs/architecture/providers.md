@@ -238,7 +238,7 @@ entries — all the same Responses wire protocol) carries the guard as well as t
 terminal event, so a truncated turn is never promoted to a successful
 `StopEndTurn`. See
 [`docs/adr/0067-openai-chat-completions-adapter.md`](../adr/0067-openai-chat-completions-adapter.md)
-and `docs/design/IMPLEMENTATION-NOTES.md` for the exact mechanics.
+for the transport rationale; `provider/ssefilter/ssefilter.go` owns frame filtering.
 `buildProvider` returns the registry **and** its default provider so the shared engine
 + every child/fork/team engine keep receiving the single default provider exactly as
 before (the default path is byte-identical). A composition-only `providerConstructor`

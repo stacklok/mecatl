@@ -111,7 +111,7 @@ specialist (`read-write`+`agent`) is never re-routed.
 ## See also
 
 - Living docs: [providers.md](../architecture/providers.md) (the router precedence ladder +
-  def/writable routing), [IMPLEMENTATION-NOTES.md](../design/IMPLEMENTATION-NOTES.md) (the
+  def/writable routing), [IMPLEMENTATION-NOTES.md](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (the
   PRECEDENCE-by-gating mechanics), [usage/model-routing.md](../usage/model-routing.md) (what
   routes + how to pin a def).
 - Related ADRs: [0031](./0031-subagent-model-router.md) (the router), [0042](./0042-taxonomy-gated-model-router.md) (taxonomy-gated enable), [0077](./0077-direct-write-subagent.md) (direct-write writable Subagent), [0058](./0058-writable-named-specialist-subagent.md) (writable named specialist), [0030](./0030-model-selection-heuristics.md) (the model-selection scheme), and the lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

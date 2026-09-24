@@ -94,6 +94,8 @@ import mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 
 For RPC-by-RPC behavior, request fields, response semantics, and stream control
 frames, see the [gRPC API reference](/reference/grpc-api.md).
+For generated service signatures, streaming directions, message fields, and
+enum values, see the [gRPC schema reference](/reference/grpc-schema.md).
 
 One `Converse` stream drives one run. Start it with exactly one `Prompt` or
 `RetryStart`, then send only control frames while the run remains live. The

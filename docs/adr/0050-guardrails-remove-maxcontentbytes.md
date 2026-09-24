@@ -50,4 +50,4 @@ This is the same class of decision as [ADR 0049](./0049-guardrails-remove-maxche
 - [ADR 0021](./0021-guardrails.md) — the guardrails feature whose cost-model / `maxContentBytes` clause this supersedes (everything else carries over).
 - [ADR 0049](./0049-guardrails-remove-maxchecks.md) — the precedent (#168) that removed the per-session call-count cap on the same thesis (a cost guard whose skip is a security downgrade; cost control lives at the provider/billing layer).
 - The documentation lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).
-- Living docs: [`docs/usage.md`](../usage.md) (the guardrails failure-mode note), [`docs/design/IMPLEMENTATION-NOTES.md`](../design/IMPLEMENTATION-NOTES.md) (guardrails cost/abuse model).
+- Living docs: [`docs/usage.md`](../usage.md) (the guardrails failure-mode note), [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) (guardrails cost/abuse model).

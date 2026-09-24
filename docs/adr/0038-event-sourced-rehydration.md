@@ -136,4 +136,4 @@ resume uses the snapshot.
   reconstruction contract and the replay-fidelity limitation.
 - [ADR 0027 — cloud-native](./0027-cloud-native.md) — the durable event log (Phase 3a)
   and the reconstruct gate (Phase 3b) this builds on; List-2 row 11.
-- `docs/design/IMPLEMENTATION-NOTES.md` — the event-log subsystem note.
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md) — the event-log subsystem note.

@@ -56,8 +56,10 @@ a PR. Without that request, draft and report only; do not perform those side eff
 
 ## Authoring
 
-1. Read `AGENTS.md`, `docs/architecture.md`, `docs/acceptance/README.md`, relevant ADRs,
-   and `docs/design/IMPLEMENTATION-NOTES.md` when applicable.
+1. Read `AGENTS.md`, `docs/acceptance/README.md`, relevant ADRs, and the owning
+   architecture topic from `docs/READING.md`. Follow the documentation change
+   review in `docs/development-process.md`: name the owning page, not a list of
+   duplicate update targets. Planned behavior stays in the plan until implemented.
 2. Draft from
    [`references/ACCEPTANCE-PLAN-TEMPLATE.md`](references/ACCEPTANCE-PLAN-TEMPLATE.md).
    Keep focused work compact. Every scenario has numbered `AC<n>.<m>:` assertions,
@@ -91,17 +93,18 @@ a PR. Without that request, draft and report only; do not perform those side eff
 
 ## Amendment mode
 
-Use amendment mode only after a `blocked-contract-drift` handoff and a separate, explicit
-user authorization to invoke `/to-acceptance-plan` for that amendment. The orchestrator
-cannot authorize or perform it. Amend the durable plan and related decision/task docs using
-the **Split** Plan / Interface PR flow regardless of the original delivery mode: run the
-checker and docs gates, open the amendment PR, then stop for human review. Merging the amended
-Plan / Interface PR is the approval event; no separate status-line edit is required. Report the
-amendment PR and full merged commit so `/plan-orchestrate` can prove approval by git ancestry,
-correct a lagging `proposed` label if needed, record both in `run.md`, establish the required
-ancestry, regenerate decomposition and briefs, and only then resume dispatch. The normal side-effect authority
-rules above still apply; amendment mode does not imply permission to branch, commit, push,
-or open a PR.
+Use amendment mode only after a `blocked-contract-drift` handoff and an explicit
+authorization from the directing human to invoke this skill. This skill owns the
+recommended Split Plan / Interface PR route: amend the durable plan and related
+decision/task docs, run the checker and docs gates, open the amendment PR, then stop
+for human review. Its merge is the approval event. The authorization does not grant
+branch, commit, push, or PR authority; the normal side-effect authority rules still
+apply. For an ADR decision or rationale change, recommend a new or superseding ADR.
+
+The directing human may authorize a different route. A direct amendment belongs to the
+blocked `/plan-orchestrate` run, which records the authorization and applies it; return
+control to that orchestrator. Do not mutate its accumulator, `run.md`, briefs, or task
+dispatch from this skill.
 
 ## Worktree ownership record
 

@@ -1125,7 +1125,7 @@ func TestBreakerHalfOpenFailureReopens(t *testing.T) {
 	}
 }
 
-// TestBreakerHalfOpenPermanentErrorStaysOpen pins the designed (IMPLEMENTATION-NOTES)
+// TestBreakerHalfOpenPermanentErrorStaysOpen pins the
 // behaviour of a half-open trial that fails with a PERMANENT error: such an error is
 // breaker-neutral, so recordFailure is never reached for it. The breaker therefore
 // stays in its post-cooldown open&halfOpen shape — it is NOT hard-reopened with a fresh

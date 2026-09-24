@@ -43,7 +43,7 @@ func TestCompactTypedAndPaletteDispatchAgree(t *testing.T) {
 	palette.prompt.Rewrite("/compact")
 	palette.palette.open = true
 	palette.palette.filtered = []client.Command{{Name: "compact", Builtin: true}}
-	palette.palette.cursor = 0
+	palette.palette.syncList()
 	mm, paletteCmd, ran := palette.dispatchSelectedBuiltin()
 	palette = mm.(Model)
 	if !ran || paletteCmd == nil || !palette.compactPending {

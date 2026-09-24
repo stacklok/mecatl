@@ -2,7 +2,7 @@
 
 # mecatl — Agentic Coding Harness
 
-The domain of mecatl: a headless agentic coding harness. A `Session` carries a `Conversation` that a `Run` drives turn by turn against a `Provider`, invoking `Tools` under a permission model, emitting a stream of `Events`, and optionally delegating to `Subagents` and `Teams`. Pass 2 adds the invariants that must always hold and scenarios that stress-test them. For the prose walkthrough see the [architecture guide](../architecture.md).
+The domain of mecatl: a headless agentic coding harness. A `Session` carries a `Conversation` that a `Run` drives turn by turn against a `Provider`, invoking `Tools` under a permission model, emitting a stream of `Events`, and optionally delegating to `Subagents` and `Teams`. Invariants and scenarios describe the domain contracts. For the prose walkthrough see the [architecture guide](../architecture.md).
 
 ## Glossary
 
@@ -159,11 +159,24 @@ One entry in a `Conversation`, attributed to a role (user, assistant, or tool). 
 
 ### `Model`
 
-A specific model exposed by a `Provider`, with its own context window and capabilities (text, image, reasoning). A `Session` runs against one `Model`; a `Subagent` or `TeamMember` may override it within the same `Provider`, and a `PermissionMode` change may re-resolve it within the same `Provider` (plan mode → a strong-reasoning model, ADR 0030 Layer 3).
+A specific model identified by the exact provider/model pair. Discovery changes knowledge about its properties, not its identity. Provider listings can be non-exhaustive; omission alone does not invalidate a passthrough model. A `Session` runs against an effective `Model`; a `Subagent` or `TeamMember` may override it within the same `Provider`, and a `PermissionMode` change may re-resolve it within the same `Provider` (plan mode → a strong-reasoning model, ADR 0030 Layer 3).
 
 **Invariants**
 
 - **model-override-stays-in-provider** — A `Subagent` or `TeamMember` may override the `Model` only within the `Session`'s bound `Provider`.
+
+
+### `ModelMetadata`
+
+An immutable observation value object describing one exact `Model`'s properties, including context window, input capabilities, and reasoning support. Each field carries explicit knowledge (known or unknown) and provenance (configuration, live discovery, or catalog). A known capability can be supported or explicitly unsupported. Observation records the evidence; host resolution policy chooses effective values from that evidence and configuration. A policy fallback is a resolved value, not an observation.
+
+**Relationships**
+
+- `Model` — n:1 — referenced — describes — Observations from different sources can describe the same exact target
+
+**Invariants**
+
+- **metadata-knowledge-explicit** — An absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
 
 
 ### `PermissionAsk`
@@ -250,6 +263,26 @@ An LLM backend behind a provider-agnostic port — OpenAI Responses, the native 
 - **provider-stateless-replay** — A `Provider` adapter holds no server-side conversation state; the full `Conversation` is replayed each `Turn` behind a byte-stable cache prefix.
 
 
+### `ProviderDiscovery`
+
+Provider-scoped knowledge and attempt lifecycle, shared by sessions within one host deployment instance. One composition-owned discovery coordinator owns this lifecycle for each provider and is the authoritative publisher of accepted live observations. It is neither a per-session owner nor a singleton shared across replicas. Attempt states are unattempted, in-flight, succeeded (returned model entries), empty (completed with no entries), and failed. The latest attempt outcome is distinct from the last successful metadata observations. Host resolution policy determines whether those observations remain usable after failure. The host coordinates discovery requests and publishes their results.
+
+**Relationships**
+
+- `Provider` — n:1 — referenced — discovers metadata for — One lifecycle per provider within a host deployment instance; separate instances have independent discovery knowledge.
+
+- `ModelMetadata` — 1:n — referenced — publishes accepted live observations as — A successful listing can describe multiple models, each with its own observation. The 1:n cardinality describes the populated case; zero observations are allowed, including before discovery or after an empty first result. Configuration and catalog observations are other sources of `ModelMetadata`, not results of a live discovery attempt.
+
+
+**Invariants**
+
+- **discovery-provider-local** — Only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
+
+- **discovery-outcome-separate-from-observations** — A failed refresh records the latest attempt outcome without turning last successful observations into a failed or empty observation.
+
+- **discovery-publication-ordered** — An obsolete attempt cannot overwrite newer accepted observations. Publication follows the coordinator's ordering of attempts, not the order in which network requests finish.
+
+
 ### `ReadLedger`
 
 A session's evidence of the file versions it has read, stored independently of the `Workspace` content backend. Read records a version; Edit and overwrite-Write compare that evidence with the current version before a conditional replacement. The ledger can be in memory or durable storage.
@@ -282,15 +315,16 @@ A single drive of a `Session` from a starting state to a terminal one — one in
 
 ### `Session`
 
-The central aggregate and unit of work: a stateful conversation between a principal and a model, with an `Environment` binding, usage accounting, and limits. A `Session` is a state machine (idle, running, awaiting, completed, cancelled, failed) and is bound to exactly one `Provider` and `Model` for its lifetime. It survives process restarts when backed by a store.
+The central aggregate and unit of work: a stateful conversation between a principal and a model, with an `Environment` binding, usage accounting, and limits. A `Session` is a state machine (idle, running, awaiting, completed, cancelled, failed) and is bound to one `Provider`. Its effective `Model` is fixed for each `Turn`; a `PermissionMode` change can re-resolve the model between turns within that provider. It survives process restarts when backed by a store.
 
 **Relationships**
 
 - `Conversation` — 1:1 — owned — records
 - `Environment` — 1:1 — referenced — bound to — The `Session` persists the exact environment identity; the host reattaches its capabilities before a `Run`. Binding to an `Environment` does not imply exclusive ownership of its files.
 
-- `Provider` — n:1 — referenced — bound to — A `Session`'s `Provider` is fixed for its lifetime
-- `Model` — n:1 — referenced — runs against
+- `Provider` — n:1 — referenced — bound to — The `Session`'s provider binding stays fixed across turns
+- `Model` — n:1 — referenced — runs against — The host resolves this effective binding from the requested session selection and `PermissionMode`; the aggregate stores selection labels without interpreting them. The relationship describes the effective target for a turn, not a lifetime model pin. Existing restart semantics remain unchanged: explicit selections are restored, while an empty selection follows the deployment default rather than persisting the previously effective target.
+
 - `PermissionMode` — 1:1 — owned — posture is — The `Session`'s `PermissionMode` governs its toolset and — via ADR 0030 Layer 3 — its effective `Model`: switching to plan mode re-resolves the plan slot to a strong-reasoning `Model` within the same `Provider`, between turns.
 
 - `Memory` — n:n — referenced — remembers into
@@ -300,7 +334,7 @@ The central aggregate and unit of work: a stateful conversation between a princi
 
 **Invariants**
 
-- **fixed-provider-per-session** — A `Session` is bound to one `Provider` and one `Model` for its entire lifetime; they are re-derived together, never swapped individually.
+- **fixed-provider-per-session** — The host preserves a `Session`'s `Provider` binding across turns. Mode-driven `Model` re-resolution stays within that provider and takes effect between turns. Provider/model-dependent collaborators are derived coherently for the effective target, never cloned with only the LLM swapped. This does not pin a floating default selection across restart.
 
 - **session-recover-before-reuse** — A `Session` in a terminal state (completed, cancelled, or failed) is returned to idle before any new `Run` reuses it.
 
@@ -473,11 +507,13 @@ erDiagram
     Memory {}
     Message {}
     Model {}
+    ModelMetadata {}
     PermissionAsk {}
     PermissionMode {}
     PermissionRule {}
     Process {}
     Provider {}
+    ProviderDiscovery {}
     ReadLedger {}
     Run {}
     Session {}
@@ -501,6 +537,7 @@ erDiagram
     Hook }o--o{ ToolCall : "gates"
     MCPServer ||--o{ Tool : "provides"
     Message ||--o{ ToolCall : "requests"
+    ModelMetadata }o--|| Model : "describes"
     PermissionAsk ||--|| ToolCall : "suspends"
     PermissionAsk }o--|| Run : "pauses"
     PermissionMode ||--|| Session : "posture of"
@@ -509,6 +546,8 @@ erDiagram
     Process ||--o{ Run : "executes"
     Process ||--o{ SessionLease : "holds"
     Provider ||--o{ Model : "offers"
+    ProviderDiscovery }o--|| Provider : "discovers metadata for"
+    ProviderDiscovery ||--o{ ModelMetadata : "publishes accepted live observations as"
     ReadLedger ||--|| Session : "records read evidence for"
     Run }o--|| Session : "drives"
     Run ||--o{ Turn : "sequences"
@@ -537,6 +576,10 @@ erDiagram
 ```
 
 ## Invariants
+
+- **model-resolution-coherent** — For the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
+
+- **metadata-before-context-dependent-execution** — Admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
 
 - **budget-enforced-at-turn-boundary** — The token budget is checked at a `Turn` boundary: an in-flight `Turn` always completes, and the budget then stops the next `Turn` cleanly.
 
@@ -689,7 +732,7 @@ erDiagram
 
 - **mode-model-fixed-per-turn** — The effective `Model` is fixed for the duration of a turn; a mode change re-resolves it only between turns, at the run-entry seam, never mid-stream.
 
-- **fixed-provider-per-session** — A `Session` is bound to one `Provider` and one `Model` for its entire lifetime; they are re-derived together, never swapped individually.
+- **fixed-provider-per-session** — The host preserves a `Session`'s `Provider` binding across turns. Mode-driven `Model` re-resolution stays within that provider and takes effect between turns. Provider/model-dependent collaborators are derived coherently for the effective target, never cloned with only the LLM swapped. This does not pin a floating default selection across restart.
 
 
 ### Plan mode hides mutating tools and denies any mutation
@@ -912,17 +955,90 @@ erDiagram
 
 **Steps**
 
-1. A `Session` is bound to one `Provider` and `Model` for its lifetime.
-2. A delegation `ToolCall` spawns a `Subagent` with a `Model` override on the same `Provider`.
+1. A `Session` keeps its `Provider` binding across turns; its effective `Model` is fixed during each turn.
+2. A delegation `ToolCall` spawns a `Subagent` with a `Model` override on the same `Provider`, deriving provider/model-dependent collaborators together for that target.
 3. The `Subagent` replays its own `Conversation` statelessly each `Turn`.
 
 **Invariants touched**
 
-- **fixed-provider-per-session** — A `Session` is bound to one `Provider` and one `Model` for its entire lifetime; they are re-derived together, never swapped individually.
+- **fixed-provider-per-session** — The host preserves a `Session`'s `Provider` binding across turns. Mode-driven `Model` re-resolution stays within that provider and takes effect between turns. Provider/model-dependent collaborators are derived coherently for the effective target, never cloned with only the LLM swapped. This does not pin a floating default selection across restart.
 
 - **model-override-stays-in-provider** — A `Subagent` or `TeamMember` may override the `Model` only within the `Session`'s bound `Provider`.
 
 - **provider-stateless-replay** — A `Provider` adapter holds no server-side conversation state; the full `Conversation` is replayed each `Turn` behind a byte-stable cache prefix.
+
+
+### Cold resume discovers metadata on the first explicit prompt
+
+**Actors:** Principal, Client, Operator
+
+**Steps**
+
+1. The host restores a transcript for an explicitly selected native provider/model without authenticated native startup discovery. That provider is healthy but its `ProviderDiscovery` is unattempted and the context window is unknown.
+2. The first explicit prompt initiates or joins that provider's discovery through the deployment's coordinator. No earlier rejected prompt or model-picker request is required.
+3. Discovery succeeds and publishes `ModelMetadata` for the exact target. Admission resolves the context window before context-dependent execution, including compaction and inference.
+4. Execution and client projections use coherent resolution for that target and evidence/configuration basis; opening the picker is not a prerequisite.
+
+**Invariants touched**
+
+- **discovery-provider-local** — Only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
+
+- **metadata-before-context-dependent-execution** — Admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
+
+- **model-resolution-coherent** — For the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
+
+
+### Providers settle independently and listings can omit passthrough models
+
+**Actors:** Principal, Operator
+
+**Steps**
+
+1. Provider A settles successfully while provider B remains unattempted. Sessions targeting B share B's lifecycle, not A's completion.
+2. A prompt targeting B initiates or joins B's attempt rather than treating B as already failed. B returns a healthy listing that omits the requested passthrough `Model`.
+3. The omission alone invalidates neither that exact target nor the existing healthy-omission fallback. Host policy can establish a permitted context-window fallback before execution, keeping it distinct from observed metadata. Listing membership is not an allowlist.
+
+**Invariants touched**
+
+- **discovery-provider-local** — Only a provider's own attempts establish its discovery state. Another provider settling proves nothing about this provider's metadata; unattempted is distinct from failed. Native providers remain demand-driven without adding authenticated startup discovery.
+
+- **metadata-knowledge-explicit** — An absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
+
+- **metadata-before-context-dependent-execution** — Admission resolves the metadata needed for context-dependent execution, or establishes a policy-permitted fallback, before compaction or inference. Otherwise execution remains unadmitted. It need not await every property, require picker activity, or add native-provider startup authentication. A healthy listing's omission of a passthrough model alone neither invalidates it nor removes its policy-permitted fallback.
+
+
+### Failed refresh and obsolete completion preserve distinct knowledge
+
+**Actors:** Operator
+
+**Steps**
+
+1. A provider has accepted successful observations. An older refresh remains in flight when a newer attempt publishes updated observations.
+2. The older request completes late with different values; its obsolete result cannot regress the newer accepted knowledge.
+3. A subsequent refresh fails. `ProviderDiscovery` distinguishes this latest outcome from the last successful `ModelMetadata`; host resolution policy governs whether those observations remain usable.
+
+**Invariants touched**
+
+- **discovery-publication-ordered** — An obsolete attempt cannot overwrite newer accepted observations. Publication follows the coordinator's ordering of attempts, not the order in which network requests finish.
+
+- **discovery-outcome-separate-from-observations** — A failed refresh records the latest attempt outcome without turning last successful observations into a failed or empty observation.
+
+
+### Missing properties are not unsupported capabilities
+
+**Actors:** Client, Operator
+
+**Steps**
+
+1. Live `ModelMetadata` reports a context window but omits reasoning support and an input capability. Those fields are unknown.
+2. An observation explicitly reporting no reasoning support is distinct from the omitted field. Host policy resolves required properties from available evidence and configuration without presenting a fallback as an observation.
+3. For the same exact target and evidence/configuration basis, execution and client projections agree on resolved facts and knowledge distinctions; the client does not independently reinterpret unknown as unsupported.
+
+**Invariants touched**
+
+- **metadata-knowledge-explicit** — An absent property remains unknown, not false or unsupported. Resolution preserves the distinction between an observed value and a policy-permitted fallback, including their provenance.
+
+- **model-resolution-coherent** — For the same exact provider/model target and evidence/configuration basis, execution and client projections use coherent host resolution of context, capabilities, and reasoning. Metadata-dependent session facts and provider/model-dependent collaborators use that basis; clients project the host's interpretation rather than resolving it independently. This does not require instantaneous atomic updates across network boundaries.
 
 
 ### The agent remembers a fact and recalls it later

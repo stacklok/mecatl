@@ -135,6 +135,12 @@ Retry decisions and breaker transitions go to structured diagnostics without raw
 errors or request content. The event log also receives sanitized
 `network.attempt` records. `InspectSession {"view":"network"}` returns bounded
 retry and terminal decisions without prompts, credentials, or response bodies.
+Each attempt also carries a bounded structural summary — whether the
+provider's protocol terminal was actually observed, and a closed outcome
+(complete, incomplete, stream error, or cancelled) — covering successful and
+cancelled streams as well as failures, so a session that finished without
+error but produced unexpected output can still be distinguished from one whose
+stream was cut off or errored in transport.
 
 ## Structured diagnostics
 

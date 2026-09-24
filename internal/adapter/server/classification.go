@@ -307,6 +307,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ConnectWorkspaceServices":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before beginning or observing its broker enrollment"},
 	"RetryWorkspaceEnrollment":     {KindCallerOwned, "authorizes and locks the owned pre-prompt session before replacing the exact enrollment correlation"},
 	"CancelWorkspaceEnrollment":    {KindCallerOwned, "authorizes and locks the owned pre-prompt session before cancelling the exact enrollment correlation"},
+	"RefreshMcpSources":            {KindCallerOwned, "owner preflight precedes shared reconciliation; run-entry and mutation lease guard any exact-name authority union"},
 
 	// --- caller-owned: schedules ---
 	"CreateSchedule": {KindCallerOwned, "the schedule manager binds the verified context principal as owner atomically with visibility"},
@@ -352,7 +353,7 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ReadMcpResource":         {KindSharedInfrastructure, "reads a resource off a process-wide MCP server registration, not a caller-owned record"},
 	"ListMcpPrompts":          {KindSharedInfrastructure, "reads prompt snapshots off a process-wide MCP server registration"},
 	"GetMcpPrompt":            {KindSharedInfrastructure, "expands a prompt on a process-wide MCP server registration"},
-	"ListMcpSources":          {KindSharedInfrastructure, "the deployment-wide MCP source inventory, identical for every caller"},
+	"ListMcpSources":          {KindSharedInfrastructure, "the cached deployment-wide MCP source inventory, identical for every caller and never an independent probe"},
 	"ListToolHiveGroups":      {KindSharedInfrastructure, "derives group names from the same deployment-wide MCP source inventory as ListMcpSources"},
 	"ListAgents":              {KindSharedInfrastructure, "the deployment's configured agent-definition catalog, identical for every caller"},
 	"ListSkills":              {KindSharedInfrastructure, "the deployment's configured skill catalog, identical for every caller"},

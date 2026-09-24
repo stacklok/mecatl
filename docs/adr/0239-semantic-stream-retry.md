@@ -54,7 +54,7 @@ Emit one structured diagnostic for every failed attempt decision. Include attemp
 
 - [ADR 0203](./0203-permanent-provider-error-signal.md)
 - [Architecture](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [gRPC API](../usage/grpc-api.md)
 - [HTTP/SSE API](../usage/http-sse-api.md)
 - [TUI behavior](../tui.md)

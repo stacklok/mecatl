@@ -23,9 +23,24 @@ require 'pull_request)' 'classifier must support pull-request comparisons'
 require 'push)' 'classifier must support push comparisons'
 require 'trusted_classifier="$RUNNER_TEMP/docs-only-changes.sh"' 'trusted classifier must be extracted outside the candidate checkout'
 require 'if git show "$base:.github/scripts/docs-only-changes.sh" > "$trusted_classifier"; then' 'classifier extraction failure must remain fail-closed'
-require 'git diff --name-only --no-renames -z "$base" "$head" | bash "$trusted_classifier")" || result=false' 'trusted classifier must receive no-renames NUL-delimited paths and fail closed'
+require 'compare_base="$base"' 'push comparisons must retain the event base'
+require 'compare_base="$(git merge-base "$base" "$head")" || compare_base=""' 'pull-request comparisons must use the merge base and fail closed on error'
+require 'if [[ -n "$compare_base" ]]; then' 'a missing comparison base must retain full validation'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$trusted_classifier")" || result=false' 'trusted classifier must receive merge-base-to-head no-renames NUL-delimited paths and fail closed'
 require 'base=""' 'unknown events must clear the comparison base'
 require 'head=""' 'unknown events must clear the comparison head'
+
+changes_job="$(awk '
+  $0 == "  changes:" { in_changes = 1; next }
+  in_changes && /^  [a-zA-Z0-9_-]+:$/ { exit }
+  in_changes { print }
+' "$workflow")"
+if ! grep -Fq 'fetch-depth: 100' <<<"$changes_job"; then
+  fail 'changes job must fetch bounded history to compute PR merge bases'
+fi
+if ! grep -Fq 'git fetch --no-tags --depth=100 origin "$base" "$head"' <<<"$changes_job"; then
+  fail 'classifier must fetch bounded base and head ancestry for merge-base comparisons'
+fi
 
 if grep -Fq 'bash .github/scripts/docs-only-changes.sh' "$workflow" \
   || grep -Fq 'bash "$GITHUB_WORKSPACE/.github/scripts/docs-only-changes.sh"' "$workflow"; then

@@ -25,7 +25,7 @@ Don't duplicate guidance; read it from where it lives:
 ## Workflow
 
 1. **Classify.** Use the compass below to decide the page's primary mode. Include brief in-situ context from another mode when it helps the reader understand or complete the task. Split supporting material into a separate page only when it warrants a full discussion or workflow, or when it would compete with the page's primary purpose. Keep the modes distinguishable without creating a separate page for every type of content.
-2. **Place.** For public documentation, follow `user-docs/_README.md`. For other documentation, place the page next to its closest siblings and match how peer content is organized. Placement problems are more expensive to fix after merge than prose problems, so settle this before drafting.
+2. **Place.** For public documentation, follow `user-docs/_README.md`. For contributor documentation, use the owning architecture topic from `docs/READING.md` and the documentation change review in `docs/development-process.md`. Update that owner; do not append the same feature narrative to several pages. Create a page only for a distinct reader need.
 3. **Read.** Read the reference file for your mode, plus [the write-time anti-patterns](references/anti-patterns.md), plus the style guide sections your task touches. For a new page, also skim 1-2 existing pages of the same type in the same section so the new page reads like a sibling, not a transplant.
 4. **Draft.** Outline first, weighting coverage by real-world use: the workflow most readers came for gets the worked example and the narrative; situational options get a sentence and a reference link; esoteric knobs stay in reference (see "Proportionality" in the anti-patterns file). Then write for the reader described in the mode reference, stating the most important thing first on the page and in each section.
 5. **Self-check.** Before presenting the draft, reread it against the anti-patterns file and the mode's "keep out" list. Cut what fails. For substantial new content, use an independent editorial review when available; for small edits, the self-check is enough.
@@ -68,7 +68,8 @@ Before presenting a draft, verify:
 - [ ] The page has a clear primary mode. Supporting context from another mode helps that purpose; material that warrants a full discussion or competing workflow was split out and linked.
 - [ ] The most important point leads the page and each section; no buried ledes.
 - [ ] Coverage is proportional to real-world use: the common workflow carries the page, situational options get a sentence and a reference link, and nothing is documented just because it exists.
-- [ ] Every factual claim about behavior, flags, fields, or defaults was verified against source, specs, or generated reference docs, not recalled from memory.
+- [ ] Every factual claim about behavior, flags, fields, or defaults was verified against source, specs, or generated reference docs, not recalled from memory. Living docs describe implemented behavior, not merely an approved plan.
+- [ ] Outdated and duplicate text was replaced or deleted. Only unique, verified knowledge was migrated; implementation chronology stays in PRs/Git rather than a catch-all notes page.
 - [ ] Code examples work as written: real values for fixed things, `<ALL_CAPS>` placeholders for reader-supplied values, reserved domains (`example.com`) in URLs.
 - [ ] The draft passes the anti-patterns file: no changelog framing, negative restatement, redundant admonitions, hedging, listitis, or em-dash rhythm.
 - [ ] Front matter (where the site uses it) has `title` and a `description` whose first 70 characters stand alone.

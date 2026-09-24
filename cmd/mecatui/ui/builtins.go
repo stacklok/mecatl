@@ -30,6 +30,7 @@ type builtin struct {
 // read clearly and a new collaborator is one field, not an 8th positional bool.
 type wiredCollaborators struct {
 	MCP          bool
+	MCPRefresh   bool
 	MCPConnector bool
 	Agents       bool
 	Skills       bool
@@ -58,8 +59,9 @@ type wiredCollaborators struct {
 // though the actual dispatch path built it correctly).
 func (m Model) wiredCollaborators() wiredCollaborators {
 	_, mcpConnector := m.deps.MCP.(client.MCPConnectorReader)
+	_, mcpRefresh := m.deps.MCP.(client.MCPRefresher)
 	return wiredCollaborators{
-		MCP: m.deps.MCP != nil, MCPConnector: mcpConnector,
+		MCP: m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
 		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
 		Reflections: m.deps.Reflections != nil,
@@ -154,6 +156,15 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 			run:  Model.runMCP,
 		})
 	}
+	directRefresh := caps.MCPRefresh && !caps.WorkspaceEnrollment && w.MCPRefresh
+	brokerRefresh := caps.WorkspaceEnrollment && !caps.MCPRefresh && w.Workspace
+	if directRefresh || brokerRefresh {
+		out = append(out, builtin{
+			name: "mcp-refresh",
+			desc: "refresh MCP tools for this session",
+			run:  Model.runMCPRefresh,
+		})
+	}
 	if caps.Agents && w.Agents {
 		out = append(out, builtin{
 			name: "agents",
@@ -241,8 +252,8 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.WorkspaceEnrollment && w.Workspace {
 		out = append(out,
-			builtin{name: "tools-connect", desc: "connect workspace tools that require your approval", run: Model.runToolsConnect},
-			builtin{name: "tools-cancel", desc: "cancel a workspace tool connection", run: Model.runToolsCancel},
+			builtin{name: "tools-connect", desc: "deprecated alias for /mcp-refresh in broker mode", run: Model.runToolsConnect},
+			builtin{name: "tools-cancel", desc: "cancel a pending workspace-services connection", run: Model.runToolsCancel},
 		)
 	}
 	out = appendLearningBuiltin(out, w)
@@ -740,7 +751,7 @@ func (m Model) dispatchBareBuiltin(text string) (tea.Model, tea.Cmd, bool) {
 		// derived palette state too. This path serves both idle and running input.
 		m.palette.open = false
 		m.palette.filtered = nil
-		m.palette.cursor = 0
+		m.palette.syncList()
 		m.prompt.Reset()
 		mm, cmd := b.run(m)
 		return mm, cmd, true

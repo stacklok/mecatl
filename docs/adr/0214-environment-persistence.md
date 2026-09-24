@@ -120,6 +120,6 @@ implied.
 - [ADR 0208 — execution environments and version-aware file mutation](./0208-execution-environment.md)
 - [ADR 0211 — execution-environment runtime seam](./0211-execution-environment-runtime-seam.md)
 - [Architecture — ports and adapter boundaries](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
 - [ADR 0027 — cloud-native state and resource inventory](./0027-cloud-native.md)
 - [ADR 0036 — engine module boundary](./0036-engine-module.md)

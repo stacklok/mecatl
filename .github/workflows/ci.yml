@@ -80,6 +80,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Fetch bounded ancestry for merge-base..head PR comparisons. If the
+          # merge base is beyond that depth, classification fails closed.
+          fetch-depth: 100
 
       - name: Classify changed paths
         id: classify
@@ -119,38 +122,44 @@ jobs:
           if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && [[ "$head" =~ ^[0-9a-f]{40}$ ]] \
             && [[ "$base" != 0000000000000000000000000000000000000000 ]] \
             && [[ "$head" != 0000000000000000000000000000000000000000 ]] \
-            && git fetch --no-tags origin "$base" "$head" \
+            && git fetch --no-tags --depth=100 origin "$base" "$head" \
             && git cat-file -e "$base^{commit}" \
             && git cat-file -e "$head^{commit}"; then
-            trusted_classifier="$RUNNER_TEMP/docs-only-changes.sh"
-            if git show "$base:.github/scripts/docs-only-changes.sh" > "$trusted_classifier"; then
-              result="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$trusted_classifier")" || result=false
-              if [[ "$result" == true ]]; then
-                docs_only=true
+            compare_base="$base"
+            if [[ "$EVENT_NAME" == pull_request ]]; then
+              compare_base="$(git merge-base "$base" "$head")" || compare_base=""
+            fi
+            if [[ -n "$compare_base" ]]; then
+              trusted_classifier="$RUNNER_TEMP/docs-only-changes.sh"
+              if git show "$base:.github/scripts/docs-only-changes.sh" > "$trusted_classifier"; then
+                result="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$trusted_classifier")" || result=false
+                if [[ "$result" == true ]]; then
+                  docs_only=true
+                fi
               fi
-            fi
-            # Same trusted-from-base-ref discipline for the macOS relevance flags:
-            # a PR cannot edit the classifier to skip a job it should run, because
-            # the base version is used until it merges. A missing script (the PR
-            # that introduces it) leaves both flags at their fail-closed RUN value.
-            macos_classifier="$RUNNER_TEMP/macos-relevant-changes.sh"
-            if git show "$base:.github/scripts/macos-relevant-changes.sh" > "$macos_classifier"; then
-              macos_go="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" go)" || macos_go=true
-              macos_sdk="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true
-            fi
-            # Same trusted-from-base-ref discipline for the Linux job-family flags:
-            # a PR cannot edit the classifier to skip a job it should run, because
-            # the base version is used until it merges. A missing script (the PR
-            # that introduces it) leaves all four flags at their fail-closed RUN
-            # value. (A base-ref classifier that predates the `studio` category
-            # treats it as an unknown category and prints true — RUN — so the PR
-            # that introduces the category also fails closed.)
-            relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"
-            if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then
-              go_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" go)" || go_relevant=true
-              sdk_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true
-              site_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true
-              studio_relevant="$(git diff --name-only --no-renames -z "$base" "$head" | bash "$relevant_classifier" studio)" || studio_relevant=true
+              # Same trusted-from-base-ref discipline for the macOS relevance flags:
+              # a PR cannot edit the classifier to skip a job it should run, because
+              # the base version is used until it merges. A missing script (the PR
+              # that introduces it) leaves both flags at their fail-closed RUN value.
+              macos_classifier="$RUNNER_TEMP/macos-relevant-changes.sh"
+              if git show "$base:.github/scripts/macos-relevant-changes.sh" > "$macos_classifier"; then
+                macos_go="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$macos_classifier" go)" || macos_go=true
+                macos_sdk="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$macos_classifier" sdk)" || macos_sdk=true
+              fi
+              # Same trusted-from-base-ref discipline for the Linux job-family flags:
+              # a PR cannot edit the classifier to skip a job it should run, because
+              # the base version is used until it merges. A missing script (the PR
+              # that introduces it) leaves all four flags at their fail-closed RUN
+              # value. (A base-ref classifier that predates the `studio` category
+              # treats it as an unknown category and prints true — RUN — so the PR
+              # that introduces the category also fails closed.)
+              relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"
+              if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then
+                go_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" go)" || go_relevant=true
+                sdk_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true
+                site_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true
+                studio_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" studio)" || studio_relevant=true
+              fi
             fi
           fi
           # One redirect group for all outputs (shellcheck SC2129).
@@ -758,8 +767,9 @@ jobs:
           go test ./internal/adapter/managedtemp -count=1
           go test ./internal/adapter/osfs -run '^TestADR_0281_.*' -count=1
           go test ./internal/app -run '^TestADR_0281_ManagedModeUnixAdmission$' -count=1
+          # The FreeBSD check covers the OS adapter. The app is released for
+          # Linux/macOS, and ToolHive's 1Password SDK cannot compile on FreeBSD.
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
-          GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/app-freebsd.test" ./internal/app
 
   test-race-root-a:
     name: Test (race root-a)
@@ -1443,7 +1453,7 @@ jobs:
             | go run ../../.github/scripts/govulncheck-gate.go) # v1.8.0
 
   docs:
-    name: Docs (matlatl)
+    name: Doc validation
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -1481,15 +1491,21 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.x'
-          # ac-trace runs the allowlisted site proof; cache its much larger npm
-          # closure. The SDK resolver installs only its small frozen dependency set.
-          cache: npm
-          cache-dependency-path: website/package-lock.json
+          # ac-trace installs the SDK and Studio dependency closures with pnpm.
+          cache: pnpm
+          cache-dependency-path: |
+            sdk/typescript/pnpm-lock.yaml
+            apps/pnpm-lock.yaml
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
       - name: Acceptance-proof traceability gate
         run: task ac-trace-strict
+
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: '1.72.0'
+          github_token: ${{ github.token }}
 
       # Documentation-only changes still run the repository's Go-backed structural
       # checks (ADR numbering/shape, citations, lifecycle, and reading-map checks).
@@ -1520,6 +1536,23 @@ jobs:
           fi
           if [ "$stale" -ne 0 ]; then
             echo "::error file=user-docs/reference/configuration.md::config reference / settings skeleton is out of date — run 'task docs:configref' and commit the result."
+            exit 1
+          fi
+
+      # Regenerate into RUNNER_TEMP so the freshness check never modifies the
+      # checkout. The checked-in page is the exact output developers get from
+      # `task docs:grpc-ref`.
+      - name: gRPC schema reference is up to date
+        shell: bash
+        run: |
+          set -euo pipefail
+          buf generate --template buf.gen.grpc-docs.yaml \
+            --output "$RUNNER_TEMP/grpc-reference" \
+            --path contracts/proto/mecatl/v1/harness.proto \
+            --path contracts/proto/mecatl/v1/schedule.proto
+          generated="$RUNNER_TEMP/grpc-reference/user-docs/reference/grpc-schema.md"
+          if ! diff -u user-docs/reference/grpc-schema.md "$generated"; then
+            echo "::error file=user-docs/reference/grpc-schema.md::gRPC schema reference is out of date — run 'task docs:grpc-ref' and commit the result."
             exit 1
           fi
 
@@ -1574,11 +1607,19 @@ jobs:
       - name: Verify generated SDK reference is fresh
         run: task sdk:docs:check
 
+      - name: Install site dependencies
+        working-directory: website
+        run: npm ci
+
+      # Docusaurus builds through its own bundler and never runs tsc, so a
+      # TypeScript upgrade that breaks the site config only surfaces here.
+      - name: Typecheck site
+        working-directory: website
+        run: npm run typecheck
+
       - name: Build site
         working-directory: website
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
 
   user-docs-gate:
     name: User docs (gate)

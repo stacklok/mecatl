@@ -338,8 +338,10 @@ not selected. Disable detection with `--toolhive-llm=false` on shared hosts.
   process.
 - `proxy` requires a running local proxy and supports self-signed gateways.
 
-Run `thv llm setup` before using direct mode; `mecated` does not open a browser
-when credentials are missing. Direct mode does not honor `tls_skip_verify`.
+Run `thv llm setup` before using direct mode. `mecated` reads ToolHive's
+encrypted credentials, including THVSEC v1 files written by ToolHive v0.50.0.
+It does not open a browser when credentials are missing. Direct mode does not
+honor `tls_skip_verify`.
 
 |Flag|Default|Purpose|
 |-|-|-|

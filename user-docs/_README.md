@@ -64,7 +64,8 @@ feature guide.
 |Skills, commands, soul, and user model|`features/skills-commands-and-soul.md` and `building/what-you-get/memory.md`|Extension-point pages document the importable interfaces.|
 |Hooks|`building/what-you-get/hooks.md`|`building/extension-points/hook-runner.md` owns host-integration details.|
 |Configuration schema|`reference/configuration.md`|`building/deployment/settings.md` explains which configuration plane to use.|
-|gRPC API|`reference/grpc-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
+|gRPC API behavior|`reference/grpc-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
+|gRPC schema|`reference/grpc-schema.md`|The generated page owns exact services, RPC signatures, messages, enums, fields, and proto comments; `reference/grpc-api.md` owns behavior and semantics.|
 |HTTP and SSE API|`reference/http-sse-api.md`|`building/deployment/grpc-http.md` explains client integration and transport choice.|
 |TypeScript SDK workflows|`building/getting-started/typescript-sdk.md` and `building/typescript-sdk/`|Deployment and feature pages link to the SDK guide that owns the application workflow.|
 |TypeScript SDK method reference|`reference/typescript-sdk-api/`|SDK guides link to the generated entry-point reference instead of copying signatures or option inventories.|
@@ -152,6 +153,8 @@ Generated reference pages are exceptions to direct editing:
 
 - For `reference/configuration.md`, change the configuration schema or
   generator, then run `task docs:configref`.
+- For `reference/grpc-schema.md`, change the public protobuf contracts or the
+  generator template, then run `task docs:grpc-ref`.
 - For `reference/typescript-sdk-api/core.md`, `node.md`, and `deno.md`, change the
   TSDoc in `sdk/typescript/src/` or the SDK documentation generator, then run
   `task sdk:docs`. Use `task sdk:docs:check` to verify that the committed output

@@ -44,9 +44,12 @@ setup command is the only parent-rooted operation):
    the approved baseline, exact interface clauses, task scope, and the
    **acceptance criteria** (numbered `AC<n.n>` items quoted from
    `docs/acceptance/<plan>.md`) you must satisfy. Do only what the brief covers.
-   If a material interface or behavioral decision is missing, wrong, or requires
-   drift, stop and report `contract-drift`; do not choose an interface during
-   implementation or expand scope to compensate.
+   If the work needs an amendment to the approved contract, stop and report
+   `contract-drift`; do not choose an interface during implementation or expand
+   scope to compensate. The default advice is a separate Plan / Interface PR to
+   update the contract. The directing human may explicitly authorize another
+   route. Resume only with a regenerated brief after the orchestrator applies the
+   authorized route.
 2. **Use exactly one isolated worktree.** The brief names `<attempt>`, the branch
    `impl-<plan>/<id>-attempt-<attempt>`, and a fallback path
    `.scratch/orchestrate/<plan>/worktrees/<id>-attempt-<attempt>`.

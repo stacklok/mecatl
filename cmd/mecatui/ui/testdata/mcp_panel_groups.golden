@@ -2,21 +2,21 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-  ┃                                                                                              ┃
-  ┃  MCP inventory                                                                               ┃
-  ┃                                                                                              ┃
-  ┃  toolhive  [toolhive]  enabled  group=dev                                                    ┃
-  ┃    • fetch  streamable-http  http://127.0.0.1:9001                                           ┃
-  ┃    • github  streamable-http  http://127.0.0.1:9002                                          ┃
-  ┃    ! skipped sse server 'legacy' (unsupported transport)                                     ┃
-  ┃  static  [static]  disabled                                                                  ┃
-  ┃                                                                                              ┃
-  ┃  ToolHive groups: dev, prod                                                                  ┃
-  ┃                                                                                              ┃
-  ┃  snapshot from mecated startup — servers started later won't appear · r refresh · esc close  ┃
-  ┃                                                                                              ┃
-  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+                   ┃                                                           ┃
+                   ┃  MCP inventory                                            ┃
+                   ┃                                                           ┃
+                   ┃  toolhive  [toolhive]  enabled  group=dev                 ┃
+                   ┃    • fetch  streamable-http  http://127.0.0.1:9001        ┃
+                   ┃    • github  streamable-http  http://127.0.0.1:9002       ┃
+                   ┃    ! skipped sse server 'legacy' (unsupported transport)  ┃
+                   ┃  static  [static]  disabled                               ┃
+                   ┃                                                           ┃
+                   ┃  ToolHive groups: dev, prod                               ┃
+                   ┃                                                           ┃
+                   ┃  revision 0 · cached · r reload status · esc close        ┃
+                   ┃                                                           ┃
+                   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

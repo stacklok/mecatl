@@ -53,9 +53,23 @@ and the operation is never replayed automatically. See
 [ADR 0223](../adr/0223-mcp-sdk-transport-error-semantics.md), and
 [ADR 0309](../adr/0309-mcp-ambiguous-closed-idle-post.md). The client also holds the
 **standalone SSE GET stream** open per connected server, so server-initiated
-`notifications/{tools,prompts,resources}/list_changed` invalidate the cached
-snapshots (lazily re-listed on the next read); live catalog refresh is
-deferred to a later phase — see [ADR 0057](../adr/0057-mcp-server-notifications.md).
+`notifications/{tools,prompts,resources}/list_changed` enter the same serialized,
+bounded reconciler as explicit refresh and ToolHive-only jittered polling. The
+reconciler retains source last-known-good state, builds complete immutable
+candidates, and atomically publishes one runtime revision. Root operations pin
+that revision; displaced runtimes close after their pins drain. See
+[ADR 0057](../adr/0057-mcp-server-notifications.md) and
+[ADR 0355](../adr/0355-mcp-source-reconciliation.md).
+
+Automatic reconciliation changes current availability but never widens durable
+session authority. `Service.RefreshMcpSources` owner-checks an eligible idle or
+quiescent completed ordinary root, requests shared reconciliation, and
+stable-unions only missing active direct names. A no-op takes no mutation lease
+and performs no save. A widening refresh saves one detached candidate and
+confirms an ambiguous save by bounded authoritative reload while the run-entry
+and mutation exclusions remain held. `ListMcpSources` reports the cached
+published/pre-shadow inventory, revision, stale state, and active reconciliation
+without probing a source.
 
 A dedicated debug session can borrow only direct tools from explicitly named, already
 connected server-global MCP servers. It persists the names and the exact initial tool-name

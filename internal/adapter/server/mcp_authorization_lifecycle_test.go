@@ -1508,6 +1508,85 @@ func TestScheduleAuthorizationExpiryWarnsWhenNoInMemoryPending(t *testing.T) {
 	}
 }
 
+func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	loaded, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var current atomic.Uint64
+	current.Store(7)
+	type revisionKey struct{}
+	f.svc.cfg.SharedEngineRevision = 7
+	f.svc.cfg.OperationRevision = func(ctx context.Context) (uint64, bool) {
+		if pinned, ok := ctx.Value(revisionKey{}).(uint64); ok {
+			return pinned, true
+		}
+		return current.Load(), false
+	}
+	var builds atomic.Int32
+	build := func(ctx context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
+		builds.Add(1)
+		revision, _ := f.svc.cfg.OperationRevision(ctx)
+		return SessionEngineResult{Engine: f.svc.cfg.Engine, BuiltForMode: mode, RuntimeRevision: revision, Close: func() error { return nil }}, nil
+	}
+	f.svc.cfg.SessionEngine = build
+	f.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+		return build(ctx, sel, specs, profile, workspace, mode)
+	}
+
+	for range 2 {
+		if _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("repeated unpinned authorization resolution built %d engines, want 1", got)
+	}
+
+	current.Store(8)
+	for range 2 {
+		if _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := builds.Load(); got != 2 {
+		t.Fatalf("one publication produced %d total builds, want 2", got)
+	}
+
+	pinned := context.WithValue(t.Context(), revisionKey{}, uint64(7))
+	if _, _, err := f.svc.engineAndEnvironmentFor(pinned, loaded); err != nil {
+		t.Fatal(err)
+	}
+	if got := builds.Load(); got != 3 {
+		t.Fatalf("older pinned revision did not win: builds=%d, want 3", got)
+	}
+
+	withoutRuntime := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
+	withoutLoaded, err := withoutRuntime.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var withoutBuilds atomic.Int32
+	withoutBuild := func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode) (SessionEngineResult, error) {
+		withoutBuilds.Add(1)
+		return SessionEngineResult{Engine: withoutRuntime.svc.cfg.Engine, BuiltForMode: mode, Close: func() error { return nil }}, nil
+	}
+	withoutRuntime.svc.cfg.SessionEngine = withoutBuild
+	withoutRuntime.svc.cfg.SessionEngineWithTools = func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+		return withoutBuild(ctx, sel, specs, profile, workspace, mode)
+	}
+	for range 2 {
+		if _, _, err := withoutRuntime.svc.engineAndEnvironmentFor(t.Context(), withoutLoaded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := withoutBuilds.Load(); got != 1 {
+		t.Fatalf("no-runtime path built %d engines, want 1", got)
+	}
+}
+
 func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testing.T) {
 	f := newLifecycleFixture(t, session.AuthorizationGranted, nil, time.Now, nil)
 	ctx, cancel := context.WithCancel(t.Context())

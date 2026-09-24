@@ -1,6 +1,7 @@
  mecatui  ·  session sess-test-00  ·  GPT-5  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃                                                                                                     ┃
 ┃  Models  (2)                                                                                        ┃
@@ -9,16 +10,15 @@
 ┃                                                                                                     ┃
 ┃  Switching models is expensive as it clears caches.                                                 ┃
 ┃                                                                                                     ┃
-┃  ╭────────────────────────────────────────────────╮                                                 ┃
-┃  │  › ●  openai · GPT-5  image input reason 200K  │                                                 ┃
-┃  ╰────────────────────────────────────────────────╯                                                 ┃
-┃       openai · GPT-5 mini  reason 128K                                                              ┃
+┃  ▶●  openai · GPT-5  image input reason 200K                                                        ┃
+┃      openai · GPT-5 mini  reason 128K                                                               ┃
 ┃                                                                                                     ┃
 ┃  type to filter · ↑/↓/pgup move · enter use · ctrl+g set global default · esc clear filter / close  ┃
 ┃  ● current  ★ global default                                                                        ┃
 ┃  reason = emits reasoning · set its effort tier with /effort                                        ┃
 ┃                                                                                                     ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 
 │

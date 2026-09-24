@@ -1407,8 +1407,12 @@ func (m *OpenRouterModelRoute) UnmarshalYAML(node ast.Node) error {
 //     only within the operator Allowlist and only on a TRUSTED workspace. A project
 //     Allowlist: key is IGNORED with a WARN (a project cannot widen its own cap).
 type ModelsSection struct {
-	// Slots binds a slot name (a call-slot "compaction"/"ask-reviewer"/"guardrail" or
-	// a tier "cheap"/"fast"/"reasoning") to a model selector (alias or concrete id).
+	// Slots binds a slot name to a model selector (alias or concrete id). Call slots
+	// include "compaction", "ask-reviewer", and "guardrail"; tier slots include
+	// "cheap", "fast", and "reasoning". The "plan" slot selects the session model
+	// while the session is in plan mode. In default or accept-edits mode, the session
+	// uses its default model. When "plan" is unset, it falls through to the "reasoning"
+	// tier when configured.
 	Slots map[string]string `yaml:"slots"`
 	// Aliases binds a short alias to a concrete model id (merged onto the CLI
 	// --model-alias map, CLI winning per key).

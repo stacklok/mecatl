@@ -41,7 +41,7 @@ func renderStatusSpans(th theme.Theme, spans []customization.Span) string {
 		}
 		style := lipgloss.NewStyle()
 		if span.Href != "" {
-			b.WriteString(style.Foreground(lipgloss.Color(th.Palette.MdLink)).Underline(true).Render(text))
+			b.WriteString(style.Foreground(lipgloss.Color(th.Palette.MdLink)).Underline(true).Hyperlink(span.Href).Render(text))
 			continue
 		}
 		if color := statusColor(th, span.Token); color != "" {

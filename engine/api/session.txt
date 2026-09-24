@@ -19,6 +19,7 @@
     method func (*Session).Fail() error
     method func (*Session).FailedStepRetryPending() (RetryMetadata, bool)
     method func (*Session).FailureMetadata() RetryMetadata
+    method func (*Session).GrantToolAuthority(names []string) error
     method func (*Session).Incarnation() IncarnationID
     method func (*Session).Interrupt() error
     method func (*Session).InterruptAuthorization() ([]ToolResult, error)

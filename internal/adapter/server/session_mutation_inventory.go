@@ -75,7 +75,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"adapter:family-derivatives":            {SessionMutationLeaseProven, "snapshot save, delete, event append, and tool-call record adapters update metadata indexes and sidecars inside the same backend call"},
 	"SettleIfStale":                         {SessionMutationLeaseOwned, "stale repair owns run-entry and the session mutation lease before abandonment save"},
 	"ApplySessionCleanup":                   {SessionMutationLeaseOwned, "each family deletion delegates to the run-entry and maintenance-lease retention path"},
-	"deleteAbandonedMembers":                {SessionMutationLeaseProven, "team creation acquires every member lease before publication and keeps it through abandoned-family cleanup"},
+	"deleteAbandonedMembers":                {SessionMutationLeaseProven, "team setup acquires every member lease before publication and keeps it through abandoned-family cleanup"},
 	"repairRunningAtRunEntry":               {SessionMutationLeaseProven, "run-entry has acquired the session lease before crash-orphan repair save"},
 	"GetSession":                            {SessionMutationReadOnly, "loads and authorizes an authoritative snapshot without changing the durable family"},
 	"GetTranscript":                         {SessionMutationReadOnly, "projects an authorized snapshot without changing the durable family"},

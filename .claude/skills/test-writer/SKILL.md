@@ -36,8 +36,8 @@ and emits a test stub.
 Name the test after the rule it defends. The first two patterns are what
 `ac-trace` gates against:
 
-- `TestInvariant_<id>` — an invariant from `AGENTS.md` ("Things That Will
-  Bite You") or `docs/design/IMPLEMENTATION-NOTES.md`, id kebab → snake.
+- `TestInvariant_<id>` — an invariant in the owning architecture topic or
+  `AGENTS.md`, id kebab → snake.
   Example: `TestInvariant_deny_dominant_scope_resolution`.
 - `TestADR_NNNN_*` — a rule codified in `docs/adr/NNNN-*.md`. Example:
   `TestADR_0041_DirectWriteSubagent`.
@@ -157,7 +157,7 @@ Then check whether the implementation contradicts its declared work classificati
 introduces an unplanned durable decision. Stop as contract drift rather than silently
 upgrading/downgrading it. Only Architectural work with a genuinely new or superseding durable
 decision adds an ADR and its `TestADR_NNNN_*` pin; a current invariant may instead belong in
-AGENTS.md / IMPLEMENTATION-NOTES.md with `TestInvariant_<id>`. Routine and Bounded rationale
+the owning architecture topic with `TestInvariant_<id>`. Routine and Bounded rationale
 stays in the issue, PR, plan, or ordinary test name. If you touched the engine's exported API:
 `task api:update` plus the `engine/CHANGELOG.md` note.
 

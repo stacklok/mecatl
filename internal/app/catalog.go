@@ -73,21 +73,28 @@ import (
 //     tool, so ForkPreservedCap stays a PROCESS bound (a per-session reaper would
 //     multiply the cap by the number of sessions).
 type catalogAssets struct {
-	globalMgr        *mcp.Manager
-	agentReg         *agents.Registry
-	memStore         tool.MemoryStore
-	userModelStore   tool.MemoryStore
-	memoryDream      *dream.Consolidator
-	userModelDream   *dream.Consolidator
-	skills           []tool.SkillMeta
-	skillSource      tool.SkillSource
-	skillIndex       skillIndex
-	liveSkills       *coreskillfs.AtomicCatalog
-	learnedSkills    learning.SkillRepository
-	skillPublication *learnedSkillPublication
-	skillPartition   learning.SkillPartition
-	skillOwner       string
-	forkReaper       *agent.LRUForkReaper
+	globalMgr *mcp.Manager
+	// mcpRuntimes owns the revisioned direct MCP manager/provider publication.
+	// Catalog copies select the operation-pinned manager before assembly; cached
+	// engines retain only the returned revision tag.
+	mcpRuntimes          *mcpRuntimeSet
+	mcpReconciler        *mcpSourceReconciler
+	sharedEngineRevision uint64
+	buildRuntimeRelease  func()
+	agentReg             *agents.Registry
+	memStore             tool.MemoryStore
+	userModelStore       tool.MemoryStore
+	memoryDream          *dream.Consolidator
+	userModelDream       *dream.Consolidator
+	skills               []tool.SkillMeta
+	skillSource          tool.SkillSource
+	skillIndex           skillIndex
+	liveSkills           *coreskillfs.AtomicCatalog
+	learnedSkills        learning.SkillRepository
+	skillPublication     *learnedSkillPublication
+	skillPartition       learning.SkillPartition
+	skillOwner           string
+	forkReaper           *agent.LRUForkReaper
 	// autoMerger is the ONE process-wide serializing tool.EnvironmentMerger used by the
 	// Parallel single-branch auto-merge (the writable Subagent no longer merges —
 	// it writes the parent tree directly, ADR 0041). It wraps a forker.Merger in a

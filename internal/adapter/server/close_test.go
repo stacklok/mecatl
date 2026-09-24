@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"context"
+	"iter"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -16,6 +19,66 @@ import (
 )
 
 // blockingProvider is defined in lease_test.go (same package).
+
+type settlementBlockingProvider struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p settlementBlockingProvider) Stream(context.Context, port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	return func(yield func(port.Chunk, error) bool) {
+		close(p.entered)
+		<-p.release
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+	}, nil
+}
+
+func (settlementBlockingProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func TestCloseRetainsOperationPinUntilRunActuallySettles(t *testing.T) {
+	provider := settlementBlockingProvider{entered: make(chan struct{}), release: make(chan struct{})}
+	var released atomic.Bool
+	svc, err := newPlacementTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{
+			LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+		}),
+		Store: memstore.New(),
+		OperationPin: func(ctx context.Context) (context.Context, func(), error) {
+			return ctx, func() { released.Store(true) }, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(context.Background(), sess.ID, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-provider.entered
+	closed := make(chan struct{})
+	go func() { svc.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Service.Close did not finish cancellation")
+	}
+	if released.Load() {
+		t.Fatal("Service.Close released the operation pin while provider work was still blocked")
+	}
+	close(provider.release)
+	for range run.Events() {
+	}
+	svc.FinishRun(sess.ID, run)
+	if !released.Load() {
+		t.Fatal("operation pin was not released after settlement")
+	}
+}
 
 // TestCloseCancelsInFlightRun proves that Service.Close() cancels a run that is
 // blocked in an LLM call. A blockingProvider streams nothing until ctx is

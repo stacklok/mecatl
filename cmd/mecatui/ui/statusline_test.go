@@ -107,8 +107,8 @@ func TestStatusLine_RenderStatusSpansUsesLinkThemeStyle(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	span := customization.Render(`<footer><link href="https://example.test/docs">docs</link></footer>`, nil).Footer.Spans[0]
 	got := renderStatusSpans(th, []customization.Span{span})
-	want := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Palette.MdLink)).Underline(true).Render("docs")
-	if got != want || strings.Contains(got, "]8;") {
+	want := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Palette.MdLink)).Underline(true).Hyperlink(span.Href).Render("docs")
+	if got != want || !strings.Contains(got, "]8;") {
 		t.Fatalf("link output %q", got)
 	}
 }
@@ -147,5 +147,66 @@ func TestStatusLine_Scenario5_DefaultCompatibility(t *testing.T) {
 	}
 	if got, want := statusSpansText(line.Footer.Spans), "ctx ▒▒░░░░░░ 20% · 2K/10K · ↑4K ↓1K cache 0%"; got != want {
 		t.Fatalf("footer = %q, want %q", got, want)
+	}
+}
+
+func TestStatusHyperlinks_Scenario1_ValidLinkEmitsPairedOSC8(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	open := "\x1b]8;;https://example.test/docs\a"
+	hyperlinkClose := "\x1b]8;;\a"
+	for _, surface := range []customization.Surface{
+		customization.Render(`<header><link href="https://example.test/docs">docs</link></header>`, nil).Header,
+		customization.Render(`<footer><link href="https://example.test/docs">docs</link></footer>`, nil).Footer,
+	} {
+		got := renderStatusSurface(th, surface, 20, false)
+		if openAt, textAt, closeAt := strings.Index(got, open), strings.Index(got, "docs"), strings.LastIndex(got, hyperlinkClose); openAt < 0 || textAt < openAt || closeAt < textAt {
+			t.Fatalf("link output %q does not contain paired OSC 8 hyperlink", got)
+		}
+		if !strings.Contains(got, "\x1b[4;") {
+			t.Fatalf("link output %q does not retain link style", got)
+		}
+	}
+}
+
+func TestStatusHyperlinks_Scenario1_AdjacentSpansDoNotLeakHyperlink(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	spans := customization.Render(`<footer><text>before </text><link href="https://example.test/docs">docs</link><accent> after</accent></footer>`, nil).Footer.Spans
+	got := renderStatusSpans(th, spans)
+	open := "\x1b]8;;https://example.test/docs\a"
+	hyperlinkClose := "\x1b]8;;\a"
+	if strings.Count(got, open) != 1 || strings.Count(got, hyperlinkClose) != 1 || !strings.Contains(got, hyperlinkClose+"\x1b[") {
+		t.Fatalf("adjacent output %q has leaking hyperlink boundaries", got)
+	}
+	if strings.Index(got, hyperlinkClose) > strings.LastIndex(got, " after") {
+		t.Fatalf("unlinked text remains inside hyperlink: %q", got)
+	}
+}
+
+func TestStatusHyperlinks_Scenario1_RejectedOrNonLinkTextEmitsNoOSC8(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	for _, markup := range []string{
+		`<footer><link href="ftp://example.test/docs">docs</link></footer>`,
+		`<footer><link href="https://user@example.test/docs">docs</link></footer>`,
+		"<footer><link href=\"https://example.test/docs\x1b\">docs</link></footer>",
+		`<footer><link href="https://example.test/docs">docs</footer>`,
+		`<footer><text>plain</text><accent>semantic</accent></footer>`,
+	} {
+		doc := customization.Render(markup, nil)
+		got := renderStatusSpans(th, doc.Footer.Spans)
+		if strings.Contains(got, "]8;") {
+			t.Fatalf("markup %q emitted OSC 8: %q", markup, got)
+		}
+	}
+}
+
+func TestStatusHyperlinks_Scenario1_HyperlinksPreserveStatusLayout(t *testing.T) {
+	th := theme.New("aztec", theme.AztecPalette())
+	surface := customization.Render(`<footer><text>ctx </text><link href="https://example.test/docs">docs</link></footer>`, nil).Footer
+	if !statusSurfaceFits(surface, 8) || statusSurfaceFits(surface, 7) {
+		t.Fatalf("visible width changed: %q", statusSpansText(surface.Spans))
+	}
+	got := renderStatusSurface(th, surface, 12, true)
+	if gotWidth := lipgloss.Width(got); gotWidth != 12 {
+		t.Fatalf("rendered width = %d, want 12: %q", gotWidth, got)
 	}
 }

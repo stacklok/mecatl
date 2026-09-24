@@ -28,6 +28,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   that retain optional interfaces for compatibility can now report negotiated
   false capabilities without consumers selecting unusable operations. Added (minor).
 
+- **Idempotent team-supervisor teardown** — adds `agent.Supervisor.Close`, a concurrent-safe, repeatable lifecycle endpoint that cancels an active run and waits until enrolled members stop and their resources are released exactly once. Event callbacks drain independently: `Close` may be called from a callback, while `Run` still waits for every ordered callback before returning. Member factories and cleanup callbacks must not synchronously re-enter `Close`. `AddMember` after run start or close returns `agent.ErrSupervisorClosed`. Added (minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,
@@ -36,6 +38,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   child policy/hook ask exactly once while leaving plan-originated asks pending
   for the dedicated plan-resolution choreography. `Run.Approve` remains the
   all-origin compatibility path. Added (minor).
+
+- **`session.Session.GrantToolAuthority`** — stable-unions bounded, control-free tool names into an idle or completed session's existing name authority without reopening it or changing unrelated aggregate state. Added (minor).
 
 - **`session.NoProgressNudgeText` / `session.NoProgressExtractiveNudgeText`** — exported the no-progress nudge literals that `engine/agent` authors and `session.IsGenuineUserPrompt` classifies against, so both sides reference one owned copy instead of duplicating the text (mirrors the existing `CompactionSummaryMarker`/`Tier4SummaryMarker` precedent). Added (minor).
 

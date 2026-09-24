@@ -69,15 +69,23 @@ func TestBuildSettlesStaleRunningSnapshotAcrossRestart(t *testing.T) {
 
 	const childID session.SessionID = "subagent-crash-orphan-475"
 
-	// built1: the crashed process. Never start a run for childID — seed the
-	// orphaned snapshot straight into the store, exactly as if built1's own
-	// (never-invoked) store.Save had been the crash's last write.
+	// built1: establish the first process over the store, then close it before
+	// writing the fixture. Its startup sweep can rebuild the derivative inventory
+	// catalog, so it must not race the fixture's direct aging below (which
+	// deliberately bypasses jsonlstore.Save and therefore does not advance that
+	// catalog's generation). The direct seed models the crashed process's final
+	// durable write without starting a run that would repair it normally.
 	cfg1 := baseCfg()
 	built1, err := buildIsolated(t, ctx, cfg1)
 	if err != nil {
 		t.Fatalf("Build #1: %v", err)
 	}
+	built1.Close()
 
+	// Seed the orphaned snapshot straight into the durable store, bypassing
+	// CreateSession/StartRunContent because a normal prompt flow through Step 3's
+	// funnel repair would mask the population this test targets (a child id
+	// nothing ever re-opens).
 	orphan := crashOrphanedSessionFixture(t, childID, time.Now())
 	seedStore, err := jsonlstore.New(storeDir)
 	if err != nil {
@@ -94,8 +102,6 @@ func TestBuildSettlesStaleRunningSnapshotAcrossRestart(t *testing.T) {
 	seededPath := jsonlSnapshotPath(t, storeDir, childID)
 	old := time.Now().Add(-2 * time.Hour)
 	setJSONLSnapshotMtime(t, seededPath, old)
-
-	built1.Close() // process death: childID was never touched by any run.
 
 	// built2: a brand-new Build over the SAME store — the restart.
 	cfg2 := baseCfg()

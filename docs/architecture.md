@@ -13,9 +13,8 @@
 
 ### How to read this
 
-Start with the **living guides** — this overview, the per-subsystem pages below,
-and [`docs/design/IMPLEMENTATION-NOTES.md`](design/IMPLEMENTATION-NOTES.md) —
-which describe the code as it exists today. The [ADR index](adr/README.md) is a
+Start with this overview and the per-subsystem living guides below, which
+describe the code as it exists today. The [ADR index](adr/README.md) is a
 **historical *why* archive**: each ADR records the decision made at a point in
 time and is frozen, so reach for it on demand to understand a rationale, not as
 the primary introduction to a feature.
@@ -205,7 +204,18 @@ session's authenticated membership, descriptions, schemas, and read-only hints. 
 omitted by live discovery disappears; an undeclared live tool appears. The resulting catalogue is frozen for the session, so later runs and token refreshes do not
 rediscover it. Initial enrollment performs a fresh discovery; an explicit owner-controlled
 refresh may perform the same whole-bundle discovery after a completed turn or after broker
-process loss. A failure admits no mixed or partial catalogue. In a broker-only
+process loss. A failure admits no mixed or partial catalogue.
+
+Direct/global MCP uses a separate Build-owned reconciler. ToolHive-only bounded
+polling, current-runtime list notifications, and explicit refresh build complete
+immutable runtime candidates and publish one revision atomically. Root runs,
+direct teams, and resource/prompt operations pin one revision. Automatic cycles
+update availability without widening durable authority; an explicit owned-session
+refresh stable-unions missing active direct names. `ListMcpSources` reads cached
+published/pre-shadow inventory and revision, stale, and reconciling status without
+probing.
+
+In a broker-only
 session with eligible frozen tools, `CallMcpWithQuery` is attachment-bound: it invokes the
 same frozen route and authorization transaction, applies bounded in-memory jq before normal
 result rendering, and never opens a direct upstream connection or exposes the raw successful
@@ -287,8 +297,8 @@ append-only log can fold its `EventLog` (+ `SessionMeta`) into a session via
 `EvUserPrompt` so user turns reconstruct, with a replay-fidelity caveat for
 reasoning providers (#115, [ADR 0038](adr/0038-event-sourced-rehydration.md)); and the
 supply chain gains per-module **`govulncheck`** (engine strict-clean; a
-fail-closed reachable-vuln gate on the root) plus **`dependabot`** over both
-modules and the SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
+fail-closed reachable-vuln gate on the root) plus **Renovate** over the
+modules, npm workspaces, and SHA-pinned actions, on a **go 1.27** toolchain (#118). The LLM
 provider sits behind the `port.LLMProvider` seam, with each
 wire format isolated entirely inside its own adapter — the OpenAI Responses API
 in `provider/openai`, the native Anthropic Messages API in

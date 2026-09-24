@@ -975,6 +975,152 @@ func singleMember(t *testing.T, out agent.TeamOutcome) agent.MemberOutcome {
 	return out.Members[0]
 }
 
+func TestSupervisorCloseIsConcurrentAndIdempotent(t *testing.T) {
+	tm := team.New("t")
+	var mu sync.Mutex
+	closed := 0
+	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
+		b := catalogFactory(t, tm)(spec, "")
+		b.Close = func() error {
+			mu.Lock()
+			closed++
+			mu.Unlock()
+			return nil
+		}
+		return b
+	}
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory)
+	if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "ro", InitialPrompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() { defer wg.Done(); sup.Close() }()
+	}
+	wg.Wait()
+	mu.Lock()
+	got := closed
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("member Close calls = %d, want 1", got)
+	}
+	if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "late"}); !errors.Is(err, agent.ErrSupervisorClosed) {
+		t.Fatalf("AddMember after Close = %v, want ErrSupervisorClosed", err)
+	}
+}
+
+func TestSupervisorCloseWaitsForConcurrentPreRunCleanup(t *testing.T) {
+	tm := team.New("t")
+	cleanupStarted := make(chan struct{})
+	releaseCleanup := make(chan struct{})
+	factory := func(spec agent.MemberSpec, _ string) agent.MemberBuild {
+		b := catalogFactory(t, tm)(spec, "")
+		b.Close = func() error {
+			close(cleanupStarted)
+			<-releaseCleanup
+			return nil
+		}
+		return b
+	}
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory)
+	if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "ro"}); err != nil {
+		t.Fatal(err)
+	}
+
+	const closers = 8
+	done := make([]chan struct{}, closers)
+	for i := range closers {
+		done[i] = make(chan struct{})
+		go func(ch chan struct{}) {
+			sup.Close()
+			close(ch)
+		}(done[i])
+	}
+	<-cleanupStarted
+	for i, ch := range done {
+		select {
+		case <-ch:
+			t.Fatalf("closer %d returned before exact-once cleanup completed", i)
+		default:
+		}
+	}
+	close(releaseCleanup)
+	for _, ch := range done {
+		<-ch
+	}
+}
+
+func TestSupervisorConcurrentCloseJoinsActiveMemberCleanup(t *testing.T) {
+	tm := team.New("t")
+	provider := &blockingProvider{started: make(chan struct{})}
+	cleanupStarted := make(chan struct{})
+	releaseCleanup := make(chan struct{})
+	factory := func(agent.MemberSpec, string) agent.MemberBuild {
+		return agent.MemberBuild{
+			Engine: newEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog()}),
+			Close: func() error {
+				close(cleanupStarted)
+				<-releaseCleanup
+				return nil
+			},
+		}
+	}
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory, agent.WithMaxRounds(1))
+	if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "ro", InitialPrompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan struct{})
+	go func() {
+		sup.Run(context.Background(), nil)
+		close(runDone)
+	}()
+	<-provider.started
+
+	firstDone := make(chan struct{})
+	secondDone := make(chan struct{})
+	go func() { sup.Close(); close(firstDone) }()
+	go func() { sup.Close(); close(secondDone) }()
+	<-cleanupStarted
+	for i, ch := range []chan struct{}{firstDone, secondDone} {
+		select {
+		case <-ch:
+			t.Fatalf("active closer %d returned before member cleanup completed", i)
+		default:
+		}
+	}
+	close(releaseCleanup)
+	<-firstDone
+	<-secondDone
+	<-runDone
+}
+
+func TestSupervisorEventSinkMayCloseSupervisor(t *testing.T) {
+	tm := team.New("t")
+	factory := catalogFactory(t, tm)
+	sup := agent.NewSupervisor(tm, agent.MemEnv("/ws"), factory, agent.WithMaxRounds(1))
+	if err := sup.AddMember(t.Context(), agent.MemberSpec{Name: "ro", InitialPrompt: "go"}); err != nil {
+		t.Fatal(err)
+	}
+
+	sinkClosed := make(chan struct{})
+	runDone := make(chan struct{})
+	go func() {
+		sup.Run(context.Background(), func(agent.TeamEvent) {
+			select {
+			case <-sinkClosed:
+				return
+			default:
+			}
+			sup.Close()
+			close(sinkClosed)
+		})
+		close(runDone)
+	}()
+	<-sinkClosed
+	<-runDone
+}
+
 func TestSupervisorRunsMemberCloseOnCleanup(t *testing.T) {
 	tm := team.New("t")
 	var closed int

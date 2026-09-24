@@ -1,0 +1,74 @@
+{{- define "safe" -}}
+{{- . | html | replace "{" "&#123;" | replace "}" "&#125;" -}}
+{{- end -}}
+{{- define "table-safe" -}}
+{{- . | nobr | replace "\r" " " | replace "\n" " " | html | replace "|" "&#124;" | replace "{" "&#123;" | replace "}" "&#125;" -}}
+{{- end -}}
+---
+title: gRPC schema reference
+description: Look up Mecatl gRPC services, RPCs, messages, enums, and fields.
+sidebar_position: 3
+---
+
+# gRPC schema reference
+
+{{"{"}}/* GENERATED FILE. DO NOT EDIT. Run `task docs:grpc-ref` after changing the source protobuf files. */{{"}"}}
+
+This reference is generated from
+[`contracts/proto/mecatl/v1/harness.proto`](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/harness.proto)
+and
+[`contracts/proto/mecatl/v1/schedule.proto`](https://github.com/stacklok/mecatl/blob/main/contracts/proto/mecatl/v1/schedule.proto).
+For behavior, authentication, status codes, and operational guidance, see the
+[gRPC API reference](/reference/grpc-api.md). For help choosing between gRPC and
+HTTP/SSE, see [Connect with gRPC or HTTP](/building/deployment/grpc-http.md).
+
+## Services
+
+{{range .Files -}}
+{{range .Services}}
+### `{{.FullName}}`
+
+{{template "safe" .Description}}
+
+| RPC | Request | Response | Client streaming | Server streaming | Description |
+|---|---|---|---|---|---|
+{{range .Methods -}}
+| `{{.Name}}` | `{{.RequestLongType}}` | `{{.ResponseLongType}}` | {{if .RequestStreaming}}Yes{{else}}No{{end}} | {{if .ResponseStreaming}}Yes{{else}}No{{end}} | {{template "table-safe" .Description}} |
+{{end}}
+{{end -}}
+{{end}}
+## Messages and enums
+
+{{range .Files}}
+### `{{.Name}}`
+
+{{template "safe" .Description}}
+
+{{range .Messages}}
+#### `{{.FullName}}`
+
+{{template "safe" .Description}}
+
+{{if .HasFields -}}
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+{{range .Fields -}}
+| `{{.Name}}` | `{{.LongType}}` | {{.Label}} | {{if and .IsOneof (ne .Label "optional")}}`{{.OneofDecl}}`{{end}} | {{if (index .Options "deprecated" | default false)}}**Deprecated.** {{end}}{{template "table-safe" .Description}}{{if .DefaultValue}} Default: `{{.DefaultValue}}`.{{end}} |
+{{end}}
+{{else -}}
+This message has no fields.
+{{end}}
+
+{{end -}}
+{{range .Enums}}
+#### `{{.FullName}}`
+
+{{template "safe" .Description}}
+
+| Name | Number | Description |
+|---|---|---|
+{{range .Values -}}
+| `{{.Name}}` | `{{.Number}}` | {{template "table-safe" .Description}} |
+{{end -}}
+{{end -}}
+{{end -}}

@@ -357,4 +357,4 @@ and closed outcome vocabulary. No material protocol choice remains open in this 
 - [ADR 0109 — Evidence-backed reflection and durable staged learning](../adr/0109-staged-learning-proposals.md)
 - [ADR 0114 — Configurable learning trigger policy](../adr/0114-configurable-learning-trigger-policy.md)
 - [Architecture: Evidence-backed reflection](../architecture.md#evidence-backed-reflection)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)
+- [Memory architecture](../architecture/memory.md)

@@ -69,9 +69,11 @@ validation error / error) and carries an `agentId: <childID>` trailer on every t
 (model-visible, mirroring the Team-id line) so the parent can discover the child id and
 read its persisted transcript via the read-only `InspectSubagent` tool (the id is used
 verbatim), or pass it as `resume` to CONTINUE that subagent with a follow-up prompt
-(default engine only, fresh fork + a resume note — the read-only staleness note, or the
-edits-survived note when the resumed child's OWN earlier run wrote to the real tree and
-this call is `read-write` again). EVERY terminal is resumable, `failed`
+(default engine only). Resume notes distinguish where this call runs from
+whether earlier edits survived. A writable resume uses the edits-survived note
+only when the prior valid `EnvironmentRef` exactly equals the parent's ref,
+including `Revision`; a path match alone is insufficient. Read-only resumes use
+a fresh throwaway environment. EVERY terminal is resumable, `failed`
 included (ADR 0200): a failed child recovers through `session.Session.Recover`, and its
 error result carries a store-gated resume hint so the model can discover the path — the
 hint states what actually carries over (conversation yes, workspace no). A direct-write

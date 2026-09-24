@@ -14,7 +14,7 @@ The default system-prompt constants were rewritten to cover the consensus behavi
 
 ## Consequences
 
-Section 7a is implemented. The prompt package domain stays provider-agnostic; per-model tuning is a composition concern. Cache stability is preserved: the agency delta is per-session, not per-turn, and env changes never alter the stable prefix. Current behaviour lives in docs/architecture.md. Status lives in docs/design/PRODUCTION-READINESS.md. The "Responses API is the only provider" framing in this document is historical; the multi-provider registry shipped after this research.
+Section 7a is implemented. The prompt package domain stays provider-agnostic; per-model tuning is a composition concern. Cache stability is preserved: the agency delta is per-session, not per-turn, and env changes never alter the stable prefix. Current behaviour lives in docs/architecture.md. Status lives in [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md). The "Responses API is the only provider" framing in this document is historical; the multi-provider registry shipped after this research.
 
 ---
 
@@ -543,7 +543,7 @@ Repo commits directly to `main`; sequence as commits, not a multi-issue split:
 *(Shipped separately: issue #22 — the structured compaction template deferred in
 §7 landed as the tier-4 summarizer prompt behind the `agent.Compactor` seam
 (`CascadeCompactor`, `engine/agent/cascade.go`); see
-`docs/design/IMPLEMENTATION-NOTES.md`.)*
+[Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md).)*
 
 ## 8. Sources
 

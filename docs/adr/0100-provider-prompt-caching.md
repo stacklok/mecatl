@@ -241,4 +241,4 @@ that, only the paired tests in each module plus `internal/app`'s
 - [ADR 0017 — OpenAI Responses API adapter](./0017-openai-responses-api.md) (frozen).
 - [ADR 0055 — Reasoning effort](./0055-reasoning-effort.md) (the sibling adapter-Option-not-port-field discipline this ADR follows).
 - [ADR 0093 — Provider modules](./0093-provider-modules.md) (why `provider/anthropic`, `provider/openai`, `provider/openaichat` are separate Go modules, and why duplication across them is the accepted discipline).
-- `docs/design/IMPLEMENTATION-NOTES.md`'s prompt-caching section (the dense per-adapter reference).
+- [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)'s prompt-caching section (the dense per-adapter reference).

@@ -77,10 +77,12 @@ while the root module runs through a fail-closed **reachable-vuln gate**
 (`.github/scripts/govulncheck-gate.go`: it parses `govulncheck -format json` and
 fails on any reachable finding whose OSV id is not on a dated accepted-risk
 allowlist — govulncheck has no native ignore mechanism, and the wrapper runs
-under `pipefail` so a broken scan cannot pass vacuously). **`dependabot`**
-(`.github/dependabot.yml`) tracks both Go modules independently plus the
-SHA-pinned GitHub Actions (grouping minor+patch, isolating majors); every action
-is **SHA-pinned** with a `# vX.Y.Z` comment that dependabot preserves.
+under `pipefail` so a broken scan cannot pass vacuously). **Renovate**
+(`renovate.json`) tracks every Go module, the npm workspaces (TypeScript SDK,
+Studio, website), Docker images, and the GitHub Actions, grouping related
+minor+patch updates and isolating majors; in-repo module pins are left to the
+release process. Every action is **SHA-pinned** with a `# vX.Y.Z` comment that
+Renovate keeps in step with the digest.
 
 ### Server-owned session placement
 

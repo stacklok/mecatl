@@ -69,7 +69,7 @@ func TestDebugSessionMCPPublishJourneyRequiresFreshApproval(t *testing.T) {
 	)
 	cfg := Config{Model: "mock-model"}
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
-	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, manager)
+	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, manager, nil)
 	res, err := factory(ctx, server.ProviderSelector{}, server.ProfileNoFS, session.ModeDefault, target.ID, session.DebugTargetFingerprint(target), target.Owner, []string{"github"}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestDebugSessionSelectedGlobalMCPIsExactAndBorrowed(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("done"))
 	cfg := Config{Model: "mock-model"}
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
-	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, manager)
+	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, manager, nil)
 	res, err := factory(ctx, server.ProviderSelector{}, server.ProfileNoFS, session.ModeDefault, target.ID, session.DebugTargetFingerprint(target), target.Owner, []string{"github"}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestDebugSessionFactoryExactCatalogAndStablePrefix(t *testing.T) {
 	})}, mockllm.TextTurn("debug done"), mockllm.TextTurn("normal done"))
 	cfg := Config{Model: "mock-model"}
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
-	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, nil)
+	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, nil, nil)
 	res, err := factory(context.Background(), server.ProviderSelector{}, server.ProfileNoFS, session.ModeDefault, target.ID, session.DebugTargetFingerprint(target), target.Owner, nil, nil)
 	if err != nil {
 		t.Fatalf("debug factory: %v", err)
@@ -238,7 +238,7 @@ func TestDebugSessionFactoryPreservesBaseInspectPolicy(t *testing.T) {
 			)
 			cfg := Config{Model: "mock-model"}
 			base := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: sessiondebug.ToolName, Effect: tc.effect}}, nil)
-			factory := debugSessionEngineFactory(cfg, regForTest(provider, providerOpenAI, cfg.Model), provider, store, nil, base, nil)
+			factory := debugSessionEngineFactory(cfg, regForTest(provider, providerOpenAI, cfg.Model), provider, store, nil, base, nil, nil)
 			res, err := factory(ctx, server.ProviderSelector{}, server.ProfileNoFS, session.ModeDefault, target.ID, session.DebugTargetFingerprint(target), target.Owner, nil, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -274,7 +274,7 @@ func TestDebugSessionRestartRehydratesBoundEngine(t *testing.T) {
 	)
 	cfg := Config{Model: "mock-model"}
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
-	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, nil)
+	factory := debugSessionEngineFactory(cfg, reg, provider, store, nil, nil, nil, nil)
 	shared := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Model: cfg.Model})
 	newService := func() *server.Service {
 		svc, err := newTestServerService(server.Config{

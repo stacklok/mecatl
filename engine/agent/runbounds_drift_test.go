@@ -9,13 +9,9 @@ import (
 // TestRunBoundsInventoryIsComplete is the issue-#90 structural drift guard: the
 // set of run-bound default consts in engine/agent (+ the var-declared session.Limits
 // used as one-shot/checker/child defaults) must match the inventory below EXACTLY.
-// Add a knob → add a row to the table in docs/design/IMPLEMENTATION-NOTES.md AND a
-// row here; change a value → update both; remove one → remove both. This mirrors the
-// posture of TestPerSessionCatalogMatchesSharedCatalog
-// (internal/app/catalog_drift_test.go) and the DAG layering test
-// (engine/arch/layering_test.go): exact-set equality, loud diff on drift. The doc
-// table uses `path` (`Symbol`) citations, so docs/lint (CheckCitations) is the
-// human-readable second guard — this test is the strong, compile-time-checked one.
+// Update this inventory when intentionally adding, changing, or removing a bound.
+// Each named value is compile-time referenced below. This checks code constants,
+// not documentation prose; update the owning API/config reference when relevant.
 //
 // The consts live in engine/agent because the layering rule forbids engine/ from
 // importing internal/ or os; the composition-root defaults
@@ -32,8 +28,7 @@ func TestRunBoundsInventoryIsComplete(t *testing.T) {
 	t.Parallel()
 
 	// Each row pins a run-bound const/var to its known value. A value change makes
-	// the matching assertion fail until the inventory (and the doc table) is updated
-	// in lockstep — that is the drift signal.
+	// the matching assertion fail until the inventory is updated intentionally.
 	type bound struct {
 		name string // the const/var identifier, for the failure message
 		val  any    // the pinned value
@@ -91,7 +86,7 @@ func TestRunBoundsInventoryIsComplete(t *testing.T) {
 			continue
 		}
 		if got != b.val {
-			t.Errorf("run-bound const %q = %v, want %v — update the doc table in docs/design/IMPLEMENTATION-NOTES.md AND this inventory",
+			t.Errorf("run-bound const %q = %v, want %v — update the inventory and any affected API/config reference",
 				b.name, got, b.val)
 		}
 	}
@@ -112,12 +107,12 @@ func TestRunBoundsInventoryIsComplete(t *testing.T) {
 		case "defaultChildLimits":
 			wantChild := session.Limits{MaxTurns: 500, MaxToolCalls: 2000, MaxConsecutiveFailures: 5}
 			if r.limits != wantChild {
-				t.Errorf("defaultChildLimits = %+v, want %+v — update the doc table AND this inventory", r.limits, wantChild)
+				t.Errorf("defaultChildLimits = %+v, want %+v — update the inventory and any affected API/config reference", r.limits, wantChild)
 			}
 		case "askReviewLimits", "guardrailCheckLimits":
 			wantOneShot := session.Limits{MaxTurns: 1, MaxToolCalls: 1, MaxConsecutiveFailures: 1}
 			if r.limits != wantOneShot {
-				t.Errorf("%s = %+v, want %+v (one-shot) — update the doc table AND this inventory", r.name, r.limits, wantOneShot)
+				t.Errorf("%s = %+v, want %+v (one-shot) — update the inventory and any affected API/config reference", r.name, r.limits, wantOneShot)
 			}
 		}
 	}

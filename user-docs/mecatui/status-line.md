@@ -215,8 +215,9 @@ trusted, bounded `http` or `https` URL without user information; use a fixed URL
 or validate it with a URL parser before producing the StatusML document.
 
 Only bounded `http` and `https` URLs without user information are retained.
-Until terminal hyperlink support is added, a link is rendered as theme-styled
-underlined text rather than an OSC 8 sequence. Unsafe link destinations lose
+Links emit native OSC 8 terminal hyperlinks. Terminals and multiplexers that
+support OSC 8 make them followable; others retain the theme-styled underlined
+text as a visual fallback. Unsafe link destinations lose
 their destination but retain their display text. Control characters, including
 ANSI, OSC, newline, tab, and Unicode line-separator controls, are removed from
 markup text, link metadata, and theme data before rendering. StatusML is always

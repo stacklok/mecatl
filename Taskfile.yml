@@ -7,7 +7,7 @@
 #                               official release binary into .tools/bin)
 #   - goimports     (only for `task fmt`)
 #                               go install golang.org/x/tools/cmd/goimports@latest
-#   - buf           (only for `task generate`)
+#   - buf           (for `task generate` and `task docs:grpc-ref`)
 #                               https://buf.build/docs/installation
 #   - helm unittest (only for `task deploy:helm-unittest`)
 #                               task deploy:helm-unittest installs the pinned
@@ -973,6 +973,16 @@ tasks:
       # fails on drift. Never hand-edit either output.
       - go run ./internal/configgen/cmd/configref --skeleton internal/configgen/settings.skeleton.yaml --reference user-docs/reference/configuration.md
 
+  docs:grpc-ref:
+    desc: Regenerate the committed gRPC schema reference from the public Harness and Schedule protobuf contracts
+    cmds:
+      - cmd: |
+          command -v buf >/dev/null 2>&1 || { echo "buf not found; install: https://buf.build/docs/installation"; exit 1; }
+          buf generate --template buf.gen.grpc-docs.yaml \
+            --path contracts/proto/mecatl/v1/harness.proto \
+            --path contracts/proto/mecatl/v1/schedule.proto
+        silent: true
+
   docs:check:
     desc: Gate acceptance-plan checker fixtures, Go-backed document structure, executable operations examples, and doc link health with matlatl (strict — broken links/anchors, orphans, unreachable)
     cmds:
@@ -995,6 +1005,7 @@ tasks:
     desc: Refresh generated references and gate doc links (matlatl) — run before committing doc changes
     cmds:
       - task: docs:configref
+      - task: docs:grpc-ref
       - task: sdk:docs
       - task: docs:check
 

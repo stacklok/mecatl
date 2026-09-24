@@ -21,6 +21,8 @@ import type {
   ListWorktreesResponse,
   ReadMcpResourceRequest,
   ReadMcpResourceResponse,
+  RefreshMcpSourcesRequest,
+  RefreshMcpSourcesResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import type { RawClient } from "./raw.js";
 import { RPC_CATALOG } from "./rpc-catalog.js";
@@ -52,6 +54,11 @@ export interface McpInventory {
     request: ListMcpSourcesRequest,
     options?: RequestOptions,
   ): Promise<ListMcpSourcesResponse>;
+  /** Refreshes direct MCP sources for one eligible owned session. */
+  refresh(
+    request: RefreshMcpSourcesRequest,
+    options?: RequestOptions,
+  ): Promise<RefreshMcpSourcesResponse>;
   /** Lists ToolHive groups present in the resolved MCP inventory. */
   listToolHiveGroups(
     request: ListToolHiveGroupsRequest,
@@ -132,6 +139,12 @@ export function createCoreNamespaces(operations: Pick<RawClient, "unary">): Core
       listSources: (request, options) =>
         operations.unary(
           RPC_CATALOG["HarnessService.ListMcpSources"].grpc.descriptor,
+          request,
+          options,
+        ),
+      refresh: (request, options) =>
+        operations.unary(
+          RPC_CATALOG["HarnessService.RefreshMcpSources"].grpc.descriptor,
           request,
           options,
         ),

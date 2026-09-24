@@ -126,4 +126,4 @@ on restart.
   the per-session-engine precedent this reuses (the mode→model rebuild).
 - `docs/architecture/parallelism.md`: the worktree-binding section (the living
   "how it works").
-- `docs/design/PRODUCTION-READINESS.md`: the shipped-status tracker row.
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md): the shipped-status tracker row.

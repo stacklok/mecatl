@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const rawProof = process.argv[2] ?? "";
 const proof = rawProof.endsWith("`") ? rawProof.slice(0, -1) : rawProof;
@@ -15,10 +15,12 @@ if (!allowed.has(proof)) {
   reject(`unsupported task target ${JSON.stringify(rawProof)}`);
 }
 
-const result = spawnSync("task", [proof], { stdio: "inherit" });
-if (result.error) {
-  reject(`${proof} could not start: ${result.error.message}`);
+let listed;
+try {
+  listed = JSON.parse(execFileSync("task", ["--list", "--json"], { encoding: "utf8" }));
+} catch (error) {
+  reject(`could not list Task targets: ${error instanceof Error ? error.message : String(error)}`);
 }
-if (result.status !== 0) {
-  reject(`${proof} exited with status ${result.status ?? "unknown"}`);
+if (!Array.isArray(listed.tasks) || !listed.tasks.some((task) => task.name === proof)) {
+  reject(`Task target ${JSON.stringify(proof)} is not registered`);
 }

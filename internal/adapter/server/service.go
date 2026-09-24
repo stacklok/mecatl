@@ -165,6 +165,11 @@ type SessionEngineResult struct {
 	// value being read, which would authorize a DIFFERENT tool than the one
 	// the model was actually offered.
 	MountedClientMCPTools []string
+	// RuntimeRevision is the immutable direct-MCP runtime revision used to build
+	// this engine. Zero keeps compatibility for compositions without live MCP
+	// publication. Engines do not hold runtime pins; run admission compares this
+	// tag with the operation pin and rebuilds before use.
+	RuntimeRevision uint64
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
 }
@@ -275,9 +280,11 @@ type Config struct {
 	// Nil disables creation and makes persisted debug sessions fail closed at
 	// rehydration rather than falling back to Engine or SessionEngine.
 	DebugSessionEngine DebugSessionEngineFactory
-	// DebugMCP reports that the debug factory can borrow selected direct tools from
-	// a configured global MCP manager.
-	DebugMCP bool
+	// DebugMCP reports whether the debug factory can currently borrow selected
+	// direct tools from the published direct MCP runtime. It is read on every
+	// capabilities request because the runtime can change after startup. Nil
+	// means unavailable.
+	DebugMCP func() bool
 	// Store persists and looks up sessions. Required.
 	Store port.SessionStore
 	// StorageManagementAuthorized gates process-wide storage health. A nil
@@ -351,6 +358,9 @@ type Config struct {
 	// this callback with its assembled catalog. Carryover forks copy their source
 	// authority instead of invoking it.
 	RootAuthority func(session.SessionKind) session.Authority
+	// RootAuthorityForOperation mints authority from the runtime pinned in ctx for
+	// direct operations that build roots after their operation boundary.
+	RootAuthorityForOperation func(context.Context, session.SessionKind) session.Authority
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
@@ -370,22 +380,16 @@ type Config struct {
 	// catalog-level inspection RPCs. Optional and nil-safe: when nil, the list
 	// RPCs return empty and the read/get RPCs return ErrNoMCPProvider.
 	MCPProvider mcp.Provider
-	// MCPSources is the resolved MCP source inventory snapshot taken at startup.
-	// It backs ListMcpSources and ListToolHiveGroups when MCPSourceProber is nil;
-	// in that case both derive purely from this snapshot and perform no live
-	// discovery. May be empty.
+	// MCPSources is the startup inventory fallback used only when MCPStatus is nil.
+	// Production direct MCP composition supplies the reconciler's cached status.
 	MCPSources []source.SourceInfo
-	// MCPSourceProber, when non-nil, re-consults the resolved MCP sources on each
-	// ListMcpSources/ListToolHiveGroups call and returns a FRESH inventory — so a
-	// client refresh reflects CURRENT source status/diagnostics (e.g. a ToolHive
-	// workload that crashed or appeared after startup), not the startup snapshot.
-	// It is the live-discovery seam: the composition root supplies a prober that
-	// closes over the resolved []source.Source and re-runs source.InspectSources.
-	// When nil, ListMcpSources falls back to the cached MCPSources snapshot. The
-	// prober is read-only (streaming-HTTP / container queries only; never spawns a
-	// process) and fail-soft: on any failure the Service falls back to the cached
-	// snapshot so the panel always renders.
-	MCPSourceProber func(ctx context.Context) []source.SourceInfo
+	// MCPRefresh reconciles direct MCP sources and returns the exact immutable
+	// runtime snapshot considered by this request. It is nil when direct refresh
+	// is unavailable. Shared reconciliation outlives caller cancellation.
+	MCPRefresh func(ctx context.Context) (MCPRefreshSnapshot, error)
+	// MCPStatus returns the reconciler's cached publication/source status without
+	// consulting an upstream source. It is nil when direct MCP is unavailable.
+	MCPStatus func() MCPSourceStatus
 	// Commands lists the available slash commands for a workspace, backing the
 	// ListCommands RPC (the client's in-input command palette). It is the
 	// composition-injected discovery seam: the composition root (internal/app)
@@ -592,6 +596,17 @@ type Config struct {
 	// regression-guard seam: composition wires it ONLY when a plan slot is active.
 	ModeNeedsEngine func(mode session.PermissionMode) bool
 
+	// OperationPin pins one immutable direct-MCP runtime for a root run. The
+	// returned context carries the generation into composition factories and child
+	// engines; release is called only when the run registry settles. Nil disables
+	// runtime publication integration.
+	OperationPin func(context.Context) (context.Context, func(), error)
+	// OperationRevision reads the revision carried by OperationPin. Shared and
+	// cached engines are rebuilt before use when their tag differs.
+	OperationRevision func(context.Context) (uint64, bool)
+	// SharedEngineRevision tags Engine's build-time direct-MCP generation.
+	SharedEngineRevision uint64
+
 	// MemberEngine builds a team member's Engine from the shared team and the
 	// member spec (see engine/agent.MemberEngine). It is the seam that wires
 	// the agent-team RPCs: when nil, those RPCs return ErrTeamsDisabled. The
@@ -599,6 +614,9 @@ type Config struct {
 	// catalog (read-only base + MemberTools, plus mutating tools only for a
 	// Mutating member) and the provider/model.
 	MemberEngine MemberEngineFactory
+	// MemberEngineForOperation resolves the direct RunTeam member factory from the
+	// operation-pinned context acquired at RunTeam. Nil uses MemberEngine.
+	MemberEngineForOperation func(context.Context) MemberEngineFactory
 	// TeamGoalUntrusted, when true, re-fences the gRPC/HTTP CreateTeam goal as
 	// UNTRUSTED data in member and synthesis prompts (threaded to
 	// agent.WithUntrustedGoal). DEFAULT false: the goal is the team's TRUSTED
@@ -1265,8 +1283,11 @@ type sessionEngine struct {
 	// shared buildAndRegisterSessionEngine path (the run-entry seam, between turns). The
 	// empty value means "no mode pin" (a pre-Phase-3 factory) and never triggers a
 	// rebuild — byte-identical to the old behaviour.
-	builtForMode session.PermissionMode
-	close        func() error
+	// runtimeRevision tags the immutable direct-MCP generation used to build the
+	// catalog. It is not a lease; the root run owns the operation pin.
+	runtimeRevision uint64
+	builtForMode    session.PermissionMode
+	close           func() error
 }
 
 // runState couples an in-flight *agent.Run with the live *session.Session the
@@ -1301,7 +1322,10 @@ type runState struct {
 	// runContextStop releases the lease-linked launch context after the promoted
 	// run has settled. It must outlive the run-entry call itself.
 	runContextStop context.CancelFunc
-	awaiting       atomic.Bool
+	// operationRelease drains the immutable direct-MCP runtime pin acquired at
+	// run admission. It is independent from engine cache lifetime.
+	operationRelease func()
+	awaiting         atomic.Bool
 	// titleRevision is the last title metadata revision successfully persisted and
 	// published for this run. It starts from the admitted durable snapshot so
 	// prompt-ingress changes publish only after their save succeeds.
@@ -2632,8 +2656,9 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		// derived under the same service construction semantics.
 		ManualCompaction:    s.cfg.Engine != nil,
 		SessionDebug:        s.cfg.DebugSessionEngine != nil,
-		DebugMcp:            s.cfg.DebugMCP,
+		DebugMcp:            s.cfg.DebugMCP != nil && s.cfg.DebugMCP(),
 		WorkspaceEnrollment: s.cfg.WorkspaceEnrollment,
+		McpRefresh:          s.cfg.MCPRefresh != nil,
 	}
 }
 
@@ -3064,7 +3089,22 @@ func (s *Service) Close() {
 	for id := range s.heldLeases {
 		leasedIDs = append(leasedIDs, id)
 	}
+	runOperationReleases := make([]func(), 0, len(s.runs))
+	for _, rs := range s.runs {
+		// Awaiting is deliberately left parked across shutdown and performs no MCP
+		// work. A completed run has also settled its provider/tool operation even if
+		// a caller omitted FinishRun. Every other pin stays attached to
+		// removeRunState so runtime closure cannot overtake live work or admission.
+		settled := rs.awaiting.Load() || (rs.run != nil && rs.run.Outcome() == agent.RunOutcomeCompleted)
+		if settled && rs.operationRelease != nil {
+			runOperationReleases = append(runOperationReleases, rs.operationRelease)
+			rs.operationRelease = nil
+		}
+	}
 	s.mu.Unlock()
+	for _, release := range runOperationReleases {
+		release()
+	}
 
 	// Close every per-session engine in a goroutine with a BOUNDED timeout so a
 	// stuck engine close (e.g. a wedged MCP transport) cannot stall shutdown
@@ -3459,6 +3499,17 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	defer release()
 	compactCtx, stopCompact, leaseHeld := s.mutationLeaseContext(ctx, id)
 	defer stopCompact()
+	operationRelease := func() {}
+	if s.cfg.OperationPin != nil {
+		compactCtx, operationRelease, err = s.cfg.OperationPin(compactCtx)
+		if err != nil {
+			return agent.ManualCompactionResult{}, err
+		}
+		if operationRelease == nil {
+			operationRelease = func() {}
+		}
+	}
+	defer operationRelease()
 	sess, _, err = s.managementTarget(ctx, id, false)
 	if err != nil {
 		return agent.ManualCompactionResult{}, err
@@ -3466,7 +3517,7 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
 		return agent.ManualCompactionResult{}, err
 	}
-	eng, _, err := s.engineAndEnvironmentFor(ctx, sess)
+	eng, _, err := s.engineAndEnvironmentFor(compactCtx, sess)
 	if err != nil {
 		return agent.ManualCompactionResult{}, err
 	}
@@ -3735,6 +3786,18 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	return nil
 }
 
+func (s *Service) logManagementLoadFailure(ctx context.Context, id session.SessionID, err error) {
+	if s.cfg.OwnershipEnforced {
+		class := port.ClassifySessionLoadFailure(err)
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "management session load failed", "class", class.String(), "ownership", "enforced")
+		if s.cfg.SessionLoadFailureMetric != nil {
+			s.cfg.SessionLoadFailureMetric(class)
+		}
+		return
+	}
+	s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "management session load failed", "session", string(id), "err", err.Error())
+}
+
 // managementOwnershipPreflight keeps foreign callers out of caller-selected
 // per-session coordination. It deliberately checks ownership only and returns no
 // aggregate: managementTarget must reload and reauthorize under runEntryMu before
@@ -3752,7 +3815,8 @@ func (s *Service) managementOwnershipPreflight(ctx context.Context, id session.S
 			}
 			return false, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return false, fmt.Errorf("%w: load session: %v", ErrInternal, err)
+		s.logManagementLoadFailure(ctx, id, err)
+		return false, fmt.Errorf("%w: session could not be loaded", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		if concealAbsence {
@@ -3775,7 +3839,8 @@ func (s *Service) managementSession(ctx context.Context, id session.SessionID, c
 			}
 			return nil, false, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
-		return nil, false, fmt.Errorf("%w: load session: %v", ErrInternal, err)
+		s.logManagementLoadFailure(ctx, id, err)
+		return nil, false, fmt.Errorf("%w: session could not be loaded", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
 		if concealAbsence {
@@ -4307,6 +4372,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 		modelID:         res.ModelID,
 		reasoningEffort: res.ReasoningEffort,
 		builtForMode:    res.BuiltForMode,
+		runtimeRevision: res.RuntimeRevision,
 		close:           res.Close,
 	}
 	if profile == ProfileNoFS && (s.placementBinder == nil || !sess.EnvironmentRef.Valid()) {
@@ -5481,8 +5547,14 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 			return nil, tool.Environment{}, err
 		}
 	}
+	desiredRuntimeRevision := s.cfg.SharedEngineRevision
+	if s.cfg.OperationRevision != nil {
+		if revision, pinned := s.cfg.OperationRevision(ctx); pinned || revision != 0 || desiredRuntimeRevision == 0 {
+			desiredRuntimeRevision = revision
+		}
+	}
 	switch {
-	case hasEngine && se.builtForMode != "" && se.builtForMode != sess.Mode:
+	case hasEngine && (se.runtimeRevision != desiredRuntimeRevision || se.builtForMode != "" && se.builtForMode != sess.Mode):
 		// CASE 1 (ADR 0030 Layer 3): the registered per-session engine was built for a
 		// DIFFERENT mode than the session now holds — a plan↔execute switch re-resolved
 		// the model. Rebuild through the shared factory path, REPLACING the prior engine.
@@ -5510,7 +5582,8 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		s.mu.Lock()
 		envOverride, hasEnvOverride = s.sessionEnvironments[id]
 		s.mu.Unlock()
-	case !hasEngine && !s.needsRehydration(sess) && s.cfg.ModeNeedsEngine != nil && s.cfg.SessionEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode):
+	case !hasEngine && !s.needsRehydration(sess) && s.cfg.SessionEngine != nil &&
+		(desiredRuntimeRevision != s.cfg.SharedEngineRevision || s.cfg.ModeNeedsEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode)):
 		// CASE 2 (ADR 0030 Layer 3): a DEFAULT-FS session that would otherwise ride the
 		// shared engine, but its mode (plan) resolves a DIFFERENT model — promote it to a
 		// per-session factory engine. A default-FS session has the empty selector + a real
@@ -5746,6 +5819,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		modelID:         res.ModelID,
 		reasoningEffort: res.ReasoningEffort,
 		builtForMode:    res.BuiltForMode,
+		runtimeRevision: res.RuntimeRevision,
 		close:           res.Close,
 	}
 	s.mu.Lock()
@@ -7854,17 +7928,30 @@ func (s *Service) cleanupRunAdmission(id session.SessionID, st *runState, promot
 // path so concurrent approvals wait for its resumeMu transaction to promote.
 // The caller holds runEntryMu for id.
 func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID, sess *session.Session, resumeAdmission bool) (*runState, context.Context, error) {
+	operationRelease := func() {}
+	if s.cfg.OperationPin != nil {
+		var err error
+		parent, operationRelease, err = s.cfg.OperationPin(parent)
+		if err != nil {
+			return nil, nil, err
+		}
+		if operationRelease == nil {
+			operationRelease = func() {}
+		}
+	}
 	ctx, cancel := context.WithCancel(parent)
-	st := &runState{sess: sess, admissionCancel: cancel, settled: make(chan struct{}), resumeAdmission: resumeAdmission, titleRevision: sess.TitleRevision}
+	st := &runState{sess: sess, admissionCancel: cancel, operationRelease: operationRelease, settled: make(chan struct{}), resumeAdmission: resumeAdmission, titleRevision: sess.TitleRevision}
 	s.mu.Lock()
 	if s.draining.Load() {
 		s.mu.Unlock()
 		cancel()
+		operationRelease()
 		return nil, nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
 	if _, exists := s.runs[id]; exists {
 		s.mu.Unlock()
 		cancel()
+		operationRelease()
 		return nil, nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
 	}
 	s.runs[id] = st
@@ -7875,11 +7962,14 @@ func (s *Service) beginRunAdmission(parent context.Context, id session.SessionID
 func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	removeCapability := false
 	var stopRunContext context.CancelFunc
+	var releaseOperation func()
 	s.mu.Lock()
 	if s.runs[id] == st {
 		delete(s.runs, id)
 		stopRunContext = st.runContextStop
 		st.runContextStop = nil
+		releaseOperation = st.operationRelease
+		st.operationRelease = nil
 		st.settledOnce.Do(func() { close(st.settled) })
 		removeCapability = st.removeCapabilityOnSettle
 		if h := s.heldLeases[id]; h != nil && !h.valid {
@@ -7890,6 +7980,9 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	s.mu.Unlock()
 	if stopRunContext != nil {
 		stopRunContext()
+	}
+	if releaseOperation != nil {
+		releaseOperation()
 	}
 	if removeCapability {
 		s.cfg.MutationCapability.Remove(id)
@@ -8116,37 +8209,34 @@ func classifyMCPError(err error) error {
 	return fmt.Errorf("%w: %v", ErrInternal, err)
 }
 
-// ListMcpSources returns the MCP source inventory (possibly empty). When a
-// MCPSourceProber is configured it RE-CONSULTS the resolved sources for live
-// status/diagnostics on every call (so a client refresh reflects current state,
-// not the startup snapshot); on a prober that returns nil it falls back to the
-// cached startup snapshot so the panel always renders. With no prober it is a
-// pure read of the injected snapshot (no live discovery).
-func (s *Service) ListMcpSources(ctx context.Context) []source.SourceInfo {
-	return s.liveSources(ctx)
+// ListMcpSources returns a detached cached published/pre-shadow inventory and
+// reconciler status. It never consults an upstream source.
+func (s *Service) ListMcpSources(_ context.Context) MCPSourceStatus {
+	if s.cfg.MCPStatus != nil {
+		cached := s.cfg.MCPStatus()
+		cached.Sources = cloneMCPSourceInfos(cached.Sources)
+		return cached
+	}
+	return MCPSourceStatus{Sources: cloneMCPSourceInfos(s.cfg.MCPSources)}
 }
 
-// liveSources returns the freshest inventory available: the prober's result when
-// it is configured and yields anything, otherwise the cached startup snapshot.
-// Centralising this keeps ListMcpSources and ListToolHiveGroups consistent — a
-// refresh that re-probes sources is reflected in both the panel and the groups.
-func (s *Service) liveSources(ctx context.Context) []source.SourceInfo {
-	if s.cfg.MCPSourceProber != nil {
-		if probed := s.cfg.MCPSourceProber(ctx); probed != nil {
-			return probed
-		}
+func cloneMCPSourceInfos(in []source.SourceInfo) []source.SourceInfo {
+	out := make([]source.SourceInfo, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].Servers = append([]source.ServerInfo(nil), in[i].Servers...)
+		out[i].Diagnostics = append([]string(nil), in[i].Diagnostics...)
 	}
-	return s.cfg.MCPSources
+	return out
 }
 
 // ListToolHiveGroups derives the distinct, non-empty ToolHive groups from the
-// inventory (the live re-probe when a MCPSourceProber is set, else the startup
-// snapshot — see liveSources). It considers only sources whose Kind is
-// "toolhive". Output is sorted for deterministic results.
+// same cached inventory as ListMcpSources. It considers only sources whose Kind
+// is "toolhive". Output is sorted for deterministic results.
 func (s *Service) ListToolHiveGroups(ctx context.Context) []string {
 	seen := make(map[string]struct{})
 	var groups []string
-	for _, src := range s.liveSources(ctx) {
+	for _, src := range s.ListMcpSources(ctx).Sources {
 		if src.Kind != "toolhive" || src.Group == "" {
 			continue
 		}

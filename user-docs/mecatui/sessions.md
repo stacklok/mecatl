@@ -172,9 +172,13 @@ Unknown, disconnected, and tool-empty server names fail. Mutating MCP tools
 always require one-call approval, including in yolo mode.
 
 Debug views report when retained evidence is incomplete. Network views expose
-sanitized failure categories instead of raw errors, URLs, headers, bodies,
-prompts, tool arguments, or credentials. The debug conversation is stored as a
-separate durable session.
+sanitized failure categories, plus a bounded structural summary of the outer
+provider attempt (whether the provider's protocol terminal was actually
+observed, and a closed outcome such as complete, incomplete, stream error, or
+cancelled) — never raw errors, URLs, headers, bodies, prompts, tool arguments,
+or credentials. This can distinguish a provider stream that finished cleanly
+but produced unexpected output from one that was cut off or failed in
+transport. The debug conversation is stored as a separate durable session.
 
 For local process diagnostics, `--perf` starts a private `admin.sock`. Its raw
 metrics and pprof data are available to the operator and are not added to model

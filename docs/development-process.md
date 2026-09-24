@@ -90,9 +90,10 @@ requires a rationale. Material public decisions cannot be postponed until code e
 3. **Implement — `/plan-orchestrate`.** Confirm the approved plan is merged (by git ancestry;
    correct a lagging `proposed` label to `approved` on entry), record its PR and commit under
    `.scratch/orchestrate/<slug>/`, decompose run-locally, and dispatch
-   isolated `tdd-worker` attempts. A worker that discovers a missing human decision reports
-   contract drift instead of making it; any material drift stops the run for a
-   human-reviewed plan amendment.
+   isolated `tdd-worker` attempts. A worker that discovers a needed amendment to the
+   approved contract reports contract drift instead of making it. An unapproved amendment,
+   or one broader than the directing human explicitly authorized, stops the run under
+   [contract amendments](#contract-amendments).
 4. **Gate and review — automatic.** On the assembled implementation branch run `task lint`,
    `task test:race`, `task docs`, the offline demo, `task ac-trace-strict`, and `/panel-review`.
    The implementation PR links the approved baseline and reports interface conformance or
@@ -112,17 +113,29 @@ Combined PR. Human merge remains mandatory.
 
 ## Contract amendments
 
-Material drift stops dispatch with `blocked-contract-drift`; the orchestrator cannot draft,
-commit, push, or open an amendment. A separately and explicitly authorized
-`/to-acceptance-plan` amendment mode uses the Split Plan / Interface PR flow, including
-checker and docs verification, human review/merge. Merging is the approval event; no separate
-status edit is required. Orchestration proves approval by git ancestry and may correct a lagging
-`proposed` label to `approved` on entry. If no attempt has integrated, the accumulator may
-fast-forward or rebase onto the newly merged amendment baseline. Once any attempt has integrated,
-merge the amendment commit into the accumulator; never rebase or rewrite integrated commits. In either case the amendment commit
-must be an ancestor afterward. Record the amendment PR and full merged commit in `run.md`,
-invalidate and regenerate pending briefs/decomposition, and revalidate integrated work
-against every amended AC and interface clause.
+A needed amendment stops dispatch with `blocked-contract-drift`. The agent assesses the
+change, recommends a direct, Split, or superseding-ADR route, and explains the risks.
+The directing human may explicitly authorize one or more identified amendments and
+override that recommendation. Each authorization identifies the affected plan or ADR,
+exact change, scope, and source. It does not cover unrelated later deviations.
+
+For an authorized direct amendment, quarantine all unintegrated attempts. Record the
+verbatim authorization, source, recommendation, and override decision, if any, in
+`run.md`; update the plan, ADR, and affected living/task docs on the accumulator as
+authorized; run the acceptance checker and `task docs`; and commit the amendment
+separately. Regenerate briefs/decomposition and dispatch fresh attempts. Revalidate every
+integrated attempt against every amended acceptance criterion and interface clause before
+resuming.
+
+The default for a material or uncertain plan amendment is the Split Plan / Interface PR
+flow through a separately and explicitly authorized `/to-acceptance-plan` amendment-mode
+invocation. The merged amendment commit must become an ancestor of the accumulator:
+fast-forward or rebase only before integration; otherwise merge it without rewriting
+integrated commits. Quarantine all unintegrated attempts, invalidate and regenerate
+pending briefs/decomposition, and revalidate integrated work before resuming. The
+default for an ADR decision or rationale change is a new or
+superseding ADR. The directing human may explicitly authorize a different route,
+including an in-place ADR update; record that override and its rationale in `run.md`.
 
 ## Operational state and cleanup
 
@@ -142,14 +155,52 @@ The implementation owns tracked feature-scoped cleanup; do not defer it to a fol
 or status-only PR. Only explicitly orchestrator-created successful worktrees are eligible for removal;
 failed, harness-owned, primary, and ambiguous worktrees are retained.
 
+## Documentation change review
+
+Documentation changes follow the same work classification as other changes.
+Use the `tech-writer` skill and, for public documentation, `user-docs`. In each
+PR, identify the reader need and the owning page; no separate documentation
+report or checklist file is required.
+
+1. **Choose one owner.** Current system behavior belongs in the relevant
+   [architecture topic](READING.md); public tasks and reference belong in
+   `user-docs/`, following `user-docs/_README.md`. Update the existing page rather than
+   copying a feature description across the overview, a second reference, and
+   agent instructions. Add a page only for a distinct reader need.
+2. **Verify the state.** Check behavioral claims against code and tests. Plans
+   describe intended behavior; plan approval is not implementation. Keep durable
+   rationale in ADRs. Track actionable work in issues and PRs, not a manually
+   synchronized feature-status table. Document current operator limitations in
+   the owning guide; release artifacts and CI provide delivery evidence.
+3. **Replace and prune.** Edit outdated explanations in place. Delete redundant
+   or obsolete text; preserve only verified, non-obvious knowledge absent from
+   its owner. Bug chronology, repair attempts, and implementation summaries
+   belong in PRs/Git, not living guides. Release notes and required API changelogs
+   remain legitimate release artifacts. Do not create another catch-all notes
+   document or bulk-migrate one into the architecture overview.
+4. **Review the reader's path.** Follow links to the owning page, check examples
+   and source/generated ownership, and run `task docs` (plus `task site:build`
+   for public behavior changes). Link and citation checks do not verify prose
+   semantics. Historical plans naming a retired document are not a requirement
+   to recreate it: update the relevant living owner. Preserve frozen decision
+   text; historical links may point to the exact Git revision they describe.
+
+For root agent instructions, require a concrete recurring mistake and explain
+why a code/test guard, existing documentation, or scoped rule is insufficient.
+Keep root guidance broadly applicable and short; review growth instead of using
+it as permanent memory for every bug fix. Use the existing reading map for
+navigation, not a second maintained package inventory.
+
 ## Verification gates
 
-Use focused package tests while iterating. Workers finish with `task test`, which runs the
-complete offline suite and standalone module proofs without the race detector. After work is
-integrated, run `task test:race` before any implementation PR is ready for review, including
-Routine and Cleanup work outside the plan workflow. `task ci` and its `task all` alias include
-the race suite. For applicable Go changes, CI runs non-race coverage on draft PRs and sharded
-race coverage on ready PRs and main.
+Use focused package tests while iterating. After an integrated change set, run
+`task test` once to exercise the complete offline suite and standalone module proofs
+without the race detector. Do not run it after every edit or worker attempt. Before
+any implementation PR is ready for review, run `task test:race`, including for Routine
+and Cleanup work outside the plan workflow. `task ci` and its `task all` alias include
+the race suite. For applicable Go changes, CI runs non-race coverage on draft PRs and
+sharded race coverage on ready PRs and main. CI independently verifies the submitted
+branch; it does not replace focused local verification or the final gates.
 
 | Gate | What it pins |
 |---|---|

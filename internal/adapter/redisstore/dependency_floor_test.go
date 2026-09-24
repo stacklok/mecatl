@@ -51,8 +51,8 @@ func TestRedisFollowCapacity_Scenario1_Go127DependencyFloor(t *testing.T) {
 		for scanner.Scan() {
 			if strings.HasPrefix(scanner.Text(), "go ") {
 				found = true
-				if scanner.Text() != "go 1.27" {
-					t.Errorf("%s declares %q, want go 1.27", strings.TrimPrefix(manifest, root+string(filepath.Separator)), scanner.Text())
+				if directive := scanner.Text(); directive != "go 1.27" && directive != "go 1.27.0" {
+					t.Errorf("%s declares %q, want Go 1.27", strings.TrimPrefix(manifest, root+string(filepath.Separator)), directive)
 				}
 				break
 			}

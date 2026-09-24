@@ -103,35 +103,33 @@ func sumHeight(rs []region) int {
 func (m Model) chrome() (above, below []region) {
 	above = []region{{role: regionHeader, content: m.renderHeader()}}
 
-	// The slash-command palette is an inline dropdown shown just ABOVE the input (not
-	// an overlay over the conversation): it appears only while idle and the input is a
-	// command line. renderPalette returns "" when it should not show.
-	if pal := renderPalette(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width); pal != "" {
+	// Render non-palette regions first so the palette receives only rows left after
+	// preserving the prompt, footer, queue, and at least one conversation row.
+	var transients []region
+	if men := renderMention(m.deps.Theme, m.mention, m.width); men != "" {
+		transients = append(transients, region{role: regionMention, content: men})
+	}
+	if q := m.renderQueue(); q != "" {
+		transients = append(transients, region{role: regionQueue, content: q})
+	}
+	if s := m.renderSteer(); s != "" {
+		transients = append(transients, region{role: regionQueue, content: s})
+	}
+	fixed := []region{
+		{role: regionInputSpacer, content: inputSpacerRow},
+		{role: regionInput, content: m.renderInput()},
+		{role: regionFooter, content: m.renderFooter()},
+	}
+
+	card := m.deps.Theme.Style("askCard")
+	paletteRows := m.height - sumHeight(above) - sumHeight(transients) - sumHeight(fixed) - 1 -
+		card.GetVerticalFrameSize() - 2 // header and key hint inside the card
+	paletteRows = min(maxPaletteRows, max(0, paletteRows))
+	if pal := renderPaletteSized(m.deps.Theme, m.palette, m.caps, m.prompt.Value(), m.width, paletteRows); pal != "" {
 		below = append(below, region{role: regionPalette, content: pal})
 	}
-	// The @-mention file menu is the same kind of inline dropdown as the palette and is
-	// mutually exclusive with it, so at most one of the two renders.
-	if men := renderMention(m.deps.Theme, m.mention, m.width); men != "" {
-		below = append(below, region{role: regionMention, content: men})
-	}
-	// Staged follow-ups (queued while a run streams) are summarised in a muted card just
-	// above the input. Shown in any phase whenever the queue is non-empty.
-	if q := m.renderQueue(); q != "" {
-		below = append(below, region{role: regionQueue, content: q})
-	}
-	// Steer mode: the in-flight steer's AUTHORITATIVE state (pending / sent /
-	// promoted / retracted) is summarised in a muted card just above the input,
-	// shown whenever a steer is in flight. Mutually exclusive with the local-queue
-	// card (steer owns mid-run input when armed, so the queue is empty then).
-	if s := m.renderSteer(); s != "" {
-		below = append(below, region{role: regionQueue, content: s})
-	}
-	below = append(below,
-		// One blank row of top padding so the input box isn't jammed against the history.
-		region{role: regionInputSpacer, content: inputSpacerRow},
-		region{role: regionInput, content: m.renderInput()},
-		region{role: regionFooter, content: m.renderFooter()},
-	)
+	below = append(below, transients...)
+	below = append(below, fixed...)
 	return above, below
 }
 

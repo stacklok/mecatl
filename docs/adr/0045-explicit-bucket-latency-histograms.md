@@ -82,7 +82,7 @@ This SUPERSEDES ADR 0018 §5 decision 2 (the exponential/native histogram choice
   superseded histogram-aggregation decision is §5 decision 2; the phased-hybrid
   decision and the perf-MCP design are unaffected).
 - [ADR 0019 — Long-term performance & resource regression tracking](./0019-perf-tracking.md).
-- The living per-subsystem detail in `docs/design/IMPLEMENTATION-NOTES.md`
+- The living per-subsystem detail in [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)
   (telemetry / perf observability), and the perf-MCP companion skill
   `.claude/skills/perf-mcp-interpretation/SKILL.md`.
 - The documentation-lifecycle convention in [ADR 0002](./0002-documentation-lifecycle.md).

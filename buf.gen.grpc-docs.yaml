@@ -1,0 +1,12 @@
+version: v2
+plugins:
+  # Keep the generator version explicit and run it through Buf's protoc-plugin
+  # protocol. A local invocation lets the plugin read the repository-owned
+  # Docusaurus template without introducing a custom protobuf parser.
+  - local:
+      - go
+      - run
+      - github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@v1.5.1
+    out: user-docs/reference
+    opt:
+      - scripts/grpc-schema.md.tmpl,grpc-schema.md

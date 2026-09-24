@@ -39,7 +39,7 @@ func (m Model) diagnosticsCmd(diagnosis string) tea.Cmd {
 func (m Model) runDiagnostics() (tea.Model, tea.Cmd) {
 	m.palette.open = false
 	m.palette.filtered = nil
-	m.palette.cursor = 0
+	m.palette.syncList()
 	m.prompt.Reset()
 	if m.deps.Embedded {
 		m.prompt.Rewrite(m.diagnosticsReport(m.deps.ClientBuild, m.deps.ServerImpl, m.deps.Server, "", "embedded"))

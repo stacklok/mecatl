@@ -489,8 +489,8 @@ const widthDivergentPlaceholder = "�"
 // restored by the FIRST of these steps whose result actually agrees (re-checked
 // after each step), so a cluster is never mangled more than necessary:
 //
-//  1. As-is. Already-agreeing clusters (bare ✅ U+2705, the ZWJ family 👨‍👩‍👧,
-//     a letter + combining accent like á — all width-stable) pass through
+//  1. As-is. Already-agreeing clusters (bare ✅ U+2705 and a letter + combining
+//     accent like á) pass through
 //     byte-for-byte.
 //  2. Strip U+FE0F (VS16). Reconciles the common divergent clusters (❤️, ⚠️, ℹ️
 //     all go from WcWidth 1 / GraphemeWidth 2 to a stable width 1) and the keycap

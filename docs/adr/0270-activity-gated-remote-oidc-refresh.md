@@ -70,6 +70,6 @@ existing sentinel-only callers continue to work.
 - [ADR 0236 — Private HTTPS OIDC issuer](./0236-private-https-oidc-issuer.md)
 - [ADR 0206 — Ship reusable OIDC caller identity](./0206-oidc-authn-module.md)
 - [Architecture guide](../architecture.md)
-- [Production readiness](../design/PRODUCTION-READINESS.md)
+- [Historical readiness tracker](https://github.com/stacklok/mecatl/blob/33a3747d9008691d4d51a872c9e82c050c43fafa/docs/design/PRODUCTION-READINESS.md)
 
 ---
