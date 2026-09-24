@@ -1,4 +1,7 @@
 {{- include "mecak8s.validateBroker" . -}}
+{{- include "mecak8s.validateBrokerCredentialStore" . -}}
+{{- $credentialStore := gt (int (include "mecak8s.brokerOAuthCount" .)) 0 -}}
+{{- $cs := .Values.broker.credentialStore -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -61,6 +64,10 @@ spec:
             - {name: workload-jwt, mountPath: /var/run/mecabroker/workload-jwt, readOnly: true}
             - {name: broker-config, mountPath: /etc/mecabroker, readOnly: true}
             - {name: tmp, mountPath: /tmp}
+{{- if $credentialStore }}
+            - {name: credential-redis-client, mountPath: /var/run/mecabroker/credential-store/redis, readOnly: true}
+            - {name: credential-encryption, mountPath: /var/run/mecabroker/credential-store/encryption, readOnly: true}
+{{- end }}
 {{- range $index, $server := .Values.mcp.servers }}
 {{- if and (eq $server.auth.mode "oauth") (eq $server.auth.oauth.client.mode "preregistered") }}
             - {name: mcp-oauth-client-secret-{{ $index }}, mountPath: /var/run/mecabroker/mcp-oauth/{{ $index }}, readOnly: true}
@@ -91,6 +98,40 @@ spec:
             defaultMode: 0444
         - name: tmp
           emptyDir: {sizeLimit: 64Mi}
+{{- if $credentialStore }}
+        # Broker-only Redis client credentials and CA; each item projected exactly, no subPath.
+        - name: credential-redis-client
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ $cs.redis.credentialsSecret | quote }}
+                  items:
+                    - {key: {{ $cs.redis.passwordKey | quote }}, path: password}
+{{- if $cs.redis.usernameKey }}
+                    - {key: {{ $cs.redis.usernameKey | quote }}, path: username}
+{{- end }}
+{{- if $cs.managedRedis.enabled }}
+              - secret:
+                  name: {{ $cs.managedRedis.tlsSecret | quote }}
+                  items:
+                    - {key: ca.crt, path: ca.pem}
+{{- else if $cs.redis.caSecret }}
+              - secret:
+                  name: {{ $cs.redis.caSecret | quote }}
+                  items:
+                    - {key: {{ $cs.redis.caKey | quote }}, path: ca.pem}
+{{- end }}
+        # One exact item per KEK id; the broker reads them via os.OpenRoot.
+        - name: credential-encryption
+          secret:
+            secretName: {{ $cs.encryption.secretName | quote }}
+            defaultMode: 0440
+            items:
+{{- range $cs.encryption.keys }}
+              - {key: {{ .secretKey | quote }}, path: {{ .id | quote }}}
+{{- end }}
+{{- end }}
 {{- range $index, $server := .Values.mcp.servers }}
 {{- if and (eq $server.auth.mode "oauth") (eq $server.auth.oauth.client.mode "preregistered") }}
         - name: mcp-oauth-client-secret-{{ $index }}

@@ -166,6 +166,70 @@ mounted
 {{- $_ := required "broker.workloadJWT.audience is required" $b.workloadJWT.audience -}}
 {{- end -}}
 
+{{/* Managed credential Redis: one headless Service is both the StatefulSet governing Service and the broker's address/SNI. */}}
+{{- define "mecak8s.credentialRedisFullname" -}}
+{{- printf "%s-credential-redis" (include "mecak8s.fullname" . | trunc 45 | trimSuffix "-") | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- define "mecak8s.credentialRedisLabels" -}}
+app.kubernetes.io/name: mecabroker-credential-redis
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: credential-redis
+{{- end -}}
+{{- define "mecak8s.brokerOAuthCount" -}}
+{{- $n := 0 -}}{{- range .Values.mcp.servers }}{{- if eq .auth.mode "oauth" }}{{- $n = add1 $n }}{{- end }}{{- end -}}{{ $n }}
+{{- end -}}
+{{- define "mecak8s.credentialRedisAddress" -}}
+{{- $cs := .Values.broker.credentialStore -}}
+{{- if $cs.managedRedis.enabled -}}{{ printf "%s.%s.svc:6379" (include "mecak8s.credentialRedisFullname" .) .Release.Namespace }}{{- else -}}{{ $cs.redis.address }}{{- end -}}
+{{- end -}}
+
+{{/* Validate broker credential custody: required with OAuth, forbidden without, external XOR managed. */}}
+{{- define "mecak8s.validateBrokerCredentialStore" -}}
+{{- $cs := .Values.broker.credentialStore -}}
+{{- $oauth := gt (int (include "mecak8s.brokerOAuthCount" .)) 0 -}}
+{{- $activated := or $cs.managedRedis.enabled (ne $cs.redis.address "") (ne $cs.redis.credentialsSecret "") (ne $cs.redis.caSecret "") (ne $cs.encryption.secretName "") (ne $cs.encryption.activeID "") (gt (len $cs.encryption.keys) 0) (ne $cs.managedRedis.tlsSecret "") (ne $cs.managedRedis.aclSecret "") -}}
+{{- if and (not $oauth) $activated }}{{ fail "broker.credentialStore requires at least one OAuth MCP server" }}{{- end -}}
+{{- if $oauth -}}
+{{- if $cs.managedRedis.enabled -}}
+{{- if or (ne $cs.redis.address "") (ne $cs.redis.caSecret "") }}{{ fail "broker.credentialStore.managedRedis.enabled derives the address and CA; leave redis.address and redis.caSecret empty" }}{{- end -}}
+{{- $_ := required "broker.credentialStore.managedRedis.tlsSecret is required for managed Redis" $cs.managedRedis.tlsSecret -}}
+{{- $_ := required "broker.credentialStore.managedRedis.aclSecret is required for managed Redis" $cs.managedRedis.aclSecret -}}
+{{- if ne $cs.managedRedis.image.digest "sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08" }}{{ fail "broker.credentialStore.managedRedis.image.digest must be the verified redis:7.4.5-alpine digest" }}{{- end -}}
+{{- else -}}
+{{- $addr := required "broker.credentialStore.redis.address (or managedRedis.enabled) is required with OAuth MCP servers" $cs.redis.address -}}
+{{- if or (regexMatch "[/@?#\\s]" $addr) (not (regexMatch "^(\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9.-]+):[0-9]{1,5}$" $addr)) }}{{ fail "broker.credentialStore.redis.address must be a bare host:port" }}{{- end -}}
+{{- end -}}
+{{- $_ := required "broker.credentialStore.redis.credentialsSecret is required with OAuth MCP servers" $cs.redis.credentialsSecret -}}
+{{- $_ := required "broker.credentialStore.encryption.secretName is required with OAuth MCP servers" $cs.encryption.secretName -}}
+{{- $_ := required "broker.credentialStore.encryption.activeID is required with OAuth MCP servers" $cs.encryption.activeID -}}
+{{- if eq (len $cs.encryption.keys) 0 }}{{ fail "broker.credentialStore.encryption.keys must list at least one KEK" }}{{- end -}}
+{{- $seen := dict -}}{{- $active := 0 -}}
+{{- range $cs.encryption.keys -}}
+{{- if hasKey $seen .id }}{{ fail (printf "broker.credentialStore.encryption.keys id %q is duplicated" .id) }}{{- end -}}
+{{- $_ := set $seen .id true -}}
+{{- if eq .id $cs.encryption.activeID }}{{- $active = add1 $active }}{{- end -}}
+{{- end -}}
+{{- if ne $active 1 }}{{ fail "broker.credentialStore.encryption.activeID must match exactly one key" }}{{- end -}}
+{{- $ms := dict -}}
+{{- range $name, $value := dict "dialTimeout" $cs.redis.dialTimeout "operationTimeout" $cs.redis.operationTimeout "healthTimeout" $cs.redis.healthTimeout -}}
+{{- $n := int64 (regexReplaceAll "(ms|s)$" ($value | toString) "") -}}
+{{- $v := ternary $n (mul $n 1000) (hasSuffix "ms" ($value | toString)) -}}
+{{- if or (le $v 0) (gt $v 30000) }}{{ fail (printf "broker.credentialStore.redis.%s must be positive and at most 30s" $name) }}{{- end -}}
+{{- $_ := set $ms $name $v -}}
+{{- end -}}
+{{- if gt (get $ms "healthTimeout") (get $ms "operationTimeout") }}{{ fail "broker.credentialStore.redis.healthTimeout must not exceed operationTimeout" }}{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "mecak8s.brokerProtectedStorage" -}}
+{{- $cs := .Values.broker.credentialStore -}}
+{{- $redis := dict "address" (include "mecak8s.credentialRedisAddress" .) "password_file" "/var/run/mecabroker/credential-store/redis/password" "dial_timeout" $cs.redis.dialTimeout "operation_timeout" $cs.redis.operationTimeout "health_timeout" $cs.redis.healthTimeout -}}
+{{- if $cs.redis.usernameKey }}{{- $_ := set $redis "username_file" "/var/run/mecabroker/credential-store/redis/username" }}{{- end -}}
+{{- if or $cs.managedRedis.enabled $cs.redis.caSecret }}{{- $_ := set $redis "ca_file" "/var/run/mecabroker/credential-store/redis/ca.pem" }}{{- end -}}
+{{- $keys := list -}}{{- range $cs.encryption.keys }}{{- $keys = append $keys (dict "id" .id "file" (printf "/var/run/mecabroker/credential-store/encryption/%s" .id)) }}{{- end -}}
+{{- dict "redis" $redis "encryption" (dict "active_id" $cs.encryption.activeID "keys" $keys) | toJson -}}
+{{- end -}}
+
 {{- define "mecak8s.brokerConfig" -}}
 {{- $profiles := list -}}
 {{- range $index, $server := .Values.mcp.servers -}}
@@ -188,7 +252,9 @@ mounted
 {{- end -}}
 {{- end -}}
 {{- $workload := dict "audience" .Values.broker.workloadJWT.audience "subject" (printf "system:serviceaccount:%s:%s" .Release.Namespace (include "mecak8s.fullname" .)) "trust_bundle_file" "/var/run/mecabroker/workload-jwt/ca.pem" "max_jwks_staleness" "900s" "kubernetes_bootstrap" (dict "discovery_url" "https://kubernetes.default.svc/.well-known/openid-configuration" "jwks_uri" "https://kubernetes.default.svc/openid/v1/jwks" "token_file" "/var/run/mecabroker/workload-jwt/token") -}}
-{{- dict "api_version" "mecabroker.mecatl.dev/v1" "listener" (dict "public_address" "0.0.0.0:8443" "tls_cert_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.certKey) "tls_key_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.keyKey)) "workload_jwt" $workload "callback_url" .Values.mcp.broker.callbackURL "profiles" $profiles "drain" (dict "propagation_delay" "2s" "timeout" "55s" "listener_shutdown_timeout" "5s") "transport" (dict "rpc_deadline" "10s" "execute_deadline" "120s" "handle_idle_timeout" "300s" "sweep_interval" "30s" "cleanup_timeout" "10s" "max_handles" 128 "max_owners" 128 "max_receipts" 4096 "max_receipt_bytes" 8388608 "max_pending_controls" 1024 "max_active_executes" 64) "runtime" (dict "max_logical_sessions" 1024 "logical_retention" "86400s" "max_pending_auth_states" 1024) | toPrettyJson -}}
+{{- $config := dict "api_version" "mecabroker.mecatl.dev/v1" "listener" (dict "public_address" "0.0.0.0:8443" "tls_cert_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.certKey) "tls_key_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.keyKey)) "workload_jwt" $workload "callback_url" .Values.mcp.broker.callbackURL "profiles" $profiles "drain" (dict "propagation_delay" "2s" "timeout" "55s" "listener_shutdown_timeout" "5s") "transport" (dict "rpc_deadline" "10s" "execute_deadline" "120s" "handle_idle_timeout" "300s" "sweep_interval" "30s" "cleanup_timeout" "10s" "max_handles" 128 "max_owners" 128 "max_receipts" 4096 "max_receipt_bytes" 8388608 "max_pending_controls" 1024 "max_active_executes" 64) "runtime" (dict "max_logical_sessions" 1024 "logical_retention" "86400s" "max_pending_auth_states" 1024) -}}
+{{- if gt (int (include "mecak8s.brokerOAuthCount" .)) 0 }}{{- $_ := set $config "protected_storage" (include "mecak8s.brokerProtectedStorage" . | fromJson) }}{{- end -}}
+{{- $config | toPrettyJson -}}
 {{- end -}}
 
 {{- define "mecak8s.validateProviderSecurity" -}}

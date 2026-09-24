@@ -457,15 +457,68 @@ to configure only the mecak8s agent. Treat upgrades and changes
 to OAuth client Secrets as maintenance, explicitly restarting the broker after
 Secret projection. Browser callbacks, in-flight authorizations, and outer broker
 attachment state are not migrated; users must re-enroll after replacement.
-The standalone singleton currently keeps both ToolHive's inner authorization,
-pending, and token storage and the outer broker state in memory. Unlike the legacy
-embedded construction, it does not wire ToolHive's Redis storage. A broker restart
-is therefore a reauthorization boundary, even though agent sessions and their event
-log remain Redis-backed. Restoring inner Redis support in the standalone broker is
-an outstanding runtime limitation; migration compatibility is not complete.
+Outer broker state (callbacks, attachment handles, receipts, parked calls) stays
+in memory and resets on every broker restart. ToolHive's upstream credentials are
+different: with an OAuth server configured, the broker keeps them encrypted in a
+dedicated Redis, so a session that finished enrollment before its first prompt can
+get fresh broker authority after a confirmed broker replacement instead of
+authorizing again. Browser flows in progress and parked calls are still interrupted.
 Rollback the Helm release only after restoring compatible image digests and
 Secrets; it still cannot revive a callback or enrollment owned by the replaced
 broker.
+
+#### Broker credential storage
+
+Every OAuth MCP server requires `broker.credentialStore`; the chart refuses to
+render OAuth without it and rejects it when no OAuth server exists. Upgrading an
+existing OAuth release is a migration: supply the storage and keys, and expect users
+to authorize once more on the first rollout. You choose one of two backends, and you
+provide every credential and key as a Secret; the chart never generates or reads
+them.
+
+```yaml
+broker:
+  credentialStore:
+    redis:
+      address: broker-redis.example.internal:6379   # external Redis, TLS only
+      credentialsSecret: broker-redis-credentials   # keys: password, optional username
+      usernameKey: username
+      caSecret: broker-redis-ca                     # empty uses system roots
+    encryption:
+      secretName: broker-credential-keks            # one 32-byte raw key per entry
+      activeID: current
+      keys:
+        - {id: current, secretKey: kek-current}
+```
+
+For chart-managed Redis, leave `redis.address` and `redis.caSecret` empty and set
+`managedRedis.enabled: true` with `managedRedis.tlsSecret` (`tls.crt`, `tls.key`,
+`ca.crt`) and `managedRedis.aclSecret` (`users.acl`). The chart then renders one
+singleton StatefulSet (`redis:7.4.5-alpine` pinned by digest, TLS-only on 6379,
+append-only file with `everysec`, `noeviction`, `maxmemory 384mb`), one headless
+Service whose `<release>-mecak8s-credential-redis.<namespace>.svc` name is both the
+broker's address and the name the certificate SAN must contain, and a NetworkPolicy
+admitting only this release's broker pods on 6379. The broker's Redis ACL user needs
+access to keys matching `~mecatl:authserver:*` only.
+
+Know the limits before relying on it:
+
+- Managed Redis is durable but not highly available. The append-only file with
+  `everysec` can lose the last second of writes, and the retained PVC is not a
+  backup. Helm uninstall deletes nothing from Redis and leaves the PVC; deleting
+  data, snapshots, and old keys is up to you.
+- Redis TCP probes only prove the socket is open. The broker checks the real TLS
+  and ACL connection at startup, in `/readyz`, and on every credential operation.
+- To rotate the encryption key, add the new key, change `activeID` to it, keep the
+  old key listed so existing rows still decrypt, and restart the broker. Restart it
+  after rotating any Redis credential, CA, or TLS Secret too.
+- After restoring an older Redis backup, install a new active key, remove every old
+  key that could decrypt the restored rows, and restart. This deliberately discards
+  all retained credentials; users authorize again.
+- Deleting a session, cancelling its enrollment, or rotating the agent's workload
+  identity removes its stored credential. A recovered broker token that was already
+  handed out stays valid until it expires, at most two minutes later; it cannot be
+  renewed.
 
 #### Rotate broker TLS and its client CA
 

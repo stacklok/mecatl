@@ -389,13 +389,14 @@ func (cfg fileConfig) validate() error {
 			return errors.New("profile auth mode is invalid")
 		}
 	}
-	// TODO(plan 10): once Helm renders protected_storage, require this block for every OAuth profile.
 	if hasOAuthProfile && cfg.CallbackURL == "" {
 		return errors.New("broker callback is required when OAuth profiles are configured")
 	}
-	// TODO(broker credential continuity): require protected_storage for every
-	// OAuth profile once the mecak8s chart renders it. Until then OAuth keeps the
-	// in-memory ToolHive storage so existing chart installs continue to start.
+	// OAuth credentials live only in encrypted durable custody; there is no
+	// in-memory fallback for a protected profile.
+	if hasOAuthProfile && cfg.ProtectedStorage == nil {
+		return errors.New("protected storage is required for OAuth profiles")
+	}
 	if cfg.ProtectedStorage != nil {
 		if !hasOAuthProfile {
 			return errors.New("protected storage requires an OAuth profile")

@@ -15,6 +15,17 @@ broker:
     secretName: mecabroker-ca
     key: ca.pem
     serverName: production-mecak8s-broker
+  credentialStore:
+    redis:
+      address: broker-redis.example.invalid:6379
+      credentialsSecret: broker-redis-credentials
+      usernameKey: username
+      caSecret: broker-redis-ca
+    encryption:
+      secretName: broker-credential-keks
+      activeID: current
+      keys:
+        - {id: current, secretKey: kek-current}
 mcp:
   broker:
     callbackURL: https://broker.example.invalid/oauth/complete

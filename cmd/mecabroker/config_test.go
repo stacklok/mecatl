@@ -66,6 +66,13 @@ func TestManagedMCPRenderedBrokerConfigAdmitsStrictParser(t *testing.T) {
 	if len(toolHive.Profiles) != 1 || toolHive.Profiles[0].OAuth == nil || toolHive.Profiles[0].OAuth.ClientID != "broker-client" || toolHive.Profiles[0].OAuth.ClientSecretFile != secret {
 		t.Fatalf("rendered config to ToolHive mapping = %#v", toolHive.Profiles)
 	}
+	storage := toolHive.ProtectedStorage
+	if storage == nil || storage.Redis.ClientConfig.Addr != "broker-redis.example.invalid:6379" || !storage.Redis.ClientConfig.TLS ||
+		storage.Redis.ClientConfig.PasswordFile != "/var/run/mecabroker/credential-store/redis/password" ||
+		storage.Encryption.ActiveID != "current" || len(storage.Encryption.Keys) != 1 ||
+		storage.Encryption.Keys[0].File != "/var/run/mecabroker/credential-store/encryption/current" {
+		t.Fatalf("rendered protected storage mapping = %#v", storage)
+	}
 }
 
 func validBrokerConfig() fileConfig {
@@ -173,6 +180,7 @@ func TestToolHiveAdmitsCIMDConfiguration(t *testing.T) {
 			cfg.Profiles = []fileProfile{{
 				Name: "private", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &tc.oauth,
 			}}
+			cfg.ProtectedStorage = testProtectedStorage()
 			if err := cfg.validate(); err != nil {
 				t.Fatalf("CIMD configuration rejected: %v", err)
 			}
@@ -238,7 +246,19 @@ func TestBrokerOAuthClientModeUnionIsStrict(t *testing.T) {
 	}
 	cfg := validBrokerConfig()
 	cfg.Profiles = []fileProfile{{Name: "private", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &fileOAuth{Issuer: "https://issuer.example", ClientMode: "preregistered", ClientID: "id", ClientSecretFile: secret}}}
+	cfg.ProtectedStorage = testProtectedStorage()
 	if err := cfg.validate(); err != nil {
 		t.Fatalf("valid preregistered profile rejected: %v", err)
+	}
+	cfg.ProtectedStorage = nil
+	if err := cfg.validate(); err == nil {
+		t.Fatal("OAuth profile accepted without protected storage")
+	}
+}
+
+func testProtectedStorage() *fileProtectedStorage {
+	return &fileProtectedStorage{
+		Redis:      fileProtectedRedis{Address: "redis.example:6379", PasswordFile: "/run/redis/password"},
+		Encryption: fileProtectedEncryption{ActiveID: "active", Keys: []fileProtectedKey{{ID: "active", File: "/run/keks/active"}}},
 	}
 }

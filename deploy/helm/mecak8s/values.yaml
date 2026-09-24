@@ -88,6 +88,44 @@ broker:
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 1000m, memory: 512Mi}
+  # Encrypted ToolHive credential custody. Required whenever an MCP server uses
+  # OAuth; ignored (and must stay unset) otherwise. Choose external Redis
+  # (redis.address) or chart-managed Redis (managedRedis.enabled). All TLS, ACL,
+  # client credentials, CA trust, and KEKs are operator-provided Secrets; the
+  # chart never generates or reads them. Restart the broker after rotating any.
+  credentialStore:
+    redis:
+      # host:port of external Redis. Leave empty with managedRedis.enabled.
+      address: ""
+      # Secret holding the broker's Redis ACL username (optional) and password.
+      credentialsSecret: ""
+      usernameKey: ""
+      passwordKey: password
+      # CA bundle Secret for external Redis; empty uses system roots.
+      caSecret: ""
+      caKey: ca.crt
+      dialTimeout: 5s
+      operationTimeout: 5s
+      healthTimeout: 2s
+    encryption:
+      # Secret holding one 32-byte raw KEK per key; keep historical keys to decrypt.
+      secretName: ""
+      activeID: ""
+      keys: [] # [{id: current, secretKey: kek-current}]
+    managedRedis:
+      enabled: false
+      image:
+        repository: redis
+        tag: 7.4.5-alpine # version documentation; managed mode renders by digest
+        digest: sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
+      persistence:
+        size: 1Gi
+        storageClassName: ""
+      # TLS Secret (tls.crt, tls.key, ca.crt); the certificate SAN must contain
+      # <release>-mecak8s-credential-redis.<namespace>.svc.
+      tlsSecret: ""
+      # Secret with key users.acl for the Redis ACL file.
+      aclSecret: ""
 
 # Optional remote learning driver. A bearer token is optional; when both tokenSecret
 # and tokenKey are set, the chart projects it only as MECATL_DRIVER_AUTH_TOKEN. TLS

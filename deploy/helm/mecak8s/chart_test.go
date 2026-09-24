@@ -348,11 +348,24 @@ func TestMecak8sHelmChart_RedisFilesystemFlagsAndWorkspaceExclusion(t *testing.T
 // identity required by every OAuth chart render. The agent remains scalable; only
 // the broker deployment is the Recreate singleton.
 func brokerOAuthArgs() []string {
-	return append(secureProductionArgs(),
+	return append(append(secureProductionArgs(),
 		"--set", "broker.image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"--set", "broker.tls.secretName=mecabroker-tls",
 		"--set", "broker.clientCA.secretName=mecabroker-ca",
-		"--set", "broker.clientCA.serverName=production-mecak8s-broker")
+		"--set", "broker.clientCA.serverName=production-mecak8s-broker"), credentialStoreArgs()...)
+}
+
+// credentialStoreArgs supplies the external credential Redis and KEK ring that
+// every OAuth broker now requires.
+func credentialStoreArgs() []string {
+	return []string{
+		"--set", "broker.credentialStore.redis.address=broker-redis.example.invalid:6379",
+		"--set", "broker.credentialStore.redis.credentialsSecret=broker-redis-credentials",
+		"--set", "broker.credentialStore.encryption.secretName=broker-credential-keks",
+		"--set", "broker.credentialStore.encryption.activeID=current",
+		"--set", "broker.credentialStore.encryption.keys[0].id=current",
+		"--set", "broker.credentialStore.encryption.keys[0].secretKey=kek-current",
+	}
 }
 
 // kindVMCPArgs renders the Kind profile with the mecak8s-vmcp fixture's own
@@ -1981,6 +1994,7 @@ func renderMCPValuesWithArgs(t *testing.T, args []string, values string) (string
 			"--set", "broker.tls.secretName=mecabroker-tls",
 			"--set", "broker.clientCA.secretName=mecabroker-ca",
 			"--set", "broker.clientCA.serverName=production-mecak8s-broker")
+		args = append(args, credentialStoreArgs()...)
 	}
 	return helm(t, append(args, "-f", path)...)
 }
