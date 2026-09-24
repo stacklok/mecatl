@@ -249,6 +249,10 @@ type Deps struct {
 
 	// Model is the provider model identifier sent on every request.
 	Model string
+	// ProviderModel is the exact immutable provider/model identity selected by
+	// composition for this engine's LLM. Auxiliary utility calls use it for returned
+	// accounting; the request itself remains provider-neutral.
+	ProviderModel session.ProviderModelID
 	// ContextWindow returns the model's context window in tokens, resolved LIVE at
 	// the point of use (the compaction check / Engine.ContextWindow) rather than
 	// frozen at construction — so a post-construction live-catalog refresh self-
@@ -666,7 +670,11 @@ type Run struct {
 	diag port.Diagnostics
 	// auxiliaryUsageMu serializes utility/hook accounting emitted by concurrent
 	// read-only tool executions before they mutate the run-owned Session aggregate.
-	auxiliaryUsageMu sync.Mutex
+	// It also fences detached child-review accounting against the end of this run's
+	// ownership capability.
+	auxiliaryUsageMu         sync.Mutex
+	auxiliaryUsageActive     bool
+	auxiliaryUsageDropWarned bool
 	// saveWarned makes the session-persistence WARN sticky per RUN. A store that
 	// is broken is broken for every save, and save runs at least once per turn, so
 	// logging unconditionally would emit up to MaxTurns near-identical lines per
@@ -929,7 +937,13 @@ func (r *Run) Events() <-chan session.Event { return r.events }
 // Outcome reports why this Run's event stream closed.
 func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
-func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
+func (r *Run) setOutcome(outcome RunOutcome) {
+	// End auxiliary mutation ownership before publishing the terminal outcome and
+	// before the terminal save. A review that wins this lock is included in that
+	// save; a detached result that loses it is dropped.
+	r.closeAuxiliaryUsageOwnership()
+	r.outcome.Store(int32(outcome))
+}
 
 // Approval resolution errors are stable categories for hosts. Callers should use
 // errors.Is rather than parse error text.
@@ -1624,7 +1638,8 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		// engine, Role != "") to its agent role too. The main engine has Role=="" so
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
-		diag: e.bindRunDiag(sess.ID),
+		diag:                 e.bindRunDiag(sess.ID),
+		auxiliaryUsageActive: true,
 	}
 	if r.reviewRoot == nil && e.deps.ToolReviewer != nil {
 		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewEvidencePreparer, e.deps.ReviewDetails, e.deps.ReviewTaskWindow)
@@ -1713,10 +1728,12 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 			defer close(r.events)
 			defer r.children.seal()
 			defer cancel()
+			defer r.closeAuxiliaryUsageOwnership()
 			body(ctx, r)
 		}()
 	}
 	abort := func() {
+		r.closeAuxiliaryUsageOwnership()
 		cancel()
 		r.children.seal()
 		close(r.events)
@@ -2995,6 +3012,30 @@ func (r *Run) recordAuxiliaryUsage(sess *session.Session, usage session.Auxiliar
 	}
 	r.auxiliaryUsageMu.Lock()
 	sess.RecordAuxiliaryUsage(usage)
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) recordAuxiliaryUsageWhileActive(ctx context.Context, sess *session.Session, purpose session.UsageKind, usage session.AuxiliaryUsage) {
+	if r == nil {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	defer r.auxiliaryUsageMu.Unlock()
+	if !r.auxiliaryUsageActive {
+		if !r.auxiliaryUsageDropWarned {
+			r.auxiliaryUsageDropWarned = true
+			if r.diag != nil {
+				r.diag.Log(context.Background(), port.LevelDebug, "late auxiliary usage dropped after parent run ended")
+			}
+		}
+		return
+	}
+	sess.RecordAuxiliaryUsage(remapAuxiliaryUsage(ctx, r.diag, purpose, usage))
+}
+
+func (r *Run) closeAuxiliaryUsageOwnership() {
+	r.auxiliaryUsageMu.Lock()
+	r.auxiliaryUsageActive = false
 	r.auxiliaryUsageMu.Unlock()
 }
 

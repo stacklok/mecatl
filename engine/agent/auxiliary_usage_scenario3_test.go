@@ -26,6 +26,18 @@ func (d *auxiliaryRecordingDiagnostics) Log(_ context.Context, _ port.Level, msg
 }
 func (d *auxiliaryRecordingDiagnostics) With(...any) port.Diagnostics { return d }
 
+func (d *auxiliaryRecordingDiagnostics) count(msg string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	count := 0
+	for _, got := range d.msgs {
+		if got == msg {
+			count++
+		}
+	}
+	return count
+}
+
 func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	usage := session.Usage{InputTokens: 7, OutputTokens: 3}
 	injected := session.Usage{InputTokens: 2, OutputTokens: 1}
@@ -140,7 +152,7 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	})
 	reviewRun := &Run{
 		askReview: &askReviewBreaker{max: DefaultAskReviewMaxDenies}, hardAbort: make(chan struct{}),
-		diag: port.NopDiagnostics{}, children: newChildRunRegistry(),
+		diag: port.NopDiagnostics{}, children: newChildRunRegistry(), auxiliaryUsageActive: true,
 	}
 	if outcome := reviewEngine.parentCaps(reviewRun, parent, 0).adjudicate(shellAsk("git status"), true); !outcome.allowed {
 		t.Fatalf("review outcome = %+v, want allowed", outcome)
@@ -192,16 +204,72 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	}
 }
 
+type blockingUsageReviewer struct {
+	started chan struct{}
+	release <-chan struct{}
+	usage   session.AuxiliaryUsage
+}
+
+func (r blockingUsageReviewer) Review(context.Context, ChildAskReviewRequest) (ChildAskReview, session.AuxiliaryUsage, error) {
+	r.started <- struct{}{}
+	<-r.release
+	return ChildAskReview{Allowed: true}, r.usage, nil
+}
+
+func TestChildAskReviewerUsageDropsAfterParentRunOwnershipEnds(t *testing.T) {
+	usage := session.Usage{InputTokens: 4, OutputTokens: 1}
+	diag := &auxiliaryRecordingDiagnostics{}
+	parent := runningAuxiliaryParent(t, "late-review-parent")
+	reviewerStarted := make(chan struct{}, 1)
+	releaseReviewer := make(chan struct{})
+	engine := NewEngine(Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Diagnostics: diag,
+		ChildAskReviewer: blockingUsageReviewer{started: reviewerStarted, release: releaseReviewer,
+			usage: auxiliaryUsage(session.UsageKindAskReviewer,
+				session.ProviderModelID{ProviderID: "provider-a", ModelID: "reviewer"}, usage)},
+	})
+	capsReady := make(chan parentCaps, 1)
+	releaseRun := make(chan struct{})
+	prepared := engine.prepareRun(t.Context(), parent, RunRequest{}, session.Usage{}, func(_ context.Context, run *Run) {
+		capsReady <- engine.parentCaps(run, parent, 0)
+		<-releaseRun
+	})
+	run, transition := prepared.Start()
+	if transition != PreparedRunStarted {
+		t.Fatalf("Start transition = %q", transition)
+	}
+	caps := <-capsReady
+	outcomeReady := make(chan askReviewOutcome, 1)
+	go func() { outcomeReady <- caps.adjudicate(shellAsk("git status"), true) }()
+	<-reviewerStarted
+
+	// End the run-owned mutation capability while the reviewer is still blocked,
+	// then let its detached result arrive late.
+	close(releaseRun)
+	for range run.Events() {
+	}
+	close(releaseReviewer)
+	if outcome := <-outcomeReady; !outcome.allowed {
+		t.Fatalf("review outcome = %+v, want allowed", outcome)
+	}
+	if got := parent.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
+		t.Fatalf("late reviews mutated parent usage = %+v, want zero", got)
+	}
+	if got := diag.count("late auxiliary usage dropped after parent run ended"); got != 1 {
+		t.Fatalf("late-drop diagnostics = %d, want one bounded line", got)
+	}
+}
+
 func TestEngineJudgeReturnsParallelUsage(t *testing.T) {
 	usage := session.Usage{InputTokens: 8, OutputTokens: 2}
-	judge := NewEngineJudge(
-		reviewerEngine(mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
+	judge := NewEngineJudge(NewEngine(Deps{
+		LLM: mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
 			{Kind: port.ChunkText, Text: `{"winner":1,"rationale":"best"}`},
 			{Kind: port.ChunkUsage, Usage: &usage},
 			{Kind: port.ChunkDone},
-		}})),
-	).(*engineJudge)
-	judge.identity = session.ProviderModelID{ProviderID: "provider-p", ModelID: "inherited-model"}
+		}}), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "inherited-model",
+		ProviderModel: session.ProviderModelID{ProviderID: "provider-p", ModelID: "inherited-model"},
+	}))
 	winner, _, gotUsage, err := judge.Judge(t.Context(), []BranchSummary{{Label: "one", Summary: "one"}, {Label: "two", Summary: "two"}}, "best")
 	if err != nil || winner != 0 {
 		t.Fatalf("Judge() winner=%d err=%v", winner, err)
@@ -222,6 +290,59 @@ type zeroUsageJudge struct{}
 
 func (zeroUsageJudge) Judge(context.Context, []BranchSummary, string) (int, string, session.AuxiliaryUsage, error) {
 	return 0, "custom", session.AuxiliaryUsage{}, nil
+}
+
+func TestUtilityEngineUsageReturnsActualTier4CompactionToCallerOwner(t *testing.T) {
+	mainUsage := session.Usage{InputTokens: 7, OutputTokens: 2}
+	compactionUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
+	provider := mockllm.New(
+		mockllm.ChunksTurn(
+			mockllm.TextChunk("## Goal\nretain the utility decision"),
+			mockllm.UsageChunk(compactionUsage),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+		mockllm.ChunksTurn(
+			mockllm.TextChunk(`{"category":"large"}`),
+			mockllm.UsageChunk(mainUsage),
+			mockllm.DoneChunk(session.StopEndTurn),
+		),
+	)
+	compactionIdentity := session.ProviderModelID{ProviderID: "provider-c", ModelID: "summary"}
+	utilityIdentity := session.ProviderModelID{ProviderID: "provider-u", ModelID: "utility"}
+	counter := HeuristicTokenCounter{CharsPerToken: 1}
+	engine := NewEngine(Deps{
+		LLM: provider, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: utilityIdentity.ModelID,
+		ProviderModel: utilityIdentity, ContextWindow: func() int { return 1_000 }, CompactionRatio: 0.8,
+		TokenCounter: counter,
+		Compactor:    CascadeCompactor{Counter: counter, LLM: provider, Model: compactionIdentity.ModelID, ProviderModel: compactionIdentity},
+	})
+	utility := session.New("utility-compaction", session.ModeDefault, judgeEnvironment.Ref(), session.Limits{MaxTurns: 1}, time.Unix(1, 0))
+	history := make([]session.Message, 0, 20)
+	for i := range 10 {
+		history = append(history,
+			session.NewUserMessage(strings.Repeat("old utility request ", 12)),
+			session.NewAssistantMessage(strings.Repeat("old utility answer ", 12)+string(rune('a'+i)), "", nil),
+		)
+	}
+	if err := utility.SeedHistory(history); err != nil {
+		t.Fatal(err)
+	}
+	for range engine.Run(t.Context(), utility, judgeEnvironment, RunRequest{Text: "classify"}).Events() {
+	}
+	if calls := provider.Calls(); calls != 2 {
+		t.Fatalf("provider calls = %d, want tier-4 summary plus utility call", calls)
+	}
+	if got := utility.UsageFor(session.UsageKindCompaction); got != compactionUsage {
+		t.Fatalf("utility tier-4 usage = %+v, want %+v", got, compactionUsage)
+	}
+
+	returned := utilityEngineUsage(session.UsageKindRouter, utilityIdentity, utility)
+	owned := remapAuxiliaryUsage(t.Context(), port.NopDiagnostics{}, session.UsageKindRouter, returned)
+	bucket := owned.Buckets[session.UsageKindRouter]
+	wantTotal := mainUsage.Add(compactionUsage)
+	if bucket.Total != wantTotal || bucket.Models["provider-u/utility"] != mainUsage || bucket.Models["provider-c/summary"] != compactionUsage {
+		t.Fatalf("caller-owned utility usage = %#v, want total %+v with exact utility and compaction attribution", bucket, wantTotal)
+	}
 }
 
 func TestAuxiliaryTokenUsage_Scenario3_NoUsageFromNonLLMHelpers(t *testing.T) {
@@ -296,8 +417,8 @@ func TestAuxiliaryTokenUsage_Scenario3_ParallelJudgeRecordsInheritedModel(t *tes
 					{Kind: port.ChunkUsage, Usage: &usage},
 					{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 				}}), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "inherited-model",
-			})).(*engineJudge)
-			judge.identity = session.ProviderModelID{ProviderID: "provider-p", ModelID: "inherited-model"}
+				ProviderModel: session.ProviderModelID{ProviderID: "provider-p", ModelID: "inherited-model"},
+			}))
 
 			parallel := NewParallelTool(child, auxiliaryUsageForker{}, WithParallelJudge(judge), WithParallelConcurrency(1)).(*ParallelTool)
 			parent := runningAuxiliaryParent(t, session.SessionID("parallel-parent-"+join))

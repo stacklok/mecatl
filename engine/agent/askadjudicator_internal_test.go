@@ -20,10 +20,11 @@ import (
 // wires (an empty catalog, allow-all floor — the reviewer never calls a tool).
 func reviewerEngine(llm port.LLMProvider) *Engine {
 	return NewEngine(Deps{
-		LLM:     llm,
-		Catalog: tool.NewCatalog(),
-		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
-		Model:   "reviewer-model",
+		LLM:           llm,
+		Catalog:       tool.NewCatalog(),
+		Policy:        permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:         "reviewer-model",
+		ProviderModel: session.ProviderModelID{ProviderID: "test-provider", ModelID: "reviewer-model"},
 	})
 }
 
