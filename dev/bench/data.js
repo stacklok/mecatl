@@ -244018,6 +244018,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790267465849,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c5772324852fe9446322a17231cbf4a8e21a57a",
+          "message": "test(mecatui): fix effort handoff source-close flake (#1890)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T10:26:45-07:00",
+          "tree_id": "eef12362da8ff92c7cc03c3462214fb510291909",
+          "url": "https://github.com/stacklok/mecatl/commit/4c5772324852fe9446322a17231cbf4a8e21a57a"
+        },
+        "date": 1790271485221,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -354524,6 +354558,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790271481948,
+  "lastUpdate": 1790271485871,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
