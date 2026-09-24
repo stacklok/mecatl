@@ -22,6 +22,7 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent } from "../../components/ui/dialog";
+import { pageTitleClass } from "../../lib/typography";
 
 export type KnowledgeView = "configured" | "learned";
 type LearnedSkill = ListLearnedSkillsResponse["items"][number];
@@ -41,7 +42,7 @@ export function KnowledgeWorkspace({
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
-        <h1 className="text-3xl font-semibold tracking-tight">Skills</h1>
+        <h1 className={pageTitleClass()}>Skills</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Inspect the procedures available to Mecatl.
         </p>

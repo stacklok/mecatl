@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Keyboard } from "lucide-react";
 import { Kbd } from "../../components/ui/kbd";
+import { pageTitleClass } from "../../lib/typography";
 import {
   freshDeploymentQuery,
   useBrowserOnline,
@@ -70,7 +71,7 @@ export function ShortcutReference() {
             <Keyboard aria-hidden="true" className="size-5" />
           </span>
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Keyboard shortcuts</h1>
+            <h1 className={pageTitleClass()}>Keyboard shortcuts</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Work faster without leaving the keyboard. Shortcuts without a modifier pause while you
               type in an input or editor.

@@ -27,6 +27,7 @@ import {
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { pageTitleClass } from "../../lib/typography";
 import { canRunNow, canTogglePause, timezoneLabel } from "./schedule-detail";
 import { ScheduleForm } from "./schedule-form";
 
@@ -114,7 +115,7 @@ export function SchedulesWorkspace({ scheduleName }: { scheduleName?: string }) 
       <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Scheduled</h1>
+            <h1 className={pageTitleClass()}>Scheduled</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Recurring and one-off work run by the connected Mecatl instance.
             </p>

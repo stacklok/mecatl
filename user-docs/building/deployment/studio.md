@@ -128,6 +128,19 @@ unavailable connection if that link drops. For a fully offline launch, the
 browser handles the missing connection; Studio does not provide an offline
 starting page.
 
+## Set your appearance
+
+1. Open **Settings**, then **Personalise**.
+1. Under **Appearance**, choose **Light**, **Dark**, or **System** for the theme.
+   System follows your device's light or dark setting.
+1. Choose **Default**, **Aztec**, **Mono**, or **Solar** for the palette. The
+   palette choice does not change your theme.
+
+Studio applies both choices when the page loads and updates other open Studio
+tabs on the same origin. The default is the System theme with the Stacklok green
+palette. If browser storage is unavailable, your choices work until you reload
+the page. Inter and Merriweather fonts load from Studio's own origin.
+
 ## Try it locally with Compose
 
 The repository's `apps/docker-compose.yml` starts a `mecated` container and

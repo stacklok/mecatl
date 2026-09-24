@@ -65,7 +65,7 @@ export function TopNav() {
           })}
         </nav>
 
-        <div className="shrink-0 [&_kbd]:rounded-full [&_kbd]:border-transparent [&_kbd]:bg-nav-kbd-bg [&_kbd]:text-nav-icon [&>button]:min-h-11 [&>button]:min-w-11 [&>button]:rounded-full [&>button]:border-nav-search-border [&>button]:bg-transparent [&>button]:text-nav-search-text [&>button]:hover:bg-white/10 [&>button]:hover:text-white [&>button]:focus-visible:ring-white min-[900px]:[&>button]:w-[214px]">
+        <div className="shrink-0 [&_kbd]:rounded-full [&_kbd]:border-transparent [&_kbd]:bg-nav-kbd-bg [&_kbd]:text-brand-foreground [&>button]:min-h-11 [&>button]:min-w-11 [&>button]:rounded-full [&>button]:border-nav-search-border [&>button]:bg-transparent [&>button]:text-nav-search-text [&>button]:hover:bg-white/10 [&>button]:hover:text-white [&>button]:focus-visible:ring-nav-search-text min-[900px]:[&>button]:w-[214px]">
           <GlobalSearch />
         </div>
       </div>

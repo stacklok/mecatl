@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { pageTitleClass } from "../../lib/typography";
+
 /** One-click prompts on the draft chat state, to seed the first message. */
 export const STARTER_PROMPTS = [
   "Summarise what changed in the repo this week",
@@ -16,9 +18,7 @@ export const chipClass =
 export function DraftGreeting({ onPickSeed }: { onPickSeed: (text: string) => void }) {
   return (
     <div className="m-auto max-w-md text-center">
-      <h2 className="text-page-title text-center text-3xl leading-tight">
-        What can I help you with?
-      </h2>
+      <h2 className={pageTitleClass("text-center")}>What can I help you with?</h2>
       <div className="mt-5 flex flex-wrap justify-center gap-2">
         {STARTER_PROMPTS.map((prompt) => (
           <button

@@ -31,6 +31,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
+import { pageTitleClass } from "../../lib/typography";
 import { LearningReview } from "../knowledge/learning-review";
 import { AgentSettings } from "./agent-settings";
 import { IdentitySettings } from "./identity-settings";
@@ -113,7 +114,7 @@ export function SettingsWorkspace({
         >
           ← Chats
         </Link>
-        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
+        <h1 className={pageTitleClass()}>Settings</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Review your preferences and the settings managed by this deployment.
         </p>
@@ -123,7 +124,7 @@ export function SettingsWorkspace({
             Settings section
           </label>
           <select
-            className="mt-2 min-h-11 w-full rounded-lg border bg-card px-3 text-sm focus-visible:outline-2 focus-visible:outline-brand"
+            className="mt-2 min-h-11 w-full rounded-lg border border-control-border bg-card px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             id="settings-section"
             onChange={(event) => onSectionChange?.(event.target.value as SettingsSection)}
             value={section}
