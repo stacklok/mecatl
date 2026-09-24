@@ -859,11 +859,7 @@ func buildConfiguredReflectionObserver(
 	}
 	modelCfg := cfg
 	modelCfg.Model = model
-	providerID := cfg.auxiliaryProviderID
-	if providerID == "" {
-		providerID = "unknown"
-	}
-	reflector, err := agent.NewEvidenceReflectorForProviderModel(provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, buildTokenCounter(modelCfg), agent.ReflectionLimits{})
+	reflector, err := agent.NewEvidenceReflector(provider, session.ProviderModelID{ProviderID: cfg.auxiliaryProviderID, ModelID: model}, buildTokenCounter(modelCfg), agent.ReflectionLimits{})
 	if err != nil {
 		cfg.diag().Log(context.Background(), port.LevelWarn, "automatic reflection unavailable", "error", err)
 		return nil
