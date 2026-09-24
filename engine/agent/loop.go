@@ -2463,7 +2463,7 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 // neither expanded nor mutated by a hook and is recorded verbatim on the user
 // message via RecordUserPromptWithParts.
 func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, userText string, parts []session.Content) (ok bool, reason string, err error) {
-	if expanded, exp, eerr := e.deps.CommandExpander.Expand(ctx, env.Workspace(), userText); eerr == nil && exp {
+	if expanded, exp, eerr := e.deps.CommandExpander.Expand(ctx, userText); eerr == nil && exp {
 		userText = expanded
 	}
 	// UserPromptSubmit fires on the expanded text before recording so a mutation
@@ -2886,9 +2886,9 @@ func (e *Engine) buildRequest(ctx context.Context, r *Run, sess *session.Session
 			aerr       error
 		)
 		if e.deps.EnableDurableEvidence {
-			discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, env.Workspace(), e.deps.Instructions)
+			discovered, r.fragmentManifest, aerr = prompt.AssembleWithManifest(ctx, e.deps.Instructions)
 		} else {
-			discovered, aerr = e.deps.Instructions.Assemble(ctx, env.Workspace())
+			discovered, aerr = e.deps.Instructions.Assemble(ctx)
 		}
 		if aerr != nil {
 			r.diag.Log(ctx, port.LevelWarn, "instruction-fragment assembly failed; continuing without turn-0 fragments", "error", aerr)

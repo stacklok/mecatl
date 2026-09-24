@@ -25,6 +25,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -253,6 +254,9 @@ type ModelInventory interface {
 // must not recover them from context values or a process-global fallback.
 type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error)
 
+// SessionContextEngineFactory builds a session engine with its stored source identity.
+type SessionContextEngineFactory func(context.Context, session.SessionID, *session.Principal, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error)
+
 // Config wires the Service's collaborators and resolved composition values.
 type Config struct {
 	// BuildID is the composed binary build identity exposed by GetServerInfo only.
@@ -399,7 +403,7 @@ type Config struct {
 	// nil-safe: when nil (command expansion
 	// disabled, or no expander enumerates), ListCommands returns an empty list.
 	// It is read-only and called per request (discovery is cheap file scanning).
-	Commands CommandLister
+	Commands CommandSourceResolver
 
 	// SharedEngineRoot is the verified workspace root the shared engine's policy
 	// collaborators were assembled for. Every filesystem-capable placement with a
@@ -575,6 +579,9 @@ type Config struct {
 	// SessionEngineWithTools is required when MCPBroker is wired. It receives the
 	// exact wrappers owned by the local broker attachment.
 	SessionEngineWithTools SessionEngineWithToolsFactory
+	// SessionContextEngine derives the engine from authoritative stored source scope.
+	// It is composition-only; client input never selects a source context.
+	SessionContextEngine SessionContextEngineFactory
 	// MCPBroker owns logical broker state; Service owns only local attachments.
 	MCPBroker brokercontract.Service
 	// MCPConnectorInspector exposes local-only inventory for the bundled broker.
@@ -2460,6 +2467,12 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	var broker *localBrokerAttachment
 	var committed bool
 	var id session.SessionID
+	var contextPublished bool
+	defer func() {
+		if !contextPublished && id != "" && s.cfg.Commands != nil {
+			s.cfg.Commands.Retire(id)
+		}
+	}()
 	if opts.debugTargetID != "" {
 		debugTarget, err = s.cfg.Store.Load(ctx, opts.debugTargetID)
 		if err != nil || debugTarget == nil || s.authorizeSession(ctx, debugTarget) != nil {
@@ -2480,7 +2493,10 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			}
 			defer s.finalizeBrokerAttachment(broker, &committed)
 		}
-		res, err = s.callSessionEngine(ctx, sel, specs, profile, workspace, mode, brokerTools(broker))
+		if s.cfg.SessionContextEngine != nil && id == "" {
+			id = mintID()
+		}
+		res, err = s.callSessionEngine(ctx, id, owner, sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		// Factory maps an unknown/unavailable provider to ErrInvalidArgument; any
@@ -2580,6 +2596,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		}
 		return persisted, perr
 	}
+	contextPublished = true
 	if broker != nil {
 		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
 		commitErr := s.commitBrokerAttachment(commitCtx, id, broker)
@@ -3991,7 +4008,7 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 // in-memory store after a process restart, or when no store-dir is configured
 // and the id was never created in this process).
 func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
-	return s.loadAndReopen(ctx, id)
+	return s.loadSessionContext(ctx, id, true)
 }
 
 // validateCarryover loads a source session (issue #20: model-switch context
@@ -4151,6 +4168,10 @@ func (s *Service) maybeReplayApprovals(ctx context.Context, sess *session.Sessio
 // recovers it via Recover (both repair the history), then re-persists. ErrNotFound
 // propagates from GetSession.
 func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*session.Session, error) {
+	return s.loadSessionContext(ctx, id, false)
+}
+
+func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, activate bool) (*session.Session, error) {
 	// Ownership is checked before caller-selected coordination, then revalidated
 	// under runEntryMu before and after acquiring the mutation lease.
 	if _, err := s.GetSession(ctx, id); err != nil {
@@ -4171,7 +4192,17 @@ func (s *Service) loadAndReopen(ctx context.Context, id session.SessionID) (*ses
 		return nil, err
 	}
 	// Persisted workspace authority is enforced at the top of reopenLoadedSession.
-	return s.reopenLoadedSession(ctx, sess)
+	sess, err = s.reopenLoadedSession(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	if activate && s.cfg.Commands != nil {
+		if err := s.cfg.Commands.Activate(ctx, sess.ID, sess.Owner.Clone(), sess.Profile); err != nil {
+			s.logDiscoveryError(ctx, "activate command sources", err)
+			return nil, fmt.Errorf("%w: command source activation failed", ErrInternal)
+		}
+	}
+	return sess, nil
 }
 
 // validatePersistedWorkspace keeps the run-entry call sites explicit while
@@ -4334,7 +4365,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	// Load + reopen-if-completed BEFORE building the engine, so an unknown id fails
 	// fast (ErrNotFound) without a wasted MCP connect. The reopen's Store.Save runs
 	// here too.
-	sess, err := s.loadAndReopen(ctx, id)
+	sess, err := s.loadSessionContext(ctx, id, true)
 	if err != nil {
 		return nil, err
 	}
@@ -4352,7 +4383,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.cfg.SessionEngine(ctx, sel, specs, profile, workspace, sess.Mode)
+	res, err := s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), sel, specs, profile, workspace, sess.Mode, nil)
 	if err != nil {
 		// The session was loaded + (if needed) reopened and re-persisted, but the
 		// per-session engine could not be built. We deliberately do NOT roll that
@@ -5729,7 +5760,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 // with an unresolved intent-driven default model, so the per-session build
 // resolves it at session-build time instead of freezing "".
 func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string) bool {
-	return sel != (ProviderSelector{}) || len(specs) > 0 || profile == ProfileNoFS ||
+	return s.cfg.SessionContextEngine != nil || sel != (ProviderSelector{}) || len(specs) > 0 || profile == ProfileNoFS ||
 		s.cfg.DefaultModelPending || workspace != s.cfg.SharedEngineRoot
 }
 
@@ -5740,7 +5771,7 @@ func (s *Service) sessionNeedsPerFactory(sel ProviderSelector, specs []mcp.Serve
 // then separately compares the verified live root with SharedEngineRoot to decide whether
 // placement affinity needs a per-session engine.
 func (s *Service) needsRehydration(sess *session.Session) bool {
-	return s.cfg.MCPBroker != nil || s.cfg.LearnedSkills != nil ||
+	return s.cfg.SessionContextEngine != nil || s.cfg.MCPBroker != nil || s.cfg.LearnedSkills != nil ||
 		sess.Kind == session.SessionKindDebug ||
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
@@ -5879,7 +5910,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 		if err != nil {
@@ -5890,7 +5921,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sel, specs, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
@@ -8536,8 +8567,7 @@ func userModelWireText(value string) string {
 
 // Command is the surface-agnostic listing metadata for one slash command (name +
 // short description), mirroring prompt.Command. The Service exposes its own type
-// so the wire adapters and the composition seam (CommandLister) need not import
-// the prompt domain package directly.
+// so wire adapters need not import the prompt domain package directly.
 type Command struct {
 	// Name is the command's invocation name (without the leading "/").
 	Name string
@@ -8545,15 +8575,17 @@ type Command struct {
 	Description string
 }
 
-// CommandLister enumerates the slash commands available through an exact,
-// already-authorized workspace. It is the composition-injected discovery seam
-// backing ListCommands: the composition root supplies an implementation that
-// closes over the run-path command expander, so the palette and the run path
-// agree on which commands exist. It is read-only.
-type CommandLister interface {
-	// List returns the commands discovered through ws, de-duplicated by name and
-	// name-sorted, or an error on a genuine discovery fault.
-	List(ctx context.Context, ws tool.Workspace) ([]Command, error)
+// CommandSourceBinding supplies live listing and expansion from one resolved source.
+type CommandSourceBinding interface {
+	prompt.CommandExpander
+	prompt.CommandLister
+}
+
+// CommandSourceResolver owns per-session command source bindings.
+type CommandSourceResolver interface {
+	Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error)
+	Activate(context.Context, session.SessionID, *session.Principal, string) error
+	Retire(session.SessionID)
 }
 
 // --- Worktree discovery (provider-private) -----------------------------------

@@ -22,17 +22,25 @@ type ScopedWorktree struct {
 	Bare     bool
 }
 
-func (s *Service) ownedSessionBinding(ctx context.Context, id session.SessionID) (*session.Session, PlacementBinding, error) {
+func (s *Service) ownedSession(ctx context.Context, id session.SessionID) (*session.Session, error) {
 	sess, err := s.cfg.Store.Load(ctx, id)
 	if err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
-			return nil, PlacementBinding{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+			return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
 		}
 		s.logDiscoveryError(ctx, "load session", err)
-		return nil, PlacementBinding{}, fmt.Errorf("%w: discovery backend failed", ErrInternal)
+		return nil, fmt.Errorf("%w: discovery backend failed", ErrInternal)
 	}
 	if sess == nil || sess.ID != id || s.authorizeSession(ctx, sess) != nil {
-		return nil, PlacementBinding{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+		return nil, fmt.Errorf("%w: %q", ErrNotFound, id)
+	}
+	return sess, nil
+}
+
+func (s *Service) ownedSessionBinding(ctx context.Context, id session.SessionID) (*session.Session, PlacementBinding, error) {
+	sess, err := s.ownedSession(ctx, id)
+	if err != nil {
+		return nil, PlacementBinding{}, err
 	}
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return sess, PlacementBinding{}, nil
@@ -56,25 +64,32 @@ func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.Sessio
 	return sess, binding.Environment, nil
 }
 
-// ListCommandsForSession owner-authorizes and exactly reattaches before command
-// discovery. A no-FS source returns empty without touching either provider.
+// ListCommandsForSession owner-authorizes the session and borrows its independent
+// command source binding without reattaching execution.
 func (s *Service) ListCommandsForSession(ctx context.Context, id session.SessionID) ([]Command, error) {
-	sess, binding, err := s.ownedSessionBinding(ctx, id)
+	sess, err := s.ownedSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if binding.Close != nil {
-		defer func() { _ = binding.Close() }()
-	}
-	if sess.EnvironmentRef.Kind == session.EnvKindNoFS || s.cfg.Commands == nil {
+	if s.cfg.Commands == nil {
 		return nil, nil
 	}
-	commands, err := s.cfg.Commands.List(ctx, binding.Environment.Workspace())
+	binding, release, err := s.cfg.Commands.Borrow(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
+	if err != nil {
+		s.logDiscoveryError(ctx, "bind command sources", err)
+		return nil, fmt.Errorf("%w: command source binding failed", ErrInternal)
+	}
+	defer release()
+	commands, err := binding.List(ctx)
 	if err != nil {
 		s.logDiscoveryError(ctx, "list commands", err)
 		return nil, fmt.Errorf("%w: command discovery failed", ErrInternal)
 	}
-	return commands, nil
+	out := make([]Command, 0, len(commands))
+	for _, command := range commands {
+		out = append(out, Command{Name: command.Name, Description: command.Description})
+	}
+	return out, nil
 }
 
 // ListWorktreesForSession owner-authorizes and exactly reattaches before

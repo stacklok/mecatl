@@ -69,6 +69,66 @@ explicit `mecated serve` flag. It controls listener topology, TLS, and rate
 limits. Supply the daemon API bearer through `--auth-token` or
 `MECATL_AUTH_TOKEN`.
 
+## Select harness context sources
+
+Use `harness_context` in operator settings to choose instruction, command,
+rule, skill, and agent-definition sources independently of execution placement.
+For example, this policy keeps the configured local sources but disables agent
+definitions:
+
+```yaml
+harness_context:
+  enabled_sources: [local]
+  kinds:
+    instructions: {sources: [local], mode: combine}
+    commands: {sources: [local], mode: combine}
+    rules: {sources: [local], mode: combine}
+    skills: {sources: [local], mode: combine}
+    agent_defs: {sources: [], mode: combine}
+```
+
+Include all five kind mappings and set each `mode` to `combine` or `replace`.
+An empty `sources` list disables that kind. Sources appear in highest-precedence
+order. `combine` concatenates instructions and combines named entries, keeping
+the first entry for each name. `replace` selects the complete contribution of
+the first nonempty source after exclusions.
+
+The built-in compatibility IDs are:
+
+|ID|Kinds|Availability|
+|-|-|-|
+|`local`|All five|The configured startup project and existing local customization settings, subject to their existing enablement and project-trust checks.|
+|`skills`|Commands|The command view of the skills selected by this policy.|
+|`driver`|Commands, skills, agent definitions|Only for each kind with a configured content-source driver. There is no built-in instruction or rule driver registration.|
+|`mcp`|Commands|When MCP prompts are enabled.|
+
+Other IDs, such as `deployment`, `organization`, or `repository`, require a
+trusted composition root to register the corresponding typed sources before
+calling `app.Build`. IDs are registration names, not paths or transport names;
+a settings file does not create adapters. Ask your deployment owner which
+additional IDs and kinds are available. Every enabled ID must appear in at
+least one kind. Unknown, disabled, duplicate, unused, or kind-incompatible
+references fail startup without falling back to execution files.
+
+A project `harness_context` block is ignored in full with a warning that omits
+its values, even in a trusted project. Source selection cannot grant tool
+permissions or bypass project trust. A no-filesystem session can still use
+separately configured file-backed or service-backed logical sources; reading
+those sources does not authorize execution-file edits.
+
+Restart the process after changing source policy. Existing sessions and
+schedules use the current policy and current source authorization when they
+rebind. Commands remain live between calls; instructions refresh per run;
+rules, skills, and agent definitions keep their source-binding snapshots.
+With no `harness_context` block, existing source settings and precedence apply,
+bound to the configured startup source rather than each session's execution
+placement.
+
+See the [configuration reference](/reference/configuration.md#harness_context)
+for the strict schema. Named `overrides` replace only their listed candidates
+when the declared winner is present; an earlier non-replaced source still wins.
+Exclusions and overrides never merge entry bodies.
+
 ## Configure the command runner
 
 Use `command_runner.shell` to choose the interpreter for built-in local Shell

@@ -172,6 +172,121 @@
 #   openai:
 #     base_url: https://proxy.example/v1
 
+#| === harness_context === (tier: operator)
+#| Selects trusted deployment-registered instruction and customization source IDs
+#| independently from execution placement. Unknown configured IDs fail startup;
+#| registration support is deployment-specific.
+# harness_context:
+#   # EnabledSources is the unique allowlist of registered IDs. Each ID must be used by at
+#   # least one kind; unknown, unused, or unsupported references fail startup.
+#   enabled_sources: []
+#   # Kinds must include all five content kinds, each with an explicit mode.
+#   kinds:
+#     instructions:
+#       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
+#       # disables this kind without changing execution capabilities.
+#       sources: []
+#       # Mode is required: combine concatenates instructions or unions named entries;
+#       # replace takes the complete first nonempty post-exclusion source contribution.
+#       mode: combine
+#       # Exclude removes exact source/name candidates before resolution. Instructions
+#       # have no names and use source-only exclusions.
+#       exclude:
+#         - source: ""
+#           name: ""
+#       # Overrides changes exact-name collisions in combine mode only. Forbidden for
+#       # instructions and replace mode. Duplicate or structurally no-op declarations fail
+#       # startup.
+#       overrides:
+#         - name: ""
+#           winner: ""
+#           replaces: []
+#     commands:
+#       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
+#       # disables this kind without changing execution capabilities.
+#       sources: []
+#       # Mode is required: combine concatenates instructions or unions named entries;
+#       # replace takes the complete first nonempty post-exclusion source contribution.
+#       mode: combine
+#       # Exclude removes exact source/name candidates before resolution. Instructions
+#       # have no names and use source-only exclusions.
+#       exclude:
+#         - source: ""
+#           name: ""
+#       # Overrides changes exact-name collisions in combine mode only. Forbidden for
+#       # instructions and replace mode. Duplicate or structurally no-op declarations fail
+#       # startup.
+#       overrides:
+#         - name: ""
+#           winner: ""
+#           replaces: []
+#     rules:
+#       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
+#       # disables this kind without changing execution capabilities.
+#       sources: []
+#       # Mode is required: combine concatenates instructions or unions named entries;
+#       # replace takes the complete first nonempty post-exclusion source contribution.
+#       mode: combine
+#       # Exclude removes exact source/name candidates before resolution. Instructions
+#       # have no names and use source-only exclusions.
+#       exclude:
+#         - source: ""
+#           name: ""
+#       # Overrides changes exact-name collisions in combine mode only. Forbidden for
+#       # instructions and replace mode. Duplicate or structurally no-op declarations fail
+#       # startup.
+#       overrides:
+#         - name: ""
+#           winner: ""
+#           replaces: []
+#     skills:
+#       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
+#       # disables this kind without changing execution capabilities.
+#       sources: []
+#       # Mode is required: combine concatenates instructions or unions named entries;
+#       # replace takes the complete first nonempty post-exclusion source contribution.
+#       mode: combine
+#       # Exclude removes exact source/name candidates before resolution. Instructions
+#       # have no names and use source-only exclusions.
+#       exclude:
+#         - source: ""
+#           name: ""
+#       # Overrides changes exact-name collisions in combine mode only. Forbidden for
+#       # instructions and replace mode. Duplicate or structurally no-op declarations fail
+#       # startup.
+#       overrides:
+#         - name: ""
+#           winner: ""
+#           replaces: []
+#     agent_defs:
+#       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
+#       # disables this kind without changing execution capabilities.
+#       sources: []
+#       # Mode is required: combine concatenates instructions or unions named entries;
+#       # replace takes the complete first nonempty post-exclusion source contribution.
+#       mode: combine
+#       # Exclude removes exact source/name candidates before resolution. Instructions
+#       # have no names and use source-only exclusions.
+#       exclude:
+#         - source: ""
+#           name: ""
+#       # Overrides changes exact-name collisions in combine mode only. Forbidden for
+#       # instructions and replace mode. Duplicate or structurally no-op declarations fail
+#       # startup.
+#       overrides:
+#         - name: ""
+#           winner: ""
+#           replaces: []
+#|
+#| Example:
+#|   enabled_sources: [local]
+#|   kinds:
+#|     instructions: {sources: [local], mode: combine}
+#|     commands: {sources: [local], mode: combine}
+#|     rules: {sources: [local], mode: combine}
+#|     skills: {sources: [local], mode: combine}
+#|     agent_defs: {sources: [local], mode: combine}
+
 #| === learning === (tier: operator + project)
 #| Optional completed-trajectory observation policy. Off means no automatic
 #| completed-trajectory reflection or review; project settings may only tighten the

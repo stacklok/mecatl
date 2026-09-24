@@ -35,7 +35,7 @@ type CommandLister interface {
 	// name. It returns a nil/empty slice when no commands are available. A non-nil
 	// error is reserved for a genuine read fault enumerating the command dirs; a
 	// dir that simply does not exist is not an error (it yields no commands).
-	List(ctx context.Context, ws tool.Workspace) ([]Command, error)
+	List(ctx context.Context) ([]Command, error)
 }
 
 // CommandExpander rewrites a raw user input into the prompt the model sees. If
@@ -56,7 +56,7 @@ type CommandExpander interface {
 	// A non-nil error is returned only for a genuine read fault discovering or
 	// reading a command file (not for "not a command" or "unknown command", which
 	// are normal, non-error outcomes that must not abort the run).
-	Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)
+	Expand(ctx context.Context, input string) (string, bool, error)
 }
 
 // NoopExpander is the default CommandExpander. It performs no expansion and
@@ -66,13 +66,13 @@ type CommandExpander interface {
 type NoopExpander struct{}
 
 // Expand implements CommandExpander by returning input unchanged.
-func (NoopExpander) Expand(_ context.Context, _ tool.Workspace, input string) (string, bool, error) {
+func (NoopExpander) Expand(_ context.Context, input string) (string, bool, error) {
 	return input, false, nil
 }
 
 // List implements CommandLister by listing nothing: the NoopExpander has no
 // command source, so a palette over it is empty.
-func (NoopExpander) List(_ context.Context, _ tool.Workspace) ([]Command, error) {
+func (NoopExpander) List(_ context.Context) ([]Command, error) {
 	return nil, nil
 }
 
@@ -117,9 +117,9 @@ func NewMultiExpander(expanders ...CommandExpander) *MultiExpander {
 // Expand tries each composed expander in order and returns the first expansion
 // (expanded=true). If none expands, it returns the original input unchanged with
 // expanded=false. An error from any expander stops the chain and is returned.
-func (m *MultiExpander) Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error) {
+func (m *MultiExpander) Expand(ctx context.Context, input string) (string, bool, error) {
 	for _, e := range m.expanders {
-		out, expanded, err := e.Expand(ctx, ws, input)
+		out, expanded, err := e.Expand(ctx, input)
 		if err != nil {
 			return input, false, err
 		}
@@ -137,7 +137,7 @@ func (m *MultiExpander) Expand(ctx context.Context, ws tool.Workspace, input str
 // collision. An expander that does not implement CommandLister contributes
 // nothing (it cannot enumerate). The merged result is de-duplicated by name and
 // sorted. A read fault from any child stops the walk and is returned.
-func (m *MultiExpander) List(ctx context.Context, ws tool.Workspace) ([]Command, error) {
+func (m *MultiExpander) List(ctx context.Context) ([]Command, error) {
 	seen := make(map[string]struct{})
 	var out []Command
 	for _, e := range m.expanders {
@@ -145,7 +145,7 @@ func (m *MultiExpander) List(ctx context.Context, ws tool.Workspace) ([]Command,
 		if !ok {
 			continue
 		}
-		cmds, err := lister.List(ctx, ws)
+		cmds, err := lister.List(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -206,14 +206,15 @@ var DefaultCommandDirs = []string{".mecatl/commands", ".claude/commands"}
 // returns the original input unchanged with expanded=false and no error, so a
 // mistyped or unconfigured command never aborts the run.
 type DirCommandExpander struct {
-	dirs []string
+	source tool.Workspace
+	dirs   []string
 }
 
 // NewDirCommandExpander constructs a DirCommandExpander. Each dir is a
 // workspace-relative directory searched in order for "<name>.md"; a blank dir is
 // ignored. When no non-blank dir is given it falls back to the defaults
 // (".mecatl/commands/" then ".claude/commands/").
-func NewDirCommandExpander(dirs ...string) *DirCommandExpander {
+func NewDirCommandExpander(source tool.Workspace, dirs ...string) *DirCommandExpander {
 	cleaned := make([]string, 0, len(dirs))
 	for _, d := range dirs {
 		d = strings.TrimRight(strings.TrimSpace(d), "/")
@@ -224,12 +225,15 @@ func NewDirCommandExpander(dirs ...string) *DirCommandExpander {
 	if len(cleaned) == 0 {
 		cleaned = append(cleaned, DefaultCommandDirs...)
 	}
-	return &DirCommandExpander{dirs: cleaned}
+	return &DirCommandExpander{source: source, dirs: cleaned}
 }
 
 // Expand implements CommandExpander. See the type doc for the grammar and
 // substitution rules.
-func (e *DirCommandExpander) Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error) {
+func (e *DirCommandExpander) Expand(ctx context.Context, input string) (string, bool, error) {
+	if e.source == nil {
+		return input, false, nil
+	}
 	name, args, ok := parseCommand(input)
 	if !ok {
 		return input, false, nil
@@ -237,7 +241,7 @@ func (e *DirCommandExpander) Expand(ctx context.Context, ws tool.Workspace, inpu
 
 	for _, dir := range e.dirs {
 		path := dir + "/" + name + ".md"
-		data, err := ws.Read(ctx, path)
+		data, err := e.source.Read(ctx, path)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -266,11 +270,14 @@ func (e *DirCommandExpander) Expand(ctx context.Context, ws tool.Workspace, inpu
 // files yields nothing). A file that cannot be read is skipped (logged via no
 // channel here — it simply contributes nothing) rather than aborting the scan; a
 // Glob fault on a dir IS returned, since that is a genuine enumeration failure.
-func (e *DirCommandExpander) List(ctx context.Context, ws tool.Workspace) ([]Command, error) {
+func (e *DirCommandExpander) List(ctx context.Context) ([]Command, error) {
+	if e.source == nil {
+		return nil, nil
+	}
 	seen := make(map[string]struct{})
 	var out []Command
 	for _, dir := range e.dirs {
-		matches, err := ws.Glob(ctx, dir+"/*.md")
+		matches, err := e.source.Glob(ctx, dir+"/*.md")
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +290,7 @@ func (e *DirCommandExpander) List(ctx context.Context, ws tool.Workspace) ([]Com
 			if _, dup := seen[name]; dup {
 				continue // earlier dir wins, matching Expand precedence
 			}
-			data, rerr := ws.Read(ctx, p)
+			data, rerr := e.source.Read(ctx, p)
 			if rerr != nil {
 				// A file that vanished or is unreadable between Glob and Read is not
 				// fatal to enumeration: skip it (it also won't be in seen, so a

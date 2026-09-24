@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -164,11 +165,21 @@ func (d *repairDiagnostics) With(...any) port.Diagnostics { return d }
 
 type errorCommandLister struct{ err error }
 
-func (l errorCommandLister) List(context.Context, tool.Workspace) ([]Command, error) {
+func (l errorCommandLister) List(context.Context) ([]prompt.Command, error) {
 	return nil, l.err
 }
+func (errorCommandLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (l errorCommandLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error) {
+	return l, func() {}, nil
+}
+func (errorCommandLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (errorCommandLister) Retire(session.SessionID) {}
 
-func TestCommandDiscoveryClosesReattachedBinding(t *testing.T) {
+func TestCommandDiscoveryDoesNotReattachExecution(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	closed := &atomic.Int32{}
 	provider := &repairPlacementProvider{binding: PlacementBinding{
@@ -194,8 +205,8 @@ func TestCommandDiscoveryClosesReattachedBinding(t *testing.T) {
 	if _, err := svc.ListCommandsForSession(t.Context(), source.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := closed.Load(); got != 1 {
-		t.Fatalf("reattached binding closes = %d, want 1", got)
+	if got := closed.Load(); got != 0 {
+		t.Fatalf("command discovery reattached execution and closed %d bindings", got)
 	}
 }
 

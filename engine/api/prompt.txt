@@ -1,29 +1,29 @@
-    ifacemethod func (CommandExpander).Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)
-    ifacemethod func (CommandLister).List(ctx context.Context, ws tool.Workspace) ([]Command, error)
+    ifacemethod func (CommandExpander).Expand(ctx context.Context, input string) (string, bool, error)
+    ifacemethod func (CommandLister).List(ctx context.Context) ([]Command, error)
     ifacemethod func (CommandPostExpansionSource).CommandBodyWithPost(ctx context.Context, name string) (body string, post string, found bool, err error)
     ifacemethod func (CommandSource).CommandBody(ctx context.Context, name string) (body string, found bool, err error)
     ifacemethod func (CommandSource).ListCommands(ctx context.Context) ([]Command, error)
-    ifacemethod func (InstructionAssembler).Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
+    ifacemethod func (InstructionAssembler).Assemble(ctx context.Context) ([]session.Message, error)
     ifacemethod func (MemoryIndexSource).Index(ctx context.Context) ([]tool.MemoryEntry, error)
     ifacemethod func (OperatorProfileSource).List(ctx context.Context, prefix string) ([]tool.MemoryEntry, error)
     ifacemethod func (RulesSource).ListRules(ctx context.Context) ([]Rule, error)
     ifacemethod func (SoulSource).Load(ctx context.Context) (string, error)
     ifacemethod func (UserModelSource).Index(ctx context.Context) ([]tool.MemoryEntry, error)
-    method func (*DirCommandExpander).Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)
-    method func (*DirCommandExpander).List(ctx context.Context, ws tool.Workspace) ([]Command, error)
-    method func (*MultiExpander).Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)
-    method func (*MultiExpander).List(ctx context.Context, ws tool.Workspace) ([]Command, error)
-    method func (*SourceExpander).Expand(ctx context.Context, _ tool.Workspace, input string) (string, bool, error)
-    method func (*SourceExpander).List(ctx context.Context, _ tool.Workspace) ([]Command, error)
+    method func (*DirCommandExpander).Expand(ctx context.Context, input string) (string, bool, error)
+    method func (*DirCommandExpander).List(ctx context.Context) ([]Command, error)
+    method func (*MultiExpander).Expand(ctx context.Context, input string) (string, bool, error)
+    method func (*MultiExpander).List(ctx context.Context) ([]Command, error)
+    method func (*SourceExpander).Expand(ctx context.Context, input string) (string, bool, error)
+    method func (*SourceExpander).List(ctx context.Context) ([]Command, error)
     method func (Layered).Render() string
-    method func (MemoryIndexAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
-    method func (MultiAssembler).Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
-    method func (NoopExpander).Expand(_ context.Context, _ tool.Workspace, input string) (string, bool, error)
-    method func (NoopExpander).List(_ context.Context, _ tool.Workspace) ([]Command, error)
-    method func (RootAssembler).Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
-    method func (RulesAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
-    method func (SoulAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
-    method func (UserModelAssembler).Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error)
+    method func (MemoryIndexAssembler).Assemble(ctx context.Context) ([]session.Message, error)
+    method func (MultiAssembler).Assemble(ctx context.Context) ([]session.Message, error)
+    method func (NoopExpander).Expand(_ context.Context, input string) (string, bool, error)
+    method func (NoopExpander).List(_ context.Context) ([]Command, error)
+    method func (RootAssembler).Assemble(ctx context.Context) ([]session.Message, error)
+    method func (RulesAssembler).Assemble(ctx context.Context) ([]session.Message, error)
+    method func (SoulAssembler).Assemble(ctx context.Context) ([]session.Message, error)
+    method func (UserModelAssembler).Assemble(ctx context.Context) ([]session.Message, error)
 const DefaultOperatorProfileMaxBytes untyped int = 8192
 const DefaultOperatorProfileMaxEntries untyped int = 32
 const DefaultOperatorProfileMaxRunes untyped int = 4096
@@ -40,14 +40,14 @@ const MaxRuleBytes untyped int = 20480
 const RuleOriginDriver RuleOrigin = "driver"
 const RuleOriginProject RuleOrigin = "project"
 const RuleOriginUser RuleOrigin = "user"
-func AssembleWithManifest(ctx context.Context, ws tool.Workspace, a InstructionAssembler) ([]session.Message, []InstructionManifest, error)
+func AssembleWithManifest(ctx context.Context, a InstructionAssembler) ([]session.Message, []InstructionManifest, error)
 func Build(cfg Config) Layered
 func DefaultRole() string
 func DefaultTone() string
 func DiscoverInstructions(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
 func EnvBlock(env Env) string
 func IsInjectedTurn0Fragment(text string) bool
-func NewDirCommandExpander(dirs ...string) *DirCommandExpander
+func NewDirCommandExpander(source tool.Workspace, dirs ...string) *DirCommandExpander
 func NewMultiAssembler(assemblers ...InstructionAssembler) MultiAssembler
 func NewMultiExpander(expanders ...CommandExpander) *MultiExpander
 func NewSourceExpander(src CommandSource) *SourceExpander
@@ -55,14 +55,14 @@ func RulesHeader() string
 func ValidCommandName(name string) bool
 type Builder func(Config) Layered
 type Command struct{Name string; Description string}
-type CommandExpander interface{Expand(ctx context.Context, ws tool.Workspace, input string) (string, bool, error)}
-type CommandLister interface{List(ctx context.Context, ws tool.Workspace) ([]Command, error)}
+type CommandExpander interface{Expand(ctx context.Context, input string) (string, bool, error)}
+type CommandLister interface{List(ctx context.Context) ([]Command, error)}
 type CommandPostExpansionSource interface{CommandBodyWithPost(ctx context.Context, name string) (body string, post string, found bool, err error)}
 type CommandSource interface{CommandBody(ctx context.Context, name string) (body string, found bool, err error); ListCommands(ctx context.Context) ([]Command, error)}
 type Config struct{Role string; Tone string; Safety string; Tools []tool.ToolSpec; Env Env; OperatorProfile OperatorProfileConfig}
 type DirCommandExpander struct{}
 type Env struct{Cwd string; OS string; Model string; Date string; Mode string; Shell string; GitStatus string}
-type InstructionAssembler interface{Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)}
+type InstructionAssembler interface{Assemble(ctx context.Context) ([]session.Message, error)}
 type InstructionManifest struct{Kind string; Provenance string}
 type Layered struct{StablePrefix string; VolatileSuffix string}
 type MemoryIndexAssembler struct{Src MemoryIndexSource; MaxEntries int; MaxBytes int}
@@ -72,7 +72,7 @@ type MultiExpander struct{}
 type NoopExpander struct{}
 type OperatorProfileConfig struct{Entries []tool.MemoryEntry; MaxEntries int; MaxBytes int; MaxRunes int}
 type OperatorProfileSource interface{List(ctx context.Context, prefix string) ([]tool.MemoryEntry, error)}
-type RootAssembler struct{}
+type RootAssembler struct{Source tool.Workspace}
 type Rule struct{Name string; Body string; Paths []string; Origin RuleOrigin}
 type RuleOrigin string
 type RulesAssembler struct{Src RulesSource; MaxBytes int; MaxCount int}

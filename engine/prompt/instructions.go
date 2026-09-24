@@ -30,15 +30,20 @@ const (
 // AssembleWithManifest runs an assembler exactly once and returns one metadata row per
 // resulting message. Built-in assemblers retain their known provenance; custom
 // assemblers remain compatible and are honestly labelled custom/unknown.
-func AssembleWithManifest(ctx context.Context, ws tool.Workspace, a InstructionAssembler) ([]session.Message, []InstructionManifest, error) {
+func AssembleWithManifest(ctx context.Context, a InstructionAssembler) ([]session.Message, []InstructionManifest, error) {
 	if a == nil {
 		return nil, nil, nil
+	}
+	if layered, ok := a.(interface {
+		AssembleWithManifest(context.Context) ([]session.Message, []InstructionManifest, error)
+	}); ok {
+		return layered.AssembleWithManifest(ctx)
 	}
 	if multi, ok := a.(MultiAssembler); ok {
 		var messages []session.Message
 		var manifest []InstructionManifest
 		for _, child := range multi.Assemblers {
-			childMessages, childManifest, err := AssembleWithManifest(ctx, ws, child)
+			childMessages, childManifest, err := AssembleWithManifest(ctx, child)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -47,7 +52,7 @@ func AssembleWithManifest(ctx context.Context, ws tool.Workspace, a InstructionA
 		}
 		return messages, manifest, nil
 	}
-	messages, err := a.Assemble(ctx, ws)
+	messages, err := a.Assemble(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,8 +82,8 @@ func instructionAssemblerManifest(a InstructionAssembler) (kind, provenance stri
 }
 
 // InstructionAssembler resolves the ordered set of project-instruction messages
-// for a workspace, returned as user-role messages to be recorded once at the
-// start of a run.
+// for its configured sources, returned as ephemeral user-role messages assembled
+// once at the start of a run.
 //
 // It is the seam that makes scoped context assembly (pattern 2) pluggable: the
 // loop consumes this interface instead of calling a discovery function directly,
@@ -86,22 +91,27 @@ func instructionAssemblerManifest(a InstructionAssembler) (kind, provenance stri
 // be wired at the composition root without touching the loop. The default
 // implementation, RootAssembler, reproduces the v1 root-only behaviour exactly.
 type InstructionAssembler interface {
-	// Assemble returns the instruction messages for ws, in the order they should
-	// be recorded. A nil/empty slice means "no project instructions"; an error is
-	// returned only for a genuine read fault (not a missing file).
-	Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error)
+	// Assemble returns instruction messages from the bound sources, in order.
+	// A nil/empty slice means no contribution; an error is returned only for a
+	// genuine read fault (not a missing optional file).
+	Assemble(ctx context.Context) ([]session.Message, error)
 }
 
 // RootAssembler is the default InstructionAssembler. It resolves project
 // instructions from the workspace root only (AGENTS.md winning, CLAUDE.md as
 // fallback) by delegating to DiscoverInstructions, so it is byte-for-byte
-// identical to the v1 behaviour. The zero value is ready to use.
-type RootAssembler struct{}
+// identical to the v1 behaviour. A nil Source contributes nothing.
+type RootAssembler struct {
+	Source tool.Workspace
+}
 
 // Assemble implements InstructionAssembler over the workspace root, delegating to
 // DiscoverInstructions.
-func (RootAssembler) Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error) {
-	return DiscoverInstructions(ctx, ws)
+func (a RootAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
+	if a.Source == nil {
+		return nil, nil
+	}
+	return DiscoverInstructions(ctx, a.Source)
 }
 
 // Compile-time assertion that RootAssembler satisfies the interface.
@@ -128,13 +138,13 @@ func NewMultiAssembler(assemblers ...InstructionAssembler) MultiAssembler {
 }
 
 // Assemble runs each child in order and concatenates their messages.
-func (m MultiAssembler) Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error) {
+func (m MultiAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
 	var out []session.Message
 	for _, a := range m.Assemblers {
 		if a == nil {
 			continue
 		}
-		msgs, err := a.Assemble(ctx, ws)
+		msgs, err := a.Assemble(ctx)
 		if err != nil {
 			return nil, err
 		}

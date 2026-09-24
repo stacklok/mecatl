@@ -342,6 +342,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"providers":              configgen.TierOperator, // operator-only: a project cannot choose LLM endpoints or auth posture
 		"credential_store":       configgen.TierOperator, // operator-only: OIDC credential custody is host authority
 		"provider_overrides":     configgen.TierOperator, // operator-only: a project cannot redirect built-in provider traffic
+		"harness_context":        configgen.TierOperator, // operator-only: project content cannot register or reorder its own sources
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup
 		"command_runner":         configgen.TierOperator, // operator-only: project cannot select a shell or restore ambient credentials

@@ -54,6 +54,63 @@ import (
 	"github.com/stacklok/mecatl/engine/learning"
 )
 
+// HarnessContextSection is the strict operator-owned harness source policy.
+type HarnessContextSection struct {
+	// EnabledSources is the unique allowlist of registered IDs. Each ID must be
+	// used by at least one kind; unknown, unused, or unsupported references fail startup.
+	EnabledSources []string `yaml:"enabled_sources"`
+	// Kinds must include all five content kinds, each with an explicit mode.
+	Kinds HarnessContextKinds `yaml:"kinds"`
+}
+
+// HarnessContextKinds contains the five closed harness content kinds.
+type HarnessContextKinds struct {
+	Instructions HarnessContextKind `yaml:"instructions"`
+	Commands     HarnessContextKind `yaml:"commands"`
+	Rules        HarnessContextKind `yaml:"rules"`
+	Skills       HarnessContextKind `yaml:"skills"`
+	AgentDefs    HarnessContextKind `yaml:"agent_defs"`
+}
+
+// HarnessContextKind configures one content kind.
+type HarnessContextKind struct {
+	// Sources lists enabled, kind-compatible IDs in highest-precedence order.
+	// Empty disables this kind without changing execution capabilities.
+	Sources []string `yaml:"sources"`
+	// Mode is required: combine concatenates instructions or unions named entries;
+	// replace takes the complete first nonempty post-exclusion source contribution.
+	Mode string `yaml:"mode"`
+	// Exclude removes exact source/name candidates before resolution. Instructions
+	// have no names and use source-only exclusions.
+	Exclude []HarnessContextExclude `yaml:"exclude"`
+	// Overrides changes exact-name collisions in combine mode only. Forbidden for
+	// instructions and replace mode. Duplicate or structurally no-op declarations fail startup.
+	Overrides []HarnessContextOverride `yaml:"overrides"`
+}
+
+// HarnessContextExclude removes one source contribution. Name is required for
+// named kinds and forbidden for instructions.
+type HarnessContextExclude struct {
+	// Source must occur in this kind's sources list.
+	Source string `yaml:"source"`
+	// Name is an exact, case-sensitive logical name. Required for named kinds;
+	// forbidden for instructions.
+	Name string `yaml:"name"`
+}
+
+// HarnessContextOverride changes one exact-name collision.
+type HarnessContextOverride struct {
+	// Name is the exact, case-sensitive collision name.
+	Name string `yaml:"name"`
+	// Winner is a configured source ID. If it has no post-exclusion candidate,
+	// normal ordered resolution applies without removing any replaced candidates.
+	Winner string `yaml:"winner"`
+	// Replaces is a nonempty unique list of configured source IDs, excluding Winner.
+	// When Winner is present, remove these candidates, then choose the first remaining
+	// candidate in original source order. An earlier non-replaced source still wins.
+	Replaces []string `yaml:"replaces"`
+}
+
 // MaxContextWindowTokens is the sane upper bound for configured and live model
 // context windows. It is deliberately shared with composition's live metadata
 // validation so either source cannot disable compaction with an absurd value.
@@ -80,6 +137,8 @@ type Config struct {
 	// ProviderOverrides holds strict operator-tier endpoint overrides for eligible
 	// built-in providers. It is never accepted from a project workspace.
 	ProviderOverrides ProviderOverrides `yaml:"provider_overrides"`
+	// HarnessContext is the strict operator-tier harness source policy.
+	HarnessContext *HarnessContextSection `yaml:"harness_context"`
 	// Permissions holds the allow/ask/deny rule-spec lists plus the child-scoped
 	// `subagent:` block.
 	Permissions Permissions `yaml:"permissions"`

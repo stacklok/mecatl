@@ -157,6 +157,67 @@ Strict endpoint overrides for built-in openai, openrouter, anthropic, and openco
 | `provider_overrides.openai` | `provideroverride` | `(absent)` |  |
 | `provider_overrides.openai.base_url` | `string` | `(required)` |  |
 
+## `harness_context`
+
+Tier: **operator**
+
+Selects trusted deployment-registered instruction and customization source IDs independently from execution placement. Unknown configured IDs fail startup; registration support is deployment-specific.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `harness_context.enabled_sources` | `[]string` | `(absent)` | EnabledSources is the unique allowlist of registered IDs. Each ID must be used by at least one kind; unknown, unused, or unsupported references fail startup. |
+| `harness_context.kinds` | `harnesscontextkinds` | `(absent)` | Kinds must include all five content kinds, each with an explicit mode. |
+| `harness_context.kinds.instructions` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.instructions.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.instructions.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.instructions.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.instructions.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.instructions.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.instructions.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.instructions.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.instructions.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.instructions.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.commands` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.commands.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.commands.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.commands.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.commands.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.commands.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.commands.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.commands.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.commands.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.commands.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.rules` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.rules.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.rules.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.rules.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.rules.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.rules.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.rules.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.rules.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.rules.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.rules.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.skills` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.skills.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.skills.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.skills.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.skills.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.skills.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.skills.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.skills.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.skills.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.skills.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+| `harness_context.kinds.agent_defs` | `HarnessContextKind` | `(absent)` |  |
+| `harness_context.kinds.agent_defs.sources` | `[]string` | `(absent)` | Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty disables this kind without changing execution capabilities. |
+| `harness_context.kinds.agent_defs.mode` | `string` | `(empty)` | Mode is required: combine concatenates instructions or unions named entries; replace takes the complete first nonempty post-exclusion source contribution. |
+| `harness_context.kinds.agent_defs.exclude` | `[]harnesscontextexclude` | `(absent)` | Exclude removes exact source/name candidates before resolution. Instructions have no names and use source-only exclusions. |
+| `harness_context.kinds.agent_defs.exclude[].source` | `string` | `(empty)` | Source must occur in this kind's sources list. |
+| `harness_context.kinds.agent_defs.exclude[].name` | `string` | `(empty)` | Name is an exact, case-sensitive logical name. Required for named kinds; forbidden for instructions. |
+| `harness_context.kinds.agent_defs.overrides` | `[]harnesscontextoverride` | `(absent)` | Overrides changes exact-name collisions in combine mode only. Forbidden for instructions and replace mode. Duplicate or structurally no-op declarations fail startup. |
+| `harness_context.kinds.agent_defs.overrides[].name` | `string` | `(empty)` | Name is the exact, case-sensitive collision name. |
+| `harness_context.kinds.agent_defs.overrides[].winner` | `string` | `(empty)` | Winner is a configured source ID. If it has no post-exclusion candidate, normal ordered resolution applies without removing any replaced candidates. |
+| `harness_context.kinds.agent_defs.overrides[].replaces` | `[]string` | `(absent)` | Replaces is a nonempty unique list of configured source IDs, excluding Winner. When Winner is present, remove these candidates, then choose the first remaining candidate in original source order. An earlier non-replaced source still wins. |
+
 ## `learning`
 
 Tier: **operator + project**

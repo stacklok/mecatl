@@ -33,11 +33,12 @@ func (fakeSink) Emit(context.Context, session.Event) {}
 // commands (so CommandExpander is a real DirCommandExpander, not the NoopExpander).
 func configWithCollaborators() Config {
 	return Config{
-		Model:          "test-model",
-		Compaction:     "cascade",
-		Tokenizer:      "tiktoken",
-		EnableCommands: true,
-		Sink:           fakeSink{},
+		Model:            "test-model",
+		Compaction:       "cascade",
+		Tokenizer:        "tiktoken",
+		EnableCommands:   true,
+		commandWorkspace: memfs.NewWorkspace("/command-source"),
+		Sink:             fakeSink{},
 	}
 }
 

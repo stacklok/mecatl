@@ -292,6 +292,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Workspace-free harness prompt sources (ADR 0354)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
+
 - **Exact Team parent-call correlation** — Team-tool member relationships now
   populate the existing `session.SessionRelationship.CallID`; validation permits
   that optional value only with a valid parent lifetime. The exported

@@ -12,6 +12,8 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -54,9 +56,19 @@ func (noopMemStore) Search(context.Context, string, int) ([]tool.MemoryEntry, er
 
 type stubCommandLister struct{}
 
-func (*stubCommandLister) List(context.Context, tool.Workspace) ([]server.Command, error) {
+func (*stubCommandLister) List(context.Context) ([]prompt.Command, error) {
 	return nil, nil
 }
+func (*stubCommandLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (s *stubCommandLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (server.CommandSourceBinding, func(), error) {
+	return s, func() {}, nil
+}
+func (*stubCommandLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (*stubCommandLister) Retire(session.SessionID) {}
 
 // stubMemberEngine satisfies Config.MemberEngine (MemberEngineFactory) just
 // enough to be non-nil; the Service only nil-checks it for the teams cap. It is

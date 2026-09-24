@@ -34,6 +34,7 @@ func BuildModel(docs Docs) *Model {
 		providersSubtree(docs),
 		credentialStoreSubtree(docs),
 		providerOverridesSubtree(docs),
+		harnessContextSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
 		commandRunnerSubtree(docs),
@@ -105,6 +106,43 @@ func renderType(t reflect.Type) string {
 		return strings.ToLower(t.Name())
 	default:
 		return t.Kind().String()
+	}
+}
+
+func harnessContextSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("HarnessContextSection", permconfig.HarnessContextSection{}, docs)
+	kindFields := fieldsOf("HarnessContextKind", permconfig.HarnessContextKind{}, docs)
+	for _, field := range kindFields {
+		switch field.Key {
+		case "mode":
+			field.ExampleValue = "combine"
+		case "exclude":
+			field.Nested = fieldsOf("HarnessContextExclude", permconfig.HarnessContextExclude{}, docs)
+		case "overrides":
+			field.Nested = fieldsOf("HarnessContextOverride", permconfig.HarnessContextOverride{}, docs)
+		}
+	}
+	for _, field := range fields {
+		if field.Key != "kinds" {
+			continue
+		}
+		for _, key := range []string{"instructions", "commands", "rules", "skills", "agent_defs"} {
+			field.Nested = append(field.Nested, &Field{Key: key, Type: "HarnessContextKind", Default: "(absent)", Nested: kindFields})
+		}
+	}
+	return &Subtree{
+		Key: "harness_context", Tier: TierOperator, CommentedOut: true,
+		Doc:    "Selects trusted deployment-registered instruction and customization source IDs independently from execution placement. Unknown configured IDs fail startup; registration support is deployment-specific.",
+		Fields: fields,
+		Example: []string{
+			"enabled_sources: [local]",
+			"kinds:",
+			"  instructions: {sources: [local], mode: combine}",
+			"  commands: {sources: [local], mode: combine}",
+			"  rules: {sources: [local], mode: combine}",
+			"  skills: {sources: [local], mode: combine}",
+			"  agent_defs: {sources: [local], mode: combine}",
+		},
 	}
 }
 

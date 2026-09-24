@@ -54,7 +54,7 @@ func validateDriverConfig(cfg Config) error {
 }
 
 func validateDriverSourceConfig(cfg Config) error {
-	if cfg.SkillSourceURL != "" && (len(cfg.SkillsDirs) > 0 || cfg.SkillsConventional) {
+	if cfg.harnessResolver == nil && cfg.SkillSourceURL != "" && (len(cfg.SkillsDirs) > 0 || cfg.SkillsConventional) {
 		return fmt.Errorf("--skill-source-url %q and --skills-dir/--skills-conventional are mutually exclusive: skills come either from the local directories or from the remote driver, never both", cfg.SkillSourceURL)
 	}
 	if cfg.SoulSourceURL != "" && cfg.SoulPath != "" {
@@ -62,7 +62,7 @@ func validateDriverSourceConfig(cfg Config) error {
 	}
 	// Explicit agent dirs clash with the driver; default conventional discovery
 	// is superseded because it is enabled and inert by default.
-	if cfg.AgentSourceURL != "" && len(cfg.AgentsDirs) > 0 {
+	if cfg.harnessResolver == nil && cfg.AgentSourceURL != "" && len(cfg.AgentsDirs) > 0 {
 		return fmt.Errorf("--agent-source-url %q and --agents-dir are mutually exclusive: agent definitions come either from the explicit local directories or from the remote driver, never both (the default conventional discovery is superseded, not an error)", cfg.AgentSourceURL)
 	}
 	return nil
