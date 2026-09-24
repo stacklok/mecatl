@@ -9,7 +9,7 @@
 **Expected tasks:** 1
 **Spine waiver:** On 2026-09-24, after the sequencing conflict was explained, the directing human explicitly confirmed `i-would-like-to-detect-the-siz` as the documentation/plan PR and `impl/mecatui-full-width-tool-cards` as its implementation PR.
 **Issue:** None — direct operator request.
-**Plan PR:** Added when the stack is submitted.
+**Plan PR:** [#1865](https://github.com/stacklok/mecatl/pull/1865).
 **Approved baseline:** Waived only for this explicitly authorized simultaneous stack; human merge authority and the implementation gates remain unchanged.
 
 Main-conversation tool cards, including the `Skill` tool used to activate skills and read their assets, will occupy the same terminal-width budget as ordinary conversation text. The existing Bubble Tea resize path remains authoritative: cards reflow when the terminal width changes, retain their normal frame whenever the established card frame fits, fall back to the existing terminal-safe frameless rendering at tiny widths, and never overflow the terminal.
