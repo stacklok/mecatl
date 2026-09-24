@@ -2,11 +2,13 @@
 
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import { describe, expect, it } from "vitest";
+import { applyRunDelivery, initialRunDeliveryState } from "./chat-state";
 import {
   abortsOnSessionSwitch,
   acceptsDelivery,
   CATCHING_UP_NOTICE,
   controlTarget,
+  createActivityDeduplicator,
   decideTruncation,
   drainsQueue,
   MAX_ACTIVITY_REATTACHES,
@@ -64,19 +66,129 @@ describe("runStreamEnd", () => {
     expect(runStreamEnd({ sawResult: false }, true, "prompt")).toEqual({ kind: "unfollowed" });
   });
 
-  it("keeps the no-result fallback for a stream that ended on its own", () => {
-    expect(runStreamEnd({ sawResult: false }, false, "prompt")).toEqual({
-      failure: {
-        message: "The agent stopped before returning a result.",
-        permanent: false,
-        prompt: "prompt",
-      },
-      kind: "settled",
-    });
+  it("keeps an abrupt close uncertain until a result or run.error arrives", () => {
+    expect(runStreamEnd({ sawResult: false }, false, "prompt")).toEqual({ kind: "uncertain" });
+    expect(drainsQueue({ kind: "uncertain" }, "chat-a", "chat-a", false)).toBe(false);
     expect(runStreamEnd({ sawResult: true }, false, "prompt")).toEqual({
       failure: undefined,
       kind: "settled",
     });
+  });
+
+  it("keeps gaps and abrupt closes separate from results", () => {
+    const gap = decideTruncation({ cursor: "", reason: "gap", type: "run.truncated" }, 0);
+    expect(gap.action).toBe("missing-history");
+    expect(runStreamEnd({ sawResult: false }, true, "prompt")).toEqual({ kind: "unfollowed" });
+    expect(runStreamEnd({ sawResult: false }, false, "prompt")).toEqual({ kind: "uncertain" });
+    const failure = { message: "provider down", permanent: false, prompt: "prompt" };
+    expect(runStreamEnd({ failure, sawResult: false }, false, "prompt")).toEqual({
+      failure,
+      kind: "settled",
+    });
+  });
+});
+
+describe("bounded replay", () => {
+  it("continues bounded replay without duplicate messages", () => {
+    const accepts = createActivityDeduplicator();
+    const options = {
+      newId: (() => {
+        let n = 0;
+        return () => `id-${++n}`;
+      })(),
+      now: 1,
+      replay: true,
+    };
+    let state = initialRunDeliveryState("assistant", "");
+    const frames: RunStreamEvent[] = [
+      { runId: "run-a", sessionId: "chat-a", type: "run.started" },
+      {
+        event: {
+          kind: "user_prompt",
+          runId: "run-a",
+          seq: "1",
+          text: "first",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "message.delta",
+          runId: "run-a",
+          seq: "2",
+          text: "one",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      { cursor: "c2", reason: "bound", type: "run.truncated" },
+      // A reattach can overlap a delivered boundary; it must not duplicate a delta.
+      {
+        event: {
+          kind: "message.delta",
+          runId: "run-a",
+          seq: "2",
+          text: "one",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "result",
+          runId: "run-a",
+          seq: "3",
+          text: "",
+          turn: 0,
+          unknown: false,
+          payload: { stop: "end_turn" },
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "user_prompt",
+          runId: "run-b",
+          seq: "4",
+          text: "second",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "message.delta",
+          runId: "run-b",
+          seq: "5",
+          text: "two",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+    ];
+    const resumes: string[] = [];
+    for (const frame of frames) {
+      if (frame.type === "run.truncated") {
+        const decision = decideTruncation(frame, resumes.length);
+        if (decision.action === "reattach") resumes.push(decision.cursor);
+      } else if (accepts(frame)) {
+        state = applyRunDelivery(state, frame, options);
+      }
+    }
+    expect(resumes).toEqual(["c2"]);
+    expect(state.runId).toBe("run-b");
+    expect(state.messages.map((message) => message.content)).toEqual([
+      "first",
+      "one",
+      "second",
+      "two",
+    ]);
   });
 });
 

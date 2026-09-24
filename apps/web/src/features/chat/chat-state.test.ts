@@ -431,20 +431,16 @@ describe("applyRunDelivery", () => {
 });
 
 describe("finalRunFailure", () => {
-  it("prefers an explicit failure over the no-result fallback", () => {
+  it("preserves an explicit failure", () => {
     const failure = { message: "boom", permanent: false, prompt: "hello" };
-    expect(finalRunFailure({ failure, sawResult: false }, "hello")).toEqual(failure);
+    expect(finalRunFailure({ failure, sawResult: false })).toEqual(failure);
   });
 
-  it("falls back to a generic message when the stream ended with no result at all", () => {
-    expect(finalRunFailure({ failure: undefined, sawResult: false }, "hello")).toEqual({
-      message: "The agent stopped before returning a result.",
-      permanent: false,
-      prompt: "hello",
-    });
+  it("does not turn an unexplained stream close into a retryable failure", () => {
+    expect(finalRunFailure({ failure: undefined, sawResult: false })).toBeUndefined();
   });
 
   it("reports no failure once a result was seen and nothing failed", () => {
-    expect(finalRunFailure({ failure: undefined, sawResult: true }, "hello")).toBeUndefined();
+    expect(finalRunFailure({ failure: undefined, sawResult: true })).toBeUndefined();
   });
 });

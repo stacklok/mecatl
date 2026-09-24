@@ -50,8 +50,10 @@ export function decideTruncation(
 
 /** How a consumed run stream ended, as far as the workspace needs to react. */
 export type RunStreamEnd =
-  /** The stream reached its natural end; `failure` is set when the run failed or produced no result. */
+  /** A result or run.error supplied an authoritative run outcome. */
   | { kind: "settled"; failure?: RunFailure }
+  /** The stream closed without an outcome; controls and queued prompts remain available. */
+  | { kind: "uncertain" }
   /** The view stopped following the run because of a truncation; the run's outcome is unknown. */
   | { kind: "unfollowed" };
 
@@ -62,10 +64,30 @@ export type RunStreamEnd =
 export function runStreamEnd(
   state: Pick<RunDeliveryState, "failure" | "sawResult">,
   unfollowed: boolean,
-  fallbackPrompt: string,
+  _fallbackPrompt: string,
 ): RunStreamEnd {
   if (unfollowed) return { kind: "unfollowed" };
-  return { failure: finalRunFailure(state, fallbackPrompt), kind: "settled" };
+  if (!state.sawResult && !state.failure) return { kind: "uncertain" };
+  return { failure: finalRunFailure(state), kind: "settled" };
+}
+
+/**
+ * Suppresses overlapping durable event frames across replay reattachments.
+ * Event sequence numbers are decimal strings from the BFF; run boundaries are
+ * still passed through because the reducer handles repeated starts itself.
+ */
+export function createActivityDeduplicator(): (delivery: RunStreamEvent) => boolean {
+  const latestByRun = new Map<string, bigint>();
+  return (delivery) => {
+    if (delivery.type !== "run.event") return true;
+    const { runId, seq } = delivery.event;
+    if (!/^\d+$/u.test(seq)) return true;
+    const current = BigInt(seq);
+    const previous = latestByRun.get(runId);
+    if (previous !== undefined && current <= previous) return false;
+    latestByRun.set(runId, current);
+    return true;
+  };
 }
 
 /** A stream's claim on the chat view: the session its run belongs to. */

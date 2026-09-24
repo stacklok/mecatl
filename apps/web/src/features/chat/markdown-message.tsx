@@ -8,7 +8,7 @@ import { HighlightedCode, langForClassName } from "./code-highlight";
 const mdComponents: Components = {
   a: ({ children: label, ...props }) => (
     <a
-      className="text-info underline underline-offset-2"
+      className="break-all text-info underline underline-offset-2"
       rel="noreferrer"
       target="_blank"
       {...props}
@@ -16,6 +16,19 @@ const mdComponents: Components = {
       {label}
     </a>
   ),
+  img: ({ alt, src }) => {
+    if (src?.startsWith("data:image/") || src?.startsWith("blob:")) {
+      return <img alt={alt ?? ""} className="max-w-full" src={src} />;
+    }
+    if (src && /^https?:\/\//u.test(src)) {
+      return (
+        <a className="break-all text-info underline" href={src} rel="noreferrer" target="_blank">
+          {alt || src} (external image)
+        </a>
+      );
+    }
+    return <span>{alt || "Image"}</span>;
+  },
   blockquote: ({ children }) => (
     <blockquote className="my-3 border-l-2 border-muted-foreground/30 pl-4 text-muted-foreground italic">
       {children}
@@ -25,7 +38,7 @@ const mdComponents: Components = {
     className ? (
       <HighlightedCode code={String(code).replace(/\n$/u, "")} lang={langForClassName(className)} />
     ) : (
-      <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.82em]" {...props}>
+      <code className="break-all rounded bg-muted px-1 py-0.5 font-mono text-[0.82em]" {...props}>
         {code}
       </code>
     ),
@@ -36,14 +49,14 @@ const mdComponents: Components = {
   hr: () => <hr className="my-4 border-t border-border" />,
   pre: ({ children: code, ...props }) => (
     <pre
-      className="my-3 overflow-x-auto rounded-lg border bg-muted/40 p-4 font-mono text-xs leading-6"
+      className="my-3 max-w-full overflow-x-auto rounded-lg border bg-muted/40 p-4 font-mono text-xs leading-6"
       {...props}
     >
       {code}
     </pre>
   ),
   table: ({ children }) => (
-    <div className="my-4 overflow-x-auto rounded-lg border bg-card">
+    <div className="my-4 max-w-full overflow-x-auto rounded-lg border bg-card">
       <table className="w-full text-sm">{children}</table>
     </div>
   ),
@@ -60,8 +73,10 @@ const mdComponents: Components = {
 
 export function MarkdownMessage({ children }: { children: string }) {
   return (
-    <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
-      {children}
-    </ReactMarkdown>
+    <div className="min-w-0 max-w-full break-words">
+      <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
+        {children}
+      </ReactMarkdown>
+    </div>
   );
 }

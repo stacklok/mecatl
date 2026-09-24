@@ -227,6 +227,7 @@ export interface RunDeliveryState {
   messages: ChatMessage[];
   runId?: string;
   sawResult: boolean;
+  stopReason?: string;
   turnStartedAt: number;
 }
 
@@ -277,6 +278,7 @@ export function applyRunDelivery(
       failure: undefined,
       runId: delivery.runId,
       sawResult: false,
+      stopReason: undefined,
       turnStartedAt: options.now,
     };
   }
@@ -288,6 +290,18 @@ export function applyRunDelivery(
 
   const event = delivery.event;
   let next = state;
+  if (event.runId && startsNewRun(state.runId, event.runId)) {
+    next = {
+      ...next,
+      activeAssistantId: state.runId && options.replay ? options.newId() : next.activeAssistantId,
+      activePrompt: state.runId && options.replay ? "" : next.activePrompt,
+      failure: undefined,
+      runId: event.runId,
+      sawResult: false,
+      stopReason: undefined,
+      turnStartedAt: options.now,
+    };
+  }
   if (event.usage && !options.replay) next = { ...next, liveUsage: event.usage };
 
   if (event.kind === "user_prompt" && options.replay) {
@@ -388,26 +402,17 @@ export function applyRunDelivery(
         turnStat: turnStat ?? message.turnStat,
       })),
       sawResult: true,
+      stopReason: stop,
     };
   }
   return next;
 }
 
-/** The final `RunFailure` for a finished stream: an explicit failure, or — if the stream ended with no `result` event at all — the generic "stopped early" fallback `consumeRun` has always reported. */
+/** Only an explicit run.error or failing result proves that a run failed. */
 export function finalRunFailure(
   state: Pick<RunDeliveryState, "failure" | "sawResult">,
-  fallbackPrompt: string,
 ): RunFailure | undefined {
-  return (
-    state.failure ??
-    (state.sawResult
-      ? undefined
-      : {
-          message: "The agent stopped before returning a result.",
-          permanent: false,
-          prompt: fallbackPrompt,
-        })
-  );
+  return state.failure;
 }
 
 function updateOrAppendMessage(
