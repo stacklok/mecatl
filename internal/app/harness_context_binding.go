@@ -25,7 +25,7 @@ func cacheProcessHarness[T any](registrations []HarnessSourceRegistration[T], sn
 		var pending chan struct{}
 		ready := false
 		closed := false
-		out[i].Bind = func(ctx context.Context, scope HarnessSourceScope) (T, func() error, error) {
+		out[i].Bind = func(ctx context.Context, _ HarnessSourceScope) (T, func() error, error) {
 			for {
 				mu.Lock()
 				if closed {
@@ -53,7 +53,7 @@ func cacheProcessHarness[T any](registrations []HarnessSourceRegistration[T], sn
 				pending = attempt
 				mu.Unlock()
 
-				bound, boundCleanup, err := registration.Bind(ctx, scope)
+				bound, boundCleanup, err := registration.Bind(ctx, HarnessSourceScope{})
 				if err == nil && snapshot != nil {
 					bound, err = snapshot(ctx, bound)
 				}

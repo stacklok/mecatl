@@ -207,7 +207,10 @@ func TestProcessHarnessSuccessfulSnapshotSharedAcrossOwners(t *testing.T) {
 	var binds, snapshots, cleanups atomic.Int32
 	regs, closeAll := cacheProcessHarness([]HarnessSourceRegistration[string]{{
 		ID: "process", Scope: HarnessSourceScopeProcess,
-		Bind: func(context.Context, HarnessSourceScope) (string, func() error, error) {
+		Bind: func(_ context.Context, scope HarnessSourceScope) (string, func() error, error) {
+			if scope.Principal != nil || scope.Profile != "" {
+				t.Error("process-scoped binding received caller-specific scope")
+			}
 			binds.Add(1)
 			return "bound", func() error { cleanups.Add(1); return nil }, nil
 		},
@@ -219,9 +222,13 @@ func TestProcessHarnessSuccessfulSnapshotSharedAcrossOwners(t *testing.T) {
 
 	const owners = 8
 	var wg sync.WaitGroup
-	for range owners {
+	for i := range owners {
 		wg.Go(func() {
-			got, _, err := regs[0].Bind(t.Context(), HarnessSourceScope{})
+			scope := HarnessSourceScope{
+				Principal: &session.Principal{Issuer: "issuer", Subject: fmt.Sprintf("owner-%d", i)},
+				Profile:   "no-fs",
+			}
+			got, _, err := regs[0].Bind(t.Context(), scope)
 			if err != nil || got != "bound-snapshot" {
 				t.Errorf("cached bind = %q, %v", got, err)
 			}
