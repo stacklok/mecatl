@@ -87,6 +87,7 @@ describe("session lifecycle", () => {
       "create",
       "get:created",
       "fork:created:peer",
+      "get:forked",
       "close:created",
       "get:created",
       "delete:created",
@@ -347,6 +348,7 @@ describe("session lifecycle", () => {
           return { sessionId: "forked" };
         },
         getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        getSession: (request) => ({ session: { sessionId: request.sessionId } }),
       });
     });
     const client = connect({ transport });
@@ -379,7 +381,7 @@ describe("session lifecycle", () => {
   it("create get and fork preserve request options and validate returned ids", async () => {
     const seen: string[] = [];
     let createId = "created";
-    let getId = "created";
+    let getId: string | undefined;
     let forkId = "forked";
     const transport = createRouterTransport((router) => {
       router.service(HarnessService, {
@@ -392,13 +394,13 @@ describe("session lifecycle", () => {
           return { sessionId: forkId };
         },
         getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
-        getSession: (_request, context) => {
+        getSession: (request, context) => {
           seen.push(`get:${context.requestHeader.get("x-caller")}`);
           return {
             session: {
               mode: SessionMode.Default,
               sessionCapabilities: { audio: false, image: true },
-              sessionId: getId,
+              sessionId: getId ?? request.sessionId,
             },
           };
         },
@@ -411,7 +413,7 @@ describe("session lifecycle", () => {
     await expect(client.sessions.fork("created", {}, options)).resolves.toMatchObject({
       id: "forked",
     });
-    expect(seen).toEqual(["create:kept", "get:kept", "fork:kept"]);
+    expect(seen).toEqual(["create:kept", "get:kept", "fork:kept", "get:kept"]);
 
     createId = "";
     await expect(client.sessions.create({}, options)).rejects.toBeInstanceOf(ProtocolError);

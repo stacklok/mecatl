@@ -564,6 +564,7 @@ interface SessionOperations {
   cancelRun(sessionId: string, runId: string): Promise<void>;
   readonly clientSignal: AbortSignal;
   features(options?: RequestOptions): Promise<ReadonlySet<string>>;
+  getSessionHandle(sessionId: string, options?: RequestOptions): Promise<Session>;
   invalidateCompatibility(): void;
   registerAttachment(close: () => Promise<void>): () => void;
   registerRun(cancel: () => Promise<void>): () => void;
@@ -875,7 +876,7 @@ class SessionImpl implements Session {
         transport: this.#operations.transportKind,
       });
     }
-    return new SessionImpl(response.sessionId, this.#baseOperations, undefined);
+    return this.#baseOperations.getSessionHandle(response.sessionId, requestOptions);
   }
 
   async uploadPdf(
@@ -1282,6 +1283,7 @@ class ClientImpl implements Client {
       cancelRun: (sessionId, runId) => this.#cancelRun(sessionId, runId),
       clientSignal: this.#abort.signal,
       features: (options) => this.#features(options),
+      getSessionHandle: (sessionId, options) => this.sessions.get(sessionId, options),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
       registerAttachment: (close) => this.#register(this.#attachments, close),
       registerRun: (cancel) => this.#register(this.#runs, cancel),
@@ -1386,7 +1388,12 @@ class ClientImpl implements Client {
           },
           sessionAffinityIfRepresentable(sourceSessionId, requestOptions),
         );
-        return this.#session(response.sessionId, "ForkSession", undefined);
+        if (response.sessionId === "") {
+          throw new ProtocolError("ForkSession returned no session id", {
+            transport: this.#transportKind,
+          });
+        }
+        return this.sessions.get(response.sessionId, requestOptions);
       },
       get: async (sessionId, options) => {
         const compatibility = await this.#compatibility(options, false);

@@ -101,6 +101,7 @@ describe("high-level session affinity", () => {
       "create-derived",
       "get",
       "fork",
+      "get",
       "prompt",
       "approve",
       "steer",
@@ -108,7 +109,18 @@ describe("high-level session affinity", () => {
       "close",
       "delete",
     ]);
-    expect(seen.every(({ affinity }) => affinity === sessionId)).toBe(true);
+    expect(seen.map(({ affinity }) => affinity)).toEqual([
+      sessionId,
+      sessionId,
+      sessionId,
+      "forked-session",
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+    ]);
     expect(seen.every(({ affinity }) => affinity !== run.id)).toBe(true);
     await client.close();
 
@@ -160,7 +172,7 @@ describe("high-level session affinity", () => {
           return Response.json({ session_id: sessionId }, { status: 201 });
         }
         if (operation === "get") {
-          return Response.json({ session_id: sessionId, state: "idle" });
+          return Response.json({ session_id: path.split("/").at(-1), state: "idle" });
         }
         if (operation === "fork") {
           return Response.json({ session_id: "forked-session" }, { status: 201 });
@@ -208,6 +220,7 @@ describe("high-level session affinity", () => {
       "create-derived",
       "get",
       "fork",
+      "get",
       "prompt",
       "approve",
       "steer",
@@ -215,7 +228,18 @@ describe("high-level session affinity", () => {
       "close",
       "delete",
     ]);
-    expect(httpSeen.every(({ affinity }) => affinity === sessionId)).toBe(true);
+    expect(httpSeen.map(({ affinity }) => affinity)).toEqual([
+      sessionId,
+      sessionId,
+      sessionId,
+      "forked-session",
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+      sessionId,
+    ]);
     expect(httpSeen.every(({ affinity }) => affinity !== httpRun.id)).toBe(true);
     await http.close();
   });
@@ -250,7 +274,7 @@ describe("high-level session affinity", () => {
     await client.sessions.get(externalId);
     await client.sessions.fork(externalId);
     await session.close();
-    expect(seenHeaders).toEqual([null, null, null, null, null]);
+    expect(seenHeaders).toEqual([null, null, null, null, null, null]);
 
     expect(() =>
       withSessionAffinity(externalId, {

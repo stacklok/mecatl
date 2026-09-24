@@ -144,14 +144,23 @@ describe("session lifecycle transport parity", () => {
       "setMode",
       "compact",
       "clear",
+      "get",
       "fork",
+      "get",
       "prompt",
       "retry",
       "close",
       "delete",
     ]);
     expect(grpcSeen.every((call) => call.caller === "kept")).toBe(true);
-    expect(grpcSeen.every((call) => call.affinity === "session")).toBe(true);
+    expect(
+      grpcSeen.filter((call) => call.operation === "get").map((call) => call.affinity),
+    ).toEqual(["session", "session", "cleared", "forked"]);
+    expect(
+      grpcSeen
+        .filter((call) => call.operation !== "get")
+        .every((call) => call.affinity === "session"),
+    ).toBe(true);
     expect(grpcSeen.find((call) => call.operation === "clear")?.body).toMatchObject({
       worktreeSelector: "clear-selector",
     });
@@ -216,7 +225,7 @@ describe("session lifecycle transport parity", () => {
           return Response.json({
             mode: "default",
             session_capabilities: { image: true },
-            session_id: "session",
+            session_id: path.split("/").at(-1),
           });
         }
         if (operation === "transcript") {
@@ -253,14 +262,23 @@ describe("session lifecycle transport parity", () => {
       "setMode",
       "compact",
       "clear",
+      "get",
       "fork",
+      "get",
       "prompt",
       "retry",
       "close",
       "delete",
     ]);
     expect(httpSeen.every((call) => call.caller === "kept")).toBe(true);
-    expect(httpSeen.every((call) => call.affinity === "session")).toBe(true);
+    expect(
+      httpSeen.filter((call) => call.operation === "get").map((call) => call.affinity),
+    ).toEqual(["session", "session", "cleared", "forked"]);
+    expect(
+      httpSeen
+        .filter((call) => call.operation !== "get")
+        .every((call) => call.affinity === "session"),
+    ).toBe(true);
     expect(httpSeen.find((call) => call.operation === "clear")?.body).toEqual({
       worktree_selector: "clear-selector",
     });
