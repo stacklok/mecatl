@@ -920,6 +920,15 @@ export interface ParallelEventPayload {
 }
 
 // @public
+export function pdfPart(artifactId: string): PdfPromptPart;
+
+// @public
+export interface PdfPromptPart {
+    readonly artifactId: string;
+    readonly kind: "pdf";
+}
+
+// @public
 export class PermissionAskAlreadyResolvedError extends InvalidStateError {
     constructor(askId: string, options: Omit<MecatlErrorOptions, "code">);
     // (undocumented)
@@ -993,7 +1002,7 @@ export interface PlanResolutionResult {
 export type PromptInput = string | readonly PromptPart[];
 
 // @public
-export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart;
+export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart | PdfPromptPart;
 
 // @public
 export class PromptValidationError extends MecatlError {
@@ -1405,6 +1414,9 @@ export interface Session {
     setMode(mode: SessionMode, options?: RequestOptions): Promise<SessionSnapshot>;
     snapshot(options?: RequestOptions): Promise<SessionSnapshot>;
     transcript(options?: RequestOptions): Promise<SessionTranscript>;
+    uploadPdf(source: Blob | AsyncIterable<Uint8Array>, options: {
+        name: string;
+    }, requestOptions?: RequestOptions): Promise<PdfPromptPart>;
 }
 
 // @public

@@ -269,6 +269,12 @@ export interface ResolvedHTTPRoute {
   readonly path: string;
 }
 
+export interface ResolvedHTTPBinaryRoute {
+  readonly classification: HTTPBinaryTransportClassification;
+  readonly method: HTTPMethod;
+  readonly path: string;
+}
+
 type JsonRecord = Record<string, JsonValue>;
 
 function jsonRecord(value: JsonValue | undefined): JsonRecord {
@@ -343,16 +349,14 @@ function routeBody(
   return body;
 }
 
-/** Resolves one catalogued HTTP request without introducing a second route table. */
-export function resolveHTTPRoute(
-  method: DescMethodUnary | DescMethodStreaming,
+function resolvePath(
+  pathTemplate: string,
+  pathParameters: readonly string[],
+  queryParameters: readonly string[],
   input: JsonRecord,
-): ResolvedHTTPRoute | undefined {
-  const entry = rpcCatalogByDescriptor.get(method);
-  if (entry?.http.kind !== "http") return undefined;
-  const classification = entry.http;
-  let path = classification.pathTemplate;
-  for (const mapping of classification.pathParameters) {
+): string {
+  let path = pathTemplate;
+  for (const mapping of pathParameters) {
     const [placeholder, source] = mappingParts(mapping);
     const value = source.startsWith("@") ? source.slice(1) : fieldValue(input, source);
     if (value === undefined) throw new TypeError(`Missing HTTP route field ${source}`);
@@ -362,7 +366,7 @@ export function resolveHTTPRoute(
     );
   }
   const query = new URLSearchParams();
-  for (const mapping of classification.queryParameters) {
+  for (const mapping of queryParameters) {
     const [name, source] = mappingParts(mapping);
     const value = fieldValue(input, source);
     if (value === undefined) continue;
@@ -373,11 +377,47 @@ export function resolveHTTPRoute(
     }
   }
   const suffix = query.toString();
+  return `${path}${suffix === "" ? "" : `?${suffix}`}`;
+}
+
+/** Resolves one catalogued HTTP request without introducing a second route table. */
+export function resolveHTTPRoute(
+  method: DescMethodUnary | DescMethodStreaming,
+  input: JsonRecord,
+): ResolvedHTTPRoute | undefined {
+  const entry = rpcCatalogByDescriptor.get(method);
+  if (entry?.http.kind !== "http") return undefined;
+  const classification = entry.http;
   return {
     body: routeBody(classification, input),
     classification,
     method: classification.method,
-    path: `${path}${suffix === "" ? "" : `?${suffix}`}`,
+    path: resolvePath(
+      classification.pathTemplate,
+      classification.pathParameters,
+      classification.queryParameters,
+      input,
+    ),
+  };
+}
+
+/** Resolves a reviewed binary route for the PDF transport path. */
+export function resolveHTTPBinaryRoute(
+  method: DescMethodUnary | DescMethodStreaming,
+  input: JsonRecord,
+): ResolvedHTTPBinaryRoute | undefined {
+  const entry = rpcCatalogByDescriptor.get(method);
+  if (entry?.http.kind !== "http-binary") return undefined;
+  const classification = entry.http;
+  return {
+    classification,
+    method: classification.method,
+    path: resolvePath(
+      classification.pathTemplate,
+      classification.pathParameters,
+      classification.queryParameters,
+      input,
+    ),
   };
 }
 

@@ -13,17 +13,20 @@ import { credentialHeaders } from "./credentials.js";
 import type { ProblemDetails } from "./errors.js";
 import {
   errorFromProblem,
+  normalizeError,
   ProtocolError,
   TransportError,
   UnsupportedFeatureError,
 } from "./errors.js";
-import type { ConverseRequest } from "./gen/mecatl/v1/harness_pb.js";
+import type { ConverseRequest, UploadPdfRequest } from "./gen/mecatl/v1/harness_pb.js";
 import { normalizeHttpWktJson } from "./http-wkt.js";
+import { PDF_CHUNK_BYTES, PDF_MAX_BYTES } from "./pdf-upload.js";
 import { registerRawJson, registerTransport } from "./raw.js";
 import {
   type HTTPMethod,
   type HTTPOnlyControlName,
   type HTTPTransportClassification,
+  resolveHTTPBinaryRoute,
   resolveHTTPOnlyControl,
   resolveHTTPRoute,
 } from "./rpc-catalog.js";
@@ -108,6 +111,7 @@ function strictSteerOutcome(value: JsonValue | undefined): number | JsonValue | 
 function contentKind(value: number): string {
   if (value === 1) return "image";
   if (value === 2) return "audio";
+  if (value === 3) return "pdf";
   return "";
 }
 
@@ -376,6 +380,7 @@ class HttpTransport implements Transport {
           expected_run_id: kind.value.expectedRunId,
           message_id: kind.value.messageId,
           parts: kind.value.parts.map((part) => ({
+            ...(part.artifactId === "" ? {} : { artifact_id: part.artifactId }),
             ...(part.data.length === 0 ? {} : { data: bytesToBase64(part.data) }),
             kind: contentKind(part.kind),
             mime_type: part.mimeType,
@@ -431,6 +436,116 @@ class HttpTransport implements Transport {
     const firstInput = first.done ? create(method.input) : create(method.input, first.value);
     const jsonInput = encodeInput(method, firstInput);
     const effectiveSignal = timeoutSignal(signal, timeoutMs);
+    if (method.name === "UploadPdf") {
+      const firstFrame = firstInput as unknown as UploadPdfRequest;
+      if (
+        firstFrame.payload.case !== "metadata" ||
+        firstFrame.payload.value.mimeType !== "application/pdf"
+      ) {
+        throw new ProtocolError("UploadPdf must start with PDF metadata", { transport: "http" });
+      }
+      const resolved = resolveHTTPBinaryRoute(method, jsonInput);
+      if (
+        resolved?.classification.requestBody !== "binary" ||
+        resolved.classification.response !== "json"
+      ) {
+        throw new UnsupportedFeatureError("http_UploadPdf", { transport: "http" });
+      }
+      let sourceFailure: unknown;
+      let complete = false;
+      let total = 0;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          async pull(controller) {
+            try {
+              if (effectiveSignal?.aborted) throw normalizeError(effectiveSignal.reason, "http");
+              const next = await iterator.next();
+              if (next.done) {
+                complete = true;
+                controller.close();
+                return;
+              }
+              const frame = create(method.input, next.value) as unknown as UploadPdfRequest;
+              if (
+                frame.payload.case !== "chunk" ||
+                frame.payload.value.byteLength === 0 ||
+                frame.payload.value.byteLength > PDF_CHUNK_BYTES
+              ) {
+                throw new ProtocolError("UploadPdf contains an invalid chunk", {
+                  transport: "http",
+                });
+              }
+              total += frame.payload.value.byteLength;
+              if (total > PDF_MAX_BYTES) {
+                throw new ProtocolError("UploadPdf exceeds the PDF size limit", {
+                  transport: "http",
+                });
+              }
+              controller.enqueue(frame.payload.value);
+            } catch (cause) {
+              sourceFailure = cause;
+              controller.error(cause);
+            }
+          },
+          async cancel() {
+            await iterator.return?.();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const headers = await credentialHeaders(this.#credentialOptions, "http", header);
+      headers.set("content-type", "application/pdf");
+      const init: RequestInit & { duplex: "half" } = {
+        body,
+        duplex: "half",
+        headers,
+        method: resolved.method,
+        ...(this.#credentials === undefined ? {} : { credentials: this.#credentials }),
+        ...(effectiveSignal === undefined ? {} : { signal: effectiveSignal }),
+      };
+      let response: Response;
+      try {
+        response = await this.#fetch(`${this.#baseUrl}${resolved.path}`, init);
+        if (sourceFailure !== undefined) throw sourceFailure;
+      } catch (cause) {
+        if (!complete) void iterator.return?.().catch(() => undefined);
+        if (sourceFailure !== undefined) throw normalizeError(sourceFailure, "http");
+        if (effectiveSignal?.aborted) throw normalizeError(effectiveSignal.reason, "http");
+        throw new TransportError("The HTTP request could not reach the mecatl server", {
+          cause,
+          transport: "http",
+        });
+      }
+      if (!complete) void iterator.return?.().catch(() => undefined);
+      if (!response.ok) await this.#problem(response);
+      if (!complete) {
+        throw new ProtocolError("UploadPdf returned before the PDF request stream completed", {
+          status: response.status,
+          transport: "http",
+        });
+      }
+      let raw: JsonValue;
+      let message: MessageShape<O>;
+      try {
+        raw = (await response.json()) as JsonValue;
+        message = fromJson(method.output, normalizeHttpWktJson(method.output, raw), {
+          ignoreUnknownFields: true,
+        });
+      } catch {
+        throw malformedSuccess("UploadPdf returned invalid artifact metadata", response);
+      }
+      registerRawJson(message, raw);
+      return {
+        header: response.headers,
+        message: (async function* () {
+          yield message;
+        })(),
+        method,
+        service: method.parent,
+        stream: true,
+        trailer: new Headers(),
+      };
+    }
     let route: Route;
     let body: JsonRecord = {};
     let responseField: string | undefined;
@@ -451,10 +566,11 @@ class HttpTransport implements Transport {
         route = sessionControlRoute("prompt", sessionId);
         body = {
           parts: start.value.parts.map((part) => ({
-            data: part.data.length === 0 ? undefined : bytesToBase64(part.data),
+            ...(part.artifactId === "" ? {} : { artifact_id: part.artifactId }),
+            ...(part.data.length === 0 ? {} : { data: bytesToBase64(part.data) }),
             kind: contentKind(part.kind),
             mime_type: part.mimeType,
-            url: part.url,
+            ...(part.kind === 3 ? {} : { url: part.url }),
           })) as unknown as JsonValue,
           ...(start.value.serverOwnedPlanContinuation
             ? { server_owned_plan_continuation: true }

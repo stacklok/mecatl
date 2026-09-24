@@ -127,6 +127,7 @@ export type {
   ImagePromptPart,
   MediaPartOptions,
   MediaPartSource,
+  PdfPromptPart,
   PromptInput,
   PromptPart,
   TextPromptPart,
@@ -139,6 +140,7 @@ export {
   MAX_MEDIA_PART_BYTES,
   MAX_PROMPT_MEDIA_BYTES,
   MAX_PROMPT_MEDIA_PARTS,
+  pdfPart,
   textPart,
 } from "./media.js";
 export type {

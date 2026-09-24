@@ -110,6 +110,8 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`Models`](#api-models-interface) | Interface |
 | [`NoRunsError`](#api-norunserror-class) | Class |
 | [`ParallelEventPayload`](#api-paralleleventpayload-interface) | Interface |
+| [`pdfPart`](#api-pdfpart-function) | Function |
+| [`PdfPromptPart`](#api-pdfpromptpart-interface) | Interface |
 | [`PermissionAskAlreadyResolvedError`](#api-permissionaskalreadyresolvederror-class) | Class |
 | [`PermissionAskEventPayload`](#api-permissionaskeventpayload-interface) | Interface |
 | [`PermissionAskResponder`](#api-permissionaskresponder-typealias) | Type alias |
@@ -833,6 +835,22 @@ Parameters:
 Returns: `Promise<ImagePromptPart>`: A validated image prompt part containing the Blob's bytes.
 
 Throws: `PromptValidationError` when the MIME type or size is invalid.
+
+<Heading as="h3" id="api-pdfpart-function"><code>pdfPart</code></Heading>
+
+Constructs a reference to a PDF already uploaded to this session. The server checks that the selected session owns the artifact ID.
+
+```ts
+export declare function pdfPart(artifactId: string): PdfPromptPart;
+```
+
+Parameters:
+
+- `artifactId` (`string`): Opaque ID returned by Session.uploadPdf().
+
+Returns: `PdfPromptPart`: A PDF prompt part containing only the artifact ID.
+
+Throws: `PromptValidationError` when the ID is empty or malformed.
 
 <Heading as="h3" id="api-textpart-function"><code>textPart</code></Heading>
 
@@ -3296,6 +3314,30 @@ readonly winnerWorkspace: string;
 readonly workspace: string;
 ```
 
+<Heading as="h3" id="api-pdfpromptpart-interface"><code>PdfPromptPart</code></Heading>
+
+A session-owned PDF uploaded with Session.uploadPdf().
+
+```ts
+export interface PdfPromptPart
+```
+
+<Heading as="h4" id="api-pdfpromptpart-artifactid-propertysignature"><code>PdfPromptPart.artifactId</code></Heading>
+
+Opaque ID of a PDF owned by the current session.
+
+```ts
+readonly artifactId: string;
+```
+
+<Heading as="h4" id="api-pdfpromptpart-kind-propertysignature"><code>PdfPromptPart.kind</code></Heading>
+
+PDF part discriminator.
+
+```ts
+readonly kind: "pdf";
+```
+
 <Heading as="h3" id="api-permissionaskeventpayload-interface"><code>PermissionAskEventPayload</code></Heading>
 
 The payload shared by `permission.ask` and `permission.retract`.
@@ -3859,7 +3901,7 @@ readonly sessionId: string;
 
 <Heading as="h4" id="api-runcontrols-steer-methodsignature"><code>RunControls.steer</code></Heading>
 
-Injects text or ordered media into this exact live run. Structured prompt text fragments are joined with a newline, and media parts retain their order relative to other media. An empty prompt is rejected locally. A late steer fails as stale and never creates a successor run.
+Injects text or ordered media and PDF references into this exact live run. Structured prompt text fragments are joined with a newline, and media parts retain their order relative to other media. An empty prompt is rejected locally. A late steer fails as stale and never creates a successor run.
 
 ```ts
 steer(prompt: PromptInput, options?: RunSteerOptions, requestOptions?: RequestOptions): Promise<RunSteerAcknowledgement>;
@@ -3867,7 +3909,7 @@ steer(prompt: PromptInput, options?: RunSteerOptions, requestOptions?: RequestOp
 
 Parameters:
 
-- `prompt` (`PromptInput`): Text, image, audio, or a structured prompt to inject.
+- `prompt` (`PromptInput`): Text or a structured text, image, audio, or PDF prompt.
 - `options` (`RunSteerOptions`, optional): Optional message correlation.
 - `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
@@ -4554,7 +4596,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`guardrailCoverage()`](#api-session-guardrailcoverage-methodsignature), [`guardrailReviewDetail()`](#api-session-guardrailreviewdetail-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`guardrailCoverage()`](#api-session-guardrailcoverage-methodsignature), [`guardrailReviewDetail()`](#api-session-guardrailreviewdetail-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature), [`uploadPdf()`](#api-session-uploadpdf-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -4833,7 +4875,7 @@ run(prompt: PromptInput, options?: RunOptions, requestOptions?: RequestOptions):
 
 Parameters:
 
-- `prompt` (`PromptInput`): Text or ordered text, image, and audio parts for the run.
+- `prompt` (`PromptInput`): Text or ordered text, image, audio, and PDF parts for the run.
 - `options` (`RunOptions`, optional): Automatic permission and plan-approval responders.
 - `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
@@ -4889,6 +4931,28 @@ Parameters:
 Returns: `Promise<SessionTranscript>`: The ordered transcript without provider-private replay fields.
 
 Throws: `ProtocolError` when the server response is missing or mismatched.
+
+<Heading as="h4" id="api-session-uploadpdf-methodsignature"><code>Session.uploadPdf</code></Heading>
+
+Streams one PDF into a session-owned artifact for later prompts or steers.
+
+```ts
+uploadPdf(source: Blob | AsyncIterable<Uint8Array>, options: {
+        name: string;
+    }, requestOptions?: RequestOptions): Promise<PdfPromptPart>;
+```
+
+Parameters:
+
+- `source` (`Blob | AsyncIterable<Uint8Array>`): Browser Blob or async source of PDF bytes.
+- `options` (`{ name: string; }`): A safe PDF basename.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<PdfPromptPart>`: A session-bound PDF prompt reference.
+
+Throws: `UnsupportedFeatureError` when artifact storage is unavailable.
+
+Throws: `PromptValidationError` for an invalid source or unsupported model.
 
 <Heading as="h3" id="api-sessionactivity-interface"><code>SessionActivity</code></Heading>
 
@@ -7066,7 +7130,7 @@ export type PromptInput = string | readonly PromptPart[];
 One segment accepted by Session.run().
 
 ```ts
-export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart;
+export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart | PdfPromptPart;
 ```
 
 <Heading as="h3" id="api-promptvalidationreason-typealias"><code>PromptValidationReason</code></Heading>

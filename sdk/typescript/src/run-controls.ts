@@ -146,14 +146,14 @@ export interface RunControls {
    */
   cancel(requestOptions?: RequestOptions): Promise<void>;
   /**
-   * Injects text or ordered media into this exact live run.
+   * Injects text or ordered media and PDF references into this exact live run.
    *
    * Structured prompt text fragments are joined with a newline, and media
    * parts retain their order relative to other media. An empty prompt is
    * rejected locally. A late steer fails as stale and never creates a successor
    * run.
    *
-   * @param prompt - Text, image, audio, or a structured prompt to inject.
+   * @param prompt - Text or a structured text, image, audio, or PDF prompt.
    * @param options - Optional message correlation.
    * @param requestOptions - Request headers, cancellation signal, and deadline.
    * @returns The server's accepted-or-appended acknowledgement.
@@ -399,10 +399,14 @@ class RunControlsImpl implements RunControls {
         messageId,
         parts: encoded.media.map((part) =>
           create(ContentSchema, {
-            ...(part.bytes === undefined ? {} : { data: part.bytes }),
-            kind: part.kind === "image" ? 1 : 2,
-            mimeType: part.mimeType,
-            ...(part.url === undefined ? {} : { url: part.url }),
+            ...(part.kind === "pdf"
+              ? { artifactId: part.artifactId }
+              : {
+                  ...(part.bytes === undefined ? {} : { data: part.bytes }),
+                  ...(part.url === undefined ? {} : { url: part.url }),
+                }),
+            kind: part.kind === "image" ? 1 : part.kind === "audio" ? 2 : 3,
+            mimeType: part.kind === "pdf" ? "application/pdf" : part.mimeType,
           }),
         ),
         sessionId: this.sessionId,
