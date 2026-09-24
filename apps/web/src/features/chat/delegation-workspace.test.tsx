@@ -408,6 +408,205 @@ describe("mounted delegated activity", () => {
     expect(container?.textContent).not.toContain("Subagent old-child");
   });
 
+  it("marks an unfinished replayed child unknown when a new run starts in the same session", async () => {
+    const oldStream = heldStream();
+    const newRun = heldStream();
+    let oldSignal: AbortSignal | undefined;
+    let newRunRequests = 0;
+    const fetcher = async (request: Request): Promise<Response> => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/v1/runtime") {
+        return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
+      }
+      if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
+      if (path === "/api/v1/sessions") {
+        return json({
+          complete: true,
+          items: [
+            {
+              capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+              createdAt: "2026-09-24T12:00:00Z",
+              debugTargetSessionId: "",
+              id: "session-a",
+              modelId: "test",
+              state: "idle",
+              title: "Session A",
+              titleProvenance: "",
+              titleRevision: "0",
+              turns: 1,
+              updatedAt: "2026-09-24T12:00:00Z",
+            },
+          ],
+        });
+      }
+      if (path === "/api/v1/sessions/session-a") {
+        return json({
+          capabilities: { image: false, manualCompaction: false, modelSelection: false },
+          id: "session-a",
+          mode: "default",
+          state: "idle",
+          usage: {
+            cacheReadTokens: "0",
+            cacheWriteTokens: "0",
+            inputTokens: "0",
+            outputTokens: "0",
+            reasoningTokens: "0",
+          },
+        });
+      }
+      if (path === "/api/v1/sessions/session-a/transcript") {
+        return json({ complete: true, messages: [], sessionId: "session-a" });
+      }
+      if (path === "/api/v1/sessions/session-a/activity") {
+        oldSignal = request.signal;
+        return oldStream.response;
+      }
+      if (path === "/api/v1/sessions/session-a/runs" && request.method === "POST") {
+        newRunRequests += 1;
+        return newRun.response;
+      }
+      throw new Error(`Unexpected request ${request.method} ${path}`);
+    };
+
+    await mountWorkspace(fetcher, () => <ChatWorkspace sessionId="session-a" />);
+    await act(async () => vi.waitFor(() => expect(oldSignal).toBeDefined()));
+    await act(async () => {
+      oldStream.send({ runId: "run-a", sessionId: "session-a", type: "run.started" });
+      oldStream.send(
+        event("subagent.start", "1", { parentCallId: "call-a", childId: "old-child" }),
+      );
+    });
+    expect(container?.textContent).toContain("Subagent old-child");
+    expect(container?.textContent).toContain("Running");
+
+    const textarea = container?.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Message Mecatl"]',
+    );
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(textarea, "Another task");
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const send = container?.querySelector<HTMLButtonElement>('button[aria-label="Send message"]');
+    expect(send?.disabled).toBe(false);
+    await act(async () => send?.click());
+    await act(async () => vi.waitFor(() => expect(newRunRequests).toBe(1)));
+    expect(oldSignal?.aborted).toBe(true);
+    expect(container?.textContent).toContain("Subagent old-child");
+    expect(container?.textContent).toContain("Outcome unknown");
+    await act(async () =>
+      [...(container?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+        .find((button) => button.textContent?.includes("Subagent old-child"))
+        ?.click(),
+    );
+    expect(container?.textContent).toContain("Activity history incomplete");
+
+    await act(async () => {
+      newRun.send({ runId: "run-b", sessionId: "session-a", type: "run.started" });
+      newRun.send({
+        event: {
+          kind: "result",
+          payload: { stop: "end_turn" },
+          runId: "run-b",
+          seq: "1",
+          text: "",
+          turn: 1,
+          unknown: false,
+        },
+        type: "run.event",
+      });
+      newRun.close();
+    });
+  });
+
+  it("retains an interrupted settled card when the same session becomes active elsewhere", async () => {
+    const oldStream = heldStream();
+    const followStream = heldStream();
+    let sessionState = "idle";
+    let activityRequests = 0;
+    let oldSignal: AbortSignal | undefined;
+    const fetcher = async (request: Request): Promise<Response> => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/v1/runtime") {
+        return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
+      }
+      if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
+      if (path === "/api/v1/sessions") {
+        return json({
+          complete: true,
+          items: [
+            {
+              capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+              createdAt: "2026-09-24T12:00:00Z",
+              debugTargetSessionId: "",
+              id: "session-a",
+              modelId: "test",
+              state: sessionState,
+              title: "Session A",
+              titleProvenance: "",
+              titleRevision: "0",
+              turns: 1,
+              updatedAt: "2026-09-24T12:00:00Z",
+            },
+          ],
+        });
+      }
+      if (path === "/api/v1/sessions/session-a") {
+        return json({
+          capabilities: { image: false, manualCompaction: false, modelSelection: false },
+          id: "session-a",
+          mode: "default",
+          state: sessionState,
+          usage: {
+            cacheReadTokens: "0",
+            cacheWriteTokens: "0",
+            inputTokens: "0",
+            outputTokens: "0",
+            reasoningTokens: "0",
+          },
+        });
+      }
+      if (path === "/api/v1/sessions/session-a/transcript") {
+        return json({ complete: true, messages: [], sessionId: "session-a" });
+      }
+      if (path === "/api/v1/sessions/session-a/activity") {
+        activityRequests += 1;
+        if (activityRequests === 1) {
+          oldSignal = request.signal;
+          return oldStream.response;
+        }
+        return followStream.response;
+      }
+      throw new Error(`Unexpected request ${path}`);
+    };
+
+    await mountWorkspace(fetcher, () => <ChatWorkspace sessionId="session-a" />);
+    await act(async () => vi.waitFor(() => expect(oldSignal).toBeDefined()));
+    await act(async () => {
+      oldStream.send({ runId: "run-a", sessionId: "session-a", type: "run.started" });
+      oldStream.send(
+        event("subagent.start", "1", { parentCallId: "call-a", childId: "old-child" }),
+      );
+    });
+    expect(container?.textContent).toContain("Subagent old-child");
+    expect(container?.textContent).toContain("Running");
+
+    sessionState = "running";
+    await act(async () => {
+      await queryClient?.invalidateQueries();
+    });
+    await act(async () => vi.waitFor(() => expect(activityRequests).toBe(2)));
+    expect(oldSignal?.aborted).toBe(true);
+    expect(container?.textContent).toContain("Subagent old-child");
+    expect(container?.textContent).toContain("Outcome unknown");
+    await act(async () =>
+      [...(container?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+        .find((button) => button.textContent?.includes("Subagent old-child"))
+        ?.click(),
+    );
+    expect(container?.textContent).toContain("Activity history incomplete");
+  });
+
   it("keeps inline activity through a transcript refresh and opens only on request", async () => {
     const stream = heldStream();
     const requests: string[] = [];
@@ -567,6 +766,13 @@ describe("mounted delegated activity", () => {
       )?.click(),
     );
     expect(document.activeElement).toBe(activityControl);
+    await act(async () =>
+      vi.waitFor(() => expect(container?.textContent).toContain("Session Aidle")),
+    );
+    await act(async () => {});
+    expect(requests.filter((path) => path === "/api/v1/sessions/session-a/activity")).toHaveLength(
+      1,
+    );
   });
 
   it("clears the former session fleet and aborts its stream on a session switch", async () => {

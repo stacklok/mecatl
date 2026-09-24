@@ -385,6 +385,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const awayFacts = useRef<AwayFacts | undefined>(undefined);
   const returnNoticeTimer = useRef<number | undefined>(undefined);
   const lastInventoryRow = useRef<SessionSummaryResponse | undefined>(undefined);
+  const activityFollowedSession = useRef<string | undefined>(undefined);
+  const interruptedSettledSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
   const visibleDelegationFleet =
@@ -467,6 +469,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     viewedSessionId.current = sessionId;
     activityRefresh.current = undefined;
     authorizationActivityCursor.current = undefined;
+    activityFollowedSession.current = undefined;
+    interruptedSettledSession.current = undefined;
     setDelegationFleet(createDelegationFleet(sessionId ?? ""));
     setDelegationAnchors({});
     setActivityFocus(undefined);
@@ -493,7 +497,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setSelectionAction(undefined);
     if (!activeRun.current || activeRun.current.sessionId !== sessionId)
       setStatusFacts({ phase: "idle" });
-  }, [sessionId]);
+    if (!sessionId) {
+      setMessages([]);
+    }
+    return () => {
+      // Cleanup runs before a new session's effects set up, and before the
+      // settled reader's cleanup on unmount. Old activity must not finalize
+      // into a view that has already left its session.
+      if (viewedSessionId.current === sessionId) viewedSessionId.current = undefined;
+    };
+  }, [sessionId, setMessages]);
 
   useEffect(() => () => activeRun.current?.controller.abort(), []);
 
@@ -781,9 +794,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setApprovals([]);
     if (!resumeFrom) {
       setMessages([]);
-      setDelegationFleet(createDelegationFleet(sessionId));
+      // A status-driven attach can interrupt a settled replay. Preserve its
+      // observed cards; their unfinished outcomes were marked unknown.
+      if (interruptedSettledSession.current !== sessionId) {
+        setDelegationFleet(createDelegationFleet(sessionId));
+      }
       setDelegationAnchors({});
     }
+    interruptedSettledSession.current = undefined;
 
     void (async () => {
       const streamFailure: StreamFailure = {};
@@ -881,12 +899,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // controls. A session switch or new run aborts this read before it can fold.
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers are stable; the replay lifetime follows session and running state
   useEffect(() => {
-    if (!sessionId || !settled || isRunning || activeRun.current || protectedRequestsPaused()) {
+    if (
+      !sessionId ||
+      !settled ||
+      isRunning ||
+      activeRun.current ||
+      activityFollowedSession.current === sessionId ||
+      protectedRequestsPaused()
+    ) {
       return;
     }
 
     const controller = new AbortController();
     const owner: RunOwner = { controller, sessionId };
+    const observedRuns = new Set<string>();
     const owns = () =>
       !controller.signal.aborted &&
       viewedSessionId.current === sessionId &&
@@ -895,9 +921,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       setDelegationFleet((current) =>
         owns() && current.sessionId === sessionId ? update(current) : current,
       );
+    const markUnfinished = () =>
+      setDelegationFleet((current) => {
+        if (viewedSessionId.current !== sessionId || current.sessionId !== sessionId)
+          return current;
+        let next = current;
+        for (const runId of observedRuns) {
+          if (hasUnsettledDelegation(next, runId)) {
+            next = markDelegationRunUnfollowed(next, runId);
+          }
+        }
+        return next;
+      });
     void (async () => {
       const streamFailure: StreamFailure = {};
-      const observedRuns = new Set<string>();
       let reattaches = 0;
       try {
         let stream: AsyncIterable<RunStreamEvent> | undefined = await watchActivity(
@@ -934,21 +971,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           updateFleet(markDelegationHistoryIncomplete);
         }
       } finally {
-        if (owns()) {
-          updateFleet((current) => {
-            let next = current;
-            for (const runId of observedRuns) {
-              if (hasUnsettledDelegation(next, runId)) {
-                next = markDelegationRunUnfollowed(next, runId);
-              }
-            }
-            return next;
-          });
-        }
+        if (owns()) markUnfinished();
       }
     })();
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      // A new run in this same chat cuts replay short. Keep the observed card,
+      // but do not keep claiming its old child is still running. On a status
+      // driven attach this cleanup precedes the live reader's setup.
+      if (viewedSessionId.current === sessionId) {
+        markUnfinished();
+        if (!activeRun.current) interruptedSettledSession.current = sessionId;
+      }
+    };
   }, [sessionId, settled, isRunning]);
 
   async function selectSession(id: string) {
@@ -1497,6 +1533,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           break;
         }
         if (!shouldApply(delivery)) continue;
+        if (delivery.type === "run.event" && owner.sessionId) {
+          activityFollowedSession.current = owner.sessionId;
+        }
         setDelegationFleet((current) =>
           current.sessionId === owner.sessionId
             ? foldDelegationDelivery(current, delivery)
