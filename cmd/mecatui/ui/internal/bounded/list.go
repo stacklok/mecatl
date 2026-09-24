@@ -266,13 +266,15 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 	}
 	v := l.View()
 	available := max(0, capacity-len(v.Rows))
-	if v.Above > 0 && available > 0 {
+	// When one chrome row remains, tell the operator about the forward tail: it
+	// contains the next reachable content, whereas the above count is historical.
+	if v.Below > overflowIndicatorThreshold && available > 0 {
 		available--
 	} else {
-		v.Above = 0
-	}
-	if v.Below <= overflowIndicatorThreshold || available == 0 {
 		v.Below = 0
+	}
+	if v.Above > 0 && available == 0 {
+		v.Above = 0
 	}
 	l.reveal = false
 	return v
