@@ -17,6 +17,21 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+type principalSkillSource struct{ owner string }
+
+func (s principalSkillSource) ListSkills(context.Context) ([]tool.SkillMeta, error) {
+	return []tool.SkillMeta{{Name: "owner-skill", Description: "skill for " + s.owner, Origin: tool.SkillOriginDriver}}, nil
+}
+func (s principalSkillSource) SkillBody(context.Context, string) (string, error) {
+	return "OWNER-SKILL-BODY-" + s.owner, nil
+}
+func (principalSkillSource) ListSkillAssets(context.Context, string) ([]tool.SkillAsset, error) {
+	return []tool.SkillAsset{{Name: "owner.txt"}}, nil
+}
+func (s principalSkillSource) ReadSkillAsset(context.Context, string, string) ([]byte, error) {
+	return []byte("OWNER-SKILL-ASSET-" + s.owner), nil
+}
+
 func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *testing.T) {
 	t.Run("concurrent retry and retirement", TestHarnessCommandBindingConcurrentRetryAndRetirement)
 	t.Run("replacement survives stale cleanup", TestHarnessGenerationOldReleaseCannotEvictReplacement)
@@ -46,8 +61,16 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 		binds[index].Add(1)
 	}
 	var requests []port.LLMRequest
-	cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), PermissionConfigs: []string{file}, UseMock: true, OwnershipEnforced: true,
-		MockProvider: mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })}, mockllm.TextTurn("done"), mockllm.TextTurn("second")),
+	cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file}, UseMock: true, OwnershipEnforced: true, AllowAllTools: true,
+		MockProvider: mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
+			mockllm.ToolCallTurn(
+				session.NewToolCall("skill-body-alice", "Skill", []byte(`{"name":"owner-skill"}`)),
+				session.NewToolCall("skill-asset-alice", "Skill", []byte(`{"name":"owner-skill","asset":"owner.txt"}`)),
+			), mockllm.TextTurn("done"),
+			mockllm.ToolCallTurn(
+				session.NewToolCall("skill-body-bob", "Skill", []byte(`{"name":"owner-skill"}`)),
+				session.NewToolCall("skill-asset-bob", "Skill", []byte(`{"name":"owner-skill","asset":"owner.txt"}`)),
+			), mockllm.TextTurn("second")),
 		HarnessInstructionSources: []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(_ context.Context, s HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 			check(s, 0)
 			return hcAssembler("TENANT-INSTRUCTIONS-" + s.Principal.Subject), nil, nil
@@ -62,7 +85,7 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 		}}},
 		HarnessSkillSources: []HarnessSourceRegistration[tool.SkillSource]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(_ context.Context, s HarnessSourceScope) (tool.SkillSource, func() error, error) {
 			check(s, 3)
-			return sourceconformance.NewFixtureSource(), nil, nil
+			return principalSkillSource{owner: s.Principal.Subject}, nil, nil
 		}}},
 		HarnessAgentDefSources: []HarnessSourceRegistration[tool.AgentDefSource]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(_ context.Context, s HarnessSourceScope) (tool.AgentDefSource, func() error, error) {
 			check(s, 4)
@@ -92,7 +115,11 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range run.Events() {
+	var aliceToolText strings.Builder
+	for event := range run.Events() {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			aliceToolText.WriteString(event.ToolResult.Content)
+		}
 	}
 	built.Service.FinishRun(sess.ID, run)
 	for i := range binds {
@@ -100,7 +127,7 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 			t.Errorf("source %d bound %d times", i, binds[i].Load())
 		}
 	}
-	if len(requests) != 1 {
+	if len(requests) != 2 {
 		t.Fatalf("requests=%d", len(requests))
 	}
 	var text strings.Builder
@@ -112,27 +139,34 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 			t.Errorf("missing %q in actual engine request", marker)
 		}
 	}
-	var skill bool
-	for _, spec := range requests[0].Tools {
-		skill = skill || spec.Name == "Skill"
+	for _, marker := range []string{"OWNER-SKILL-BODY-alice", "OWNER-SKILL-ASSET-alice"} {
+		if !strings.Contains(aliceToolText.String(), marker) {
+			t.Fatalf("actual Skill invocation missing %q: %q", marker, aliceToolText.String())
+		}
 	}
-	if !skill {
-		t.Fatal("principal skill catalog missing")
+	if strings.Contains(aliceToolText.String(), "bob") {
+		t.Fatal("other owner's skill data reached alice")
 	}
 	expectedSubject = "bob"
 	bob := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
 	other := harnessCreate(t, built, bob)
-	harnessRun(t, built, bob, other, "/review")
+	bobEvents := harnessRun(t, built, bob, other, "/review")
+	var bobToolText strings.Builder
+	for _, event := range bobEvents {
+		if event.Type == session.EvToolResult && event.ToolResult != nil {
+			bobToolText.WriteString(event.ToolResult.Content)
+		}
+	}
 	for i := range binds {
 		if binds[i].Load() != 2 {
 			t.Errorf("source %d reused another owner's binding", i)
 		}
 	}
-	if len(requests) != 2 {
+	if len(requests) != 4 {
 		t.Fatalf("requests=%d", len(requests))
 	}
 	var otherText strings.Builder
-	for _, message := range requests[1].Messages {
+	for _, message := range requests[2].Messages {
 		otherText.WriteString(message.Text)
 	}
 	if strings.Contains(otherText.String(), "TENANT-INSTRUCTIONS-alice") || strings.Contains(otherText.String(), "TENANT-COMMAND-alice") {
@@ -140,5 +174,23 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 	}
 	if !strings.Contains(otherText.String(), "TENANT-INSTRUCTIONS-bob") || !strings.Contains(otherText.String(), "TENANT-COMMAND-bob") {
 		t.Fatal("second owner did not receive its sources")
+	}
+	for _, marker := range []string{"OWNER-SKILL-BODY-bob", "OWNER-SKILL-ASSET-bob"} {
+		if !strings.Contains(bobToolText.String(), marker) {
+			t.Fatalf("bob Skill invocation missing %q: %q", marker, bobToolText.String())
+		}
+	}
+	if strings.Contains(bobToolText.String(), "alice") {
+		t.Fatal("alice skill data leaked to bob")
+	}
+	for range 3 {
+		if _, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{ProviderID: "unknown"}, server.ProfileDefault); err == nil {
+			t.Fatal("unknown provider session creation succeeded")
+		}
+	}
+	for i := range binds {
+		if binds[i].Load() != 2 {
+			t.Errorf("unknown-provider failure retained source %d binding: %d", i, binds[i].Load())
+		}
 	}
 }

@@ -39,6 +39,10 @@ const (
 )
 
 // HarnessProvenancePolicy constrains the admission tiers a source may produce.
+// Exactly one mode is required. Fixed stamps one of project, user, explicit, or
+// driver onto every contribution. PreserveAllowed retains only values from a
+// nonempty subset of those tiers and is reserved for trusted compatibility
+// adapters with mixed origins; rules cannot preserve or use explicit.
 type HarnessProvenancePolicy struct {
 	Fixed           string
 	PreserveAllowed []string
@@ -147,10 +151,10 @@ func compileHarnessKind(name string, cfg permconfig.HarnessContextKind, enabled 
 			return p, fmt.Errorf("harness_context.kinds.%s has duplicate source %q", name, id)
 		}
 		if _, ok := enabled[id]; !ok {
-			return p, fmt.Errorf("harness_context.kinds.%s source %q is not enabled", name, id)
+			return p, fmt.Errorf("harness_context.kinds.%s source %q is not enabled; add it to harness_context.enabled_sources", name, id)
 		}
 		if _, ok := registered[id]; !ok {
-			return p, fmt.Errorf("harness_context.kinds.%s source %q is not registered", name, id)
+			return p, fmt.Errorf("harness_context.kinds.%s source %q is not registered; the deployment must register a compatible source ID before Build", name, id)
 		}
 		seen[id] = struct{}{}
 		p.sources = append(p.sources, id)
@@ -275,7 +279,7 @@ func (s *resolvedRulesSource) ListRules(ctx context.Context) ([]prompt.Rule, err
 	for _, source := range s.sources {
 		rules, err := source.source.ListRules(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("list rules source %q: %w", source.id, err)
 		}
 		entries := make(map[string]prompt.Rule, len(rules))
 		for _, rule := range rules {
@@ -401,7 +405,18 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 			return fmt.Errorf("bind rules source %q: %w", id, bindErr)
 		}
 		addCleanup(cleanup)
-		boundRules = append(boundRules, boundRulesSource{id: id, source: source, provenance: reg.Provenance})
+		bound := boundRulesSource{id: id, source: source, provenance: reg.Provenance}
+		// Rules are snapshots. Resolve each source as it is bound so replace mode
+		// can stop before consulting a lower source at all.
+		resolved, listErr := (&resolvedRulesSource{policy: harnessKindPolicy{sources: []HarnessSourceID{id}, mode: harnessModeCombine, exclude: rulesPolicy.exclude}, sources: []boundRulesSource{bound}, projectAdmitted: projectIngestionAdmitted(*cfg)}).ListRules(ctx)
+		if listErr != nil {
+			closeHarnessCleanups(cleanups)
+			return listErr
+		}
+		boundRules = append(boundRules, boundRulesSource{id: id, source: frozenHarnessRules{rules: resolved}, provenance: reg.Provenance})
+		if rulesPolicy.mode == harnessModeReplace && len(resolved) > 0 {
+			break
+		}
 	}
 	rulesSnapshot, rulesErr := (&resolvedRulesSource{policy: rulesPolicy, sources: boundRules, projectAdmitted: projectIngestionAdmitted(*cfg)}).ListRules(ctx)
 	cfg.harnessRules = frozenHarnessRules{rules: rulesSnapshot, err: rulesErr}
@@ -443,7 +458,7 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 				_ = cleanup()
 			}
 			closeHarnessCleanups(cleanups)
-			return listErr
+			return fmt.Errorf("list skill source %q: %w", id, listErr)
 		}
 		addCleanup(cleanup)
 		entries := make(map[string]tool.SkillMeta, len(metas))
@@ -519,7 +534,7 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 				_ = cleanup()
 			}
 			closeHarnessCleanups(cleanups)
-			return listErr
+			return fmt.Errorf("list agent source %q: %w", id, listErr)
 		}
 		addCleanup(cleanup)
 		entries := make(map[string]tool.AgentDef, len(defs))
@@ -580,7 +595,7 @@ type resolvedCommandBinding struct {
 
 type harnessCommandChoice struct {
 	command prompt.Command
-	source  server.CommandSourceBinding
+	sources []boundCommandSource
 }
 
 func (b *resolvedCommandBinding) observe(ctx context.Context) (map[string]harnessCommandChoice, error) {
@@ -590,7 +605,7 @@ func (b *resolvedCommandBinding) observe(ctx context.Context) (map[string]harnes
 	for _, source := range b.sources {
 		commands, err := source.binding.List(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("list command source %q: %w", source.id, err)
 		}
 		entries := make(map[string]prompt.Command, len(commands))
 		for _, command := range commands {
@@ -611,8 +626,20 @@ func (b *resolvedCommandBinding) observe(ctx context.Context) (map[string]harnes
 		for id, entries := range listed {
 			_, present[id] = entries[name]
 		}
-		if winner, ok := chooseHarnessWinner(name, present, b.policy); ok {
-			out[name] = harnessCommandChoice{command: listed[winner][name], source: bindings[winner]}
+		var choice harnessCommandChoice
+		for {
+			winner, ok := chooseHarnessWinner(name, present, b.policy)
+			if !ok {
+				break
+			}
+			if len(choice.sources) == 0 {
+				choice.command = listed[winner][name]
+			}
+			choice.sources = append(choice.sources, boundCommandSource{id: winner, binding: bindings[winner]})
+			delete(present, winner)
+		}
+		if len(choice.sources) > 0 {
+			out[name] = choice
 		}
 	}
 	return out, nil
@@ -644,7 +671,16 @@ func (b *resolvedCommandBinding) Expand(ctx context.Context, input string) (stri
 	if !ok {
 		return input, false, nil
 	}
-	return choice.source.Expand(ctx, input)
+	for _, source := range choice.sources {
+		out, expanded, expandErr := source.binding.Expand(ctx, input)
+		if expandErr != nil {
+			return input, false, fmt.Errorf("expand command source %q: %w", source.id, expandErr)
+		}
+		if expanded {
+			return out, true, nil
+		}
+	}
+	return input, false, nil
 }
 
 func commandInvocationName(input string) string {
@@ -675,16 +711,97 @@ type commandBindingEntry struct {
 	retired   bool
 }
 
+type commandBindingReservation struct {
+	principal *session.Principal
+	profile   string
+	revision  uint64
+	done      chan struct{}
+}
+
+type lazyProcessCommandBinding struct {
+	mu      sync.Mutex
+	reg     HarnessSourceRegistration[server.CommandSourceBinding]
+	binding server.CommandSourceBinding
+	cleanup func() error
+	ready   chan struct{}
+	closed  bool
+}
+
+func (b *lazyProcessCommandBinding) Bind(ctx context.Context) (server.CommandSourceBinding, error) {
+	for {
+		b.mu.Lock()
+		if b.closed {
+			b.mu.Unlock()
+			return nil, fmt.Errorf("process command source %q is closed", b.reg.ID)
+		}
+		if b.binding != nil {
+			binding := b.binding
+			b.mu.Unlock()
+			return binding, nil
+		}
+		if b.ready != nil {
+			ready := b.ready
+			b.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ready:
+				continue
+			}
+		}
+		ready := make(chan struct{})
+		b.ready = ready
+		b.mu.Unlock()
+
+		binding, cleanup, err := b.reg.Bind(ctx, HarnessSourceScope{})
+		if err == nil && binding == nil {
+			err = fmt.Errorf("source returned nil binding")
+		}
+		b.mu.Lock()
+		b.ready = nil
+		closed := b.closed
+		if err == nil && !closed {
+			b.binding, b.cleanup = binding, cleanup
+		}
+		close(ready)
+		b.mu.Unlock()
+		if err != nil || closed {
+			if cleanup != nil {
+				_ = cleanup()
+			}
+			if err != nil {
+				return nil, fmt.Errorf("bind process command source %q: %w", b.reg.ID, err)
+			}
+			return nil, fmt.Errorf("process command source %q is closed", b.reg.ID)
+		}
+		return binding, nil
+	}
+}
+
+func (b *lazyProcessCommandBinding) Close() {
+	b.mu.Lock()
+	b.closed = true
+	cleanup := b.cleanup
+	b.cleanup, b.binding = nil, nil
+	b.mu.Unlock()
+	if cleanup != nil {
+		_ = cleanup()
+	}
+}
+
 type harnessCommandResolver struct {
 	mu           sync.Mutex
 	sourceConfig *Config
 	policy       harnessKindPolicy
 	regs         map[HarnessSourceID]HarnessSourceRegistration[server.CommandSourceBinding]
 	process      map[HarnessSourceID]boundCommandSource
+	processLazy  map[HarnessSourceID]*lazyProcessCommandBinding
 	close        []func() error
 	entries      map[session.SessionID]*commandBindingEntry
 	generations  map[*commandBindingEntry]struct{}
 	retired      map[session.SessionID]struct{}
+	revisions    map[session.SessionID]uint64
+	creating     map[session.SessionID]*commandBindingReservation
 	closed       bool
 }
 
@@ -696,30 +813,50 @@ func initializeHarnessCommandResolver(ctx context.Context, policy harnessKindPol
 	r.policy = policy
 	r.regs = make(map[HarnessSourceID]HarnessSourceRegistration[server.CommandSourceBinding])
 	r.process = make(map[HarnessSourceID]boundCommandSource)
+	r.processLazy = make(map[HarnessSourceID]*lazyProcessCommandBinding)
 	r.entries = make(map[session.SessionID]*commandBindingEntry)
 	r.retired = make(map[session.SessionID]struct{})
+	r.revisions = make(map[session.SessionID]uint64)
+	r.creating = make(map[session.SessionID]*commandBindingReservation)
 	r.generations = make(map[*commandBindingEntry]struct{})
 	for _, reg := range regs {
 		if _, selected := harnessSourcePosition(policy.sources, reg.ID); !selected {
 			continue
 		}
 		r.regs[reg.ID] = reg
-		if reg.Scope != HarnessSourceScopeProcess {
+		if reg.Scope == HarnessSourceScopeProcess {
+			holder := &lazyProcessCommandBinding{reg: reg}
+			r.processLazy[reg.ID] = holder
+			r.close = append(r.close, func() error { holder.Close(); return nil })
+		}
+	}
+	principalMayWin := false
+	for _, id := range policy.sources {
+		reg := r.regs[id]
+		if reg.Scope == HarnessSourceScopePrincipal {
+			principalMayWin = true
 			continue
 		}
-		binding, cleanup, err := reg.Bind(ctx, HarnessSourceScope{})
-		if cleanup != nil {
-			r.close = append(r.close, cleanup)
+		if policy.mode == harnessModeReplace && principalMayWin {
+			continue
 		}
+		binding, err := r.processLazy[id].Bind(ctx)
 		if err != nil {
 			r.closeProcess()
-			return nil, fmt.Errorf("bind process command source %q: %w", reg.ID, err)
+			return nil, err
 		}
-		if binding == nil {
-			r.closeProcess()
-			return nil, fmt.Errorf("bind process command source %q returned nil", reg.ID)
+		source := boundCommandSource{id: id, binding: binding}
+		r.process[id] = source
+		if policy.mode == harnessModeReplace {
+			nonempty, listErr := commandSourceHasEntries(ctx, source, policy)
+			if listErr != nil {
+				r.closeProcess()
+				return nil, listErr
+			}
+			if nonempty {
+				break
+			}
 		}
-		r.process[reg.ID] = boundCommandSource{id: reg.ID, binding: binding}
 	}
 	return r, nil
 }
@@ -736,80 +873,150 @@ func (r *harnessCommandResolver) Borrow(ctx context.Context, id session.SessionI
 	return r.borrow(ctx, id, principal, profile, false)
 }
 
+//nolint:gocyclo // Reservation, cancellation, retirement, and atomic publication are one lifecycle state transition.
 func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionID, principal *session.Principal, profile string, activate bool) (server.CommandSourceBinding, func(), error) {
-	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
-		return nil, nil, fmt.Errorf("harness command resolver is closed")
-	}
-	if _, retired := r.retired[id]; retired && !activate {
-		r.mu.Unlock()
-		return nil, nil, fmt.Errorf("harness command binding is retired")
-	}
-	if entry := r.entries[id]; entry != nil {
-		if !sameHarnessPrincipal(entry.principal, principal) || entry.profile != profile {
+	for {
+		r.mu.Lock()
+		if r.closed {
 			r.mu.Unlock()
-			return nil, nil, fmt.Errorf("harness command binding identity mismatch")
+			return nil, nil, fmt.Errorf("harness command resolver is closed")
 		}
-		if !entry.retired {
-			entry.refs++
-			release := r.release(entry)
-			binding := entry.binding
+		if _, retired := r.retired[id]; retired && !activate {
+			r.mu.Unlock()
+			return nil, nil, fmt.Errorf("harness command binding is retired")
+		}
+		if entry := r.entries[id]; entry != nil {
+			if !sameHarnessPrincipal(entry.principal, principal) || entry.profile != profile {
+				r.mu.Unlock()
+				return nil, nil, fmt.Errorf("harness command binding identity mismatch")
+			}
+			if !entry.retired {
+				entry.refs++
+				release, binding := r.release(entry), entry.binding
+				r.mu.Unlock()
+				return binding, release, nil
+			}
+		}
+		if pending := r.creating[id]; pending != nil {
+			if !sameHarnessPrincipal(pending.principal, principal) || pending.profile != profile {
+				r.mu.Unlock()
+				return nil, nil, fmt.Errorf("harness command binding identity mismatch")
+			}
+			done := pending.done
+			r.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-done:
+				continue
+			}
+		}
+		reservation := &commandBindingReservation{principal: principal.Clone(), profile: profile, revision: r.revisions[id], done: make(chan struct{})}
+		r.creating[id] = reservation
+		r.mu.Unlock()
+
+		entry, err := r.buildEntry(ctx, principal, profile)
+
+		r.mu.Lock()
+		delete(r.creating, id)
+		close(reservation.done)
+		publish := err == nil && !r.closed && r.revisions[id] == reservation.revision
+		if _, retired := r.retired[id]; retired && !activate {
+			publish = false
+		}
+		if publish {
+			r.entries[id] = entry
+			r.generations[entry] = struct{}{}
+			delete(r.retired, id)
+			release, binding := r.release(entry), entry.binding
 			r.mu.Unlock()
 			return binding, release, nil
 		}
+		r.mu.Unlock()
+		if entry != nil {
+			closeHarnessCleanups(entry.cleanup)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, nil, ctxErr
+		}
+		return nil, nil, fmt.Errorf("harness command binding creation was retired")
 	}
+}
+
+func commandSourceHasEntries(ctx context.Context, source boundCommandSource, policy harnessKindPolicy) (bool, error) {
+	commands, err := source.binding.List(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list command source %q: %w", source.id, err)
+	}
+	for _, command := range commands {
+		if prompt.ValidCommandName(command.Name) && !policy.excludes(source.id, command.Name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *harnessCommandResolver) buildEntry(ctx context.Context, principal *session.Principal, profile string) (*commandBindingEntry, error) {
 	sources := make([]boundCommandSource, 0, len(r.policy.sources))
 	cleanups := make([]func() error, 0)
 	scopeConfig, scopeCleanup, scopeErr := r.bindSessionSources(ctx, HarnessSourceScope{Principal: principal.Clone(), Profile: profile})
 	if scopeErr != nil {
-		r.mu.Unlock()
-		return nil, nil, scopeErr
+		return nil, scopeErr
 	}
 	if scopeCleanup != nil {
 		cleanups = append(cleanups, scopeCleanup)
 	}
 	for _, sourceID := range r.policy.sources {
+		var source boundCommandSource
 		if sourceID == "skills" && scopeConfig != nil {
 			metas, err := scopeConfig.harnessSkills.ListSkills(ctx)
 			if err != nil {
-				r.mu.Unlock()
 				closeHarnessCleanups(cleanups)
-				return nil, nil, err
+				return nil, fmt.Errorf("list skill command source %q: %w", sourceID, err)
 			}
-			sources = append(sources, boundCommandSource{id: sourceID, binding: prompt.NewSourceExpander(skills.NewSkillCommandSource(metas, scopeConfig.harnessSkills))})
-			continue
-		}
-		if process, ok := r.process[sourceID]; ok {
-			sources = append(sources, process)
-			continue
-		}
-		reg := r.regs[sourceID]
-		binding, cleanup, err := reg.Bind(ctx, HarnessSourceScope{Principal: principal.Clone(), Profile: profile})
-		if cleanup != nil {
-			cleanups = append(cleanups, cleanup)
-		}
-		if err != nil || binding == nil {
-			r.mu.Unlock()
-			for i := len(cleanups) - 1; i >= 0; i-- {
-				_ = cleanups[i]()
+			source = boundCommandSource{id: sourceID, binding: prompt.NewSourceExpander(skills.NewSkillCommandSource(metas, scopeConfig.harnessSkills))}
+		} else if process, ok := r.process[sourceID]; ok {
+			source = process
+		} else if process := r.processLazy[sourceID]; process != nil {
+			binding, err := process.Bind(ctx)
+			if err != nil {
+				closeHarnessCleanups(cleanups)
+				return nil, err
 			}
-			if err == nil {
-				err = fmt.Errorf("source returned nil binding")
+			source = boundCommandSource{id: sourceID, binding: binding}
+		} else {
+			reg := r.regs[sourceID]
+			binding, cleanup, err := reg.Bind(ctx, HarnessSourceScope{Principal: principal.Clone(), Profile: profile})
+			if cleanup != nil {
+				cleanups = append(cleanups, cleanup)
 			}
-			return nil, nil, fmt.Errorf("bind command source %q: %w", sourceID, err)
+			if err != nil || binding == nil {
+				closeHarnessCleanups(cleanups)
+				if err == nil {
+					err = fmt.Errorf("source returned nil binding")
+				}
+				return nil, fmt.Errorf("bind command source %q: %w", sourceID, err)
+			}
+			source = boundCommandSource{id: sourceID, binding: binding}
 		}
-		sources = append(sources, boundCommandSource{id: sourceID, binding: binding})
+		sources = append(sources, source)
+		if r.policy.mode == harnessModeReplace {
+			nonempty, err := commandSourceHasEntries(ctx, source, r.policy)
+			if err != nil {
+				closeHarnessCleanups(cleanups)
+				return nil, err
+			}
+			if nonempty {
+				break
+			}
+		}
 	}
-	entry := &commandBindingEntry{principal: principal.Clone(), profile: profile, binding: &resolvedCommandBinding{context: scopeConfig, policy: r.policy, sources: sources}, cleanup: cleanups, refs: 1}
-	entry.binding.(*resolvedCommandBinding).generation = harnessGeneration{resolver: r, entry: entry}
-	r.entries[id] = entry
-	r.generations[entry] = struct{}{}
-	delete(r.retired, id)
-	release := r.release(entry)
-	binding := entry.binding
-	r.mu.Unlock()
-	return binding, release, nil
+	entry := &commandBindingEntry{principal: principal.Clone(), profile: profile, cleanup: cleanups, refs: 1}
+	entry.binding = &resolvedCommandBinding{context: scopeConfig, policy: r.policy, sources: sources, generation: harnessGeneration{resolver: r, entry: entry}}
+	return entry, nil
 }
 
 func (r *harnessCommandResolver) release(target *commandBindingEntry) func() {
@@ -820,15 +1027,16 @@ func (r *harnessCommandResolver) release(target *commandBindingEntry) func() {
 			if target.refs > 0 {
 				target.refs--
 			}
-			cleanup := target.retired && target.refs == 0
-			if cleanup {
+			var cleanup []func() error
+			if target.retired && target.refs == 0 {
 				delete(r.generations, target)
+				cleanup = target.cleanup
+				target.cleanup = nil
+				target.binding = nil
 			}
 			processCleanup := r.takeProcessCleanupLocked()
 			r.mu.Unlock()
-			if cleanup {
-				closeHarnessCleanups(target.cleanup)
-			}
+			closeHarnessCleanups(cleanup)
 			closeHarnessCleanups(processCleanup)
 		})
 	}
@@ -837,20 +1045,22 @@ func (r *harnessCommandResolver) release(target *commandBindingEntry) func() {
 func (r *harnessCommandResolver) Retire(id session.SessionID) {
 	r.mu.Lock()
 	r.retired[id] = struct{}{}
+	r.revisions[id]++
 	entry := r.entries[id]
 	if entry == nil || entry.retired {
 		r.mu.Unlock()
 		return
 	}
 	entry.retired = true
-	cleanup := entry.refs == 0
-	if cleanup {
+	var cleanup []func() error
+	if entry.refs == 0 {
 		delete(r.generations, entry)
+		cleanup = entry.cleanup
+		entry.cleanup = nil
+		entry.binding = nil
 	}
 	r.mu.Unlock()
-	if cleanup {
-		closeHarnessCleanups(entry.cleanup)
-	}
+	closeHarnessCleanups(cleanup)
 }
 
 func (r *harnessCommandResolver) Close() {
@@ -866,6 +1076,8 @@ func (r *harnessCommandResolver) Close() {
 		if entry.refs == 0 {
 			delete(r.generations, entry)
 			cleanup = append(cleanup, entry.cleanup)
+			entry.cleanup = nil
+			entry.binding = nil
 		}
 	}
 	processCleanup := r.takeProcessCleanupLocked()

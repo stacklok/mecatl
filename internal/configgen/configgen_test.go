@@ -5,9 +5,34 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
+
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/configgen"
 )
+
+func TestHarnessContextGeneratedScaffoldingParsesWhenUncommented(t *testing.T) {
+	var lines []string
+	capturing := false
+	for _, line := range strings.Split(configgen.Skeleton(), "\n") {
+		if line == "# harness_context:" {
+			capturing = true
+		}
+		if capturing && strings.HasPrefix(line, "#| ===") {
+			break
+		}
+		if capturing && strings.HasPrefix(line, "# ") {
+			lines = append(lines, strings.TrimPrefix(line, "# "))
+		}
+	}
+	var cfg permconfig.Config
+	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")+"\n"), &cfg); err != nil {
+		t.Fatalf("uncommented generated harness_context scaffolding is not executable configuration: %v\n%s", err, strings.Join(lines, "\n"))
+	}
+	if cfg.HarnessContext == nil || cfg.HarnessContext.Kinds.Instructions.Mode != "combine" {
+		t.Fatal("uncommented generated scaffolding did not parse into the configured subtree")
+	}
+}
 
 // authoritativeKeys reflects over the permconfig *Section structs to collect EVERY
 // yaml key the strict-decode maps accept — derived independently of the renderers so

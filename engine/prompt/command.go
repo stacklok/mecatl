@@ -30,8 +30,8 @@ type Command struct {
 // CommandExpander so an expander that cannot enumerate (e.g. a pure prompt
 // source) need not implement it. List is read-only and cheap.
 type CommandLister interface {
-	// List returns the available commands discovered through ws, de-duplicated by
-	// name (first occurrence wins, matching expansion precedence) and sorted by
+	// List returns the available commands from the already-bound source,
+	// de-duplicated by name (first occurrence wins, matching expansion precedence) and sorted by
 	// name. It returns a nil/empty slice when no commands are available. A non-nil
 	// error is reserved for a genuine read fault enumerating the command dirs; a
 	// dir that simply does not exist is not an error (it yields no commands).
@@ -49,7 +49,7 @@ type CommandLister interface {
 // the input unchanged so behaviour is identical when no commands are configured.
 type CommandExpander interface {
 	// Expand inspects input. When input is a command invocation it loads the
-	// matching template from ws, substitutes its placeholders, and returns the
+	// matching template from the already-bound source, substitutes its placeholders, and returns the
 	// rendered body with expanded=true. When input is not a command, or the named
 	// command does not exist, it returns input unchanged with expanded=false.
 	//

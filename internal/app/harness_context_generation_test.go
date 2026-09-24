@@ -9,9 +9,127 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
+
+type parkedHarnessAssembler struct {
+	started chan struct{}
+	resume  chan struct{}
+	once    *sync.Once
+}
+
+func (a parkedHarnessAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
+	a.once.Do(func() { close(a.started) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-a.resume:
+		return hcAssembler("PARKED-GENERATION").Assemble(ctx)
+	}
+}
+
+func TestHarnessRetiredServiceEngineDrainsParkedOperation(t *testing.T) {
+	kinds := harnessEmptyKinds()
+	kinds.Instructions = permconfig.HarnessContextKind{Sources: []string{"tenant"}, Mode: "combine"}
+	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"tenant"}, Kinds: kinds})
+	started, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	var cleaned atomic.Int32
+	cfg.MockProvider = mockllm.New(mockllm.TextTurn("done"))
+	cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+		return parkedHarnessAssembler{started: started, resume: resume, once: &once}, func() error { cleaned.Add(1); return nil }, nil
+	}}}
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := built.Service.StartRun(t.Context(), sess.ID, "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	built.Service.CloseSession(sess.ID)
+	close(resume)
+	var result *session.ResultPayload
+	for event := range run.Events() {
+		if event.Type == session.EvResult {
+			result = event.Result
+		}
+	}
+	built.Service.FinishRun(sess.ID, run)
+	if result == nil || result.Error != "" {
+		t.Fatalf("parked operation did not drain through retirement: %+v", result)
+	}
+	if cleaned.Load() != 1 {
+		t.Fatalf("retired generation cleanup calls = %d, want 1", cleaned.Load())
+	}
+}
+
+func TestHarnessResolverBindingDoesNotHoldGlobalLock(t *testing.T) {
+	started := make(chan struct{})
+	unblock := make(chan struct{})
+	var blockedOnce sync.Once
+	var cleaned atomic.Int32
+	reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "a", Scope: HarnessSourceScopePrincipal, Bind: func(_ context.Context, scope HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+		if scope.Principal != nil && scope.Principal.Subject == "blocked" {
+			blockedOnce.Do(func() { close(started) })
+			<-unblock
+		}
+		return &hcCommands{values: map[string]string{"x": scope.Principal.Subject}}, func() error { cleaned.Add(1); return nil }, nil
+	}}
+	resolver, err := newHarnessCommandResolver(t.Context(), harnessKindPolicy{sources: []HarnessSourceID{"a"}, mode: harnessModeCombine}, []HarnessSourceRegistration[server.CommandSourceBinding]{reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := &session.Principal{Issuer: "issuer", Subject: "blocked"}
+	other := &session.Principal{Issuer: "issuer", Subject: "other"}
+	blockedDone := make(chan error, 1)
+	go func() {
+		_, release, borrowErr := resolver.Borrow(context.Background(), "blocked", blocked, "")
+		if release != nil {
+			release()
+		}
+		blockedDone <- borrowErr
+	}()
+	<-started
+	binding, release, err := resolver.Borrow(t.Context(), "other", other, "")
+	if err != nil {
+		t.Fatalf("unrelated borrow blocked by remote binder: %v", err)
+	}
+	if out, ok, expandErr := binding.Expand(t.Context(), "/x"); expandErr != nil || !ok || out != "other" {
+		t.Fatalf("unrelated binding = %q,%v,%v", out, ok, expandErr)
+	}
+	release()
+
+	waitCtx, cancel := context.WithCancel(context.Background())
+	waitDone := make(chan error, 1)
+	go func() {
+		_, _, waitErr := resolver.Borrow(waitCtx, "blocked", blocked, "")
+		waitDone <- waitErr
+	}()
+	cancel()
+	if waitErr := <-waitDone; !errors.Is(waitErr, context.Canceled) {
+		t.Fatalf("same-id canceled waiter = %v", waitErr)
+	}
+
+	resolver.Close()
+	close(unblock)
+	if bindErr := <-blockedDone; bindErr == nil {
+		t.Fatal("binding published after resolver shutdown")
+	}
+	if cleaned.Load() != 2 {
+		t.Fatalf("cleanup calls = %d, want successful unrelated and late blocked results", cleaned.Load())
+	}
+}
 
 func TestHarnessGenerationOldReleaseCannotEvictReplacement(t *testing.T) {
 	var binds, closed atomic.Int32
@@ -38,7 +156,12 @@ func TestHarnessGenerationOldReleaseCannotEvictReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	oldGeneration := old.(*resolvedCommandBinding).generation
 	resolver.Retire("s")
+	leased := generationCommands{harnessGeneration: oldGeneration, source: old}
+	if out, ok, expandErr := leased.Expand(t.Context(), "/x"); expandErr != nil || !ok || out != "1" {
+		t.Fatalf("already-borrowed generation stopped draining after retirement: %q,%v,%v", out, ok, expandErr)
+	}
 	if _, _, err := resolver.Borrow(t.Context(), "s", nil, ""); err == nil {
 		t.Fatal("ordinary borrow resurrected retirement")
 	}
@@ -66,6 +189,12 @@ func TestHarnessGenerationOldReleaseCannotEvictReplacement(t *testing.T) {
 	}
 	unblock.Do(func() { close(finishOldCleanup) })
 	<-done
+	if _, _, err := leased.Expand(t.Context(), "/x"); err == nil {
+		t.Fatal("drained retired generation remained usable after owner release")
+	}
+	if oldEntry := oldGeneration.entry; oldEntry.binding != nil || oldEntry.cleanup != nil {
+		t.Fatal("drained generation retained binding or cleanup payload")
+	}
 	releaseOld()
 	again, releaseAgain, err := resolver.Borrow(t.Context(), "s", nil, "")
 	if err != nil {

@@ -118,8 +118,12 @@ func harnessContextSubtree(docs Docs) *Subtree {
 			field.ExampleValue = "combine"
 		case "exclude":
 			field.Nested = fieldsOf("HarnessContextExclude", permconfig.HarnessContextExclude{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
 		case "overrides":
 			field.Nested = fieldsOf("HarnessContextOverride", permconfig.HarnessContextOverride{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
 		}
 	}
 	for _, field := range fields {

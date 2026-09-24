@@ -2223,6 +2223,14 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, err
 	}
+	commandResolverTransferred := false
+	defer func() {
+		if !commandResolverTransferred {
+			if closer, ok := commandLister.(interface{ Close() }); ok {
+				closer.Close()
+			}
+		}
+	}()
 	cfg.storageMaintenance = &storageMaintenanceState{}
 	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
 	workspaceFactory := osfsWorkspaceFactory(cfg.diag())
@@ -2887,6 +2895,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	profilesTransferred = true
 	managedTempTransferred = true
 	harnessContextTransferred = true
+	commandResolverTransferred = true
 	return &Built{Service: svc, MCPBroker: brokerRuntime, MCPBrokerHandlers: brokerHandlers, MCPBrokerCallbackPath: brokerCallbackPath, Close: closeAll}, nil
 }
 
@@ -4124,6 +4133,8 @@ func escapePolicyForConfig(cfg Config, reg *providerRegistry, provider port.LLMP
 // resolveAgentSeam (FS or driver) — threaded in, never re-resolved here, so
 // every consumer (catalog, per-session factory, snapshot, team wiring) shares
 // the same registry.
+//
+//nolint:gocyclo // Provider-first principal binding adds one fail-fast branch to the established assembly.
 func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provider port.LLMProvider, store, engineStore port.SessionStore, agentReg *agents.Registry) (*agent.Engine, *mcp.Manager, mcp.Provider, []mcpsource.SourceInfo, server.SessionEngineFactory, *permstore.Memory, port.PermissionPolicy, catalogAssets, *server.ScheduleManagerImpl, func(), error) {
 	// SkillDraft trust boundary: when enabled, the quarantine dir must live OUTSIDE
 	// the workspace root (so the model's workspace-confined Write/Edit cannot reach
@@ -4391,6 +4402,13 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	assets.sessionFactoryWithTools = sessionEngineFactoryWithTools(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	if cfg.harnessResolver != nil {
 		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool) (server.SessionEngineResult, error) {
+			// Reject an invalid selector before principal-scoped source binding creates
+			// unpublished state that cannot be adopted by a session.
+			if selector.ProviderID != "" {
+				if _, err := resolveProviderSelection(reg, selector.ProviderID); err != nil {
+					return server.SessionEngineResult{}, err
+				}
+			}
 			binding, release, err := cfg.harnessResolver.Borrow(ctx, id, owner, string(profile))
 			if err != nil {
 				return server.SessionEngineResult{}, err
@@ -4411,6 +4429,13 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 				return server.SessionEngineResult{}, err
 			}
 			sessionAssets.skills, sessionAssets.skillSource, sessionAssets.skillIndex = seam.metas, seam.source, seam.index
+			// The process catalog is rooted in the caller-neutral startup seam. A
+			// principal binding needs its own catalog so the actual Skill tool, its
+			// logical assets, slash-command view, and learned overlays share the same
+			// owner-specific external source without mutating global ownership.
+			if sessionAssets.liveSkills != nil {
+				sessionAssets.liveSkills = coreskillfs.NewAtomicCatalog(seam.metas, seam.source, nil)
+			}
 			sessionCfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 			factory := sessionEngineFactoryWithTools(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
 			result, err := factory(ctx, selector, specs, profile, workspace, mode, extra)

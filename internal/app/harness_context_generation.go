@@ -18,7 +18,9 @@ type harnessGeneration struct {
 func (g harnessGeneration) borrow() (func(), error) {
 	g.resolver.mu.Lock()
 	defer g.resolver.mu.Unlock()
-	if g.resolver.closed || g.entry.retired {
+	// Retirement bars resolver-level borrows, but the engine holding this
+	// generation's owner lease may continue using it while that lease drains.
+	if g.entry.refs == 0 || g.entry.binding == nil {
 		return nil, fmt.Errorf("harness source generation is retired")
 	}
 	g.entry.refs++

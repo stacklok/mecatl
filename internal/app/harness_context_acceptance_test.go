@@ -71,7 +71,7 @@ func hcConfiguredFiles(t *testing.T, source tool.Workspace) Config {
 	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return Config{Workspace: t.TempDir(), UseMock: true, Headless: true, TrustProject: true, UserModelDir: t.TempDir(), PermissionConfigs: []string{file},
+	return Config{Workspace: t.TempDir(), UseMock: true, Headless: true, TrustProject: true, UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file},
 		HarnessInstructionSources: []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: "source", Provenance: HarnessProvenancePolicy{Fixed: "project"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 			return prompt.RootAssembler{Source: source}, nil, nil
 		}}},

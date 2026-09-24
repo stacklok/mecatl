@@ -191,16 +191,11 @@
 #       mode: combine
 #       # Exclude removes exact source/name candidates before resolution. Instructions
 #       # have no names and use source-only exclusions.
-#       exclude:
-#         - source: ""
-#           name: ""
+#       exclude: []
 #       # Overrides changes exact-name collisions in combine mode only. Forbidden for
 #       # instructions and replace mode. Duplicate or structurally no-op declarations fail
 #       # startup.
-#       overrides:
-#         - name: ""
-#           winner: ""
-#           replaces: []
+#       overrides: []
 #     commands:
 #       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
 #       # disables this kind without changing execution capabilities.
@@ -210,16 +205,11 @@
 #       mode: combine
 #       # Exclude removes exact source/name candidates before resolution. Instructions
 #       # have no names and use source-only exclusions.
-#       exclude:
-#         - source: ""
-#           name: ""
+#       exclude: []
 #       # Overrides changes exact-name collisions in combine mode only. Forbidden for
 #       # instructions and replace mode. Duplicate or structurally no-op declarations fail
 #       # startup.
-#       overrides:
-#         - name: ""
-#           winner: ""
-#           replaces: []
+#       overrides: []
 #     rules:
 #       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
 #       # disables this kind without changing execution capabilities.
@@ -229,16 +219,11 @@
 #       mode: combine
 #       # Exclude removes exact source/name candidates before resolution. Instructions
 #       # have no names and use source-only exclusions.
-#       exclude:
-#         - source: ""
-#           name: ""
+#       exclude: []
 #       # Overrides changes exact-name collisions in combine mode only. Forbidden for
 #       # instructions and replace mode. Duplicate or structurally no-op declarations fail
 #       # startup.
-#       overrides:
-#         - name: ""
-#           winner: ""
-#           replaces: []
+#       overrides: []
 #     skills:
 #       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
 #       # disables this kind without changing execution capabilities.
@@ -248,16 +233,11 @@
 #       mode: combine
 #       # Exclude removes exact source/name candidates before resolution. Instructions
 #       # have no names and use source-only exclusions.
-#       exclude:
-#         - source: ""
-#           name: ""
+#       exclude: []
 #       # Overrides changes exact-name collisions in combine mode only. Forbidden for
 #       # instructions and replace mode. Duplicate or structurally no-op declarations fail
 #       # startup.
-#       overrides:
-#         - name: ""
-#           winner: ""
-#           replaces: []
+#       overrides: []
 #     agent_defs:
 #       # Sources lists enabled, kind-compatible IDs in highest-precedence order. Empty
 #       # disables this kind without changing execution capabilities.
@@ -267,16 +247,11 @@
 #       mode: combine
 #       # Exclude removes exact source/name candidates before resolution. Instructions
 #       # have no names and use source-only exclusions.
-#       exclude:
-#         - source: ""
-#           name: ""
+#       exclude: []
 #       # Overrides changes exact-name collisions in combine mode only. Forbidden for
 #       # instructions and replace mode. Duplicate or structurally no-op declarations fail
 #       # startup.
-#       overrides:
-#         - name: ""
-#           winner: ""
-#           replaces: []
+#       overrides: []
 #|
 #| Example:
 #|   enabled_sources: [local]

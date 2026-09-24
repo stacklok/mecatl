@@ -394,15 +394,11 @@ type Config struct {
 	// MCPStatus returns the reconciler's cached publication/source status without
 	// consulting an upstream source. It is nil when direct MCP is unavailable.
 	MCPStatus func() MCPSourceStatus
-	// Commands lists the available slash commands for a workspace, backing the
-	// ListCommands RPC (the client's in-input command palette). It is the
-	// composition-injected discovery seam: the composition root (internal/app)
-	// closes over the SAME command expander it builds for the run path and receives
-	// the exact authorized workspace reattached for the session, so the palette
-	// offers exactly the commands a "/<cmd>" prompt would expand. Optional and
-	// nil-safe: when nil (command expansion
-	// disabled, or no expander enumerates), ListCommands returns an empty list.
-	// It is read-only and called per request (discovery is cheap file scanning).
+	// Commands owns source-only slash-command bindings for each session, backing
+	// ListCommands and the run-path expander. The resolver receives only the
+	// authoritative stored owner/profile; execution placement is not a command
+	// source. Optional and nil-safe: when nil (command expansion disabled, or no
+	// expander enumerates), ListCommands returns an empty list.
 	Commands CommandSourceResolver
 
 	// SharedEngineRoot is the verified workspace root the shared engine's policy
@@ -8581,7 +8577,12 @@ type CommandSourceBinding interface {
 	prompt.CommandLister
 }
 
-// CommandSourceResolver owns per-session command source bindings.
+// CommandSourceResolver owns per-session command source generations. Borrow
+// returns an authoritative binding plus a mandatory release function; callers
+// must release exactly once after all instruction/command/skill operations using
+// that generation finish. Activate is the owner-authorized reload path and must
+// create a fresh generation after retirement. Retire bars new borrows for only
+// the current generation while already-borrowed engines drain.
 type CommandSourceResolver interface {
 	Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error)
 	Activate(context.Context, session.SessionID, *session.Principal, string) error

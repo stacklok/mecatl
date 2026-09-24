@@ -1,7 +1,7 @@
 package permconfig
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/goccy/go-yaml/ast"
 )
@@ -17,9 +17,18 @@ func (s *HarnessContextSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "harness_context", s.strictFields()); err != nil {
 		return err
 	}
-	for _, kind := range []HarnessContextKind{s.Kinds.Instructions, s.Kinds.Commands, s.Kinds.Rules, s.Kinds.Skills, s.Kinds.AgentDefs} {
-		if kind.Mode != "combine" && kind.Mode != "replace" {
-			return errors.New("all five harness kinds require a valid mode")
+	for _, entry := range []struct {
+		name string
+		kind HarnessContextKind
+	}{
+		{"instructions", s.Kinds.Instructions},
+		{"commands", s.Kinds.Commands},
+		{"rules", s.Kinds.Rules},
+		{"skills", s.Kinds.Skills},
+		{"agent_defs", s.Kinds.AgentDefs},
+	} {
+		if entry.kind.Mode != "combine" && entry.kind.Mode != "replace" {
+			return fmt.Errorf("harness_context.kinds.%s.mode must be combine or replace", entry.name)
 		}
 	}
 	return nil
