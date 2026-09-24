@@ -243690,6 +243690,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790265637583,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "627d07b9b65075eddf860b28f71e6154d0e76ad8",
+          "message": "feat(studio): implement appearance foundation (#1873)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T18:20:32+02:00",
+          "tree_id": "bde14193009d79dc41c38e89ee74f6c10e49bce3",
+          "url": "https://github.com/stacklok/mecatl/commit/627d07b9b65075eddf860b28f71e6154d0e76ad8"
+        },
+        "date": 1790267465849,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -354043,6 +354077,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790267462765,
+  "lastUpdate": 1790267466522,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
