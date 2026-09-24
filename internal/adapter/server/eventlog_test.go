@@ -224,6 +224,95 @@ func TestLiveRelaysPersistButOmitObservedNetworkAttempt(t *testing.T) {
 	}
 }
 
+// TestADR_0357_Scenario4_PublicSurfacesOmitEvidence proves AC4.2 for the two
+// live transports the harness serves directly (gRPC Converse and HTTP/SSE):
+// the new structural fields (ProviderTerminalObserved/StreamOutcome) ride the
+// same debugger-only network.attempt event as the rest of ADR 0255's evidence,
+// so they never reach an ordinary client stream even though they are durably
+// recorded. Direct Team streams are covered separately by
+// TestDirectTeamTransportsOmitNetworkAttemptWithoutAffectingDurableObservation;
+// this test does not additionally exercise watch/subscription, SDK
+// attachment, or ACP surfaces, none of which this suite has existing harness
+// support for.
+func TestADR_0357_Scenario4_PublicSurfacesOmitEvidence(t *testing.T) {
+	for _, transport := range []string{"grpc", "http"} {
+		t.Run(transport, func(t *testing.T) {
+			log := memstore.NewEventLog()
+			terminal := true
+			llm := &observedAttemptProvider{observations: []session.NetworkAttemptPayload{
+				{Attempt: 1, MaxAttempts: 1, RetryDisposition: "unknown", StreamProgress: "complete", Decision: "terminal", SuppressionReason: "unknown", FailureClass: "unknown", ProviderTerminalObserved: &terminal, StreamOutcome: "complete"},
+			}}
+			engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "test-model", EnableDurableEvidence: true})
+			svc, err := newPlacementTestService(server.Config{
+				Engine: engine, Store: memstore.New(), EventLog: log,
+				Now: func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: llm.Capabilities(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var wireTypes []string
+			switch transport {
+			case "grpc":
+				client, cleanup := dialGRPC(t, svc)
+				defer cleanup()
+				stream, err := client.Converse(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(sess.ID), Text: "go"}}}); err != nil {
+					t.Fatal(err)
+				}
+				_ = stream.CloseSend()
+				for {
+					resp, err := stream.Recv()
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					wireTypes = append(wireTypes, resp.GetEvent().GetType())
+				}
+			case "http":
+				srv := httptest.NewServer(server.NewHTTPHandler(svc))
+				defer srv.Close()
+				resp, err := http.Post(srv.URL+"/v1/sessions/"+string(sess.ID)+"/prompt", "application/json", strings.NewReader(`{"text":"go"}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				for _, ev := range parseSSE(t, bufio.NewReader(resp.Body)) {
+					wireTypes = append(wireTypes, ev.GetType())
+				}
+			}
+			for _, typ := range wireTypes {
+				if typ == string(session.EvNetworkAttempt) {
+					t.Fatalf("live %s stream exposed structural evidence via network.attempt: %v", transport, wireTypes)
+				}
+			}
+
+			var attempts []session.NetworkAttemptPayload
+			for _, ev := range readEventLog(t, log, sess.ID) {
+				if ev.Type == session.EvNetworkAttempt {
+					if ev.NetworkAttempt == nil {
+						t.Fatal("durable network.attempt has nil payload")
+					}
+					attempts = append(attempts, *ev.NetworkAttempt)
+				}
+			}
+			if len(attempts) != 1 || attempts[0].StreamOutcome != "complete" ||
+				attempts[0].ProviderTerminalObserved == nil || !*attempts[0].ProviderTerminalObserved {
+				t.Fatalf("durable structural evidence = %+v, want it recorded despite public-surface omission", attempts)
+			}
+		})
+	}
+}
+
 type observedAttemptProvider struct {
 	observations []session.NetworkAttemptPayload
 }

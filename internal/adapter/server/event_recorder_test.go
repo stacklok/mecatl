@@ -259,6 +259,45 @@ func TestRunEventRecorderDrainToDiscardStillObserves(t *testing.T) {
 	}
 }
 
+// TestADR_0357_Scenario3_DurableAfterDisconnect proves AC3.3: a disconnected
+// client does not prevent a network.attempt structural event from reaching
+// EventLog, and an unrelated EventLog write failure earlier in the same run
+// stays non-fatal to durable recording of the later structural event.
+func TestADR_0357_Scenario3_DurableAfterDisconnect(t *testing.T) {
+	terminal := true
+	payload := session.NetworkAttemptPayload{
+		SessionID: "s1", RunSerial: 4, Turn: 1, Attempt: 1, MaxAttempts: 1,
+		Decision: "terminal", RetryDisposition: "unknown", StreamProgress: "complete",
+		FailureClass: "unknown", SuppressionReason: "unknown",
+		ProviderTerminalObserved: &terminal, StreamOutcome: "complete",
+	}
+	// The first Append (the delta) fails; the recorder must not retry it and must
+	// still durably record the structural event that follows.
+	log := &countingEventLog{failCalls: map[int]bool{1: true}}
+	diag := &countingDiagnostics{}
+	svc := recorderService(log, diag)
+	recorder := NewRunEventRecorder(context.Background(), svc, "s1")
+	h := &HarnessServer{svc: svc}
+	// The relay's Send always fails — a fully disconnected client — so the ONLY
+	// path the structural event can reach durable storage through is the
+	// recorder, decoupled from delivery (AGENTS.md: "the Append is DECOUPLED
+	// from the client send... a dead client never stops the log").
+	rl := &runRelay{id: "s1", sendErr: errors.New("client gone"), recorder: recorder}
+
+	h.sendEvent(rl, session.Event{Type: session.EvMessageDelta, Text: "will fail to persist"})
+	h.sendEvent(rl, session.Event{Type: session.EvNetworkAttempt, Turn: 1, NetworkAttempt: &payload})
+	recorder.Close()
+
+	if diag.warnings != 1 {
+		t.Fatalf("warnings = %d, want one sticky non-fatal write-failure warning", diag.warnings)
+	}
+	if len(log.recorded) != 1 || log.recorded[0].Type != session.EvNetworkAttempt ||
+		log.recorded[0].NetworkAttempt == nil || log.recorded[0].NetworkAttempt.StreamOutcome != "complete" ||
+		log.recorded[0].NetworkAttempt.ProviderTerminalObserved == nil || !*log.recorded[0].NetworkAttempt.ProviderTerminalObserved {
+		t.Fatalf("durable structural event after disconnect+write-failure = %+v", log.recorded)
+	}
+}
+
 func TestRunEventRecorderOversizedEscapedUTF8RoundTripsThroughJSONL(t *testing.T) {
 	log, err := jsonlstore.New(t.TempDir())
 	if err != nil {
