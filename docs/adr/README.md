@@ -87,6 +87,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0351 — Mecatl Studio: in-repo web UI behind a BFF over the published SDK](./0351-mecatl-studio-in-repo-web-ui.md) *(proposed; `apps/` workspace, one-origin image, `MECATL_*`/`STUDIO_*` split)*
 - [0361 — Studio exposes coarse status and completes browser login in a popup](./0361-studio-anonymous-status-and-popup-login.md) *(proposed; anonymous status, authenticated runtime, and same-origin callback messaging)*
 - [0366 — Resolve plan asks by exact run and ask](./0366-exact-plan-ask-control.md) *(proposed; strict control for live and restored plan asks, extending ADR 0347)*
+- [0367 — Session-owned PDF artifacts outside session storage](./0367-session-owned-pdf-artifacts.md) *(proposed)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
 - [0356 — Durable context occupancy in session snapshots](./0356-durable-context-occupancy.md) *(proposed; extends ADR 0307 without changing lifetime-ledger or budget semantics)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*

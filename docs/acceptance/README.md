@@ -128,6 +128,9 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [SDK PDF artifacts](sdk-pdf-artifacts.md) — streams session-owned PDFs into
+  chat prompts and out of PDF tool results with object storage outside Redis.
+  Status: proposed.
 - [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
 - [Provider-scoped model discovery](provider-model-discovery.md) — one composition-owned provider lifecycle for shared discovery, ordered publication, context-safe admission, and truthful retry recovery. Status: draft.
 
