@@ -266351,6 +266351,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790226041646,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fc7c967bc95dd6daa428c09af0787e07a949be7a",
+          "message": "perf(ci): batch acceptance proof resolution (#1832)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T22:49:46-07:00",
+          "tree_id": "34b8fff67cd703cd58ec0f5f27469f37d827f517",
+          "url": "https://github.com/stacklok/mecatl/commit/fc7c967bc95dd6daa428c09af0787e07a949be7a"
+        },
+        "date": 1790229622896,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3300,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 93,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -349267,6 +349306,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790229619826,
+  "lastUpdate": 1790229624184,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
