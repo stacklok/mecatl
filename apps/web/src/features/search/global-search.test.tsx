@@ -2,15 +2,29 @@
 // @vitest-environment happy-dom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ShortcutProvider, useShortcut } from "../shortcuts/shortcut-provider";
 import { GlobalSearch } from "./global-search";
 
 const navigation = vi.hoisted(() => vi.fn(async () => undefined));
+type AuthSession = {
+  account?: string;
+  mode: "none" | "oidc" | "static";
+  status: string;
+};
 const inventoryState = vi.hoisted(() => ({
+  authCalls: 0,
+  authPending: undefined as Promise<void> | undefined,
+  authSession: {
+    account: "account-a",
+    mode: "oidc",
+    status: "authenticated",
+  } as AuthSession,
   calls: [] as string[],
+  failAuth: false,
+  authErrorStatus: undefined as number | undefined,
   inventoryCalls: [] as string[],
   failSchedules: false,
   failSessionsUnauthorized: false,
@@ -22,11 +36,22 @@ const inventoryState = vi.hoisted(() => ({
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigation }));
+vi.mock("@mecatl-studio/contracts/generated", () => ({
+  getAuthSession: async () => {
+    inventoryState.authCalls += 1;
+    await inventoryState.authPending;
+    if (inventoryState.failAuth) {
+      if (inventoryState.authErrorStatus) throw { status: inventoryState.authErrorStatus };
+      throw new Error("auth unavailable");
+    }
+    return { data: inventoryState.authSession };
+  },
+}));
 vi.mock("@mecatl-studio/contracts/query", () => {
   const options = (key: string, data: unknown) => () => ({
     queryFn: async () => {
       if (key !== "auth") inventoryState.inventoryCalls.push(key);
-      return data;
+      return key === "auth" ? inventoryState.authSession : data;
     },
     queryKey: [key],
   });
@@ -74,12 +99,13 @@ function BackgroundShortcut({ onInvoke }: { onInvoke: () => void }) {
 
 async function mount(
   onBackgroundShortcut = () => {},
-  authSession: { account?: string; mode: "none" | "oidc" | "static"; status: string } = {
+  authSession: AuthSession = {
     account: "account-a",
     mode: "oidc",
     status: "authenticated",
   },
 ) {
+  inventoryState.authSession = authSession;
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
@@ -89,12 +115,14 @@ async function mount(
   root = createRoot(container);
   await act(async () => {
     root?.render(
-      <QueryClientProvider client={client}>
-        <ShortcutProvider>
-          <BackgroundShortcut onInvoke={onBackgroundShortcut} />
-          <GlobalSearch />
-        </ShortcutProvider>
-      </QueryClientProvider>,
+      <StrictMode>
+        <QueryClientProvider client={client}>
+          <ShortcutProvider>
+            <BackgroundShortcut onInvoke={onBackgroundShortcut} />
+            <GlobalSearch />
+          </ShortcutProvider>
+        </QueryClientProvider>
+      </StrictMode>,
     );
   });
   return client;
@@ -110,7 +138,7 @@ async function searchFor(value: string) {
   const input = document.querySelector<HTMLInputElement>('input[role="combobox"]');
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
   await act(async () => {
-    setter?.call(input, value);
+    if (input) setter?.call(input, value);
     input?.dispatchEvent(new Event("input", { bubbles: true }));
   });
   return input;
@@ -135,7 +163,16 @@ afterEach(async () => {
   container = undefined;
   document.body.replaceChildren();
   navigation.mockClear();
+  inventoryState.authCalls = 0;
+  inventoryState.authPending = undefined;
+  inventoryState.authSession = {
+    account: "account-a",
+    mode: "oidc",
+    status: "authenticated",
+  };
   inventoryState.calls = [];
+  inventoryState.failAuth = false;
+  inventoryState.authErrorStatus = undefined;
   inventoryState.inventoryCalls = [];
   inventoryState.failSchedules = false;
   inventoryState.failSessionsUnauthorized = false;
@@ -199,6 +236,11 @@ describe("GlobalSearch", () => {
     inventoryState.sessions = [
       { id: "session-b", modelId: "model", state: "idle", title: "Private Beta" },
     ];
+    inventoryState.authSession = {
+      account: "account-b",
+      mode: "oidc",
+      status: "authenticated",
+    };
     await act(async () => {
       client.setQueryData(["auth"], {
         account: "account-b",
@@ -238,6 +280,7 @@ describe("GlobalSearch", () => {
     const callsBeforeAccountLoss = [...inventoryState.inventoryCalls];
     expect(callsBeforeAccountLoss).toHaveLength(5);
 
+    inventoryState.authSession = { mode: "oidc", status: "authenticated" };
     await act(async () => {
       client.setQueryData(["auth"], { mode: "oidc", status: "authenticated" });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -257,6 +300,117 @@ describe("GlobalSearch", () => {
     );
     expect(inventoryState.calls).toEqual(["sessions"]);
     expect(inventoryState.inventoryCalls).toEqual(callsBeforeAccountLoss);
+  });
+
+  it("checks fresh identity before reopening cached private results", async () => {
+    inventoryState.sessions = [
+      { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+    ];
+    const client = await mount();
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+    await act(async () => trigger?.click());
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    expect(inventoryState.authCalls).toBe(1);
+    expect(inventoryState.calls).toEqual(["sessions"]);
+
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
+    );
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(client.getQueryData(["auth"])).toEqual({
+      account: "account-a",
+      mode: "oidc",
+      status: "authenticated",
+    });
+
+    inventoryState.sessions = [
+      { id: "session-b", modelId: "model", state: "idle", title: "Private Beta" },
+    ];
+    inventoryState.authSession = {
+      account: "account-b",
+      mode: "oidc",
+      status: "authenticated",
+    };
+    let releaseAuth: (() => void) | undefined;
+    inventoryState.authPending = new Promise<void>((resolve) => {
+      releaseAuth = resolve;
+    });
+    await act(async () => trigger?.click());
+    await searchFor("Private Alpha");
+    expect(document.body.textContent).not.toContain("Private Alpha");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(inventoryState.authCalls).toBe(2);
+    expect(inventoryState.calls).toEqual(["sessions"]);
+
+    await act(async () => {
+      releaseAuth?.();
+      await inventoryState.authPending;
+    });
+    inventoryState.authPending = undefined;
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("Private Alpha");
+    expect(client.getQueryData(["auth"])).toEqual(inventoryState.authSession);
+
+    const newTrigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+    await act(async () => newTrigger?.click());
+    expect(inventoryState.authCalls).toBe(3);
+    expect(inventoryState.calls).toEqual(["sessions", "sessions"]);
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')).toBeNull();
+    await searchFor("Private Beta");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Beta");
+  });
+
+  it("shows only local help when a fresh identity check loses the BFF", async () => {
+    inventoryState.sessions = [
+      { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+    ];
+    await mount();
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+    await act(async () => trigger?.click());
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
+    );
+    inventoryState.failAuth = true;
+    await act(async () => trigger?.click());
+    expect(document.body.textContent).not.toContain("Private Alpha");
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')).toBeNull();
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      "Workspace inventories unavailable",
+    );
+    await searchFor("shortcuts");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Keyboard shortcuts");
+    expect(inventoryState.authCalls).toBe(2);
+    expect(inventoryState.calls).toEqual(["sessions"]);
+
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
+    );
+    inventoryState.failAuth = false;
+    await act(async () => trigger?.click());
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    expect(inventoryState.authCalls).toBe(3);
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).not.toContain(
+      "Workspace inventories unavailable",
+    );
+  });
+
+  it("keeps search closed after a rejected fresh identity check", async () => {
+    await mount();
+    inventoryState.failAuth = true;
+    inventoryState.authErrorStatus = 401;
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(inventoryState.authCalls).toBe(1);
+    expect(inventoryState.inventoryCalls).toEqual([]);
   });
 
   it("fetches only after an authorized session opens the palette and keeps the query local", async () => {

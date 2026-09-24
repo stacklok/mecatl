@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { type GetAuthSessionResponse, getAuthSession } from "@mecatl-studio/contracts/generated";
 import {
   getAuthSessionOptions,
   listConfiguredSkillsOptions,
@@ -79,17 +80,20 @@ function isUnauthorized(error: unknown): boolean {
   return false;
 }
 
+function searchScope(session: GetAuthSessionResponse | undefined): string | undefined {
+  if (session?.status === "authenticated") {
+    return session.account ? `account:${session.account}` : "static-help:account-unavailable";
+  }
+  if (session?.status === "disabled" && session.mode !== "oidc") {
+    return `shared:${session.mode}`;
+  }
+  return undefined;
+}
+
 export function GlobalSearch() {
   const auth = useQuery(getAuthSessionOptions());
   const staticOnly = auth.data?.status === "authenticated" && !auth.data.account;
-  const scope =
-    auth.data?.status === "authenticated" && auth.data.account
-      ? `account:${auth.data.account}`
-      : staticOnly
-        ? "static-help:account-unavailable"
-        : auth.data?.status === "disabled" && auth.data.mode !== "oidc"
-          ? `shared:${auth.data.mode}`
-          : undefined;
+  const scope = searchScope(auth.data);
 
   // A changed account remounts the palette closed. Its inventory queries get
   // separate keys, so React Query never offers the prior account's cache.
@@ -107,6 +111,8 @@ function SearchPalette({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(false);
+  const [staticHelpOnly, setStaticHelpOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -114,6 +120,8 @@ function SearchPalette({
   const navigating = useRef(false);
   const navigationDone = useRef(false);
   const dialogClosed = useRef(false);
+  const opening = useRef(false);
+  const mounted = useRef(true);
   const composition = useRef(createSearchCompositionGuard());
   const scrollActiveIntoView = useRef(false);
   const [visualViewport, setVisualViewport] = useState<{ height: number; top: number } | null>(
@@ -132,6 +140,7 @@ function SearchPalette({
   const configuredSkillsKey = accountQueryKey(configuredSkillsOptions.queryKey, scope);
   const learnedSkillsKey = accountQueryKey(learnedSkillsOptions.queryKey, scope);
   const memoryKey = accountQueryKey(memoryOptions.queryKey, scope);
+  const canSearchInventory = inventoryAuthorized && !staticHelpOnly;
   const accountKeys = useRef([
     sessionsKey,
     schedulesKey,
@@ -141,27 +150,27 @@ function SearchPalette({
   ]);
   const sessions = useQuery({
     ...sessionsOptions,
-    enabled: open && inventoryAuthorized,
+    enabled: open && canSearchInventory,
     queryKey: sessionsKey,
   });
   const schedules = useQuery({
     ...schedulesOptions,
-    enabled: open && inventoryAuthorized,
+    enabled: open && canSearchInventory,
     queryKey: schedulesKey,
   });
   const configuredSkills = useQuery({
     ...configuredSkillsOptions,
-    enabled: open && inventoryAuthorized,
+    enabled: open && canSearchInventory,
     queryKey: configuredSkillsKey,
   });
   const learnedSkills = useQuery({
     ...learnedSkillsOptions,
-    enabled: open && inventoryAuthorized,
+    enabled: open && canSearchInventory,
     queryKey: learnedSkillsKey,
   });
   const memory = useQuery({
     ...memoryOptions,
-    enabled: open && inventoryAuthorized,
+    enabled: open && canSearchInventory,
     queryKey: memoryKey,
   });
   const threadSessionIds = useThreadSessionIds();
@@ -172,7 +181,7 @@ function SearchPalette({
 
   const index = useMemo(
     () =>
-      inventoryAuthorized
+      canSearchInventory
         ? buildGlobalSearchIndex({
             configuredSkills: configuredSkills.data?.supported ? configuredSkills.data.items : [],
             learnedSkills: learnedSkills.data?.supported ? learnedSkills.data.items : [],
@@ -184,7 +193,7 @@ function SearchPalette({
           })
         : globalSearchPages,
     [
-      inventoryAuthorized,
+      canSearchInventory,
       configuredSkills.data,
       learnedSkills.data,
       memory.data,
@@ -199,8 +208,8 @@ function SearchPalette({
   // Inventories load while the user types, so the stored index can outrun the list.
   const highlighted = clampActiveIndex(activeIndex, flatResults.length);
   const activeResult = flatResults[highlighted];
-  const loading = inventoryAuthorized && inventories.some((inventory) => inventory.isPending);
-  const partialError = inventoryAuthorized && inventories.some((inventory) => inventory.isError);
+  const loading = canSearchInventory && inventories.some((inventory) => inventory.isPending);
+  const partialError = canSearchInventory && inventories.some((inventory) => inventory.isError);
   const mac = navigator.platform.includes("Mac");
 
   useEffect(() => {
@@ -225,7 +234,9 @@ function SearchPalette({
   // Queries outlive a dialog close for quick reopening by the same account,
   // but never outlive this keyed palette's account scope.
   useEffect(() => {
+    mounted.current = true;
     return () => {
+      mounted.current = false;
       for (const queryKey of accountKeys.current)
         queryClient.removeQueries({ exact: true, queryKey });
     };
@@ -239,13 +250,44 @@ function SearchPalette({
     void queryClient.invalidateQueries({ queryKey: getAuthSessionOptions().queryKey });
   }, [accessExpired, queryClient]);
 
-  function openSearch(invoker: HTMLElement | null) {
-    if (accessExpired) return;
-    invokingElement.current = invoker;
-    navigating.current = false;
-    navigationDone.current = false;
-    dialogClosed.current = false;
-    setOpen(true);
+  async function openSearch(invoker: HTMLElement | null) {
+    if (accessExpired || opening.current) return;
+    opening.current = true;
+    setCheckingAuth(true);
+    const authKey = getAuthSessionOptions().queryKey;
+    const showSearch = () => {
+      invokingElement.current = invoker;
+      navigating.current = false;
+      navigationDone.current = false;
+      dialogClosed.current = false;
+      setOpen(true);
+    };
+    try {
+      // This is a new BFF request, independent of React Query's cached or
+      // in-flight auth query. A different tab may have changed the shared
+      // cookie since this tab last rendered its search trigger.
+      const { data } = await getAuthSession({ throwOnError: true });
+      if (!mounted.current) return;
+      if (searchScope(queryClient.getQueryData<GetAuthSessionResponse>(authKey)) !== scope) return;
+      queryClient.setQueryData(authKey, data);
+      if (searchScope(data) !== scope) return;
+      setStaticHelpOnly(false);
+      showSearch();
+    } catch (error) {
+      // A lost BFF connection still permits local help search. A rejected
+      // session does not: leave sign-in recovery to the auth gate.
+      if (!mounted.current) return;
+      if (searchScope(queryClient.getQueryData<GetAuthSessionResponse>(authKey)) !== scope) return;
+      if (isUnauthorized(error)) {
+        void queryClient.invalidateQueries({ exact: true, queryKey: authKey });
+        return;
+      }
+      setStaticHelpOnly(true);
+      showSearch();
+    } finally {
+      opening.current = false;
+      if (mounted.current) setCheckingAuth(false);
+    }
   }
 
   function closeSearch() {
@@ -281,7 +323,7 @@ function SearchPalette({
   useShortcutSuppression(paletteOpen, paletteShortcuts);
   useShortcut("search.open", () => {
     if (open) closeSearch();
-    else openSearch(document.activeElement as HTMLElement | null);
+    else void openSearch(document.activeElement as HTMLElement | null);
   });
   useShortcut("settings.open", () => {
     void navigateFromSearch(() => navigate({ to: "/workspace/settings" }));
@@ -365,9 +407,9 @@ function SearchPalette({
       <button
         aria-keyshortcuts="Control+K Meta+K"
         aria-label="Search"
-        disabled={accessExpired}
+        disabled={accessExpired || checkingAuth}
         className="flex size-11 items-center justify-center gap-2 rounded-full px-2.5 text-[#a5b8b4] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 min-[500px]:w-full min-[900px]:justify-start min-[900px]:px-3"
-        onClick={(event) => openSearch(event.currentTarget)}
+        onClick={(event) => void openSearch(event.currentTarget)}
         type="button"
       >
         <Search aria-hidden="true" className="size-[17px]" />
@@ -381,7 +423,12 @@ function SearchPalette({
         </span>
       </button>
 
-      <Dialog onOpenChange={setOpen} open={paletteOpen}>
+      <Dialog
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) closeSearch();
+        }}
+        open={paletteOpen}
+      >
         <DialogContent
           aria-describedby={undefined}
           className="top-[max(4rem,12dvh)] flex max-h-[min(36rem,calc(100dvh-4rem))] max-w-[min(42rem,calc(100%-1.5rem))] translate-y-0 flex-col gap-0 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-2xl max-[499px]:top-[var(--search-viewport-top,0px)] max-[499px]:left-0 max-[499px]:h-[var(--search-viewport-height,100dvh)] max-[499px]:max-h-none max-[499px]:max-w-none max-[499px]:translate-x-0 max-[499px]:rounded-none max-[499px]:border-0 max-[499px]:pt-[env(safe-area-inset-top)] max-[499px]:pb-[env(safe-area-inset-bottom)] sm:max-w-[min(42rem,calc(100%-1.5rem))]"
@@ -417,7 +464,7 @@ function SearchPalette({
               aria-controls={listboxId}
               aria-expanded={true}
               aria-label={
-                inventoryAuthorized
+                canSearchInventory
                   ? "Search chats, schedules, skills, and memory"
                   : "Search help and pages"
               }
@@ -434,7 +481,7 @@ function SearchPalette({
               onPointerDownCapture={() => composition.current.pointerChoice()}
               onTouchStartCapture={() => composition.current.pointerChoice()}
               placeholder={
-                inventoryAuthorized
+                canSearchInventory
                   ? "Search chats, schedules, skills, and memory…"
                   : "Search help and pages…"
               }
@@ -454,7 +501,7 @@ function SearchPalette({
 
           <div className="min-h-0 flex-1 overflow-y-auto p-2 max-[499px]:max-h-none">
             {!query.trim() ? (
-              <SearchPrompt inventoryAuthorized={inventoryAuthorized} />
+              <SearchPrompt inventoryAuthorized={canSearchInventory} />
             ) : flatResults.length === 0 && !loading ? (
               <p className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No results for “{query.trim()}”
@@ -500,7 +547,7 @@ function SearchPalette({
 
           <div className="flex min-h-9 items-center justify-between gap-3 border-t px-4 py-2 text-[11px] text-muted-foreground">
             <span aria-live="polite">
-              {!inventoryAuthorized
+              {!canSearchInventory
                 ? "Workspace inventories unavailable; search help and pages"
                 : partialError
                   ? "Some inventories could not be searched"

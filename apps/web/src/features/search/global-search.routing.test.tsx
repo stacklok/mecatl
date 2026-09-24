@@ -18,6 +18,10 @@ import { GlobalSearch } from "./global-search";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
+vi.mock("@mecatl-studio/contracts/generated", () => ({
+  getAuthSession: async () => ({ data: { mode: "none", status: "disabled" } }),
+}));
+
 vi.mock("@mecatl-studio/contracts/query", () => {
   const options = (key: string, data: unknown) => () => ({
     queryFn: async () => data,
