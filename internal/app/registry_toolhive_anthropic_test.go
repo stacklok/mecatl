@@ -408,6 +408,8 @@ func TestToolhiveNativeAnthropic_DirectCatalogDiagnosticsRedactResponseBody(t *t
 	if got, _ := seenAuth.Load().(string); got != "Bearer "+reflectedBearer {
 		t.Fatalf("catalog Authorization = %q", got)
 	}
+	// Publication wakes request waiters before diagnostics; join delivery before inspecting it.
+	discovery.Close()
 	records := strings.Join(diag.capturedStrings(), "\n")
 	if strings.Contains(records, reflectedBearer) || strings.Contains(records, `"error"`) {
 		t.Fatalf("diagnostics exposed native response body or credential: %s", records)
