@@ -8,6 +8,7 @@
 **Delivery:** Split. Session filtering, incremental pagination, capability-authorized actions, and compact geometry need contract review before implementation changes their shared state path.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1895](https://github.com/stacklok/mecatl/issues/1895).
+**Plan PR:** [#1906](https://github.com/stacklok/mecatl/pull/1906)
 
 This slice migrates only the selectable `/sessions` inventory to the existing pointer-owned `bounded.List`. The current panel owns a numeric cursor and applies `scrollWindow` before width-dependent row rendering in [`cmd/mecatui/ui/sessions_surface.go`](../../cmd/mecatui/ui/sessions_surface.go). The migration makes session ID the list identity and lets the existing control account for each row's actual wrapped physical height.
 
