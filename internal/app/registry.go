@@ -511,7 +511,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 			return nil, fmt.Errorf("configure OpenAI bearer token file: %w", err)
 		}
 		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, "", baseURL,
-			openai.WithHTTPClient(client), openai.WithMaxRetries(0))
+			openai.WithHTTPClient(withRootSessionCorrelation(client)), openai.WithMaxRetries(0))
 	}
 
 	if entry, err := newOpenAICodexEntry(cfg); err != nil {
@@ -798,7 +798,7 @@ func newNativeProviderEntry(cfg Config, definition permconfig.ProviderDefinition
 		return providerEntry{}, fmt.Errorf("configure OIDC provider %q: %w", definition.ID, err)
 	}
 	entry := newOpenAICompatEntry(cfg, definition.ID, "transport-owned", definition.BaseURL,
-		openai.WithHTTPClient(client), openai.WithMaxRetries(0))
+		openai.WithHTTPClient(withRootSessionCorrelation(client)), openai.WithMaxRetries(0))
 	entry.nativeEndpoint = true
 	entry.defaultModel = definition.DefaultModel
 	entry.lister = gatewayLister{inner: openaicompat.NewLister(definition.BaseURL, "", client)}
@@ -833,7 +833,7 @@ func newCustomProviderEntry(cfg Config, definition permconfig.ProviderDefinition
 }
 
 func customProviderInferenceHTTPClient() *http.Client {
-	return &http.Client{CheckRedirect: openaicompat.RefuseRedirects}
+	return withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})
 }
 
 func customProviderListingHTTPClient(client *http.Client) *http.Client {
@@ -881,7 +881,7 @@ func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
 		providerOpenAICodex,
 		"policy-owned",
 		openaicodex.BaseURL,
-		openai.WithHTTPClient(policy.HTTPClient()),
+		openai.WithHTTPClient(withRootSessionCorrelation(policy.HTTPClient())),
 		openai.WithMaxRetries(0),
 	)
 	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy)}
@@ -1003,7 +1003,7 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		// prompt, file contents and tool results do. Prepended BEFORE extra, so a
 		// caller that passes its own WithHTTPClient (the gateway entries, which
 		// already refuse redirects and additionally inject a bearer) still wins.
-		opts = append(opts, openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))
+		opts = append(opts, openai.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -1077,6 +1077,7 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		// OpenAI-over-Chat-Completions entry gets it for free on every
 		// per-session/heal re-mint.
 		opts = append(opts, openaichat.WithCacheDialect(openaichatCacheDialectFor(id, baseURL, cfg)))
+		opts = append(opts, openaichat.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = openaichat.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -1195,7 +1196,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		// own client (the gateway entries, which already refuse redirects and
 		// additionally inject a bearer) still wins.
 		opts = append(opts, anthropic.WithRequestOption(
-			anthropicoption.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
+			anthropicoption.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = anthropic.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -1662,7 +1663,7 @@ func ToolhiveAvailable(cfg Config) bool {
 // following a redirect is ordinary and expected.
 func newGatewayEntry(cfg Config, id, baseURL, gatewayURL string, explicit bool, lister modelLister) providerEntry {
 	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, baseURL,
-		openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))
+		openai.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 	entry.lister = lister
 	entry.intentDriven = true
 	entry.intentGatewayURL = gatewayURL
@@ -1705,7 +1706,7 @@ func newToolhiveAnthropicEntry(cfg Config, intent toolhiveIntent, meta *liveMeta
 	baseURL := toolhiveAnthropicBaseURL(intent.baseURL)
 	entry := newAnthropicEntryFor(cfg, providerToolhiveAnthropic, "", baseURL, meta, false,
 		anthropic.WithRequestOption(
-			anthropicoption.WithHTTPClient(client),
+			anthropicoption.WithHTTPClient(withRootSessionCorrelation(client)),
 			anthropicoption.WithMaxRetries(0),
 		))
 	entry.lister = anthropicLister{inner: anthropic.NewLister("", baseURL, client)}
@@ -1771,7 +1772,7 @@ func newDirectGatewayClient(cfg Config, intent toolhiveIntent, configPath string
 
 func newDirectGatewayEntry(cfg Config, id string, intent toolhiveIntent, client *http.Client) providerEntry {
 	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, intent.baseURL,
-		openai.WithHTTPClient(client),
+		openai.WithHTTPClient(withRootSessionCorrelation(client)),
 		openai.WithMaxRetries(0))
 	// The direct-mode lister shares the SAME bearer-authenticated client so
 	// the Build-time probe (probeToolhive) and the live refresh authenticate

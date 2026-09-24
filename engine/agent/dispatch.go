@@ -1945,10 +1945,9 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 				return askReviewOutcome{}
 			default:
 			}
-			// A fresh background context + timeout: resolveChildAsk runs on the drain
-			// path with no ctx of its own, and the parked child must not hang on a
-			// wedged reviewer. A timed-out review is a failure → fall-through deny.
-			ctx, cancel := context.WithTimeout(context.Background(), askReviewTimeout)
+			// Detach cancellation while preserving only the causal root; the review
+			// remains bounded by its own timeout and the hard-abort gate above.
+			ctx, cancel := context.WithTimeout(detachedRunContext(r.ctx), askReviewTimeout)
 			defer cancel()
 			review, err := reviewer.Review(ctx, ChildAskReviewRequest{Ask: ask, Isolated: isolated})
 			switch {

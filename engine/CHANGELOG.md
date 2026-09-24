@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Root-session run correlation context** — adds `port.WithRootSessionID` and
+  `port.RootSessionIDFromContext` so trusted engine composition can preserve one
+  causal session identity across nested runs without changing active session
+  identity. Added (minor).
+
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
   snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).

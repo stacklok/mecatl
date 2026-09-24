@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
+	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -726,6 +728,7 @@ func prepareJevRouter(cfg *Config) error {
 			BaseURL: cfg.RouterJevBaseURL, DefaultCategory: cfg.RouterDefaultCategory,
 			MinimumConfidence: cfg.RouterJevMinimumConfidence,
 			MaximumInputBytes: cfg.RouterJevMaximumInputBytes,
+			HTTPClient:        withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}),
 		})
 		if err != nil {
 			return fmt.Errorf("configure Jev model router: %w", err)

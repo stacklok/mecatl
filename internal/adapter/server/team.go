@@ -99,17 +99,18 @@ type teamDeclarationMessage struct {
 }
 
 type teamState struct {
-	team     *team.Team
-	sup      *agent.Supervisor
-	base     string
-	env      tool.Environment
-	name     string
-	goal     string
-	budget   int
-	specs    []agent.MemberSpec
-	messages []teamDeclarationMessage
-	owner    *session.Principal
-	phase    teamPhase
+	team          *team.Team
+	sup           *agent.Supervisor
+	base          string
+	env           tool.Environment
+	name          string
+	goal          string
+	budget        int
+	specs         []agent.MemberSpec
+	messages      []teamDeclarationMessage
+	owner         *session.Principal
+	rootSessionID session.SessionID
+	phase         teamPhase
 
 	// run serialises a SpawnTeammate (AddMember writes the supervisor's member maps)
 	// against a RunTeam start (sup.Run reads them). See the type doc above.
@@ -148,7 +149,7 @@ func (s *Service) CreateTeamOnDefaultPlacement(ctx context.Context, name, goal s
 	if binding.Close != nil {
 		defer func() { _ = binding.Close() }()
 	}
-	return s.createTeamInEnvironment(ctx, binding.Environment, name, goal, maxTeamTokens, members)
+	return s.createTeamInEnvironment(ctx, binding.Environment, "", name, goal, maxTeamTokens, members)
 }
 
 // CreateTeamForSession creates a team in an owning session's exact authorized
@@ -157,17 +158,17 @@ func (s *Service) CreateTeamForSession(ctx context.Context, source session.Sessi
 	if source == "" {
 		return "", nil, fmt.Errorf("%w: session_id is required", ErrInvalidArgument)
 	}
-	_, env, err := s.ownedSessionEnvironment(ctx, source)
+	loaded, env, err := s.ownedSessionEnvironment(ctx, source)
 	if err != nil {
 		return "", nil, err
 	}
 	if env.Workspace() == nil || env.Ref().Kind == session.EnvKindNoFS {
 		return "", nil, fmt.Errorf("%w: session has no filesystem placement", ErrFailedPrecondition)
 	}
-	return s.createTeamInEnvironment(ctx, env, name, goal, maxTeamTokens, members)
+	return s.createTeamInEnvironment(ctx, env, loaded.ID, name, goal, maxTeamTokens, members)
 }
 
-func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environment, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
+func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environment, rootSessionID session.SessionID, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
 	if s.cfg.MemberEngine == nil {
 		return "", nil, ErrTeamsDisabled
 	}
@@ -207,7 +208,7 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 	state := &teamState{
 		team: t, base: workspace, env: base, name: name, goal: goal,
 		budget: maxTeamTokens, specs: append([]agent.MemberSpec(nil), members...),
-		owner: session.PrincipalFromContext(ctx).Clone(),
+		owner: session.PrincipalFromContext(ctx).Clone(), rootSessionID: rootSessionID,
 	}
 	if err := s.declareInitialRoster(t, id, members); err != nil {
 		return "", nil, err
@@ -597,6 +598,10 @@ func (s *Service) RunTeam(ctx context.Context, teamID string, sink func(agent.Te
 		ts.phase = teamDone
 		s.mu.Unlock()
 	}()
+	// A team created from a source session roots every member in that session. A
+	// default-placement team has no source conversation, so the empty value masks
+	// any root on the caller's ctx and prepareRun roots each member in itself.
+	ctx = port.WithRootSessionID(ctx, ts.rootSessionID)
 	return sup.Run(ctx, sink), nil
 }
 

@@ -124,6 +124,7 @@ func NewSessionLoadFailure(class SessionLoadFailureClass, cause error) error
 func ObserveAttempt(ctx context.Context, observation session.NetworkAttemptPayload)
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error)
+func RootSessionIDFromContext(ctx context.Context) (session.SessionID, bool)
 func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content
 func RunSerialFromContext(ctx context.Context) (int64, bool)
 func SessionDiscoveryMetaEqual(a SessionDiscoveryMeta, b SessionDiscoveryMeta) bool
@@ -136,6 +137,7 @@ func SupportsSessionMetadataPaging(store any) bool
 func TurnIndexFromContext(ctx context.Context) (int, bool)
 func ValidateSessionLineageQuery(query SessionLineageQuery) error
 func WithAttemptObserver(ctx context.Context, observer AttemptObserver) context.Context
+func WithRootSessionID(ctx context.Context, id session.SessionID) context.Context
 func WithRunAttemptContext(ctx context.Context, id session.SessionID, serial int64) context.Context
 func WithRunSerial(ctx context.Context, serial int64) context.Context
 func WithSessionID(ctx context.Context, id session.SessionID) context.Context

@@ -4515,7 +4515,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	ctx = rootedRunContext(ctx, sess, env)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.RetryFailedStep(ctx, sess, env)
 	})
@@ -4759,7 +4759,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	ctx = rootedRunContext(ctx, sess, env)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID, CanPresentAuthorization: canPresentAuthorization})
 	})
@@ -5061,7 +5061,7 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 		st.persistMu.Unlock()
 	}
 	run, err := s.promoteDetachedRunAdmission(ctx, id, st, stopRun, func() *agent.Run {
-		return engine.ResumeApproval(memory.WithWorkspace(ownedLeaseCtx, env.Workspace().Root()), sess, env, resolution.AskID, resolution.Verdict)
+		return engine.ResumeApproval(rootedRunContext(ownedLeaseCtx, sess, env), sess, env, resolution.AskID, resolution.Verdict)
 	})
 	if err != nil {
 		if scoped {
@@ -6449,7 +6449,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	ctx = rootedRunContext(ctx, sess, env)
 	st.persistMu.Lock()
 	accepted := resolution
 	st.acceptedApproval = &accepted
@@ -8236,6 +8236,13 @@ func randomID() session.SessionID {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return session.SessionID(hex.EncodeToString(b[:]))
+}
+
+// rootedRunContext is the context every server run entry hands to the engine: the
+// authoritative session becomes the causal root (overwriting anything the caller's
+// ctx carried, ADR 0360) and memory writes bind to the session's workspace.
+func rootedRunContext(ctx context.Context, sess *session.Session, env tool.Environment) context.Context {
+	return memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), env.Workspace().Root())
 }
 
 // --- MCP inspection ----------------------------------------------------------

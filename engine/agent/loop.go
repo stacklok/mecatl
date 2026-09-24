@@ -1561,8 +1561,27 @@ func (e *Engine) startRun(ctx context.Context, sess *session.Session, req RunReq
 	return run
 }
 
+// detachedRunContext returns a fresh context that carries only parent's causal
+// root session. Use it instead of context.Background() when nested engine work
+// must outlive parent cancellation but still belongs to parent's run tree; the
+// caller bounds it with its own deadline.
+func detachedRunContext(parent context.Context) context.Context {
+	ctx := context.Background()
+	if rootID, ok := port.RootSessionIDFromContext(parent); ok {
+		ctx = port.WithRootSessionID(ctx, rootID)
+	}
+	return ctx
+}
+
+// prepareRun seeds the causal root from sess only when ctx carries none, so every
+// nested Engine.Run whose ctx derives from its parent run (or from
+// detachedRunContext) inherits the tree's root without extra wiring.
 func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunRequest, budgetBaseline session.Usage, body func(context.Context, *Run)) *PreparedRun {
 	ctx, cancel := context.WithCancel(ctx)
+	rootSessionID, hasRootSessionID := port.RootSessionIDFromContext(ctx)
+	if !hasRootSessionID || rootSessionID == "" {
+		ctx = port.WithRootSessionID(ctx, sess.ID)
+	}
 	serial := runSerial.Add(1)
 	ctx = port.WithRunAttemptContext(ctx, sess.ID, serial)
 	ctx = withSessionOrigin(ctx, sess.ID)
