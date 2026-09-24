@@ -244346,6 +244346,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790271485221,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b3e8df843b38ad4db9b20e1a3730287b3f37d09e",
+          "message": "feat(mecatui): bound mention palette (#1833)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T13:34:27-07:00",
+          "tree_id": "2d94ce65236a46f9a8f4faf367fc90e09b65e42f",
+          "url": "https://github.com/stacklok/mecatl/commit/b3e8df843b38ad4db9b20e1a3730287b3f37d09e"
+        },
+        "date": 1790282742558,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -355005,6 +355039,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790282739771,
+  "lastUpdate": 1790282743923,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
