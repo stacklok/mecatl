@@ -242,6 +242,32 @@ models:
         model: image
 ```
 
+### Use a planning model in plan mode
+
+Set `models.default` to the model that implements your changes and bind `plan`
+to a model for plan-mode turns:
+
+```yaml
+models:
+  aliases:
+    implementation: gpt-5.6-terra
+    planner: gpt-5.6-sol
+  default: implementation
+  slots:
+    plan: planner
+```
+
+When the session enters plan mode, its next turn uses the `plan` model. When
+you approve the plan and Mecatl continues in default or accept-edits mode, it
+uses the session default again. Mecatl rebuilds the session engine at the mode
+change, so the provider stays fixed. Configure both model IDs for the same
+provider.
+
+If `plan` is unset, Mecatl uses the `reasoning` slot when it is configured;
+otherwise plan mode uses the session default model. See
+[Permissions and posture](/features/permissions-and-posture.md#plan-mode) for
+the plan-review workflow.
+
 This example selects the Jev classifier backend. Set `TYPESAFE_API_KEY` in the
 server process environment. When Jev is active, Mecatl sends each eligible
 delegated task description and the configured category names and descriptions
