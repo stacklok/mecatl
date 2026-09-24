@@ -29,6 +29,7 @@ export function statusBannerState(input: StatusBannerInput): StatusBannerState {
   if (input.publicStatusFailed) return "bff-unavailable";
   if (input.publicStatus?.connection === "unavailable") return "daemon-unavailable";
   if (input.sessionCheckFailed) return "session-check-failed";
+  if (input.publicStatus?.connection === "checking") return "hidden";
   if (input.publicStatus?.signInRequired && !input.authenticated) return "sign-in";
   return "hidden";
 }

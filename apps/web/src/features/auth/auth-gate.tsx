@@ -4,7 +4,10 @@ import { getAuthSessionOptions, getPublicStatusOptions } from "@mecatl-studio/co
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogIn, RefreshCw } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { ConnectionStatusBanner } from "../../components/shell/connection-status-banner";
+import {
+  statusBannerMessages,
+  statusBannerState,
+} from "../../components/shell/connection-status-banner-state";
 import { Button } from "../../components/ui/button";
 import { accountStorageKey } from "../../lib/account-storage";
 import { onAuthenticationRequired, setRequestRecoveryState } from "../../lib/api-client";
@@ -228,33 +231,35 @@ export function authLoginUrl(returnTo: string) {
 }
 
 function PublicShell() {
-  const { phase, popupIssue, retrySession, startPopupLogin } = useAuthRecovery();
+  const { banner, phase, popupIssue, retrySession, startPopupLogin } = useAuthRecovery();
+  const state = statusBannerState(banner);
+  const unavailable = state === "bff-unavailable" || state === "daemon-unavailable";
   return (
     <div className="flex min-h-dvh flex-col bg-[radial-gradient(120%_140%_at_20%_30%,var(--shell-gradient-start)_0%,var(--shell-gradient-mid)_50%,var(--shell-gradient-end)_100%)]">
-      <ConnectionStatusBanner />
-      <header className="px-6 py-5 text-sm font-semibold text-white">Mecatl Studio</header>
       <main className="flex flex-1 items-center justify-center p-6">
         <section className="w-full max-w-md rounded-2xl border bg-card p-6 text-card-foreground shadow-xl">
           <h1 className="text-xl font-semibold">Mecatl Studio</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {phase === "checking"
-              ? "Checking your sign-in and the Mecatl connection…"
+          <p aria-live="polite" className="mt-2 text-sm text-muted-foreground">
+            {unavailable
+              ? statusBannerMessages[state]
               : phase === "verification-unavailable"
                 ? "We couldn't verify your sign-in. Your workspace will appear after a successful check."
-                : "Sign in to open this workspace."}
+                : state === "sign-in"
+                  ? "Sign in to open this workspace."
+                  : "Checking your sign-in and the Mecatl connection…"}
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            {phase === "sign-in" && (
+            {state === "sign-in" && (
               <Button onClick={startPopupLogin} variant="action">
                 <LogIn aria-hidden="true" /> Sign in to Mecatl
               </Button>
             )}
-            {phase === "verification-unavailable" && (
+            {(unavailable || phase === "verification-unavailable") && (
               <Button onClick={retrySession} variant="outline">
                 <RefreshCw aria-hidden="true" /> Try again
               </Button>
             )}
-            {popupIssue && <PopupFallback />}
+            {state === "sign-in" && popupIssue && <PopupFallback />}
           </div>
         </section>
       </main>

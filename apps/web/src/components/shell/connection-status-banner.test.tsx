@@ -27,7 +27,7 @@ describe("public status banner", () => {
     expect(
       statusBannerState({
         ...base,
-        publicStatus: { connection: "checking", signInRequired: false },
+        publicStatus: { connection: "checking", signInRequired: true },
       }),
     ).toBe("hidden");
     expect(statusBannerState({ ...base, publicStatus: undefined })).toBe("hidden");

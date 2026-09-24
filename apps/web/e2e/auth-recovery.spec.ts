@@ -447,11 +447,16 @@ test("peer-tab sign-out removes the mounted private workspace", async ({
 
 test("anonymous shell shows outage before sign-in", async ({ offlineBff, page }) => {
   setup(offlineBff, { signedIn: false });
-  offlineBff.json("GET", "/api/v1/status", { connection: "unavailable", signInRequired: true });
   await page.goto(draftRoute);
-  await expect(
-    page.getByRole("status").filter({ hasText: "Mecatl instance is unavailable" }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Sign in( to Mecatl)?$/ })).toHaveCount(1);
+  await expect(page.getByRole("status")).toHaveCount(0);
+  await expect(page.getByText("Mecatl Studio", { exact: true })).toHaveCount(1);
+
+  offlineBff.json("GET", "/api/v1/status", { connection: "unavailable", signInRequired: true });
+  await page.reload();
+  await expect(page.getByText("The Mecatl instance is unavailable right now.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Sign in( to Mecatl)?$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Mecatl Studio" })).toBeVisible();
   expect(offlineBff.requestsFor("GET", "/api/v1/runtime")).toHaveLength(0);
   expect(offlineBff.requestsFor("GET", "/api/v1/storage/health")).toHaveLength(0);
@@ -462,7 +467,9 @@ test("failed public status fetch shows BFF unavailable", async ({ offlineBff, pa
   setup(offlineBff, { signedIn: false });
   offlineBff.fail("GET", "/api/v1/status");
   await page.goto(draftRoute);
-  await expect(page.getByRole("status").filter({ hasText: "Studio is unavailable" })).toBeVisible();
+  await expect(page.getByText("Studio is unavailable right now.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Sign in( to Mecatl)?$/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 });
 
 test("session check outage keeps the shell and route", async ({ offlineBff, page }) => {
@@ -470,10 +477,10 @@ test("session check outage keeps the shell and route", async ({ offlineBff, page
   await page.clock.install();
   await page.goto(draftRoute);
   await expect(page.getByRole("heading", { name: "Mecatl Studio" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Retry session check" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   expect(offlineBff.requestsFor("GET", "/api/v1/runtime")).toHaveLength(0);
   state.sessionFails = false;
-  await page.getByRole("button", { name: "Retry session check" }).click();
+  await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toBeVisible();
   await page
     .getByRole("textbox", { name: "Message Mecatl" })

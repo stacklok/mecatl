@@ -190,11 +190,13 @@ replica needs only the same `STUDIO_SESSION_SECRET`.
 
 ### Sign in and recover
 
-Use **Sign in** to complete your identity provider's login in a popup. Studio
-keeps the original tab, route, and unfinished draft open. If the browser blocks
-the popup or you close it, use **Retry** or the manual new-tab sign-in link. Return
-to the Studio tab after signing in through the new tab so it can check your
-session.
+On your first visit, select **Sign in to Mecatl** in the centered card. If the
+card reports an outage, select **Try again** after the connection returns. When
+a session expires in an open workspace, use **Sign in** in the status banner.
+Studio keeps the original tab, route, and unfinished draft open while the popup
+completes login. If the browser blocks the popup or you close it, use **Retry**
+or the manual new-tab sign-in link. Return to the Studio tab after signing in
+through the new tab so it can check your session.
 
 If your session expires while Studio is open, sign in again. Studio refetches
 reads after you return to the same account. Retry a write or stream yourself

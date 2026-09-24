@@ -24,16 +24,16 @@ export function ConnectionStatusBanner() {
       <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
       <span>{statusBannerMessages[state]}</span>
       {state === "session-check-failed" && (
-        <Button onClick={retrySession} size="sm" variant="outline">
+        <Button onClick={retrySession} size="sm" variant="secondary">
           <RefreshCw aria-hidden="true" /> Retry session check
         </Button>
       )}
       {state === "sign-in" && (
         <>
-          <Button onClick={startPopupLogin} size="sm" variant="outline">
+          <Button onClick={startPopupLogin} size="sm" variant="secondary">
             <LogIn aria-hidden="true" /> {phase === "sign-in" ? "Sign in" : "Sign in again"}
           </Button>
-          {popupIssue && <PopupFallback />}
+          {popupIssue && <PopupFallback variant="secondary" />}
         </>
       )}
     </div>
