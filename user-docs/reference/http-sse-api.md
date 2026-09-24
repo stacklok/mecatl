@@ -67,6 +67,8 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation|`201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref|
 |`GET /v1/sessions`|—|`200` `{sessions: [...]}` — path-free stored-session inventory|
 |`GET /v1/sessions/{id}`|—|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
+|`POST /v1/sessions/{id}/pdfs?name=<FILENAME>`|streamed `application/pdf` body; percent-encode the safe basename in `name`|`201` `{artifact_id, name, size, sha256}` for a PDF owned by the session; 20 MiB maximum|
+|`GET /v1/sessions/{id}/pdfs/{artifact_id}`|—|`200` streamed `application/pdf`; `Cache-Control: private, no-store` and a safe attachment filename; ownership is checked before bytes are sent|
 |`GET /v1/sessions/{id}/events`|—|`200` `text/event-stream` — replay a session's durable event log (including `session.title` changes and the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips). A replayed `user_prompt.synthetic` value of `true` identifies a server-authored continuation; absent/false means genuine or legacy-unknown. Never infer origin from text. Empty for an unknown id; `501` when no durable `EventLog` is wired|
 |`GET /v1/sessions/{id}/watch?cursor=&run_id=`|—|`200` `text/event-stream` — **durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)). Each `data:` frame is `{event, cursor, phase}` (NOT a bare Event like `/events`); `phase` is an open string `replay`/`live`/`gap`. Exactly one event-less `live` frame marks the replay→live boundary; an event-less `gap` frame marks a failed durable append. `cursor` is opaque — empty means the beginning; hand back the last one you PROCESSED to resume. Optional `run_id` narrows delivery to one run; a cursor is **scoped to the `run_id` it was issued under** — resume with the same filter, or from the beginning, since a filtered watch's position advances past the records it dropped. The stream STAYS OPEN (unlike `/events`, which ends). `501` when no durable `EventLog` or no cursor seam, `404` when the caller may not read the session, `400` for a delegation-child session id. A **cursor fault is not a status code on this route**: the cursor is decoded after the `200` is committed, so a malformed or expired cursor arrives as the same terminal frame everything else does (`cursor_malformed` / `cursor_expired`); over gRPC it is a status. A mid-stream fault arrives as a final SSE frame tagged `event: error` whose `data:` line carries `{"code","error"}` — `watch_lagging` is **resumable** (reconnect with your last cursor), `activity_gap` means recorded events are missing|
 |`POST /v1/sessions/{id}/rename`|`{title}`|`200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease|
@@ -76,7 +78,7 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry`|no body|`200` safe `WorkspaceEnrollment` projection; cancels the exact pending enrollment before beginning its replacement; stale IDs return `412`|
 |`POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel`|no body|`200` safe `WorkspaceEnrollment` projection; cancels only the exact pending enrollment and clears its prompt gate; stale IDs return `412`|
 |`DELETE /v1/sessions/{id}`|—|`204` — close the session, releasing its per-session resources (not physical stored-session deletion)|
-|`POST /v1/sessions/{id}/prompt`|`{text}`|`200` `text/event-stream` of events; rejected while failed-step retry intent is pending|
+|`POST /v1/sessions/{id}/prompt`|`{text?, parts?}`; text or at least one part is required|`200` `text/event-stream` of events; rejected while failed-step retry intent is pending|
 |`POST /v1/sessions/{id}/retry`|no body|`200` `text/event-stream` for a prompt-free failed-step retry; reuses conversation/tool state but re-resolves live instruction sources; `409` unless persisted state is eligible|
 |`POST /v1/sessions/{id}/approve`|`{ask_id, allow}`|`204`|
 |`POST /v1/sessions/{id}/plan:approve`|`{"target_mode": "default" \| "accept_edits" \| "plan", "note": "..."}`|`200` `text/event-stream` — atomically resolve a parked **plan-approval** ask ([ADR 0069](https://github.com/stacklok/mecatl/blob/main/docs/adr/0069-plan-approval-gate.md)): on `default`/`accept_edits` resume the parked run AND start the continuation run (both streamed); on `plan`/`""` iterate (no continuation). `409` on a precondition failure (live run / not awaiting / not a plan ask), `404` on an unknown session|
@@ -436,8 +438,11 @@ $ curl -s -X POST http://127.0.0.1:8081/v1/sessions/<id>/steer \
 {"outcome":"accepted","message_id":"client-42"}
 ```
 
-The `parts` array uses the same `{kind, mime_type, data?, url?}` content blocks
-as an HTTP prompt. The selected provider must support every supplied media kind.
+The `parts` array uses the same `{kind, mime_type, data?, url?, artifact_id?}`
+content blocks as an HTTP prompt. Image and audio parts use inline data or a
+URL. A PDF part uses `kind: "pdf"`, `mime_type: "application/pdf"`, and a
+session-owned `artifact_id` returned by the upload route; it carries no inline
+data or URL. The selected provider must support every supplied media kind.
 `message_id` is an optional client correlation value. It must be no longer than
 64 Unicode code points. A pending bundle can accept multiple steers: the first
 returns `accepted`, and later fragments return `appended`. The eventual `steer`

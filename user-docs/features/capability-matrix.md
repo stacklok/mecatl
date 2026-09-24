@@ -19,7 +19,7 @@ When configured, `mecated` and `mecak8s` provide the same core capabilities:
 - project instructions, rules, skills, commands, soul, memory, named agents, and
   streaming-HTTP MCP sources;
 - durable sessions, event logs, scheduling, Subagents, Parallel, Teams, and
-  multimodal input; and
+  image and audio input; and
 - gRPC and HTTP/SSE session APIs.
 
 Some features require additional configuration, model support, project trust, or
@@ -34,6 +34,7 @@ durable storage. A connected client uses the server's capabilities.
 |gRPC API|✓|✓|Private Unix socket|
 |HTTP/SSE API|✓|✓|No|
 |Durable state|Optional configured backend|Redis-backed when configured|JSONL store by default|
+|SDK PDF artifact upload and download|Unavailable|With Redis and a private S3-compatible bucket|Unavailable|
 |Kubernetes leases and drain handling|No|✓|No|
 |Interactive permission approvals|Opt|Headless by default|✓|
 |ACP editor integration|✓, `mecated acp` only|No|No|

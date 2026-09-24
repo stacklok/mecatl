@@ -33,6 +33,13 @@ reach the right run.
   honest `engine/adapter/nofs` implementation and its valid no-FS ref survives restart.
 - `GetSession(GetSessionRequest) → GetSessionResponse` — path-free snapshot with
   bounded placement metadata; exact private refs remain storage-only.
+- `UploadPdf(stream UploadPdfRequest) → UploadPdfResponse` and
+  `DownloadPdf(DownloadPdfRequest) → stream DownloadPdfResponse` carry private,
+  session-owned PDF bytes in bounded chunks. The service authorizes the exact
+  session before object-store access. A prompt carries only the returned artifact
+  ID, and a PDF tool result projects an ID and bounded metadata after its bytes
+  are externalized. Both RPCs require configured artifact storage; PDF prompt
+  input also requires the selected model's PDF capability.
 - `ClearSession` creates a distinct empty-history successor; `ForkSession` creates a
   history-carrying successor. Both inherit the source's exact placement unless given a
   fresh caller/source-scoped worktree selector from `ListWorktrees(session_id)`. The
@@ -94,6 +101,8 @@ v1 enforces required checks in the Go server (protovalidate runtime is deferred)
 |---|---|---|
 | `POST /v1/sessions` | `CreateSession` | JSON body → `session_id`; optional `provider_id`/`model_id` selector + `profile` (`"no-fs"`) |
 | `GET /v1/sessions/{id}` | `GetSession` | JSON snapshot |
+| `POST /v1/sessions/{id}/pdfs?name=...` | `UploadPdf` | streamed PDF body; returns private artifact metadata |
+| `GET /v1/sessions/{id}/pdfs/{artifact_id}` | `DownloadPdf` | streamed PDF body after ownership check |
 | `POST /v1/sessions/{id}/mode` | `SetMode` | change permission mode; mid-turn rejection is surfaced to the client |
 | `POST /v1/sessions/{id}/compact` | `CompactSession` | bodyless forced compaction at an idle/terminal boundary; `{"compacted":true}` when history changed, false for a no-op |
 | `POST /v1/sessions/{id}/clear` | `ClearSession` | empty-history successor; optional ephemeral `worktree_selector` |

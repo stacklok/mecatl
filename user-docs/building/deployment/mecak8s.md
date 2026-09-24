@@ -310,6 +310,11 @@ through Kubernetes Secret `valueFrom.secretKeyRef` entries. Project
 credential values in the Secret, outside Helm values. Configure the bucket's
 backup, retention, and access policy for your session retention requirements.
 
+When rotating Secret-backed environment credentials, keep the old credentials
+valid while you update the Secret and roll the `mecak8s` Deployment. Revoke the
+old credentials after the new pods are ready. Kubernetes does not refresh
+environment variables in running pods when a Secret changes.
+
 With the store enabled, PDF uploads and recognized PDF tool results keep their
 bytes in the object store. Redis holds artifact IDs, bounded metadata, staging
 markers, and a deletion outbox. An uploaded PDF that is never used in a saved
