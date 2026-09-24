@@ -439,12 +439,13 @@ const (
 // "still pending after it" on each drain echo, instead of collapsing everything
 // into one re-minted bundle (the duplication bug the append model exposed).
 type steerQueuedSend struct {
-	ID     string
-	Text   string
-	Draft  string
-	Media  client.MediaResult
-	Staged map[string]stagedAttachment
-	Pastes map[string]string
+	ID        string
+	Text      string
+	Draft     string
+	Media     client.MediaResult
+	Staged    map[string]stagedAttachment
+	Pastes    map[string]string
+	Synthetic bool
 }
 
 // steerState is the ONE-ELEMENT steer-mode mid-run state: the pending bundle —
@@ -626,6 +627,12 @@ type Model struct {
 	palette                      paletteState       // slash-command palette (open when the input starts with "/")
 	mention                      mentionState       // @-file-mention completion menu (open when the trailing word is an "@token"); mutually exclusive with palette
 	queued                       []string           // follow-up prompts staged while a run streams; MERGED into one prompt and drained on a healthy stop (see drainQueue)
+	queuedHistory                []string           // prepared operator-owned queue text; synthetic fragments are excluded
+	pendingPromptHistory         string             // queue-drain history text, valid only at pendingPromptHistoryRevision
+	pendingPromptHistoryRevision uint64             // editor revision binding pendingPromptHistory to the unedited merged draft
+	promptOrigin                 promptOrigin       // provenance of the current host-prepared prompt; zero is operator input
+	promptOriginRevision         uint64             // editor revision at which promptOrigin was assigned
+	promptHistory                promptHistoryState // bounded text-only submissions for this client attachment to the logical conversation
 	queuedMedia                  client.MediaResult // media owned by the local merge queue; sent with the merged follow-up
 	pendingPromptMedia           client.MediaResult // prepared queue media handed to submitPrompt without reconstructing markers
 	queuePaused                  string             // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
@@ -1172,6 +1179,7 @@ func (m Model) resetDocumentProjection() Model {
 // without each call site re-listing fields.
 func (m Model) resetSession() Model {
 	m.conv = conversation{}
+	m.promptHistory = promptHistoryState{}
 	return m.resetSessionDerived()
 }
 
@@ -1220,6 +1228,11 @@ func (m Model) resetSessionDerived() Model {
 	// plan ask may have been open), as is the full-screen ask-args view.
 	m.closeModal()
 	m.queued = nil
+	m.queuedHistory = nil
+	m.pendingPromptHistory = ""
+	m.pendingPromptHistoryRevision = 0
+	m.promptOrigin = promptOriginOperator
+	m.promptOriginRevision = 0
 	m.queuedMedia = client.MediaResult{}
 	m.pendingPromptMedia = client.MediaResult{}
 	m.queuePaused = ""

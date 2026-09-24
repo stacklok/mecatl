@@ -636,17 +636,18 @@ func TestSteer_TUIBurnedIdFreshDraft(t *testing.T) {
 		t.Fatalf("the shipped steer must be visible in context, got:\n%s", view)
 	}
 
-	// ↑ on an empty input AFTER the drain: no cancel frame (nothing pending) and
-	// no pull-back (the landed text is burned — the shipped line is not re-editable).
+	// ↑ after the drain sends no cancel frame (nothing pending), but the committed
+	// text is now independently available through submitted-prompt history.
 	mm3, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = mm3.(Model)
 	runBatchLeaves(cmd)
 	if got := steerCancelCount(conv.send); got != 0 {
 		t.Fatalf("↑ after drain must send NO steer_cancel (the id is burned), got %d", got)
 	}
-	if got := m.prompt.Value(); got != "" {
-		t.Fatalf("↑ after drain must NOT pull the shipped text back (burned id), got %q", got)
+	if got := m.prompt.Value(); got != "second" {
+		t.Fatalf("↑ after drain must recall committed history, got %q", got)
 	}
+	m.prompt.Reset()
 
 	// Typing a new prompt and resending opens a FRESH submission with its OWN id —
 	// it is not a re-edit of the shipped one.

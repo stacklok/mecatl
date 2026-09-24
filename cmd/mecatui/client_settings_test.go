@@ -256,6 +256,26 @@ func TestKeymapPrecedenceCLIBeatsClient(t *testing.T) {
 	}
 }
 
+func TestPromptHistoryKeymapCompositionAndEffectiveCollision(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSettings(t, "mecatui", "keymap:\n  HistoryNext: ctrl+f18\n")
+	cfg := config{keymap: &cliconfig.KeyValueList{"HistoryNext": "ctrl+f19"}}
+	var deps ui.Deps
+	if err := applyKeyOverridesToDeps(cfg, mustReadClientSettings(t), &deps); err != nil {
+		t.Fatalf("compose HistoryNext: %v", err)
+	}
+	if got := deps.KeyOverrides["HistoryNext"]; !reflect.DeepEqual(got, []string{"ctrl+f19"}) {
+		t.Fatalf("HistoryNext CLI precedence = %v, want [ctrl+f19]", got)
+	}
+
+	writeSettings(t, "mecatui", "keymap:\n  ScrollD: down\n")
+	deps = ui.Deps{}
+	err := applyKeyOverridesToDeps(config{}, mustReadClientSettings(t), &deps)
+	if err == nil || !strings.Contains(err.Error(), "ScrollD") || !strings.Contains(err.Error(), "HistoryNext") || !strings.Contains(err.Error(), "down") {
+		t.Fatalf("effective collision = %v, want ScrollD/HistoryNext/down", err)
+	}
+}
+
 func TestCanonicalDebugPrintsKeymapDiagnostics(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var deps ui.Deps

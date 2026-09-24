@@ -21,7 +21,8 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 | --- | --- |
 | `enter` | Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise. |
 | `shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter` | Insert a newline. Your terminal decides which of these chords it can send; see [Newline chords and your terminal](#newline-chords-and-your-terminal). |
-| `↑` | With empty input, bring queued follow-ups back for editing. |
+| `↑` | At the first visible row of the prompt, recall the previous submitted text. An editable queued follow-up or pending steer takes precedence. |
+| `↓` | At the last visible row, move toward newer submitted text. After the newest entry, restore the draft that was present before history browsing. |
 | `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable). |
 | physical `esc` twice within 500ms | While idle with a focused draft containing text, staged attachments, large-paste content, or pending media, clear it through `ClearPrompt`; attachment-only drafts qualify. This gesture requires enhanced key-event support, so it is unavailable in terminals that do not report it. The first press is silent and only arms; an `esc` key release must establish a distinct press before a second non-repeat press can clear. A key repeat or another press before release cannot complete it. Selection, palette, mention, approval, overlay, modal, and running-turn owners take precedence and disarm it, as do another key or expiry. This physical gesture is not remappable; use the universal remappable `ClearPrompt` / `ctrl+u` alternative. |
 | `esc` | Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft. |
@@ -43,6 +44,17 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 
 Suspending does not stop an embedded server or active run. Cancel the run first
 if it should stop.
+
+`mecatui` keeps the 100 most recent submitted text messages for the current
+client attachment. History does not carry across a restart or when you open a
+stored session. A model, effort, or worktree switch that carries the active
+conversation also carries this history. History recall contains text only and
+never reattaches media. While the current draft contains staged media or a
+staged large paste, the arrow keys retain their prompt-editing behavior.
+
+Editing recalled text exits history browsing and keeps the edited text as your
+current draft. Interior rows of a multiline or wrapped prompt continue to use
+`↑` and `↓` for cursor movement.
 
 The double-`esc` gesture requires two separate key presses and releases; key
 repeat does not trigger it. A selection, palette, approval, overlay, modal,

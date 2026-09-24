@@ -2,7 +2,10 @@ package ui
 
 import (
 	"reflect"
+	"sort"
 	"testing"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/keymap"
 )
 
 // keyMapFieldNames returns the exported field names of the keyMap struct via
@@ -14,6 +17,27 @@ func keyMapFieldNames() []string {
 		names = append(names, tp.Field(i).Name)
 	}
 	return names
+}
+
+func TestKeymapCatalogMatchesRuntimeDefaults(t *testing.T) {
+	fields := keyMapFieldNames()
+	sort.Strings(fields)
+	if actions := keymap.ActionNames(); !reflect.DeepEqual(actions, fields) {
+		t.Fatalf("validator actions drifted from runtime keyMap fields:\nvalidator=%v\nruntime=%v", actions, fields)
+	}
+
+	km := reflect.ValueOf(defaultKeys())
+	for action, want := range keymap.GlobalDefaults() {
+		binding := km.FieldByName(action)
+		if !binding.IsValid() {
+			t.Fatalf("global default %q has no runtime binding", action)
+		}
+		out := binding.MethodByName("Keys").Call(nil)
+		got, _ := out[0].Interface().([]string)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s runtime defaults = %v, validator defaults = %v", action, got, want)
+		}
+	}
 }
 
 // TestDefaultOverlayFunctionKeyBindings pins the replacement defaults and the

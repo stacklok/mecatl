@@ -712,7 +712,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if msg.token != m.modelSwitchRequestToken || m.phase != phaseConnecting || m.sessionID != msg.sourceID {
 			return m, nil, true
 		}
+		history := m.promptHistory
 		m = m.resetSession()
+		m.promptHistory = history
 		m.conv = conversationFromTranscript(msg.transcript.Messages)
 		mm, cmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
@@ -786,7 +788,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		if m.sessionID != msg.oldID || m.phase != phaseConnecting {
 			return m, nil, true
 		}
+		history := m.promptHistory
 		m = m.resetSession()
+		m.promptHistory = history
 		m.activePlacement = msg.placement
 		mm, bindCmd, handled := m.applySessionReady(msg.ready)
 		m = mm.(Model)
@@ -1587,8 +1591,10 @@ func (m Model) applySteerEcho(msg client.SteerEchoMsg) (tea.Model, tea.Cmd) {
 	// re-renders the transcript line; the one drain = one echo invariant makes
 	// the duplicate a server non-occurrence).
 	landed := false
+	historyText := ""
 	if m.steer != nil {
 		if msg.MessageID == "" {
+			historyText = historyTextFromSteerSends(m.steer.Sends)
 			// id-less legacy echo: clear the whole bundle.
 			m.steer = nil
 			landed = true
@@ -1596,6 +1602,7 @@ func (m Model) applySteerEcho(msg client.SteerEchoMsg) (tea.Model, tea.Cmd) {
 			idx := steerSendIndex(m.steer.Sends, msg.MessageID)
 			switch {
 			case idx >= 0:
+				historyText = historyTextFromSteerSends(m.steer.Sends[:idx+1])
 				rest := m.steer.Sends[idx+1:]
 				if len(rest) == 0 {
 					m.steer = nil // the whole bundle drained
@@ -1612,6 +1619,7 @@ func (m Model) applySteerEcho(msg client.SteerEchoMsg) (tea.Model, tea.Cmd) {
 				// advanced); the echo is the drain confirming it — clear.
 				m.steer = nil
 				landed = true
+				historyText = msg.Text
 			default:
 				if tr := m.steerTrace("echo", msg.MessageID, "no matching live bundle (card left)"); tr != "" {
 					m.statusMsg = tr
@@ -1620,6 +1628,7 @@ func (m Model) applySteerEcho(msg client.SteerEchoMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if landed {
+		m.promptHistory.record(historyText)
 		// Render the landed line IN CONTEXT (its true stream position — the echo
 		// arrives exactly where the drain committed the user continuation).
 		if media := mediaDescriptors(msg.Parts); len(media) > 0 {
@@ -2881,12 +2890,10 @@ func (m Model) onRunningKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return mm, nil
 		}
 	}
+	if mm, cmd, handled := m.onPromptHistoryBinding(msg); handled {
+		return mm, cmd
+	}
 	switch {
-	case m.wantsEditBack(msg):
-		// ↑ on an EMPTY input line with staged follow-ups pulls the merged queue back
-		// into the textarea for editing. It is distinct from Escape, which cancels
-		// the running turn without changing the queue.
-		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Agents):
 		// f6 opens the unified agents overlay MID-RUN (Gap B): the deep view is
 		// most useful while agents stream. openAgents permits phaseRunning, reads the
@@ -2947,13 +2954,14 @@ func (m Model) onRunningCancel() (tea.Model, tea.Cmd) {
 // path.
 func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.prompt.Value())
+	origin := m.takePromptOrigin()
 	if text == "" && len(m.stagedMedia) == 0 && len(m.stagedPastes) == 0 {
 		return m, nil
 	}
 	// Native multimodal steer is enabled by the single steer capability. When it
 	// is runtime-disabled, the local queue owns all mid-run text and media.
 	if m.caps.Steer && m.stream != nil {
-		return m.sendSteer(text)
+		return m.sendSteer(text, origin)
 	}
 	if len(m.queued) >= maxQueued {
 		m.statusMsg = m.deps.Theme.Style("muted").Render(fmt.Sprintf("queue full (%d)", maxQueued))
@@ -2975,7 +2983,11 @@ func (m Model) enqueuePrompt() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.queued = append(m.queued, prepared)
+	if origin == promptOriginOperator && strings.TrimSpace(prepared) != "" {
+		m.queuedHistory = append(m.queuedHistory, prepared)
+	}
 	m.queuedMedia = combined
+	m.clearPromptOrigin()
 	if hadStaged {
 		m.stagedMedia = nil
 		m.nextMediaN = 0
@@ -3032,7 +3044,7 @@ func filterPastes(draft string, in map[string]string) map[string]string {
 // ack / steer drain echo (updateStreamSecondary), correlated BY the minted id —
 // never assumed client-side. The textarea is reset and the card moves to the
 // pending state.
-func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
+func (m Model) sendSteer(text string, origin promptOrigin) (tea.Model, tea.Cmd) {
 	draft := m.prompt.Value()
 	prepared, media, hadPastes, hadStaged, err := m.preparePromptContent(text)
 	if err != nil {
@@ -3071,7 +3083,7 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 	if m.steer == nil {
 		m.steer = &steerState{Phase: steerPending}
 	}
-	m.steer.Sends = append(m.steer.Sends, steerQueuedSend{ID: id, Text: text, Draft: draft, Media: media, Staged: staged, Pastes: pastes})
+	m.steer.Sends = append(m.steer.Sends, steerQueuedSend{ID: id, Text: text, Draft: draft, Media: media, Staged: staged, Pastes: pastes, Synthetic: origin == promptOriginSynthetic})
 	m.steer.Text = joinSteerSends(m.steer.Sends)
 	stream := m.stream
 	sendMsg := func() tea.Msg {
@@ -3081,9 +3093,27 @@ func (m Model) sendSteer(text string) (tea.Model, tea.Cmd) {
 		return nil
 	}
 	m.prompt.Reset()
+	m.clearPromptOrigin()
 	m.statusMsg = m.deps.Theme.Style("muted").Render("steering…")
 	m.refreshView()
 	return m, sendMsg
+}
+
+func (m Model) onPromptHistoryBinding(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.wantsEditBack(msg) {
+		// Editable queued state takes precedence over submitted-prompt history.
+		mm, cmd := m.editBackQueue()
+		return mm, cmd, true
+	}
+	if !key.Matches(msg, m.keys.EditBack) && !key.Matches(msg, m.keys.HistoryNext) {
+		return m, nil, false
+	}
+	if mm, handled := m.onPromptHistoryKey(msg); handled {
+		return mm, nil, true
+	}
+	cmd := (&m).updatePromptKey(msg)
+	mm, next := m.afterInputEdit(cmd)
+	return mm, next, true
 }
 
 // wantsEditBack reports whether msg is the EditBack key (↑) pressed on an EMPTY
@@ -3152,6 +3182,9 @@ func (m Model) editBackQueue() (tea.Model, tea.Cmd) {
 	}
 	m.prompt.Rewrite(strings.Join(m.queued, queueMergeSep))
 	m.queued = nil
+	m.queuedHistory = nil
+	m.pendingPromptHistory = ""
+	m.pendingPromptHistoryRevision = 0
 	m.pendingPromptMedia = m.queuedMedia
 	m.queuedMedia = client.MediaResult{}
 	m.queuePaused = ""
@@ -3184,14 +3217,10 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return mm, nil
 		}
 	}
+	if mm, cmd, handled := m.onPromptHistoryBinding(msg); handled {
+		return mm, cmd
+	}
 	switch {
-	case m.wantsEditBack(msg):
-		// ↑ on an EMPTY input line with staged follow-ups (a PAUSED queue held after a
-		// non-clean stop, or a queue lingering at idle) pulls the merged queue back into
-		// the textarea for editing (non-destructive; Escape clears a paused queue). Placed
-		// before Submit/the textarea default so it wins the empty-input case in both paused
-		// and idle states.
-		return m.editBackQueue()
 	case key.Matches(msg, m.keys.Help) && strings.TrimSpace(m.prompt.Value()) == "":
 		// "?" is printable: open help only on an empty prompt so "?" in prose still
 		// inserts literally. The overlay claims the keyboard via the m.showHelp gate
@@ -3218,6 +3247,9 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// A run ended on a non-clean stop with staged follow-ups still queued (the
 		// paused state). Escape drops that paused queue; it never clears a draft.
 		m.queued = nil
+		m.queuedHistory = nil
+		m.pendingPromptHistory = ""
+		m.pendingPromptHistoryRevision = 0
 		m.queuedMedia = client.MediaResult{}
 		m.queuePaused = ""
 		m.statusMsg = m.deps.Theme.Style("muted").Render("queue cleared")
@@ -3383,6 +3415,7 @@ func (m Model) dispatchSelectedBuiltin() (tea.Model, tea.Cmd, bool) {
 // edits the input runs through, so the palette can never get out of step with the
 // input.
 func (m Model) afterInputEdit(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m.promptHistory.detachIfMutated(m.prompt.ContentRevision(), m.prompt.Value())
 	mm, fetch := m.syncPalette()
 	// The @-mention menu syncs from the SAME input edit. It is mutually exclusive
 	// with the palette (mentionToken returns false for a "/" line and for a
@@ -3497,6 +3530,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("wait for session compaction to finish before sending a prompt")
 		return m, nil
 	}
+	origin := m.takePromptOrigin()
 	text, media, hadPastes, hadStaged, err := m.preparePromptContent(text)
 	if err == nil {
 		media = appendMedia(m.pendingPromptMedia, media)
@@ -3524,6 +3558,10 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	// truly empty submit (no text AND no parts) is the no-op early-return.
 	if text == "" && len(media.Parts) == 0 {
 		return m, nil
+	}
+	m.clearPromptOrigin()
+	if historyText, ok := m.takePromptHistoryText(text, origin); ok {
+		m.promptHistory.record(historyText)
 	}
 	if m.startupAdopted {
 		m.startupRetryPrompt = m.prompt.Value()
@@ -4802,10 +4840,14 @@ func (m Model) drainQueue(stop string) (tea.Model, tea.Cmd) {
 func (m Model) popAndSubmit() (tea.Model, tea.Cmd) {
 	m.queuePaused = ""
 	merged := strings.Join(m.queued, queueMergeSep)
+	historyText := strings.Join(m.queuedHistory, queueMergeSep)
 	m.queued = nil
+	m.queuedHistory = nil
 	m.pendingPromptMedia = m.queuedMedia
 	m.queuedMedia = client.MediaResult{}
 	m.prompt.Rewrite(merged)
+	m.pendingPromptHistory = historyText
+	m.pendingPromptHistoryRevision = m.prompt.ContentRevision()
 	if m.pendingMode != "" {
 		submit := firstKey(m.keys.Submit, "enter")
 		m.statusMsg = m.deps.Theme.Style("warning").Render("mode " + m.pendingMode + " will apply before the queued prompt — press " + submit + " to continue")
