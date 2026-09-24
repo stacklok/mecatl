@@ -85,6 +85,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0348 — TypeScript SDK MCP authorization lifecycle](./0348-typescript-sdk-mcp-authorization-lifecycle.md) *(proposed; supersedes ADR 0304 Decision 3 only for the authorization-lifecycle resource)*
 - [0349 - Cause-free TypeScript SDK malformed-success decoding](./0349-typescript-sdk-malformed-success-decoding.md) *(proposed; narrows decoder diagnostics at the HTTP successful-response boundary)*
 - [0351 — Mecatl Studio: in-repo web UI behind a BFF over the published SDK](./0351-mecatl-studio-in-repo-web-ui.md) *(proposed; `apps/` workspace, one-origin image, `MECATL_*`/`STUDIO_*` split)*
+- [0361 — Studio exposes coarse status and completes browser login in a popup](./0361-studio-anonymous-status-and-popup-login.md) *(proposed; anonymous status, authenticated runtime, and same-origin callback messaging)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
 - [0356 — Durable context occupancy in session snapshots](./0356-durable-context-occupancy.md) *(proposed; extends ADR 0307 without changing lifetime-ledger or budget semantics)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
@@ -92,7 +93,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
 - [0337 — Classify synthetic user-prompt origin at emission](./0337-synthetic-user-prompt-origin.md) *(proposed)*
-- [0357 - Harness context source authority is independent of execution](./0357-harness-context-source-authority.md) *(proposed)*
+- [0359 - Harness context source authority is independent of execution](./0359-harness-context-source-authority.md) *(proposed)*
 - [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
 - [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md) *(skill read-root carve-out superseded by 0108)*

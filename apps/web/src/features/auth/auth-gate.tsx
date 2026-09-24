@@ -1,97 +1,278 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
-import { useQuery } from "@tanstack/react-query";
+import { getAuthSessionOptions, getPublicStatusOptions } from "@mecatl-studio/contracts/query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogIn, RefreshCw } from "lucide-react";
-import { type ReactNode, useEffect, useRef } from "react";
-import { Button } from "../../components/ui/button";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "../../components/ui/card";
-import { reconcileAccount } from "../../lib/account-storage";
-import { authGateState } from "./auth-gate-state";
+  statusBannerMessages,
+  statusBannerState,
+} from "../../components/shell/connection-status-banner-state";
+import { GlobalStatusSlot } from "../../components/shell/global-status-slot";
+import { Button } from "../../components/ui/button";
+import { accountStorageKey } from "../../lib/account-storage";
+import { onAuthenticationRequired, setRequestRecoveryState } from "../../lib/api-client";
+import { AuthRecoveryContext, useAuthRecovery } from "./auth-recovery-context";
+import {
+  acceptsPopupResult,
+  commitRecoveryCheck,
+  isPublicQuery,
+  publicStatusFetchFailed,
+  type RecoveryState,
+  type SessionCheck,
+} from "./auth-recovery-state";
+import { PopupFallback } from "./popup-fallback";
 
+const initialRecovery: RecoveryState = {
+  identityEpoch: 0,
+  phase: "checking",
+  workspaceMounted: false,
+};
+
+function currentLoginUrl(popup: boolean): string {
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return authLoginUrl(returnTo, popup);
+}
+
+/** Keep the full requested browser URL through the interactive sign-in round trip. */
+export function authLoginUrl(returnTo: string, popup = false) {
+  const query = new URLSearchParams({ return_to: returnTo });
+  if (popup) query.set("flow", "popup");
+  return `/api/v1/auth/login?${query}`;
+}
+
+/** Public status is always fetched; authenticated feature queries mount only after verification. */
 export function AuthGate({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const session = useQuery({
     ...getAuthSessionOptions(),
     refetchInterval: 60_000,
     retry: false,
     staleTime: 30_000,
   });
+  const status = useQuery({
+    ...getPublicStatusOptions(),
+    refetchInterval: 15_000,
+    retry: false,
+    staleTime: 5_000,
+  });
+  const [recovery, setRecovery] = useState(initialRecovery);
+  const recoveryRef = useRef(initialRecovery);
+  const processedSession = useRef("");
+  const [popupIssue, setPopupIssue] = useState<"blocked" | "closed" | "failed" | "waiting" | null>(
+    null,
+  );
+  const popup = useRef<{ attempt: number; window: Window } | null>(null);
+  const attempt = useRef(0);
 
-  // Tracks whether this tab has ever seen an authenticated session, so a
-  // credential that expires mid-use reads as "sign in again" rather than
-  // the same generic first-visit copy — the session silently dropping
-  // should never look identical to never having signed in.
-  const wasAuthenticated = useRef(false);
+  const applyCheck = useCallback(
+    (check: SessionCheck) => {
+      const transition = commitRecoveryCheck(recoveryRef.current, check, queryClient);
+      recoveryRef.current = transition.state;
+      setRequestRecoveryState(transition.state);
+      setRecovery(transition.state);
+      if (transition.refetchReads) {
+        void queryClient.invalidateQueries({
+          predicate: (query) => !isPublicQuery(query.queryKey),
+        });
+      }
+    },
+    [queryClient],
+  );
+
   useEffect(() => {
-    if (session.data?.status === "authenticated") wasAuthenticated.current = true;
-  }, [session.data?.status]);
+    if (session.isPending) return;
+    const observation = `${session.status}:${session.dataUpdatedAt}:${session.errorUpdatedAt}`;
+    if (processedSession.current === observation) return;
+    processedSession.current = observation;
+    if (session.isError || !session.data) {
+      applyCheck({ kind: "session-check-failed" });
+    } else if (session.data.mode !== "oidc") {
+      applyCheck({ kind: "disabled" });
+    } else if (session.data.status === "anonymous") {
+      applyCheck({ kind: "anonymous" });
+    } else {
+      applyCheck({ kind: "authenticated", account: session.data.account });
+    }
+  }, [
+    applyCheck,
+    session.data,
+    session.dataUpdatedAt,
+    session.errorUpdatedAt,
+    session.isError,
+    session.isPending,
+    session.status,
+  ]);
 
-  const state = authGateState(session);
-  // Before any child reads browser storage: drop what a previous account left
-  // behind on this origin. Idempotent, so running it on every render is safe.
-  if (state === "ready") reconcileAccount(session.data?.account);
+  useEffect(
+    () =>
+      onAuthenticationRequired(() => {
+        if (recoveryRef.current.phase !== "ready") return;
+        applyCheck({ kind: "anonymous" });
+        void session.refetch();
+        void status.refetch();
+      }),
+    [applyCheck, session.refetch, status.refetch],
+  );
 
-  if (state === "checking") {
-    return <GateFrame message="Checking the Mecatl connection…" />;
-  }
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== accountStorageKey || event.newValue === recoveryRef.current.account) return;
+      // A peer tab explicitly signed out or changed account. Unlike an
+      // expired session, its old workspace must disappear immediately.
+      applyCheck({ kind: "signed-out" });
+      void session.refetch();
+      void status.refetch();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [applyCheck, session.refetch, status.refetch]);
 
-  if (state === "error") {
-    return (
-      <GateFrame message="We couldn't check your sign-in status. Try again.">
-        <Button onClick={() => session.refetch()} variant="outline">
-          <RefreshCw aria-hidden="true" />
-          Try again
-        </Button>
-      </GateFrame>
-    );
-  }
+  const verifySession = useCallback(
+    async (fallbackIssue: "closed" | "failed" = "closed", keepWaiting = false) => {
+      const checked = await session.refetch();
+      void status.refetch();
+      if (checked.data?.status === "authenticated" && checked.data.account) {
+        setPopupIssue(null);
+      } else if (checked.data?.status === "disabled") {
+        setPopupIssue(null);
+      } else if (keepWaiting && popup.current && !popup.current.window.closed) {
+        setPopupIssue("waiting");
+      } else {
+        setPopupIssue(fallbackIssue);
+      }
+    },
+    [session.refetch, status.refetch],
+  );
 
-  if (state === "sign-in") {
-    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    const loginUrl = `/api/v1/auth/login?${new URLSearchParams({ return_to: returnTo }).toString()}`;
-    const message = wasAuthenticated.current
-      ? "Sign in again to keep using the agent."
-      : "Sign in with the identity provider configured by this Mecatl deployment.";
-    return (
-      <GateFrame message={message}>
-        <Button asChild className="w-full" variant="action">
-          <a href={loginUrl}>
-            <LogIn aria-hidden="true" />
-            {wasAuthenticated.current ? "Sign in again" : "Sign in to Mecatl"}
-          </a>
-        </Button>
-      </GateFrame>
-    );
-  }
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const active = popup.current;
+      if (!active) return;
+      if (
+        !acceptsPopupResult(event, {
+          activeAttempt: attempt.current,
+          attempt: active.attempt,
+          origin: window.location.origin,
+          popup: active.window,
+        })
+      )
+        return;
+      popup.current = null;
+      void verifySession(event.data.result === "failure" ? "failed" : "closed");
+    };
+    const onFocus = () => {
+      if (recoveryRef.current.phase !== "ready" || popupIssue !== null)
+        void verifySession("closed", true);
+    };
+    window.addEventListener("message", onMessage);
+    window.addEventListener("focus", onFocus);
+    const interval = window.setInterval(() => {
+      if (!popup.current?.window.closed) return;
+      popup.current = null;
+      void verifySession();
+    }, 500);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(interval);
+    };
+  }, [popupIssue, verifySession]);
 
-  return children;
+  const startPopupLogin = useCallback(() => {
+    const nextAttempt = ++attempt.current;
+    popup.current?.window.close();
+    // This call stays in the initiating click stack so browser popup policy can allow it.
+    const opened = window.open(currentLoginUrl(true), "_blank", "popup,width=520,height=720");
+    if (!opened) {
+      popup.current = null;
+      setPopupIssue("blocked");
+      return;
+    }
+    popup.current = { attempt: nextAttempt, window: opened };
+    setPopupIssue("waiting");
+  }, []);
+
+  const bannerStatus =
+    recovery.phase === "sign-in" && session.data?.mode === "oidc" && status.data
+      ? { ...status.data, signInRequired: true }
+      : status.data;
+  const context = {
+    banner: {
+      authenticated: recovery.phase === "ready",
+      publicStatus: status.isError ? undefined : bannerStatus,
+      publicStatusFailed: publicStatusFetchFailed(status.isError, status.error),
+      sessionCheckFailed: recovery.phase === "verification-unavailable",
+    },
+    loginUrl: currentLoginUrl(false),
+    phase: recovery.phase,
+    popupIssue,
+    retrySession: () => {
+      void session.refetch();
+      void status.refetch();
+    },
+    startPopupLogin,
+  };
+
+  // A new or missing OIDC account must never render the old identity's
+  // workspace while the effect below clears storage and authenticated queries.
+  const unsafeIdentity =
+    recovery.workspaceMounted &&
+    session.isSuccess &&
+    session.data.mode === "oidc" &&
+    session.data.status === "authenticated" &&
+    (!session.data.account || recovery.account !== session.data.account);
+
+  return (
+    <AuthRecoveryContext.Provider value={context}>
+      {recovery.workspaceMounted && !unsafeIdentity ? (
+        <div key={recovery.identityEpoch}>{children}</div>
+      ) : (
+        <PublicShell />
+      )}
+    </AuthRecoveryContext.Provider>
+  );
 }
 
-function GateFrame({ children, message }: { children?: ReactNode; message: string }) {
+function PublicShell() {
+  const { banner, phase, popupIssue, retrySession, startPopupLogin } = useAuthRecovery();
+  const state = statusBannerState(banner);
+  const unavailable = state === "bff-unavailable" || state === "daemon-unavailable";
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-[radial-gradient(120%_140%_at_20%_30%,var(--shell-gradient-start)_0%,var(--shell-gradient-mid)_50%,var(--shell-gradient-end)_100%)] p-5">
-      <Card className="w-full max-w-sm border-white/10 bg-background/95 shadow-2xl backdrop-blur">
-        <CardHeader className="text-center">
-          <span
-            aria-hidden="true"
-            className="mx-auto mb-2 block size-10 bg-brand [mask-image:url(/stacklok-logo-mark.svg)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain]"
-          />
-          <CardTitle>Mecatl</CardTitle>
-          <CardDescription>{message}</CardDescription>
-        </CardHeader>
-        {children === undefined ? null : (
-          <CardContent>
-            <CardFooter className="p-0">{children}</CardFooter>
-          </CardContent>
-        )}
-      </Card>
-    </main>
+    <div className="flex min-h-dvh min-w-0 flex-col bg-[var(--shell-gradient-mid)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      <GlobalStatusSlot />
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col bg-[radial-gradient(120%_140%_at_20%_30%,var(--shell-gradient-start)_0%,var(--shell-gradient-mid)_50%,var(--shell-gradient-end)_100%)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
+        data-shell-gradient=""
+      >
+        <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6">
+          <section className="w-full max-w-md rounded-2xl border bg-card p-6 text-card-foreground shadow-xl">
+            <h1 className="text-xl font-semibold">Mecatl Studio</h1>
+            <p aria-live="polite" className="mt-2 text-sm text-muted-foreground">
+              {unavailable
+                ? statusBannerMessages[state]
+                : phase === "verification-unavailable"
+                  ? "We couldn't verify your sign-in. Your workspace will appear after a successful check."
+                  : state === "sign-in"
+                    ? "Sign in to open this workspace."
+                    : "Checking your sign-in and the Mecatl connection…"}
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {state === "sign-in" && (
+                <Button onClick={startPopupLogin} variant="action">
+                  <LogIn aria-hidden="true" /> Sign in to Mecatl
+                </Button>
+              )}
+              {(unavailable || phase === "verification-unavailable") && (
+                <Button onClick={retrySession} variant="outline">
+                  <RefreshCw aria-hidden="true" /> Try again
+                </Button>
+              )}
+              {state === "sign-in" && popupIssue && <PopupFallback />}
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
   );
 }

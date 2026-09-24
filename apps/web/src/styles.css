@@ -1,13 +1,18 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-@import url("https://fonts.googleapis.com/css2?family=Merriweather:wght@300&display=swap");
+@import "@fontsource-variable/inter/wght.css";
+@import "@fontsource/merriweather/300.css";
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  font-size: calc(100% * var(--ui-scale, 1));
+  font-size: calc(16px * var(--ui-scale, 1));
   color-scheme: light;
+  --font-sans:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-serif: "Merriweather", Georgia, "Times New Roman", serif;
   --background: hsl(0 0% 100%);
   --foreground: hsl(240 10% 3.9%);
   --card: hsl(0 0% 100%);
@@ -24,17 +29,28 @@
   --accent-foreground: hsl(240 5.9% 10%);
   --destructive: hsl(0 72% 51%);
   --destructive-foreground: hsl(0 0% 98%);
+  --destructive-strong: hsl(0 74% 40%);
   --border: hsl(240 5.9% 90%);
   --input: hsl(240 5.9% 90%);
-  --ring: hsl(240 5% 65%);
-  --brand: hsl(161 94% 21%);
+  --ring: #6b6b75;
+  --sidebar: hsl(240 4.8% 98.5%);
+  --avatar-background: oklch(0.696 0 0 / 89.8%);
+  --logo: hsl(0 0% 28%);
+  --default-palette-accent: hsl(161 94% 21%);
+  --brand: var(--default-palette-accent);
   --brand-foreground: hsl(0 0% 100%);
+  --brand-label: var(--default-palette-accent);
+  --brand-ink: var(--default-palette-accent);
+  --link: hsl(211 92% 43%);
+  --input-icon: hsl(240 3.8% 46.1%);
+  --control-border: #83838a;
   --success: hsl(142 71% 29%);
-  --warning: hsl(35 92% 42%);
+  --warning: hsl(35 92% 34%);
+  --warning-foreground: #ffffff;
   --info: hsl(211 92% 43%);
   --badge-outline-border: hsl(240 5.9% 90%);
   --badge-outline-text: hsl(240 10% 3.9%);
-  --btn-primary: hsl(161 94% 21%);
+  --btn-primary: var(--default-palette-accent);
   --btn-primary-hover: #02543a;
   --radius: 0.5rem;
   --title: hsl(240 5% 18%);
@@ -44,8 +60,8 @@
   --nav-pill-bg: #cadfd8;
   --nav-pill-text: #03433e;
   --nav-icon: #a5b8b4;
-  --nav-search-border: #6e807d;
-  --nav-search-text: #b4c0c1;
+  --nav-search-border: #a5b0ae;
+  --nav-search-text: #cbd4d4;
   --nav-kbd-bg: #3f605a;
 }
 
@@ -66,12 +82,22 @@
   --accent: hsl(240 4% 15.9%);
   --accent-foreground: hsl(0 0% 98%);
   --destructive: hsl(358.7 100% 69.6%);
-  --destructive-foreground: hsl(0 0% 98%);
+  --destructive-foreground: #18181b;
+  --destructive-strong: hsl(358.7 78% 55%);
   --border: hsl(0 0% 15.5%);
   --input: hsl(0 0% 20.4%);
-  --ring: hsl(0 0% 45.2%);
+  --ring: #a0a0a0;
+  --sidebar: hsl(240 6.3% 12.5%);
+  --avatar-background: oklch(0.696 0 0 / 89.8%);
+  --logo: hsl(0 0% 58%);
+  --brand-label: hsl(158 64% 52%);
+  --brand-ink: hsl(142 50% 60%);
+  --link: hsl(211 92% 66%);
+  --input-icon: hsl(0 0% 100%);
+  --control-border: #8c8c8c;
   --success: hsl(142 61% 55%);
   --warning: hsl(35 92% 62%);
+  --warning-foreground: #18181b;
   --info: hsl(211 92% 66%);
   --badge-outline-border: hsl(0 0% 32%);
   --badge-outline-text: hsl(0 0% 80%);
@@ -84,12 +110,130 @@
   --nav-pill-bg: #cadfd8;
   --nav-pill-text: #03433e;
   --nav-icon: #a5b8b4;
-  --nav-search-border: #6e807d;
+  --nav-search-border: #728481;
   --nav-search-text: #b4c0c1;
   --nav-kbd-bg: #3f605a;
 }
 
+[data-palette="aztec"] {
+  --brand: #0f7f6c;
+  --brand-ink: #0f7f6c;
+  --brand-label: #0f7f6c;
+  --btn-primary: #0f7f6c;
+  --btn-primary-hover: #0b6656;
+  --link: #157a83;
+  --info: #157a83;
+  --shell-gradient-start: #1f6b5c;
+  --shell-gradient-mid: #15302a;
+  --shell-gradient-end: #0e1311;
+  --nav-pill-bg: #bfe6dc;
+  --nav-pill-text: #0e2a24;
+  --nav-icon: #aeb9b2;
+  --nav-search-border: #aab9b4;
+  --nav-search-text: #d7deda;
+  --nav-kbd-bg: #2e4039;
+}
+
+.dark[data-palette="aztec"] {
+  --brand: #1fb39a;
+  --brand-ink: #4fd1b8;
+  --brand-label: #4fd1b8;
+  --btn-primary: #12846d;
+  --btn-primary-hover: #0e6b59;
+  --link: #5cc8d0;
+  --info: #5cc8d0;
+  --shell-gradient-start: #143d33;
+  --shell-gradient-mid: #0f1f1a;
+  --shell-gradient-end: #0a0f0d;
+  --nav-pill-bg: #a8ddd0;
+  --nav-pill-text: #0e2a24;
+  --nav-icon: #8a998f;
+  --nav-search-border: #71877f;
+  --nav-search-text: #a9b8b1;
+  --nav-kbd-bg: #26362f;
+}
+
+[data-palette="mono"] {
+  --brand: #2563eb;
+  --brand-ink: #2563eb;
+  --brand-label: #2563eb;
+  --btn-primary: #2563eb;
+  --btn-primary-hover: #1d4ed8;
+  --link: #2563eb;
+  --info: #2563eb;
+  --shell-gradient-start: #3a3a3a;
+  --shell-gradient-mid: #232323;
+  --shell-gradient-end: #141414;
+  --nav-pill-bg: #e4e4e7;
+  --nav-pill-text: #18181b;
+  --nav-icon: #a1a1aa;
+  --nav-search-border: #85858d;
+  --nav-search-text: #c4c4c8;
+  --nav-kbd-bg: #3f3f46;
+}
+
+.dark[data-palette="mono"] {
+  --brand: #3b82f6;
+  --brand-ink: #60a5fa;
+  --brand-label: #60a5fa;
+  --btn-primary: #1d4ed8;
+  --btn-primary-hover: #1e40af;
+  --link: #60a5fa;
+  --info: #60a5fa;
+  --shell-gradient-start: #262626;
+  --shell-gradient-mid: #161616;
+  --shell-gradient-end: #0b0b0b;
+  --nav-pill-bg: #d4d4d8;
+  --nav-pill-text: #0b0b0b;
+  --nav-icon: #8a8a8a;
+  --nav-search-border: #727272;
+  --nav-search-text: #b5b5b5;
+  --nav-kbd-bg: #2a2a2a;
+}
+
+[data-palette="solar"] {
+  --brand: #9a7300;
+  --brand-ink: #8a6800;
+  --brand-label: #8a6800;
+  --btn-primary: #946e00;
+  --btn-primary-hover: #7f5e00;
+  --link: #cb4b16;
+  --info: #1f6fa8;
+  --shell-gradient-start: #775707;
+  --shell-gradient-mid: #6b4f0a;
+  --shell-gradient-end: #3f3008;
+  --nav-pill-bg: #f3e3b5;
+  --nav-pill-text: #3f3008;
+  --nav-icon: #d9c48a;
+  --nav-search-border: #c0b188;
+  --nav-search-text: #e6d8b4;
+  --nav-kbd-bg: #7a5c0c;
+}
+
+.dark[data-palette="solar"] {
+  --brand: #b58900;
+  --brand-ink: #e0b52e;
+  --brand-label: #e0b52e;
+  --btn-primary: #8a6800;
+  --btn-primary-hover: #705400;
+  --link: #f0884d;
+  --info: #5fb0ee;
+  --shell-gradient-start: #4a3708;
+  --shell-gradient-mid: #2c2206;
+  --shell-gradient-end: #191404;
+  --nav-pill-bg: #e8d59a;
+  --nav-pill-text: #2c2206;
+  --nav-icon: #b8a878;
+  --nav-search-border: #918561;
+  --nav-search-text: #d6c89a;
+  --nav-kbd-bg: #3a2c08;
+}
+
 @theme inline {
+  --font-sans:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-serif: "Merriweather", Georgia, "Times New Roman", serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -106,19 +250,32 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-strong: var(--destructive-strong);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-avatar-background: var(--avatar-background);
+  --color-logo: var(--logo);
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-label: var(--brand-label);
+  --color-link: var(--link);
+  --color-input-icon: var(--input-icon);
+  --color-control-border: var(--control-border);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
   --color-badge-outline-border: var(--badge-outline-border);
   --color-badge-outline-text: var(--badge-outline-text);
   --color-btn-primary: var(--btn-primary);
   --color-btn-primary-hover: var(--btn-primary-hover);
   --color-title: var(--title);
+  --color-shell-gradient-start: var(--shell-gradient-start);
+  --color-shell-gradient-mid: var(--shell-gradient-mid);
+  --color-shell-gradient-end: var(--shell-gradient-end);
   --color-nav-pill-bg: var(--nav-pill-bg);
   --color-nav-pill-text: var(--nav-pill-text);
   --color-nav-icon: var(--nav-icon);
@@ -133,7 +290,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
 
   html,
@@ -146,20 +303,14 @@
   html,
   body {
     margin: 0;
-    background-color: #06202a;
+    background-color: var(--shell-gradient-end);
   }
 
   body {
     @apply text-foreground;
-    font-family:
-      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: var(--font-sans);
     font-synthesis: none;
     text-rendering: optimizeLegibility;
-  }
-
-  html.dark,
-  html.dark body {
-    background-color: #02141b;
   }
 
   button,
@@ -168,15 +319,48 @@
   select {
     font: inherit;
   }
+
+  html.appearance-changing,
+  html.appearance-changing *,
+  html.appearance-changing *::before,
+  html.appearance-changing *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: Appearance changes must outrank component transition utilities for one frame. */
+    transition-property: none !important;
+  }
 }
 
 @layer utilities {
   .text-page-title {
-    font-family: "Merriweather", serif;
+    font-family: var(--font-serif);
     font-size: 34px;
     line-height: 42px;
     font-weight: 300;
     letter-spacing: -0.85px;
     color: var(--title);
+  }
+}
+
+@media (max-width: 499px) {
+  :root {
+    font-size: calc(18px * var(--ui-scale, 1));
+  }
+
+  /* Shared controls size bare SVG descendants through parent utilities; their
+     mobile glyphs need the same fixed 20px size as explicit size-4 icons. */
+  svg.lucide.size-4,
+  svg.lucide.h-4.w-4,
+  [data-slot="button"] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"]),
+  [data-slot="dropdown-menu-item"] svg.lucide:not([class*="size-"]),
+  [data-slot="dropdown-menu-checkbox-item"] svg.lucide:not([class*="size-"]),
+  [data-slot="dropdown-menu-radio-item"] svg.lucide:not([class*="size-"]),
+  [data-slot="dropdown-menu-sub-trigger"] svg.lucide:not([class*="size-"]),
+  [data-slot="dialog-close"] svg.lucide:not([class*="size-"]) {
+    width: 20px;
+    height: 20px;
+  }
+
+  svg.lucide[class~="size-3.5"] {
+    width: 18px;
+    height: 18px;
   }
 }

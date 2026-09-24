@@ -4,8 +4,8 @@
 import { type DefaultError, queryOptions, type UseMutationOptions } from '@tanstack/react-query';
 
 import { client } from '../client.gen';
-import { actOnLearnedSkill, actOnSchedule, cancelRun, clearSession, compactSession, completeAuthLogin, createSchedule, createSession, decideLearningProposal, decideMemoryConsolidationPlan, deleteSchedule, deleteSession, diffLearnedSkillVersions, forkSession, generateMemoryConsolidationPlan, getAuthSession, getHealth, getLearnedSkill, getRuntime, getRuntimeSettings, getSessionDetail, getSessionTranscript, getStorageHealth, getUserMemory, listConfiguredSkills, listLearnedSkillChanges, listLearnedSkills, listLearningProposals, listScheduleFires, listSchedules, listSessions, listUserMemory, logoutAuthSession, type Options, reflectSession, renameSession, resolveRunPermission, setSessionMode, startAuthLogin, steerRun, undoLearningPromotion, updateSchedule } from '../sdk.gen';
-import type { ActOnLearnedSkillData, ActOnLearnedSkillError, ActOnLearnedSkillResponse, ActOnScheduleData, ActOnScheduleError, ActOnScheduleResponse, CancelRunData, CancelRunError, CancelRunResponse, ClearSessionData, ClearSessionError, ClearSessionResponse, CompactSessionData, CompactSessionError, CompactSessionResponse, CompleteAuthLoginData, CompleteAuthLoginError, CreateScheduleData, CreateScheduleError, CreateScheduleResponse, CreateSessionData, CreateSessionError, CreateSessionResponse, DecideLearningProposalData, DecideLearningProposalError, DecideLearningProposalResponse, DecideMemoryConsolidationPlanData, DecideMemoryConsolidationPlanError, DecideMemoryConsolidationPlanResponse, DeleteScheduleData, DeleteScheduleError, DeleteScheduleResponse, DeleteSessionData, DeleteSessionError, DeleteSessionResponse, DiffLearnedSkillVersionsData, DiffLearnedSkillVersionsError, DiffLearnedSkillVersionsResponse, ForkSessionData, ForkSessionError, ForkSessionResponse, GenerateMemoryConsolidationPlanData, GenerateMemoryConsolidationPlanError, GenerateMemoryConsolidationPlanResponse, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetLearnedSkillData, GetLearnedSkillError, GetLearnedSkillResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, GetRuntimeSettingsData, GetRuntimeSettingsError, GetRuntimeSettingsResponse, GetSessionDetailData, GetSessionDetailError, GetSessionDetailResponse, GetSessionTranscriptData, GetSessionTranscriptError, GetSessionTranscriptResponse, GetStorageHealthData, GetStorageHealthError, GetStorageHealthResponse, GetUserMemoryData, GetUserMemoryError, GetUserMemoryResponse, ListConfiguredSkillsData, ListConfiguredSkillsError, ListConfiguredSkillsResponse, ListLearnedSkillChangesData, ListLearnedSkillChangesError, ListLearnedSkillChangesResponse, ListLearnedSkillsData, ListLearnedSkillsError, ListLearnedSkillsResponse, ListLearningProposalsData, ListLearningProposalsError, ListLearningProposalsResponse, ListScheduleFiresData, ListScheduleFiresError, ListScheduleFiresResponse, ListSchedulesData, ListSchedulesError, ListSchedulesResponse, ListSessionsData, ListSessionsError, ListSessionsResponse, ListUserMemoryData, ListUserMemoryError, ListUserMemoryResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, ReflectSessionData, ReflectSessionError, ReflectSessionResponse, RenameSessionData, RenameSessionError, RenameSessionResponse, ResolveRunPermissionData, ResolveRunPermissionError, ResolveRunPermissionResponse, SetSessionModeData, SetSessionModeError, SetSessionModeResponse, StartAuthLoginData, StartAuthLoginError, SteerRunData, SteerRunError, SteerRunResponse, UndoLearningPromotionData, UndoLearningPromotionError, UndoLearningPromotionResponse, UpdateScheduleData, UpdateScheduleError, UpdateScheduleResponse } from '../types.gen';
+import { actOnLearnedSkill, actOnSchedule, cancelRun, clearSession, compactSession, completeAuthLogin, createSchedule, createSession, decideLearningProposal, decideMemoryConsolidationPlan, deleteSchedule, deleteSession, diffLearnedSkillVersions, forkSession, generateMemoryConsolidationPlan, getAuthSession, getHealth, getLearnedSkill, getProviderSettings, getPublicStatus, getRuntime, getRuntimeSettings, getSessionDetail, getSessionTranscript, getStorageHealth, getUserMemory, listConfiguredSkills, listLearnedSkillChanges, listLearnedSkills, listLearningProposals, listScheduleFires, listSchedules, listSessions, listUserMemory, logoutAuthSession, type Options, reflectSession, renameSession, resolveRunPermission, setSessionMode, startAuthLogin, steerRun, undoLearningPromotion, updateSchedule } from '../sdk.gen';
+import type { ActOnLearnedSkillData, ActOnLearnedSkillError, ActOnLearnedSkillResponse, ActOnScheduleData, ActOnScheduleError, ActOnScheduleResponse, CancelRunData, CancelRunError, CancelRunResponse, ClearSessionData, ClearSessionError, ClearSessionResponse, CompactSessionData, CompactSessionError, CompactSessionResponse, CompleteAuthLoginData, CompleteAuthLoginError, CompleteAuthLoginResponse, CreateScheduleData, CreateScheduleError, CreateScheduleResponse, CreateSessionData, CreateSessionError, CreateSessionResponse, DecideLearningProposalData, DecideLearningProposalError, DecideLearningProposalResponse, DecideMemoryConsolidationPlanData, DecideMemoryConsolidationPlanError, DecideMemoryConsolidationPlanResponse, DeleteScheduleData, DeleteScheduleError, DeleteScheduleResponse, DeleteSessionData, DeleteSessionError, DeleteSessionResponse, DiffLearnedSkillVersionsData, DiffLearnedSkillVersionsError, DiffLearnedSkillVersionsResponse, ForkSessionData, ForkSessionError, ForkSessionResponse, GenerateMemoryConsolidationPlanData, GenerateMemoryConsolidationPlanError, GenerateMemoryConsolidationPlanResponse, GetAuthSessionData, GetAuthSessionResponse, GetHealthData, GetHealthResponse, GetLearnedSkillData, GetLearnedSkillError, GetLearnedSkillResponse, GetProviderSettingsData, GetProviderSettingsError, GetProviderSettingsResponse, GetPublicStatusData, GetPublicStatusError, GetPublicStatusResponse, GetRuntimeData, GetRuntimeError, GetRuntimeResponse, GetRuntimeSettingsData, GetRuntimeSettingsError, GetRuntimeSettingsResponse, GetSessionDetailData, GetSessionDetailError, GetSessionDetailResponse, GetSessionTranscriptData, GetSessionTranscriptError, GetSessionTranscriptResponse, GetStorageHealthData, GetStorageHealthError, GetStorageHealthResponse, GetUserMemoryData, GetUserMemoryError, GetUserMemoryResponse, ListConfiguredSkillsData, ListConfiguredSkillsError, ListConfiguredSkillsResponse, ListLearnedSkillChangesData, ListLearnedSkillChangesError, ListLearnedSkillChangesResponse, ListLearnedSkillsData, ListLearnedSkillsError, ListLearnedSkillsResponse, ListLearningProposalsData, ListLearningProposalsError, ListLearningProposalsResponse, ListScheduleFiresData, ListScheduleFiresError, ListScheduleFiresResponse, ListSchedulesData, ListSchedulesError, ListSchedulesResponse, ListSessionsData, ListSessionsError, ListSessionsResponse, ListUserMemoryData, ListUserMemoryError, ListUserMemoryResponse, LogoutAuthSessionData, LogoutAuthSessionError, LogoutAuthSessionResponse, ReflectSessionData, ReflectSessionError, ReflectSessionResponse, RenameSessionData, RenameSessionError, RenameSessionResponse, ResolveRunPermissionData, ResolveRunPermissionError, ResolveRunPermissionResponse, SetSessionModeData, SetSessionModeError, SetSessionModeResponse, StartAuthLoginData, StartAuthLoginError, SteerRunData, SteerRunError, SteerRunResponse, UndoLearningPromotionData, UndoLearningPromotionError, UndoLearningPromotionResponse, UpdateScheduleData, UpdateScheduleError, UpdateScheduleResponse } from '../types.gen';
 
 export type QueryKey<TOptions extends Options> = [
     Pick<TOptions, 'baseUrl' | 'body' | 'headers' | 'path' | 'query'> & {
@@ -72,7 +72,7 @@ export const startAuthLoginOptions = (options?: Options<StartAuthLoginData>) => 
 
 export const completeAuthLoginQueryKey = (options?: Options<CompleteAuthLoginData>) => createQueryKey('completeAuthLogin', options);
 
-export const completeAuthLoginOptions = (options?: Options<CompleteAuthLoginData>) => queryOptions<unknown, CompleteAuthLoginError, unknown, ReturnType<typeof completeAuthLoginQueryKey>>({
+export const completeAuthLoginOptions = (options?: Options<CompleteAuthLoginData>) => queryOptions<CompleteAuthLoginResponse, CompleteAuthLoginError, CompleteAuthLoginResponse, ReturnType<typeof completeAuthLoginQueryKey>>({
     queryFn: async ({ queryKey, signal }) => {
         const { data } = await completeAuthLogin({
             ...options,
@@ -112,6 +112,21 @@ export const getHealthOptions = (options?: Options<GetHealthData>) => queryOptio
         return data;
     },
     queryKey: getHealthQueryKey(options)
+});
+
+export const getPublicStatusQueryKey = (options?: Options<GetPublicStatusData>) => createQueryKey('getPublicStatus', options);
+
+export const getPublicStatusOptions = (options?: Options<GetPublicStatusData>) => queryOptions<GetPublicStatusResponse, GetPublicStatusError, GetPublicStatusResponse, ReturnType<typeof getPublicStatusQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getPublicStatus({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getPublicStatusQueryKey(options)
 });
 
 export const getRuntimeQueryKey = (options?: Options<GetRuntimeData>) => createQueryKey('getRuntime', options);
@@ -617,6 +632,21 @@ export const getRuntimeSettingsOptions = (options?: Options<GetRuntimeSettingsDa
         return data;
     },
     queryKey: getRuntimeSettingsQueryKey(options)
+});
+
+export const getProviderSettingsQueryKey = (options: Options<GetProviderSettingsData>) => createQueryKey('getProviderSettings', options);
+
+export const getProviderSettingsOptions = (options: Options<GetProviderSettingsData>) => queryOptions<GetProviderSettingsResponse, GetProviderSettingsError, GetProviderSettingsResponse, ReturnType<typeof getProviderSettingsQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+        const { data } = await getProviderSettings({
+            ...options,
+            ...queryKey[0],
+            signal,
+            throwOnError: true
+        });
+        return data;
+    },
+    queryKey: getProviderSettingsQueryKey(options)
 });
 
 export const getStorageHealthQueryKey = (options?: Options<GetStorageHealthData>) => createQueryKey('getStorageHealth', options);

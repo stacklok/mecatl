@@ -116,11 +116,11 @@ function GenericPreviewPanel({
         />
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           {preview.kind === "canvas" ? (
-            <NotebookPen aria-hidden="true" className="size-4 text-brand" />
+            <NotebookPen aria-hidden="true" className="size-4 text-brand-ink" />
           ) : preview.kind === "tool" ? (
-            <Braces aria-hidden="true" className="size-4 text-brand" />
+            <Braces aria-hidden="true" className="size-4 text-brand-ink" />
           ) : (
-            <FileText aria-hidden="true" className="size-4 text-brand" />
+            <FileText aria-hidden="true" className="size-4 text-brand-ink" />
           )}
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{previewTitle(preview)}</h2>
           <Button aria-label="Close preview" onClick={onClose} size="icon" variant="ghost">

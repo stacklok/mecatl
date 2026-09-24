@@ -26,6 +26,7 @@ import {
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { pageTitleClass } from "../../lib/typography";
 import { computeLineDiff } from "../chat/edit-diff";
 
 type Action = "activate" | "archive" | "reject" | "rollback";
@@ -116,9 +117,7 @@ export function LearnedSkillDetail({ skillId }: { skillId: string }) {
         <div className="mt-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="break-words text-3xl font-semibold tracking-tight sm:text-4xl">
-                {skill.name}
-              </h1>
+              <h1 className={pageTitleClass("break-words")}>{skill.name}</h1>
               <span className="font-mono text-sm text-muted-foreground">{skill.version}</span>
               <SkillState state={skill.state} />
             </div>
@@ -173,7 +172,7 @@ export function LearnedSkillDetail({ skillId }: { skillId: string }) {
         </div>
 
         {mutation.isError && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">
             {errorMessage(mutation.error)} Refresh the skill and review its current revision before
             trying again.
           </p>
@@ -413,8 +412,8 @@ function diffRowMarker(kind: DiffRowKind) {
 }
 
 function diffRowClass(kind: DiffRowKind) {
-  if (kind === "addition") return "bg-success/10 text-success";
-  if (kind === "deletion") return "bg-destructive/10 text-destructive";
+  if (kind === "addition") return "bg-success/10 text-foreground";
+  if (kind === "deletion") return "bg-destructive/10 text-foreground";
   if (kind === "metadata") return "text-muted-foreground";
   return "";
 }

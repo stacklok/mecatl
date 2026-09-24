@@ -27,7 +27,7 @@ export function notifyRunCompletion(title: string, failed = false) {
     failed ? "Mecatl needs your attention" : "Mecatl finished",
     {
       body: failed ? `${title} stopped before completing.` : `${title} is ready to review.`,
-      icon: "/favicon.ico",
+      icon: "/stacklok-favicon.png",
       tag: `mecatl-run-${title}`,
     },
     true,

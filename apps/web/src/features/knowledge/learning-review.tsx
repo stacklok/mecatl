@@ -149,7 +149,7 @@ export function LearningReview() {
         <div className="mt-5 inline-flex max-w-full overflow-x-auto rounded-full bg-muted p-1">
           {filters.map((item) => (
             <button
-              className={`h-8 rounded-full px-4 text-sm ${filter === item.value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
+              className={`min-h-11 rounded-full px-4 text-sm focus-visible:outline-2 focus-visible:outline-brand ${filter === item.value ? "bg-background font-medium shadow-sm" : "text-muted-foreground"}`}
               key={item.value}
               onClick={() => {
                 setFilter(item.value);
@@ -166,7 +166,7 @@ export function LearningReview() {
           <p className="mt-4 rounded-lg bg-info/10 p-3 text-sm text-foreground">{notice}</p>
         )}
         {(decide.isError || undo.isError) && (
-          <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+          <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">
             {errorMessage(decide.error ?? undo.error)}
           </p>
         )}
@@ -226,7 +226,7 @@ export function LearningReview() {
           <div className="mt-5 flex flex-col gap-2 sm:flex-row">
             <select
               aria-label="Completed session"
-              className="h-10 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm"
+              className="min-h-11 min-w-0 flex-1 rounded-lg border bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-brand"
               onChange={(event) => setSelectedSession(event.target.value)}
               value={selectedSession}
             >
@@ -238,6 +238,7 @@ export function LearningReview() {
               ))}
             </select>
             <Button
+              className="min-h-11"
               disabled={!selectedSession || reflection.isPending}
               onClick={() => void reflect()}
               variant="action"
@@ -275,8 +276,9 @@ export function LearningReview() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
             <AlertDialogAction
+              className="min-h-11"
               disabled={decide.isPending || undo.isPending}
               onClick={confirmPendingAction}
             >
@@ -339,6 +341,7 @@ function ProposalCard({
         {proposal.status === "staged" && (
           <>
             <Button
+              className="min-h-11"
               disabled={busy || !proposal.promotionAvailable}
               onClick={onApprove}
               size="sm"
@@ -347,13 +350,20 @@ function ProposalCard({
             >
               Approve
             </Button>
-            <Button disabled={busy} onClick={onReject} size="sm" variant="outline">
+            <Button
+              className="min-h-11"
+              disabled={busy}
+              onClick={onReject}
+              size="sm"
+              variant="outline"
+            >
               Reject
             </Button>
           </>
         )}
         {proposal.status === "promoted" && (
           <Button
+            className="min-h-11"
             disabled={busy || !proposal.promotionAvailable}
             onClick={onUndo}
             size="sm"

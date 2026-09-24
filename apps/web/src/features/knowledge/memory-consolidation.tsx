@@ -91,6 +91,7 @@ export function MemoryConsolidation() {
           </div>
         </div>
         <Button
+          className="min-h-11"
           disabled={generate.isPending || decide.isPending}
           onClick={() => void generatePlan()}
           size="sm"
@@ -105,7 +106,9 @@ export function MemoryConsolidation() {
           Mecatl is reviewing memory; this may take a minute.
         </p>
       )}
-      {notice && <p className="mt-4 rounded-lg bg-warning/10 p-3 text-sm text-warning">{notice}</p>}
+      {notice && (
+        <p className="mt-4 rounded-lg bg-warning/10 p-3 text-sm text-foreground">{notice}</p>
+      )}
       {error && !notice && <p className="mt-4 text-sm text-destructive">{errorMessage(error)}</p>}
 
       {plan && plan.operations.length === 0 && (
@@ -114,6 +117,7 @@ export function MemoryConsolidation() {
             Nothing needs consolidation; this memory is already tidy.
           </p>
           <Button
+            className="min-h-11"
             disabled={!capability.decide || decide.isPending}
             onClick={() => void decidePlan("dismiss")}
             size="sm"
@@ -172,6 +176,7 @@ export function MemoryConsolidation() {
           </ul>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button
+              className="min-h-11"
               disabled={!capability.decide || decide.isPending}
               onClick={() => setConfirmApply(true)}
               size="sm"
@@ -181,6 +186,7 @@ export function MemoryConsolidation() {
               Apply plan
             </Button>
             <Button
+              className="min-h-11"
               disabled={!capability.decide || decide.isPending}
               onClick={() => void decidePlan("dismiss")}
               size="sm"
@@ -207,8 +213,12 @@ export function MemoryConsolidation() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={decide.isPending} onClick={() => void decidePlan("apply")}>
+            <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="min-h-11"
+              disabled={decide.isPending}
+              onClick={() => void decidePlan("apply")}
+            >
               Apply
             </AlertDialogAction>
           </AlertDialogFooter>

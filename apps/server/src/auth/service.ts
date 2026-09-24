@@ -40,8 +40,9 @@ export const defaultReturnTo = "/workspace";
 
 interface AccessCredential {
   readonly accessToken: string;
+  readonly email?: string;
   readonly expiresAt: number;
-  readonly subject?: string;
+  readonly subject: string;
   readonly tokenType: "Bearer";
 }
 
@@ -52,6 +53,7 @@ interface LoginTransaction {
   readonly redirectUri: string;
   readonly returnTo: string;
   readonly state: string;
+  readonly flow?: "popup";
 }
 
 interface RefreshCredential {
@@ -65,6 +67,7 @@ export interface AuthenticationCredential extends AccessCredential {
 export interface AuthenticationResult {
   readonly credential: AuthenticationCredential;
   readonly returnTo: string;
+  readonly flow?: "popup";
 }
 
 export type CredentialResolution =
@@ -83,23 +86,30 @@ export interface MecatlAuthenticationProfile {
 export interface AuthenticationService {
   clear(context: Context<AppEnv>): void;
   /** Records a completed login; call only after the credential is verified and stored. */
-  noteLoginComplete(context: Context<AppEnv>, subject?: string): void;
+  noteLoginComplete(context: Context<AppEnv>): void;
   /** Records a login that failed after the exchange, such as a rejected credential. */
   noteLoginFailure(context: Context<AppEnv>, reason: string): void;
   completeLogin(context: Context<AppEnv>): Promise<AuthenticationResult>;
   credential(context: Context<AppEnv>): Promise<CredentialResolution>;
   logout(context: Context<AppEnv>): Promise<void>;
   save(context: Context<AppEnv>, credential: AuthenticationCredential): Promise<void>;
-  startLogin(context: Context<AppEnv>, returnTo: string | undefined): Promise<string>;
+  signInRequired(context: Context<AppEnv>): Promise<boolean>;
+  startLogin(
+    context: Context<AppEnv>,
+    returnTo: string | undefined,
+    flow?: "popup",
+  ): Promise<string>;
 }
 
 export class AuthenticationError extends Error {
   readonly code: string;
+  readonly popup: boolean;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, popup = false) {
     super(message);
     this.name = "AuthenticationError";
     this.code = code;
+    this.popup = popup;
   }
 }
 
@@ -296,17 +306,28 @@ class OidcAuthenticationService implements AuthenticationService {
       // Audited by noteLoginComplete once the caller has verified the
       // credential and sealed the session: a token exchange that Mecatl then
       // rejects, or a session too large to store, is not a completed login.
-      const credential = credentialFromTokens(tokens, tokens.claims()?.sub);
-      return { credential, returnTo: transaction.returnTo };
+      const claims = tokens.claims();
+      const subject = verifiedSubject(claims?.sub);
+      if (subject === undefined) throw missingSubject();
+      const credential = credentialFromTokens(tokens, {
+        subject,
+        email: verifiedEmail(claims?.email),
+      });
+      return {
+        credential,
+        returnTo: transaction.returnTo,
+        ...(transaction.flow === "popup" ? { flow: "popup" as const } : {}),
+      };
     } catch (error) {
       if (error instanceof AuthenticationError) {
         this.#audit("login.fail", context, { reason: error.code });
-        throw error;
+        throw new AuthenticationError(error.code, error.message, transaction.flow === "popup");
       }
       this.#audit("login.fail", context, { reason: "token_exchange_failed" });
       throw new AuthenticationError(
         "token_exchange_failed",
         "The identity provider rejected the authorization code exchange",
+        transaction.flow === "popup",
       );
     }
   }
@@ -337,18 +358,18 @@ class OidcAuthenticationService implements AuthenticationService {
     }
 
     try {
-      const refreshed = await this.#refresh(refresh.refreshToken, access.subject);
+      const refreshed = await this.#refresh(refresh.refreshToken, access);
       await this.save(context, refreshed);
       return { credential: refreshed, status: "authenticated" };
     } catch {
       this.clear(context);
-      this.#audit("session.expired", context, { subject: access.subject });
+      this.#audit("session.expired", context, {});
       return { status: "expired" };
     }
   }
 
-  noteLoginComplete(context: Context<AppEnv>, subject?: string): void {
-    this.#audit("login.complete", context, { subject });
+  noteLoginComplete(context: Context<AppEnv>): void {
+    this.#audit("login.complete", context, {});
   }
 
   noteLoginFailure(context: Context<AppEnv>, reason: string): void {
@@ -365,9 +386,7 @@ class OidcAuthenticationService implements AuthenticationService {
       getCookie(context, refreshCookie),
     );
     this.clear(context);
-    this.#audit("logout", context, {
-      subject: validAccessCredential(access) ? access.subject : undefined,
-    });
+    this.#audit("logout", context, {});
 
     const tokens = [
       ...(validRefreshCredential(refresh) ? [refresh.refreshToken] : []),
@@ -408,10 +427,12 @@ class OidcAuthenticationService implements AuthenticationService {
   async #sealSession(
     credential: AuthenticationCredential,
   ): Promise<[access: string, refresh: string | undefined]> {
+    if (verifiedSubject(credential.subject) === undefined) throw missingSubject();
     const access = await this.#codec.seal("access", {
       accessToken: credential.accessToken,
+      ...(credential.email === undefined ? {} : { email: credential.email }),
       expiresAt: credential.expiresAt,
-      ...(credential.subject === undefined ? {} : { subject: credential.subject }),
+      subject: credential.subject,
       tokenType: credential.tokenType,
     } satisfies AccessCredential);
     const refresh =
@@ -423,7 +444,25 @@ class OidcAuthenticationService implements AuthenticationService {
     return [access, refresh];
   }
 
-  async startLogin(context: Context<AppEnv>, returnTo: string | undefined): Promise<string> {
+  async signInRequired(context: Context<AppEnv>): Promise<boolean> {
+    const access = await this.#codec.open<AccessCredential>(
+      "access",
+      getCookie(context, accessCookie),
+    );
+    if (!validAccessCredential(access)) return true;
+    if (access.expiresAt > Date.now()) return false;
+    const refresh = await this.#codec.open<RefreshCredential>(
+      "refresh",
+      getCookie(context, refreshCookie),
+    );
+    return !validRefreshCredential(refresh);
+  }
+
+  async startLogin(
+    context: Context<AppEnv>,
+    returnTo: string | undefined,
+    flow?: "popup",
+  ): Promise<string> {
     const safeReturnTo = validReturnTo(returnTo) ? returnTo : defaultReturnTo;
     const redirectUri = this.#redirectUri(context);
     const codeVerifier = randomPKCECodeVerifier();
@@ -435,6 +474,7 @@ class OidcAuthenticationService implements AuthenticationService {
       redirectUri,
       returnTo: safeReturnTo,
       state,
+      ...(flow === "popup" ? { flow } : {}),
     } satisfies LoginTransaction);
     setCookie(context, transactionCookie, transaction, this.#transactionOptions(context));
 
@@ -462,12 +502,11 @@ class OidcAuthenticationService implements AuthenticationService {
     }
   }
 
-  #audit(event: string, context: Context<AppEnv>, fields: { reason?: string; subject?: string }) {
+  #audit(event: string, context: Context<AppEnv>, fields: { reason?: string }) {
     this.#logger.audit(`auth.${event}`, {
       clientAddress: context.get("clientAddress"),
       reason: fields.reason,
       requestId: context.get("requestId"),
-      subject: fields.subject,
     });
   }
 
@@ -526,14 +565,25 @@ class OidcAuthenticationService implements AuthenticationService {
    * The window is per replica; replicas behind a load balancer without
    * session affinity can still race each other.
    */
-  #refresh(refreshToken: string, subject: string | undefined): Promise<AuthenticationCredential> {
+  #refresh(refreshToken: string, access: AccessCredential): Promise<AuthenticationCredential> {
     const active = this.#refreshes.get(refreshToken);
     if (active !== undefined) return active;
 
     const operation = this.#configuration()
       .then(async (configuration) => {
         const tokens = await refreshTokenGrant(configuration, refreshToken);
-        const credential = credentialFromTokens(tokens, tokens.claims()?.sub ?? subject);
+        const claims = tokens.claims();
+        const subject = claims === undefined ? access.subject : verifiedSubject(claims.sub);
+        if (subject === undefined || subject !== access.subject) {
+          throw new AuthenticationError(
+            "refresh_subject_mismatch",
+            "The identity provider changed the session subject during refresh",
+          );
+        }
+        const credential = credentialFromTokens(tokens, {
+          subject,
+          email: claims === undefined ? access.email : verifiedEmail(claims.email),
+        });
         const refreshed = {
           ...credential,
           refreshToken: credential.refreshToken ?? refreshToken,
@@ -668,7 +718,7 @@ function credentialFromTokens(
     readonly refresh_token?: string;
     readonly token_type?: string;
   },
-  subject: string | undefined,
+  identity: { readonly subject: string; readonly email?: string },
 ): AuthenticationCredential {
   if (
     tokens.access_token === undefined ||
@@ -690,9 +740,33 @@ function credentialFromTokens(
     ...(tokens.refresh_token === undefined || tokens.refresh_token === ""
       ? {}
       : { refreshToken: tokens.refresh_token }),
-    ...(subject === undefined ? {} : { subject }),
+    ...(identity.email === undefined ? {} : { email: identity.email }),
+    subject: identity.subject,
     tokenType: "Bearer",
   };
+}
+
+function verifiedSubject(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function missingSubject(): AuthenticationError {
+  return new AuthenticationError(
+    "id_token_subject_missing",
+    "The identity provider did not return a usable verified subject",
+  );
+}
+
+function verifiedEmail(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value !== "" &&
+    new TextEncoder().encode(value).byteLength <= 254 &&
+    [...value].every((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code >= 0x20 && code !== 0x7f;
+    })
+    ? value
+    : undefined;
 }
 
 function invalidDiscovery(): AuthenticationError {
@@ -736,7 +810,8 @@ function validAccessCredential(value: unknown): value is AccessCredential {
     typeof value.expiresAt === "number" &&
     Number.isFinite(value.expiresAt) &&
     value.tokenType === "Bearer" &&
-    (value.subject === undefined || typeof value.subject === "string")
+    verifiedSubject(value.subject) !== undefined &&
+    (value.email === undefined || verifiedEmail(value.email) !== undefined)
   );
 }
 
@@ -763,7 +838,8 @@ function validLoginTransaction(value: unknown): value is LoginTransaction {
     value.redirectUri !== "" &&
     typeof value.returnTo === "string" &&
     typeof value.state === "string" &&
-    value.state !== ""
+    value.state !== "" &&
+    (value.flow === undefined || value.flow === "popup")
   );
 }
 

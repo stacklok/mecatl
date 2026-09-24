@@ -9,6 +9,7 @@ import {
 import { MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
+import { studioBuildId } from "./build-info.js";
 import type { ActivityLimits } from "./config.js";
 import { requestBodyLimit } from "./http/body-limit.js";
 import type { AppEnv } from "./http/env.js";
@@ -21,6 +22,7 @@ import {
   type SecurityOptions,
   sameOriginMutations,
   securityHeaders,
+  statusRateLimiter,
 } from "./http/security.js";
 import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
@@ -39,7 +41,11 @@ import { registerChatRoutes } from "./routes/chat.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
+import { registerStatusRoutes } from "./routes/status.js";
 import { registerStorageRoutes } from "./routes/storage.js";
+import { readInstalledSdkVersion } from "./sdk-version.js";
+
+const sdkVersion = readInstalledSdkVersion();
 
 export const openApiInfo = {
   info: { title: "Mecatl Studio API", version: "1.0.0" },
@@ -119,6 +125,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   for (const middleware of requestContext(security)) app.use(middleware);
   app.use(securityHeaders());
   app.use(hostAllowlist(security));
+  app.use("/api/v1/status", statusRateLimiter(security));
   app.use("/api/*", csrfCookieIssuer(security));
   const authLimiter = rateLimiter(security);
   app.use("/api/v1/auth/*", authLimiter);
@@ -128,10 +135,12 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   registerAuthRoutes(app, authentication, runtime);
 
-  // AC3.8: with interactive login active, everything under /api/v1 except the
-  // auth routes themselves needs a live session; /api/health never does.
+  // With interactive login active, only public status and auth routes bypass
+  // the session gate under /api/v1; /api/health never enters it.
   app.use("/api/v1/*", async (context, next) => {
-    if (context.req.path.startsWith("/api/v1/auth/")) return next();
+    if (context.req.path === "/api/v1/status" || context.req.path.startsWith("/api/v1/auth/")) {
+      return next();
+    }
     if (authentication === undefined) return next();
     const resolution = await authentication.credential(context);
     if (resolution.status === "anonymous") {
@@ -160,10 +169,14 @@ export function createApp(dependencies: AppDependencies = {}) {
   // Capabilities come from the negotiated snapshot, so answering earlier would
   // report a supported feature as `supported: false` — a successful, cacheable
   // lie. The wait runs inside the request's credential context. /runtime keeps
-  // its own non-blocking 503, and the auth routes never depend on it.
+  // its own non-blocking 503; public status and auth routes never depend on it.
   app.use("/api/v1/*", async (context, next) => {
     if (runtime === undefined) return next();
-    if (context.req.path === "/api/v1/runtime" || context.req.path.startsWith("/api/v1/auth/")) {
+    if (
+      context.req.path === "/api/v1/status" ||
+      context.req.path === "/api/v1/runtime" ||
+      context.req.path.startsWith("/api/v1/auth/")
+    ) {
       return next();
     }
     if (await negotiated(runtime, readinessTimeoutMs)) return next();
@@ -174,10 +187,19 @@ export function createApp(dependencies: AppDependencies = {}) {
     context.json({ service: "mecatl-studio" as const, status: "ok" as const }, 200),
   );
 
+  registerStatusRoutes(app, authentication, runtime);
+
   app.openapi(runtimeRoute, (context) => {
     if (runtime === undefined) return runtimeUnavailable(context, "The BFF has no Mecatl runtime.");
     try {
-      return context.json(runtime.snapshot(), 200);
+      return context.json(
+        {
+          ...runtime.snapshot(),
+          ...(sdkVersion === undefined ? {} : { sdkVersion }),
+          ...(studioBuildId === undefined ? {} : { studioBuildId }),
+        },
+        200,
+      );
     } catch (error) {
       if (error instanceof RuntimeNotReadyError) {
         void runtime.ready().catch(() => undefined);

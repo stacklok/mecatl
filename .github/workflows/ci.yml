@@ -572,6 +572,12 @@ jobs:
       - name: Test Studio (Vitest, offline)
         run: task studio:test
 
+      - name: Install Chromium for Studio browser journeys
+        run: task studio:browser:install
+
+      - name: Test Studio browser journeys (Playwright, offline)
+        run: task studio:browser
+
       - name: Verify committed contracts artifacts are fresh
         run: task studio:generated-check
 

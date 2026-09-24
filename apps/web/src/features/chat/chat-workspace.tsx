@@ -80,6 +80,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Input } from "../../components/ui/input";
+import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { notifyRunCompletion } from "../../lib/browser-notifications";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
@@ -94,6 +95,7 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { useShortcut } from "../shortcuts/shortcut-provider";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import {
@@ -203,6 +205,7 @@ const defaultDraftConfiguration: DraftChatConfiguration = {
 };
 
 export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
+  const recovery = useAuthRecovery();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const sessions = useQuery(listSessionsOptions());
@@ -226,6 +229,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [reattached, setReattached] = useState(false);
+  const [reattachEpoch, setReattachEpoch] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
@@ -371,7 +375,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // Attachment lifetime is deliberately keyed only to session identity and its watchable state.
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
   useEffect(() => {
-    if (!sessionId || !watchable || activeRun.current) return;
+    if (!sessionId || !watchable || activeRun.current || protectedRequestsPaused()) return;
 
     const controller = new AbortController();
     const owner: RunOwner = { controller, sessionId };
@@ -434,7 +438,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         setReattached(false);
       }
     };
-  }, [sessionId, watchable]);
+  }, [sessionId, watchable, reattachEpoch]);
 
   async function selectSession(id: string) {
     setSidebarOpen(false);
@@ -589,7 +593,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     prompt: string,
     images: ImageAttachment[] = [],
     targetSessionId = sessionId,
+    onAccepted?: (accepted: boolean) => void,
   ) {
+    let accepted = false;
     setError(undefined);
     setNotice(undefined);
     setFailedRun(undefined);
@@ -625,14 +631,23 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           images: images.map(({ data, mimeType, name }) => ({ data, mimeType, name })),
           prompt,
         },
-        onSseError: (caught) => {
-          streamFailure.error = caught;
-        },
+        onSseError: captureSseFailure(streamFailure),
         path: { sessionId: activeSessionId },
         signal: controller.signal,
         sseMaxRetryAttempts: 1,
       });
-      end = await consumeRun(owner, response.stream, streamFailure, assistantId, prompt);
+      end = await consumeRun(
+        owner,
+        response.stream,
+        streamFailure,
+        assistantId,
+        prompt,
+        false,
+        () => {
+          accepted = true;
+          onAccepted?.(true);
+        },
+      );
 
       if (streamFailure.error && !controller.signal.aborted) {
         throw streamFailure.error;
@@ -658,6 +673,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         notifyRunCompletion(selectedSession?.title ?? "Your chat", true);
       }
     } finally {
+      if (!accepted) onAccepted?.(false);
       await finishRun(owner, end);
     }
   }
@@ -690,11 +706,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     action: ComposerEnterAction,
     images: ImageAttachment[],
   ) {
+    if (recovery.phase !== "ready") {
+      setNotice("Verify your sign-in before sending this draft.");
+      return false;
+    }
     if (!isRunning) {
-      // The run owns its own error handling and can outlive this submission.
-      // Release the composer immediately so it can switch to queue/steer mode.
-      void sendPrompt(prompt, images);
-      return true;
+      // Keep the draft until the first stream delivery proves the write was accepted.
+      // The rest of the run continues in the background, leaving queue/steer available.
+      return await new Promise<boolean>((resolve) => {
+        void sendPrompt(prompt, images, sessionId, resolve);
+      });
     }
     if (images.length > 0) {
       setNotice("Wait for the active run to finish before sending images.");
@@ -724,6 +745,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   }
 
   function drainNextQueuedMessage(activeSessionId: string) {
+    if (protectedRequestsPaused()) return;
     if (viewedSessionId.current !== activeSessionId) return;
     const next = takeNextQueuedMessage(activeSessionId);
     if (next) void sendPrompt(next.text, [], activeSessionId);
@@ -748,9 +770,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     try {
       const streamFailure: StreamFailure = {};
       const response = await retrySession({
-        onSseError: (caught) => {
-          streamFailure.error = caught;
-        },
+        onSseError: captureSseFailure(streamFailure),
         path: { sessionId: retrySessionId },
         signal: controller.signal,
         sseMaxRetryAttempts: 1,
@@ -789,9 +809,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   /** Opens (or, with `resumeFrom`, reopens) the activity stream of the run owner's session. */
   async function watchActivity(owner: RunOwner, streamFailure: StreamFailure, resumeFrom?: string) {
     const response = await watchSessionActivity({
-      onSseError: (caught) => {
-        streamFailure.error = caught;
-      },
+      onSseError: captureSseFailure(streamFailure),
       path: { sessionId: owner.sessionId ?? "" },
       query: resumeFrom ? { resumeFrom } : undefined,
       signal: owner.controller.signal,
@@ -813,6 +831,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     assistantId: string,
     prompt: string,
     replay = false,
+    onAccepted?: () => void,
   ): Promise<RunStreamEnd> {
     let failure: RunFailure | undefined;
     let sawResult = false;
@@ -830,6 +849,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     while (stream) {
       let resumeFrom: string | undefined;
       for await (const delivery of stream) {
+        onAccepted?.();
+        onAccepted = undefined;
         if (!acceptsDelivery(owner, activeRun.current, viewedSessionId.current, delivery)) {
           if (owns()) continue;
           // The user left this run's chat: stop reading, and report no outcome.
@@ -1462,13 +1483,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         )}
 
         {error && (
-          <div className="mx-auto mb-3 flex w-[calc(100%-2rem)] max-w-3xl items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <div className="mx-auto mb-3 flex w-[calc(100%-2rem)] max-w-3xl items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-foreground">
             <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
             {error}
+            {watchable && !isRunning && (
+              <Button
+                disabled={protectedRequestsPaused()}
+                onClick={() => {
+                  setError(undefined);
+                  setReattachEpoch((epoch) => epoch + 1);
+                }}
+                size="sm"
+                variant="outline"
+              >
+                Retry stream
+              </Button>
+            )}
           </div>
         )}
         {notice && (
-          <div className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg bg-success/10 px-3 py-2 text-sm text-success">
+          <div className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg bg-success/10 px-3 py-2 text-sm text-foreground">
             {notice}
           </div>
         )}
@@ -1733,7 +1767,7 @@ export function Message({
                 >
                   {display.kind === "link" ? (
                     <a
-                      className="flex items-center gap-2 px-3 py-2 text-sm text-foreground underline underline-offset-2 hover:text-brand"
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-foreground underline underline-offset-2 hover:text-brand-ink"
                       href={display.href}
                       rel="noopener noreferrer"
                       target="_blank"
@@ -1833,7 +1867,7 @@ function MessageAvatar({
 }) {
   return (
     <span
-      className={`mt-1 flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full ${fallback === "agent" ? "bg-brand/10 text-brand" : "bg-muted text-muted-foreground"}`}
+      className={`mt-1 flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full ${fallback === "agent" ? "bg-brand/10 text-brand-ink" : "bg-muted text-muted-foreground"}`}
     >
       {avatarUrl ? (
         <img alt={name} className="size-full object-cover" src={avatarUrl} />

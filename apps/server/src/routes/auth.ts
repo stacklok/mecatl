@@ -38,6 +38,7 @@ const loginRoute = createRoute({
   request: {
     query: z.object({
       // The contract's public name; see docs/acceptance/studio-bootstrap.md.
+      flow: z.enum(["popup"]).optional(),
       return_to: z.string().optional(),
     }),
   },
@@ -54,6 +55,10 @@ const callbackRoute = createRoute({
   operationId: "completeAuthLogin",
   path: "/api/v1/auth/callback",
   responses: {
+    200: {
+      content: { "text/html": { schema: z.string() } },
+      description: "A popup completion page that reports only the authentication result.",
+    },
     302: redirectResponse,
     400: problemResponse,
     401: problemResponse,
@@ -79,23 +84,31 @@ export function registerAuthRoutes(
   runtime: MecatlRuntime | undefined,
 ) {
   app.openapi(sessionRoute, async (context) => {
+    context.header("Cache-Control", "private, no-store");
     if (authentication === undefined) {
       return context.json(
-        { mode: runtime?.authMode ?? ("none" as const), status: "disabled" as const },
+        {
+          mode: runtime?.authMode === "static" ? ("static" as const) : ("none" as const),
+          status: "disabled" as const,
+        },
         200,
       );
     }
     const resolution = await authentication.credential(context);
-    const subject =
-      resolution.status === "authenticated" ? resolution.credential.subject : undefined;
+    if (resolution.status !== "authenticated") {
+      return context.json({ mode: "oidc" as const, status: "anonymous" as const }, 200);
+    }
+    const { subject, email } = resolution.credential;
+    if (subject === undefined || subject === "") {
+      authentication.clear(context);
+      return context.json({ mode: "oidc" as const, status: "anonymous" as const }, 200);
+    }
     return context.json(
       {
-        ...(subject === undefined ? {} : { account: accountKey(subject) }),
+        account: accountKey(subject),
+        ...(email === undefined ? {} : { email }),
         mode: "oidc" as const,
-        status:
-          resolution.status === "authenticated"
-            ? ("authenticated" as const)
-            : ("anonymous" as const),
+        status: "authenticated" as const,
       },
       200,
     );
@@ -107,6 +120,7 @@ export function registerAuthRoutes(
       const location = await authentication.startLogin(
         context,
         context.req.valid("query").return_to,
+        context.req.valid("query").flow,
       );
       return context.redirect(location, 302);
     } catch (error) {
@@ -118,14 +132,17 @@ export function registerAuthRoutes(
     if (authentication === undefined || runtime === undefined) {
       return authenticationDisabled(context);
     }
+    let popup = false;
     try {
       const result = await authentication.completeLogin(context);
+      popup = result.flow === "popup";
       await runtime.verifyCredential(result.credential.accessToken);
       await authentication.save(context, result.credential);
       // Only now is the login complete: verified upstream and stored locally.
-      authentication.noteLoginComplete(context, result.credential.subject);
-      return context.redirect(result.returnTo, 302);
+      authentication.noteLoginComplete(context);
+      return popup ? popupResult(context, "success") : context.redirect(result.returnTo, 302);
     } catch (error) {
+      if (error instanceof AuthenticationError && error.popup) popup = true;
       // A callback with no matching transaction is exactly what a forged
       // cross-site link produces; it must not sign the user out of a session
       // they already hold. completeLogin has dropped the transaction cookie.
@@ -138,27 +155,53 @@ export function registerAuthRoutes(
         if (error.code !== "login_state_mismatch") {
           authentication.noteLoginFailure(context, error.code);
         }
-        return authenticationFailure(context, error, 400);
+        return popup ? popupResult(context, "failure") : authenticationFailure(context, error, 400);
       }
       authentication.noteLoginFailure(context, "mecatl_credential_rejected");
-      return problem(
-        context,
-        401,
-        "mecatl_credential_rejected",
-        "Login rejected",
-        "Mecatl rejected the credential returned by the identity provider.",
-      );
+      return popup
+        ? popupResult(context, "failure")
+        : problem(
+            context,
+            401,
+            "mecatl_credential_rejected",
+            "Login rejected",
+            "Mecatl rejected the credential returned by the identity provider.",
+          );
     }
   };
 
   app.openapi(callbackRoute, completeLogin);
   // The mecatui loopback callback alias used by local development (AC3.4).
   app.get("/oauth/callback", completeLogin);
+  app.get("/api/v1/auth/callback.js", (context) => {
+    context.header("Cache-Control", "private, no-store");
+    context.header("Referrer-Policy", "no-referrer");
+    return context.body(popupCallbackScript, 200, {
+      "Content-Type": "text/javascript; charset=utf-8",
+    });
+  });
 
   app.openapi(logoutRoute, async (context) => {
     await authentication?.logout(context);
     return context.body(null, 204);
   });
+}
+
+const popupCallbackScript = `(() => {
+  const result = document.documentElement.dataset.result;
+  if (result === "success" || result === "failure") {
+    window.opener?.postMessage({ type: "studio.auth.result", result }, window.location.origin);
+  }
+  window.close();
+})();`;
+
+function popupResult(context: Context<AppEnv>, result: "success" | "failure"): Response {
+  context.header("Cache-Control", "private, no-store");
+  context.header("Referrer-Policy", "no-referrer");
+  return context.html(
+    `<!doctype html><html lang="en" data-result="${result}"><head><meta charset="utf-8"><title>Studio sign-in</title><script src="/api/v1/auth/callback.js" defer></script></head><body><p>You can return to Studio. If this window stays open, close it manually.</p></body></html>`,
+    200,
+  );
 }
 
 function authenticationDisabled(context: Context<AppEnv>) {

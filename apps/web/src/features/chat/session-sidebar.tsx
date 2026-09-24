@@ -242,7 +242,7 @@ function SessionRow({
     <div
       className={cn(
         "group relative my-0.5 flex items-center rounded-lg border-l-2 pr-1 transition-colors",
-        selected ? "border-brand bg-brand/10" : "border-transparent hover:bg-accent",
+        selected ? "border-brand-ink bg-brand/10" : "border-transparent hover:bg-accent",
       )}
     >
       <button

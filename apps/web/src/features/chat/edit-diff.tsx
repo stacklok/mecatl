@@ -281,8 +281,8 @@ const GUTTER: Record<DiffLineKind, string> = {
 
 const GUTTER_CLASS: Record<DiffLineKind, string> = {
   context: "text-muted-foreground/60",
-  added: "text-success",
-  removed: "text-destructive",
+  added: "text-foreground",
+  removed: "text-foreground",
 };
 
 function DiffRows({ lines, cap = DIFF_LINE_CAP }: { lines: DiffLine[]; cap?: number }) {

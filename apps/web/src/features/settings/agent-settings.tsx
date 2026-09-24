@@ -21,11 +21,14 @@ export function AgentSettings() {
   const agentAvatar = useAgentAvatar();
 
   return (
-    <IdentityCard description="Shown on the agent's replies." title="Agent">
+    <IdentityCard
+      description="Personal display name and picture stored in this browser. Agent behavior comes from the deployment."
+      title="Agent"
+    >
       <IdentityField description="What the agent calls itself." label="Agent name">
         <Input
           aria-label="Agent name"
-          className="max-w-64"
+          className="min-h-11 max-w-64"
           maxLength={40}
           onChange={(event) => agentName.setValue(event.target.value)}
           placeholder={defaultAgentName}

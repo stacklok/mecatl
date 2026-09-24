@@ -11,11 +11,66 @@ export interface CompositionKeyState {
   keyCode?: number;
 }
 
+export interface SearchKeyState extends CompositionKeyState {
+  key: string;
+}
+
 const IME_PROCESS_KEY_CODE = 229;
 
 /** Whether an input method editor currently owns the keystroke. */
 export function isImeComposing(event: CompositionKeyState): boolean {
   return event.isComposing === true || event.keyCode === IME_PROCESS_KEY_CODE;
+}
+
+/**
+ * Composition events and the committing keydown arrive in different orders
+ * across browsers. Keep ownership with the IME until that key has passed.
+ */
+export function createSearchCompositionGuard() {
+  let composing = false;
+  let awaitingCommitKey = false;
+  let pointerDuringComposition = false;
+
+  return {
+    start() {
+      composing = true;
+      awaitingCommitKey = false;
+      pointerDuringComposition = false;
+    },
+    end() {
+      composing = false;
+      awaitingCommitKey = !pointerDuringComposition;
+      pointerDuringComposition = false;
+    },
+    pointerChoice() {
+      // An observable pointer/touch choice may end composition without a
+      // committing keydown. A subsequent Enter is then a new user action.
+      if (composing) pointerDuringComposition = true;
+      awaitingCommitKey = false;
+    },
+    ownsKeyDown(event: SearchKeyState): boolean {
+      if (composing || isImeComposing(event)) {
+        if (awaitingCommitKey && ["Enter", "ArrowDown", "ArrowUp"].includes(event.key)) {
+          awaitingCommitKey = false;
+        }
+        return true;
+      }
+      const pending = awaitingCommitKey;
+      awaitingCommitKey = false;
+      return pending && ["Enter", "ArrowDown", "ArrowUp"].includes(event.key);
+    },
+    keyUp(event: Pick<SearchKeyState, "key">) {
+      // A candidate can commit with Space or a digit after compositionend,
+      // without a committing Enter keydown. That keyup completes the IME
+      // action, leaving the next distinct Enter for the palette.
+      if (
+        ["Enter", "ArrowDown", "ArrowUp", " ", "Spacebar"].includes(event.key) ||
+        /^[0-9]$/.test(event.key)
+      ) {
+        awaitingCommitKey = false;
+      }
+    },
+  };
 }
 
 /**

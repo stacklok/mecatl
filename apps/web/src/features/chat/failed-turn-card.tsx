@@ -46,17 +46,17 @@ export function FailedTurnCard({
     <div className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2">
       <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-destructive" />
       <div className="min-w-0 flex-1 text-sm">
-        <p className="font-medium text-destructive">
+        <p className="font-medium text-foreground">
           {permanent ? "This turn failed permanently" : "This turn failed"}
         </p>
-        <p className="mt-0.5 break-words text-destructive/90">{text}</p>
-        {!permanent && <p className="mt-0.5 text-xs text-destructive/70">Retrying may succeed.</p>}
+        <p className="mt-0.5 break-words text-foreground">{text}</p>
+        {!permanent && <p className="mt-0.5 text-xs text-foreground">Retrying may succeed.</p>}
         {hasDetails && (
           <>
             <button
               aria-controls={detailsId}
               aria-expanded={expanded}
-              className="mt-1 inline-flex items-center gap-1 rounded text-xs text-destructive/80 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="mt-1 inline-flex items-center gap-1 rounded text-xs text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={toggleExpanded}
               type="button"
             >
@@ -72,7 +72,7 @@ export function FailedTurnCard({
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
                   Raw payload
                 </p>
-                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-xs text-destructive/90">
+                <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-xs text-foreground">
                   {detail}
                 </pre>
               </div>

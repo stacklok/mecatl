@@ -27,6 +27,7 @@ import {
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { pageTitleClass } from "../../lib/typography";
 import { canRunNow, canTogglePause, timezoneLabel } from "./schedule-detail";
 import { ScheduleForm } from "./schedule-form";
 
@@ -114,7 +115,7 @@ export function SchedulesWorkspace({ scheduleName }: { scheduleName?: string }) 
       <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Scheduled</h1>
+            <h1 className={pageTitleClass()}>Scheduled</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Recurring and one-off work run by the connected Mecatl instance.
             </p>
@@ -128,7 +129,7 @@ export function SchedulesWorkspace({ scheduleName }: { scheduleName?: string }) 
         </div>
 
         {error && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
         )}
 
         {schedules.isPending ? (
@@ -245,7 +246,7 @@ function ScheduleItem({
   }, [selected]);
   return (
     <article
-      className={selected ? "bg-brand/5 p-4 ring-2 ring-inset ring-brand/35 sm:p-5" : "p-4 sm:p-5"}
+      className={selected ? "bg-brand/5 p-4 ring-2 ring-inset ring-brand-ink sm:p-5" : "p-4 sm:p-5"}
       id={scheduleTargetId(schedule.name)}
       tabIndex={-1}
     >
@@ -254,7 +255,7 @@ function ScheduleItem({
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-semibold">
               <Link
-                className="hover:text-brand hover:underline"
+                className="hover:text-brand-ink hover:underline"
                 params={{ scheduleName: schedule.name }}
                 to="/workspace/schedules/$scheduleName"
               >

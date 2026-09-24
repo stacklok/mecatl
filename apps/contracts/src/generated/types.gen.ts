@@ -17,9 +17,16 @@ export type GetAuthSessionResponses = {
      * How this deployment identifies callers, and this browser's own state.
      */
     200: {
-        account?: string;
-        mode: 'oidc' | 'static' | 'none';
-        status: 'authenticated' | 'anonymous' | 'disabled';
+        account: string;
+        email?: string;
+        mode: 'oidc';
+        status: 'authenticated';
+    } | {
+        mode: 'oidc';
+        status: 'anonymous';
+    } | {
+        mode: 'static' | 'none';
+        status: 'disabled';
     };
 };
 
@@ -29,6 +36,7 @@ export type StartAuthLoginData = {
     body?: never;
     path?: never;
     query?: {
+        flow?: 'popup';
         return_to?: string;
     };
     url: '/api/v1/auth/login';
@@ -139,6 +147,15 @@ export type CompleteAuthLoginErrors = {
 
 export type CompleteAuthLoginError = CompleteAuthLoginErrors[keyof CompleteAuthLoginErrors];
 
+export type CompleteAuthLoginResponses = {
+    /**
+     * A popup completion page that reports only the authentication result.
+     */
+    200: string;
+};
+
+export type CompleteAuthLoginResponse = CompleteAuthLoginResponses[keyof CompleteAuthLoginResponses];
+
 export type LogoutAuthSessionData = {
     body?: never;
     path?: never;
@@ -189,6 +206,41 @@ export type GetHealthResponses = {
 };
 
 export type GetHealthResponse = GetHealthResponses[keyof GetHealthResponses];
+
+export type GetPublicStatusData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/status';
+};
+
+export type GetPublicStatusErrors = {
+    /**
+     * The client's public status request budget is exhausted.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetPublicStatusError = GetPublicStatusErrors[keyof GetPublicStatusErrors];
+
+export type GetPublicStatusResponses = {
+    /**
+     * Coarse Mecatl connection and browser sign-in facts.
+     */
+    200: {
+        connection: 'checking' | 'reachable' | 'unavailable';
+        signInRequired: boolean;
+    };
+};
+
+export type GetPublicStatusResponse = GetPublicStatusResponses[keyof GetPublicStatusResponses];
 
 export type GetRuntimeData = {
     body?: never;
@@ -275,7 +327,9 @@ export type GetRuntimeResponses = {
         deployment?: string;
         features: Array<string>;
         mock: boolean;
+        sdkVersion?: string;
         source: 'external' | 'local';
+        studioBuildId?: string;
     };
 };
 
@@ -2923,6 +2977,102 @@ export type GetRuntimeSettingsResponses = {
 };
 
 export type GetRuntimeSettingsResponse = GetRuntimeSettingsResponses[keyof GetRuntimeSettingsResponses];
+
+export type GetProviderSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        providerId: string;
+    };
+    url: '/api/v1/settings/provider';
+};
+
+export type GetProviderSettingsErrors = {
+    /**
+     * The provider ID is missing, empty, or repeated.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * Sign in before reading provider details in OIDC mode.
+     */
+    401: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The provider is absent from the caller-visible inventory.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * Model selection is unavailable on this deployment.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The runtime or provider information is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetProviderSettingsError = GetProviderSettingsErrors[keyof GetProviderSettingsErrors];
+
+export type GetProviderSettingsResponses = {
+    /**
+     * Caller-visible provider, models, and safe diagnostic endpoint.
+     */
+    200: {
+        displayEndpoint: string | null;
+        models: Array<{
+            contextLimit: string;
+            displayName: string;
+            id: string;
+            image: boolean;
+            providerId: string;
+            reasoning: boolean;
+        }>;
+        provider: {
+            availableNotDefault: boolean;
+            defaultModelAutoSelected: boolean;
+            hint: string;
+            id: string;
+            modelCount: number;
+            state: string;
+        };
+    };
+};
+
+export type GetProviderSettingsResponse = GetProviderSettingsResponses[keyof GetProviderSettingsResponses];
 
 export type GetStorageHealthData = {
     body?: never;

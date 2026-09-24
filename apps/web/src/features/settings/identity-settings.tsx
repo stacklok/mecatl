@@ -10,11 +10,14 @@ export function IdentitySettings() {
   const userAvatar = useUserAvatar();
 
   return (
-    <IdentityCard description="Browser-local details shown beside your chat messages." title="You">
+    <IdentityCard
+      description="Source: browser profile preferences. Owner: personal. These details appear beside your chat messages; your sign-in identity comes from the authenticated session and is read-only here."
+      title="You"
+    >
       <IdentityField description="What the agent should call you." label="Display name">
         <Input
           aria-label="Your display name"
-          className="max-w-64"
+          className="min-h-11 max-w-64"
           maxLength={40}
           onChange={(event) => userName.setValue(event.target.value)}
           placeholder="You"

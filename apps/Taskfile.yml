@@ -46,6 +46,18 @@ tasks:
     cmds:
       - pnpm run test
 
+  browser:install:
+    desc: Install the pinned Chromium revision for offline Studio browser journeys
+    deps: [install]
+    cmds:
+      - pnpm exec playwright install chromium
+
+  browser:
+    desc: Run offline Vite browser journeys at desktop and mobile widths
+    deps: [install]
+    cmds:
+      - pnpm run test:browser
+
   test:integration:
     desc: |
       Drive the real BFF over the real SDK against a spawned `mecated --mock`.

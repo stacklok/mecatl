@@ -667,6 +667,24 @@ every replica shares one secret and scales horizontally behind mecak8s with no n
 infrastructure. `Secure` flags and the callback origin derive from `STUDIO_PUBLIC_URL`,
 never from the request scheme, because production TLS terminates at an Ingress.
 
+`GET /api/v1/status` is the sole anonymous `/api/v1` exception. It returns only a
+coarse connection state (`checking`, `reachable`, or `unavailable`) and whether this
+browser needs to sign in. A daemon authentication rejection proves transport
+reachability; a transport failure reports unavailable even when sign-in is also
+required. Detailed `/api/v1/runtime`, settings, storage health, and feature routes
+retain the OIDC session gate. The browser uses the public status for its shell
+banner, giving outages priority over sign-in, and reads storage health only after
+authentication. OIDC sign-in can complete in a same-origin popup through the
+existing callback URL. The opener verifies the callback message's origin, source,
+and active attempt, then checks the BFF session; the callback message carries only
+a success or failure result. A blocked or closed popup leaves the route and draft
+mounted with retry and a manual new-tab sign-in path. After a same-account session
+recovery, reads refetch; mutations and streams await explicit user retry. The
+BFF's authenticated session response can include a validated email claim from
+the verified ID token. The raw subject stays in sealed server-readable
+credentials; the browser receives only the opaque account key for identity
+comparison. An OIDC session without that identity fails closed.
+
 The **image** is one origin: a multi-stage `Dockerfile` compiles `apps/web` and
 `apps/server` to `dist`, prunes the server to production dependencies with
 `pnpm deploy --prod`, and copies them onto `cgr.dev/chainguard/node` pinned by digest
@@ -1392,7 +1410,7 @@ server's `audience:["user"]` is not a suppression control). Server-returned
 fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
 backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
-**Proposed harness context boundary.** [ADR 0357](adr/0357-harness-context-source-authority.md)
+**Proposed harness context boundary.** [ADR 0359](adr/0359-harness-context-source-authority.md)
 and the [acceptance plan](acceptance/harness-context.md) define a Plan / Interface contract that
 is not implemented yet. Deployment composition selects project instructions, commands, rules,
 skills, and agent definitions independently from execution. Sources can read APIs, host files,

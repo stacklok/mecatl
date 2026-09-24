@@ -395,6 +395,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Protocol-native prompt-cache breakpoints](unified-prompt-cache-dialect.md) — ask an upstream to cache through the Responses protocol's own `prompt_cache_breakpoint` on every request, so an explicit-ask model caches on any endpoint without mecatl consulting the vendor, plus Messages routing where model ids are shared. Status: proposed.
 
 - [Mecatl Studio bootstrap](studio-bootstrap.md) — bring the Studio web UI into the repository as a self-contained `apps/` skeleton over the published SDK: BFF runtime modes, hardened OIDC browser sessions, a one-origin multi-stage image, CI, and the `publish-studio` release job. Status: landed in the implementation candidate; authoritative on merge.
+- [Studio public status and popup sign-in](studio-public-status-popup-auth.md) — a minimal anonymous connection and sign-in contract, same-origin popup OIDC completion, and route-preserving recovery with detailed runtime and account separation retained. Status: proposed.
 
 - [Mecatl Studio chat](studio-chat.md) — the first Studio feature layer: session inventory and lifecycle routes, the run SSE union that preserves unknown SDK kinds, run controls addressed to the exact durable run, and the chat workspace with its ported behaviour tests. Status: landed in the implementation candidate; authoritative on merge.
 
@@ -404,7 +405,12 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio settings](studio-settings.md) — the fourth Studio feature layer: the safe, capability-gated runtime-settings inventory, storage health, the eight-section settings workspace, and chat's model picker restored over the live inventory. Status: landed in the implementation candidate; authoritative on merge.
 
+- [Mecatl Studio settings routes and About](studio-settings-routes-and-about.md) — direct section URLs, legacy redirects, provider detail, authenticated build facts, read-only deployment settings, and the shortcuts reference. Status: proposed.
+
 - [Mecatl Studio global search and keyboard shortcuts](studio-search-shortcuts.md) — the last Studio feature layer: a browser-owned search index over already-served inventories, the closed shortcut registry, the reference page with honest help features, and the palette in the top nav. Status: landed in the implementation candidate; authoritative on merge.
+
+- [Mecatl Studio workspace shell](studio-workspace-shell.md) — responsive workspace navigation and search interaction, accessible error routes, installable assets, and honest loaded-shell offline status. Status: proposed.
+- [Mecatl Studio appearance foundation](studio-appearance-foundation.md) — semantic light/dark tokens and Default, Aztec, Mono, and Solar choices in Appearance; same-origin fonts and pre-paint state; accessible shared controls for the 500px pivot. Status: landed (candidate, pending stacked PR merges).
 
 ## See also
 

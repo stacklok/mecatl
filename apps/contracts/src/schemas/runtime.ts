@@ -58,7 +58,9 @@ export const runtimeResponseSchema = z.object({
   deployment: z.string().optional(),
   features: z.array(z.string()),
   mock: z.boolean(),
+  sdkVersion: z.string().optional(),
   source: z.enum(["external", "local"]),
+  studioBuildId: z.string().optional(),
 });
 
 export type RuntimeResponse = z.infer<typeof runtimeResponseSchema>;

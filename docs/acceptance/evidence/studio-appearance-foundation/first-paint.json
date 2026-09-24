@@ -1,0 +1,21 @@
+{
+  "prepaint": {
+    "palette": "solar",
+    "theme": "dark",
+    "dark": true,
+    "scale": "1.15",
+    "paintEntries": 0
+  },
+  "hydrated": {
+    "palette": "solar",
+    "theme": "dark",
+    "dark": true,
+    "scale": "1.15",
+    "paintEntries": [
+      {
+        "name": "first-paint",
+        "startTime": 96
+      }
+    ]
+  }
+}

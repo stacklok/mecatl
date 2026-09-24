@@ -26,11 +26,19 @@ export function StorageSettings() {
     <section className="rounded-2xl border bg-card p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Storage</h2>
-        <Button onClick={() => void query.refetch()} size="sm" variant="outline">
+        <Button
+          className="min-h-11"
+          onClick={() => void query.refetch()}
+          size="sm"
+          variant="outline"
+        >
           <RefreshCw aria-hidden="true" className="size-3.5" />
           Refresh
         </Button>
       </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Storage cleanup is managed by this deployment.
+      </p>
       <div className="mt-4">
         <StorageHealthSummary health={query.data} />
       </div>

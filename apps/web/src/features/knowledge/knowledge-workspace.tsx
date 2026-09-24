@@ -22,6 +22,7 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent } from "../../components/ui/dialog";
+import { pageTitleClass } from "../../lib/typography";
 
 export type KnowledgeView = "configured" | "learned";
 type LearnedSkill = ListLearnedSkillsResponse["items"][number];
@@ -41,7 +42,7 @@ export function KnowledgeWorkspace({
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
-        <h1 className="text-3xl font-semibold tracking-tight">Skills</h1>
+        <h1 className={pageTitleClass()}>Skills</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Inspect the procedures available to Mecatl.
         </p>
@@ -95,7 +96,7 @@ function ConfiguredSkills({ selectedName }: { selectedName?: string }) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {query.data.items.map((skill) => (
           <article
-            className={`rounded-xl border bg-card p-4 ${skill.name === selectedName ? "ring-2 ring-brand/40" : ""}`}
+            className={`rounded-xl border bg-card p-4 ${skill.name === selectedName ? "ring-2 ring-brand-ink" : ""}`}
             id={knowledgeTargetId("configured", skill.name)}
             key={skill.name}
             tabIndex={-1}
@@ -175,7 +176,7 @@ function LearnedSkills({
   return (
     <>
       {error && (
-        <p className="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+        <p className="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
       )}
       {!query.data.complete && (
         <p className="mb-3 text-xs text-warning">Showing the first 100 learned skills.</p>

@@ -28,6 +28,7 @@ import {
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { pageTitleClass } from "../../lib/typography";
 import { ScheduleForm } from "./schedule-form";
 
 type Schedule = ListSchedulesResponse["items"][number];
@@ -108,9 +109,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
         <div className="mt-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="break-words text-3xl font-semibold tracking-tight sm:text-4xl">
-                {schedule.name}
-              </h1>
+              <h1 className={pageTitleClass("break-words")}>{schedule.name}</h1>
               <StatusBadge status={schedule.status} />
               <Badge variant="outline">{modeLabel(schedule.mode)}</Badge>
               {schedule.mutating && <Badge variant="warning">writes enabled</Badge>}
@@ -154,7 +153,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
         </div>
 
         {error && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
         )}
 
         <div className="mt-8 grid gap-5 sm:grid-cols-2">

@@ -751,6 +751,8 @@ jobs:
             org.opencontainers.image.revision=${{ steps.revision.outputs.sha }}
             org.opencontainers.image.vendor=Stacklok
             org.stacklok.mecatl.studio.stability=early-access
+          build-args: |
+            STUDIO_BUILD_ID=${{ env.VERSION }}
 
       # Sign/SBOM/attest the pushed manifest list BY DIGEST, matching the
       # ko-based jobs above — never a mutable tag, so this binds to the exact

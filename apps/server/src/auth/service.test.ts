@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { bootstrap } from "../bootstrap.js";
 import { ConfigurationError, studioConfigFromEnvironment } from "../config.js";
+import type { AppEnv } from "../http/env.js";
 import type { RuntimeConfig } from "../mecatl/runtime.js";
 import { fakeIssuer, resourceUrl } from "../testing/fake-issuer.js";
 import {
@@ -18,6 +20,7 @@ import {
   type AuthenticationService,
   createAuthenticationService,
   maximumCookieValueBytes,
+  SealedCookieCodec,
   validReturnTo,
 } from "./service.js";
 
@@ -47,6 +50,173 @@ async function loggedInApp(issuerOptions: Parameters<typeof fakeIssuer>[0] = {})
 }
 
 describe("authentication service", () => {
+  it("public sign-in inspection reads sealed identity without refresh or network", async () => {
+    const { authentication, callback, issuer } = await loggedInApp({ expiresIn: 10_000 });
+    expect(callback.status).toBe(302);
+    const app = new Hono<AppEnv>();
+    app.get("/inspect", async (context) =>
+      context.json({ signInRequired: await authentication.signInRequired(context) }),
+    );
+    const beforeCalls = issuer.tokenCalls();
+    const session = cookieHeader(callback.headers.getSetCookie());
+    const pending = await app.request("http://localhost/inspect", { headers: { Cookie: session } });
+    expect(await pending.json()).toEqual({ signInRequired: false });
+    expect(pending.headers.getSetCookie()).toEqual([]);
+    expect(issuer.tokenCalls()).toBe(beforeCalls);
+    const anonymous = await app.request("http://localhost/inspect");
+    expect(await anonymous.json()).toEqual({ signInRequired: true });
+    const legacy = await new SealedCookieCodec(secret).seal("access", {
+      accessToken: "legacy",
+      expiresAt: Date.now() + 3_600_000,
+      tokenType: "Bearer",
+    });
+    const subjectless = await app.request("http://localhost/inspect", {
+      headers: { Cookie: `studio_access=${legacy}` },
+    });
+    expect(await subjectless.json()).toEqual({ signInRequired: true });
+    expect(issuer.tokenCalls()).toBe(beforeCalls);
+  });
+
+  it("verified email claim stays optional and subject stays sealed", async () => {
+    const subject = "issuer-subject-sensitive";
+    const valid = await loggedInApp({ idTokenClaims: { sub: subject, email: "ada@example.com" } });
+    expect(valid.callback.status).toBe(302);
+    const sessionCookie = cookieHeader(valid.callback.headers.getSetCookie());
+    const response = await valid.app.request("https://studio.example.com/api/v1/auth/session", {
+      headers: { Cookie: sessionCookie },
+    });
+    const body = await response.json();
+    expect(body).toEqual({
+      account: expect.any(String),
+      email: "ada@example.com",
+      mode: "oidc",
+      status: "authenticated",
+    });
+    expect(body.account).not.toBe(subject);
+    expect(JSON.stringify(body)).not.toContain(subject);
+    expect(JSON.stringify(valid.records.filter((record) => record.audit))).not.toContain(subject);
+    const sealedAccess = sessionCookie
+      .split("; ")
+      .find((cookie) => cookie.startsWith("studio_access="));
+    expect(sealedAccess).toBeDefined();
+    const access = await new SealedCookieCodec(secret).open<Record<string, unknown>>(
+      "access",
+      sealedAccess?.slice("studio_access=".length),
+    );
+    expect(access).toMatchObject({ subject, email: "ada@example.com" });
+
+    for (const email of [
+      undefined,
+      "",
+      42,
+      "x".repeat(255),
+      "é".repeat(128),
+      "a\n@b",
+      "a\u007f@b",
+    ]) {
+      const attempt = await loggedInApp({ idTokenClaims: { sub: subject, email } });
+      expect(attempt.callback.status).toBe(302);
+      const checked = await attempt.app.request("https://studio.example.com/api/v1/auth/session", {
+        headers: { Cookie: cookieHeader(attempt.callback.headers.getSetCookie()) },
+      });
+      expect(await checked.json()).toEqual({
+        account: body.account,
+        mode: "oidc",
+        status: "authenticated",
+      });
+    }
+    const edge = await loggedInApp({ idTokenClaims: { sub: subject, email: "é".repeat(127) } });
+    const edgeSession = await edge.app.request("https://studio.example.com/api/v1/auth/session", {
+      headers: { Cookie: cookieHeader(edge.callback.headers.getSetCookie()) },
+    });
+    expect(await edgeSession.json()).toMatchObject({ email: "é".repeat(127) });
+
+    const retained = await loggedInApp({
+      expiresIn: 10_000,
+      idTokenClaims: { sub: subject, email: "before@example.com" },
+    });
+    const retainedSession = await retained.app.request(
+      "https://studio.example.com/api/v1/auth/session",
+      {
+        headers: { Cookie: cookieHeader(retained.callback.headers.getSetCookie()) },
+      },
+    );
+    expect(await retainedSession.json()).toMatchObject({
+      account: body.account,
+      email: "before@example.com",
+    });
+    expect(retained.issuer.refreshCalls()).toBe(1);
+
+    for (const [claims, expectedEmail] of [
+      [{ sub: subject, email: "after@example.com" }, "after@example.com"],
+      [{ sub: subject }, undefined],
+      [{ sub: subject, email: "bad\u007f@example.com" }, undefined],
+    ] as const) {
+      const refreshed = await loggedInApp({
+        expiresIn: 10_000,
+        idTokenClaims: { sub: subject, email: "before@example.com" },
+        refreshIdTokenClaims: claims,
+      });
+      const checked = await refreshed.app.request(
+        "https://studio.example.com/api/v1/auth/session",
+        {
+          headers: { Cookie: cookieHeader(refreshed.callback.headers.getSetCookie()) },
+        },
+      );
+      expect(await checked.json()).toEqual({
+        account: body.account,
+        ...(expectedEmail === undefined ? {} : { email: expectedEmail }),
+        mode: "oidc",
+        status: "authenticated",
+      });
+    }
+
+    const changed = await loggedInApp({
+      expiresIn: 10_000,
+      idTokenClaims: { sub: subject, email: "before@example.com" },
+      refreshIdTokenClaims: { sub: "different-subject", email: "after@example.com" },
+    });
+    const changedSession = await changed.app.request(
+      "https://studio.example.com/api/v1/auth/session",
+      {
+        headers: { Cookie: cookieHeader(changed.callback.headers.getSetCookie()) },
+      },
+    );
+    expect(await changedSession.json()).toEqual({ mode: "oidc", status: "anonymous" });
+    expect(
+      changedSession.headers.getSetCookie().some((cookie) => cookie.startsWith("studio_access=;")),
+    ).toBe(true);
+
+    for (const claims of [{}, { sub: "" }]) {
+      const missing = await loggedInApp({ idTokenClaims: claims });
+      expect(missing.callback.status).not.toBe(302);
+      expect(
+        missing.callback.headers
+          .getSetCookie()
+          .some(
+            (cookie) =>
+              cookie.startsWith("studio_access=") && !cookie.startsWith("studio_access=;"),
+          ),
+      ).toBe(false);
+    }
+
+    const legacy = await new SealedCookieCodec(secret).seal("access", {
+      accessToken: "legacy-token",
+      expiresAt: Date.now() + 3_600_000,
+      tokenType: "Bearer",
+    });
+    const legacySession = await valid.app.request(
+      "https://studio.example.com/api/v1/auth/session",
+      {
+        headers: { Cookie: `studio_access=${legacy}` },
+      },
+    );
+    expect(await legacySession.json()).toEqual({ mode: "oidc", status: "anonymous" });
+    expect(
+      legacySession.headers.getSetCookie().some((cookie) => cookie.startsWith("studio_access=;")),
+    ).toBe(true);
+  });
+
   it("a missing protected resource document disables interactive login", async () => {
     const issuer = fakeIssuer({ discoveryStatus: 404 });
     await expect(

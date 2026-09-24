@@ -8,10 +8,12 @@
     "build": "vite build",
     "dev": "vite",
     "generate:routes": "tsr generate",
-    "test": "vitest run",
-    "typecheck": "tsr generate && tsc --noEmit"
+    "test": "vitest run src",
+    "typecheck": "tsr generate && tsc --noEmit && tsc --noEmit -p tsconfig.browser.json"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource/merriweather": "5.3.0",
     "@mecatl-studio/contracts": "workspace:*",
     "@radix-ui/react-alert-dialog": "1.1.15",
     "@radix-ui/react-dialog": "1.1.15",
@@ -35,9 +37,12 @@
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/router-cli": "1.167.36",
     "@tanstack/router-plugin": "1.168.38",
+    "@testing-library/react": "16.3.3",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.1.1",
+    "happy-dom": "20.14.5",
+    "jsdom": "30.1.1",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "vite": "8.3.0",

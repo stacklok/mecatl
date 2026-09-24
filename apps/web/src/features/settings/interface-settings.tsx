@@ -17,7 +17,9 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { paletteSwatch } from "../../components/palette-swatch";
 import { Button } from "../../components/ui/button";
+import { OptionField } from "../../components/ui/option-field";
 import { Switch } from "../../components/ui/switch";
 import {
   type BrowserNotificationPermission,
@@ -25,6 +27,7 @@ import {
   requestBrowserNotifications,
   sendBrowserNotification,
 } from "../../lib/browser-notifications";
+import { BUILT_IN_PALETTES, type Palette, usePalette } from "../../lib/palettes";
 import {
   type EnterSendBehavior,
   type SessionListSide,
@@ -38,13 +41,19 @@ import {
   useUiScale,
 } from "../../lib/profile-preferences";
 import { type Theme, useTheme } from "../../lib/theme";
-import { OptionField } from "./option-field";
 
 const THEME_OPTIONS = [
-  { icon: Sun, label: "Light", value: "light" },
-  { icon: Moon, label: "Dark", value: "dark" },
-  { icon: MonitorCog, label: "System", value: "system" },
+  { icon: Sun, label: "Light", description: "Always light.", value: "light" },
+  { icon: Moon, label: "Dark", description: "Always dark.", value: "dark" },
+  { icon: MonitorCog, label: "System", description: "Follow this device.", value: "system" },
 ] as const;
+
+const PALETTE_OPTIONS = BUILT_IN_PALETTES.map((palette) => ({
+  icon: paletteSwatch(palette.swatch),
+  label: palette.label,
+  description: palette.description,
+  value: palette.id,
+}));
 
 const SIDE_OPTIONS = [
   { icon: PanelLeft, label: "Left", value: "left" },
@@ -63,6 +72,7 @@ const START_ON_OPTIONS = [
 
 export function InterfaceSettings() {
   const theme = useTheme();
+  const palette = usePalette();
   const scale = useUiScale();
   const sessionListSide = useSessionListSide();
   const showToolCalls = useShowToolCalls();
@@ -72,13 +82,13 @@ export function InterfaceSettings() {
   return (
     <section className="rounded-2xl border bg-card p-5 sm:p-6">
       <div className="flex items-center gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-ink">
           <MonitorCog aria-hidden="true" className="size-5" />
         </span>
         <div>
-          <h2 className="text-lg font-semibold">Interface</h2>
+          <h2 className="text-lg font-semibold">Appearance</h2>
           <p className="text-sm text-muted-foreground">
-            Browser-local presentation and chat preferences.
+            Source: browser appearance and chat preferences. Owner: personal.
           </p>
         </div>
       </div>
@@ -92,10 +102,22 @@ export function InterfaceSettings() {
             value={theme.theme}
           />
         </PreferenceRow>
+        <PreferenceRow
+          description="Choose Studio's color palette for this browser."
+          label="Palette"
+        >
+          <OptionField
+            label="Palette"
+            onChange={(value) => palette.setPalette(value as Palette)}
+            options={PALETTE_OPTIONS}
+            value={palette.palette}
+          />
+        </PreferenceRow>
         <PreferenceRow description="Sizes text and controls together." label="Interface scale">
           <div className="flex w-44 items-center justify-between gap-2">
             <Button
               aria-label="Decrease interface scale"
+              className="min-h-11 min-w-11"
               disabled={scale.value <= uiScaleMin}
               onClick={() => scale.setValue(scale.value - 0.05)}
               size="icon"
@@ -106,6 +128,7 @@ export function InterfaceSettings() {
             <span className="text-sm tabular-nums">{Math.round(scale.value * 100)}%</span>
             <Button
               aria-label="Increase interface scale"
+              className="min-h-11 min-w-11"
               disabled={scale.value >= uiScaleMax}
               onClick={() => scale.setValue(scale.value + 0.05)}
               size="icon"
@@ -131,7 +154,7 @@ export function InterfaceSettings() {
           label="Tool activity"
         >
           <label
-            className="flex w-44 items-center justify-between gap-2 text-sm"
+            className="flex min-h-11 w-44 items-center justify-between gap-2 text-sm"
             htmlFor="show-tool-activity"
           >
             <span className="flex items-center gap-2">
@@ -185,7 +208,7 @@ function NotificationPreference() {
     <PreferenceRow description={description} label="Browser notifications">
       <div className="flex w-44 items-center gap-2">
         <Button
-          className="flex-1"
+          className="min-h-11 flex-1"
           disabled={permission === "granted"}
           onClick={() => void requestBrowserNotifications().then(setPermission)}
           size="sm"
@@ -196,11 +219,12 @@ function NotificationPreference() {
         </Button>
         <Button
           aria-label="Send a test notification"
+          className="min-h-11 min-w-11"
           disabled={permission !== "granted"}
           onClick={() =>
             sendBrowserNotification("Mecatl notifications are ready", {
               body: "You’ll be notified when an off-screen run finishes.",
-              icon: "/favicon.ico",
+              icon: "/stacklok-favicon.png",
               tag: "mecatl-notification-test",
             })
           }

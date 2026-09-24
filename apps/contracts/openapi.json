@@ -18,31 +18,82 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "account": {
-                      "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "account": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "oidc"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "authenticated"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "account",
+                        "mode",
+                        "status"
+                      ],
+                      "additionalProperties": false
                     },
-                    "mode": {
-                      "type": "string",
-                      "enum": [
-                        "oidc",
-                        "static",
-                        "none"
-                      ]
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "oidc"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "anonymous"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "status"
+                      ],
+                      "additionalProperties": false
                     },
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "authenticated",
-                        "anonymous",
-                        "disabled"
-                      ]
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "static",
+                            "none"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "disabled"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "status"
+                      ],
+                      "additionalProperties": false
                     }
-                  },
-                  "required": [
-                    "mode",
-                    "status"
                   ]
                 }
               }
@@ -55,6 +106,17 @@
       "get": {
         "operationId": "startAuthLogin",
         "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "popup"
+              ]
+            },
+            "required": false,
+            "name": "flow",
+            "in": "query"
+          },
           {
             "schema": {
               "type": "string"
@@ -197,6 +259,16 @@
       "get": {
         "operationId": "completeAuthLogin",
         "responses": {
+          "200": {
+            "description": "A popup completion page that reports only the authentication result.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "302": {
             "description": "Continue the browser authentication flow.",
             "headers": {
@@ -484,6 +556,79 @@
         }
       }
     },
+    "/api/v1/status": {
+      "get": {
+        "operationId": "getPublicStatus",
+        "responses": {
+          "200": {
+            "description": "Coarse Mecatl connection and browser sign-in facts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "string",
+                      "enum": [
+                        "checking",
+                        "reachable",
+                        "unavailable"
+                      ]
+                    },
+                    "signInRequired": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "connection",
+                    "signInRequired"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The client's public status request budget is exhausted.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/runtime": {
       "get": {
         "operationId": "getRuntime",
@@ -677,12 +822,18 @@
                     "mock": {
                       "type": "boolean"
                     },
+                    "sdkVersion": {
+                      "type": "string"
+                    },
                     "source": {
                       "type": "string",
                       "enum": [
                         "external",
                         "local"
                       ]
+                    },
+                    "studioBuildId": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -8855,6 +9006,303 @@
           },
           "503": {
             "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/provider": {
+      "get": {
+        "operationId": "getProviderSettings",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "providerId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Caller-visible provider, models, and safe diagnostic endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "displayEndpoint": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "contextLimit": {
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "image": {
+                            "type": "boolean"
+                          },
+                          "providerId": {
+                            "type": "string"
+                          },
+                          "reasoning": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "contextLimit",
+                          "displayName",
+                          "id",
+                          "image",
+                          "providerId",
+                          "reasoning"
+                        ]
+                      }
+                    },
+                    "provider": {
+                      "type": "object",
+                      "properties": {
+                        "availableNotDefault": {
+                          "type": "boolean"
+                        },
+                        "defaultModelAutoSelected": {
+                          "type": "boolean"
+                        },
+                        "hint": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "modelCount": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "state": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "availableNotDefault",
+                        "defaultModelAutoSelected",
+                        "hint",
+                        "id",
+                        "modelCount",
+                        "state"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "displayEndpoint",
+                    "models",
+                    "provider"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The provider ID is missing, empty, or repeated.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in before reading provider details in OIDC mode.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The provider is absent from the caller-visible inventory.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Model selection is unavailable on this deployment.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The runtime or provider information is unavailable.",
             "content": {
               "application/problem+json": {
                 "schema": {

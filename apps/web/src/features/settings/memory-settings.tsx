@@ -3,18 +3,13 @@
 import type { GetUserMemoryResponse } from "@mecatl-studio/contracts/generated";
 import { getUserMemoryOptions, listUserMemoryOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Badge } from "../../components/ui/badge";
-import { Modal, StateCard } from "../knowledge/knowledge-workspace";
+import { StateCard } from "../knowledge/knowledge-workspace";
 import { MemoryConsolidation } from "../knowledge/memory-consolidation";
 
 /** Settings → Memory: the facts the agent has remembered about this user. */
-export function MemorySettings({
-  onSelect,
-  selectedKey,
-}: {
-  onSelect: (key?: string) => void;
-  selectedKey?: string;
-}) {
+export function MemorySettings() {
   const query = useQuery(listUserMemoryOptions());
   if (query.isPending) return <StateCard text="Loading memory…" />;
   if (query.isError) return <StateCard error text={errorMessage(query.error)} />;
@@ -39,36 +34,49 @@ export function MemorySettings({
       </div>
       <div className="divide-y overflow-hidden rounded-xl border bg-card">
         {query.data.items.map((entry) => (
-          <button
-            className="block w-full p-4 text-left hover:bg-muted/40"
+          <Link
+            className="block w-full p-4 text-left hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand"
             key={entry.key}
-            onClick={() => onSelect(entry.key)}
-            type="button"
+            search={{ item: entry.key }}
+            to="/workspace/memory"
           >
-            <span className="font-medium">{entry.key}</span>
+            <span className="break-all font-medium">{entry.key}</span>
             <span className="mt-1 block text-sm text-muted-foreground">
               {entry.description || "No description recorded."}
             </span>
-          </button>
+          </Link>
         ))}
       </div>
-      {selectedKey && <MemoryDialog memoryKey={selectedKey} onClose={() => onSelect(undefined)} />}
     </>
   );
 }
 
-function MemoryDialog({ memoryKey, onClose }: { memoryKey: string; onClose: () => void }) {
+/** A stable, reloadable detail page for a single exact memory key. */
+export function MemoryFactDetail({ memoryKey }: { memoryKey: string }) {
   const query = useQuery(getUserMemoryOptions({ path: { memoryKey } }));
   return (
-    <Modal onClose={onClose}>
-      {query.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading memory…</p>
-      ) : query.isError ? (
-        <p className="text-sm text-destructive">{errorMessage(query.error)}</p>
-      ) : (
-        <MemoryDetail detail={query.data} />
-      )}
-    </Modal>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-3xl px-4 py-7 sm:px-8 sm:py-10">
+        <Link
+          className="inline-flex min-h-11 items-center rounded-lg text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+          params={{ section: "memory" }}
+          search={{ item: undefined }}
+          to="/workspace/settings/$section"
+        >
+          ← Memory
+        </Link>
+        <h1 className="mt-5 text-3xl font-semibold tracking-tight">Memory fact</h1>
+        <div className="mt-7 rounded-2xl border bg-card p-5 sm:p-6">
+          {query.isPending ? (
+            <p className="text-sm text-muted-foreground">Loading memory…</p>
+          ) : query.isError ? (
+            <p className="text-sm text-destructive">{errorMessage(query.error)}</p>
+          ) : (
+            <MemoryDetail detail={query.data} />
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -80,7 +88,7 @@ function MemoryDetail({ detail }: { detail: GetUserMemoryResponse }) {
         {detail.current.status && <Badge variant="success">{detail.current.status}</Badge>}
       </div>
       <p className="mt-2 text-sm text-muted-foreground">{detail.current.description}</p>
-      <p className="mt-4 whitespace-pre-wrap rounded-lg border bg-card p-4 text-sm leading-6">
+      <p className="mt-4 whitespace-pre-wrap break-words rounded-lg border bg-card p-4 text-sm leading-6">
         {detail.current.value || "No value recorded."}
       </p>
       <dl className="mt-4 grid gap-2 text-xs text-muted-foreground">
@@ -101,7 +109,7 @@ function MemoryDetail({ detail }: { detail: GetUserMemoryResponse }) {
       </dl>
       {detail.historyAvailable && detail.history.length > 0 && (
         <details className="mt-4 rounded-lg border p-3">
-          <summary className="cursor-pointer text-sm font-medium">
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-brand">
             Revision history ({detail.history.length})
           </summary>
           <ul className="mt-3 space-y-2">
@@ -111,7 +119,7 @@ function MemoryDetail({ detail }: { detail: GetUserMemoryResponse }) {
                 key={`${revision.key}-${revision.version}`}
               >
                 <span className="font-mono">{revision.version}</span>
-                <p className="mt-1 whitespace-pre-wrap">{revision.value}</p>
+                <p className="mt-1 whitespace-pre-wrap break-words">{revision.value}</p>
               </li>
             ))}
           </ul>
