@@ -178,7 +178,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0330 — Isolated bounded Redis follow capacity](./0330-isolated-redis-follow-capacity.md) *(raises mecatl's Go floor to 1.27, replaces ADR 0233's old shared-client package locator, supersedes ADR 0250's shared-pool sizing deferral, and supersedes ADR 0240's no-force-close rule for isolated follow clients only)*
 
 ### Providers & APIs
-- [0353 — Provider-scoped model discovery ownership](./0353-provider-scoped-model-discovery.md) *(proposed; supersedes only ADR 0342's global settlement, prior-rejection retry, and discovery-readiness policy)*
+- [0357 — Provider-scoped model discovery ownership](./0357-provider-scoped-model-discovery.md) *(proposed; supersedes only ADR 0342's global settlement, prior-rejection retry, and discovery-readiness policy)*
 - [0308 — Asynchronous session-title generation](./0308-session-title-generation-and-auxiliary-usage.md) *(proposed)*
 - [0307 — Canonical durable token accounting and run-scoped budgets](./0307-canonical-durable-token-accounting.md)
 - [0016 — Multi-provider](./0016-multi-provider.md)

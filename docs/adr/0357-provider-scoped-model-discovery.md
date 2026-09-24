@@ -1,4 +1,4 @@
-# ADR 0353 — Provider-scoped model discovery ownership
+# ADR 0357 — Provider-scoped model discovery ownership
 
 - Status: Proposed
 - Date: 2026-09-23
@@ -34,6 +34,23 @@ existing bootstrap probes request or join its provider-local attempts. It is the
 publisher of accepted live observations.
 Registry membership/default selection, protocol adapters, and credential custody remain
 separate responsibilities; the owner borrows their existing listers.
+
+Ownership is per `app.Build`, normally one server process per replica. Embedded `mecatui`
+uses its embedded server's owner; connected clients share the remote `mecated` owner's
+knowledge. Each `mecak8s` replica has independent observations, outcomes, and cooldowns,
+even when session/event/schedule storage is shared. Multiple Builds within one process
+also remain independent. Evidence belongs to the configured registry and its borrowed
+credential-backed listers, not to a cluster-global or caller-selected credential cache.
+This maps the existing domain model's host-instance scope to deployment lifetimes without
+changing the model.
+
+Ordinary startup discovery warms eligible providers; existing bootstrap requirements
+remain unchanged. Correctness at the covered Service gates depends on admission-time
+resolution: the replica that passes session ownership and lease checks obtains its own
+required evidence on demand. A cold replacement needs neither a picker visit nor another
+replica's completed discovery. Different replicas can admit differently when their evidence
+differs, including warm last-good admission versus cold rejection during a listing outage.
+The coherence guarantee applies to the same target and evidence/configuration basis.
 
 Represent unattempted, in-flight, succeeded, empty, and failed explicitly. Keep latest
 attempt outcome separate from retained successful observations. Catalogue/configuration
@@ -76,8 +93,12 @@ at that owner terminal-publication timestamp, not waiter exit or later fetch ret
 slot remains occupied until return; only then, after cooldown, can another attempt start.
 Late success is discarded. This prevents overlap rather than adding a replacement-attempt
 API. Cancelling a waiter affects only its wait. Owner shutdown invalidates and cancels/joins
-work without publishing a failure or timeout from shutdown cancellation. Physical cleanup
-still requires listers to honor cancellation.
+work without publishing a failure or timeout from shutdown cancellation. Publication and
+waiter notification precede diagnostic delivery. Physical cleanup requires listers to honor
+cancellation and synchronous diagnostics delivery to return; attempt and admission deadlines
+do not bound arbitrary collaborator cleanup. Deployment drain rejects/cancels run admissions
+without itself closing discovery. `Built.Close` stops discovery before closing borrowed
+credential and transport resources.
 
 Retries are ListModels/admission-demand and provider-local, with no periodic refresher or
 durable cache. ListModels is not a human-action signal. Native authenticated listing remains
@@ -91,6 +112,16 @@ otherwise it returns `context_window_unavailable`. Direct delegated, utility, an
 remain a separate slice: a known parent can bypass discovery while an unknown child override
 still runs with the engine's 128000 floor. This is not the entire metadata-before-execution
 invariant.
+
+Session leasing remains separate from discovery. A metadata rejection retains the existing
+session-lifetime lease; another replica can fail ownership acquisition before discovery
+admission. This decision adds no lease-holder routing, transparent takeover, or guarantee
+that Retry succeeds on an arbitrary replica. Mecak8s readiness remains drain/storage
+readiness, not model admissibility or inference health. Schedule validation reads the
+handling replica's inventory; a fire encounters the executing replica's Service admission.
+Scheduler leadership does not share discovery knowledge. See the
+[deployment ownership contract](../acceptance/provider-model-discovery.md#local-and-replicated-deployment-ownership)
+for the local/cloud mapping and cross-Build proofs.
 
 Mecatui maps the structured rejection to safe guidance. Retain one bounded pre-SessionInit
 submission with exact prepared text/media and editable staged paste/image state. Explicit
@@ -114,9 +145,11 @@ global cooldown, and independent outcome/inventory publishers instead of retaini
 behind a new facade.
 
 Process-lifetime last-good metadata can age and no longer describe the provider's current
-limits or entitlements. ListModels demand can perform more listing requests than the old
-gateway-only stale path; provider-local cooldown bounds that activity. The deadline bounds
-waiter outcomes, while cleanup still depends on lister cancellation. A rejected-submission
+limits or entitlements. Listing traffic and cooldowns are per Build, so adding replicas
+can increase provider traffic. ListModels demand can perform more listing requests than
+the old gateway-only stale path; provider-local cooldown bounds each owner's activity.
+The deadline bounds waiter outcomes, while physical cleanup depends on cooperative listers
+and returning diagnostics calls. A rejected-submission
 record retains one bounded text/media payload in memory until recovery or disposal. These
 trade-offs are recorded in the plan's resolved human decisions.
 
