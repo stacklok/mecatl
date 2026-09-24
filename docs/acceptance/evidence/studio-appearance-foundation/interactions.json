@@ -18,7 +18,10 @@
   "sheet selection changes the palette",
   "sheet selection restores trigger focus",
   "Escape restores sheet trigger focus",
+  "sheet resize restores focus to the new desktop trigger",
+  "sheet resize clears the modal overlay and pointer lock",
   "500px viewport has no horizontal overflow",
+  "menu resize restores focus to the new mobile trigger",
   "499px viewport has no horizontal overflow",
   "storage denial starts with Default",
   "storage denial starts with System",
@@ -29,5 +32,7 @@
   "storage-denied reload restores System",
   "stylesheet request is held during first-paint proof",
   "boot applies Solar Dark before first paint",
-  "React hydration preserves prepaint palette"
+  "boot applies stored UI scale before first paint",
+  "React hydration preserves prepaint palette",
+  "hydration keeps the prepaint theme and scale"
 ]

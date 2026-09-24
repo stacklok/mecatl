@@ -1,0 +1,48 @@
+[
+  {
+    "width": 499,
+    "sizes": [
+      {
+        "label": "Button descendant",
+        "count": 4,
+        "width": "20px",
+        "height": "20px"
+      },
+      {
+        "label": "explicit 16px",
+        "count": 10,
+        "width": "20px",
+        "height": "20px"
+      },
+      {
+        "label": "larger icon",
+        "count": 1,
+        "width": "22.5px",
+        "height": "22.5px"
+      }
+    ]
+  },
+  {
+    "width": 500,
+    "sizes": [
+      {
+        "label": "Button descendant",
+        "count": 4,
+        "width": "16px",
+        "height": "16px"
+      },
+      {
+        "label": "explicit 16px",
+        "count": 10,
+        "width": "16px",
+        "height": "16px"
+      },
+      {
+        "label": "larger icon",
+        "count": 1,
+        "width": "20px",
+        "height": "20px"
+      }
+    ]
+  }
+]

@@ -101,6 +101,9 @@ describe("OptionField", () => {
     setWidth(500);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Theme: Light" })),
+    );
     fireEvent.keyDown(screen.getByRole("button", { name: "Theme: Light" }), { key: "ArrowDown" });
     expect(await screen.findByRole("menu")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -108,6 +111,9 @@ describe("OptionField", () => {
     setWidth(499);
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Theme: Light" })),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Theme: Light" }));
     fireEvent.click(await screen.findByRole("radio", { name: /Dark/ }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

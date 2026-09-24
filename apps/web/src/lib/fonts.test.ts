@@ -30,7 +30,11 @@ describe("Studio typography", () => {
     expect(css).toMatch(/:root\s*\{[^}]*font-size:\s*calc\(16px \* var\(--ui-scale, 1\)\)/s);
     expect(css).toMatch(/@media\s*\(max-width:\s*499px\)/);
     expect(css).toMatch(/:root\s*\{[^}]*font-size:\s*calc\(18px \* var\(--ui-scale, 1\)\)/s);
-    expect(css).toMatch(/svg\.lucide\.size-4\s*\{[^}]*width:\s*20px;[^}]*height:\s*20px/s);
+    const mobileGlyphs = css.match(/svg\.lucide\.size-4,([^{}]+)\{([^{}]+)\}/);
+    expect(mobileGlyphs?.[1]).toContain('[data-slot="button"] svg.lucide:not([class*="size-"])');
+    expect(mobileGlyphs?.[1]).toContain('[data-slot="dropdown-menu-item"]');
+    expect(mobileGlyphs?.[1]).toContain('[data-slot="dialog-close"]');
+    expect(mobileGlyphs?.[2]).toMatch(/width:\s*20px;[^}]*height:\s*20px/s);
     expect(css).toMatch(
       /svg\.lucide\[class~="size-3\.5"\]\s*\{[^}]*width:\s*18px;[^}]*height:\s*18px/s,
     );

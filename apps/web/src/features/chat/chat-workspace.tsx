@@ -1767,7 +1767,7 @@ export function Message({
                 >
                   {display.kind === "link" ? (
                     <a
-                      className="flex items-center gap-2 px-3 py-2 text-sm text-foreground underline underline-offset-2 hover:text-brand"
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-foreground underline underline-offset-2 hover:text-brand-ink"
                       href={display.href}
                       rel="noopener noreferrer"
                       target="_blank"
@@ -1867,7 +1867,7 @@ function MessageAvatar({
 }) {
   return (
     <span
-      className={`mt-1 flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full ${fallback === "agent" ? "bg-brand/10 text-brand" : "bg-muted text-muted-foreground"}`}
+      className={`mt-1 flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full ${fallback === "agent" ? "bg-brand/10 text-brand-ink" : "bg-muted text-muted-foreground"}`}
     >
       {avatarUrl ? (
         <img alt={name} className="size-full object-cover" src={avatarUrl} />

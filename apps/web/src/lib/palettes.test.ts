@@ -75,6 +75,9 @@ describe("Studio palette tokens", () => {
         expect(actual.has("--shiki-dark")).toBe(false);
       }
     }
+    // Shiki's paired light/dark token colors are set by the code renderer;
+    // no stylesheet rule may replace them for a palette or surface.
+    expect(css).not.toMatch(/--(?:shiki-(?:light|dark)|sl|sd)\s*:/);
 
     const light = declarations(":root");
     const dark = declarations(".dark");

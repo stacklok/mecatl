@@ -96,7 +96,7 @@ function ConfiguredSkills({ selectedName }: { selectedName?: string }) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {query.data.items.map((skill) => (
           <article
-            className={`rounded-xl border bg-card p-4 ${skill.name === selectedName ? "ring-2 ring-brand/40" : ""}`}
+            className={`rounded-xl border bg-card p-4 ${skill.name === selectedName ? "ring-2 ring-brand-ink" : ""}`}
             id={knowledgeTargetId("configured", skill.name)}
             key={skill.name}
             tabIndex={-1}

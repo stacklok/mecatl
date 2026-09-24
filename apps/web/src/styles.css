@@ -346,7 +346,16 @@
     font-size: calc(18px * var(--ui-scale, 1));
   }
 
-  svg.lucide.size-4 {
+  /* Shared controls size bare SVG descendants through parent utilities; their
+     mobile glyphs need the same fixed 20px size as explicit size-4 icons. */
+  svg.lucide.size-4,
+  svg.lucide.h-4.w-4,
+  [data-slot="button"] svg.lucide:not([class*="size-"]),
+  [data-slot="dropdown-menu-item"] svg.lucide:not([class*="size-"]),
+  [data-slot="dropdown-menu-checkbox-item"] svg.lucide:not([class*="size-"]),
+  [data-slot="dropdown-menu-radio-item"] svg.lucide:not([class*="size-"]),
+  [data-slot="dropdown-menu-sub-trigger"] svg.lucide:not([class*="size-"]),
+  [data-slot="dialog-close"] svg.lucide:not([class*="size-"]) {
     width: 20px;
     height: 20px;
   }

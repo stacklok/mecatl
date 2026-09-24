@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { highlightCode, langForClassName } from "./code-highlight";
 
 describe("langForClassName", () => {
@@ -36,6 +36,22 @@ describe("highlightCode", () => {
     const colours = lines.flat().map((token) => token.light);
     // At least one token is coloured rather than inheriting the foreground.
     expect(colours.some((colour) => colour !== "inherit" && colour.startsWith("#"))).toBe(true);
+  });
+
+  it("keeps paired Shiki colors independent of the selected palette", async () => {
+    const source = "const answer = 42;";
+    const baseline = await highlightCode(source, "typescript");
+    expect(
+      baseline.flat().some((token) => token.light.startsWith("#") && token.dark.startsWith("#")),
+    ).toBe(true);
+    try {
+      for (const palette of ["default", "aztec", "mono", "solar"]) {
+        vi.stubGlobal("document", { documentElement: { dataset: { palette } } });
+        expect(await highlightCode(source, "typescript"), palette).toEqual(baseline);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("returns plain tokens for an unknown language without throwing", async () => {

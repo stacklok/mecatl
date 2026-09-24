@@ -683,7 +683,7 @@ function Section({
   return (
     <section className="rounded-2xl border bg-card p-5 sm:p-6">
       <div className="flex items-center gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-ink">
           <Icon className="size-5" />
         </span>
         <h2 className="text-lg font-semibold">{title}</h2>

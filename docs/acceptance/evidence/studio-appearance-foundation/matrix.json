@@ -15,6 +15,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#036848",
         "--brand-ink": "#036848",
         "--brand-label": "#036848",
         "--btn-primary": "#036848",
@@ -28,15 +29,20 @@
         "--shell-gradient-mid": "#03433e",
         "--shell-gradient-end": "#06202a",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#096ad3",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -55,6 +61,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#036848",
         "--brand-ink": "#036848",
         "--brand-label": "#036848",
         "--btn-primary": "#036848",
@@ -68,15 +75,20 @@
         "--shell-gradient-mid": "#03433e",
         "--shell-gradient-end": "#06202a",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#096ad3",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -95,6 +107,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#036848",
         "--brand-ink": "#66cc8b",
         "--brand-label": "#36d399",
         "--btn-primary": "#024c34",
@@ -108,15 +121,20 @@
         "--shell-gradient-mid": "#022723",
         "--shell-gradient-end": "#02141b",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#59a6f8",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -135,6 +153,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#036848",
         "--brand-ink": "#66cc8b",
         "--brand-label": "#36d399",
         "--btn-primary": "#024c34",
@@ -148,15 +167,20 @@
         "--shell-gradient-mid": "#022723",
         "--shell-gradient-end": "#02141b",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#59a6f8",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -175,6 +199,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#0f7f6c",
         "--brand-ink": "#0f7f6c",
         "--brand-label": "#0f7f6c",
         "--btn-primary": "#0f7f6c",
@@ -188,15 +213,20 @@
         "--shell-gradient-mid": "#15302a",
         "--shell-gradient-end": "#0e1311",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#157a83",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -215,6 +245,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#0f7f6c",
         "--brand-ink": "#0f7f6c",
         "--brand-label": "#0f7f6c",
         "--btn-primary": "#0f7f6c",
@@ -228,15 +259,20 @@
         "--shell-gradient-mid": "#15302a",
         "--shell-gradient-end": "#0e1311",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#157a83",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -255,6 +291,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#1fb39a",
         "--brand-ink": "#4fd1b8",
         "--brand-label": "#4fd1b8",
         "--btn-primary": "#12846d",
@@ -268,15 +305,20 @@
         "--shell-gradient-mid": "#0f1f1a",
         "--shell-gradient-end": "#0a0f0d",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#5cc8d0",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -295,6 +337,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#1fb39a",
         "--brand-ink": "#4fd1b8",
         "--brand-label": "#4fd1b8",
         "--btn-primary": "#12846d",
@@ -308,15 +351,20 @@
         "--shell-gradient-mid": "#0f1f1a",
         "--shell-gradient-end": "#0a0f0d",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#5cc8d0",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -335,6 +383,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#2563eb",
         "--brand-ink": "#2563eb",
         "--brand-label": "#2563eb",
         "--btn-primary": "#2563eb",
@@ -348,15 +397,20 @@
         "--shell-gradient-mid": "#232323",
         "--shell-gradient-end": "#141414",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#2563eb",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -375,6 +429,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#2563eb",
         "--brand-ink": "#2563eb",
         "--brand-label": "#2563eb",
         "--btn-primary": "#2563eb",
@@ -388,15 +443,20 @@
         "--shell-gradient-mid": "#232323",
         "--shell-gradient-end": "#141414",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#2563eb",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -415,6 +475,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#3b82f6",
         "--brand-ink": "#60a5fa",
         "--brand-label": "#60a5fa",
         "--btn-primary": "#1d4ed8",
@@ -428,15 +489,20 @@
         "--shell-gradient-mid": "#161616",
         "--shell-gradient-end": "#0b0b0b",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#60a5fa",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -455,6 +521,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#3b82f6",
         "--brand-ink": "#60a5fa",
         "--brand-label": "#60a5fa",
         "--btn-primary": "#1d4ed8",
@@ -468,15 +535,20 @@
         "--shell-gradient-mid": "#161616",
         "--shell-gradient-end": "#0b0b0b",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#60a5fa",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -495,6 +567,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#9a7300",
         "--brand-ink": "#8a6800",
         "--brand-label": "#8a6800",
         "--btn-primary": "#946e00",
@@ -508,15 +581,20 @@
         "--shell-gradient-mid": "#6b4f0a",
         "--shell-gradient-end": "#3f3008",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#1f6fa8",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -535,6 +613,7 @@
         "--background": "#fff",
         "--foreground": "#09090b",
         "--card": "#fff",
+        "--brand": "#9a7300",
         "--brand-ink": "#8a6800",
         "--brand-label": "#8a6800",
         "--btn-primary": "#946e00",
@@ -548,15 +627,20 @@
         "--shell-gradient-mid": "#6b4f0a",
         "--shell-gradient-end": "#3f3008",
         "--control-border": "#83838a",
-        "--ring": "#6b6b75"
+        "--ring": "#6b6b75",
+        "--success": "#157e3c",
+        "--warning": "#a66407",
+        "--info": "#1f6fa8",
+        "--destructive": "#dc2828",
+        "--warning-foreground": "#fff"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -575,6 +659,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#b58900",
         "--brand-ink": "#e0b52e",
         "--brand-label": "#e0b52e",
         "--btn-primary": "#8a6800",
@@ -588,15 +673,20 @@
         "--shell-gradient-mid": "#2c2206",
         "--shell-gradient-end": "#191404",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#5fb0ee",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   },
   {
@@ -615,6 +705,7 @@
         "--background": "#18181b",
         "--foreground": "#fafafa",
         "--card": "#1f1f23",
+        "--brand": "#b58900",
         "--brand-ink": "#e0b52e",
         "--brand-label": "#e0b52e",
         "--btn-primary": "#8a6800",
@@ -628,15 +719,20 @@
         "--shell-gradient-mid": "#2c2206",
         "--shell-gradient-end": "#191404",
         "--control-border": "#8c8c8c",
-        "--ring": "#a0a0a0"
+        "--ring": "#a0a0a0",
+        "--success": "#46d27a",
+        "--warning": "#f7ad45",
+        "--info": "#5fb0ee",
+        "--destructive": "#ff6467",
+        "--warning-foreground": "#18181b"
       },
       "timeline": [],
       "overflowX": false
     },
     "externalRequests": [],
     "fontRequests": [
-      "http://127.0.0.1:3113/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
-      "http://127.0.0.1:3113/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
+      "http://127.0.0.1:3114/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "http://127.0.0.1:3114/assets/merriweather-latin-300-normal-C5yjfxyF.woff2"
     ]
   }
 ]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ChevronDown } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useIsMobile } from "../../lib/use-mobile";
 import { cn } from "../../lib/utils";
 import { Button } from "./button";
@@ -36,19 +36,24 @@ export function OptionField({
   const isMobile = useIsMobile();
   const surface = isMobile ? "mobile" : "desktop";
   const [openSurface, setOpenSurface] = useState<"mobile" | "desktop" | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const open = openSurface === surface;
   const current = options.find((option) => option.value === value);
   const CurrentIcon = current?.icon;
 
   // A resize must not transfer an open menu into a sheet, or vice versa.
   useEffect(() => {
-    if (openSurface !== null && openSurface !== surface) setOpenSurface(null);
+    if (openSurface !== null && openSurface !== surface) {
+      setOpenSurface(null);
+      triggerRef.current?.focus();
+    }
   }, [openSurface, surface]);
 
   const trigger = (
     <Button
       aria-label={`${label}: ${current?.label ?? value}`}
       className="min-h-11 w-44 justify-between gap-2 rounded-lg px-3 font-normal"
+      ref={triggerRef}
       type="button"
       variant="outline"
     >

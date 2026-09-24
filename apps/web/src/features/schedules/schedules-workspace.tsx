@@ -246,7 +246,7 @@ function ScheduleItem({
   }, [selected]);
   return (
     <article
-      className={selected ? "bg-brand/5 p-4 ring-2 ring-inset ring-brand/35 sm:p-5" : "p-4 sm:p-5"}
+      className={selected ? "bg-brand/5 p-4 ring-2 ring-inset ring-brand-ink sm:p-5" : "p-4 sm:p-5"}
       id={scheduleTargetId(schedule.name)}
       tabIndex={-1}
     >
@@ -255,7 +255,7 @@ function ScheduleItem({
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-semibold">
               <Link
-                className="hover:text-brand hover:underline"
+                className="hover:text-brand-ink hover:underline"
                 params={{ scheduleName: schedule.name }}
                 to="/workspace/schedules/$scheduleName"
               >

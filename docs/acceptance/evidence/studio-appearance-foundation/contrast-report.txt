@@ -1,6 +1,9 @@
 Studio appearance contrast report, 2026-09-24
 WCAG sRGB relative luminance; normal text >= 4.5:1, interactive icons/focus/required boundaries >= 3:1.
 Token pairs are measured against each shell gradient stop. Badge fills are composited over --card; banner fill is measured over each shell gradient stop.
+Calculations use the committed CSS role values. matrix.json records the same roles
+from the built browser page at 499px and 1280px; browser sRGB rounding changes
+some displayed ratios by 0.01–0.02 without crossing a floor.
 
 TOKEN ROLE PAIRS
 default light nav search border on start 3.12:1, nav icon on start 3.35:1, control border 3.76:1, destructive action text 4.59:1, nav search text on start 4.60:1
@@ -26,6 +29,14 @@ all four palettes and both themes is 14.33:1 at 5% opacity, 12.93:1 at 10%, and
 The worst original text-on-tint pairs were 3.81:1 (destructive badge in light)
 and 4.13:1 (destructive/warning text on a 10% light tint); these are corrected
 without changing the frozen status hues.
+
+BRAND FOREGROUND USES
+The decorative --brand fill is not used for foreground text or icons on cards.
+The prior dark Default --brand measured 2.41:1 on --card; affected content now
+uses --brand-ink. Across the eight palette/theme pairs, --brand-ink reaches at
+least 4.92:1 on --card for text and 4.30:1 on a 10% --brand tint for icons.
+Selected chat, knowledge, and schedule item borders/rings also use solid
+--brand-ink; their translucent --brand backgrounds remain decorative.
 
 RENDERED STATUS BADGES AND WARNING BANNER
 default light badge muted       18.11:1

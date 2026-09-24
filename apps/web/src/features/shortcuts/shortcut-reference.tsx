@@ -67,7 +67,7 @@ export function ShortcutReference() {
           ← Settings
         </Link>
         <div className="flex items-start gap-4">
-          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand">
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand-ink">
             <Keyboard aria-hidden="true" className="size-5" />
           </span>
           <div>
