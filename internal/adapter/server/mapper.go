@@ -995,12 +995,21 @@ func toProtoSession(s *session.Session, rm ResolvedModel, _ *mecatlv1.ServerCapa
 			Image: sessionCaps.Image,
 			Audio: sessionCaps.Audio,
 		},
-		Kind:            string(s.Kind),
-		Relationship:    toProtoSessionRelationship(s.Relationship),
-		DebugMcpServers: validStrings(s.DebugMCPServers),
-		DebugMcpTools:   validStrings(s.DebugMCPTools),
-		Placement:       placementMetadataToProto(s.Placement),
+		Kind:                   string(s.Kind),
+		Relationship:           toProtoSessionRelationship(s.Relationship),
+		DebugMcpServers:        validStrings(s.DebugMCPServers),
+		DebugMcpTools:          validStrings(s.DebugMCPTools),
+		Placement:              placementMetadataToProto(s.Placement),
+		LatestContextOccupancy: toProtoContextOccupancy(s),
 	}
+}
+
+func toProtoContextOccupancy(s *session.Session) *mecatlv1.ContextOccupancy {
+	occupancy, ok := s.LatestContextOccupancy()
+	if !ok {
+		return nil
+	}
+	return &mecatlv1.ContextOccupancy{InputTokens: int64(occupancy.InputTokens), Estimated: occupancy.Estimated}
 }
 
 func titlePayload(s *session.Session) session.TitlePayload {

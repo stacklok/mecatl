@@ -1325,6 +1325,14 @@ message ForkSessionResponse {
   PlacementMetadata placement = 2;
 }
 
+// ContextOccupancy is the latest display-only context-meter numerator recorded
+// for a completed agent-loop turn. It is neither durable token accounting nor a
+// run budget baseline.
+message ContextOccupancy {
+  int64 input_tokens = 1;
+  bool estimated = 2;
+}
+
 // Session is a snapshot of server-side session state.
 message Session {
   // session_id is the session's id.
@@ -1370,6 +1378,9 @@ message Session {
   // GetSession, resume, clear, and fork retain accurate media gates. Nil on an
   // older server tells clients to fall back to the server-wide capabilities.
   SessionCapabilities session_capabilities = 21;
+  // latest_context_occupancy is optional display state from the latest completed
+  // agent-loop turn. Its absence is unknown, including for legacy snapshots.
+  ContextOccupancy latest_context_occupancy = 22;
 }
 
 // SessionTitle is the canonical durable, source-free title lifecycle projection.
