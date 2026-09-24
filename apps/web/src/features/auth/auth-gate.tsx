@@ -4,6 +4,7 @@ import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { LogIn, RefreshCw } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
+import { GlobalStatusSlot } from "../../components/shell/global-status-slot";
 import { Button } from "../../components/ui/button";
 import {
   Card,
@@ -76,22 +77,30 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
 function GateFrame({ children, message }: { children?: ReactNode; message: string }) {
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-[radial-gradient(120%_140%_at_20%_30%,var(--shell-gradient-start)_0%,var(--shell-gradient-mid)_50%,var(--shell-gradient-end)_100%)] p-5">
-      <Card className="w-full max-w-sm border-white/10 bg-background/95 shadow-2xl backdrop-blur">
-        <CardHeader className="text-center">
-          <span
-            aria-hidden="true"
-            className="mx-auto mb-2 block size-10 bg-brand [mask-image:url(/stacklok-logo-mark.svg)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain]"
-          />
-          <CardTitle>Mecatl</CardTitle>
-          <CardDescription>{message}</CardDescription>
-        </CardHeader>
-        {children === undefined ? null : (
-          <CardContent>
-            <CardFooter className="p-0">{children}</CardFooter>
-          </CardContent>
-        )}
-      </Card>
-    </main>
+    <div className="flex min-h-dvh min-w-0 flex-col bg-[var(--shell-gradient-mid)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      <GlobalStatusSlot />
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col bg-[radial-gradient(120%_140%_at_20%_30%,var(--shell-gradient-start)_0%,var(--shell-gradient-mid)_50%,var(--shell-gradient-end)_100%)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
+        data-shell-gradient=""
+      >
+        <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-5">
+          <Card className="w-full max-w-sm border-white/10 bg-background/95 shadow-2xl backdrop-blur">
+            <CardHeader className="text-center">
+              <span
+                aria-hidden="true"
+                className="mx-auto mb-2 block size-10 bg-brand [mask-image:url(/stacklok-logo-mark.svg)] [mask-position:center] [mask-repeat:no-repeat] [mask-size:contain]"
+              />
+              <CardTitle>Mecatl</CardTitle>
+              <CardDescription>{message}</CardDescription>
+            </CardHeader>
+            {children === undefined ? null : (
+              <CardContent>
+                <CardFooter className="p-0">{children}</CardFooter>
+              </CardContent>
+            )}
+          </Card>
+        </main>
+      </div>
+    </div>
   );
 }
