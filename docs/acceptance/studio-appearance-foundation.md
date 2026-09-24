@@ -4,7 +4,7 @@
 **Work classification:** Bounded — changes browser presentation and local interaction inside the existing Studio web app. It adds no daemon, BFF, deployment, or trust boundary.
 **Decision record:** None — [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) already fixes Studio's browser/BFF boundary and local workspace; this plan defines a bounded visual and component contract within it.
 **Phase:** Studio design alignment, foundation for #1844 and #1846
-**Status:** proposed, 2026-09-24. The frozen design and material interface decisions below are ready for plan review.
+**Status:** in-progress, 2026-09-24. Implementation is stacked on the open Plan / Interface PR for review.
 **Delivery:** Split. The token and control contract is reviewed before the independent implementation PR and the dependent shell and settings work.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1843](https://github.com/stacklok/mecatl/issues/1843).
