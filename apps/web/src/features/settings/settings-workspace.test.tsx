@@ -7,6 +7,7 @@ import type {
   GetRuntimeSettingsResponse,
 } from "@mecatl-studio/contracts/generated";
 import {
+  getAuthSessionQueryKey,
   getProviderSettingsQueryKey,
   getRuntimeQueryKey,
   getRuntimeSettingsQueryKey,
@@ -16,10 +17,10 @@ import {
 } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { modelPreferenceId } from "../../lib/model-preferences";
 import { routeTree } from "../../routeTree.gen";
 import { ProviderDetail } from "./provider-detail";
@@ -135,7 +136,43 @@ async function renderSection(
   );
 }
 
-afterEach(() => window.localStorage.clear());
+async function mountPage(path: string, child: ReactNode, client: QueryClient) {
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: [path] }),
+    routeTree,
+  });
+  await router.load();
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <QueryClientProvider client={client}>
+        <RouterContextProvider router={router}>{child}</RouterContextProvider>
+      </QueryClientProvider>,
+    );
+  });
+  return {
+    host,
+    unmount: async () => {
+      await act(async () => root.unmount());
+      host.remove();
+    },
+  };
+}
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const response = new Promise<Response>((finish) => {
+    resolve = finish;
+  });
+  return { resolve, response };
+}
+
+afterEach(() => {
+  window.localStorage.clear();
+  vi.restoreAllMocks();
+});
 
 describe("settings facts", () => {
   it("shows a provider's BFF details as text and links to its exact ID", async () => {
@@ -230,6 +267,12 @@ describe("settings facts", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === "/api/v1/runtime") return Response.json(runtime());
+      if (path === "/api/v1/settings/runtime") return Response.json(settings());
+      throw new Error(`Unexpected BFF read: ${path}`);
+    });
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
@@ -254,9 +297,25 @@ describe("settings facts", () => {
 
   it("separates personal agent identity from managed behavior", async () => {
     const client = seededClient();
+    client.setQueryData(getAuthSessionQueryKey(), {
+      account: "safe-opaque-account-key",
+      mode: "oidc",
+      status: "authenticated",
+    });
     const profile = await renderSection("profile", client);
     expect(profile).toContain("browser profile preferences");
     expect(profile).toContain("Your display name");
+    expect(profile).toContain("Sign-in session");
+    expect(profile).toContain("Signed in");
+    expect(profile).toContain("Interactive sign-in");
+    expect(profile).toContain("safe-opaque-account-key");
+    client.setQueryData(getAuthSessionQueryKey(), {
+      mode: "static",
+      status: "disabled",
+    });
+    const sharedIdentity = await renderSection("profile", client);
+    expect(sharedIdentity).toContain("Shared static identity");
+    expect(sharedIdentity).not.toContain("safe-opaque-account-key");
     const appearance = await renderSection("appearance", client);
     expect(appearance).toContain("browser appearance");
     const agent = await renderSection("agent", client);
@@ -343,9 +402,15 @@ describe("settings facts", () => {
       expect(page).toContain(fact);
       expect(page).toContain(owner);
       expect(page).toContain(source);
-      expect(page).not.toMatch(
-        /<(?:input|select|button)[^>]*(?:posture|MCP setup|Clean up|logs|usage|demo)/i,
+      const document = new DOMParser().parseFromString(page, "text/html");
+      const forbiddenControls = [
+        ...document.querySelectorAll("input, select, textarea, button"),
+      ].filter((control) =>
+        /posture|MCP setup|clean up storage|logs|usage|demo/i.test(
+          `${control.getAttribute("aria-label") ?? ""} ${control.textContent ?? ""}`,
+        ),
       );
+      expect(forbiddenControls, section).toHaveLength(0);
     }
   });
 
@@ -425,6 +490,107 @@ describe("settings facts", () => {
       host.remove();
       if (originalOnline) Object.defineProperty(window.navigator, "onLine", originalOnline);
       else Reflect.deleteProperty(window.navigator, "onLine");
+    }
+  });
+
+  it.each(["offline", "failure"] as const)(
+    "masks cached provider facts until the runtime validates as %s",
+    async (outcome) => {
+      const pending = deferredResponse();
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path === "/api/v1/runtime") return pending.response;
+        if (path === "/api/v1/settings/runtime") return Promise.resolve(Response.json(settings()));
+        throw new Error(`Unexpected BFF read: ${path}`);
+      });
+      const page = await mountPage(
+        "/workspace/settings/providers",
+        <SettingsWorkspace section="providers" />,
+        seededClient(),
+      );
+      try {
+        expect(page.host.textContent).toContain("Loading current runtime settings");
+        expect(page.host.textContent).not.toContain("Ready through the gateway");
+        await act(async () => {
+          pending.resolve(
+            outcome === "offline"
+              ? Response.json(runtime({ connection: "offline" }))
+              : Response.json({ code: "runtime_unavailable" }, { status: 503 }),
+          );
+        });
+        expect(page.host.textContent).toContain(
+          outcome === "offline" ? "Offline" : "could not be loaded",
+        );
+        expect(page.host.textContent).not.toContain("Ready through the gateway");
+      } finally {
+        await page.unmount();
+      }
+    },
+  );
+
+  it("masks cached inventory when the runtime is online but inventory refresh fails", async () => {
+    const pending = deferredResponse();
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === "/api/v1/runtime") return Promise.resolve(Response.json(runtime()));
+      if (path === "/api/v1/settings/runtime") return pending.response;
+      throw new Error(`Unexpected BFF read: ${path}`);
+    });
+    const page = await mountPage(
+      "/workspace/settings/providers",
+      <SettingsWorkspace section="providers" />,
+      seededClient(),
+    );
+    try {
+      expect(page.host.textContent).toContain("Loading settings");
+      expect(page.host.textContent).not.toContain("Ready through the gateway");
+      await act(async () => {
+        pending.resolve(Response.json({ code: "runtime_unavailable" }, { status: 503 }));
+      });
+      expect(page.host.textContent).toContain("Current settings could not be loaded");
+      expect(page.host.textContent).not.toContain("Ready through the gateway");
+    } finally {
+      await page.unmount();
+    }
+  });
+
+  it("masks a cached provider endpoint through runtime and detail refresh", async () => {
+    const runtimeRead = deferredResponse();
+    const detailRead = deferredResponse();
+    const requested: URL[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      requested.push(url);
+      if (url.pathname === "/api/v1/runtime") return runtimeRead.response;
+      if (url.pathname === "/api/v1/settings/provider") return detailRead.response;
+      throw new Error(`Unexpected BFF read: ${url.pathname}`);
+    });
+    const client = seededClient();
+    client.setQueryData(getProviderSettingsQueryKey({ query: { providerId } }), {
+      displayEndpoint: "https://provider.example/v1",
+      models: [model],
+      provider,
+    });
+    const page = await mountPage(
+      "/workspace/provider?providerId=team%2Fopenai",
+      <ProviderDetail providerId={providerId} />,
+      client,
+    );
+    try {
+      expect(page.host.textContent).toContain("Loading provider details");
+      expect(page.host.textContent).not.toContain("https://provider.example/v1");
+      await act(async () => runtimeRead.resolve(Response.json(runtime())));
+      expect(requested.find((url) => url.pathname === "/api/v1/settings/provider")?.search).toBe(
+        "?providerId=team%2Fopenai",
+      );
+      expect(page.host.textContent).not.toContain("https://provider.example/v1");
+      await act(async () =>
+        detailRead.resolve(Response.json({ code: "runtime_unavailable" }, { status: 503 })),
+      );
+      expect(page.host.textContent).toContain("could not be loaded");
+      expect(page.host.textContent).not.toContain("https://provider.example/v1");
+    } finally {
+      await page.unmount();
     }
   });
 });

@@ -24,7 +24,7 @@ export const Route = createFileRoute("/workspace/settings_/$section")({
   }),
 });
 
-function SettingsSectionPage() {
+export function SettingsSectionPage() {
   const navigate = useNavigate();
   const { section } = Route.useParams();
   if (!isSettingsSection(section)) return null;

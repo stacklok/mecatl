@@ -6,29 +6,63 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { Badge } from "../../components/ui/badge";
-import { connectionMessage, useBrowserOnline } from "./settings-connection";
+import {
+  connectionMessage,
+  freshDeploymentQuery,
+  useBrowserOnline,
+  useRefreshOnEntry,
+} from "./settings-connection";
 
 /** Direct, reloadable detail for one exact caller-visible provider ID. */
 export function ProviderDetail({ providerId }: { providerId: string }) {
   const browserOnline = useBrowserOnline();
-  const runtime = useQuery(getRuntimeOptions());
+  const runtime = useQuery({
+    ...getRuntimeOptions(),
+    ...freshDeploymentQuery,
+    enabled: browserOnline,
+  });
+  const runtimeValidating = useRefreshOnEntry(
+    `provider:${providerId}:runtime`,
+    browserOnline,
+    runtime.data !== undefined,
+    runtime.refetch,
+  );
   const detail = useQuery({
     ...getProviderSettingsOptions({ query: { providerId } }),
-    enabled: browserOnline && runtime.data?.connection === "online",
+    ...freshDeploymentQuery,
+    enabled:
+      browserOnline &&
+      !runtimeValidating &&
+      !runtime.isFetching &&
+      !runtime.isError &&
+      runtime.data?.connection === "online",
   });
-  const connection = runtime.data && connectionMessage(runtime.data.connection);
+  const detailValidating = useRefreshOnEntry(
+    `provider:${providerId}:detail`,
+    browserOnline &&
+      !runtimeValidating &&
+      !runtime.isFetching &&
+      runtime.data?.connection === "online",
+    detail.data !== undefined,
+    detail.refetch,
+  );
+  const connection =
+    !runtimeValidating &&
+    !runtime.isFetching &&
+    runtime.data &&
+    connectionMessage(runtime.data.connection);
   let content: ReactNode;
-  if (!browserOnline || connection) {
-    content = (
-      <State
-        text={browserOnline ? (connection ?? "") : "Offline. Provider details are unavailable."}
-      />
-    );
+  if (!browserOnline) {
+    content = <State text="Offline. Provider details are unavailable." />;
+  } else if (runtimeValidating || runtime.isFetching || runtime.isPending) {
+    content = <State text="Loading provider details…" />;
+  } else if (connection) {
+    content = <State text={connection} />;
   } else if (runtime.isError) {
     content = (
       <State text="Provider details could not be loaded. Check the connection and try again." />
     );
-  } else if (runtime.isPending || detail.isPending) {
+  } else if (detailValidating || detail.isFetching || detail.isPending) {
     content = <State text="Loading provider details…" />;
   } else if (detail.isError) {
     content = isProviderNotFound(detail.error) ? (

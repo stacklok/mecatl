@@ -5,6 +5,7 @@ import type {
   GetRuntimeSettingsResponse,
 } from "@mecatl-studio/contracts/generated";
 import {
+  getAuthSessionOptions,
   getRuntimeOptions,
   getRuntimeSettingsOptions,
   getStorageHealthOptions,
@@ -36,44 +37,19 @@ import { IdentitySettings } from "./identity-settings";
 import { InterfaceSettings } from "./interface-settings";
 import { managementNotes } from "./management-notes";
 import { MemorySettings } from "./memory-settings";
-import { connectionMessage, useBrowserOnline } from "./settings-connection";
-import type { SettingsSection } from "./settings-sections";
+import {
+  connectionMessage,
+  freshDeploymentQuery,
+  useBrowserOnline,
+  useRefreshOnEntry,
+} from "./settings-connection";
+import { type SettingsSection, settingsGroups } from "./settings-sections";
 import { StorageSettings } from "./storage-settings";
 
 type Model = GetRuntimeSettingsResponse["models"][number];
 
 /** Where a problem with this app (not the connected agent) is reported. */
 const supportUrl = "https://github.com/stacklok/mecatl/issues";
-
-/** The stable route list is shared by desktop and mobile settings navigation. */
-const settingsGroups: Array<{
-  items: Array<{ label: string; value: SettingsSection }>;
-  title: string;
-}> = [
-  {
-    items: [
-      { label: "Profile", value: "profile" },
-      { label: "Appearance", value: "appearance" },
-    ],
-    title: "Preferences",
-  },
-  {
-    items: [
-      { label: "Agent", value: "agent" },
-      { label: "Permissions", value: "permissions" },
-      { label: "Providers", value: "providers" },
-      { label: "Models", value: "models" },
-      { label: "MCP tools", value: "mcp-tools" },
-      { label: "Storage", value: "storage" },
-      { label: "Memory", value: "memory" },
-      { label: "Learning", value: "learning" },
-      { label: "Diagnostics", value: "diagnostics" },
-      { label: "Labs", value: "labs" },
-    ],
-    title: "Agent runtime",
-  },
-  { items: [{ label: "About", value: "about" }], title: "Support" },
-];
 
 export function SettingsWorkspace({
   onSectionChange,
@@ -82,23 +58,49 @@ export function SettingsWorkspace({
   onSectionChange?: (section: SettingsSection) => void;
   section?: SettingsSection;
 }) {
-  const runtime = useQuery(getRuntimeOptions());
-  const settings = useQuery(getRuntimeSettingsOptions());
-  const modelPreferences = useDisabledModels();
   const browserOnline = useBrowserOnline();
+  const deploymentSection = section !== "profile" && section !== "appearance";
+  const inventorySection =
+    section === "providers" ||
+    section === "models" ||
+    section === "about" ||
+    section === "diagnostics";
+  const runtime = useQuery({
+    ...getRuntimeOptions(),
+    ...freshDeploymentQuery,
+    enabled: browserOnline && deploymentSection,
+  });
+  const settings = useQuery({
+    ...getRuntimeSettingsOptions(),
+    ...freshDeploymentQuery,
+    enabled: browserOnline && inventorySection,
+  });
+  const runtimeValidating = useRefreshOnEntry(
+    `settings:${section}:runtime`,
+    browserOnline && deploymentSection,
+    runtime.data !== undefined,
+    runtime.refetch,
+  );
+  const settingsValidating = useRefreshOnEntry(
+    `settings:${section}:inventory`,
+    browserOnline && inventorySection,
+    settings.data !== undefined,
+    settings.refetch,
+  );
+  const modelPreferences = useDisabledModels();
   const runtimeState = !browserOnline
     ? "Offline. Connect to the agent to read current deployment settings."
-    : runtime.isError
-      ? "Current runtime settings could not be loaded. Check the connection and try again."
-      : runtime.isPending
-        ? "Loading current runtime settings…"
+    : runtimeValidating || runtime.isFetching || runtime.isPending
+      ? "Loading current runtime settings…"
+      : runtime.isError
+        ? "Current runtime settings could not be loaded. Check the connection and try again."
         : connectionMessage(runtime.data.connection);
   const inventoryState =
     runtimeState ??
-    (settings.isError
-      ? "Current settings could not be loaded. Check the connection and try again."
-      : settings.isPending
-        ? "Loading settings…"
+    (settingsValidating || settings.isFetching || settings.isPending
+      ? "Loading settings…"
+      : settings.isError
+        ? "Current settings could not be loaded. Check the connection and try again."
         : null);
 
   return (
@@ -166,7 +168,12 @@ export function SettingsWorkspace({
           </nav>
 
           <div className="min-w-0 flex-1 space-y-6">
-            {section === "profile" && <IdentitySettings />}
+            {section === "profile" && (
+              <>
+                <IdentitySettings />
+                <ProfileSession />
+              </>
+            )}
             {section === "agent" && (
               <>
                 <AgentSettings />
@@ -318,6 +325,57 @@ export function SettingsWorkspace({
         </div>
       </div>
     </div>
+  );
+}
+
+function ProfileSession() {
+  const browserOnline = useBrowserOnline();
+  const session = useQuery({
+    ...getAuthSessionOptions(),
+    enabled: browserOnline,
+    refetchOnMount: false,
+    retry: false,
+    staleTime: 0,
+  });
+  const sessionValidating = useRefreshOnEntry(
+    "profile:session",
+    browserOnline,
+    session.data !== undefined,
+    session.refetch,
+  );
+  const sessionState = !browserOnline
+    ? "Offline. Sign-in details are unavailable."
+    : sessionValidating || session.isFetching || session.isPending
+      ? "Checking sign-in details…"
+      : session.isError
+        ? "Sign-in details could not be loaded."
+        : null;
+  const account =
+    session.data?.mode === "oidc" && session.data.status === "authenticated"
+      ? session.data.account?.trim()
+      : undefined;
+
+  return (
+    <Section icon={Server} title="Sign-in session">
+      <SourceNote source="BFF auth session" owner="read-only account identity" />
+      {sessionState ? (
+        <StateCard text={sessionState} />
+      ) : (
+        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+          <Fact label="Session status">
+            {session.data?.status === "authenticated" ? "Signed in" : "Sign-in not required"}
+          </Fact>
+          <Fact label="Authentication mode">
+            {session.data?.mode === "oidc"
+              ? "Interactive sign-in"
+              : session.data?.mode === "static"
+                ? "Shared static identity"
+                : "No authentication"}
+          </Fact>
+          {account && <Fact label="Account reference">{account}</Fact>}
+        </dl>
+      )}
+    </Section>
   );
 }
 

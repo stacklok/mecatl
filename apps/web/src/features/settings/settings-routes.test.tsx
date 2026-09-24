@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { routeTree } from "../../routeTree.gen";
 import { authLoginUrl } from "../auth/auth-gate";
 import { MemoryFactDetail, MemorySettings } from "./memory-settings";
-import { isSettingsSection } from "./settings-sections";
+import { isSettingsSection, settingsGroups } from "./settings-sections";
 import { SettingsWorkspace } from "./settings-workspace";
 
 async function load(path: string) {
@@ -57,6 +57,9 @@ describe("settings routes", () => {
       expect(router.state.matches.at(-1)?.routeId).toBe("/workspace/settings_/$section");
       expect(router.state.matches.at(-1)?.params).toMatchObject({ section });
     }
+    expect(settingsGroups.flatMap((group) => group.items.map((item) => item.value))).toEqual(
+      sections,
+    );
     const navigation = renderToStaticMarkup(
       <QueryClientProvider client={new QueryClient()}>
         <RouterContextProvider router={await load("/workspace/settings/permissions")}>

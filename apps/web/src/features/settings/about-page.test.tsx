@@ -46,6 +46,12 @@ async function mountAbout(
   runtimeResponse: GetRuntimeResponse,
   settingsResponse: GetRuntimeSettingsResponse,
 ) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    if (path === "/api/v1/runtime") return Response.json(runtimeResponse);
+    if (path === "/api/v1/settings/runtime") return Response.json(settingsResponse);
+    throw new Error(`Unexpected BFF read: ${path}`);
+  });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });

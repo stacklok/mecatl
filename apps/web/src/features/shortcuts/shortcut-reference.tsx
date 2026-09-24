@@ -5,6 +5,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Keyboard } from "lucide-react";
 import { Kbd } from "../../components/ui/kbd";
+import {
+  freshDeploymentQuery,
+  useBrowserOnline,
+  useRefreshOnEntry,
+} from "../settings/settings-connection";
 import { deriveHelpFeatures } from "./help-features";
 import { keycaps, shortcutGroups, shortcutRegistry } from "./shortcut-registry";
 
@@ -28,8 +33,23 @@ const USAGE_LEGEND: ReadonlyArray<{ label: string; note: string }> = [
 
 export function ShortcutReference() {
   const mac = navigator.platform.includes("Mac");
-  const runtime = useQuery(getRuntimeOptions());
+  const browserOnline = useBrowserOnline();
+  const runtime = useQuery({
+    ...getRuntimeOptions(),
+    ...freshDeploymentQuery,
+    enabled: browserOnline,
+  });
+  const runtimeValidating = useRefreshOnEntry(
+    "shortcuts:runtime",
+    browserOnline,
+    runtime.data !== undefined,
+    runtime.refetch,
+  );
   const features =
+    browserOnline &&
+    !runtimeValidating &&
+    !runtime.isFetching &&
+    !runtime.isError &&
     runtime.data?.connection === "online"
       ? deriveHelpFeatures(runtime.data.capabilities).filter((row) => row.enabled)
       : undefined;
@@ -86,7 +106,7 @@ export function ShortcutReference() {
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Features on this agent
           </h2>
-          {runtime.isPending ? (
+          {browserOnline && (runtimeValidating || runtime.isFetching || runtime.isPending) ? (
             <p className="mt-3 text-sm text-muted-foreground">Checking what's turned on…</p>
           ) : runtime.error || !features ? (
             <p className="mt-3 text-sm text-muted-foreground">
