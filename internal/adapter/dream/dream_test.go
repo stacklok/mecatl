@@ -2,6 +2,7 @@ package dream
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	memoryadapter "github.com/stacklok/mecatl/internal/adapter/memory"
 )
@@ -1090,9 +1092,84 @@ func TestConcurrentConsolidationApplyRemainsSerialized(t *testing.T) {
 	}
 }
 
+func TestAuxiliaryTokenUsage_Scenario4_NoSensitiveOrFabricatedAttribution(t *testing.T) {
+	const (
+		prompt          = "private prompt material"
+		output          = "private model output"
+		rawProviderErr  = "provider said credential rejected"
+		requestID       = "request-secret-123"
+		credential      = "Bearer accounting-secret"
+		clientProvider  = "client-selected-provider"
+		clientModel     = "client-selected-model"
+		clientReasoning = "client-selected-reasoning"
+	)
+	forbidden := []string{prompt, output, rawProviderErr, requestID, credential, clientProvider, clientModel, clientReasoning}
+	containsForbidden := func(record session.AuxiliaryUsage) bool {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, value := range forbidden {
+			if strings.Contains(string(raw), value) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Prove the absence oracle observes the accounting surface by planting a
+	// forbidden request identifier in the model-attribution key first.
+	planted := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindReflection: {Models: map[string]session.Usage{requestID: {InputTokens: 1}}},
+	}}
+	if !containsForbidden(planted) {
+		t.Fatal("absence oracle did not detect planted sensitive accounting data")
+	}
+
+	usage := session.Usage{InputTokens: 7, OutputTokens: 3, CacheReadTokens: 2}
+	record := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindReflection: {Total: usage, Models: map[string]session.Usage{"server-provider/server-model": usage}},
+	}}
+	if containsForbidden(record) {
+		t.Fatalf("accounting record retained sensitive input or client-selected controls: %#v", record)
+	}
+	bucket := record.Buckets[session.UsageKindReflection]
+	if bucket.Total != usage || bucket.Models["server-provider/server-model"] != usage || len(bucket.Models) != 1 {
+		t.Fatalf("accounting record = %#v, want only aggregate tokens and actual server model", record)
+	}
+
+	var fabricated int
+	ctx, deactivate := port.WithAuxiliaryUsageReporter(t.Context(), func(session.AuxiliaryUsage) { fabricated++ })
+	defer deactivate()
+	for _, call := range []struct {
+		name string
+		run  func(*Consolidator) error
+	}{
+		{name: "dream", run: func(c *Consolidator) error { _, err := c.GeneratePlan(ctx); return err }},
+		{name: "consolidation", run: func(c *Consolidator) error { _, err := c.Consolidate(ctx); return err }},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			provider := &captureProvider{
+				reply: `{"exact_duplicates":[],"synthesized_replacements":[]}`,
+				usage: usage,
+			}
+			if err := call.run(New(newFakeStore(entries("a", "b")...), provider, Config{MinEntriesToRun: 1})); err != nil {
+				t.Fatal(err)
+			}
+			if len(provider.requests) != 1 {
+				t.Fatalf("provider calls = %d, want one", len(provider.requests))
+			}
+		})
+	}
+	if fabricated != 0 {
+		t.Fatalf("source-less dream/consolidation fabricated %d session usage reports", fabricated)
+	}
+}
+
 type captureProvider struct {
 	reply    string
 	chunks   []string
+	usage    session.Usage
 	requests []port.LLMRequest
 }
 
@@ -1108,6 +1185,9 @@ func (p *captureProvider) Stream(_ context.Context, req port.LLMRequest) (iter.S
 			if !yield(port.Chunk{Kind: port.ChunkText, Text: chunk}, nil) {
 				return
 			}
+		}
+		if p.usage != (session.Usage{}) {
+			yield(port.Chunk{Kind: port.ChunkUsage, Usage: &p.usage}, nil)
 		}
 	}, nil
 }
