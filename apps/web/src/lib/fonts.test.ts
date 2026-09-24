@@ -10,9 +10,10 @@ describe("Studio typography", () => {
   it("loads Inter and Merriweather from same-origin assets", async () => {
     expect(css).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
     expect(css).toContain('@import "@fontsource-variable/inter/wght.css";');
-    for (const weight of [300, 400, 700]) {
-      expect(css).toContain(`@import "@fontsource/merriweather/${weight}.css";`);
-    }
+    const merriweatherWeights = [
+      ...css.matchAll(/@import "@fontsource\/merriweather\/(\d+)\.css";/g),
+    ];
+    expect(merriweatherWeights.map(([, weight]) => weight)).toEqual(["300"]);
     expect(pkg.dependencies).toHaveProperty("@fontsource-variable/inter");
     expect(pkg.dependencies).toHaveProperty("@fontsource/merriweather");
     expect(css).toMatch(/--font-sans:\s*"Inter Variable"/);

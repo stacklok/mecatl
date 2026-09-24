@@ -2,8 +2,6 @@
 
 @import "@fontsource-variable/inter/wght.css";
 @import "@fontsource/merriweather/300.css";
-@import "@fontsource/merriweather/400.css";
-@import "@fontsource/merriweather/700.css";
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
