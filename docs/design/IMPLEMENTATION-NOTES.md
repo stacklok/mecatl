@@ -5937,8 +5937,22 @@ authority (an access-only bearer of at most two minutes, reissued by the logical
 until custody expires), then adopt or complete with the fresh binding, Save, and Commit.
 Any other attach failure never enters recovery. Authenticated discovery runs outside the
 attachment lock with single-flight per handle and an exact-compare before publishing.
-Invalidation ordering and the composed Scenario 2/3 proof are not yet shipped; no caller
-may infer recovery from custody alone.
+Invalidation ordering is shipped; the composed two-broker Scenario 2/3 proof is not yet.
+No caller may infer recovery from custody alone. A missing or unreadable host workload
+identity fails closed without destroying custody (it is unknown, not rotated).
+Invalidation captures the stored custody guard and exact B2 binding, clears and saves host
+authority first, evicts local attachment/engine state, then best-effort Tombstones the old
+custody and exact-deletes the old B2 logical session. A failed Tombstone or unavailable
+continuity service is intentionally only a closed-field diagnostic after durable host
+revocation. The accepted residual is that a recovered bearer already copied by an upstream
+may remain valid until its fixed expiry of at most two minutes; once its source is cleared,
+it has no renewal path. Mecatl does not add a cleanup worker, distributed revocation,
+signature deletion, or a recovered-token gate for that bounded residual. Known gap: a
+broker profile change is detected as `ErrContinuityProfileChanged` only for the in-process
+broker; over gRPC every authorized continuity failure is the single generic reason 7, so a
+remote host cannot tell a changed profile from other refusals and does not invalidate on
+its own. Such custody stays unusable until its native expiry or until the session is
+deleted or its enrollment cancelled.
 The intended boundary remains that encrypted ToolHive custody is subordinate evidence: only
 the current durable Mecatl session plus the presenting verified workload may authorize a
 confirmed pre-prompt replacement after structured broker-instance loss. The replacement

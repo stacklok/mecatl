@@ -168,7 +168,7 @@ func (p *Process) matchesCurrentContinuityProfile(guard contract.ContinuityGuard
 
 func (p *Process) CommitCredentialCustody(ctx context.Context, assertion contract.CustodyAssertion) error {
 	if !p.matchesCurrentContinuityProfile(assertion.Guard) {
-		return contract.ErrContinuityUnavailable
+		return errors.Join(contract.ErrContinuityUnavailable, contract.ErrContinuityProfileChanged)
 	}
 	custody, err := p.continuityCustody()
 	if err != nil {
@@ -286,7 +286,7 @@ func (p *Process) replayRecoveredAttempt(ctx context.Context, attempt *recovered
 
 func (p *Process) RecoverCredentialAttachment(ctx context.Context, assertion contract.CustodyAssertion, requestID string) (contract.RecoveredCredentialAttachment, error) {
 	if !p.matchesCurrentContinuityProfile(assertion.Guard) {
-		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
+		return contract.RecoveredCredentialAttachment{}, errors.Join(contract.ErrContinuityUnavailable, contract.ErrContinuityProfileChanged)
 	}
 	attempt, creator, err := p.reserveRecoveredAttempt(assertion, requestID)
 	if err != nil {

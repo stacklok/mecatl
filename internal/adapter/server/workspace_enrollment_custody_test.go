@@ -19,18 +19,21 @@ import (
 
 // custodyRecorder captures the host's enrollment choreography in order.
 type custodyRecorder struct {
-	mu         sync.Mutex
-	events     []string
-	stageIDs   []string
-	stageErr   error
-	commitErrs []error
-	commits    int
-	tombstones int
-	noOffer    bool
+	mu           sync.Mutex
+	events       []string
+	stageIDs     []string
+	stageErr     error
+	commitErrs   []error
+	commits      int
+	tombstones   int
+	tombstoneErr error
+	noOffer      bool
 	// failCustodySave fails every Save carrying custody once; landThenFail
 	// makes that write durable before reporting the error.
 	failCustodySave bool
 	landThenFail    bool
+	// failClearedSave fails a Save that removes custody (invalidation).
+	failClearedSave bool
 	// attachErr makes expected-binding attach fail (e.g. structured instance loss).
 	attachErr error
 	// recoverWith supplies the fresh B2 attachment; nil makes Recover unavailable.
@@ -140,8 +143,18 @@ func (b *custodyBroker) TombstoneCredentialCustody(context.Context, brokercontra
 	b.rec.mu.Lock()
 	b.rec.tombstones++
 	b.rec.events = append(b.rec.events, "tombstone")
+	err := b.rec.tombstoneErr
 	b.rec.mu.Unlock()
-	return nil
+	return err
+}
+
+func (b *custodyBroker) DeleteSessionIfBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (brokercontract.DeleteOutcome, error) {
+	b.rec.add("delete")
+	deleter, ok := b.enrollmentBroker.Service.(brokercontract.BindingSessionDeleter)
+	if !ok {
+		return "", brokercontract.ErrContinuityUnavailable
+	}
+	return deleter.DeleteSessionIfBinding(ctx, id, binding)
 }
 
 type custodyRecordingStore struct {
@@ -154,6 +167,13 @@ func (s custodyRecordingStore) Save(ctx context.Context, sess *session.Session) 
 	failCustodySave := s.rec.failCustodySave
 	landThenFail := s.rec.landThenFail
 	s.rec.mu.Unlock()
+	s.rec.mu.Lock()
+	failClearedSave := s.rec.failClearedSave
+	s.rec.mu.Unlock()
+	if _, custody := sess.BrokerCredentialCustody(); !custody && failClearedSave {
+		s.rec.add("save:failed")
+		return errors.New("store unavailable")
+	}
 	if _, custody := sess.BrokerCredentialCustody(); custody && failCustodySave {
 		if landThenFail {
 			// The write lands but the store still reports an error (ambiguous).
@@ -173,6 +193,8 @@ func (s custodyRecordingStore) Save(ctx context.Context, sess *session.Session) 
 		s.rec.add("save:completed+custody")
 	case pending:
 		s.rec.add("save:pending")
+	case !custody:
+		s.rec.add("save:cleared")
 	}
 	return s.SessionStore.Save(ctx, sess)
 }
@@ -264,6 +286,51 @@ func TestWorkspaceEnrollmentCustodyFollowsNormativeOrder(t *testing.T) {
 	custody, ok := loaded.BrokerCredentialCustody()
 	if _, pending := loaded.PendingWorkspaceEnrollment(); pending || !ok || custody.ProfileDigest() != ([32]byte{7}) || strings.Join(custody.Providers(), ",") != "calendar" {
 		t.Fatalf("persisted custody = %+v, %v", custody, ok)
+	}
+}
+
+func TestInvalidateBrokerCustodyPersistsThenTombstonesAndDeletes(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.begin(t)
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	loaded, err := f.store.Load(t.Context(), f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.invalidateBrokerCustody(t.Context(), loaded, false); err != nil {
+		t.Fatalf("invalidate: %v", err)
+	}
+	events, _, _ := f.rec.snapshot()
+	if got, want := strings.Join(events[len(events)-3:], ","), "save:cleared,tombstone,delete"; got != want {
+		t.Fatalf("invalidation events = %v, want trailing %q", events, want)
+	}
+	after, err := f.store.Load(t.Context(), f.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, custody := after.BrokerCredentialCustody(); custody {
+		t.Fatal("custody remains durable after invalidation")
+	}
+}
+
+func TestInvalidateBrokerCustodyContinuesAfterTombstoneFailure(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.begin(t)
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	f.rec.mu.Lock()
+	f.rec.tombstoneErr = errors.New("unavailable")
+	f.rec.mu.Unlock()
+	loaded, _ := f.store.Load(t.Context(), f.session.ID)
+	if err := f.svc.invalidateBrokerCustody(t.Context(), loaded, false); err != nil {
+		t.Fatalf("invalidation should continue after tombstone failure: %v", err)
+	}
+	events, _, _ := f.rec.snapshot()
+	if !strings.HasSuffix(strings.Join(events, ","), "save:cleared,tombstone,delete") {
+		t.Fatalf("events = %v, want delete after failed tombstone", events)
 	}
 }
 
@@ -528,5 +595,196 @@ func TestBrokerRecoveryFailureLeavesDurableStateUntouched(t *testing.T) {
 	after, _ := f.store.Load(t.Context(), f.session.ID)
 	if _, pending := after.PendingWorkspaceEnrollment(); !pending || after.ExternalBinding != before.ExternalBinding {
 		t.Fatalf("failed recovery changed durable state: pending=%v binding %q -> %q", pending, before.ExternalBinding, after.ExternalBinding)
+	}
+}
+
+func (s custodyRecordingStore) List(ctx context.Context) ([]port.StoredSession, error) {
+	return s.SessionStore.(port.PrunableStore).List(ctx)
+}
+
+func (s custodyRecordingStore) Delete(ctx context.Context, id session.SessionID) error {
+	s.rec.add("store:delete")
+	return s.SessionStore.(port.PrunableStore).Delete(ctx, id)
+}
+
+func (f *custodyFixture) ownerContext(ctx context.Context) context.Context {
+	return session.WithPrincipal(ctx, &session.Principal{Issuer: "https://idp.example", Subject: "owner", GrantType: session.GrantTypeUser})
+}
+
+func (f *custodyFixture) completeEnrollment(t *testing.T) {
+	t.Helper()
+	f.begin(t)
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err != nil {
+		t.Fatalf("enrollment: %v", err)
+	}
+	f.rec.mu.Lock()
+	f.rec.events = nil
+	f.rec.mu.Unlock()
+}
+
+func (f *custodyFixture) eventsAfterInvalidation(t *testing.T) string {
+	t.Helper()
+	events, _, _ := f.rec.snapshot()
+	return strings.Join(events, ",")
+}
+
+// Deleting a session tombstones with the STORED guard, so it works after the
+// host's workload identity rotated or when no identity is configured at all.
+func TestDeleteSessionTombstonesCustodyRegardlessOfCurrentIdentity(t *testing.T) {
+	for name, identity := range map[string]*session.Principal{
+		"rotated": {Issuer: "https://kubernetes.default.svc", Subject: "system:serviceaccount:agents:rotated"},
+		"absent":  nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCustodyFixture(t)
+			f.completeEnrollment(t)
+			f.svc.cfg.BrokerWorkloadIdentity = identity
+			if err := f.svc.DeleteSession(f.ownerContext(t.Context()), f.session.ID); err != nil {
+				t.Fatalf("DeleteSession: %v", err)
+			}
+			got := f.eventsAfterInvalidation(t)
+			if !strings.Contains(got, "save:cleared,tombstone,delete") || !strings.HasSuffix(got, "store:delete") {
+				t.Fatalf("events = %s; want host authority cleared, Tombstone, B2 delete, then the record deleted", got)
+			}
+		})
+	}
+}
+
+func TestInvalidateBrokerCustodySaveFailureChangesNothing(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.completeEnrollment(t)
+	loaded, _ := f.store.Load(t.Context(), f.session.ID)
+	f.rec.mu.Lock()
+	f.rec.failClearedSave = true
+	f.rec.mu.Unlock()
+	if err := f.svc.invalidateBrokerCustody(t.Context(), loaded, false); err == nil {
+		t.Fatal("invalidation succeeded although clearing custody failed to persist")
+	}
+	if got := f.eventsAfterInvalidation(t); strings.Contains(got, "tombstone") || strings.Contains(got, "delete") {
+		t.Fatalf("events = %s; a failed host save must not reach the broker", got)
+	}
+	after, _ := f.store.Load(t.Context(), f.session.ID)
+	if _, custody := after.BrokerCredentialCustody(); !custody {
+		t.Fatal("failed invalidation lost durable custody")
+	}
+	if _, custody := loaded.BrokerCredentialCustody(); !custody {
+		t.Fatal("failed invalidation left the in-memory session without custody")
+	}
+}
+
+func TestCancelPendingEnrollmentWithCustodyInvalidatesFirst(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.pendingCustodySession(t)
+	loaded, _ := f.store.Load(t.Context(), f.session.ID)
+	pending, _ := loaded.PendingWorkspaceEnrollment()
+	f.rec.mu.Lock()
+	f.rec.events = nil
+	f.rec.mu.Unlock()
+	projection, err := f.svc.CancelWorkspaceEnrollment(t.Context(), f.session.ID, pending.ID)
+	if err != nil || projection.Status != brokercontract.WorkspaceEnrollmentCancelled {
+		t.Fatalf("cancel = %#v, %v", projection, err)
+	}
+	// Custody is cleared and saved first (the session is still pending then),
+	// the broker is cleaned up, and only then is the enrollment aborted.
+	if got := f.eventsAfterInvalidation(t); got != "save:pending,tombstone,delete,save:cleared" {
+		t.Fatalf("events = %s; want custody invalidated before the enrollment is aborted", got)
+	}
+	after, _ := f.store.Load(t.Context(), f.session.ID)
+	if _, custody := after.BrokerCredentialCustody(); custody {
+		t.Fatal("cancelled enrollment kept custody")
+	}
+	if _, stillPending := after.PendingWorkspaceEnrollment(); stillPending {
+		t.Fatal("cancelled enrollment stayed pending")
+	}
+}
+
+func TestProfileChangedCommitInvalidatesInsteadOfRetrying(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.pendingCustodySession(t)
+	f.rec.mu.Lock()
+	f.rec.commitErrs = []error{errors.Join(brokercontract.ErrContinuityUnavailable, brokercontract.ErrContinuityProfileChanged)}
+	f.rec.events = nil
+	f.rec.mu.Unlock()
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil {
+		t.Fatal("completion succeeded against a changed broker profile")
+	}
+	if got := f.eventsAfterInvalidation(t); !strings.Contains(got, "tombstone") {
+		t.Fatalf("events = %s; want the stale custody tombstoned", got)
+	}
+	after, _ := f.store.Load(t.Context(), f.session.ID)
+	if _, custody := after.BrokerCredentialCustody(); custody {
+		t.Fatal("custody survived a profile change")
+	}
+}
+
+// An unconfigured or unreadable workload identity is unknown, not rotated:
+// the host fails closed but must not destroy recoverable custody.
+func TestMissingWorkloadIdentityNeverDestroysCustody(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.pendingCustodySession(t)
+	f.svc.cfg.BrokerWorkloadIdentity = nil
+	f.rec.mu.Lock()
+	f.rec.events = nil
+	f.rec.mu.Unlock()
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil {
+		t.Fatal("completion succeeded without a workload identity")
+	}
+	f.rec.mu.Lock()
+	f.rec.attachErr, f.rec.recoverWith = errInstanceLost, replacementBroker(t)
+	f.rec.mu.Unlock()
+	f.svc.closeSessionLocal(f.session.ID)
+	if _, err := f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID); err == nil {
+		t.Fatal("recovery succeeded without a workload identity")
+	}
+	if got := f.eventsAfterInvalidation(t); strings.Contains(got, "tombstone") {
+		t.Fatalf("events = %s; missing identity must not tombstone custody", got)
+	}
+	after, _ := f.store.Load(t.Context(), f.session.ID)
+	if _, custody := after.BrokerCredentialCustody(); !custody {
+		t.Fatal("missing identity destroyed durable custody")
+	}
+}
+
+func TestExpiredCustodyIsClearedOnNextEnrollmentTouch(t *testing.T) {
+	f := newCustodyFixture(t)
+	f.completeEnrollment(t)
+	f.svc.cfg.Now = func() time.Time { return time.Now().Add(48 * time.Hour) }
+	_, _ = f.svc.ConnectWorkspaceServices(t.Context(), f.session.ID)
+	if got := f.eventsAfterInvalidation(t); !strings.Contains(got, "save:cleared,tombstone,delete") || strings.Contains(got, "recover") {
+		t.Fatalf("events = %s; want expired custody invalidated without a recovery attempt", got)
+	}
+	after, _ := f.store.Load(t.Context(), f.session.ID)
+	if _, custody := after.BrokerCredentialCustody(); custody {
+		t.Fatal("expired custody was not cleared")
+	}
+}
+
+// Custody is bound to one exact session incarnation; successors never inherit it.
+func TestSuccessorSessionsNeverCopyCustody(t *testing.T) {
+	for name, create := range map[string]func(f *custodyFixture, ctx context.Context) (session.SessionID, error){
+		"clear": func(f *custodyFixture, ctx context.Context) (session.SessionID, error) {
+			return f.svc.ClearSessionSuccessor(ctx, f.session.ID, SuccessorPlacement{})
+		},
+		"fork": func(f *custodyFixture, ctx context.Context) (session.SessionID, error) {
+			return f.svc.ForkSessionSuccessor(ctx, ForkSuccessorRequest{Source: f.session.ID})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCustodyFixture(t)
+			f.completeEnrollment(t)
+			ids := []session.SessionID{"successor-" + session.SessionID(name)}
+			f.svc.cfg.NewID = func() session.SessionID { return ids[0] }
+			id, err := create(f, f.ownerContext(t.Context()))
+			if err != nil {
+				t.Fatalf("create successor: %v", err)
+			}
+			successor, err := f.store.Load(t.Context(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, custody := successor.BrokerCredentialCustody(); custody {
+				t.Fatal("successor session inherited broker credential custody")
+			}
+		})
 	}
 }

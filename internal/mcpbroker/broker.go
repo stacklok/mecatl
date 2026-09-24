@@ -32,6 +32,10 @@ var (
 	// ErrContinuityUnavailable means a continuity operation could not safely
 	// proceed. It intentionally reveals no custody or provisional-state detail.
 	ErrContinuityUnavailable = errors.New("mcp broker continuity unavailable")
+	// ErrContinuityProfileChanged marks a custody guard whose protected provider,
+	// destination, or profile no longer matches the broker configuration. It is
+	// also ErrContinuityUnavailable so existing callers remain fail-closed.
+	ErrContinuityProfileChanged = errors.New("mcp broker continuity profile changed")
 	// ErrCapacity means admission was refused without evicting existing authority.
 	ErrCapacity = errors.New("mcp broker capacity reached")
 	// ErrAttachmentClosed means an operation used a locally closed attachment.

@@ -872,7 +872,12 @@ type Service struct {
 	// underneath an in-flight operation.
 	brokerGenerationMu sync.RWMutex
 	brokerRecoveryMu   sync.Mutex
-	brokerRecovery     map[session.SessionID]brokerRecoveryAttempt
+	// brokerRecovery is process-local retry correlation for recovered provisional
+	// attachments. Its key fences a retry to the exact durable authority tuple.
+	brokerRecovery map[brokerRecoveryAttemptKey]brokerRecoveryAttempt
+	// brokerRetiredCloses holds replaced client closers until no cached attachment
+	// remains bound to their generation. brokerReplacementMu protects it.
+	brokerRetiredCloses map[uint64]func() error
 
 	// placementBinder is the sole creation/successor placement binding seam.
 	// It is nil only for legacy hand-built configurations that have not migrated.
@@ -1404,7 +1409,8 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		teams:                      make(map[string]*teamState),
 		sessionEngines:             make(map[session.SessionID]*sessionEngine),
 		brokerAttachments:          make(map[session.SessionID]brokercontract.SessionHandle),
-		brokerRecovery:             make(map[session.SessionID]brokerRecoveryAttempt),
+		brokerRecovery:             make(map[brokerRecoveryAttemptKey]brokerRecoveryAttempt),
+		brokerRetiredCloses:        make(map[uint64]func() error),
 		brokerAttachmentGeneration: make(map[session.SessionID]uint64),
 		authorizationExpiry:        make(map[session.SessionID]*authorizationExpiry),
 		sessionEnvironments:        make(map[session.SessionID]tool.Environment),
@@ -2802,6 +2808,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 		delete(s.sessionEngines, id)
 	}
 	brokerAttachment := s.brokerAttachments[id]
+	brokerGeneration := s.brokerAttachmentGeneration[id]
 	delete(s.brokerAttachments, id)
 	delete(s.brokerAttachmentGeneration, id)
 	// Drop any per-session environment override too: it closes over the (now
@@ -2826,6 +2833,8 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	delete(s.steerMsgIDs, id)
 	delete(s.lostOwnership, id)
 	s.mu.Unlock()
+	s.discardBrokerRecoveryAttempts(id)
+	s.releaseRetiredBrokerClient(brokerGeneration)
 	if expiry != nil && expiry.timer != nil {
 		expiry.timer.Stop()
 	}
@@ -3082,15 +3091,24 @@ func (s *Service) closeBrokerAdmission() {
 
 func (s *Service) closeBrokerGeneration() {
 	s.brokerReplacementMu.Lock()
-	defer s.brokerReplacementMu.Unlock()
 	s.brokerClosed = true
 	s.brokerGenerationMu.Lock()
-	defer s.brokerGenerationMu.Unlock()
-	if s.brokerFactoryClose != nil {
-		_ = s.brokerFactoryClose()
-		s.brokerFactoryClose = nil
-	}
+	currentClose := s.brokerFactoryClose
+	s.brokerFactoryClose = nil
 	s.brokerCurrent = nil
+	retired := make([]func() error, 0, len(s.brokerRetiredCloses))
+	for generation, closeClient := range s.brokerRetiredCloses {
+		retired = append(retired, closeClient)
+		delete(s.brokerRetiredCloses, generation)
+	}
+	s.brokerGenerationMu.Unlock()
+	s.brokerReplacementMu.Unlock()
+	if currentClose != nil {
+		_ = currentClose()
+	}
+	for _, closeClient := range retired {
+		_ = closeClient()
+	}
 }
 
 func (s *Service) snapshotDrainState() (map[session.SessionID]*runState, []session.SessionID) {
@@ -3515,7 +3533,8 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
-	if err := s.invalidateBrokerCustody(ctx, sess); err != nil {
+	_, hasCustody := sess.BrokerCredentialCustody()
+	if err := s.invalidateBrokerCustody(ctx, sess, false); err != nil {
 		return err
 	}
 	if err := s.deleteSessionFamily(ctx, sess.ID, prunable); err != nil {
@@ -3523,9 +3542,11 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 			// The durable record is already gone: still attempt broker cleanup
 			// (best-effort) before reporting success, so a locally-retained
 			// broker handle is never orphaned by an already-completed delete.
-			if brokerErr := s.deleteBrokerSessionLocked(ctx, id, ""); brokerErr != nil {
-				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted session failed",
-					"session", string(id), "err", brokerErr.Error())
+			if !hasCustody {
+				if brokerErr := s.deleteBrokerSessionLocked(ctx, id, ""); brokerErr != nil {
+					s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted session failed",
+						"session", string(id), "err", brokerErr.Error())
+				}
 			}
 			s.closeSessionLocal(id)
 			return nil
@@ -3541,9 +3562,11 @@ func (s *Service) DeleteSession(ctx context.Context, id session.SessionID) error
 	// would survive pointing at broker state that no longer exists. Broker
 	// state is process-local, so an orphaned entry here is a bounded leak, the
 	// strictly safer failure direction.
-	if err := s.deleteBrokerSessionLocked(ctx, id, sess.ExternalBinding); err != nil {
-		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after session delete failed",
-			"session", string(id), "err", err.Error())
+	if !hasCustody {
+		if err := s.deleteBrokerSessionLocked(ctx, id, sess.ExternalBinding); err != nil {
+			s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after session delete failed",
+				"session", string(id), "err", err.Error())
+		}
 	}
 	s.closeSessionLocal(id)
 	return nil
@@ -3600,6 +3623,12 @@ func (s *Service) DeleteSessionForRetentionCandidate(ctx context.Context, candid
 	}
 	if !deleted {
 		return errRetentionCandidateChanged
+	}
+	if _, hasCustody := sess.BrokerCredentialCustody(); hasCustody {
+		if err := s.invalidateBrokerCustody(ctx, sess, true); err != nil {
+			return err
+		}
+		return nil
 	}
 	// The durable record is gone; broker cleanup is now best-effort (I-8: see
 	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
@@ -3658,14 +3687,17 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	}
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
-	if err := s.invalidateBrokerCustody(ctx, sess); err != nil {
+	_, hasCustody := sess.BrokerCredentialCustody()
+	if err := s.invalidateBrokerCustody(ctx, sess, false); err != nil {
 		return err
 	}
 	if err := s.deleteSessionFamily(ctx, id, prunable); err != nil {
 		if errors.Is(err, port.ErrSessionNotFound) {
-			if brokerErr := s.deleteBrokerSessionLocked(ctx, id, ""); brokerErr != nil {
-				s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted retention candidate failed",
-					"session", string(id), "err", brokerErr.Error())
+			if !hasCustody {
+				if brokerErr := s.deleteBrokerSessionLocked(ctx, id, ""); brokerErr != nil {
+					s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after already-deleted retention candidate failed",
+						"session", string(id), "err", brokerErr.Error())
+				}
 			}
 			s.closeSessionLocal(id)
 			return nil
@@ -3677,9 +3709,11 @@ func (s *Service) DeleteSessionForRetention(ctx context.Context, id session.Sess
 	}
 	// The durable record is gone; broker cleanup is now best-effort (I-8: see
 	// deleteBrokerSessionLocked's doc comment for the ordering rationale).
-	if err := s.deleteBrokerSessionLocked(ctx, id, sess.ExternalBinding); err != nil {
-		s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
-			"session", string(id), "err", err.Error())
+	if !hasCustody {
+		if err := s.deleteBrokerSessionLocked(ctx, id, sess.ExternalBinding); err != nil {
+			s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "broker cleanup after retention delete failed",
+				"session", string(id), "err", err.Error())
+		}
 	}
 	s.closeSessionLocal(id)
 	return nil
@@ -4611,6 +4645,21 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 			}
 		}()
 	}
+	if custody, hasCustody := sess.BrokerCredentialCustody(); hasCustody {
+		now := time.Now()
+		if s.cfg.Now != nil {
+			now = s.cfg.Now()
+		}
+		if !custody.Active(now) {
+			unlockBroker := s.brokerMu.lock(id)
+			err := s.invalidateBrokerCustody(ctx, sess, false)
+			unlockBroker()
+			if err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("%w: broker credential custody expired; reconnect workspace services before the first prompt", ErrFailedPrecondition)
+		}
+	}
 	engine, env, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
@@ -5254,7 +5303,14 @@ func (s *Service) buildPersistAndRegisterSessionEngine(ctx context.Context, sess
 				return nil, fmt.Errorf("%w: broker recovery is unavailable during a pending authorization", ErrFailedPrecondition)
 			}
 			if _, hasCustody := sess.BrokerCredentialCustody(); hasCustody {
-				broker, err = s.recoverBrokerAttachment(ctx, sess, s.brokerAttachmentGenerationFor(id))
+				if sess.State != session.StateIdle || sess.Conversation == nil || len(sess.Conversation.Messages) != 0 {
+					return nil, fmt.Errorf("%w: broker recovery must precede the first prompt", ErrFailedPrecondition)
+				}
+				failedGeneration := s.brokerAttachmentGenerationFor(id)
+				if failedGeneration == 0 {
+					_, failedGeneration = s.brokerSnapshot()
+				}
+				broker, err = s.recoverBrokerAttachment(ctx, sess, failedGeneration)
 			}
 		}
 		if err != nil {

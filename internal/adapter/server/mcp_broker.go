@@ -25,6 +25,13 @@ type brokerRecoveryAttempt struct {
 	deadline  time.Time
 }
 
+type brokerRecoveryAttemptKey struct {
+	sessionID   session.SessionID
+	incarnation string
+	reference   string
+	binding     session.ExternalBinding
+}
+
 type localBrokerAttachment struct {
 	attachment brokercontract.SessionHandle
 	generation uint64
@@ -56,6 +63,47 @@ func (s *Service) brokerAttachmentGenerationFor(id session.SessionID) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.brokerAttachmentGeneration[id]
+}
+
+func recoveryAttemptKey(sess *session.Session, custody session.BrokerCredentialCustody) brokerRecoveryAttemptKey {
+	return brokerRecoveryAttemptKey{
+		sessionID:   sess.ID,
+		incarnation: string(custody.SessionIncarnation()),
+		reference:   custody.RecoveryReference(),
+		binding:     sess.ExternalBinding,
+	}
+}
+
+func (s *Service) discardBrokerRecoveryAttempts(id session.SessionID) {
+	s.brokerRecoveryMu.Lock()
+	defer s.brokerRecoveryMu.Unlock()
+	for key := range s.brokerRecovery {
+		if key.sessionID == id {
+			delete(s.brokerRecovery, key)
+		}
+	}
+}
+
+// releaseRetiredBrokerClient closes a replaced client only after every cached
+// attachment using its generation has been retired. Replacement never closes a
+// client below a live attachment.
+func (s *Service) releaseRetiredBrokerClient(generation uint64) {
+	s.mu.Lock()
+	for _, attachedGeneration := range s.brokerAttachmentGeneration {
+		if attachedGeneration == generation {
+			s.mu.Unlock()
+			return
+		}
+	}
+	s.mu.Unlock()
+
+	s.brokerReplacementMu.Lock()
+	closeClient := s.brokerRetiredCloses[generation]
+	delete(s.brokerRetiredCloses, generation)
+	s.brokerReplacementMu.Unlock()
+	if closeClient != nil {
+		_ = closeClient()
+	}
 }
 
 func brokerTools(local *localBrokerAttachment) []tool.Tool {
@@ -118,6 +166,13 @@ func (s *Service) openBrokerAttachment(ctx context.Context, id session.SessionID
 			// create state here: report the mismatch so callers take their
 			// explicit rebind (legacy) or fail-closed (custody) path.
 			return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, brokercontract.ErrStateUnavailable, ErrBrokerBindingMismatch, id)
+		}
+		if err != nil && errors.Is(err, brokercontract.ErrBrokerIncarnationLost) {
+			// A different broker instance is also a binding mismatch: live controls
+			// must see a hard precondition failure, not a soft interruption
+			// (brokerStateLost). Instance loss stays wrapped so recovery and
+			// rebind callers still recognise it.
+			return nil, fmt.Errorf("%w: %w: %w for session %q", ErrFailedPrecondition, ErrBrokerBindingMismatch, err, id)
 		}
 	} else {
 		attachment, outcome, err = broker.AttachSession(ctx, id)
