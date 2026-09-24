@@ -153,6 +153,26 @@ describe("appearance state", () => {
     expect(reloaded.getSnapshot().effectiveTheme).toBe("dark");
   });
 
+  it("keeps a new choice when stored values are readable but writes fail", () => {
+    const env = browser({ "mecatl-studio-theme": "light", "mecatl-studio.palette": "aztec" });
+    env.storage.setItem.mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    const store = createAppearanceStore();
+    store.initialize();
+    expect(store.getSnapshot()).toMatchObject({ theme: "light", palette: "aztec" });
+
+    store.setTheme("dark");
+    store.setPalette("solar");
+    env.emitStorage("unrelated-key");
+    expect(store.getSnapshot()).toMatchObject({ theme: "dark", palette: "solar" });
+    expect(env.entries.get("mecatl-studio-theme")).toBe("light");
+    expect(env.entries.get("mecatl-studio.palette")).toBe("aztec");
+
+    const reloaded = createAppearanceStore();
+    expect(reloaded.getSnapshot()).toMatchObject({ theme: "light", palette: "aztec" });
+  });
+
   it("suppresses color transitions while appearance changes", () => {
     const env = browser();
     const store = createAppearanceStore();

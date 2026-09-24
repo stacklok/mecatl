@@ -288,14 +288,14 @@ export function SideThreadPanel({
         </div>
 
         {run.error && (
-          <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <div className="mx-4 mb-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-foreground">
             <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
             {run.error}
           </div>
         )}
 
         {run.notice && (
-          <div className="mx-4 mb-3 rounded-lg bg-success/10 px-3 py-2 text-sm text-success">
+          <div className="mx-4 mb-3 rounded-lg bg-success/10 px-3 py-2 text-sm text-foreground">
             {run.notice}
           </div>
         )}

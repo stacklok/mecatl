@@ -176,7 +176,7 @@ function LearnedSkills({
   return (
     <>
       {error && (
-        <p className="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+        <p className="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
       )}
       {!query.data.complete && (
         <p className="mb-3 text-xs text-warning">Showing the first 100 learned skills.</p>

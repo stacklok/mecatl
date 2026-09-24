@@ -317,9 +317,7 @@ export function ScheduleForm({
           </div>
 
           {error && (
-            <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
-              {error}
-            </p>
+            <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
           )}
           <DialogFooter className="mt-5">
             <Button onClick={onCancel} type="button" variant="outline">

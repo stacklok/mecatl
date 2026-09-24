@@ -1483,7 +1483,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         )}
 
         {error && (
-          <div className="mx-auto mb-3 flex w-[calc(100%-2rem)] max-w-3xl items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <div className="mx-auto mb-3 flex w-[calc(100%-2rem)] max-w-3xl items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-foreground">
             <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
             {error}
             {watchable && !isRunning && (
@@ -1502,7 +1502,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           </div>
         )}
         {notice && (
-          <div className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg bg-success/10 px-3 py-2 text-sm text-success">
+          <div className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg bg-success/10 px-3 py-2 text-sm text-foreground">
             {notice}
           </div>
         )}

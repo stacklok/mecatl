@@ -172,7 +172,7 @@ export function LearnedSkillDetail({ skillId }: { skillId: string }) {
         </div>
 
         {mutation.isError && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">
             {errorMessage(mutation.error)} Refresh the skill and review its current revision before
             trying again.
           </p>
@@ -412,8 +412,8 @@ function diffRowMarker(kind: DiffRowKind) {
 }
 
 function diffRowClass(kind: DiffRowKind) {
-  if (kind === "addition") return "bg-success/10 text-success";
-  if (kind === "deletion") return "bg-destructive/10 text-destructive";
+  if (kind === "addition") return "bg-success/10 text-foreground";
+  if (kind === "deletion") return "bg-destructive/10 text-foreground";
   if (kind === "metadata") return "text-muted-foreground";
   return "";
 }

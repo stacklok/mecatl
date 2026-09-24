@@ -106,7 +106,9 @@ export function MemoryConsolidation() {
           Mecatl is reviewing memory; this may take a minute.
         </p>
       )}
-      {notice && <p className="mt-4 rounded-lg bg-warning/10 p-3 text-sm text-warning">{notice}</p>}
+      {notice && (
+        <p className="mt-4 rounded-lg bg-warning/10 p-3 text-sm text-foreground">{notice}</p>
+      )}
       {error && !notice && <p className="mt-4 text-sm text-destructive">{errorMessage(error)}</p>}
 
       {plan && plan.operations.length === 0 && (

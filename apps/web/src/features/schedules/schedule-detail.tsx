@@ -153,7 +153,7 @@ export function ScheduleDetail({ scheduleName }: { scheduleName: string }) {
         </div>
 
         {error && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
         )}
 
         <div className="mt-8 grid gap-5 sm:grid-cols-2">

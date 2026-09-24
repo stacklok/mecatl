@@ -129,7 +129,7 @@ export function SchedulesWorkspace({ scheduleName }: { scheduleName?: string }) 
         </div>
 
         {error && (
-          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>
+          <p className="mt-5 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">{error}</p>
         )}
 
         {schedules.isPending ? (

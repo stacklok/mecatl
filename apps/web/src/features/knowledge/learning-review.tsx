@@ -166,7 +166,7 @@ export function LearningReview() {
           <p className="mt-4 rounded-lg bg-info/10 p-3 text-sm text-foreground">{notice}</p>
         )}
         {(decide.isError || undo.isError) && (
-          <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+          <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-foreground">
             {errorMessage(decide.error ?? undo.error)}
           </p>
         )}
