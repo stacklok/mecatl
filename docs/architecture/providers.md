@@ -395,11 +395,36 @@ the provider id.)
 
 **Model inventory.** `internal/app/provider_discovery.go` (`providerDiscovery`)
 is the Build-owned listing and publication owner. It borrows the registry's frozen
-provider-to-lister set; registry membership, credentials, and default selection
-remain separate responsibilities. Bootstrap, one-shot startup, ListModels, and
-Service context admission all request or join provider-local attempts through
-`request`. Protocol wrappers in `internal/app/modellister.go` translate responses
-but do not coordinate refresh or publish metadata.
+provider-to-lister set; registry membership, credentials, adapter construction, and
+default selection remain separate responsibilities. Bootstrap, one-shot startup,
+ListModels, and Service context admission all request or join provider-local attempts
+through `request`. Protocol wrappers in `internal/app/modellister.go` translate
+responses but do not coordinate refresh or publish metadata.
+
+### Discovery ownership in local and replicated deployments
+
+Each `app.Build` owns one discovery domain. In the usual deployment that is one server
+or pod. Embedded mecatui uses its embedded server's owner, and connected clients share
+the owner of the server they connect to. Every mecak8s replica has an independent owner,
+even when Redis shares durable sessions, events, and schedules. A registry owns provider
+credentials, adapters, and defaults; discovery owns attempts, evidence, and publication;
+the Service owns execution-target resolution and admission; and `Built.Close` owns
+cancellation and cleanup of discovery work.
+
+Bootstrap, startup warming, ListModels, and admission use that same owner. Startup
+warming is useful but is not a safety prerequisite, except for the existing ToolHive and
+Codex bootstrap requirements. A native demand-only provider obtains evidence on its first
+unknown-window prompt, and a cold replacement Build obtains its own evidence. The rules
+apply to the same selected target and its evidence, not to simultaneous agreement between
+replicas. A warm replica can retain positive evidence during an outage while a cold
+replica rejects; each Build has its own listing traffic and cooldowns.
+
+Service acquisition of an existing session lease precedes admission and remains held when
+admission rejects. A lease conflict stops the request before discovery, and deployments do
+not provide owner routing or transparent takeover. Mecak8s readiness describes drain and
+storage readiness, not model admissibility or inference health. Schedule validation reads
+local inventory without listing; the replica that fires a schedule performs its own Service
+admission. Scheduler leadership does not make discovery global.
 
 The owner projects public model metadata only—ID, provider ID, display name,
 image/reasoning flags, and context limit, never a key, environment value, or base
@@ -456,9 +481,9 @@ registry-owned default healing, capture of default provider/model/auto-selected 
 projection, and commit. Healing and reminting use candidate capabilities outside the
 short publication lock. `internal/app/provider_discovery_projection.go` projects from
 that candidate and captured defaults. The owner atomically publishes observations,
-outcomes, and model/status rows before waking waiters; timeout and Close serialize
-with the same tail. Lister entries are cloned on acceptance, and
-`CurrentModelSnapshot` returns detached protobuf messages and slices.
+outcomes, and model/status rows and notifies waiters before delivering synchronous
+diagnostics outside the completion tail. Timeout and Close serialize with that tail. Lister entries are cloned
+on acceptance, and `CurrentModelSnapshot` returns detached protobuf messages and slices.
 
 `internal/adapter/server/service.go` (`ListModelSnapshot`) refreshes once and captures
 one combined read-only `ModelSnapshot` for either HTTP or gRPC. The models-only
@@ -469,11 +494,14 @@ including an injected manager. Only standalone Services without an inventory rea
 use the `SetModels`/`SetProviderStatus` fallback; neither setter can write a wired
 Build's inventory.
 
+Entering drain stops or cancels run admissions but leaves discovery lifecycle intact.
 On Build failure and normal `Built.Close`, the owner prohibits new work, cancels
 attempts, and joins fetch/startup workers and deadline callbacks before borrowed
-credential resources close. Bounded physical shutdown requires listers to honor
-cancellation. Attempts, cooldowns, and observations reset at the next Build. See the
-[resource and fidelity inventory](../adr/0027-cloud-native.md) and
+credential resources close. Physical shutdown requires listers to honor cancellation
+and synchronous diagnostics delivery to return: Close joins the worker delivering those
+records even though admission waiters have already been notified. Attempt/admission deadlines
+do not bound a blocked collaborator's cleanup. Attempts, cooldowns, and observations reset at the
+next Build. See the [resource and fidelity inventory](../adr/0027-cloud-native.md) and
 [context admission boundary](context-and-compaction.md).
 
 **Capability intersection (`internal/app/capability.go`).** `modelCapability` combines

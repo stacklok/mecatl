@@ -25,7 +25,11 @@ provider/model from one immutable discovery snapshot. If blocked, it requests on
 that provider through the [discovery owner](providers.md) and resolves again, within
 a ten-second caller wait. An unattempted native authenticated provider starts on this
 first demand; concurrent callers join, and failed/empty attempts retry on the next
-eligible demand after the provider-local ten-second cooldown.
+eligible demand after the provider-local ten-second cooldown. The gate uses the same
+Build-local owner as bootstrap, startup warming, and ListModels. It admits only after
+the Service has acquired session ownership; a lease conflict reaches no discovery, and
+a rejected holder retains its lease. Replica-local evidence can therefore differ during
+an outage. See [discovery ownership in local and replicated deployments](providers.md#discovery-ownership-in-local-and-replicated-deployments).
 
 Resolution follows this precedence:
 
@@ -52,15 +56,16 @@ terminal-state reopening/history repair and session-lifetime lease retention sti
 apply. Cancellation ends the caller's wait, not the owner's fetch. Another request
 can recover after cooldown without opening the picker. The before-execution boundary
 is recorded in [ADR 0342](../adr/0342-context-window-admission.md); provider-local
-ownership and policy are described in [ADR 0357](../adr/0357-provider-scoped-model-discovery.md).
+ownership and policy are described in [ADR 0358](../adr/0358-provider-scoped-model-discovery.md).
 
 The engine resolver always returns a positive scalar, using 128000 defensively.
 The server echo resolver returns 0 when admission is blocked; a wired zero replaces
 even a positive seeded default, while a nil resolver leaves the supplied value intact.
 A policy-admitted unknown window echoes 128000. These are resolve-at-use reads, not
-metadata-generation pins. Direct child, utility, and team engine entry bypass this
-Service gate: a known-window parent can run while an unknown child override uses
-the defensive floor. Session capabilities and effort remain construction-time values.
+metadata-generation pins. Admission for direct child, utility, and team engine entry
+is deferred: a known-window parent can run while an unknown child override uses the
+defensive floor. Capability and effort generation reconciliation is also deferred;
+session capabilities and effort remain construction-time values.
 
 Mecatui recognizes the exact typed pre-SessionInit rejection through
 `cmd/mecatui/client/admission.go` (`IsContextWindowUnavailable`). It preserves the

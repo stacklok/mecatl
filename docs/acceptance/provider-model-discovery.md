@@ -4,7 +4,7 @@
 **Work classification:** Architectural — establishes one publication owner and provider-local readiness, retry, and freshness rules across composition, run admission, and inventory projections.
 **Decision record:** [ADR 0362](../adr/0362-provider-scoped-model-discovery.md)
 **Phase:** Discovery ownership and context-safe run admission
-**Status:** proposed, 2026-09-24. The six recorded policies remain resolved; deployment clarifications and additional verification await plan review. The plan PR remains unmerged.
+**Status:** landed, 2026-09-24. Proposed implementation-candidate transition after the amended 26-AC verification, aggregate gates, and amendment panel review; authoritative only when the Implementation PR merges. Plan PR #1805 remains unmerged under the directing human's pre-merge draft-stack exception and explicit amendment-continuation instruction.
 **Delivery:** Split. Review the discovery and admission contract before implementation.
 **Expected tasks:** deferred to orchestration
 **Related PR:** [PR 1800](https://github.com/stacklok/mecatl/pull/1800), the domain-model prerequisite.
