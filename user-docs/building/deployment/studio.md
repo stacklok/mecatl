@@ -82,8 +82,8 @@ from your app list; it opens Chats at `/workspace/chat`.
 
 The installed window loads Studio from its origin and needs a connection to the
 BFF and Mecatl deployment for agent actions. A loaded window reports an
-unavailable connection if that link drops. A fully offline launch follows the
-browser's default failure page because Studio does not provide an offline
+unavailable connection if that link drops. For a fully offline launch, the
+browser handles the missing connection; Studio does not provide an offline
 starting page.
 
 ## Try it locally with Compose
