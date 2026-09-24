@@ -902,6 +902,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if m.restoreRefusedApproval(msg.Err) {
+			return m, nil, true
+		}
 		if m.phase == phaseAuthorizing && m.authorization.authorizationID != "" && client.IsMCPAuthorizationPending(msg.Err) {
 			// The parked authorization remains authoritative. The original Converse
 			// stream is done, but its card and automatic polling remain active.
@@ -1036,6 +1039,29 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.palette.commands = msg.Commands
 		mm, cmd := m.syncPalette()
 		return mm, cmd, true
+	case client.GuardrailCoverageMsg:
+		if !guardrailCoverageCurrent(msg, m.sessionID, m.guardrailStatusRequest) {
+			return m, nil, true
+		}
+		if msg.Posture {
+			checker := "checker unknown (status unavailable; do not infer off or healthy)"
+			if msg.Err == nil {
+				checker = guardrailPostureSummary(msg.Coverage)
+			}
+			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture) + "; " + checker)
+		} else if msg.Err != nil {
+			m.conv.addNotice("Guardrails status unavailable; checker state is unknown, not off or healthy.")
+		} else {
+			m.conv.addNotice(guardrailCoverageNotice(msg.Coverage))
+		}
+		m.refreshView()
+		return m, nil, true
+	case client.GuardrailReviewDetailMsg:
+		if msg.Err == nil {
+			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
+			m.refreshView()
+		}
+		return m, nil, true
 	case client.ResolvedModelMsg:
 		return m.onResolvedModelMsg(msg)
 	default:
@@ -1146,7 +1172,14 @@ func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
 // updateStreamEvent reduces the per-event stream msgs into the conversation. It
 // is the back half of Update, split out so the cyclomatic complexity of each
 // stays manageable. Unknown msgs are a no-op.
+//
+//nolint:gocyclo // the explicit event reducer preserves refusal-before-settlement ordering.
 func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if refused, ok := msg.(client.ControlRefusedMsg); ok {
+		(&m).restoreControlRefused(refused)
+		return m, nil
+	}
+	m.settleApprovalOnEvent(msg)
 	switch msg := msg.(type) {
 	case client.SessionInitMsg:
 		m.admissionSubmission = nil
@@ -1237,8 +1270,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case client.PermissionAskMsg:
 		return m.applyPermissionAsk(msg)
 	case client.HookMsg:
-		m.conv.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
-		return m.afterEvent()
+		return m.applyHookMsg(msg)
 	case client.DeliveryNoteMsg:
 		return m.applyDeliveryNote(msg)
 	case client.ResultMsg:
@@ -1252,6 +1284,16 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// be added there, not here. Unknown msgs are a no-op.
 		return m.updateStreamSecondary(msg)
 	}
+}
+
+func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
+	m.conv.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+	model, cmd := m.afterEvent()
+	if msg.Guardrail == nil || m.deps.Guardrails == nil {
+		return model, cmd
+	}
+	detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID)
+	return model, tea.Batch(cmd, detailCmd)
 }
 
 // applyDeliveryNote reduces a DeliveryNoteMsg, extracted from updateStreamEvent

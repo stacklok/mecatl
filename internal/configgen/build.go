@@ -140,11 +140,12 @@ func guardrailsSubtree(docs Docs) *Subtree {
 	for _, f := range fields {
 		switch f.Key {
 		case "model":
-			f.EnableNote = "Setting a model here ENABLES guardrails (the guardrails-parity " +
-				"enable model). A configured model with no rules runs the default BLOCK set " +
-				"(WebSearch/WebFetch/mcp__*/Shell, enforcing; downgrade via defaultMode: advisory). " +
+			f.EnableNote = "Setting a model here ENABLES contextual guardrails. " +
+				"A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. " +
 				"Leave empty (and pass no --guardrails-model) to keep guardrails OFF."
 			f.ExampleValue = "claude-haiku-4-6"
+		case "taskWindow":
+			f.Default, f.ExampleValue = "1", "1"
 		case "rules":
 			f.Nested = fieldsOf("GuardrailRuleSpec", permconfig.GuardrailRuleSpec{}, docs)
 		}

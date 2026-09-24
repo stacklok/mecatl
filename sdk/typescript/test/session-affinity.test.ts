@@ -67,7 +67,7 @@ describe("high-level session affinity", () => {
           await input.next();
           yield {
             event: {
-              ask: { askId: "ask", tool: "Shell" },
+              ask: { args: "{}", askId: "ask", reason: "test", tool: "Shell" },
               runId: "different-run-id",
               type: "permission.ask",
             },
@@ -172,7 +172,7 @@ describe("high-level session affinity", () => {
                 promptController = controller;
                 controller.enqueue(
                   encoder.encode(
-                    `data: ${JSON.stringify({ ask: { ask_id: "ask", tool: "Shell" }, run_id: "different-http-run-id", type: "permission.ask" })}\n\n`,
+                    `data: ${JSON.stringify({ ask: { args: "{}", ask_id: "ask", reason: "test", tool: "Shell" }, run_id: "different-http-run-id", type: "permission.ask" })}\n\n`,
                   ),
                 );
               },

@@ -29,7 +29,7 @@ type countObserver struct{ calls atomic.Int64 }
 
 func drainRunToLearningLog(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID, run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) string {
 	t.Helper()
 	recorder := server.NewRunEventRecorder(ctx, svc, id)

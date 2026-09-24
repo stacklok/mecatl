@@ -172,6 +172,8 @@ type messageDTO struct {
 	// snapshot with no "parts" key decodes to nil Parts — a text-only message,
 	// exactly correct; the field is purely additive and needs no version bump.
 	Parts []contentDTO `json:"parts,omitempty"`
+	// UserPromptProvenance is additive; absent legacy snapshots remain unknown.
+	UserPromptProvenance session.UserPromptProvenance `json:"user_prompt_provenance,omitempty"`
 }
 
 // contentDTO mirrors session.Content with JSON tags. Data []byte marshals as
@@ -609,27 +611,29 @@ func validateAuthorityWireClaim(raw json.RawMessage) error {
 
 func toDTO(m session.Message) messageDTO {
 	return messageDTO{
-		Role:            m.Role,
-		Text:            m.Text,
-		ToolCalls:       m.ToolCalls,
-		ToolResult:      m.ToolResult,
-		Reasoning:       m.Reasoning,
-		ProviderPhase:   m.ProviderPhase,
-		ReasoningItemID: m.ReasoningItemID,
-		Parts:           contentToDTO(m.Parts),
+		Role:                 m.Role,
+		Text:                 m.Text,
+		ToolCalls:            m.ToolCalls,
+		ToolResult:           m.ToolResult,
+		Reasoning:            m.Reasoning,
+		ProviderPhase:        m.ProviderPhase,
+		ReasoningItemID:      m.ReasoningItemID,
+		Parts:                contentToDTO(m.Parts),
+		UserPromptProvenance: m.UserPromptProvenance,
 	}
 }
 
 func fromDTO(dto messageDTO) session.Message {
 	return session.Message{
-		Role:            dto.Role,
-		Text:            dto.Text,
-		ToolCalls:       dto.ToolCalls,
-		ToolResult:      dto.ToolResult,
-		Reasoning:       dto.Reasoning,
-		ProviderPhase:   dto.ProviderPhase,
-		ReasoningItemID: dto.ReasoningItemID,
-		Parts:           contentFromDTO(dto.Parts),
+		Role:                 dto.Role,
+		Text:                 dto.Text,
+		ToolCalls:            dto.ToolCalls,
+		ToolResult:           dto.ToolResult,
+		Reasoning:            dto.Reasoning,
+		ProviderPhase:        dto.ProviderPhase,
+		ReasoningItemID:      dto.ReasoningItemID,
+		Parts:                contentFromDTO(dto.Parts),
+		UserPromptProvenance: dto.UserPromptProvenance,
 	}
 }
 

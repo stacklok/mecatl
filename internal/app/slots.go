@@ -279,12 +279,26 @@ func foldOperatorModelSlots(cfg Config) Config {
 				continue
 			}
 			if _, cliSet := cfg.ModelSlots[k]; cliSet {
-				continue // CLI --model-slot wins.
+				continue // CLI --model-slot wins, including over an object.
 			}
-			cfg.ModelSlots[k] = strings.TrimSpace(v)
+			if v.ExplicitProvider {
+				cfg.GuardrailSlot = &ModelTargetSelector{ProviderID: strings.TrimSpace(v.Provider), Model: strings.TrimSpace(v.Model)}
+				continue
+			}
+			cfg.ModelSlots[k] = strings.TrimSpace(v.Model)
 		}
 	}
 	return cfg
+}
+
+func scalarModelSlots(slots permconfig.ModelSlots) map[string]string {
+	out := make(map[string]string, len(slots))
+	for name, value := range slots {
+		if !value.ExplicitProvider {
+			out[name] = value.Model
+		}
+	}
+	return out
 }
 
 // cliModelKeys is the snapshot of which model bindings the OPERATOR set on the CLI
@@ -521,7 +535,7 @@ func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
 	cfg.ModelAliases = capMergeProjectBindings(cfg, "aliases", proj.Aliases, cfg.ModelAliases, cliKeys.aliases, allowed, false)
 	// slots: re-bind each slot key within the cap (CLI --model-slot key wins; the slot
 	// NAME is validated against knownSlotNames, the slot VALUE is capped resolve-then-check).
-	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", proj.Slots, cfg.ModelSlots, cliKeys.slots, allowed, true)
+	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", scalarModelSlots(proj.Slots), cfg.ModelSlots, cliKeys.slots, allowed, true)
 	return cfg
 }
 

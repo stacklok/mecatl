@@ -149,6 +149,7 @@ type catalogAssets struct {
 	rootCatalog              *tool.Catalog
 	modelInventory           server.ModelInventory
 	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
+	guardrailGrants          interface{ ClearSession(string) }
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the

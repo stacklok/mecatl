@@ -20,6 +20,20 @@ const (
 	RoleTool Role = "tool"
 )
 
+// UserPromptProvenance identifies explicit authority provenance for a user-role message.
+type UserPromptProvenance string
+
+const (
+	// UserPromptProvenanceUnknown is the fail-closed zero value used by legacy
+	// snapshots and callers that record an ordinary user-role message.
+	UserPromptProvenanceUnknown UserPromptProvenance = ""
+	// UserPromptProvenancePrincipal marks input authenticated by the root run's
+	// prompt or accepted-steer ingress.
+	UserPromptProvenancePrincipal UserPromptProvenance = "principal"
+	// UserPromptProvenanceHarness marks a harness-authored continuation.
+	UserPromptProvenanceHarness UserPromptProvenance = "harness"
+)
+
 // Message is an immutable value object: one entry in the model-visible
 // conversation history. Construct it with one of the constructors below; it
 // carries no mutating methods.
@@ -71,6 +85,9 @@ type Message struct {
 	// URL-referenced media that rides alongside the text. Do not mutate Parts (or a
 	// Part's Data) after construction.
 	Parts []Content
+	// UserPromptProvenance is explicit positive/non-principal provenance for a
+	// user-role message. Unknown is deliberately not treated as principal authority.
+	UserPromptProvenance UserPromptProvenance
 }
 
 // NewUserMessage constructs a user-role message.

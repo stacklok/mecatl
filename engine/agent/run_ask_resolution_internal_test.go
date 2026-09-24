@@ -16,7 +16,7 @@ import (
 func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	t.Run("root ordinary resolution is atomic", func(t *testing.T) {
 		run := &Run{asks: newAskRegistry()}
-		verdicts := run.asks.registerPending(session.PendingAsk{AskID: "root-ordinary"})
+		verdicts := run.asks.registerAsk(session.PendingAsk{AskID: "root-ordinary", Origin: session.ApprovalOriginPermission})
 
 		const callers = 32
 		assertOneResolution(t, resolveConcurrently(run, "root-ordinary", session.VerdictAllowAlways, callers), callers)
@@ -27,7 +27,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 
 	t.Run("root plan ask stays pending for Approve", func(t *testing.T) {
 		run := &Run{asks: newAskRegistry()}
-		verdicts := run.asks.registerPending(session.PendingAsk{AskID: "root-plan", PlanOriginated: true})
+		verdicts := run.asks.registerAsk(session.PendingAsk{AskID: "root-plan", Origin: session.ApprovalOriginPlan})
 
 		for i := 0; i < 2; i++ {
 			if got := run.ResolveOrdinaryAsk("root-plan", session.VerdictAllowOnce); got != AskResolutionPlanOriginated {
@@ -49,7 +49,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	t.Run("surfaced child ordinary ask resolves exactly once", func(t *testing.T) {
 		parent := &Run{asks: newAskRegistry(), childAsks: newChildAskRouter()}
 		child := &Run{asks: newAskRegistry()}
-		verdicts := child.asks.registerPending(session.PendingAsk{AskID: "child-ordinary"})
+		verdicts := child.asks.registerAsk(session.PendingAsk{AskID: "child-ordinary", Origin: session.ApprovalOriginPermission})
 		parent.childAsks.registerChild("child-ordinary", child)
 
 		const callers = 32
@@ -62,7 +62,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	t.Run("surfaced child plan ask and route stay pending for Approve", func(t *testing.T) {
 		parent := &Run{asks: newAskRegistry(), childAsks: newChildAskRouter()}
 		child := &Run{asks: newAskRegistry()}
-		verdicts := child.asks.registerPending(session.PendingAsk{AskID: "child-plan", PlanOriginated: true})
+		verdicts := child.asks.registerAsk(session.PendingAsk{AskID: "child-plan", Origin: session.ApprovalOriginPlan})
 		parent.childAsks.registerChild("child-plan", child)
 
 		for i := 0; i < 2; i++ {
@@ -88,7 +88,7 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 			t.Fatalf("unknown outcome = %v, want %v", got, AskResolutionNotPending)
 		}
 
-		verdicts := run.asks.registerPending(session.PendingAsk{AskID: "late"})
+		verdicts := run.asks.registerAsk(session.PendingAsk{AskID: "late", Origin: session.ApprovalOriginPermission})
 		if got := run.ResolveOrdinaryAsk("late", session.VerdictAllowOnce); got != AskResolutionResolved {
 			t.Fatalf("later registered ask outcome = %v, want %v", got, AskResolutionResolved)
 		}

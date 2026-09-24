@@ -62,6 +62,9 @@ service HarnessService {
   // GetSession returns a snapshot of an existing session.
   rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
 
+  rpc ListGuardrailCoverage(ListGuardrailCoverageRequest) returns (ListGuardrailCoverageResponse);
+  rpc GetGuardrailReviewDetail(GetGuardrailReviewDetailRequest) returns (GetGuardrailReviewDetailResponse);
+
   // GetSessionTranscript returns the authoritative, snapshot-derived human
   // transcript for one owned session. It is read-only and does not use EventLog.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
@@ -1558,6 +1561,12 @@ message ResumeApproval {
   // is current. Existing clients are unaffected; a client that knows the run id
   // it is acting on should always send it.
   string expected_run_id = 4;
+  // review_id and guardrail_kind acknowledge the purpose shown by a contextual
+  // guardrail prompt. They are mandatory and must exactly echo
+  // PermissionAsk.guardrail for EVERY guardrail-scoped ask (both ACTION and
+  // RESULT_RELEASE). They are absent only for ordinary permission asks.
+  string review_id = 5;
+  GuardrailApprovalKind guardrail_kind = 6;
 }
 
 // ApprovalVerdict is the client's three-way resolution of a permission.ask,
@@ -1711,6 +1720,11 @@ message ResolveRunAskRequest {
   string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
   string ask_id = 3 [(buf.validate.field).string.min_len = 1];
   ApprovalVerdict verdict = 4 [(buf.validate.field).enum = {in: [1, 2, 3]}];
+  // review_id and guardrail_kind acknowledge the purpose shown by a contextual
+  // guardrail prompt. Both are required for scoped action/result-release asks and
+  // omitted together for ordinary permission asks.
+  string review_id = 5;
+  GuardrailApprovalKind guardrail_kind = 6;
 }
 
 // ResolveRunAskResponse acknowledges only the accepted run/ask correlation.
@@ -1938,6 +1952,17 @@ message Event {
   // events. It is safe durable correlation only; the live presentation URL and
   // private continuation state never enter this payload.
   Authorization authorization = 24;
+  // control_refused is set on control.refused events. It identifies the exact
+  // approval ask whose submitted control was rejected and carries only a stable
+  // machine category; raw arguments and refusal rationale never enter it.
+  ControlRefused control_refused = 25;
+}
+
+// ControlRefused is the metadata-only acknowledgement for a rejected in-stream
+// approval control. Message text remains a sanitized human diagnostic on Event.text.
+message ControlRefused {
+  string ask_id = 1;
+  string category = 2;
 }
 
 // ModelRetry identifies the failed-step retry intent being driven.
@@ -1980,6 +2005,97 @@ message SteerAck {
   string message_id = 4;
 }
 
+enum GuardrailJob {
+  GUARDRAIL_JOB_UNSPECIFIED = 0;
+  GUARDRAIL_JOB_ACTION = 1;
+  GUARDRAIL_JOB_INBOUND = 2;
+  GUARDRAIL_JOB_PERMISSION = 3;
+}
+
+enum GuardrailAssessment {
+  GUARDRAIL_ASSESSMENT_UNSPECIFIED = 0;
+  GUARDRAIL_ASSESSMENT_ACCEPTABLE = 1;
+  GUARDRAIL_ASSESSMENT_PROHIBITED = 2;
+  GUARDRAIL_ASSESSMENT_UNRESOLVED = 3;
+}
+
+enum GuardrailInspection {
+  GUARDRAIL_INSPECTION_UNSPECIFIED = 0;
+  GUARDRAIL_INSPECTION_COMPLETE = 1;
+  GUARDRAIL_INSPECTION_OPERATIONAL_FAILURE = 2;
+}
+
+enum GuardrailDisposition {
+  GUARDRAIL_DISPOSITION_UNSPECIFIED = 0;
+  GUARDRAIL_DISPOSITION_EXECUTE = 1;
+  GUARDRAIL_DISPOSITION_ASK_ACTION = 2;
+  GUARDRAIL_DISPOSITION_WITHHOLD_RESULT = 3;
+  GUARDRAIL_DISPOSITION_RELEASE_RESULT = 4;
+  GUARDRAIL_DISPOSITION_DENY = 5;
+  GUARDRAIL_DISPOSITION_PASS_ADVISORY = 6;
+  GUARDRAIL_DISPOSITION_CONTINUE_WARNING = 7;
+}
+
+enum GuardrailApprovalKind {
+  GUARDRAIL_APPROVAL_KIND_UNSPECIFIED = 0;
+  GUARDRAIL_APPROVAL_KIND_ACTION = 1;
+  GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE = 2;
+}
+
+message GuardrailRef {
+  string ref = 1;
+  string category = 2;
+}
+
+message GuardrailReview {
+  string review_id = 1;
+  GuardrailJob job = 2;
+  GuardrailAssessment assessment = 3;
+  GuardrailInspection inspection = 4;
+  GuardrailDisposition disposition = 5;
+  string reason_code = 6;
+  string rule_id = 7;
+  string rule_origin = 8;
+  string checker_provider_id = 9;
+  string checker_model_id = 10;
+  repeated GuardrailRef concerns = 11;
+  repeated GuardrailRef sources = 12;
+}
+
+message GuardrailApprovalScope {
+  string review_id = 1;
+  GuardrailApprovalKind kind = 2;
+  string grant_digest = 3;
+  bool session_only = 4;
+  bool repeat_available = 5;
+  reserved 6;
+}
+
+message ListGuardrailCoverageRequest { string session_id = 1; }
+message GuardrailCoverageEntry {
+  string tool = 1;
+  string phase = 2;
+  GuardrailJob job = 3;
+  string mode = 4;
+  string rule_id = 5;
+  string rule_origin = 6;
+  GuardrailInspection inspection = 7;
+  string reason = 8;
+}
+message ListGuardrailCoverageResponse {
+  bool enabled = 1;
+  string checker_provider_id = 2;
+  string checker_model_id = 3;
+  repeated GuardrailCoverageEntry entries = 4;
+}
+message GetGuardrailReviewDetailRequest { string session_id = 1; string review_id = 2; }
+message GetGuardrailReviewDetailResponse {
+  string review_id = 1;
+  string concern = 2;
+  string source_display = 3;
+  string next_action = 4;
+}
+
 // Approval is the proto projection of session.ApprovalPayload (EvApproval):
 // the verdict half of a permission ask. Metadata-only (gauntlet #7): tool NAME +
 // verdict enum + askID + the opaque gated-call id. NEVER raw args. LOG-ONLY on the live Converse wire; surfaced only by the
@@ -1997,6 +2113,8 @@ message Approval {
   string call_id = 4;
   // verdict is the typed resolution of the permission ask.
   ApprovalVerdict verdict = 6;
+  // origin is the explicit approval provenance. Empty/unknown origins fail closed.
+  string origin = 7;
 }
 
 // UserPrompt is the proto projection of session.UserPromptPayload (EvUserPrompt):
@@ -2122,6 +2240,7 @@ message Hook {
   // phases (PreToolUse / PostToolUse); empty otherwise. Lets a client address the
   // hook notice to the originating tool card. Mirrors session.HookPayload.CallID.
   string call_id = 4;
+  GuardrailReview guardrail = 5;
 }
 
 // RoutingDecision is bounded configured-router evidence attached to a delegation
@@ -2526,6 +2645,7 @@ message PermissionAsk {
   string args = 3;
   // reason explains why approval is required.
   string reason = 4;
+  GuardrailApprovalScope guardrail = 5;
 }
 
 // RetryDisposition is the neutral causal retry classification of a failed model

@@ -30,6 +30,49 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Idempotent team-supervisor teardown** — adds `agent.Supervisor.Close`, a concurrent-safe, repeatable lifecycle endpoint that cancels an active run and waits until enrolled members stop and their resources are released exactly once. Event callbacks drain independently: `Close` may be called from a callback, while `Run` still waits for every ordered callback before returning. Member factories and cleanup callbacks must not synchronously re-enter `Close`. `AddMember` after run start or close returns `agent.ErrSupervisorClosed`. Added (minor).
 
+- **Remote contextual-approval intent validation** — adds `agent.Run.ValidateRemoteApprovalIntent` so transport adapters can require an exact review/purpose acknowledgement before releasing a privately held tool result, without consuming the pending ask. Added (minor).
+
+- **Typed child-ask provenance and contextual permission review** — replaces the
+  `PermissionDecision`/`PendingAsk` configured/floored boolean pair with the closed
+  `governance.AskProvenance` value, including the built-in substitution-floor state.
+  Adds `agent.ReviewJobPermission`, `PermissionReviewPolicyProvider`, closed
+  `ReviewFailureCode` values, and `GuardrailReviewFailure`. The built-in worker Shell
+  floor can receive one enforcing permission-specific review without learning or
+  persisting authority. Changed (breaking, pre-v1 minor).
+
+- **Contextual review task provenance and plan receipts** — adds `session.UserPromptProvenance`, `session.Message.UserPromptProvenance`, `session.UserPromptPayload.Provenance`, `session.Session.RecordPrincipalPromptWithParts`, `session.Session.RecordHarnessPrompt`, `agent.Deps.ReviewTaskWindow`, `agent.Deps.PlanApprovals`, `agent.PlanApprovalReceipt`, and the optional `agent.PlanApprovalStore`. Hosts can preserve fail-closed principal provenance and bounded process-local, single-use plan approval evidence without conflating either with permission learning, result release, durable replay, or guardrail repeat grants. Added (minor).
+
+- **Atomic contextual approval resolution** — adds `agent.ApprovalResolution`,
+  `agent.ValidateApprovalResolution`, and `agent.Run.ResolveApproval` so hosts validate
+  the exact pending review purpose and submit its verdict under one registry lock. Changes
+  `Run.Approve` to return an actionable error and restricts it to ordinary/legacy action
+  approvals; result release requires the atomic operation. Stable
+  `ErrApprovalNotPending`, `ErrApprovalIntentMismatch`, `ErrApprovalUnsupported`, and
+  `ErrApprovalGrantIneligible` categories let hosts classify failures with `errors.Is`,
+  while `GuardrailReviewTerminalFailure` documents the fail-closed evidence-failure marker.
+  `ReviewEvidencePreparation`
+  also gains a trusted originating-session `Authorize` callback that evidence preparers
+  must consult before backend metadata or content reads. Changed (breaking, pre-v1 minor).
+
+- **Contextual guardrail foundation** — adds the consumer-local `agent.ToolReviewer`,
+  `ReviewEvidenceSource`, `ReviewEvidencePreparer`, explicit review policy/metadata/grant
+  extension interfaces, and `ReviewDetailSink`, with bounded request, result, evidence,
+  trajectory, preparation, and detail value types. `ReviewDetail.RootSessionID`
+  explicitly binds child detail to its delegation-root lifetime so external sinks do
+  not silently treat a child as a root. Adds `tool.BoundedWorkspaceReader` so
+  evidence-capable workspaces can reject oversized reads before allocation. Adds
+  session-owned machine projections for guardrail reviews and approval scopes, plus explicit
+  `session.ApprovalOrigin` on pending and durable approval records. Adds
+  `tool.LocalFileOperands` so only explicit built-in filesystem semantics can mint
+  local evidence/targets, and `tool.BoundedWorkspaceRangeReader` plus opaque
+  continuation metadata for version-consistent finite evidence paging. Added (minor).
+
+- **Explicit approval origin** — replaces `session.PendingAsk.HookOriginated`,
+  `PlanOriginated`, and the derived `AskOrigin` accessor/type with one serialized
+  `PendingAsk.Origin`. Missing or unrecognized origins now fail closed and cannot
+  execute, learn permission rules, arm hook waivers, or transition plan mode. Changed
+  (breaking, pre-v1 minor).
+
 - **Request-manifest schema-byte evidence** — adds `session.RequestManifestPayload.AdvertisedToolSchemaBytes` and exposes it through the target-bound debugger manifest view. Adds catalog registration-key metadata accessors so manifest enumeration does not refresh live tool specifications. Added (minor).
 
 - **Atomic ordinary permission-ask resolution** — adds `agent.AskResolution`,

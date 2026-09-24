@@ -1316,7 +1316,8 @@ func TestContentFromProtoRejectsMimeKindMismatch(t *testing.T) {
 	}
 }
 
-// TestVerdictFromResumeApproval pins the explicit enum mapping and fail-safe default.
+// TestVerdictFromResumeApproval pins the explicit enum mapping and ensures unknown
+// values remain invalid for shared validation rather than consuming the pending ask.
 func TestVerdictFromResumeApproval(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -1326,8 +1327,9 @@ func TestVerdictFromResumeApproval(t *testing.T) {
 		{"allow always", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS, session.VerdictAllowAlways},
 		{"allow once", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, session.VerdictAllowOnce},
 		{"deny", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY, session.VerdictDeny},
-		{"unspecified fails safe", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, session.VerdictDeny},
-		{"unknown fails safe", mecatlv1.ApprovalVerdict(99), session.VerdictDeny},
+		{"unspecified remains invalid", mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_UNSPECIFIED, invalidTransportApprovalVerdict},
+		{"unknown remains invalid", mecatlv1.ApprovalVerdict(99), invalidTransportApprovalVerdict},
+		{"large unknown cannot truncate to allow", mecatlv1.ApprovalVerdict(257), invalidTransportApprovalVerdict},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1335,6 +1337,17 @@ func TestVerdictFromResumeApproval(t *testing.T) {
 				t.Fatalf("verdictFromResumeApproval(%v) = %v, want %v", tc.verdict, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestApprovalResolutionFromProtoPreservesGuardrailAcknowledgement(t *testing.T) {
+	got := approvalResolutionFromProto(&mecatlv1.ResumeApproval{
+		AskId: "ask-1", ReviewId: "review-1",
+		GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE,
+		Verdict:       mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS,
+	})
+	if got.AskID != "ask-1" || got.ReviewID != "review-1" || got.Kind != session.GuardrailApprovalResultRelease || got.Verdict != session.VerdictAllowAlways {
+		t.Fatalf("approval resolution lost contextual acknowledgement: %+v", got)
 	}
 }
 

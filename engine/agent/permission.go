@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -29,67 +30,52 @@ type approval struct {
 // concurrent use.
 type askRegistry struct {
 	mu      sync.Mutex
-	pending map[string]pendingApproval
-}
-
-// pendingApproval keeps the resolution channel and the one provenance bit the
-// ordinary-ask control must inspect at the same linearization point. Plan asks
-// remain owned by the dedicated plan-resolution choreography.
-type pendingApproval struct {
-	ch             chan approval
-	planOriginated bool
+	pending map[string]chan approval
+	scopes  map[string]session.PendingAsk
 }
 
 // newAskRegistry constructs an empty registry.
 func newAskRegistry() *askRegistry {
-	return &askRegistry{pending: make(map[string]pendingApproval)}
+	return &askRegistry{pending: make(map[string]chan approval), scopes: make(map[string]session.PendingAsk)}
+}
+
+func (r *askRegistry) registerAsk(ask session.PendingAsk) <-chan approval {
+	ch := make(chan approval, 1)
+	r.mu.Lock()
+	r.pending[ask.AskID] = ch
+	r.scopes[ask.AskID] = ask
+	r.mu.Unlock()
+	return ch
 }
 
 // register creates and stores a resolution channel for askID before the loop
 // emits the permission.ask Event, so an Approve that races in immediately after
 // the event is observed cannot be lost. It returns the channel the loop awaits.
 func (r *askRegistry) register(askID string) <-chan approval {
-	return r.registerPending(session.PendingAsk{AskID: askID})
+	return r.registerAsk(session.PendingAsk{AskID: askID, Origin: session.ApprovalOriginPermission})
 }
 
-// registerPending is the provenance-carrying registration path used by the
-// live ask spine. The legacy ID-only helper remains for internal callers that
-// construct an ordinary ask directly.
-func (r *askRegistry) registerPending(ask session.PendingAsk) <-chan approval {
-	ch := make(chan approval, 1)
-	r.mu.Lock()
-	r.pending[ask.AskID] = pendingApproval{ch: ch, planOriginated: ask.PlanOriginated}
-	r.mu.Unlock()
-	return ch
-}
-
-// resolve delivers a verdict for askID if one is pending. It is non-blocking and
-// idempotent: a second resolution (or one for an unknown ask) is dropped. It
-// removes the ask from the registry so a stale Approve cannot resolve a later,
-// distinct ask that happens to reuse an id.
-func (r *askRegistry) resolve(askID string, v session.ApprovalVerdict) {
-	r.resolveWith(askID, approval{verdict: v})
-}
-
-// resolveOrdinary atomically classifies and resolves askID. A plan-originated
-// ask is deliberately left in the registry for the dedicated plan control.
+// resolveOrdinary atomically classifies and resolves askID. Any non-permission
+// ask is deliberately left in the registry for its purpose-specific control.
 func (r *askRegistry) resolveOrdinary(askID string, v session.ApprovalVerdict) AskResolution {
 	r.mu.Lock()
-	pending, ok := r.pending[askID]
+	ch, ok := r.pending[askID]
+	ask := r.scopes[askID]
 	if !ok {
 		r.mu.Unlock()
 		return AskResolutionNotPending
 	}
-	if pending.planOriginated {
+	if ask.Origin != session.ApprovalOriginPermission {
 		r.mu.Unlock()
 		return AskResolutionPlanOriginated
 	}
 	delete(r.pending, askID)
+	delete(r.scopes, askID)
 	r.mu.Unlock()
 
 	// The channel is buffered (cap 1) and this entry was removed while locked,
 	// so exactly one caller can reach this send and it cannot block.
-	pending.ch <- approval{verdict: v}
+	ch <- approval{verdict: v}
 	return AskResolutionResolved
 }
 
@@ -98,18 +84,28 @@ func (r *askRegistry) resolveOrdinary(askID string, v session.ApprovalVerdict) A
 // auto-deny uses it to carry childAutoDenyMessage so the model sees the accurate cause
 // rather than the misleading "denied by user".
 func (r *askRegistry) resolveWith(askID string, a approval) {
+	_ = r.resolveChecked(askID, a, nil)
+}
+
+func (r *askRegistry) resolveChecked(askID string, a approval, check func(session.PendingAsk) error) error {
 	r.mu.Lock()
-	pending, ok := r.pending[askID]
-	if ok {
-		delete(r.pending, askID)
-	}
-	r.mu.Unlock()
+	ch, ok := r.pending[askID]
+	ask := r.scopes[askID]
 	if !ok {
-		return
+		r.mu.Unlock()
+		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", ErrApprovalNotPending)
 	}
-	// ch is buffered (cap 1) and only ever written once per ask, so this never
-	// blocks.
-	pending.ch <- a
+	if check != nil {
+		if err := check(ask); err != nil {
+			r.mu.Unlock()
+			return err
+		}
+	}
+	delete(r.pending, askID)
+	delete(r.scopes, askID)
+	r.mu.Unlock()
+	ch <- a
+	return nil
 }
 
 // discard drops a pending ask without resolving it and reports whether it was
@@ -121,6 +117,7 @@ func (r *askRegistry) discard(askID string) bool {
 	_, ok := r.pending[askID]
 	if ok {
 		delete(r.pending, askID)
+		delete(r.scopes, askID)
 	}
 	r.mu.Unlock()
 	return ok
@@ -161,17 +158,28 @@ func (r *childAskRouter) registerChild(askID string, child *Run) {
 // is itself idempotent and safe on an already-resolved/unknown id, so a verdict that
 // arrives after the child moved on is a harmless no-op.
 func (r *childAskRouter) route(askID string, v session.ApprovalVerdict) bool {
+	owned, _ := r.routeResolution(ApprovalResolution{AskID: askID, Verdict: v})
+	return owned
+}
+
+func (r *childAskRouter) routeResolution(resolution ApprovalResolution) (bool, error) {
 	r.mu.Lock()
-	child, ok := r.byAskID[askID]
+	child, ok := r.byAskID[resolution.AskID]
 	if ok {
-		delete(r.byAskID, askID)
+		delete(r.byAskID, resolution.AskID)
 	}
 	r.mu.Unlock()
 	if !ok {
-		return false
+		return false, nil
 	}
-	child.Approve(askID, v)
-	return true
+	if err := child.ResolveApproval(resolution); err != nil {
+		// A validation failure leaves the child's ask pending, so restore routing.
+		r.mu.Lock()
+		r.byAskID[resolution.AskID] = child
+		r.mu.Unlock()
+		return true, err
+	}
+	return true, nil
 }
 
 // resolveOrdinary resolves one surfaced child ask while holding the route and

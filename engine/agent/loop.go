@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
@@ -171,6 +172,18 @@ type Deps struct {
 	AuthorityEvaluator port.AuthorityEvaluator
 	// Hooks runs the PreToolUse / PostToolUse lifecycle hooks.
 	Hooks port.HookRunner
+	// ToolReviewer performs contextual action and inbound review when configured.
+	ToolReviewer ToolReviewer
+	// ReviewEvidencePreparer mints authority-bound finite evidence inventories for
+	// each contextual review. A nil preparer yields an explicitly incomplete inventory.
+	ReviewEvidencePreparer ReviewEvidencePreparer
+	// ReviewDetails receives bounded live-only human review detail.
+	ReviewDetails ReviewDetailSink
+	// ReviewTaskWindow selects the last K accepted genuine root prompts supplied as
+	// principal task facts. Values are clamped to 1..3; zero defaults to 1.
+	ReviewTaskWindow int
+	// PlanApprovals owns process-local, single-use plan approval receipts.
+	PlanApprovals PlanApprovalStore
 	// Store persists session state (optional; nil disables persistence).
 	Store port.SessionStore
 	// SessionLiveness is the optional lifecycle-exclusion seam for engine-owned
@@ -612,11 +625,11 @@ type Run struct {
 	// resolve the new one (CWE-863). Set once before the run goroutine starts and
 	// only read after, so it needs no synchronisation.
 	serial int64
-	// askDiscriminator is the resolved trailing askID component for this run:
-	// req.AskIDDiscriminator when the host supplied a valid (non-empty,
-	// colon-free) value, else the process-global "r<serial>" fallback. Resolved
-	// once in startRun. See newAskID + RunRequest.AskIDDiscriminator + ADR-0044.
+	// askDiscriminator is the resolved trailing host/run namespace component for asks.
 	askDiscriminator string
+	// askSequence uniquely identifies each approval occurrence within this run. It is
+	// atomic because child/worker event paths may mint asks concurrently.
+	askSequence atomic.Uint64
 	// runID is the host-minted identity stamped onto every event this run emits
 	// (ADR 0249). Read ONLY by emit/emitOrAbort; the loop never branches on it.
 	runID string
@@ -710,6 +723,9 @@ type Run struct {
 	// resumed run before runLoop sees it). Set before the run goroutine reaches
 	// terminateComplete and only read after, so it needs no synchronisation.
 	planApprovedTarget session.PermissionMode
+	// planApprovalReceipt is staged only by a validated positive plan callback and
+	// recorded by terminateComplete after SetMode succeeds.
+	planApprovalReceipt PlanApprovalReceipt
 	// planIterateRequested is the run-scoped flag set when the operator DENIES a
 	// plan-approval ask (issue #206): the run terminates CLEANLY with StopPlanIterate
 	// instead of continuing in-turn (the old behaviour kept the model iterating with
@@ -741,6 +757,11 @@ type Run struct {
 	operatorProfile       []tool.MemoryEntry
 	operatorProfileLoaded bool
 	operatorProfileWarned bool
+	// reviewRoot is the delegation-root contextual trajectory and reviewer binding.
+	// Child runs inherit the same pointer through private RunRequest fields; no
+	// conversation content crosses that seam.
+	reviewRoot     *reviewRoot
+	ownsReviewRoot bool
 	// currentPrompt is the accepted genuine prompt for this run. Completion locates
 	// it in the final history; if compaction removed it, automatic admission gets an
 	// invalid span and fails closed.
@@ -838,11 +859,12 @@ type RunRequest struct {
 	// DERIVE the ask discriminator from it. It must never be branched on, logged,
 	// sent to a provider, or used to reach storage — see ADR 0249's consequences.
 	RunID string
-	// AskIDDiscriminator, when non-empty, REPLACES the trailing process-global
-	// "r<serial>" component of every askID minted this run (see agent.newAskID),
-	// making the askID reconstructable across processes from persisted state. The
-	// askID format is "<sessionID>:<n>:<callID>:<discriminator>". HOST CONTRACT:
-	// the host MUST supply a value that is (a) UNIQUE per run-ATTEMPT and (b)
+	// AskIDDiscriminator, when non-empty, supplies the colon-free HOST namespace
+	// of every askID minted this run. Live issuance appends a per-run `.aN`
+	// occurrence token to the opaque call component, making repeated approvals for
+	// one call distinct while retaining the exact host suffix and four-component
+	// colon grammar. The host value remains reconstructable from persisted state.
+	// The host MUST supply a value that is (a) UNIQUE per run-ATTEMPT and (b)
 	// STABLE across processes for the SAME attempt — this preserves the CWE-863
 	// replay guard the process-global serial provides (the Interrupt/re-mint
 	// scenario documented on newAskID): a stale verdict for a retracted ask must
@@ -861,6 +883,10 @@ type RunRequest struct {
 	// r.req.AskIDDiscriminator, which may be empty or colon-bearing and would
 	// bypass the colon/empty fallback.
 	AskIDDiscriminator string
+	// reviewRoot is engine-owned delegation-root state. It is private so callers
+	// cannot inject reviewer authority or share trajectory across unrelated roots.
+	reviewRoot     *reviewRoot
+	reviewIsolated bool
 }
 
 // extraToolOptions records runtime-owned restrictions for an ExtraTools overlay.
@@ -900,21 +926,127 @@ func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
 func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
 
-// Approve resolves the permission.ask identified by askID with the client's
-// verdict: VerdictDeny refuses the call, VerdictAllowOnce permits this call only,
-// and VerdictAllowAlways permits it AND asks the policy to learn a per-session
-// allow rule for the matching tool+pattern. It is non-blocking and safe to call
-// from another goroutine; an unknown or already-resolved askID is ignored.
-func (r *Run) Approve(askID string, v session.ApprovalVerdict) {
-	// Router-first: a foreign (child-namespaced) askID belongs to a SURFACED subagent
-	// ask — route the verdict to the owning child Run. Because child askIDs are prefixed
-	// by a distinct child session id, they never collide with this run's own asks, so a
-	// router miss (route==false) safely falls through to our own registry. A nil router
-	// (child run / headless) skips straight to the own-registry path.
-	if r.childAsks != nil && r.childAsks.route(askID, v) {
-		return
+// Approval resolution errors are stable categories for hosts. Callers should use
+// errors.Is rather than parse error text.
+var (
+	// ErrApprovalNotPending means the ask is stale, unknown, or already resolved.
+	ErrApprovalNotPending = errors.New("approval is not pending")
+	// ErrApprovalIntentMismatch means the reply does not match the pending ask's identity or scope.
+	ErrApprovalIntentMismatch = errors.New("approval intent does not match pending ask")
+	// ErrApprovalUnsupported means the registered ask has an unsupported origin or guardrail kind.
+	ErrApprovalUnsupported = errors.New("approval kind or origin is unsupported")
+	// ErrApprovalGrantIneligible means the requested verdict is invalid for this approval kind.
+	ErrApprovalGrantIneligible = errors.New("approval grant is ineligible")
+)
+
+// ApprovalResolution atomically identifies and resolves one registered approval.
+// ReviewID and Kind must exactly acknowledge a guardrail-scoped ask; ordinary
+// permission asks leave both empty. VerdictAllowAlways is ineligible for result
+// release, which supports only release-once or deny.
+type ApprovalResolution struct {
+	AskID    string
+	ReviewID string
+	Kind     session.GuardrailApprovalKind
+	Verdict  session.ApprovalVerdict
+}
+
+// ValidateApprovalResolution checks a resolution against the exact pending ask.
+func ValidateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution) error {
+	return validateApprovalResolution(ask, resolution, true)
+}
+
+func validateApprovalResolution(ask session.PendingAsk, resolution ApprovalResolution, requireGuardrailAck bool) error {
+	if !validApprovalVerdict(resolution.Verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, resolution.Verdict)
 	}
-	r.asks.resolve(askID, v)
+	if err := validatePendingApproval(ask); err != nil {
+		return fmt.Errorf("%w: %v", ErrApprovalUnsupported, err)
+	}
+	if ask.AskID != resolution.AskID {
+		return fmt.Errorf("%w: approval ask identity does not match the registered ask", ErrApprovalIntentMismatch)
+	}
+	if ask.Guardrail == nil {
+		if resolution.ReviewID != "" || resolution.Kind != "" {
+			return fmt.Errorf("%w: ordinary permission approval must not claim a guardrail review", ErrApprovalIntentMismatch)
+		}
+		return nil
+	}
+	if ask.Guardrail.Kind == session.GuardrailApprovalResultRelease && resolution.Verdict == session.VerdictAllowAlways {
+		return fmt.Errorf("%w: result release supports only release once or deny", ErrApprovalGrantIneligible)
+	}
+	if requireGuardrailAck || resolution.ReviewID != "" || resolution.Kind != "" {
+		if resolution.ReviewID != ask.Guardrail.ReviewID || resolution.Kind != ask.Guardrail.Kind {
+			return fmt.Errorf("%w: guardrail approval requires the exact review_id and approval kind from the pending ask", ErrApprovalIntentMismatch)
+		}
+	}
+	return nil
+}
+
+func validApprovalVerdict(verdict session.ApprovalVerdict) bool {
+	switch verdict {
+	case session.VerdictDeny, session.VerdictAllowOnce, session.VerdictAllowAlways:
+		return true
+	default:
+		return false
+	}
+}
+
+// ResolveApproval validates purpose, review identity, verdict eligibility, and
+// pending identity while holding the ask registry lock, then submits the verdict
+// exactly once. A failed validation leaves the ask registered and unresolved.
+func (r *Run) ResolveApproval(resolution ApprovalResolution) error {
+	if !validApprovalVerdict(resolution.Verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, resolution.Verdict)
+	}
+	if r == nil || resolution.AskID == "" {
+		return fmt.Errorf("%w: approval requires a non-empty ask id", ErrApprovalNotPending)
+	}
+	if r.childAsks != nil {
+		if owned, err := r.childAsks.routeResolution(resolution); owned {
+			return err
+		}
+	}
+	return r.asks.resolveChecked(resolution.AskID, approval{verdict: resolution.Verdict}, func(ask session.PendingAsk) error {
+		return validateApprovalResolution(ask, resolution, true)
+	})
+}
+
+// ValidateRemoteApprovalIntent is retained for source compatibility. Hosts must
+// use ResolveApproval for an atomic validate-and-submit operation.
+func (r *Run) ValidateRemoteApprovalIntent(askID, reviewID string, kind session.GuardrailApprovalKind, verdict session.ApprovalVerdict) error {
+	if !validApprovalVerdict(verdict) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, verdict)
+	}
+	if r == nil {
+		return fmt.Errorf("%w: approval run is unavailable", ErrApprovalNotPending)
+	}
+	r.asks.mu.Lock()
+	ask, ok := r.asks.scopes[askID]
+	r.asks.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: ask is unknown, stale, or already resolved", ErrApprovalNotPending)
+	}
+	return validateApprovalResolution(ask, ApprovalResolution{AskID: askID, ReviewID: reviewID, Kind: kind, Verdict: verdict}, true)
+}
+
+// Approve is the compatibility helper for ordinary permission and legacy action
+// approvals. Result release requires ResolveApproval's explicit review acknowledgement.
+func (r *Run) Approve(askID string, v session.ApprovalVerdict) error {
+	if !validApprovalVerdict(v) {
+		return fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, v)
+	}
+	if r == nil || askID == "" {
+		return errors.New("approval requires a non-empty ask id")
+	}
+	if r.childAsks != nil && r.childAsks.route(askID, v) {
+		return nil
+	}
+	return r.asks.resolveChecked(askID, approval{verdict: v}, func(ask session.PendingAsk) error {
+		if ask.Guardrail != nil && ask.Guardrail.Kind == session.GuardrailApprovalResultRelease {
+			return errors.New("result release requires ResolveApproval with the exact review_id and result_release kind")
+		}
+		return validateApprovalResolution(ask, ApprovalResolution{AskID: askID, Verdict: v}, false)
+	})
 }
 
 // ResolveOrdinaryAsk atomically resolves one pending non-plan permission ask
@@ -1183,6 +1315,16 @@ func (e *Engine) ResumeApprovalWith(ctx context.Context, sess *session.Session, 
 	// the run that just ended, and inheriting it would silently attribute a brand
 	// new run's events to the previous one.
 	return e.startRun(ctx, sess, RunRequest{RunID: sess.RunID(), CanPresentAuthorization: opts.CanPresentAuthorization}, session.Usage{}, func(ctx context.Context, r *Run) {
+		// Reject malformed internal callers before inspecting the environment or
+		// clearing the pending ask. Wire mappers already fail unknown enum values to
+		// deny, but the public engine seam must not treat a future value as an allow.
+		if !validApprovalVerdict(verdict) {
+			err := fmt.Errorf("%w: unknown approval verdict %d", ErrApprovalGrantIneligible, verdict)
+			e.emit(r, session.Event{Type: session.EvSessionInit})
+			r.setOutcome(RunOutcomeCompleted)
+			e.emitResult(r, sess, session.StopError, "", session.Usage{}, err.Error(), session.RetryDispositionPermanent, session.StreamProgressUnknown)
+			return
+		}
 		if !e.prepareRunEnvironment(ctx, r, sess, env) {
 			return
 		}
@@ -1335,7 +1477,29 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			reject("no longer permitted in plan mode", fmt.Sprintf("authorization continuation is no longer permitted: plan mode is active and %q now mutates the workspace; present a plan and exit plan mode first", pending.Call.Name))
 			return
 		}
-		result := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, time.Time{})
+		decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, sess.Counters.Turns, pending.Call)
+		if cancelled {
+			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
+			return
+		}
+		var result session.ToolResult
+		if decision.Effect != governance.Allow {
+			result = denyResult(pending.Call, decision.Reason)
+			e.emit(r, session.Event{Type: session.EvToolResult, Turn: sess.Counters.Turns, ToolResult: ptr(result)})
+		} else {
+			var enqueue time.Time
+			if e.deps.Clock != nil {
+				enqueue = e.deps.Clock.Now()
+			}
+			var proceed bool
+			result, _, cancelled, proceed = e.reviewActionWithTail(ctx, r, sess, env, sess.Counters.Turns, pending.Call, &auth, true, func() (session.ToolResult, *dispatchPark, bool) {
+				executed, wasCancelled := e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
+				return executed, nil, wasCancelled
+			})
+			if proceed {
+				result, cancelled = e.execute(ctx, r, sess, env, sess.Counters.Turns, pending.Call, toolToRun, &auth, enqueue)
+			}
+		}
 		results := []session.ToolResult{result}
 		for _, deferred := range pending.Deferred {
 			deferredResult := session.NewToolError(deferred.ID, "authorization deferred sibling was not executed")
@@ -1347,6 +1511,10 @@ func (e *Engine) PrepareAuthorizationContinuation(ctx context.Context, sess *ses
 			return
 		}
 		e.save(ctx, r, sess)
+		if cancelled {
+			e.terminate(ctx, r, sess, session.StopCancelled, "", session.Usage{}, nil, false)
+			return
+		}
 		e.emitAuthorizationResolution(r, sess.Counters.Turns, pending.Authorization, pending.Call.ID, status, nil)
 		e.runLoop(ctx, r, sess, env, session.Usage{}, "", false)
 	}), nil
@@ -1416,6 +1584,7 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		ctx:            ctx,
 		req:            req,
 		budgetBaseline: budgetBaseline,
+		reviewRoot:     req.reviewRoot,
 		hardAbort:      make(chan struct{}),
 		serial:         serial,
 		// Bind the run-scoped diagnostics ONCE here, where the live session is in
@@ -1424,6 +1593,11 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
 		diag: e.bindRunDiag(sess.ID),
+	}
+	if r.reviewRoot == nil && e.deps.ToolReviewer != nil {
+		r.reviewRoot = newReviewRoot(e.deps.ToolReviewer, e.deps.ReviewEvidencePreparer, e.deps.ReviewDetails, e.deps.ReviewTaskWindow)
+		r.reviewRoot.rootSessionID = sess.ID
+		r.ownsReviewRoot = true
 	}
 	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
 	// askDiscriminatorFor for the precedence and the colon rule.
@@ -1493,6 +1667,9 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	r.children.unregisterAsk = r.unregisterChildAsk
 	start := func() {
 		go func() {
+			if r.ownsReviewRoot {
+				defer r.reviewRoot.clearHeld()
+			}
 			// Defers run LIFO: cancel first (releases the run's ctx tree), then the
 			// belt-and-braces seal — its abort-before-emitMu ordering closes emitAbort,
 			// which is what unwinds any guarded send still parked on a full events
@@ -1737,6 +1914,13 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 func (e *Engine) dispatchTurn(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, calls []session.ToolCall, lastText string, total session.Usage) bool {
 	results, park, cancelled := e.dispatch(ctx, r, sess, env, turnIdx, calls)
 	if cancelled {
+		if len(results) > 0 {
+			if err := sess.RecordToolResults(results); err != nil {
+				e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
+				return true
+			}
+			e.save(context.WithoutCancel(ctx), r, sess)
+		}
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
@@ -2295,12 +2479,32 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// the persisted history or recreating the compaction-pin ambiguity. Only the
 	// GENUINE prompt (+ media parts) is recorded here; instr is nil (the param stays a
 	// valid seam for callers that DO want to persist instructions, e.g. tests).
-	if rerr := sess.RecordUserPromptWithParts(finalText, parts, nil); rerr != nil {
+	provenance := session.UserPromptProvenanceUnknown
+	if e.deps.Role == "" {
+		provenance = session.UserPromptProvenancePrincipal
+	}
+	var rerr error
+	if provenance == session.UserPromptProvenancePrincipal {
+		rerr = sess.RecordPrincipalPromptWithParts(finalText, parts, nil)
+	} else {
+		rerr = sess.RecordUserPromptWithParts(finalText, parts, nil)
+	}
+	if rerr != nil {
 		return false, "", fmt.Errorf("agent: record user prompt: %w", rerr)
 	}
 	if messages := sess.Conversation.Messages; len(messages) > 0 {
 		owned := learning.NewTrajectory(sess.ID, env.Workspace().Root(), session.StopNone, session.Usage{}, messages[len(messages)-1:])
 		r.currentPrompt = &owned.Messages[0]
+		if e.deps.Role == "" {
+			if r.reviewRoot != nil {
+				r.reviewRoot.refreshTasks(messages)
+			}
+			if e.deps.PlanApprovals != nil && sess.Mode != session.ModePlan {
+				if receipt, found := e.deps.PlanApprovals.ConsumePlanApproval(sess.ID); found && validPlanApprovalReceipt(receipt, sess.ID, sess.Mode) && r.reviewRoot != nil {
+					r.reviewRoot.setPlanApproval(receipt)
+				}
+			}
+		}
 	}
 	// Seed the session Title ONCE from this genuine prompt (set-once guard in
 	// SetTitle: only the first non-empty prompt sticks). The loop calls SetTitle
@@ -2314,8 +2518,15 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 	// Emit the durable, log-only EvUserPrompt so the EventLog records WHAT THE USER
 	// ASKED (the relay never re-emits the prompt to the client). Turn 0 — the genuine
 	// prompt opens the run. parts ride verbatim so a fold rebuilds a multimodal prompt.
-	e.emitUserPrompt(r, 0, finalText, parts, false)
+	e.emitUserPrompt(r, 0, finalText, parts, provenance)
 	return true, "", nil
+}
+
+func validPlanApprovalReceipt(receipt PlanApprovalReceipt, sessionID session.SessionID, mode session.PermissionMode) bool {
+	if receipt.Ref == "" || receipt.Call == "" || receipt.SessionID != sessionID || receipt.TargetMode != mode {
+		return false
+	}
+	return mode == session.ModeDefault || mode == session.ModeAccept
 }
 
 // emitUserPrompt emits the log-only EvUserPrompt event carrying a just-recorded
@@ -2325,9 +2536,9 @@ func (e *Engine) recordPrompt(ctx context.Context, r *Run, sess *session.Session
 // nudge, background-completion notice) — so the durable log (and an event-sourced
 // fold) sees a COMPLETE user-turn sequence. The event is log-only: the relay appends
 // it and skips it on the live client wire (the client already holds the prompt).
-func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content, synthetic bool) {
+func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []session.Content, provenance session.UserPromptProvenance) {
 	e.emit(r, session.Event{Type: session.EvUserPrompt, Turn: turnIdx,
-		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts, Synthetic: synthetic}})
+		UserPrompt: &session.UserPromptPayload{Text: text, Parts: parts, Synthetic: provenance == session.UserPromptProvenanceHarness, Provenance: provenance}})
 }
 
 // recordContinuation records a harness-authored synthetic user-role continuation
@@ -2336,10 +2547,10 @@ func (e *Engine) emitUserPrompt(r *Run, turnIdx int, text string, parts []sessio
 // user-message site bypasses the durable record. It mirrors recordPrompt's
 // record-then-emit shape for the non-genuine sites.
 func (e *Engine) recordContinuation(r *Run, sess *session.Session, turnIdx int, text string) error {
-	if err := sess.RecordUserPrompt(text, nil); err != nil {
+	if err := sess.RecordHarnessPrompt(text); err != nil {
 		return err
 	}
-	e.emitUserPrompt(r, turnIdx, text, nil, true)
+	e.emitUserPrompt(r, turnIdx, text, nil, session.UserPromptProvenanceHarness)
 	return nil
 }
 
@@ -3140,8 +3351,12 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	// mode, honestly. Save the flipped mode so a Reopen/restart continues in the
 	// approved posture.
 	if r.planApprovedTarget != "" {
-		_ = sess.SetMode(r.planApprovedTarget)
-		e.save(ctx, r, sess)
+		if err := sess.SetMode(r.planApprovedTarget); err == nil {
+			if e.deps.PlanApprovals != nil && r.planApprovalReceipt.SessionID == sess.ID && r.planApprovalReceipt.TargetMode == r.planApprovedTarget {
+				e.deps.PlanApprovals.RecordPlanApproval(r.planApprovalReceipt)
+			}
+			e.save(ctx, r, sess)
+		}
 	}
 	// Persist the terminal aggregate before a synchronous Observer can block or
 	// perform model work. The result event remains after observation, preserving

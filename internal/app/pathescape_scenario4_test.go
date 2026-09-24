@@ -322,8 +322,8 @@ func TestPathEscapePosture_Scenario4_PlanModeWriteEscapeDenied(t *testing.T) {
 			if d.Effect != governance.Ask {
 				t.Fatalf("default-mode write escape at %s = %v, want the escape Ask", posture, d.Effect)
 			}
-			if d.ConfiguredAsk || d.FlooredConfiguredAllow {
-				t.Fatalf("escape Ask at %s carries ConfiguredAsk=%v/FlooredConfiguredAllow=%v — it must surface to a human (A2/floored-allow key off those bits)", posture, d.ConfiguredAsk, d.FlooredConfiguredAllow)
+			if d.AskProvenance != governance.AskProvenanceUnknown {
+				t.Fatalf("escape Ask at %s carries auto-approval provenance %v — it must surface to a human", posture, d.AskProvenance)
 			}
 
 			// Positive control 2: a plan-mode READ escape follows the read row
@@ -369,7 +369,7 @@ func TestPathEscapePosture_Scenario4_ConfiguredRulesStillWin(t *testing.T) {
 		}, nil)
 		p := newEscapePolicy(inner, PostureTrusted)
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Ask || !d.ConfiguredAsk {
+		if d.Effect != governance.Ask || d.AskProvenance != governance.AskProvenanceConfigured {
 			t.Fatalf("effect = %+v, want the CONFIGURED Ask — the escape Ask must never replace a configured Ask", d)
 		}
 	})

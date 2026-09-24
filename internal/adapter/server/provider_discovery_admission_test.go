@@ -99,7 +99,7 @@ func TestProviderModelDiscovery_Scenario3_ServiceRunEntryPaths(t *testing.T) {
 						transition = seed.PrepareFailedStepRetry()
 					}
 				case "restart-approval":
-					transition = seed.PauseForApproval(session.PendingAsk{AskID: "persisted-ask", Tool: "Write", Call: "pending-call"})
+					transition = seed.PauseForApproval(session.PendingAsk{AskID: "persisted-ask", Tool: "Write", Call: "pending-call", Origin: session.ApprovalOriginPermission})
 				case "orphaned-running":
 				default:
 					transition = seed.Complete()

@@ -280,6 +280,9 @@ type Config struct {
 	DebugMCP func() bool
 	// Store persists and looks up sessions. Required.
 	Store port.SessionStore
+	// SessionCleared drops process-local state tied to a source session after a
+	// successful ClearSession successor publication. nil is inert.
+	SessionCleared func(session.SessionID)
 	// StorageManagementAuthorized gates process-wide storage health. A nil
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.
@@ -354,6 +357,10 @@ type Config struct {
 	// RootAuthorityForOperation mints authority from the runtime pinned in ctx for
 	// direct operations that build roots after their operation boundary.
 	RootAuthorityForOperation func(context.Context, session.SessionKind) session.Authority
+	ReviewDetails             *ReviewDetailRegistry
+	// GuardrailCoverage projects the effective checker route and rules over the
+	// already-assembled, session-specific authority. Nil reports guardrails disabled.
+	GuardrailCoverage func(*session.Session) GuardrailCoverage
 	// DefaultMode is applied when a CreateSession request leaves mode
 	// unspecified. Defaults to session.ModeDefault when empty.
 	DefaultMode session.PermissionMode
@@ -933,6 +940,8 @@ type Service struct {
 	mu    sync.Mutex
 	runs  map[session.SessionID]*runState
 	teams map[string]*teamState
+	// reviewDetails is live-only human display data owned by root-run lifecycle.
+	reviewDetails *ReviewDetailRegistry
 	// teamsReserving counts CreateTeam calls that have passed the MaxTeams check
 	// but have not yet registered. Enrolment acquires member leases and publishes
 	// durable member snapshots, so the cap must be claimed BEFORE that work: a
@@ -1330,11 +1339,12 @@ type runState struct {
 	// engine so a delayed relay never snapshots a concurrently-resuming session.
 	// Backend calls admitted before invalidation may still complete.
 	persistMu sync.Mutex
-	// resolvedAskID and cancelSignaled are guarded by persistMu. They close the
+	// resolvedAskID, acceptedApproval, and cancelSignaled are guarded by persistMu. They close the
 	// event-delivery race where a control reaches a detached/background run after
 	// the engine emitted permission.ask but before its relay starts Persist.
-	resolvedAskID  string
-	cancelSignaled bool
+	resolvedAskID    string
+	acceptedApproval *agent.ApprovalResolution
+	cancelSignaled   bool
 	// preserveDurable prevents a shutdown-cancelled local awaiting run from
 	// overwriting the already-durable PendingAsk handoff point.
 	preserveDurable atomic.Bool
@@ -1481,6 +1491,7 @@ func NewServiceContext(ctx context.Context, cfg Config) (*Service, error) {
 		shutdownCancel:      shutdownCancel,
 		runs:                make(map[session.SessionID]*runState),
 		teams:               make(map[string]*teamState),
+		reviewDetails:       configuredReviewDetailRegistry(cfg.ReviewDetails),
 		sessionEngines:      make(map[session.SessionID]*sessionEngine),
 		brokerAttachments:   make(map[session.SessionID]brokercontract.Attachment),
 		authorizationExpiry: make(map[session.SessionID]*authorizationExpiry),
@@ -2924,6 +2935,7 @@ func (s *Service) closeSessionLocal(id session.SessionID) {
 	// from growing unbounded on a long-lived server.
 	s.recoverNotices.Delete(id)
 	delete(s.lostOwnership, id)
+	s.reviewDetails.clear(id)
 	s.mu.Unlock()
 	if expiry != nil && expiry.timer != nil {
 		expiry.timer.Stop()
@@ -3009,6 +3021,7 @@ func (s *Service) Close() {
 	// and before engine-close so runs unblock promptly rather than waiting on
 	// the full shutdown sequence.
 	s.shutdownCancel()
+	s.reviewDetails.clearAll()
 
 	s.prepareAuthorizationClose()
 
@@ -4821,9 +4834,37 @@ func (s *Service) ResolveRunAsk(ctx context.Context, id session.SessionID, expec
 	if st != nil && st.run != nil {
 		return s.resolveLiveRunAsk(ctx, id, st, expectedRunID, askID, verdict, generation)
 	}
-	return s.resolvePersistedRunAsk(ctx, id, expectedRunID, askID, verdict, generation)
+	return s.resolvePersistedRunAsk(ctx, id, expectedRunID, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, false, generation)
 }
 
+// ResolveScopedRunAsk resolves one guardrail-scoped ask on one exact run while
+// preserving the purpose acknowledgement displayed to the operator.
+func (s *Service) ResolveScopedRunAsk(ctx context.Context, id session.SessionID, expectedRunID string, resolution agent.ApprovalResolution) (RunAskAcknowledgement, error) {
+	if expectedRunID == "" || resolution.AskID == "" {
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: expected_run_id and ask_id are required", ErrInvalidArgument)
+	}
+	if !validRunAskVerdict(resolution.Verdict) {
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: verdict is invalid", ErrInvalidArgument)
+	}
+	if ctx.Err() != nil {
+		return RunAskAcknowledgement{}, ctx.Err()
+	}
+	if _, err := s.GetSession(ctx, id); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	generation := s.captureRunEntryGeneration(id)
+	if s.draining.Load() {
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
+	}
+
+	s.mu.Lock()
+	st := s.runs[id]
+	s.mu.Unlock()
+	if st != nil && st.run != nil {
+		return s.resolveLiveScopedRunAsk(ctx, id, st, expectedRunID, resolution, generation)
+	}
+	return s.resolvePersistedRunAsk(ctx, id, expectedRunID, resolution, true, generation)
+}
 func (s *Service) resolveLiveRunAsk(ctx context.Context, id session.SessionID, st *runState, expectedRunID, askID string, verdict session.ApprovalVerdict, generation runEntryGeneration) (RunAskAcknowledgement, error) {
 	st.persistMu.Lock()
 	defer st.persistMu.Unlock()
@@ -4847,6 +4888,31 @@ func (s *Service) resolveLiveRunAsk(ctx context.Context, id session.SessionID, s
 	}
 }
 
+func (s *Service) resolveLiveScopedRunAsk(ctx context.Context, id session.SessionID, st *runState, expectedRunID string, resolution agent.ApprovalResolution, generation runEntryGeneration) (RunAskAcknowledgement, error) {
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ctx.Err() != nil {
+		return RunAskAcknowledgement{}, ctx.Err()
+	}
+	run, err := s.liveRunForControlLocked(id, st, expectedRunID, generation)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	if st.acceptedApproval != nil && st.acceptedApproval.AskID == resolution.AskID {
+		if *st.acceptedApproval == resolution {
+			return RunAskAcknowledgement{RunID: run.RunID(), AskID: resolution.AskID}, nil
+		}
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: ask was already resolved", agent.ErrApprovalNotPending)
+	}
+	if err := run.ResolveApproval(resolution); err != nil {
+		return RunAskAcknowledgement{}, err
+	}
+	st.resolvedAskID = resolution.AskID
+	return RunAskAcknowledgement{RunID: run.RunID(), AskID: resolution.AskID}, nil
+}
+
 func validRunAskVerdict(verdict session.ApprovalVerdict) bool {
 	switch verdict {
 	case session.VerdictDeny, session.VerdictAllowOnce, session.VerdictAllowAlways:
@@ -4857,10 +4923,10 @@ func validRunAskVerdict(verdict session.ApprovalVerdict) bool {
 }
 
 // validatePersistedRunAsk validates the complete restart-resume authority of an
-// exact ordinary ask. It is deliberately shared by the pre-lease and post-lease
-// snapshots: the first rejects cheap mismatches, while the second is the
-// authoritative decision after distributed ownership has been acquired.
-func (s *Service) validatePersistedRunAsk(sess *session.Session, expectedRunID, askID string) error {
+// exact ask. It is deliberately shared by the pre-lease and post-lease snapshots:
+// the first rejects cheap mismatches, while the second is the authoritative
+// decision after distributed ownership has been acquired.
+func (s *Service) validatePersistedRunAsk(sess *session.Session, expectedRunID string, resolution agent.ApprovalResolution, scoped bool) error {
 	if err := checkExpectedRun(expectedRunID, sess.RunID()); err != nil {
 		return err
 	}
@@ -4868,17 +4934,29 @@ func (s *Service) validatePersistedRunAsk(sess *session.Session, expectedRunID, 
 		return checkExpectedRun(expectedRunID, "")
 	}
 	pending, ok := sess.PendingAsk()
-	if !ok || pending.AskID != askID {
+	if !ok || pending.AskID != resolution.AskID {
+		if scoped {
+			return fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
+		}
 		return ErrAskNotPending
 	}
-	if pending.Origin() == session.AskOriginPlan {
-		return ErrPlanResolutionRequired
+	if scoped {
+		if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
+			return err
+		}
+	} else {
+		if pending.Origin != session.ApprovalOriginPermission {
+			return ErrPlanResolutionRequired
+		}
+		if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
+			return err
+		}
 	}
 	return s.validatePersistedWorkspace(sess)
 }
 
 //nolint:gocyclo // restart resolution keeps validation, admission, context transfer, and exact-once relay together.
-func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.SessionID, expectedRunID, askID string, verdict session.ApprovalVerdict, generation runEntryGeneration) (RunAskAcknowledgement, error) {
+func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.SessionID, expectedRunID string, resolution agent.ApprovalResolution, scoped bool, generation runEntryGeneration) (RunAskAcknowledgement, error) {
 	resumeUnlock := s.resumeMu.lock(id)
 	defer resumeUnlock()
 	entryUnlock := s.runEntryMu.lock(id)
@@ -4894,14 +4972,17 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 	st := s.runs[id]
 	s.mu.Unlock()
 	if st != nil && st.run != nil {
-		return s.resolveLiveRunAsk(ctx, id, st, expectedRunID, askID, verdict, generation)
+		if scoped {
+			return s.resolveLiveScopedRunAsk(ctx, id, st, expectedRunID, resolution, generation)
+		}
+		return s.resolveLiveRunAsk(ctx, id, st, expectedRunID, resolution.AskID, resolution.Verdict, generation)
 	}
 
 	sess, err := s.GetSession(ctx, id)
 	if err != nil {
 		return RunAskAcknowledgement{}, err
 	}
-	if err := s.validatePersistedRunAsk(sess, expectedRunID, askID); err != nil {
+	if err := s.validatePersistedRunAsk(sess, expectedRunID, resolution, scoped); err != nil {
 		return RunAskAcknowledgement{}, err
 	}
 
@@ -4928,7 +5009,7 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 	if err != nil {
 		return RunAskAcknowledgement{}, err
 	}
-	if err := s.validatePersistedRunAsk(sess, expectedRunID, askID); err != nil {
+	if err := s.validatePersistedRunAsk(sess, expectedRunID, resolution, scoped); err != nil {
 		return RunAskAcknowledgement{}, err
 	}
 	st.persistMu.Lock()
@@ -4973,10 +5054,21 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 			s.detachedControlWG.Done()
 		}
 	}()
+	if scoped {
+		st.persistMu.Lock()
+		accepted := resolution
+		st.acceptedApproval = &accepted
+		st.persistMu.Unlock()
+	}
 	run, err := s.promoteDetachedRunAdmission(ctx, id, st, stopRun, func() *agent.Run {
-		return engine.ResumeApproval(memory.WithWorkspace(ownedLeaseCtx, env.Workspace().Root()), sess, env, askID, verdict)
+		return engine.ResumeApproval(memory.WithWorkspace(ownedLeaseCtx, env.Workspace().Root()), sess, env, resolution.AskID, resolution.Verdict)
 	})
 	if err != nil {
+		if scoped {
+			st.persistMu.Lock()
+			st.acceptedApproval = nil
+			st.persistMu.Unlock()
+		}
 		stopOwnedLease()
 		stopOwned()
 		return RunAskAcknowledgement{}, err
@@ -4987,7 +5079,7 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 		s.relayDetachedControlRun(ownedLeaseCtx, id, run)
 	}()
 	relayReserved = false
-	return RunAskAcknowledgement{RunID: expectedRunID, AskID: askID}, nil
+	return RunAskAcknowledgement{RunID: expectedRunID, AskID: resolution.AskID}, nil
 }
 
 func (s *Service) reserveDetachedControlRelay() bool {
@@ -6087,6 +6179,10 @@ func (s *Service) awaitRunDeregister(ctx context.Context, id session.SessionID, 
 // The service mutex orders the approval with renewal-loss invalidation; a surfaced
 // child ask is still addressed through its parent run's approval router.
 func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID string, verdict session.ApprovalVerdict, expectedRunID string) error {
+	return s.resolveLiveRun(id, target, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, expectedRunID)
+}
+
+func (s *Service) resolveLiveRun(id session.SessionID, target *agent.Run, resolution agent.ApprovalResolution, expectedRunID string) error {
 	if s.draining.Load() {
 		return fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -6096,7 +6192,7 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 	if st == nil {
 		return ErrNoActiveRun
 	}
-	return s.approveRunState(id, st, target, askID, verdict, expectedRunID)
+	return s.resolveRunState(id, st, target, resolution, expectedRunID)
 }
 
 // approveRunState crosses the persistence barrier for the runState captured by
@@ -6104,6 +6200,10 @@ func (s *Service) approveLiveRun(id session.SessionID, target *agent.Run, askID 
 // signals the run. The explicit captured state keeps the post-barrier registry
 // identity proof in one place.
 func (s *Service) approveRunState(id session.SessionID, st *runState, target *agent.Run, askID string, verdict session.ApprovalVerdict, expectedRunID string) error {
+	return s.resolveRunState(id, st, target, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, expectedRunID)
+}
+
+func (s *Service) resolveRunState(id session.SessionID, st *runState, target *agent.Run, resolution agent.ApprovalResolution, expectedRunID string) error {
 	// Persist and a control signal must be one ordered transaction. Persist takes
 	// persistMu before revalidating under s.mu, so retain that lock order here.
 	st.persistMu.Lock()
@@ -6122,10 +6222,18 @@ func (s *Service) approveRunState(id session.SessionID, st *runState, target *ag
 	if err := checkExpectedRun(expectedRunID, target.RunID()); err != nil {
 		return err
 	}
-	// Set before waking the run. If permission.ask is still buffered, its relay
-	// observes this marker and skips the now-stale awaiting snapshot.
-	st.resolvedAskID = askID
-	target.Approve(askID, verdict)
+	if st.acceptedApproval != nil && st.acceptedApproval.AskID == resolution.AskID {
+		if *st.acceptedApproval == resolution {
+			return nil
+		}
+		return fmt.Errorf("%w: ask was already resolved", agent.ErrApprovalNotPending)
+	}
+	if err := target.ResolveApproval(resolution); err != nil {
+		return err
+	}
+	// Set only after atomic validation+submission succeeds. If permission.ask is
+	// still buffered, its relay observes this marker and skips the stale snapshot.
+	st.resolvedAskID = resolution.AskID
 	return nil
 }
 
@@ -6171,6 +6279,12 @@ func (s *Service) Approve(ctx context.Context, id session.SessionID, askID strin
 // resolves only its own live run. The prompt-free ResolveRunAsk RPC and strict HTTP
 // mirror use the separate acknowledgement-only, Service-owned transition above.
 func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string) (*agent.Run, error) {
+	return s.ResolveApprovalRun(ctx, id, agent.ApprovalResolution{AskID: askID, Verdict: verdict}, expectedRunID)
+}
+
+// ResolveApprovalRun atomically validates guardrail purpose and review identity
+// before submitting a verdict. Validation failures leave the pending hold intact.
+func (s *Service) ResolveApprovalRun(ctx context.Context, id session.SessionID, resolution agent.ApprovalResolution, expectedRunID string) (*agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
@@ -6199,7 +6313,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 			resumeAdmission := st.resumeAdmission
 			s.mu.Unlock()
 			if resumeAdmission {
-				return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
+				return s.resumeFromAwaiting(ctx, id, resolution, expectedRunID, generation)
 			}
 			return nil, ErrNoActiveRun
 		}
@@ -6208,13 +6322,13 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 		// Compare against and signal the run that would ACTUALLY receive the
 		// verdict. approveLiveRun revalidates the registry + lease after crossing
 		// the awaiting-persistence barrier.
-		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
+		if err := s.resolveLiveRun(id, run, resolution, expectedRunID); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
 	s.mu.Unlock()
-	return s.resumeFromAwaiting(ctx, id, askID, verdict, expectedRunID, generation)
+	return s.resumeFromAwaiting(ctx, id, resolution, expectedRunID, generation)
 }
 
 // resumeFromAwaiting is the service half of the fourth (awaiting-only) run-entry
@@ -6241,7 +6355,7 @@ func (s *Service) ApproveRun(ctx context.Context, id session.SessionID, askID st
 // a concurrent Cancel/Approve reaches it and FinishRun cleans it up.
 //
 //nolint:gocyclo // Approval resume keeps generation, lock ordering, lease, and exact-once launch in one transaction.
-func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, askID string, verdict session.ApprovalVerdict, expectedRunID string, generation runEntryGeneration) (*agent.Run, error) {
+func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, resolution agent.ApprovalResolution, expectedRunID string, generation runEntryGeneration) (*agent.Run, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -6264,7 +6378,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		if run == nil {
 			return nil, ErrNoActiveRun
 		}
-		if err := s.approveLiveRun(id, run, askID, verdict, expectedRunID); err != nil {
+		if err := s.resolveLiveRun(id, run, resolution, expectedRunID); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -6299,6 +6413,13 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		// stranded-for-Approve as before (last-write-wins / nothing to resume).
 		return nil, ErrNoActiveRun
 	}
+	pending, ok := sess.PendingAsk()
+	if !ok || pending.AskID != resolution.AskID {
+		return nil, fmt.Errorf("%w: ask is unknown, stale, or already resolved", agent.ErrApprovalNotPending)
+	}
+	if err := agent.ValidateApprovalResolution(pending, resolution); err != nil {
+		return nil, err
+	}
 	st, admissionParent, err := s.beginRunAdmission(ctx, id, sess, true)
 	if err != nil {
 		return nil, err
@@ -6329,10 +6450,17 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
 	ctx = memory.WithWorkspace(ctx, env.Workspace().Root())
+	st.persistMu.Lock()
+	accepted := resolution
+	st.acceptedApproval = &accepted
+	st.persistMu.Unlock()
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
-		return engine.ResumeApproval(ctx, sess, env, askID, verdict)
+		return engine.ResumeApproval(ctx, sess, env, resolution.AskID, resolution.Verdict)
 	})
 	if err != nil {
+		st.persistMu.Lock()
+		st.acceptedApproval = nil
+		st.persistMu.Unlock()
 		return nil, err
 	}
 	promoted = true
@@ -6404,7 +6532,7 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 		return nil, fmt.Errorf("%w: session %q is in state %q, not awaiting", ErrNotAwaitingPlan, id, sess.State)
 	}
 	ask, ok := sess.PendingAsk()
-	if !ok || ask.Origin() != session.AskOriginPlan {
+	if !ok || ask.Origin != session.ApprovalOriginPlan {
 		return nil, fmt.Errorf("%w: session %q is not awaiting a plan-approval ask", ErrNotAwaitingPlan, id)
 	}
 	// (3) targetMode → verdict.
@@ -6422,7 +6550,7 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 	// caller approves THE PLAN this session is parked on, and the askID is read
 	// off the snapshot rather than supplied. There is no caller expectation to
 	// enforce, so it passes no expected run id.
-	resumed, rerr := s.resumeFromAwaiting(ctx, id, ask.AskID, verdict, "", generation)
+	resumed, rerr := s.resumeFromAwaiting(ctx, id, agent.ApprovalResolution{AskID: ask.AskID, Verdict: verdict}, "", generation)
 	if rerr != nil {
 		return nil, rerr
 	}
@@ -6939,7 +7067,7 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	if ev.Type != session.EvPermissionAsk || ev.Ask == nil {
 		return
 	}
-	if ev.Ask.Origin() != session.AskOriginPlan {
+	if ev.Ask.Origin != session.ApprovalOriginPlan {
 		return
 	}
 	generation := s.captureRunEntryGeneration(id)
@@ -8023,6 +8151,7 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 		pending, pendingOK = st.sess.PendingAuthorization()
 	}
 	s.removeRunState(id, st)
+	s.clearGuardrailReviewDetails(id)
 	if parked {
 		s.scheduleAuthorizationExpiry(id, pending, pendingOK)
 	}

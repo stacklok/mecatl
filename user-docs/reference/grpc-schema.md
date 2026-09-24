@@ -30,6 +30,8 @@ the bidi Converse stream that drives one agent run.
 | `CreateSession` | `CreateSessionRequest` | `CreateSessionResponse` | No | No | CreateSession allocates a new server-side session and returns its id. |
 | `GetServerInfo` | `GetServerInfoRequest` | `GetServerInfoResponse` | No | No | GetServerInfo returns only the composed server build identity. It is authenticated like every HarnessService operation and does not inspect configuration or state. |
 | `GetSession` | `GetSessionRequest` | `GetSessionResponse` | No | No | GetSession returns a snapshot of an existing session. |
+| `ListGuardrailCoverage` | `ListGuardrailCoverageRequest` | `ListGuardrailCoverageResponse` | No | No |  |
+| `GetGuardrailReviewDetail` | `GetGuardrailReviewDetailRequest` | `GetGuardrailReviewDetailResponse` | No | No |  |
 | `GetSessionTranscript` | `GetSessionTranscriptRequest` | `GetSessionTranscriptResponse` | No | No | GetSessionTranscript returns the authoritative, snapshot-derived human transcript for one owned session. It is read-only and does not use EventLog. |
 | `SetMode` | `SetModeRequest` | `SetModeResponse` | No | No | SetMode changes an existing session&#39;s permission posture. The session aggregate remains authoritative: a mid-turn change is rejected with InvalidArgument, so clients that want &#34;next prompt&#34; semantics must defer and retry once idle. |
 | `CloseSession` | `CloseSessionRequest` | `CloseSessionResponse` | No | No | CloseSession ends a session and releases its server-side resources (learned permission rules, bound placement, and any per-session engine). Idempotent: closing an unknown or already-closed session via the wire returns NotFound only for a never-created id; an already-released session succeeds. |
@@ -193,6 +195,7 @@ StreamSessionEvents replay.
 | `tool` | `string` |  |  | tool is the NAME of the tool the ask gated. It is the tool name ALONE — never the call&#39;s args. |
 | `call_id` | `string` |  |  | call_id is the opaque id of the gated ToolCall (the durable, grammar-free correlation handle a 3b consumer uses to find the call in the conversation). |
 | `verdict` | `ApprovalVerdict` |  |  | verdict is the typed resolution of the permission ask. |
+| `origin` | `string` |  |  | origin is the explicit approval provenance. Empty/unknown origins fail closed. |
 
 
 
@@ -621,6 +624,19 @@ session.Content for tool-result Parts). A sum-type over Kind.
 
 
 
+#### `mecatl.v1.ControlRefused`
+
+ControlRefused is the metadata-only acknowledgement for a rejected in-stream
+approval control. Message text remains a sanitized human diagnostic on Event.text.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `ask_id` | `string` |  |  |  |
+| `category` | `string` |  |  |  |
+
+
+
+
 #### `mecatl.v1.ConversationMessage`
 
 ConversationMessage is the proto projection of one session.Message (an immutable
@@ -956,6 +972,7 @@ event kind; the structured submessages are populated per kind.
 | `run_id` | `string` |  |  | run_id is the opaque, server-minted identity of the run that emitted this event (ADR 0249). It is stamped by the agent loop, so every event a run emits carries it on both the gRPC and HTTP/SSE surfaces.  It is OPAQUE: it encodes nothing and exists only to be compared for equality. A client uses it to know which run an event belongs to — `seq` is monotonic WITHIN a run and restarts each run, so it cannot distinguish two runs of one session — and to address controls at a specific run rather than &#34;whatever is running now&#34;.  EMPTY IS MEANINGFUL, not missing: it means the event is SESSION-scoped rather than run-scoped. The schedule.* lifecycle events are emitted outside any run and legitimately carry no id. A client following one run filters on an exact match and so never sees them; a client showing a session timeline includes them. |
 | `title` | `SessionTitle` |  |  | title is set on session.title events. It is the authoritative, source-free title lifecycle projection after a persisted title state change. |
 | `authorization` | `Authorization` |  |  | authorization is set on authorization.required and authorization.resolved events. It is safe durable correlation only; the live presentation URL and private continuation state never enter this payload. |
+| `control_refused` | `ControlRefused` |  |  | control_refused is set on control.refused events. It identifies the exact approval ask whose submitted control was rejected and carries only a stable machine category; raw arguments and refusal rationale never enter it. |
 
 
 
@@ -1042,6 +1059,32 @@ operator toggle will call an RPC the server has never heard of.
 | `capabilities` | `ServerCapabilities` |  |  | capabilities is the canonical deployment-wide operator-enabled feature set. Media (image/audio) here is a SERVER-WIDE hint for UI chrome only: the per-session CreateSessionResponse.session_capabilities value remains authoritative for whether a given session may send media. |
 | `features` | `string` | repeated |  | features are the build&#39;s supported feature identifiers as OPEN STRINGS, not an enum — the EvNoProgress/StopBudget string-passthrough discipline. An unrecognised identifier is ignored by an older client; a new one is a minor release, never a wire-compat event. Identifiers are stable once published.  A feature that is only reachable on some listeners is advertised only on a listener that permits it, so this set is &#34;what this build implements AND this listener permits&#34; (see ADR 0237 / ADR 0248). |
 | `deployment` | `string` |  |  | deployment is an OPTIONAL, opaque, bounded, operator-set label for this deployment. It is empty by default and is NEVER derived from hostname, pod name, or environment — infrastructure topology is not something an authenticated caller is owed, and a label the operator did not choose is a leak with no consenting author. Set via mecated --deployment-id. |
+
+
+
+
+#### `mecatl.v1.GetGuardrailReviewDetailRequest`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `session_id` | `string` |  |  |  |
+| `review_id` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.GetGuardrailReviewDetailResponse`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `review_id` | `string` |  |  |  |
+| `concern` | `string` |  |  |  |
+| `source_display` | `string` |  |  |  |
+| `next_action` | `string` |  |  |  |
 
 
 
@@ -1368,6 +1411,73 @@ metadata. The entries reflect the LIVE store index at request time.
 
 
 
+#### `mecatl.v1.GuardrailApprovalScope`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `review_id` | `string` |  |  |  |
+| `kind` | `GuardrailApprovalKind` |  |  |  |
+| `grant_digest` | `string` |  |  |  |
+| `session_only` | `bool` |  |  |  |
+| `repeat_available` | `bool` |  |  |  |
+
+
+
+
+#### `mecatl.v1.GuardrailCoverageEntry`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `tool` | `string` |  |  |  |
+| `phase` | `string` |  |  |  |
+| `job` | `GuardrailJob` |  |  |  |
+| `mode` | `string` |  |  |  |
+| `rule_id` | `string` |  |  |  |
+| `rule_origin` | `string` |  |  |  |
+| `inspection` | `GuardrailInspection` |  |  |  |
+| `reason` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.GuardrailRef`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `ref` | `string` |  |  |  |
+| `category` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.GuardrailReview`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `review_id` | `string` |  |  |  |
+| `job` | `GuardrailJob` |  |  |  |
+| `assessment` | `GuardrailAssessment` |  |  |  |
+| `inspection` | `GuardrailInspection` |  |  |  |
+| `disposition` | `GuardrailDisposition` |  |  |  |
+| `reason_code` | `string` |  |  |  |
+| `rule_id` | `string` |  |  |  |
+| `rule_origin` | `string` |  |  |  |
+| `checker_provider_id` | `string` |  |  |  |
+| `checker_model_id` | `string` |  |  |  |
+| `concerns` | `GuardrailRef` | repeated |  |  |
+| `sources` | `GuardrailRef` | repeated |  |  |
+
+
+
+
 #### `mecatl.v1.Hook`
 
 Hook is the structured payload carried by a hook event, in addition to the
@@ -1379,6 +1489,7 @@ human-readable Event.text. Mirrors session.HookPayload.
 | `tool` | `string` |  |  | tool is the tool the hook relates to for per-tool phases; empty otherwise. |
 | `decision` | `HookDecision` |  |  | decision is the hook outcome (info / blocked / modified). |
 | `call_id` | `string` |  |  | call_id is the id of the tool call this hook fired against, for the per-tool phases (PreToolUse / PostToolUse); empty otherwise. Lets a client address the hook notice to the originating tool card. Mirrors session.HookPayload.CallID. |
+| `guardrail` | `GuardrailReview` |  |  |  |
 
 
 
@@ -1563,6 +1674,31 @@ ListCommandsResponse carries the discovered slash commands.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `commands` | `Command` | repeated |  | commands are the (possibly empty) discovered commands, name-sorted. |
+
+
+
+
+#### `mecatl.v1.ListGuardrailCoverageRequest`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `session_id` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ListGuardrailCoverageResponse`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` |  |  |  |
+| `checker_provider_id` | `string` |  |  |  |
+| `checker_model_id` | `string` |  |  |  |
+| `entries` | `GuardrailCoverageEntry` | repeated |  |  |
 
 
 
@@ -2222,6 +2358,7 @@ Mirrors session.PendingAsk.
 | `tool` | `string` |  |  | tool is the name of the tool awaiting approval. |
 | `args` | `string` |  |  | args is the proposed tool-call argument payload (raw JSON). |
 | `reason` | `string` |  |  | reason explains why approval is required. |
+| `guardrail` | `GuardrailApprovalScope` |  |  |  |
 
 
 
@@ -2482,6 +2619,8 @@ ResolveRunAskRequest addresses one ordinary permission ask on one exact run.
 | `expected_run_id` | `string` |  |  |  |
 | `ask_id` | `string` |  |  |  |
 | `verdict` | `ApprovalVerdict` |  |  |  |
+| `review_id` | `string` |  |  | review_id and guardrail_kind acknowledge the purpose shown by a contextual guardrail prompt. Both are required for scoped action/result-release asks and omitted together for ordinary permission asks. |
+| `guardrail_kind` | `GuardrailApprovalKind` |  |  |  |
 
 
 
@@ -2546,6 +2685,8 @@ event stream.
 | `ask_id` | `string` |  |  | ask_id correlates the resolution with the paused ask. |
 | `verdict` | `ApprovalVerdict` |  |  | verdict is the required three-way resolution: deny, allow this call once, or allow always (which additionally learns a per-session allow rule for the matching tool + exact pattern). |
 | `expected_run_id` | `string` |  |  | expected_run_id, when set, scopes this control to ONE run: the server refuses it if the session&#39;s current run is a different one, and the newer run is left untouched.  It closes a real race, not a hypothetical one. Controls are addressed at a SESSION, so a control still in flight when a run ends would otherwise land on whatever run started next — approving a tool call the user never saw, or cancelling work they did not ask to stop. `seq` cannot distinguish the two runs (it restarts each run), so before run ids there was no way to express &#34;this one&#34;.  EMPTY is the legacy behaviour exactly: the control applies to whatever run is current. Existing clients are unaffected; a client that knows the run id it is acting on should always send it. |
+| `review_id` | `string` |  |  | review_id and guardrail_kind acknowledge the purpose shown by a contextual guardrail prompt. They are mandatory and must exactly echo PermissionAsk.guardrail for EVERY guardrail-scoped ask (both ACTION and RESULT_RELEASE). They are absent only for ordinary permission asks. |
+| `guardrail_kind` | `GuardrailApprovalKind` |  |  |  |
 
 
 
@@ -3662,6 +3803,63 @@ Kind discriminates the block kind.
 | `KIND_RESOURCE_LINK` | `4` | KIND_RESOURCE_LINK is a reference to an MCP resource by URI. |
 | `KIND_EMBEDDED_RESOURCE` | `5` | KIND_EMBEDDED_RESOURCE is an embedded MCP resource (text or blob). |
 | `KIND_STRUCTURED_CONTENT` | `6` | KIND_STRUCTURED_CONTENT is a JSON structured-content block. |
+
+#### `mecatl.v1.GuardrailApprovalKind`
+
+
+
+| Name | Number | Description |
+|---|---|---|
+| `GUARDRAIL_APPROVAL_KIND_UNSPECIFIED` | `0` |  |
+| `GUARDRAIL_APPROVAL_KIND_ACTION` | `1` |  |
+| `GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE` | `2` |  |
+
+#### `mecatl.v1.GuardrailAssessment`
+
+
+
+| Name | Number | Description |
+|---|---|---|
+| `GUARDRAIL_ASSESSMENT_UNSPECIFIED` | `0` |  |
+| `GUARDRAIL_ASSESSMENT_ACCEPTABLE` | `1` |  |
+| `GUARDRAIL_ASSESSMENT_PROHIBITED` | `2` |  |
+| `GUARDRAIL_ASSESSMENT_UNRESOLVED` | `3` |  |
+
+#### `mecatl.v1.GuardrailDisposition`
+
+
+
+| Name | Number | Description |
+|---|---|---|
+| `GUARDRAIL_DISPOSITION_UNSPECIFIED` | `0` |  |
+| `GUARDRAIL_DISPOSITION_EXECUTE` | `1` |  |
+| `GUARDRAIL_DISPOSITION_ASK_ACTION` | `2` |  |
+| `GUARDRAIL_DISPOSITION_WITHHOLD_RESULT` | `3` |  |
+| `GUARDRAIL_DISPOSITION_RELEASE_RESULT` | `4` |  |
+| `GUARDRAIL_DISPOSITION_DENY` | `5` |  |
+| `GUARDRAIL_DISPOSITION_PASS_ADVISORY` | `6` |  |
+| `GUARDRAIL_DISPOSITION_CONTINUE_WARNING` | `7` |  |
+
+#### `mecatl.v1.GuardrailInspection`
+
+
+
+| Name | Number | Description |
+|---|---|---|
+| `GUARDRAIL_INSPECTION_UNSPECIFIED` | `0` |  |
+| `GUARDRAIL_INSPECTION_COMPLETE` | `1` |  |
+| `GUARDRAIL_INSPECTION_OPERATIONAL_FAILURE` | `2` |  |
+
+#### `mecatl.v1.GuardrailJob`
+
+
+
+| Name | Number | Description |
+|---|---|---|
+| `GUARDRAIL_JOB_UNSPECIFIED` | `0` |  |
+| `GUARDRAIL_JOB_ACTION` | `1` |  |
+| `GUARDRAIL_JOB_INBOUND` | `2` |  |
+| `GUARDRAIL_JOB_PERMISSION` | `3` |  |
 
 #### `mecatl.v1.HookDecision`
 

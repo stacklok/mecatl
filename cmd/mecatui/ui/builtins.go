@@ -40,6 +40,7 @@ type wiredCollaborators struct {
 	Dream        bool
 	Compactor    bool
 	Models       bool // mirrors client.Capabilities.ModelSelection
+	Guardrails   bool
 	Worktrees    bool
 	Scheduling   bool
 	Sessions     bool // /sessions picker — gated on inventory + authoritative transcript
@@ -64,6 +65,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 		MCP: m.deps.MCP != nil, MCPRefresh: mcpRefresh, MCPConnector: mcpConnector,
 		Agents: m.deps.Agents != nil, Skills: m.deps.Skills != nil,
 		Soul: m.deps.Soul != nil, UserModel: m.deps.UserModel != nil, Models: m.deps.Models != nil,
+		Guardrails:  m.deps.Guardrails != nil,
 		Reflections: m.deps.Reflections != nil,
 		Dream:       m.deps.Dream != nil,
 		Compactor:   m.deps.Compactor != nil,
@@ -208,6 +210,9 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.ManualDream != nil && w.Dream {
 		out = append(out, builtin{name: "dream", desc: "manually consolidate project memory or the user model", run: Model.runDream})
+	}
+	if w.Guardrails {
+		out = append(out, builtin{name: "guardrails", desc: "show contextual guardrail coverage and checker health", run: Model.runGuardrails})
 	}
 	if caps.ModelSelection && w.Models {
 		out = append(out, builtin{
@@ -553,8 +558,14 @@ func (m Model) runLearningSensitivity() (tea.Model, tea.Cmd) {
 // non-empty. The summary names the four defenses the posture controls so an operator
 // can confirm, e.g., that the child prompt-injection defense is OFF under yolo.
 func (m Model) runPosture() (tea.Model, tea.Cmd) {
-	m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture))
-	return m, nil
+	base := postureSummary(m.caps.Posture)
+	if m.deps.Guardrails == nil || m.sessionID == "" {
+		m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (server does not expose guardrail coverage)")
+		return m, nil
+	}
+	m.guardrailStatusRequest++
+	m.statusMsg = m.deps.Theme.Style("muted").Render(base + "; checker unknown (loading effective status)")
+	return m, client.ListGuardrailCoverageCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, m.guardrailStatusRequest, true)
 }
 
 // debugAskPayloads are the three canned long-args Shell commands /debug-ask

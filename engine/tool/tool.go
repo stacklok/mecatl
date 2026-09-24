@@ -337,6 +337,72 @@ type WorkspaceReader interface {
 	Stat(ctx context.Context, path string) (FileInfo, error)
 }
 
+// LocalFileOperands returns only operands whose built-in tool semantics identify
+// workspace-local files. Argument names on MCP, custom, or delegation tools are
+// payload labels and never mint local filesystem authority.
+func LocalFileOperands(name string, args json.RawMessage) []string {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(args, &fields) != nil {
+		return nil
+	}
+	keys := []string(nil)
+	switch name {
+	case "Read", "Edit", "Write", "Remove", "ListDir":
+		keys = []string{"path"}
+	case "Copy", "Move":
+		keys = []string{"source", "destination"}
+	case ShellToolName:
+		var command string
+		if json.Unmarshal(fields["command"], &command) == nil {
+			if path, ok := exactLocalShellScript(command); ok {
+				return []string{path}
+			}
+		}
+	}
+	paths := make([]string, 0, len(keys))
+	for _, key := range keys {
+		var path string
+		if json.Unmarshal(fields[key], &path) == nil && path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func exactLocalShellScript(command string) (string, bool) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" || strings.ContainsAny(trimmed, ";&|$`()<>\\\n\r") {
+		return "", false
+	}
+	parts := strings.Fields(trimmed)
+	if strings.Join(parts, " ") != trimmed {
+		return "", false
+	}
+	if len(parts) == 1 && (strings.HasPrefix(parts[0], "./") || strings.HasSuffix(parts[0], ".sh")) {
+		return parts[0], true
+	}
+	if len(parts) == 2 && (parts[0] == "sh" || parts[0] == "bash" || parts[0] == "dash") && (strings.HasPrefix(parts[1], "./") || strings.HasSuffix(parts[1], ".sh")) {
+		return parts[1], true
+	}
+	return "", false
+}
+
+// BoundedWorkspaceReader is the optional evidence-safe versioned read seam.
+// ReadVersionBounded must reject content larger than maxBytes before allocating
+// more than maxBytes+1 bytes and must return content and version from one
+// consistent snapshot. Callers must fail closed when a Workspace lacks it.
+type BoundedWorkspaceReader interface {
+	ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, FileVersion, error)
+}
+
+// BoundedWorkspaceRangeReader is the optional paging extension used for finite
+// evidence larger than one native preview. It must read at most maxBytes from
+// offset, reject files larger than totalLimit without allocating them, and
+// return the authoritative version and total size from the same opened snapshot.
+type BoundedWorkspaceRangeReader interface {
+	ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, FileVersion, int64, error)
+}
+
 // AuthorityResourceResolver derives the physical, workspace-confined identity of a
 // local path for authority evaluation. Implementations must resolve symlinks using
 // the same rules as filesystem access and reject an escape or any ambiguous path.

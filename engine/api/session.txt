@@ -33,7 +33,9 @@
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
     method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
+    method func (*Session).RecordHarnessPrompt(text string) error
     method func (*Session).RecordLastError(cause string) error
+    method func (*Session).RecordPrincipalPromptWithParts(text string, parts []Content, instructions []Message) error
     method func (*Session).RecordTitleAttempt(attempt TitleAttempt)
     method func (*Session).RecordTitleSourcePrompt(text string)
     method func (*Session).RecordTokenUsage(kind UsageKind, providerID string, modelID string, usage Usage)
@@ -79,7 +81,6 @@
     method func (GrantType).Valid() bool
     method func (IncarnationID).Valid() bool
     method func (Limits).WithDefaults(d Limits) Limits
-    method func (PendingAsk).Origin() AskOrigin
     method func (PendingAuthorization).Clone() PendingAuthorization
     method func (RetryDisposition).Valid() bool
     method func (RetryMetadata).Valid() bool
@@ -92,9 +93,10 @@
 const ActivityActive ActivityState = "active"
 const ActivityDraft ActivityState = "draft"
 const ActivityUnknown ActivityState = ""
-const AskOriginHook AskOrigin = 1
-const AskOriginNone AskOrigin = 0
-const AskOriginPlan AskOrigin = 2
+const ApprovalOriginHookGuardrail ApprovalOrigin = "hook_guardrail"
+const ApprovalOriginPermission ApprovalOrigin = "permission"
+const ApprovalOriginPlan ApprovalOrigin = "plan"
+const ApprovalOriginUnknown ApprovalOrigin = ""
 const AuthorizationCancelled AuthorizationStatus = "cancelled"
 const AuthorizationClosed AuthorizationStatus = "closed"
 const AuthorizationDenied AuthorizationStatus = "denied"
@@ -156,6 +158,8 @@ const EvUserPrompt EventType = "user_prompt"
 const GrantTypeClientCredentials GrantType = "client_credentials"
 const GrantTypeSystem GrantType = "system"
 const GrantTypeUser GrantType = "user"
+const GuardrailApprovalAction GuardrailApprovalKind = "action"
+const GuardrailApprovalResultRelease GuardrailApprovalKind = "result_release"
 const HookAdvisory HookDecision = "advisory"
 const HookBlocked HookDecision = "blocked"
 const HookInfo HookDecision = "info"
@@ -256,6 +260,9 @@ const TitleProvenanceOperator TitleProvenance = "operator"
 const TitleProvenanceUnknown TitleProvenance = ""
 const UsageKindMain UsageKind = "main"
 const UsageKindSessionTitle UsageKind = "session_title"
+const UserPromptProvenanceHarness UserPromptProvenance = "harness"
+const UserPromptProvenancePrincipal UserPromptProvenance = "principal"
+const UserPromptProvenanceUnknown UserPromptProvenance = ""
 const VerdictAllowAlways ApprovalVerdict = 2
 const VerdictAllowOnce ApprovalVerdict = 1
 const VerdictDeny ApprovalVerdict = 0
@@ -322,9 +329,9 @@ func ValidateToolResultParts(parts []Content) error
 func VerdictString(v ApprovalVerdict) string
 func WithPrincipal(ctx context.Context, p *Principal) context.Context
 type ActivityState string
-type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool}
+type ApprovalOrigin string
+type ApprovalPayload struct{AskID string; Verdict string; Tool string; Call ToolCallID; AllowAlways bool; Origin ApprovalOrigin}
 type ApprovalVerdict int
-type AskOrigin int
 type Authority struct{CapabilitySet governance.CapabilitySet "json:\"capability_set\""; Provenance string "json:\"provenance\""; DefinitionIdentity string "json:\"definition_identity,omitempty\""}
 type AuthorizationBinding string
 type AuthorizationPayload struct{AuthorizationID string; DisplayName string; Call ToolCallID; ExpiresAt time.Time; Status AuthorizationStatus}
@@ -342,17 +349,21 @@ type EventType string
 type ExternalAuthorization struct{ID string; DisplayName string; Binding AuthorizationBinding; ExpiresAt time.Time}
 type ExternalBinding string
 type GrantType string
+type GuardrailApprovalKind string
+type GuardrailPendingScope struct{ReviewID string; Kind GuardrailApprovalKind; GrantDigest string; SessionOnly bool; RepeatAvailable bool}
+type GuardrailRef struct{Ref string; Category string}
+type GuardrailReviewPayload struct{ReviewID string; Job string; Assessment string; Inspection string; Disposition string; ReasonCode string; RuleID string; RuleOrigin string; CheckerProviderID string; CheckerModelID string; Concerns []GuardrailRef; Sources []GuardrailRef}
 type HookDecision string
-type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID}
+type HookPayload struct{Phase string; Tool string; Decision HookDecision; CallID ToolCallID; Guardrail *GuardrailReviewPayload}
 type IncarnationID string
 type Limits struct{MaxTurns int; MaxToolCalls int; MaxConsecutiveFailures int}
 type MediaKind string
-type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; ReasoningItemID string; Parts []Content}
+type Message struct{Role Role; Text string; ToolCalls []ToolCall; ToolResult *ToolResult; Reasoning string; ProviderPhase string; ReasoningItemID string; Parts []Content; UserPromptProvenance UserPromptProvenance}
 type ModelRetryPayload struct{Disposition RetryDisposition; Progress StreamProgress}
 type NetworkAttemptPayload struct{SessionID SessionID "json:\"session_id\""; RunSerial int64 "json:\"run_serial\""; Turn int "json:\"turn\""; Attempt int "json:\"attempt\""; MaxAttempts int "json:\"max_attempts\""; ElapsedMs int64 "json:\"elapsed_ms\""; RetryDisposition string "json:\"retry_disposition\""; StreamProgress string "json:\"stream_progress\""; Decision string "json:\"decision\""; SuppressionReason string "json:\"suppression_reason,omitempty\""; BackoffMs int64 "json:\"backoff_ms\""; FailureClass string "json:\"failure_class\""; HTTPStatus int "json:\"http_status,omitempty\""; InBandStatus int "json:\"in_band_status,omitempty\""; CorrelationKind string "json:\"correlation_kind,omitempty\""; CorrelationDigest string "json:\"correlation_digest,omitempty\""}
 type ParallelEventKind string
 type ParallelPayload struct{ParentCallID string; Kind ParallelEventKind; Join string; BranchCount int; BranchIndex int; ChildID string; ChildIncarnation IncarnationID; BranchLabel string; Goal string; RoutedCategory string; RoutedModel string; RoutingReason string; RoutingDecision *RoutingDecision; Model string; ToolName string; IsError bool; ToolCount int; Text string; Detail string; InnerKind EventType; Failed bool; Stop StopReason; Usage Usage; DurationMs int64; Winner int}
-type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; ConfiguredAsk bool; FlooredConfiguredAllow bool; HookOriginated bool "json:\"hook_originated,omitempty\""; PlanOriginated bool "json:\"plan_originated,omitempty\""}
+type PendingAsk struct{AskID string; Tool string; Args json.RawMessage; Reason string; Call ToolCallID "json:\"call,omitempty\""; Guardrail *GuardrailPendingScope "json:\"guardrail,omitempty\""; Origin ApprovalOrigin "json:\"origin,omitempty\""; AskProvenance governance.AskProvenance "json:\"-\""}
 type PendingAuthorization struct{Authorization ExternalAuthorization; Call ToolCall; Deferred []ToolCall}
 type PendingWorkspaceEnrollment struct{ID WorkspaceEnrollmentID; RequiredServices uint32; ExpiresAt time.Time}
 type PermissionMode string
@@ -394,7 +405,8 @@ type Turn struct{Index int; Assistant Message; Results []ToolResult; Usage Usage
 type TurnEndPayload struct{Usage Usage; Estimated bool; DurationMs int64; TTFTMs int64; InterTokenMeanMs int64; InterTokenMaxMs int64}
 type Usage struct{InputTokens int; OutputTokens int; CacheReadTokens int; CacheWriteTokens int; ReasoningTokens int}
 type UsageKind string
-type UserPromptPayload struct{Text string; Parts []Content; Synthetic bool}
+type UserPromptPayload struct{Text string; Parts []Content; Synthetic bool; Provenance UserPromptProvenance}
+type UserPromptProvenance string
 type WorkspaceEnrollmentID string
 var ErrIllegalTransition error
 var ErrInvalidContent error

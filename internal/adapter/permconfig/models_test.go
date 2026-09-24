@@ -111,7 +111,7 @@ func TestOperatorModelsFromCLIHonoured(t *testing.T) {
 		t.Fatal("operator-tier models must be honoured from the CLI/explicit tier")
 		return
 	}
-	if m.Slots["compaction"] != "cheap" || m.Slots["guardrail"] != "fast" {
+	if m.Slots["compaction"].Model != "cheap" || m.Slots["guardrail"].Model != "fast" {
 		t.Fatalf("slots not parsed faithfully: %+v", m.Slots)
 	}
 	if m.Aliases["cheap"] != "gpt-4o-mini" || m.Aliases["fast"] != "gpt-4o" {

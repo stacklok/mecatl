@@ -6,6 +6,10 @@
     method func (Scope).HasHigherPrecedenceThan(other Scope) bool
 const Allow Effect = "allow"
 const Ask Effect = "ask"
+const AskProvenanceBuiltinSubstitutionFloor AskProvenance = "builtin_substitution_floor"
+const AskProvenanceConfigured AskProvenance = "configured_ask"
+const AskProvenanceConfiguredAllowFloor AskProvenance = "configured_allow_floor"
+const AskProvenanceUnknown AskProvenance = ""
 const AudienceAll Audience = 0
 const AudienceMain Audience = 1
 const AudienceSubagent Audience = 2
@@ -44,6 +48,7 @@ func SubstitutionReadOnly(seg string) bool
 func WithAudience(a Audience) EvaluatorOption
 func WithLooseSubstitution(loose bool) EvaluatorOption
 func WriteUntrustedBlock(b *strings.Builder, body string)
+type AskProvenance string
 type Audience int
 type CapabilitySet struct{Tools []string; RemainingDelegationDepth int; FileSystem bool; DirectWrite bool}
 type Effect string
@@ -52,7 +57,7 @@ type EvaluatorOption func(*Evaluator)
 type HookEvent struct{Phase HookPhase; Tool string; Input json.RawMessage; SessionID string; CallID string}
 type HookOutcome struct{Block bool; Message string; Mutated json.RawMessage; AskApproval bool}
 type HookPhase string
-type PermissionDecision struct{Effect Effect; Reason string; ConfiguredAsk bool; FlooredConfiguredAllow bool}
+type PermissionDecision struct{Effect Effect; Reason string; AskProvenance AskProvenance}
 type Rule struct{Scope Scope; Tool string; Pattern string; Effect Effect; Exact bool; Audience Audience}
 type Scope int
 var ErrDelegationDepthExhausted error

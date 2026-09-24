@@ -143,7 +143,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 	if decision.Effect == governance.Deny {
 		return decision // deny-dominance: never relax an inner deny
 	}
-	if decision.Effect == governance.Ask && decision.ConfiguredAsk {
+	if decision.Effect == governance.Ask && decision.AskProvenance == governance.AskProvenanceConfigured {
 		return decision // configured-Ask floor: the relax never suppresses a configured Ask
 	}
 	clf := p.classifierFor(ws)
@@ -177,7 +177,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 		}
 		path := escapePath(c.Args)
 		switch c.Name {
-		case "Read", "ListDir":
+		case "Read", listDirToolName:
 			if p.posture >= PostureAuto {
 				// Shell parity: at auto/yolo Shell already reads the same bytes, so
 				// the FS read boundary was cosmetic. The relaxed workspace serves
@@ -200,7 +200,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 				Effect: governance.Ask,
 				Reason: fmt.Sprintf("out-of-workspace read-only access: %q lies outside the workspace root — approve to run %s through the FS tool (an opaque Shell workaround is NOT a substitute)", path, c.Name),
 			}
-		case "Write", "Edit":
+		case writeToolName, editToolName:
 			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —
 			// never a silent un-asked mutation below yolo. Scenario 4 extends
 			// the SAME ask to strict/trusted (whose Write/Edit floor Ask
@@ -419,6 +419,28 @@ func (w *escapeWorkspace) ReadVersion(ctx context.Context, path string) ([]byte,
 		return nil, tool.FileVersion{}, err
 	}
 	return w.Workspace.ReadVersion(ctx, path)
+}
+
+func (w *escapeWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
+	if err := w.refusePath(path); err != nil {
+		return nil, tool.FileVersion{}, err
+	}
+	reader, ok := w.Workspace.(tool.BoundedWorkspaceReader)
+	if !ok {
+		return nil, tool.FileVersion{}, tool.ErrFileOperationUnsupported
+	}
+	return reader.ReadVersionBounded(ctx, path, maxBytes)
+}
+
+func (w *escapeWorkspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
+	if err := w.refusePath(path); err != nil {
+		return nil, tool.FileVersion{}, 0, err
+	}
+	reader, ok := w.Workspace.(tool.BoundedWorkspaceRangeReader)
+	if !ok {
+		return nil, tool.FileVersion{}, 0, tool.ErrFileOperationUnsupported
+	}
+	return reader.ReadVersionRangeBounded(ctx, path, offset, maxBytes, totalLimit)
 }
 
 // Stat consults the escape classifier (pseudo-fs hard-deny) then delegates.

@@ -60,6 +60,8 @@ func TestSDKRunControls_Scenario1_ProtobufContract(t *testing.T) {
 		"expected_run_id": {number: 2, kind: protoreflect.StringKind},
 		"ask_id":          {number: 3, kind: protoreflect.StringKind},
 		"verdict":         {number: 4, kind: protoreflect.EnumKind, typeName: "mecatl.v1.ApprovalVerdict"},
+		"review_id":       {number: 5, kind: protoreflect.StringKind},
+		"guardrail_kind":  {number: 6, kind: protoreflect.EnumKind, typeName: "mecatl.v1.GuardrailApprovalKind"},
 	})
 	assertStringMinLen(t, resolveRequest, "session_id", 1)
 	assertStringMinLen(t, resolveRequest, "expected_run_id", 1)

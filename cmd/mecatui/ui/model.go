@@ -131,10 +131,11 @@ type LearningSettings interface {
 // imports client + theme only — never contracts/gen or any internal/... package;
 // all proto contact happens behind Converser/SessionCreator.
 type Deps struct {
-	Session SessionCreator
-	Conv    Converser
-	MCP     client.MCP       // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
-	Cmds    client.Commander // slash-command discovery for the input palette; nil disables it
+	Session    SessionCreator
+	Conv       Converser
+	MCP        client.MCP             // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
+	Cmds       client.Commander       // slash-command discovery for the input palette; nil disables it
+	Guardrails client.GuardrailClient // contextual coverage and live-only review detail; nil disables /guardrails
 	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without
@@ -670,7 +671,8 @@ type Model struct {
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
 	// pre-declared tombstone field (surface.go).
-	modal surface
+	modal           surface
+	pendingApproval *approvalResolvedIntent
 	// modelSwitchRequestToken correlates the asynchronous create-and-hydrate handoff.
 	// A stale result must not replace a session selected by a later lifecycle action.
 	modelSwitchRequestToken uint64
@@ -781,6 +783,9 @@ type Model struct {
 	// (all-false) until connect and for an older server. STORED, UNRENDERED in
 	// Phase A — Phase B consumes it.
 	caps client.Capabilities
+	// guardrailStatusRequest invalidates asynchronous /guardrails and /posture
+	// coverage responses when a newer request or session wins.
+	guardrailStatusRequest uint64
 
 	// activeMode is the server-confirmed permission mode for THIS session. It is
 	// initialized from the launch mode and updated only from SessionReady/GetSession/

@@ -112,8 +112,8 @@ func TestCanonicalShellTool_Scenario2_LegacyPendingCallRejected(t *testing.T) {
 			result = *event.ToolResult
 		}
 	}
-	if !result.IsError || !strings.Contains(result.Content, "unknown tool") {
-		t.Fatalf("legacy pending result = %+v, want unknown-tool error", result)
+	if !result.IsError || !strings.Contains(result.Content, "unknown approval origin") {
+		t.Fatalf("legacy pending result = %+v, want unresolved unknown-origin error", result)
 	}
 	if runner.command != "" {
 		t.Fatalf("restored legacy Bash call executed command %q", runner.command)

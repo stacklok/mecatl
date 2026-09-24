@@ -383,7 +383,7 @@ func TestCloudNativeLearning_Scenario3_UnwiredLearningIsByteIdentical(t *testing
 
 func drainLearningRun(run interface {
 	Events() <-chan session.Event
-	Approve(string, session.ApprovalVerdict)
+	Approve(string, session.ApprovalVerdict) error
 }) []session.Event {
 	var events []session.Event
 	for event := range run.Events() {

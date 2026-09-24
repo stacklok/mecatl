@@ -266,7 +266,7 @@ func TestFoldContractDocMatchesSessionFields(t *testing.T) {
 	//   (ToolCall.ItemID is on ToolCall, asserted separately below)
 	wantMessageFields := map[string]struct{}{
 		"Role": {}, "Text": {}, "ToolCalls": {}, "ToolResult": {},
-		"Reasoning": {}, "ProviderPhase": {}, "ReasoningItemID": {}, "Parts": {},
+		"Reasoning": {}, "ProviderPhase": {}, "ReasoningItemID": {}, "Parts": {}, "UserPromptProvenance": {},
 	}
 	assertExportedFields(t, reflect.TypeOf(session.Message{}), wantMessageFields,
 		"session.Message — classify the new field in COMPATIBILITY.md's reconstruction contract")

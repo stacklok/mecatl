@@ -666,7 +666,7 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		if d.Effect != governance.Ask {
 			t.Fatalf("effect = %v, want Ask — the relax must NEVER suppress a configured Ask", d.Effect)
 		}
-		if !d.ConfiguredAsk {
+		if d.AskProvenance != governance.AskProvenanceConfigured {
 			t.Fatal("ConfiguredAsk = false — the surviving Ask must stay marked configured (the child-ask model honours a configured Ask)")
 		}
 	})
@@ -680,7 +680,7 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		// roots the policy has already seen — in the loop, Learn only ever
 		// follows an Evaluate of the same call).
 		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
-		if d.Effect != governance.Ask || d.ConfiguredAsk {
+		if d.Effect != governance.Ask || d.AskProvenance == governance.AskProvenanceConfigured {
 			t.Fatalf("escape at auto = %+v, want an unconfigured escape Ask", d)
 		}
 		// The loop calls Learn on an allow-always verdict; the wrapper must

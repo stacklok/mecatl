@@ -20,25 +20,36 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
 )
+
+type transportAskPolicy struct{}
+
+func (transportAskPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
+	return governance.PermissionDecision{Effect: governance.Ask}
+}
+func (transportAskPolicy) Learn(session.SessionID, session.ToolCall) {}
 
 type recheckAuthorizationStream struct {
 	grpc.BidiStreamingServer[mecatlv1.RecheckMcpAuthorizationRequest, mecatlv1.RecheckMcpAuthorizationResponse]
-	ctx          context.Context
-	requests     []*mecatlv1.RecheckMcpAuthorizationRequest
-	requestCh    chan *mecatlv1.RecheckMcpAuthorizationRequest
-	approveOnAsk bool
-	afterInitial func()
-	sendErr      error
-	failAt       int
-	sendCalls    int
-	recvErr      error
-	recvErred    chan struct{}
-	eofAfterAsk  chan struct{}
-	responses    []*mecatlv1.RecheckMcpAuthorizationResponse
+	ctx              context.Context
+	requests         []*mecatlv1.RecheckMcpAuthorizationRequest
+	requestCh        chan *mecatlv1.RecheckMcpAuthorizationRequest
+	approveOnAsk     bool
+	staleThenApprove bool
+	pendingAsk       *mecatlv1.PermissionAsk
+	afterInitial     func()
+	sendErr          error
+	failAt           int
+	sendCalls        int
+	recvErr          error
+	recvErred        chan struct{}
+	eofAfterAsk      chan struct{}
+	responses        []*mecatlv1.RecheckMcpAuthorizationResponse
 }
 
 func (s *recheckAuthorizationStream) Context() context.Context { return s.ctx }
@@ -80,10 +91,26 @@ func (s *recheckAuthorizationStream) Send(response *mecatlv1.RecheckMcpAuthoriza
 		return s.sendErr
 	}
 	if s.approveOnAsk && response.GetEvent().GetType() == "permission.ask" {
-		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{AskId: response.GetEvent().GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE}}}
+		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{
+			AskId: response.GetEvent().GetAsk().GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+			ReviewId: response.GetEvent().GetAsk().GetGuardrail().GetReviewId(), GuardrailKind: response.GetEvent().GetAsk().GetGuardrail().GetKind(),
+		}}}
 	}
 	if s.eofAfterAsk != nil && response.GetEvent().GetType() == "permission.ask" {
 		close(s.eofAfterAsk)
+	}
+	if s.staleThenApprove && response.GetEvent().GetType() == "permission.ask" {
+		s.pendingAsk = response.GetEvent().GetAsk()
+		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{
+			AskId: s.pendingAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+			ReviewId: s.pendingAsk.GetGuardrail().GetReviewId(), GuardrailKind: s.pendingAsk.GetGuardrail().GetKind(), ExpectedRunId: "stale-run",
+		}}}
+	}
+	if s.staleThenApprove && response.GetEvent().GetType() == "control.refused" && s.pendingAsk != nil {
+		s.requestCh <- &mecatlv1.RecheckMcpAuthorizationRequest{Control: &mecatlv1.RecheckMcpAuthorizationRequest_ResumeApproval{ResumeApproval: &mecatlv1.ResumeApproval{
+			AskId: s.pendingAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+			ReviewId: s.pendingAsk.GetGuardrail().GetReviewId(), GuardrailKind: s.pendingAsk.GetGuardrail().GetKind(), ExpectedRunId: response.GetEvent().GetRunId(),
+		}}}
 	}
 	return nil
 }
@@ -162,7 +189,7 @@ func TestMCPAuthorizationGRPCUsesAuthenticatedOwnerAndAuthoritativeStatus(t *tes
 	}
 }
 
-func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
+func TestMCPAuthorizationGRPCContinuationDeliversResult(t *testing.T) {
 	followup := session.NewToolCall("followup-call", "protected", nil)
 	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
 		mockllm.ToolCallTurn(followup), mockllm.TextTurn("continued after approval"))
@@ -189,22 +216,70 @@ func TestMCPAuthorizationGRPCContinuationPermissionApproval(t *testing.T) {
 	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); err != nil {
 		t.Fatal(err)
 	}
-	var asked, toolResult, terminal bool
+	var toolResult, terminal bool
 	for _, response := range stream.responses {
 		ev := response.GetEvent()
 		switch {
-		case ev.GetType() == "permission.ask" && ev.GetAsk().GetAskId() != "":
-			asked = true
 		case ev.GetType() == "tool.result" && ev.GetToolResult().GetCallId() == "followup-call":
 			toolResult = true
 		case ev.GetType() == "result":
 			terminal = true
 		}
 	}
-	if !asked || !toolResult || !terminal {
-		t.Fatalf("continuation events missing ask/approved result/terminal: asked=%t toolResult=%t terminal=%t", asked, toolResult, terminal)
+	if !toolResult || !terminal {
+		t.Fatalf("continuation events missing result/terminal: toolResult=%t terminal=%t", toolResult, terminal)
 	}
 	assertAuthorizationStatusLoggedOnce(t, log, "authorization-session", session.AuthorizationGranted)
+}
+
+func TestMCPAuthorizationGRPCStaleApprovalRefusesThenAcceptsCorrectRetry(t *testing.T) {
+	followup := session.NewToolCall("followup-stale", "protected", nil)
+	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
+		mockllm.ToolCallTurn(followup), mockllm.TextTurn("continued after stale retry"))
+	f.svc.cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		catalog := tool.NewCatalog()
+		for _, candidate := range tools {
+			catalog.MustRegister(candidate)
+		}
+		engine := agent.NewEngine(agent.Deps{
+			LLM:     mockllm.New(mockllm.ToolCallTurn(followup), mockllm.TextTurn("continued after stale retry")),
+			Catalog: catalog, Policy: transportAskPolicy{}, Store: f.store, Model: "mock", Interactive: true,
+		})
+		return SessionEngineResult{Engine: engine, BuiltForMode: mode, Close: func() error { return nil }}, nil
+	}
+	owner := &session.Principal{Issuer: "https://issuer.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	sess, err := f.store.Load(t.Context(), "authorization-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Owner = owner
+	if err := f.store.Save(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.cfg.OwnershipEnforced = true
+
+	ctx, cancel := context.WithCancel(session.WithPrincipal(t.Context(), owner))
+	defer cancel()
+	stream := &recheckAuthorizationStream{
+		ctx: ctx, requestCh: make(chan *mecatlv1.RecheckMcpAuthorizationRequest, 1), staleThenApprove: true,
+		requests: []*mecatlv1.RecheckMcpAuthorizationRequest{{SessionId: "authorization-session", AuthorizationId: f.pending.Authorization.ID}},
+	}
+	if err := NewHarnessServer(f.svc).RecheckMcpAuthorization(stream); err != nil {
+		t.Fatal(err)
+	}
+	var refused, toolResult bool
+	for _, response := range stream.responses {
+		ev := response.GetEvent()
+		if ev.GetType() == "control.refused" {
+			refused = ev.GetControlRefused().GetAskId() == stream.pendingAsk.GetAskId() && ev.GetControlRefused().GetCategory() == "stale_run_control"
+		}
+		if ev.GetType() == "tool.result" && ev.GetToolResult().GetCallId() == "followup-stale" {
+			toolResult = true
+		}
+	}
+	if !refused || !toolResult {
+		t.Fatalf("stale retry pipeline refused=%t toolResult=%t responses=%+v", refused, toolResult, stream.responses)
+	}
 }
 
 func TestMCPAuthorizationGRPCInitialStatusSendFailureDrainsAndFinishesContinuation(t *testing.T) {
@@ -353,7 +428,7 @@ func TestMCPAuthorizationGRPCControlEOFDrainsContinuationWithoutCancellingIt(t *
 
 func TestMCPAuthorizationGRPCControlEOFCancelsStrandedPermissionContinuation(t *testing.T) {
 	followup := session.NewToolCall("followup-call", "protected", nil)
-	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
+	f := newLifecycleFixtureWithPolicyTurns(t, session.AuthorizationGranted, nil, time.Now, nil, transportAskPolicy{},
 		mockllm.ToolCallTurn(followup), mockllm.TextTurn("must not continue after a stranded ask"))
 	stream := &recheckAuthorizationStream{
 		ctx:         t.Context(),
@@ -380,7 +455,7 @@ func TestMCPAuthorizationGRPCControlEOFCancelsStrandedPermissionContinuation(t *
 
 func TestMCPAuthorizationGRPCControlEOFBeforeAskCancelsWhenContinuationLaterStrands(t *testing.T) {
 	followup := session.NewToolCall("followup-call", "protected", nil)
-	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
+	f := newLifecycleFixtureWithPolicyTurns(t, session.AuthorizationGranted, nil, time.Now, nil, transportAskPolicy{},
 		mockllm.ToolCallTurn(followup), mockllm.TextTurn("must not continue after a stranded ask"))
 	recvErred := make(chan struct{})
 	releaseWork := make(chan struct{})

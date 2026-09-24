@@ -41,12 +41,15 @@ type PermissionPolicy interface {
 |`governance.Ask`|Pause for a client verdict|
 |`governance.Deny`|Return the reason to the model without running the tool|
 
-An ask decision can also set `ConfiguredAsk` or `FlooredConfiguredAllow`. These
-fields are mutually exclusive. `ConfiguredAsk` prevents a child approval layer
-from auto-approving an operator's ask. `FlooredConfiguredAllow` lets that layer
-auto-approve only when a configured allow covers the outer command, commands
-hidden by substitution are read-only, and the command remains confined to the
-isolated workspace.
+An ask decision carries one `AskProvenance` value. `AskProvenanceConfigured`
+preserves an operator's configured ask. `AskProvenanceConfiguredAllowFloor`
+allows a one-time child resolution only when a configured allow covers the outer
+command, hidden substitution commands are read-only, and the command remains
+confined to the isolated workspace. `AskProvenanceBuiltinSubstitutionFloor`
+identifies the narrow built-in worker Shell floor that an enforcing contextual
+permission review can resolve once. Leave the zero value for default and
+unclassified asks; it grants no additional approval authority, while existing
+isolation and optional headless-review fallbacks continue to apply.
 
 `workspace` is a read-only view used to resolve project configuration. Treat a
 nil value as no project configuration.

@@ -61,18 +61,18 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES guardrails (the guardrails-parity enable model). A configured model with no rules runs the default BLOCK set (WebSearch/WebFetch/mcp__*/Shell, enforcing; downgrade via defaultMode: advisory). Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
-| `guardrails.minContentBytes` | `int` | `0` | MinContentBytes skips the checker for content shorter than this. 0 = check all. |
+| `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES contextual guardrails. A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
 | `guardrails.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it). |
-| `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "warn" (default, fail-open) or "fail" (fail-closed for all rules). Per-rule failClosed overrides: failClosed:true tightens even under warn; failClosed:false (explicit) loosens even under fail. Empty = warn. |
-| `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default), "advisory", or "sanitize". An explicit rules list replaces the defaults entirely (this key is ignored). |
+| `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "fail" (default, fail-closed) or explicit "warn" (continue with an operational warning). Per-rule failClosed overrides: failClosed:true tightens under warn; explicit false loosens under fail. Empty = fail. |
+| `guardrails.defaultMode` | `string` | `(empty)` | DefaultMode sets the enforcement mode for the built-in default rules when no explicit rules are configured: "block" (default) or "advisory". An explicit rules list replaces the defaults entirely (this key is ignored). |
+| `guardrails.taskWindow` | `int` | `1` | TaskWindow selects the last K explicitly authenticated root prompts (default 1, clamped 1..3). |
 | `guardrails.escape` | `bool` | `false` | Escape is the ADR-0080 escape knob: when true AND a checker model is configured, an out-of-root FS escape at posture auto routes through the guardrail checker (an unsafe verdict denies; a checker error fails closed to the write-escape Ask). Default false = the un-routed posture table. |
 | `guardrails.rules` | `[]guardrailrulespec` | `(absent)` | Rules is the guardrail rule list. |
 | `guardrails.rules[].match` | `string` | `(empty)` | Match is the tool-name matcher (exact / "prefix*" / "*"). |
 | `guardrails.rules[].phases` | `[]string` | `(absent)` | Phases lists "pre"/"post"; empty = both. |
-| `guardrails.rules[].mode` | `string` | `(empty)` | Mode is "block"/"sanitize"/"advisory"; empty defaults to block. |
-| `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt overrides the built-in inspection rubric. |
-| `guardrails.rules[].failClosed` | `bool` | `false` | FailClosed flips the fail-open default for enforcing modes. |
+| `guardrails.rules[].mode` | `string` | `(empty)` | Mode is "block"/"advisory"; empty defaults to block. |
+| `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt adds operator task-risk context beneath the fixed harness safety, provenance, evidence, and structured-output rubric; it cannot replace it. |
+| `guardrails.rules[].failClosed` | `bool` | `false` | FailClosed optionally overrides the fail-closed global default for this rule. |
 
 ## `posture`
 
@@ -258,7 +258,7 @@ Per-slot/alias/default model config (ADR 0030) + the operator allowlist cap and 
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `models.slots` | `map[string]string` | `(absent)` | Slots binds a slot name to a model selector (alias or concrete id). Call slots include "compaction", "ask-reviewer", and "guardrail"; tier slots include "cheap", "fast", and "reasoning". The "plan" slot selects the session model while the session is in plan mode. In default or accept-edits mode, the session uses its default model. When "plan" is unset, it falls through to the "reasoning" tier when configured. |
+| `models.slots` | `map[string]modelslotvalue` | `(absent)` | Slots binds a slot name to a model selector. Call slots include "compaction", "ask-reviewer", and "guardrail"; tier slots include "cheap", "fast", and "reasoning". The "plan" slot selects the session model while the session is in plan mode. In default or accept-edits mode, the session uses its default model. When "plan" is unset, it falls through to the "reasoning" tier when configured. The guardrail slot alone also accepts an operator-only explicit provider route. |
 | `models.aliases` | `map[string]string` | `(absent)` | Aliases binds a short alias to a concrete model id (merged onto the CLI --model-alias map, CLI winning per key). |
 | `models.default` | `string` | `(empty)` | Default is the session-default model selector (alias or concrete id). It is the project-overridable session default (ADR 0030 Phase 4) — within the operator allowlist; the operator's own Default is uncapped. Empty = absent. |
 | `models.subagent` | `string` | `(empty)` | Subagent is the OPERATOR-TIER def-less child-default model selector (alias or concrete id): the settings.yaml twin of the --subagent-model flag (issue #288). It sets the global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (via an agent definition or a per-call override). Operator-tier ONLY: a project-tier subagent: is IGNORED with a WARN (the child-default model is an operator decision — the same operator-only captureModels discipline as default_provider/allowlist/router). The CLI --subagent-model WINS when both are set. Validated FAIL-FAST at Build (normalizeSubagentModel): a value that does not resolve to a usable model id is a startup error (unlike fail-soft models.default). Empty = absent (the flag/inherit-parent behaviour is unchanged). |

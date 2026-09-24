@@ -2,8 +2,8 @@
 
 - Status: Proposed
 - Date: 2026-09-14
-- Scope: contextual action/inbound review, exact effective-call ordering, live repeat grants and result release, main/worker trajectory, checker routing, and safe status
-- Proposed supersession: ADR 0021's one-payload/tool-less classifier architecture; ADR 0051's generic advisory projection; ADR 0060's narrow default coverage; ADR 0062's waiver identity and approval-origin behavior
+- Scope: contextual action/inbound review, narrow worker permission review, exact effective-call ordering, live repeat grants and result release, main/worker trajectory, checker routing, and safe status
+- Proposed supersession: ADR 0021's one-payload/tool-less classifier architecture; ADR 0051's generic advisory projection; ADR 0060's narrow default coverage; ADR 0062's waiver identity and approval-origin behavior; ADR 0304's exact gRPC-only exception set, adding the owner-authorized coverage and live-detail RPCs
 - Superseded by: —
 
 ## Context
@@ -22,16 +22,21 @@ Finally, an `EvHook` is observed by the durable relay before live delivery. Chec
 
 ## Proposed decision
 
-The product direction and exact proposed interface live in the [acceptance plan](../acceptance/contextual-guardrails.md). On 2026-09-21 the operator explicitly authorized this amendment and continued stacked implementation on PR #1510 over Plan / Interface PR #1455. Human review and merge remain required. Implementation must build finite capacity calibration and quality-measurement deliverables, while separately authorized release validation supplies any actual checker-model efficacy evidence before a production-readiness claim.
+The product direction and exact interface live in the [acceptance plan](../acceptance/contextual-guardrails.md). Implementation is operator-authorized as a stacked, in-progress change on Plan / Interface PR #1455 while this ADR remains Proposed. On 2026-09-21 the operator explicitly authorized the task-window, scoped approval-evidence, independent posture/checker-status amendment. On 2026-09-23 the operator explicitly authorized the closed failure-code projection and narrow built-in worker Shell substitution-floor exception. Human review and merge are still required. Protocol and offline tests do not establish checker-model efficacy, which remains a separately authorized release-validation deliverable.
 
-### One reviewer, two jobs
+### One reviewer, three distinct jobs
 
 Replace the old reviewer rather than retaining modes. Remove sanitize from code, configuration, prompts, tests, and current documentation without compatibility or migration machinery. Guardrails remain off unless enabled; enforcing `block` and explicit `advisory` remain.
 
+Remove `minContentBytes` from the strict schema and composition rather than retaining an ignored option: matched inbound content is never skipped merely because it is short. Existing configurations that still set the removed key fail strict unknown-key validation and must delete it; there is no compatibility mapping or silent migration.
+
 Use one protocol with separate prompts:
 
-- **action** reviews the exact outbound call after one trusted mutation and deterministic re-evaluation; and
-- **inbound** reviews the already-produced effective result before history, save, event, client, or working-model delivery.
+- **action** reviews the exact outbound call after one trusted mutation and deterministic re-evaluation;
+- **inbound** reviews the already-produced effective result before history, save, event, client, or working-model delivery; and
+- **permission** applies only to an exact worker `Shell` ask whose typed evaluator provenance proves that the built-in substitution/grouping floor is the sole remaining Ask after a floor-free Allow fold.
+
+The permission rubric asks whether that exact command is safe to authorize once under the genuine current task and bound child authority. Ordinary action acceptability is not authorization. Configured Ask, Deny, plan mode, Shell system scope, mixed compounds with another Ask, and advisory, skipped, disabled, or unmatched coverage never enter this path. Only a completed acceptable permission assessment grants `AllowOnce`; every other outcome preserves the existing interactive surface or headless deny/adjudicator path. The one-shot resolution learns and persists nothing, and ordinary downstream action review and binding revalidation still run before execution.
 
 The inbound rubric is not the action-risk rubric reused. Both prompts require affirmative evidence of attempted authority crossing or redirection. Imperatives, assistant-directed prose, normal issue tasks, genuinely admitted project instructions, and quoted attack examples are not findings by themselves. Missing evidence does not itself increase intrinsic risk. Existing per-rule `prompt` configuration becomes additive operator policy beneath a fixed harness rubric; it may customize task-risk rules within existing permissions but cannot replace or hide authority, provenance, source-aware false-positive, evidence, protocol, or structured-output contracts. This deliberate replacement has no legacy full-override mode.
 
@@ -81,7 +86,7 @@ Reuse `models.slots.guardrail` and the shared alias machinery. Resolve one provi
 
 One 90-second deadline covers setup, evidence, provider recovery, and at most three complete attempts. Only classified recoverable operational failures retry inside that same deadline; completed findings do not. Human waiting is excluded. Revalidation after a human answer runs once under the remaining normal operation/parent context, without resetting model budget, reviewer recall, or claiming universal filesystem/remote atomicity. A deadline does not bound memory: implementation calibrates private `max_evidence_handles`/`max_evidence_bytes` per review and `max_trajectory_facts`/`max_trajectory_bytes` per delegation-root Run, enforces them before allocation, and documents values and stress experiments in implementation review. They are internal capacities, not public deployment configuration fields.
 
-Operational checker failure is distinct from a prohibited or completed unresolved assessment. `inspection=complete, assessment=unresolved` covers capacity exhaustion, incomplete trajectory, and specifically missing decision-relevant evidence; it is not an outage and never increments checker-DOWN state. In enforcing mode it takes the job-appropriate human boundary: ask action approval or hold for result release interactively, and deny the action or withhold the result unattended. Advisory leaves the original action/result unchanged with explicit unresolved/incomplete status, never an unsafe finding. Missing-evidence detail cites actual unavailable/incomplete source refs and does not fabricate an attack. Only `inspection=operational_failure` enters the existing `onCheckerDown` posture: `fail` recovers within budget, then asks an interactive human or blocks/withholds unattended; explicit `warn` may continue with warning. Neither posture can override permission denial, prohibited findings, forbidden evidence, stale authority, or invalid identity.
+Operational checker failure is distinct from a prohibited or completed unresolved assessment. Operational failures carry exactly one closed machine-safe reason: `provider_failure`, `timeout`, `blank_assessment`, `malformed_assessment`, `invalid_assessment`, `missing_submit`, or `evidence_failure`. The same code drives event projection, bounded live detail, and the latest checker-health reason. Unknown custom errors fall back to `provider_failure`; raw checker response, prompt, evidence, and error text never cross these boundaries. `inspection=complete, assessment=unresolved` covers capacity exhaustion, incomplete trajectory, and specifically missing decision-relevant evidence; it is not an outage and never increments checker-DOWN state. In enforcing mode it takes the job-appropriate human boundary: ask action approval or hold for result release interactively, and deny the action or withhold the result unattended. Advisory leaves the original action/result unchanged with explicit unresolved/incomplete status, never an unsafe finding. Missing-evidence detail cites actual unavailable/incomplete source refs and does not fabricate an attack. Only `inspection=operational_failure` enters the existing `onCheckerDown` posture: `fail` recovers within budget, then asks an interactive human or blocks/withholds unattended; explicit `warn` may continue with warning. Neither posture can override permission denial, prohibited findings, forbidden evidence, stale authority, or invalid identity.
 
 ### Coverage and workers
 

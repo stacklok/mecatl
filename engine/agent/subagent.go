@@ -79,6 +79,9 @@ type observableTool interface {
 // adapter/server/proto type crosses. A tool that does not implement childCapableTool
 // (or a nil caps) gets the legacy headless auto-deny posture, unchanged.
 type parentCaps struct {
+	// reviewRoot shares only harness-owned trajectory/reviewer state with workers.
+	// It never carries a parent conversation or model-authored summary.
+	reviewRoot *reviewRoot
 	// interactive is the PARENT run's interactivity: true when a human approver is
 	// attached (the surfaced ask can be answered), false for a headless run.
 	interactive bool
@@ -2548,6 +2551,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// wrap). See buildSubagentRunRequest.
 	runReq, submit, prompt := buildSubagentRunRequest(args, resuming,
 		resumePosture{writable: writable, editsSurvived: editsSurvived}, forkAdvisory)
+	runReq.reviewRoot = caps.reviewRoot
+	runReq.reviewIsolated = !writable && t.childForker != nil
 
 	// A read-only child forking a worktree (childForker wired) runs ISOLATED, so its
 	// Shell asks are eligible for the A2 worktree-safe auto-approve; a forker-less
@@ -2890,6 +2895,8 @@ func (t *SubagentTool) driveBackground(ctx context.Context, b backgroundChild) {
 	// mode:"read-write"+background is rejected in validateMode, so a background child is
 	// always the read-only forked kind and gets the fresh-checkout resume note.
 	runReq, submit, prompt := buildSubagentRunRequest(b.args, b.resuming, resumePosture{}, forkAdvisory)
+	runReq.reviewRoot = b.caps.reviewRoot
+	runReq.reviewIsolated = t.childForker != nil
 	posture := childPosture{isolated: t.childForker != nil, caps: b.caps, role: string(b.childID),
 		childID:  string(b.childID),
 		askLabel: fmt.Sprintf("subagent %q", goal)}
@@ -4428,33 +4435,26 @@ func handleChildEvent(run *Run, ev session.Event, posture childPosture) (text st
 	return "", session.StopNone, false
 }
 
+func autoApproveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) bool {
+	switch {
+	case ask.AskProvenance == governance.AskProvenanceConfiguredAllowFloor:
+	case posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)):
+	default:
+		return false
+	}
+	_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
+	return true
+}
+
 // resolveChildAsk applies the 4-step resolution (plus the issue-#32 config axis;
 // see handleChildEvent's ordering doc) to one child permission ask.
 func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
-	// Config axis, BEFORE the isolation auto-approve. The two bits are mutually
-	// exclusive BY CONSTRUCTION (the evaluator never sets both), but they ride a
-	// PendingAsk that crosses run boundaries and is externally reachable, so the
-	// gate ORDER is the fail-safe for the illegal both-true state: ConfiguredAsk
-	// (surface / auto-deny) is checked FIRST, so a both-true ask fails SAFE
-	// (gated), never auto-approves.
-	//   - A CONFIGURED Ask must NEVER be auto-approved (the configured-Ask-never-
-	//     suppressed invariant, extended to A2): skip BOTH the floored-allow
-	//     auto-approve and the isolation auto-approve and fall through to
-	//     surface-to-human / headless auto-deny.
-	//   - Otherwise a substitution-floored ask whose every floored segment a
-	//     CONFIGURED Allow covers — with every extracted INNER positively
-	//     read-only and the blanked outer escape-rejection-free — resolves
-	//     AllowOnce: the configured child Allow vouches for the OUTER, and the
-	//     inner/escape bound was checked in the evaluator. Deny never reaches here
-	//     (it resolves in the ordinary fold).
-	if ask.ConfiguredAsk {
-		// Fall through to surface / headless auto-deny (skip every auto-approve).
-	} else if ask.FlooredConfiguredAllow {
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
-		return
-	} else if posture.isolated && ask.Tool == "Shell" && governance.IsolationApprovable(shellCmdFromArgs(ask.Args)) {
-		// Step A2: isolated child + isolation-approvable Shell → auto-approve.
-		run.Approve(ask.AskID, session.VerdictAllowOnce)
+	// Typed provenance is fail-closed: configured asks skip every automatic
+	// branch; configured-allow floors retain their existing bounded AllowOnce;
+	// built-in substitution floors that reach this consumer retain the existing
+	// surface/headless path; unknown provenance does likewise.
+	configuredAsk := ask.AskProvenance == governance.AskProvenanceConfigured
+	if !configuredAsk && autoApproveChildAsk(run, ask, posture) {
 		return
 	}
 	// Surface to the human when the parent is interactive and a surface seam is
@@ -4480,7 +4480,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 	// breaker-opened INFO) so an operator can tell a flaky reviewer from a blanket
 	// deny. The approved/denied command is named in the audit line (clamped) — an
 	// autonomous approval must record WHAT it ran, not only the policy reason.
-	if !ask.ConfiguredAsk && posture.caps.adjudicate != nil {
+	if !configuredAsk && posture.caps.adjudicate != nil {
 		outcome := posture.caps.adjudicate(ask, posture.isolated)
 		cmdPreview := clampPreview(surfacedCommandPreview(ask))
 		// One-time breaker-opened INFO, emitted regardless of WHICH non-allow outcome
@@ -4501,7 +4501,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 					"command", cmdPreview, "decision", "reviewed-allow",
 					"verdict_reason", clampPreview(outcome.reason))
 			}
-			run.Approve(ask.AskID, session.VerdictAllowOnce)
+			_ = run.Approve(ask.AskID, session.VerdictAllowOnce)
 			return
 		case outcome.reviewed:
 			if posture.caps.diag != nil {
@@ -4537,7 +4537,7 @@ func resolveChildAsk(run *Run, ask session.PendingAsk, posture childPosture) {
 			"subagent permission ask auto-denied (non-interactive shell)",
 			"agent", posture.role, "tool", ask.Tool, "reason", ask.Reason)
 	}
-	run.autoDenyChildAsk(ask.AskID, childAutoDenyMessage(ask.Reason, ask.ConfiguredAsk))
+	run.autoDenyChildAsk(ask.AskID, childAutoDenyMessage(ask.Reason, configuredAsk))
 }
 
 // shellCmdFromArgs extracts the Shell command string from a pending ask's raw args,

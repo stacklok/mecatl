@@ -258,7 +258,7 @@ category_labels=(
 )
 
 for label in "${category_labels[@]}"; do
-  category_count=$(printf '%s\n' "$interface_block" | awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { count++ } END { print count + 0 }')
+  category_count=$(awk -v label="$label" 'index($0, label) == 1 && substr($0, length(label) + 1, 1) == " " { count++ } END { print count + 0 }' <<< "$interface_block")
   if [[ "$category_count" -ne 1 ]]; then
     note_fail "expected exactly one canonical interface category: $label"
     continue

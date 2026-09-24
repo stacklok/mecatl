@@ -253,7 +253,7 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
 	case client.HookMsg:
-		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
+		c.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
 	case client.ResultMsg:
 		if msg.Stop == stopError && msg.Error != "" {
 			if msg.Permanent {
@@ -289,7 +289,7 @@ func (s *sessionsState) applyReplayEventSecondary(msg tea.Msg) {
 
 type sessionForker interface {
 	ForkSession(context.Context, string, string) (string, error)
-	client.SessionGetter
+	GetSession(context.Context, string) (client.SessionSnapshot, error)
 }
 
 type sessionsState struct {

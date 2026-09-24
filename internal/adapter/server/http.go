@@ -1333,6 +1333,8 @@ type resolveRunAskBody struct {
 	ExpectedRunID string `json:"expected_run_id"`
 	AskID         string `json:"ask_id"`
 	Verdict       string `json:"verdict"`
+	ReviewID      string `json:"review_id,omitempty"`
+	GuardrailKind string `json:"guardrail_kind,omitempty"`
 }
 
 type cancelRunBody struct {
@@ -1394,7 +1396,15 @@ func (h *HTTPHandler) resolveRunAsk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
 		return
 	}
-	ack, err := h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
+	var ack RunAskAcknowledgement
+	var err error
+	if body.ReviewID != "" || body.GuardrailKind != "" {
+		ack, err = h.svc.ResolveScopedRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, agent.ApprovalResolution{
+			AskID: body.AskID, ReviewID: body.ReviewID, Kind: session.GuardrailApprovalKind(body.GuardrailKind), Verdict: verdict,
+		})
+	} else {
+		ack, err = h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return

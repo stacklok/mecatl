@@ -101,54 +101,49 @@ func TestAudienceDefaultIsAllBackCompat(t *testing.T) {
 func TestConfiguredAskTruthTable(t *testing.T) {
 	floorAllow := Rule{Scope: ScopeBuiltinDefault, Effect: Allow}
 	cases := []struct {
-		name          string
-		rules         []Rule
-		cmd           string
-		wantEffect    Effect
-		wantConfAsk   bool
-		wantFloorBits bool // FlooredConfiguredAllow
+		name           string
+		rules          []Rule
+		cmd            string
+		wantEffect     Effect
+		wantProvenance AskProvenance
 	}{
 		{
-			name:        "configured ask wins → ConfiguredAsk",
-			rules:       []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: Ask}},
-			cmd:         "go test ./...",
-			wantEffect:  Ask,
-			wantConfAsk: true,
+			name:           "configured ask wins → ConfiguredAsk",
+			rules:          []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "go test*", Effect: Ask}},
+			cmd:            "go test ./...",
+			wantEffect:     Ask,
+			wantProvenance: AskProvenanceConfigured,
 		},
 		{
-			name:        "builtin-floor ask → NOT configured",
-			rules:       []Rule{{Scope: ScopeBuiltinDefault, Tool: "Shell", Pattern: "go test*", Effect: Ask}},
-			cmd:         "go test ./...",
-			wantEffect:  Ask,
-			wantConfAsk: false,
+			name:       "builtin-floor ask → NOT configured",
+			rules:      []Rule{{Scope: ScopeBuiltinDefault, Tool: "Shell", Pattern: "go test*", Effect: Ask}},
+			cmd:        "go test ./...",
+			wantEffect: Ask,
 		},
 		{
-			name:        "no matching rule default ask → NOT configured",
-			rules:       nil,
-			cmd:         "go test ./...",
-			wantEffect:  Ask,
-			wantConfAsk: false,
+			name:       "no matching rule default ask → NOT configured",
+			rules:      nil,
+			cmd:        "go test ./...",
+			wantEffect: Ask,
 		},
 		{
-			name:        "substitution-floor escalation → NOT configured",
-			rules:       []Rule{floorAllow},
-			cmd:         "cat $(zap)",
-			wantEffect:  Ask,
-			wantConfAsk: false,
+			name:           "substitution-floor escalation → NOT configured",
+			rules:          []Rule{floorAllow},
+			cmd:            "cat $(zap)",
+			wantEffect:     Ask,
+			wantProvenance: AskProvenanceBuiltinSubstitutionFloor,
 		},
 		{
-			name:        "allow decision → bits zero",
-			rules:       []Rule{floorAllow},
-			cmd:         "ls",
-			wantEffect:  Allow,
-			wantConfAsk: false,
+			name:       "allow decision → bits zero",
+			rules:      []Rule{floorAllow},
+			cmd:        "ls",
+			wantEffect: Allow,
 		},
 		{
-			name:        "deny decision → bits zero",
-			rules:       []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny}},
-			cmd:         "rm x",
-			wantEffect:  Deny,
-			wantConfAsk: false,
+			name:       "deny decision → bits zero",
+			rules:      []Rule{floorAllow, {Scope: ScopeSharedProject, Tool: "Shell", Pattern: "rm *", Effect: Deny}},
+			cmd:        "rm x",
+			wantEffect: Deny,
 		},
 		{
 			name: "configured ask on one segment gates the compound",
@@ -156,9 +151,9 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 				floorAllow,
 				{Scope: ScopeUser, Tool: "Shell", Pattern: "go vet*", Effect: Ask},
 			},
-			cmd:         "ls && go vet ./...",
-			wantEffect:  Ask,
-			wantConfAsk: true,
+			cmd:            "ls && go vet ./...",
+			wantEffect:     Ask,
+			wantProvenance: AskProvenanceConfigured,
 		},
 	}
 	for _, tc := range cases {
@@ -168,14 +163,8 @@ func TestConfiguredAskTruthTable(t *testing.T) {
 			if got.Effect != tc.wantEffect {
 				t.Fatalf("effect = %v, want %v (%s)", got.Effect, tc.wantEffect, got.Reason)
 			}
-			if got.ConfiguredAsk != tc.wantConfAsk {
-				t.Fatalf("ConfiguredAsk = %v, want %v (%s)", got.ConfiguredAsk, tc.wantConfAsk, got.Reason)
-			}
-			if got.FlooredConfiguredAllow != tc.wantFloorBits {
-				t.Fatalf("FlooredConfiguredAllow = %v, want %v", got.FlooredConfiguredAllow, tc.wantFloorBits)
-			}
-			if got.ConfiguredAsk && got.FlooredConfiguredAllow {
-				t.Fatalf("ConfiguredAsk and FlooredConfiguredAllow must be mutually exclusive")
+			if got.AskProvenance != tc.wantProvenance {
+				t.Fatalf("AskProvenance = %v, want %v (%s)", got.AskProvenance, tc.wantProvenance, got.Reason)
 			}
 		})
 	}
@@ -186,7 +175,7 @@ func TestConfiguredAskNonShell(t *testing.T) {
 	rules := []Rule{{Scope: ScopeLocalProject, Tool: "Write", Effect: Ask}}
 	e := NewEvaluator(rules)
 	got := e.Evaluate("Write", fileArgs("/x"), false)
-	if got.Effect != Ask || !got.ConfiguredAsk {
+	if got.Effect != Ask || got.AskProvenance != AskProvenanceConfigured {
 		t.Fatalf("configured non-Shell Ask must set ConfiguredAsk; got %+v", got)
 	}
 }
@@ -319,11 +308,9 @@ func TestFlooredConfiguredAllow(t *testing.T) {
 			if got.Effect != tc.wantEffect {
 				t.Fatalf("effect = %v, want %v (%s)", got.Effect, tc.wantEffect, got.Reason)
 			}
-			if got.FlooredConfiguredAllow != tc.want {
-				t.Fatalf("FlooredConfiguredAllow = %v, want %v (%s)", got.FlooredConfiguredAllow, tc.want, got.Reason)
-			}
-			if got.ConfiguredAsk && got.FlooredConfiguredAllow {
-				t.Fatalf("bits must be mutually exclusive")
+			gotConfiguredFloor := got.AskProvenance == AskProvenanceConfiguredAllowFloor
+			if gotConfiguredFloor != tc.want {
+				t.Fatalf("configured-floor provenance = %v, want %v (%s)", got.AskProvenance, tc.want, got.Reason)
 			}
 		})
 	}
@@ -343,8 +330,43 @@ func TestFlooredConfiguredAllowNeverOnDeny(t *testing.T) {
 	if got.Effect != Deny {
 		t.Fatalf("expected Deny, got %v", got.Effect)
 	}
-	if got.ConfiguredAsk || got.FlooredConfiguredAllow {
-		t.Fatalf("deny decision must carry zero bits; got %+v", got)
+	if got.AskProvenance != AskProvenanceUnknown {
+		t.Fatalf("deny decision must carry zero provenance; got %+v", got)
+	}
+}
+
+func TestBuiltinSubstitutionFloorProvenanceIsExact(t *testing.T) {
+	floor := Rule{Scope: ScopeBuiltinDefault, Effect: Allow}
+	configuredAsk := Rule{Scope: ScopeUser, Tool: "Shell", Pattern: "go vet*", Effect: Ask}
+	deny := Rule{Scope: ScopeManaged, Tool: "Shell", Pattern: "rm *", Effect: Deny}
+
+	if got := NewEvaluator([]Rule{floor}).Evaluate("Shell", shellArgs("echo $(zap) > out"), false); got.Effect != Ask || got.AskProvenance != AskProvenanceBuiltinSubstitutionFloor {
+		t.Fatalf("pure built-in floor = %+v", got)
+	}
+	if got := NewEvaluator([]Rule{floor, configuredAsk}).Evaluate("Shell", shellArgs("echo $(zap) > out && go vet ./..."), false); got.Effect != Ask || got.AskProvenance != AskProvenanceConfigured {
+		t.Fatalf("mixed configured Ask = %+v", got)
+	}
+	if got := NewEvaluator([]Rule{floor, deny}).Evaluate("Shell", shellArgs("echo $(zap) > out && rm marker"), false); got.Effect != Deny || got.AskProvenance != AskProvenanceUnknown {
+		t.Fatalf("deny-dominant compound = %+v", got)
+	}
+	if got := NewEvaluator([]Rule{floor}).Evaluate("Shell", shellArgs("echo $(zap) > out"), true); got.Effect != Deny || got.AskProvenance != AskProvenanceUnknown {
+		t.Fatalf("plan-mode command = %+v", got)
+	}
+}
+
+func TestBuiltinSubstitutionFloorMixedProvenanceIsUnknownInBothOrders(t *testing.T) {
+	builtinEcho := Rule{Scope: ScopeBuiltinDefault, Tool: "Shell", Pattern: "echo *", Effect: Allow}
+	configuredGo := Rule{Scope: ScopeUser, Tool: "Shell", Pattern: "go test*", Effect: Allow}
+	for _, cmd := range []string{
+		"echo $(zap) > out && go test $(git rev-parse HEAD)",
+		"go test $(git rev-parse HEAD) && echo $(zap) > out",
+		"echo $(zap) > out && unmatched",
+		"unmatched && echo $(zap) > out",
+	} {
+		got := NewEvaluator([]Rule{builtinEcho, configuredGo}).Evaluate("Shell", shellArgs(cmd), false)
+		if got.Effect != Ask || got.AskProvenance != AskProvenanceUnknown {
+			t.Fatalf("mixed command %q = %+v, want Ask with unknown provenance", cmd, got)
+		}
 	}
 }
 

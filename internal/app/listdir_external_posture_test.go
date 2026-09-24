@@ -123,7 +123,7 @@ func TestListDirExternalConfiguredRulesSurviveYolo(t *testing.T) {
 			if decision.Effect != tc.effect {
 				t.Fatalf("configured %s became %s at yolo", tc.effect, decision.Effect)
 			}
-			if tc.effect == governance.Ask && !decision.ConfiguredAsk {
+			if tc.effect == governance.Ask && decision.AskProvenance != governance.AskProvenanceConfigured {
 				t.Fatal("configured ListDir ask lost ConfiguredAsk provenance")
 			}
 		})
@@ -192,7 +192,7 @@ func TestListDirPseudoFSAliasApprovedAskStillRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := runListDirEscape(t, built, sess.ID, session.VerdictAllowOnce)
-	if out.ask == nil || !out.ask.ConfiguredAsk {
+	if out.ask == nil || out.ask.AskProvenance != governance.AskProvenanceConfigured {
 		t.Fatalf("ask = %+v, want configured ListDir ask before approval", out.ask)
 	}
 	if out.result == nil || !out.result.IsError || !strings.Contains(out.result.Content, "pseudo-filesystem (/proc, /sys, /dev) is never served") {

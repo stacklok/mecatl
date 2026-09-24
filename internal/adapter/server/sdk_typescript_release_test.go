@@ -56,15 +56,16 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 		t.Fatalf("stale generated mecatl.v1 service catalog/exclusion decision: %v", missing)
 	}
 
-	wantCounts := map[string]int{"HarnessService": 74, "ScheduleService": 10}
-	wantKeys := make(map[string]struct{}, 84)
+	wantCounts := map[string]int{"HarnessService": 76, "ScheduleService": 10}
+	wantKeys := make(map[string]struct{}, 90)
 	for service := range targetServices {
 		methods := descriptorsByService[service]
 		if len(methods) != wantCounts[service] {
 			t.Fatalf("%s descriptor count = %d, want pinned %d", service, len(methods), wantCounts[service])
 		}
 		for method := range methods {
-			wantKeys[service+"."+method] = struct{}{}
+			key := service + "." + method
+			wantKeys[key] = struct{}{}
 		}
 	}
 
@@ -108,7 +109,7 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 			routeFamily[row.method] = struct{}{}
 		}
 	}
-	assertSDKStringSetsEqual(t, "ADR 0304 gRPC-only methods", stringSet("StreamSessionLive"), grpcOnly)
+	assertSDKStringSetsEqual(t, "ADR 0304 gRPC-only methods", stringSet("StreamSessionLive", "ListGuardrailCoverage", "GetGuardrailReviewDetail"), grpcOnly)
 	assertSDKStringSetsEqual(t, "ADR 0304 route-family methods", stringSet("Converse"), routeFamily)
 	assertSDKRPCManifest(t, source, "MECATL_RPC_ROUTE_FAMILIES", stringSet("Converse"))
 	assertSDKRPCManifest(
@@ -196,6 +197,10 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"ActiveRuns",
 		"Approve",
 		"ApproveRun",
+		// HTTP approve and gRPC Converse controls call these contextual successors to
+		// ApproveRun inside the aggregate Converse catalog row.
+		"ResolveApprovalRun",
+		"ResolveScopedRunAsk",
 		"BindPlacement",
 		"CanProcessSchedule",
 		"Cancel",

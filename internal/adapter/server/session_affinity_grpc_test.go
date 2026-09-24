@@ -70,7 +70,7 @@ func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T)
 		"ApprovePlan": true, "CreateTeam": true,
 		"ResolveRunAsk": true, "CancelRun": true, "SteerRun": true, "CancelRunSteer": true,
 		"GetMcpAuthorizationPresentation": true, "RecheckMcpAuthorization": true, "CancelMcpAuthorization": true,
-		"ListSessionMcpConnectors": true,
+		"ListSessionMcpConnectors": true, "ListGuardrailCoverage": true, "GetGuardrailReviewDetail": true,
 		"ConnectWorkspaceServices": true, "RetryWorkspaceEnrollment": true, "CancelWorkspaceEnrollment": true,
 		"RefreshMcpSources": true,
 	}

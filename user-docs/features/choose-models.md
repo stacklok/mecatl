@@ -244,6 +244,22 @@ models:
         model: image
 ```
 
+The `guardrail` slot also accepts a strict provider-aware object when the checker
+must use a different configured provider:
+
+```yaml
+models:
+  slots:
+    guardrail:
+      provider: review-provider
+      model: coder
+```
+
+Both object fields are required. Unknown providers, missing fields, unknown keys,
+and an unresolvable model fail startup; Mecatl never infers a provider from an
+opaque model ID. The scalar form binds its selector to the deployment default
+provider. Project-tier objects are ignored with a warning.
+
 ### Use a planning model in plan mode
 
 Set `models.default` to the model that implements your changes and bind `plan`

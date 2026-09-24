@@ -1646,7 +1646,9 @@ function unwrapEvents(
             transport,
           });
         }
-        if (event.runId !== runId) {
+        const correlatedControlEvent =
+          event.type === "permission.ask" || event.type === "control.refused";
+        if (event.runId !== runId && !correlatedControlEvent) {
           throw new ProtocolError("The Converse stream changed run id", { transport });
         }
         if (event.type === "result") release();

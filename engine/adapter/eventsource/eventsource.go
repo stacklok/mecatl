@@ -568,6 +568,10 @@ func (f *folder) consumeHistoryEvent(ev session.Event) {
 			return
 		}
 		msg := session.NewUserMessageWithParts(ev.UserPrompt.Text, ev.UserPrompt.Parts)
+		msg.UserPromptProvenance = ev.UserPrompt.Provenance
+		if msg.UserPromptProvenance == session.UserPromptProvenanceUnknown && ev.UserPrompt.Synthetic {
+			msg.UserPromptProvenance = session.UserPromptProvenanceHarness
+		}
 		f.messages = append(f.messages, msg)
 		if f.firstGenuineText == "" && session.IsGenuineUserPrompt(msg) && strings.TrimSpace(msg.Text) != "" {
 			f.firstGenuineText = msg.Text

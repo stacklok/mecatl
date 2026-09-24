@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/stacklok/mecatl/engine/governance"
 )
 
 // SessionID uniquely identifies a session. Outside code holds a SessionID and
@@ -223,6 +225,36 @@ type Counters struct {
 	ConsecutiveFailures int
 }
 
+// GuardrailApprovalKind distinguishes approval of an action from release of an
+// already-produced result.
+type GuardrailApprovalKind string
+
+// Guardrail approval kinds.
+const (
+	GuardrailApprovalAction        GuardrailApprovalKind = "action"
+	GuardrailApprovalResultRelease GuardrailApprovalKind = "result_release"
+)
+
+// GuardrailPendingScope is the machine-only scope attached to a guardrail ask.
+type GuardrailPendingScope struct {
+	ReviewID        string
+	Kind            GuardrailApprovalKind
+	GrantDigest     string
+	SessionOnly     bool
+	RepeatAvailable bool
+}
+
+// ApprovalOrigin is the explicit provenance of an approval.
+type ApprovalOrigin string
+
+// Approval origins.
+const (
+	ApprovalOriginUnknown       ApprovalOrigin = ""
+	ApprovalOriginPermission    ApprovalOrigin = "permission"
+	ApprovalOriginHookGuardrail ApprovalOrigin = "hook_guardrail"
+	ApprovalOriginPlan          ApprovalOrigin = "plan"
+)
+
 // PendingAsk describes a permission prompt the loop is blocked on while in
 // StateAwaiting. It is surfaced to the client via a permission.ask Event and
 // resolved by ResumeWith.
@@ -235,96 +267,14 @@ type PendingAsk struct {
 	Args json.RawMessage
 	// Reason explains why approval is required.
 	Reason string
-	// Call is the id of the gated ToolCall this ask pauses on. It is the
-	// REQUEST-half twin of ApprovalPayload.Call (the verdict half): an OPAQUE
-	// identifier, NOT secret content — it is already implicitly encoded inside
-	// AskID (see agent.newAskID) — so surfacing it directly opens no new leak
-	// surface. It is durable, grammar-free correlation data: a host that pauses
-	// on a PendingAsk reads Call instead of parsing the AskID grammar. Unlike the
-	// run-scoped ConfiguredAsk/FlooredConfiguredAllow below, it round-trips in the
-	// snapshot (it is correlation data, not run-scoped policy state).
+	// Call is the id of the gated ToolCall this ask pauses on.
 	Call ToolCallID `json:"call,omitempty"`
-	// ConfiguredAsk carries governance.PermissionDecision.ConfiguredAsk onto the
-	// pending ask: the Ask came from a deliberately-configured rule (above the
-	// built-in floor). An approval layer keys "never auto-approve a configured
-	// Ask" on it. It is purely run-scoped state — never serialized to a snapshot
-	// (an old snapshot deserializing false is harmless: an ask is never resumed
-	// from one). Mutually exclusive with FlooredConfiguredAllow.
-	ConfiguredAsk bool
-	// FlooredConfiguredAllow carries
-	// governance.PermissionDecision.FlooredConfiguredAllow onto the pending ask:
-	// the Ask exists only because of the substitution floor, and the command is
-	// one the configured policy already allows with provably read-only
-	// substitution contents — so an approval layer may relax the floor without
-	// surfacing it. Same run-scoped, never-serialized posture as ConfiguredAsk.
-	// Mutually exclusive with it (a third RUN-SCOPED ask-provenance signal would
-	// warrant collapsing these two into a single enum on both this value object and
-	// the governance decision; HookOriginated below is NOT that third signal — it is
-	// a different, SERIALIZED axis, see its note).
-	FlooredConfiguredAllow bool
-	// HookOriginated marks an ask that arose from a PreToolUse hook BLOCK refined
-	// into an approval (governance.HookOutcome.AskApproval; ADR 0062), NOT from the
-	// permission policy. It is SERIALIZED (json:"hook_originated,omitempty") and is
-	// DELIBERATELY a bool, NOT folded into an AskOrigin enum with
-	// ConfiguredAsk/FlooredConfiguredAllow: those two are RUN-SCOPED policy hints that
-	// are never serialized (an old snapshot deserializing false is harmless because a
-	// policy ask is never resumed from one), whereas HookOriginated is CROSS-PROCESS
-	// LOAD-BEARING — the awaiting-resume path (Engine.ResumeApproval →
-	// resolvePendingCall) runs in a FRESH process and keys the skip-preHook branch on
-	// it (an Allow must EXECUTE the tool WITHOUT re-running the PreToolUse hook, which
-	// would re-block / re-ask). Collapsing a serialized correctness marker into an
-	// enum with two ephemeral hints would conflate two different lifetimes and
-	// serialization contracts — so it stays its own bool. Its plan-approval sibling
-	// PlanOriginated (issue #206) is the SECOND serialized provenance bit: the two
-	// bools are now the serialized contract, and the read-time Origin() accessor
-	// derives the single provenance from them.
-	HookOriginated bool `json:"hook_originated,omitempty"`
-	// PlanOriginated marks an ask that arose from a plan-approval gate (the
-	// operator was asked to approve a presented plan; issue #206), NOT from the
-	// permission policy or a hook. It is SERIALIZED (json:"plan_originated,omitempty")
-	// and CROSS-PROCESS LOAD-BEARING — the awaiting-resume path
-	// (Engine.ResumeApproval → resolvePendingCall) runs in a FRESH process and keys
-	// the plan-flip branch on it (an Allow flips the session out of plan mode and
-	// drives the turn through the completed path with StopPlanApproved; the resumed
-	// call is NOT re-presented). It is deliberately a bool sibling of HookOriginated
-	// rather than folded into a single enum with ConfiguredAsk/FlooredConfiguredAllow:
-	// those two are RUN-SCOPED policy hints that are never serialized, whereas
-	// PlanOriginated (like HookOriginated) is a serialized correctness marker that
-	// must survive a process restart. The read-time provenance is surfaced via Origin.
-	PlanOriginated bool `json:"plan_originated,omitempty"`
-}
-
-// AskOrigin is the read-time provenance of a PendingAsk, derived from the
-// serialized provenance bools. It is a convenience accessor, NOT a stored field:
-// the two serialized bools (HookOriginated, PlanOriginated) remain the on-disk
-// contract, and Origin is how a reader obtains the single provenance without
-// poking both bools. Hook takes precedence if both were (incorrectly) set;
-// construction is via the loop's ask sites only (a PendingAsk is never built
-// with two origins at once).
-type AskOrigin int
-
-const (
-	// AskOriginNone is the zero value: the ask came from the permission policy
-	// (neither a hook nor a plan gate). It is the common case.
-	AskOriginNone AskOrigin = iota
-	// AskOriginHook marks an ask refined from a PreToolUse hook BLOCK (ADR 0062).
-	AskOriginHook
-	// AskOriginPlan marks an ask presented by the plan-approval gate (issue #206).
-	AskOriginPlan
-)
-
-// Origin returns the provenance of the ask. Hook takes precedence over Plan when
-// both bools are set (a construction invariant violation — only one site ever
-// sets a given ask — but the tie-break is deterministic for the reader).
-func (p PendingAsk) Origin() AskOrigin {
-	switch {
-	case p.HookOriginated:
-		return AskOriginHook
-	case p.PlanOriginated:
-		return AskOriginPlan
-	default:
-		return AskOriginNone
-	}
+	// Guardrail carries the exact guardrail approval class and repeat scope.
+	Guardrail *GuardrailPendingScope `json:"guardrail,omitempty"`
+	// Origin is serialized approval provenance. Unknown is fail-closed.
+	Origin ApprovalOrigin `json:"origin,omitempty"`
+	// AskProvenance is the run-local deterministic policy provenance.
+	AskProvenance governance.AskProvenance `json:"-"`
 }
 
 // Errors returned by the Session state machine.
@@ -652,6 +602,22 @@ func (s *Session) RecordUserPrompt(text string, instructions []Message) error {
 // difference is the recorded user message carries Parts. It is legal from any
 // non-terminal state.
 func (s *Session) RecordUserPromptWithParts(text string, parts []Content, instructions []Message) error {
+	return s.recordUserPromptWithParts(text, parts, instructions, UserPromptProvenanceUnknown)
+}
+
+// RecordPrincipalPromptWithParts records a prompt whose principal provenance was
+// authenticated by the root agent ingress. It is intentionally narrower than
+// RecordUserPromptWithParts: arbitrary callers and legacy history remain unknown.
+func (s *Session) RecordPrincipalPromptWithParts(text string, parts []Content, instructions []Message) error {
+	return s.recordUserPromptWithParts(text, parts, instructions, UserPromptProvenancePrincipal)
+}
+
+// RecordHarnessPrompt records a harness-authored user-role continuation.
+func (s *Session) RecordHarnessPrompt(text string) error {
+	return s.recordUserPromptWithParts(text, nil, nil, UserPromptProvenanceHarness)
+}
+
+func (s *Session) recordUserPromptWithParts(text string, parts []Content, instructions []Message, provenance UserPromptProvenance) error {
 	if err := s.rejectWhileWorkspaceEnrollmentPending("RecordUserPrompt"); err != nil {
 		return err
 	}
@@ -661,7 +627,9 @@ func (s *Session) RecordUserPromptWithParts(text string, parts []Content, instru
 	for _, m := range instructions {
 		s.Conversation.Append(m)
 	}
-	s.Conversation.Append(NewUserMessageWithParts(text, parts))
+	message := NewUserMessageWithParts(text, parts)
+	message.UserPromptProvenance = provenance
+	s.Conversation.Append(message)
 	return nil
 }
 

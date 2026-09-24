@@ -75,7 +75,7 @@ func parkPlanAsk(t *testing.T, svc *server.Service, sessID session.SessionID) (a
 	go func() {
 		defer close(drainDone)
 		for ev := range r.Events() {
-			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginPlan {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan {
 				svc.Persist(context.Background(), sessID)
 				// Persist then deregister: the store has StateAwaiting, and the
 				// in-flight registry no longer holds this run, so ApprovePlan's
@@ -120,11 +120,11 @@ func awaitLivePlanAsk(t *testing.T, r *agent.Run, wantCall session.ToolCallID, w
 	var seen []session.Event
 	for ev := range r.Events() {
 		seen = append(seen, ev)
-		if ev.Type != session.EvPermissionAsk || ev.Ask == nil || ev.Ask.Origin() != session.AskOriginPlan {
+		if ev.Type != session.EvPermissionAsk || ev.Ask == nil || ev.Ask.Origin != session.ApprovalOriginPlan {
 			continue
 		}
 		ask := ev.Ask
-		if ask.Tool != "PresentPlan" || ask.Call != wantCall || ask.Origin() != session.AskOriginPlan {
+		if ask.Tool != "PresentPlan" || ask.Call != wantCall || ask.Origin != session.ApprovalOriginPlan {
 			t.Fatalf("fresh plan ask = %+v, want Tool=PresentPlan Call=%q Origin=AskOriginPlan", ask, wantCall)
 		}
 		var args struct {
@@ -437,7 +437,7 @@ func TestCancelledPlanReviewRecoversAndRequiresFreshAsk(t *testing.T) {
 	for _, ev := range firstEvs {
 		switch ev.Type {
 		case session.EvPermissionAsk:
-			if ev.Ask != nil && ev.Ask.Origin() == session.AskOriginPlan && ev.Ask.Call == "c1" {
+			if ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan && ev.Ask.Call == "c1" {
 				planAsks++
 			}
 		case session.EvApproval:
@@ -619,7 +619,7 @@ func TestApprovePlanNotPlanAskFails(t *testing.T) {
 	}
 	var parked bool
 	for ev := range r.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginNone {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPermission {
 			parked = true
 			svc.Persist(context.Background(), sess.ID)
 			// Deregister and cancel: the run must not stay live (ApprovePlan rejects
@@ -1091,7 +1091,7 @@ func TestApprovePlanHTTPNotPlanAsk409(t *testing.T) {
 	}
 	var parked bool
 	for ev := range r.Events() {
-		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginNone {
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPermission {
 			parked = true
 			svc.Persist(context.Background(), session.SessionID(id))
 			svc.FinishRun(session.SessionID(id), r)
