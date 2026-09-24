@@ -25,6 +25,12 @@ type recordingObserver struct {
 	sess  *session.Session
 }
 
+type usageErrorObserver struct{ recordingObserver }
+
+func (o *usageErrorObserver) ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error) {
+	return session.AuxiliaryUsage{}, o.err
+}
+
 func (o *recordingObserver) Observe(_ context.Context, tr learning.Trajectory) error {
 	o.calls++
 	o.tr = tr
@@ -233,6 +239,20 @@ func TestLearningObserverErrorIsDiagnostic(t *testing.T) {
 	}
 	if sess.State != session.StateCompleted {
 		t.Fatalf("state = %s, want completed", sess.State)
+	}
+}
+
+func TestLearningUsageObserverErrorHasDistinctDiagnostic(t *testing.T) {
+	diag := newRecordingDiag()
+	observer := &usageErrorObserver{recordingObserver: recordingObserver{err: errors.New("observe failed")}}
+	e := newEngine(agent.Deps{
+		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Diagnostics: diag,
+		LearningMode: learning.Auto, LearningObserver: observer,
+	})
+	for range e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"}).Events() {
+	}
+	if _, ok := diag.findLine("completed-trajectory usage observer failed"); !ok {
+		t.Fatal("usage observer failure was not reported through a distinct diagnostic")
 	}
 }
 
