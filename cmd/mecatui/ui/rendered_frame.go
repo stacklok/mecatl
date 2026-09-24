@@ -160,7 +160,7 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 // Phase 1 — cache/render inputs: walk blocks once and pass its render-pass output
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
-func (r *renderer) renderConversationFrame(c *conversation, expand bool) renderedFrame {
+func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bool) renderedFrame {
 	renderedBlocks, metadata, prepared, firstChanged := r.walkConversation(c, expand)
 	n := len(renderedBlocks)
 	prefixN := min(firstChanged, n)
@@ -176,7 +176,7 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 		provenance: r.frameProvenanceScratch[:0],
 	}
 	if expand {
-		if appendix, ok := c.scrollback.AppendixSnapshot(); ok && len(appendix.Files) > 0 {
+		if appendix, ok := c.AppendixSnapshot(); ok && len(appendix.Files) > 0 {
 			frame.appendixID = uint64(appendix.ID)
 		}
 	}
@@ -191,7 +191,7 @@ func (r *renderer) renderConversationFrame(c *conversation, expand bool) rendere
 	return frame
 }
 
-func (r *renderer) rebuildFramePrefix(c *conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
+func (r *renderer) rebuildFramePrefix(c *scrollback.Conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
 	lines := make([]string, 0, prefixN*2)
 	provenance := make([]renderedRow, 0, prefixN*2)
 	for i := 0; i < prefixN; i++ {
@@ -202,7 +202,7 @@ func (r *renderer) rebuildFramePrefix(c *conversation, metadata []scrollback.Blo
 	return lines, provenance
 }
 
-func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, index int, expand bool) {
+func (r *renderer) appendFrameSegment(frame *renderedFrame, c *scrollback.Conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, index int, expand bool) {
 	if index > 0 {
 		for n := 0; n < blockBlankLinesAfterMetadata(metadata, index); n++ {
 			frame.lines = append(frame.lines, "")
@@ -217,8 +217,8 @@ func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, met
 	}
 }
 
-func (r *renderer) blockFrameRowsTyped(c *conversation, index int, meta scrollback.BlockMetadata, prepared *block, rendered string, expand bool) []renderedRow {
-	key := blockRenderKey{revision: int(meta.Revision), context: r.renderContext(expand)}
+func (r *renderer) blockFrameRowsTyped(c *scrollback.Conversation, index int, meta scrollback.BlockMetadata, prepared *block, rendered string, expand bool) []renderedRow {
+	key := blockRenderKey{revision: rendererRevision(meta.Revision), context: r.renderContext(expand)}
 	if rows, ok := r.blocks.frameRowsFor(index, key); ok {
 		return rows
 	}
@@ -227,7 +227,7 @@ func (r *renderer) blockFrameRowsTyped(c *conversation, index int, meta scrollba
 	}
 	if prepared == nil {
 		var ok bool
-		b, ok := blockFromSnapshot(c.scrollback.SnapshotAt(index))
+		b, ok := blockFromSnapshot(c.SnapshotAt(index))
 		if !ok {
 			return nil
 		}

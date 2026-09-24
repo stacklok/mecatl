@@ -464,8 +464,8 @@ func TestSessionsTranscriptReducer(t *testing.T) {
 		{Role: "tool", ToolResult: &client.ConvToolResult{CallID: "c1", Content: "hello"}},
 		{Role: "assistant", Text: "done"},
 	})
-	if got.isEmpty() || len(got.blocks) != 4 {
-		t.Fatalf("transcript blocks = %d, want 4", len(got.blocks))
+	if got.isEmpty() || len(got.testBlocks()) != 4 {
+		t.Fatalf("transcript blocks = %d, want 4", len(got.testBlocks()))
 	}
 }
 

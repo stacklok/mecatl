@@ -243,18 +243,18 @@ func TestEffortPickPreservesTranscript(t *testing.T) {
 	mm, cmd, _ := m.onEffortKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	// The transcript is UNTOUCHED by the handoff itself.
-	if len(m.conv.blocks) != len(before.blocks) {
-		t.Fatalf("transcript blocks = %d after the handoff, want %d (fork must not wipe it)", len(m.conv.blocks), len(before.blocks))
+	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
+		t.Fatalf("transcript blocks = %d after the handoff, want %d (fork must not wipe it)", len(m.conv.testBlocks()), len(before.testBlocks()))
 	}
 	m = feedCmd(t, m, cmd)
 	// After the fork + SessionReadyMsg: the transcript is STILL unchanged …
-	if len(m.conv.blocks) != len(before.blocks) {
-		t.Fatalf("transcript blocks = %d after the fork, want %d (regression: resetSession re-introduced?)", len(m.conv.blocks), len(before.blocks))
+	if len(m.conv.testBlocks()) != len(before.testBlocks()) {
+		t.Fatalf("transcript blocks = %d after the fork, want %d (regression: resetSession re-introduced?)", len(m.conv.testBlocks()), len(before.testBlocks()))
 	}
-	for i := range before.blocks {
-		if m.conv.blocks[i].raw != before.blocks[i].raw || m.conv.blocks[i].kind != before.blocks[i].kind {
+	for i := range before.testBlocks() {
+		if m.conv.testBlocks()[i].raw != before.testBlocks()[i].raw || m.conv.testBlocks()[i].kind != before.testBlocks()[i].kind {
 			t.Errorf("block %d changed across the fork: (%v,%q) → (%v,%q)", i,
-				before.blocks[i].kind, before.blocks[i].raw, m.conv.blocks[i].kind, m.conv.blocks[i].raw)
+				before.testBlocks()[i].kind, before.testBlocks()[i].raw, m.conv.testBlocks()[i].kind, m.conv.testBlocks()[i].raw)
 		}
 	}
 	// … the session id rebinds to the fork id …

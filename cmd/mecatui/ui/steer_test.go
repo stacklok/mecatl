@@ -192,7 +192,7 @@ func TestSteer_MediaOnlySendAndEcho(t *testing.T) {
 	}
 	mm, _ = m.Update(client.SteerEchoMsg{Parts: []client.ContentBlock{{Kind: client.ContentBlockImage, MimeType: "image/png", Data: []byte("pixels")}}, MessageID: "steer-0001"})
 	m = mm.(Model)
-	last := m.conv.blocks[len(m.conv.blocks)-1]
+	last := m.conv.testBlocks()[len(m.conv.testBlocks())-1]
 	if len(last.media) != 1 || last.media[0] != "image/png (inline)" {
 		t.Fatalf("echo media projection = %#v", last)
 	}

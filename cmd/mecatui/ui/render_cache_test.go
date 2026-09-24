@@ -40,11 +40,12 @@ func newCacheRenderer() *renderer {
 // independent test oracle and allocation benchmark for the production frame path.
 func (r *renderer) renderConversation(c *conversation, expand bool) string {
 	var b strings.Builder
-	for i := range c.blocks {
+	blocks := c.testBlocks()
+	for i := range blocks {
 		if i > 0 {
-			b.WriteString(blockSepAfter(c.blocks, i-1))
+			b.WriteString(blockSepAfter(blocks, i-1))
 		}
-		b.WriteString(r.renderBlock(i, &c.blocks[i], expand))
+		b.WriteString(r.renderBlock(i, &blocks[i], expand))
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -221,39 +222,27 @@ var oracleSteps = []struct {
 }
 
 // oracleNonMutators are the *conversation methods the oracle does not drive as
-// steps: pure reads, plus the rev-bump gateways and the lazy lane/group
-// accessors, which are exercised INSIDE the mutator steps (currentAssistant via
-// appendAssistant/appendReasoning/endReasoningStream, subagentBlock via the
-// setSubagent* trio, teamBlock via the five setTeam*/addTeamMember mutators,
-// fleetLane via fleet*, parallelGroupFor via parallel*). A NEW conversation
+// steps: pure reads plus lazy lane/group accessors exercised inside mutator
+// steps. A NEW conversation
 // method fails TestConversationMutatorsCoveredByOracle until it is either added
 // as an oracle step or consciously listed here.
 var oracleNonMutators = map[string]string{
-	"appendBlock":            "legacy delegation compatibility gateway",
-	"syncSnapshot":           "typed model snapshot projection gateway, driven by ordinary mutators",
-	"syncBlock":              "typed model snapshot projection gateway, driven by syncSnapshot and syncCall",
-	"syncCall":               "typed call projection gateway, driven by typed delegation mutations",
-	"subagentCard":           "typed snapshot lookup",
-	"teamCard":               "typed snapshot lookup",
-	"ensureTeamCard":         "typed Team specialization gateway, driven by applyTeamTyped",
-	"changedFiles":           "detached appendix read",
-	"changedFilesAppendixID": "appendix identity read",
-	"recordFileChange":       "changes only appendix metadata, which is not yet a rendered block",
-	"isEmpty":                "pure read",
-	"blockIDForCall":         "removed typed lookup helper compatibility allowance",
-	"currentAssistant":       "rev-bump gateway, driven via appendAssistant/appendReasoning/endReasoningStream",
-	"subagentBlock":          "rev-bump gateway, driven via the setSubagent* steps",
-	"teamBlock":              "rev-bump gateway, driven via the setTeam*/addTeamMember steps",
-	"fleetLane":              "lazy accessor, driven via the fleet* steps",
-	"parallelGroupFor":       "lazy accessor, driven via the parallel* steps",
-	"subagentFleetCounts":    "pure read",
-	"hasSubagents":           "pure read",
-	"parallelGroupCounts":    "pure read",
-	"hasParallel":            "pure read",
-	"liveParallel":           "pure read",
-	"latestTeamBlock":        "overlay READ path (never bumps rev)",
-	"liveTeamBlock":          "overlay READ path (never bumps rev)",
-	"addDelivery":            "mutator — blockDelivery cards do not carry a mutable render field beyond raw",
+	"subagentCard":        "typed snapshot lookup",
+	"teamCard":            "typed snapshot lookup",
+	"ensureTeamCard":      "typed Team specialization gateway, driven by applyTeamTyped",
+	"recordFileChange":    "changes only appendix metadata, which is not yet a rendered block",
+	"isEmpty":             "pure read",
+	"blockIDForCall":      "removed typed lookup helper compatibility allowance",
+	"fleetLane":           "lazy accessor, driven via the fleet* steps",
+	"parallelGroupFor":    "lazy accessor, driven via the parallel* steps",
+	"subagentFleetCounts": "pure read",
+	"hasSubagents":        "pure read",
+	"parallelGroupCounts": "pure read",
+	"hasParallel":         "pure read",
+	"liveParallel":        "pure read",
+	"latestTeamBlock":     "overlay READ path (never bumps rev)",
+	"liveTeamBlock":       "overlay READ path (never bumps rev)",
+	"addDelivery":         "mutator — blockDelivery cards do not carry a mutable render field beyond raw",
 }
 
 // TestBlockCacheOutputMatchesFreshRender is THE ORACLE: after EVERY conversation
@@ -438,8 +427,8 @@ func TestBlockCacheInvalidatesOnWidthChange(t *testing.T) {
 
 	r.setWidth(80)
 	got := r.renderConversation(c, false)
-	if n := r.blockRenders - base; n != len(c.blocks) {
-		t.Errorf("width change should re-render every block exactly once: got %d renders, want %d", n, len(c.blocks))
+	if n := r.blockRenders - base; n != len(c.testBlocks()) {
+		t.Errorf("width change should re-render every block exactly once: got %d renders, want %d", n, len(c.testBlocks()))
 	}
 	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(80)
@@ -458,8 +447,8 @@ func TestBlockCacheInvalidatesOnExpandToggle(t *testing.T) {
 	base := r.blockRenders
 
 	got := r.renderConversation(c, true)
-	if n := r.blockRenders - base; n != len(c.blocks) {
-		t.Errorf("expand flip should re-render every block exactly once: got %d renders, want %d", n, len(c.blocks))
+	if n := r.blockRenders - base; n != len(c.testBlocks()) {
+		t.Errorf("expand flip should re-render every block exactly once: got %d renders, want %d", n, len(c.testBlocks()))
 	}
 	fresh := newRenderer(r.th, defaultHelpKeys())
 	fresh.setWidth(r.width)
@@ -579,7 +568,7 @@ func TestResetSessionDropsRenderCaches(t *testing.T) {
 // mirroring viewport.GetContent (strings.Join over the lines). The result must be
 // byte-identical to renderConversation's monolithic join.
 func joinLinesString(r *renderer, c *conversation, expand bool) string {
-	return strings.Join(r.renderConversationLines(c, expand), "\n")
+	return strings.Join(r.renderConversationLines(&c.scrollback, expand), "\n")
 }
 
 // freshConvString is the oracle: a brand-new renderer's renderConversation string
@@ -840,8 +829,8 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 		// Two stable renders: frame 1 all-miss (cold cache, no prefix), frame 2 caches
 		// the full prefix over the settled blocks. No live block / no glamour churn, so
 		// the per-frame cost below is purely the line assembly.
-		r.renderConversationLines(c, false)
-		r.renderConversationLines(c, false)
+		r.renderConversationLines(&c.scrollback, false)
+		r.renderConversationLines(&c.scrollback, false)
 		return r, c
 	}
 
@@ -857,7 +846,7 @@ func TestIncrementalJoinAllocatesOnlySuffix(t *testing.T) {
 	// Measured: the incremental line path reuses the cached prefix verbatim — no
 	// full-scrollback copy.
 	r, c := build()
-	incr := allocatedBytesPerIteration(iterations, func() { r.renderConversationLines(c, false) })
+	incr := allocatedBytesPerIteration(iterations, func() { r.renderConversationLines(&c.scrollback, false) })
 
 	// The string path copies the entire scrollback into a Builder each frame; the line
 	// path reuses the cached prefix slice. Require at least a 4x byte reduction — a
@@ -895,8 +884,8 @@ func TestPathSwitchStalePrefix(t *testing.T) {
 
 	// 1) LINES path: warm the prefix over the whole settled (unresolved) scrollback.
 	//    Two frames so the settled blocks hit and the prefix actually caches them.
-	r.renderConversationLines(c, false)
-	r.renderConversationLines(c, false)
+	r.renderConversationLines(&c.scrollback, false)
+	r.renderConversationLines(&c.scrollback, false)
 	if r.blocks.prefixN == 0 {
 		t.Fatal("precondition: the prefix must be cached over the settled scrollback")
 	}
@@ -945,9 +934,9 @@ func TestIncrementalJoinMultiBlockOneFrame(t *testing.T) {
 	// Warm a PARTIAL prefix: settled blocks + a live tail. Stream a couple of tokens
 	// so the prefix caches the settled head and the tail is the only changing block.
 	c.appendAssistant("warming ")
-	r.renderConversationLines(c, false)
+	r.renderConversationLines(&c.scrollback, false)
 	c.appendAssistant("more ")
-	r.renderConversationLines(c, false)
+	r.renderConversationLines(&c.scrollback, false)
 	if r.blocks.prefixN == 0 {
 		t.Fatal("precondition: a partial prefix over the settled head must be cached")
 	}
@@ -988,10 +977,10 @@ func TestIncrementalJoinSteadyFrameAllocCeiling(t *testing.T) {
 	}
 	r := newCacheRenderer()
 	// Two stable renders: frame 1 cold (no prefix), frame 2 caches the full prefix.
-	r.renderConversationLines(c, false)
-	r.renderConversationLines(c, false)
-	if r.blocks.prefixN != len(c.blocks) {
-		t.Fatalf("precondition: the full prefix must be cached (joinPrefixN=%d, want %d)", r.blocks.prefixN, len(c.blocks))
+	r.renderConversationLines(&c.scrollback, false)
+	r.renderConversationLines(&c.scrollback, false)
+	if r.blocks.prefixN != len(c.testBlocks()) {
+		t.Fatalf("precondition: the full prefix must be cached (joinPrefixN=%d, want %d)", r.blocks.prefixN, len(c.testBlocks()))
 	}
 	nLines := len(r.blocks.prefixLines)
 
@@ -999,7 +988,7 @@ func TestIncrementalJoinSteadyFrameAllocCeiling(t *testing.T) {
 	perOp := allocatedBytesPerIteration(iterations, func() {
 		// UNCHANGED conversation: the steady interaction-cadence frame. The prefix is
 		// fully cached, so only the per-frame slice header + backing array allocates.
-		r.renderConversationLines(c, false)
+		r.renderConversationLines(&c.scrollback, false)
 	})
 
 	// Ceiling: the fresh per-frame slice is one []string of ~nLines capacity (16 B per

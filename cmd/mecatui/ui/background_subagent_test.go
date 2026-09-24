@@ -97,7 +97,7 @@ func TestSubagentFocusBackgroundNote(t *testing.T) {
 func TestBackgroundSubagentEndTransientNotice(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedSubagents(m, "p1", startBgSub("p1", "subagent-p1", "long audit"))
-	blocksBefore := len(m.conv.blocks)
+	blocksBefore := len(m.conv.testBlocks())
 
 	m = seedSubagents(m, "p2", endSub("p1", "subagent-p1", 9000, 1200, 4, "end_turn"))
 	got := stripANSIstr(m.statusMsg)
@@ -107,8 +107,8 @@ func TestBackgroundSubagentEndTransientNotice(t *testing.T) {
 	}
 	// seedSubagents added one Subagent card block for "p2"; beyond that the end event
 	// must leave scrollback untouched (the notice is transient, never durable).
-	if len(m.conv.blocks) != blocksBefore+1 {
-		t.Errorf("background end must not append scrollback notices, blocks %d → %d", blocksBefore, len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != blocksBefore+1 {
+		t.Errorf("background end must not append scrollback notices, blocks %d → %d", blocksBefore, len(m.conv.testBlocks()))
 	}
 }
 

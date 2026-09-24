@@ -712,7 +712,7 @@ func TestTeamCardStoppedCountInline(t *testing.T) {
 	c.setTeamStart("t1", "", roster())
 	c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410},
 		[]client.TeamMemberDisposition{{Name: "lead"}, {Name: "scout", Stopped: true, Reason: "budget"}})
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], false))
 	if !strings.Contains(out, "1 stopped") {
 		t.Errorf("inline resolved Team line must show \"1 stopped\", got %q", out)
 	}
@@ -740,7 +740,7 @@ func TestTeamStoppedCountMultiple(t *testing.T) {
 	c.addTool("t1", "Team", `{"goal":"ship the feature"}`)
 	c.setTeamStart("t1", "", threeRoster)
 	c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, disps)
-	inline := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	inline := stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], false))
 	if !strings.Contains(inline, "2 stopped") {
 		t.Errorf("inline resolved Team line must show \"2 stopped\", got %q", inline)
 	}
@@ -1084,7 +1084,7 @@ func TestSetTeamTasksAttribution(t *testing.T) {
 	if !c.setTeamTasks("t1", []client.TeamTask{{ID: "task-1", State: "pending"}}) {
 		t.Fatal("setTeamTasks should attribute to the Team card and return true")
 	}
-	if got := c.blocks[0].teamTasks; len(got) != 1 || got[0].id != "task-1" {
+	if got := c.testBlocks()[0].teamTasks; len(got) != 1 || got[0].id != "task-1" {
 		t.Errorf("task snapshot not stored on the block: %+v", got)
 	}
 	if c.setTeamTasks("nope", []client.TeamTask{{ID: "x"}}) {
@@ -1236,12 +1236,12 @@ func TestSetTeamFindingsAttribution(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
 	c.setTeamFindings("t1", []client.TeamFinding{{Member: "scout", Body: "found it"}})
-	if got := c.blocks[0].teamFindings; len(got) != 1 || got[0].member != "scout" || got[0].body != "found it" {
+	if got := c.testBlocks()[0].teamFindings; len(got) != 1 || got[0].member != "scout" || got[0].body != "found it" {
 		t.Errorf("findings snapshot not stored on the block: %+v", got)
 	}
 	// A miss must not panic and must not touch the block's ledger.
 	c.setTeamFindings("nope", []client.TeamFinding{{Member: "x", Body: "y"}})
-	if got := c.blocks[0].teamFindings; len(got) != 1 || got[0].member != "scout" {
+	if got := c.testBlocks()[0].teamFindings; len(got) != 1 || got[0].member != "scout" {
 		t.Errorf("a miss must leave the matched block's ledger unchanged: %+v", got)
 	}
 }
@@ -1326,7 +1326,7 @@ func TestAgentsFindingsShowsBody(t *testing.T) {
 func TestTeamEndSetsTransientNotice(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m = seedTeam(m, func(c *conversation) { c.setTeamStart("t1", "team-x", roster()) })
-	before := len(m.conv.blocks)
+	before := len(m.conv.testBlocks())
 	mm, _ := m.Update(client.TeamMsg{
 		Kind:         client.TeamEnd,
 		ParentCallID: "t1",
@@ -1340,9 +1340,9 @@ func TestTeamEndSetsTransientNotice(t *testing.T) {
 	}
 	// No durable notice block was added by the team.end (the card + ResultMsg carry
 	// the durable signal); only the team card may have updated, never a new notice.
-	for i := before; i < len(m.conv.blocks); i++ {
-		if m.conv.blocks[i].kind == blockNotice {
-			t.Errorf("team.end must NOT add a scrollback notice; got %q", m.conv.blocks[i].raw)
+	for i := before; i < len(m.conv.testBlocks()); i++ {
+		if m.conv.testBlocks()[i].kind == blockNotice {
+			t.Errorf("team.end must NOT add a scrollback notice; got %q", m.conv.testBlocks()[i].raw)
 		}
 	}
 }

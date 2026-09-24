@@ -301,14 +301,14 @@ func TestReconnectUI_TriggerOnStreamCloseAndError(t *testing.T) {
 	}
 
 	// The catch-up delivery renders exactly once.
-	if len(m.conv.blocks) != 1 {
-		t.Fatalf("expected 1 delivery block, got %d: %+v", len(m.conv.blocks), m.conv.blocks)
+	if len(m.conv.testBlocks()) != 1 {
+		t.Fatalf("expected 1 delivery block, got %d: %+v", len(m.conv.testBlocks()), m.conv.testBlocks())
 	}
-	if m.conv.blocks[0].kind != blockDelivery {
-		t.Errorf("block kind = %v, want blockDelivery", m.conv.blocks[0].kind)
+	if m.conv.testBlocks()[0].kind != blockDelivery {
+		t.Errorf("block kind = %v, want blockDelivery", m.conv.testBlocks()[0].kind)
 	}
-	if m.conv.blocks[0].deliveryFireID != "sched--fire-gap" {
-		t.Errorf("fire id = %q, want sched--fire-gap", m.conv.blocks[0].deliveryFireID)
+	if m.conv.testBlocks()[0].deliveryFireID != "sched--fire-gap" {
+		t.Errorf("fire id = %q, want sched--fire-gap", m.conv.testBlocks()[0].deliveryFireID)
 	}
 
 	// Degraded state cleared.
@@ -362,8 +362,8 @@ func TestReconnectUI_DedupAcrossCatchUpAndLive(t *testing.T) {
 	}
 
 	// The catch-up delivery rendered once.
-	if len(m.conv.blocks) != 1 {
-		t.Fatalf("expected 1 delivery block after catch-up, got %d", len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != 1 {
+		t.Fatalf("expected 1 delivery block after catch-up, got %d", len(m.conv.testBlocks()))
 	}
 
 	// Now simulate the SAME delivery arriving on the reopened LIVE feed.
@@ -372,8 +372,8 @@ func TestReconnectUI_DedupAcrossCatchUpAndLive(t *testing.T) {
 	m = mm.(Model)
 
 	// Exactly-once: still 1 block (the live delivery was deduped by FireID).
-	if len(m.conv.blocks) != 1 {
-		t.Errorf("expected 1 delivery block after live dup, got %d (FireID dedup failed)", len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != 1 {
+		t.Errorf("expected 1 delivery block after live dup, got %d (FireID dedup failed)", len(m.conv.testBlocks()))
 	}
 	if _, ok := m.seenFireIDs["fire-dup"]; !ok {
 		t.Errorf("seenFireIDs missing fire-dup: %+v", m.seenFireIDs)
@@ -401,8 +401,8 @@ func TestReconnectUI_DifferentFireIDsBothRender(t *testing.T) {
 	if !reconnected {
 		t.Fatal("expected LiveReconnectedMsg")
 	}
-	if len(m.conv.blocks) != 2 {
-		t.Errorf("expected 2 delivery blocks (fire-A + fire-B), got %d", len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != 2 {
+		t.Errorf("expected 2 delivery blocks (fire-A + fire-B), got %d", len(m.conv.testBlocks()))
 	}
 }
 
@@ -443,11 +443,11 @@ func TestReconnectUI_CatchUpDoesNotDuplicateTranscript(t *testing.T) {
 
 	// Only the delivery note landed; the replayed turn/delta/prompt/result events
 	// were dropped, NOT re-rendered into the live conversation.
-	if len(m.conv.blocks) != 1 {
-		t.Fatalf("expected exactly 1 block (the delivery note) — the replay re-rendered history; got %d blocks: %+v", len(m.conv.blocks), m.conv.blocks)
+	if len(m.conv.testBlocks()) != 1 {
+		t.Fatalf("expected exactly 1 block (the delivery note) — the replay re-rendered history; got %d blocks: %+v", len(m.conv.testBlocks()), m.conv.testBlocks())
 	}
-	if m.conv.blocks[0].kind != blockDelivery || m.conv.blocks[0].deliveryFireID != "fire-only-me" {
-		t.Errorf("block = kind %v fire %q, want the delivery note fire-only-me", m.conv.blocks[0].kind, m.conv.blocks[0].deliveryFireID)
+	if m.conv.testBlocks()[0].kind != blockDelivery || m.conv.testBlocks()[0].deliveryFireID != "fire-only-me" {
+		t.Errorf("block = kind %v fire %q, want the delivery note fire-only-me", m.conv.testBlocks()[0].kind, m.conv.testBlocks()[0].deliveryFireID)
 	}
 }
 
@@ -610,7 +610,7 @@ func TestReconnectUI_RegressionUnfencedPromptNotDelivery(t *testing.T) {
 		t.Fatal("expected LiveReconnectedMsg")
 	}
 	// No delivery block; the prompt was NOT misclassified.
-	for _, b := range m.conv.blocks {
+	for _, b := range m.conv.testBlocks() {
 		if b.kind == blockDelivery {
 			t.Errorf("un-fenced prompt misclassified as a delivery block")
 		}

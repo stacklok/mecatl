@@ -64,14 +64,14 @@ func TestMecatuiTypedScrollbackModel_Scenario3_FrameAnchorAndSelectionContinuity
 	applySubagentTo(&c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "sub", ChildID: "child", Goal: "inspect"})
 	c.addNotice("tail")
 	r := newCacheRenderer()
-	before := r.renderConversationFrame(&c, false)
+	before := r.renderConversationFrame(&c.scrollback, false)
 	anchor, ok := before.observedAnchorForRow(0, towardStart)
 	if !ok {
 		t.Fatal("missing specialized-card anchor")
 	}
 	c.resolveTool("sub", "started", false) // non-tail typed update
 	r.setWidth(48)
-	after := r.renderConversationFrame(&c, true)
+	after := r.renderConversationFrame(&c.scrollback, true)
 	if len(after.lines) != len(after.provenance) {
 		t.Fatalf("frame/provenance drift: %d lines, %d rows", len(after.lines), len(after.provenance))
 	}
@@ -81,19 +81,34 @@ func TestMecatuiTypedScrollbackModel_Scenario3_FrameAnchorAndSelectionContinuity
 }
 
 func TestMecatuiTypedScrollbackModel_Scenario3_ScrollbackRetentionAndDepthContract(t *testing.T) {
-	var c conversation
-	for i := 0; i < 64; i++ {
-		c.addNotice("settled")
-	}
-	c.addTool("sub", "Subagent", `{}`)
-	applySubagentTo(&c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "sub", ChildID: "child", Goal: "inspect"})
-	r := newCacheRenderer()
-	r.renderConversationFrame(&c, false)
-	if got, want := c.scrollback.Len(), 65; got != want {
-		t.Fatalf("logical document retained %d cards, want %d", got, want)
-	}
-	if got, want := len(r.blocks.rendered), c.scrollback.Len(); got != want {
-		t.Fatalf("cache has %d entries for %d cards; migration retained a second transcript", got, want)
+	for _, depth := range []int{64, 256, 1024} {
+		var c conversation
+		for i := 0; i < depth; i++ {
+			c.addNotice("settled")
+		}
+		c.startAssistant()
+		c.appendAssistant("tail")
+		r := newCacheRenderer()
+		r.renderConversationFrame(&c.scrollback, false)
+		prepares, renders := r.cardPrepares, r.blockRenders
+
+		c.appendAssistant(" update")
+		frame := r.renderConversationFrame(&c.scrollback, false)
+		if got, want := c.scrollback.Len(), depth+1; got != want {
+			t.Fatalf("depth %d retained %d logical cards, want %d", depth, got, want)
+		}
+		if got, want := len(r.blocks.rendered), c.scrollback.Len(); got != want {
+			t.Fatalf("depth %d cache has %d entries for %d cards", depth, got, want)
+		}
+		if got := r.cardPrepares - prepares; got != 0 {
+			t.Fatalf("depth %d tail update prepared %d settled cards", depth, got)
+		}
+		if got := r.blockRenders - renders; got != 1 {
+			t.Fatalf("depth %d tail update rendered %d cards, want 1", depth, got)
+		}
+		if len(frame.lines) != len(frame.provenance) {
+			t.Fatalf("depth %d frame/provenance = %d/%d", depth, len(frame.lines), len(frame.provenance))
+		}
 	}
 }
 

@@ -4682,7 +4682,7 @@ func (m Model) onScrollKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // conversationContent produces the complete current projection, including the expanded
 // changed-files appendix which is outside the conversation renderer's block rows.
 func (m *Model) conversationContent() string {
-	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
 	content := strings.Join(frame.lines, "\n")
 	if m.expandTools {
 		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
@@ -4713,7 +4713,7 @@ func (m *Model) refreshView() {
 	// invalidated — the caller may be a spinner-only frame that skips refreshView
 	// entirely, in which case the vpView cache correctly serves the prior content.
 	m.rend.invalidateVPView()
-	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
+	frame := m.rend.renderConversationFrame(&m.conv.scrollback, m.expandTools)
 	// FAST PATH: the line-slice handoff. When no selection is active AND the
 	// changed-files footer is not in play (it renders only under the global expand
 	// toggle), feed vp.SetContentLines directly with the incrementally-joined line

@@ -812,7 +812,7 @@ func TestMCPAuthorizationPendingStreamErrorKeepsCorrelatedCard(t *testing.T) {
 	m.prompt.Rewrite("draft")
 	m.streamGen = 7
 	m.streamCh = make(chan tea.Msg)
-	blocks := len(m.conv.blocks)
+	blocks := len(m.conv.testBlocks())
 
 	// Converse ReadLoop delivers the error through the generation-tagged stream
 	// fan-in, rather than directly to updateLifecycle.
@@ -824,8 +824,8 @@ func TestMCPAuthorizationPendingStreamErrorKeepsCorrelatedCard(t *testing.T) {
 	if m.streamCh != nil || m.streamGen != 8 {
 		t.Fatalf("parked Converse source was not invalidated: channel=%v generation=%d", m.streamCh, m.streamGen)
 	}
-	if len(m.conv.blocks) != blocks || len(m.queued) != 1 || m.prompt.Value() != "draft" {
-		t.Fatalf("pending status polluted generic error or prompt state: blocks=%d queued=%v prompt=%q", len(m.conv.blocks), m.queued, m.prompt.Value())
+	if len(m.conv.testBlocks()) != blocks || len(m.queued) != 1 || m.prompt.Value() != "draft" {
+		t.Fatalf("pending status polluted generic error or prompt state: blocks=%d queued=%v prompt=%q", len(m.conv.testBlocks()), m.queued, m.prompt.Value())
 	}
 }
 
@@ -833,14 +833,14 @@ func TestMCPAuthorizationPendingStreamErrorWithoutCardUsesGenericFailure(t *test
 	m := New(Deps{Theme: theme.New("aztec", theme.AztecPalette())})
 	m.sessionID = "session-1"
 	m.phase = phaseRunning
-	blocks := len(m.conv.blocks)
+	blocks := len(m.conv.testBlocks())
 
 	mm, _ := m.Update(client.StreamErrMsg{Err: pendingMCPAuthorizationStatusError(t)})
 	m = mm.(Model)
 	if m.phase == phaseAuthorizing {
 		t.Fatal("uncorrelated pending status created an authorization card")
 	}
-	if len(m.conv.blocks) <= blocks {
+	if len(m.conv.testBlocks()) <= blocks {
 		t.Fatal("uncorrelated pending status did not use generic stream failure")
 	}
 }

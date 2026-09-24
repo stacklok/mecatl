@@ -29,7 +29,7 @@ func retryFrameCount(frames []*mecatlv1.ConverseRequest) int {
 
 func userBlockCount(c conversation) int {
 	n := 0
-	for _, b := range c.blocks {
+	for _, b := range c.testBlocks() {
 		if b.kind == blockUser {
 			n++
 		}

@@ -64,9 +64,9 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	decision.CandidateModel = "mutated-candidate"
 
 	var subBlock *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "sub-call" {
-			subBlock = &m.conv.blocks[i]
+	for i := range m.conv.testBlocks() {
+		if m.conv.testBlocks()[i].toolID == "sub-call" {
+			subBlock = &m.conv.testBlocks()[i]
 			break
 		}
 	}
@@ -93,9 +93,9 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 		t.Errorf("expanded fallback duplicated compact candidate cue %d times:\n%s", got, expanded)
 	}
 	var acceptedBlock *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "accepted-call" {
-			acceptedBlock = &m.conv.blocks[i]
+	for i := range m.conv.testBlocks() {
+		if m.conv.testBlocks()[i].toolID == "accepted-call" {
+			acceptedBlock = &m.conv.testBlocks()[i]
 			break
 		}
 	}
@@ -105,9 +105,9 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	acceptedExpanded := stripANSIstr(r.renderBlock(0, acceptedBlock, true))
 	assertAcceptedRoutingDetail(t, "expanded accepted Subagent card", acceptedExpanded)
 	var teamBlock *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "team-call" {
-			teamBlock = &m.conv.blocks[i]
+	for i := range m.conv.testBlocks() {
+		if m.conv.testBlocks()[i].toolID == "team-call" {
+			teamBlock = &m.conv.testBlocks()[i]
 			break
 		}
 	}
@@ -150,11 +150,11 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 70})
 	m = mm.(Model)
 	conversationView := stripANSIstr(m.View().Content)
-	if got, want := len(m.conv.blocks), 3; got != want {
+	if got, want := len(m.conv.testBlocks()), 3; got != want {
 		t.Fatalf("Parallel lifecycle created an inline conversation block: got %d blocks, want %d", got, want)
 	}
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "parallel-call" {
+	for i := range m.conv.testBlocks() {
+		if m.conv.testBlocks()[i].toolID == "parallel-call" {
 			t.Fatal("Parallel lifecycle created a new inline routing card")
 		}
 	}

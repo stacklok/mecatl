@@ -113,7 +113,7 @@ func TestFireDelivery_Scenario5_ConnectedTUIRendersDeliveryLive(t *testing.T) {
 
 	// Sanity: the conversation starts empty.
 	if !m.conv.isEmpty() {
-		t.Fatalf("conversation should be empty before the delivery, got %d blocks", len(m.conv.blocks))
+		t.Fatalf("conversation should be empty before the delivery, got %d blocks", len(m.conv.testBlocks()))
 	}
 
 	// Push a delivery user_prompt event through the live feed fan-in path.
@@ -145,7 +145,7 @@ func TestFireDelivery_Scenario5_ConnectedTUIRendersDeliveryLive(t *testing.T) {
 	if m.conv.isEmpty() {
 		t.Fatal("conversation should be non-empty after a live delivery")
 	}
-	blocks := m.conv.blocks
+	blocks := m.conv.testBlocks()
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block (the delivery card), got %d: %+v", len(blocks), blocks)
 	}
@@ -190,11 +190,11 @@ func TestFireDelivery_Scenario6_TransportProjectionParity(t *testing.T) {
 	rs.applyReplayEvent(liveDN)
 
 	// ── Assertions ─────────────────────────────────────────────────────
-	liveBlocks := lm.conv.blocks
+	liveBlocks := lm.conv.testBlocks()
 	if len(liveBlocks) != 1 {
 		t.Fatalf("live path: expected 1 block, got %d", len(liveBlocks))
 	}
-	replayBlocks := rs.transcript.blocks
+	replayBlocks := rs.transcript.testBlocks()
 	if len(replayBlocks) != 1 {
 		t.Fatalf("replay path: expected 1 block, got %d", len(replayBlocks))
 	}

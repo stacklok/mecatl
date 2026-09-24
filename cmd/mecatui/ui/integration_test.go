@@ -502,11 +502,11 @@ func TestReasoningInterleavedRendersOnce(t *testing.T) {
 
 	// Exactly one assistant block, with both reasoning fragments merged into it.
 	var asst int
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockAssistant {
+	for i := range m.conv.testBlocks() {
+		if m.conv.testBlocks()[i].kind == blockAssistant {
 			asst++
-			if m.conv.blocks[i].reasoning != "step one\nstep two\n" {
-				t.Errorf("reasoning not merged onto the block: %q", m.conv.blocks[i].reasoning)
+			if m.conv.testBlocks()[i].reasoning != "step one\nstep two\n" {
+				t.Errorf("reasoning not merged onto the block: %q", m.conv.testBlocks()[i].reasoning)
 			}
 		}
 	}
@@ -596,13 +596,13 @@ func TestTurnEndTrivialSuppressed(t *testing.T) {
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.phase = phaseRunning
 
-	before := len(m.conv.blocks)
+	before := len(m.conv.testBlocks())
 	// Tiny tokens, no clock → trivial → suppressed.
 	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 5, OutputTokens: 2}, DurationMs: 0})
 	// Tiny tokens, sub-second duration → still trivial → suppressed.
 	m = applyAll(m, client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 10, OutputTokens: 0}, DurationMs: 300})
-	if len(m.conv.blocks) != before {
-		t.Errorf("trivial turns should add no stat block; blocks grew %d→%d", before, len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != before {
+		t.Errorf("trivial turns should add no stat block; blocks grew %d→%d", before, len(m.conv.testBlocks()))
 	}
 
 	// A turn over the duration threshold is NOT trivial even with tiny tokens.

@@ -53,8 +53,8 @@ func TestSessionContinuityUX_Scenario6_NoThrowawaySession(t *testing.T) {
 	if conv.createCount != 0 {
 		t.Fatalf("startup adoption called CreateSession %d times", conv.createCount)
 	}
-	if m.sessionID != "existing" || m.sessionTitle != "Prior chat" || m.activePlacement.Label != "prior" || m.phase != phaseIdle || len(m.conv.blocks) == 0 || !m.prompt.Focused() {
-		t.Fatalf("adopted model incomplete: id=%q title=%q workspace=%q phase=%v blocks=%d focused=%v", m.sessionID, m.sessionTitle, m.activePlacement.Label, m.phase, len(m.conv.blocks), m.prompt.Focused())
+	if m.sessionID != "existing" || m.sessionTitle != "Prior chat" || m.activePlacement.Label != "prior" || m.phase != phaseIdle || len(m.conv.testBlocks()) == 0 || !m.prompt.Focused() {
+		t.Fatalf("adopted model incomplete: id=%q title=%q workspace=%q phase=%v blocks=%d focused=%v", m.sessionID, m.sessionTitle, m.activePlacement.Label, m.phase, len(m.conv.testBlocks()), m.prompt.Focused())
 	}
 }
 
@@ -103,7 +103,7 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 	}
 	fresh := newRenderer(m.deps.Theme, m.rend.marks)
 	fresh.setWidth(m.rend.width)
-	wantFrame := fresh.renderConversationFrame(&m.conv, m.expandTools)
+	wantFrame := fresh.renderConversationFrame(&m.conv.scrollback, m.expandTools)
 	if !reflect.DeepEqual(m.conversationView.frame.provenance, wantFrame.provenance) {
 		t.Fatal("replacement retained stale frame provenance")
 	}
@@ -166,8 +166,8 @@ func TestADR_0108_FirstPromptRevalidatesAtomically(t *testing.T) {
 		if m.phase != phaseIdle || m.sessionID != "existing" || !m.prompt.Focused() || m.startupRunEntryFailed || conv.createCount != 0 {
 			t.Fatalf("back state: phase=%v id=%q focused=%v failed=%v creates=%d", m.phase, m.sessionID, m.prompt.Focused(), m.startupRunEntryFailed, conv.createCount)
 		}
-		if m.prompt.Value() != "retry this turn" || len(sender.frames()) != 1 || len(m.conv.blocks) == 0 {
-			t.Fatalf("back lost prompt or transcript: prompt=%q frames=%d blocks=%d", m.prompt.Value(), len(sender.frames()), len(m.conv.blocks))
+		if m.prompt.Value() != "retry this turn" || len(sender.frames()) != 1 || len(m.conv.testBlocks()) == 0 {
+			t.Fatalf("back lost prompt or transcript: prompt=%q frames=%d blocks=%d", m.prompt.Value(), len(sender.frames()), len(m.conv.testBlocks()))
 		}
 	})
 }

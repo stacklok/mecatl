@@ -24,7 +24,7 @@ func subagentCard(t *testing.T, expand bool, build func(c *conversation)) string
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{"prompt":"investigate the loop"}`)
 	build(c)
-	return stripANSIstr(r.renderBlock(0, &c.blocks[0], expand))
+	return stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], expand))
 }
 
 // addSubTool routes a bare (kind-less) subagent.tool event into the card — the
@@ -137,7 +137,7 @@ func TestSubagentExpandedWrapsNarrow(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		addSubTool(c, "p1", "Read", false, i+1)
 	}
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], true))
+	out := stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], true))
 	// The chip region must occupy more than one visual line (it wrapped).
 	if strings.Count(out, "✓") != 6 {
 		t.Fatalf("want all 6 chips present, got %q", out)
@@ -215,11 +215,11 @@ func TestSubagentAttributionByParentCallID(t *testing.T) {
 	addSubTool(c, "pa", "Grep", false, 1)
 	addSubTool(c, "pb", "Read", false, 1)
 
-	if c.blocks[0].subGoal != "alpha goal" || c.blocks[0].subTrace[0].name != "Grep" {
-		t.Errorf("card pa mis-attributed: goal=%q trace=%+v", c.blocks[0].subGoal, c.blocks[0].subTrace)
+	if c.testBlocks()[0].subGoal != "alpha goal" || c.testBlocks()[0].subTrace[0].name != "Grep" {
+		t.Errorf("card pa mis-attributed: goal=%q trace=%+v", c.testBlocks()[0].subGoal, c.testBlocks()[0].subTrace)
 	}
-	if c.blocks[1].subGoal != "bravo goal" || c.blocks[1].subTrace[0].name != "Read" {
-		t.Errorf("card pb mis-attributed: goal=%q trace=%+v", c.blocks[1].subGoal, c.blocks[1].subTrace)
+	if c.testBlocks()[1].subGoal != "bravo goal" || c.testBlocks()[1].subTrace[0].name != "Read" {
+		t.Errorf("card pb mis-attributed: goal=%q trace=%+v", c.testBlocks()[1].subGoal, c.testBlocks()[1].subTrace)
 	}
 }
 

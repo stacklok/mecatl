@@ -473,7 +473,7 @@ func TestFooterCountsIdleAsNotWorking(t *testing.T) {
 	c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
 
-	lanes := c.blocks[0].teamLanes
+	lanes := c.testBlocks()[0].teamLanes
 	if !lanes[1].idle {
 		t.Fatalf("scout lane must be idle after its per-round result, got %+v", lanes[1])
 	}

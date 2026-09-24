@@ -11,8 +11,8 @@ import (
 // countNoticeBlocks returns how many scrollback notice blocks the conversation holds.
 func countNoticeBlocks(m Model) int {
 	n := 0
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockNotice {
+	for i := range m.conv.testBlocks() {
+		if m.conv.testBlocks()[i].kind == blockNotice {
 			n++
 		}
 	}

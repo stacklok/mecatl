@@ -85,12 +85,12 @@ func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 	if strings.Contains(view, "local source only") {
 		t.Fatalf("conversation must be target-authoritative:\n%s", view)
 	}
-	if len(m.conv.blocks) != 4 {
-		t.Fatalf("adopted transcript blocks = %d, want user, assistant, tool, assistant", len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != 4 {
+		t.Fatalf("adopted transcript blocks = %d, want user, assistant, tool, assistant", len(m.conv.testBlocks()))
 	}
-	tool := m.conv.blocks[2]
-	if m.conv.blocks[0].kind != blockUser || m.conv.blocks[1].kind != blockAssistant || tool.kind != blockTool || m.conv.blocks[3].kind != blockAssistant {
-		t.Fatalf("adopted block order = %#v", m.conv.blocks)
+	tool := m.conv.testBlocks()[2]
+	if m.conv.testBlocks()[0].kind != blockUser || m.conv.testBlocks()[1].kind != blockAssistant || tool.kind != blockTool || m.conv.testBlocks()[3].kind != blockAssistant {
+		t.Fatalf("adopted block order = %#v", m.conv.testBlocks())
 	}
 	if tool.toolName != "Read" || tool.toolArgs != `{"path":"target.txt"}` || !tool.resolved || tool.resultBody != "target tool result" {
 		t.Fatalf("adopted tool block = %#v", tool)

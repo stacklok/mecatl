@@ -36,7 +36,7 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	c := &conversation{}
 	c.addTool("call-1", "Read", `{"path":"README.md"}`)
 	r := newCacheRenderer()
-	base := r.blockRenderKey(&c.blocks[0], false)
+	base := r.blockRenderKey(&c.testBlocks()[0], false)
 	if base.context != (renderContextKey{
 		width: r.width,
 	}) {
@@ -53,7 +53,7 @@ func TestMecatuiFunctionalConversationCards_Scenario1_BlockRenderKeyTracksConten
 	if !c.resolveTool("call-1", "done", false) {
 		t.Fatal("resolve tool")
 	}
-	assertChanged("content revision", r.blockRenderKey(&c.blocks[0], false))
+	assertChanged("content revision", r.blockRenderKey(&c.testBlocks()[0], false))
 
 	block := block{rev: base.revision}
 	r.width++

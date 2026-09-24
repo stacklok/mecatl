@@ -21,14 +21,14 @@ func scenario3Conversation() *conversation {
 	return c
 }
 
-func TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardPreparation(t *testing.T) {
+func TestMecatuiTypedScrollbackModel_Scenario3_CacheRevisionFastPathPreserved(t *testing.T) {
 	c := scenario3Conversation()
 	r := newCacheRenderer()
-	r.renderConversationFrame(c, false)
+	r.renderConversationFrame(&c.scrollback, false)
 	prepares := r.cardPrepares
 	renders := r.blockRenders
 
-	r.renderConversationFrame(c, false)
+	r.renderConversationFrame(&c.scrollback, false)
 	if r.cardPrepares != prepares {
 		t.Fatalf("settled frame prepared cards: %d → %d", prepares, r.cardPrepares)
 	}
@@ -37,12 +37,12 @@ func TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettled
 	}
 
 	c.addTool("changed-call", "Read", `{"path":"changed.txt"}`)
-	r.renderConversationFrame(c, false)
+	r.renderConversationFrame(&c.scrollback, false)
 	prepares = r.cardPrepares
 	if !c.resolveTool("changed-call", "changed result", false) {
 		t.Fatal("resolve changed tool")
 	}
-	r.renderConversationFrame(c, false)
+	r.renderConversationFrame(&c.scrollback, false)
 	if got := r.cardPrepares; got != prepares+1 {
 		t.Fatalf("one content revision prepared %d cards, want one", got-prepares)
 	}
@@ -51,11 +51,11 @@ func TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettled
 func TestMecatuiFunctionalConversationCards_Scenario3_FrameProvenanceMatchesPreparedRows(t *testing.T) {
 	c := scenario3Conversation()
 	r := newCacheRenderer()
-	frame := r.renderConversationFrame(c, true)
+	frame := r.renderConversationFrame(&c.scrollback, true)
 	if len(frame.lines) != len(frame.provenance) {
 		t.Fatalf("frame lines/provenance = %d/%d", len(frame.lines), len(frame.provenance))
 	}
-	for i := range c.blocks {
+	for i := range c.testBlocks() {
 		entry := r.blocks.rendered[i]
 		if len(strings.Split(entry.out, "\n")) != len(entry.rows) {
 			t.Fatalf("block %d cached lines/rows are not lockstep", i)
@@ -78,13 +78,13 @@ func TestMecatuiFunctionalConversationCards_Scenario3_AnchorsAndSelectionSurvive
 	c.addTool("call", "Read", `{"path":"ARGUMENT-MARKER-with-context.txt"}`)
 	r := newCacheRenderer()
 	r.setWidth(34)
-	initial := r.renderConversationFrame(c, true)
+	initial := r.renderConversationFrame(&c.scrollback, true)
 	point := scenario3SelectionPoint(t, initial, conversationRegionArguments, "ARGUMENT-MARKER")
 
 	c.addNotice("unrelated append")
 	c.resolveTool("call", "late result", false)
 	r.setWidth(58)
-	reflowed := r.renderConversationFrame(c, true)
+	reflowed := r.renderConversationFrame(&c.scrollback, true)
 	if _, _, ok := resolveSelectionPoint(reflowed, point); !ok {
 		t.Fatal("tool-argument selection did not retain exact context after append, result, and reflow")
 	}
@@ -93,7 +93,7 @@ func TestMecatuiFunctionalConversationCards_Scenario3_AnchorsAndSelectionSurvive
 		t.Fatal("logical reading anchor did not survive card reflow")
 	}
 
-	collapsed := r.renderConversationFrame(c, false)
+	collapsed := r.renderConversationFrame(&c.scrollback, false)
 	if _, _, ok := resolveSelectionPoint(collapsed, point); ok {
 		t.Fatal("selection survived after collapse hid its prepared argument row")
 	}
@@ -132,20 +132,20 @@ func TestMecatuiFunctionalConversationCards_Scenario3_IncrementalCacheFastPath(t
 	c.startAssistant()
 	c.appendAssistant("tail")
 	r := newCacheRenderer()
-	first := r.renderConversationFrame(c, false)
+	first := r.renderConversationFrame(&c.scrollback, false)
 	prepares, renders := r.cardPrepares, r.blockRenders
 
 	c.appendAssistant(" update")
-	second := r.renderConversationFrame(c, false)
+	second := r.renderConversationFrame(&c.scrollback, false)
 	if r.cardPrepares != prepares || r.blockRenders-renders != 1 {
 		t.Fatalf("tail update: card prepares=%d block renders=%d, want 0/1", r.cardPrepares-prepares, r.blockRenders-renders)
 	}
-	if r.blocks.prefixN != len(c.blocks)-1 {
-		t.Fatalf("tail update prefix = %d, want %d", r.blocks.prefixN, len(c.blocks)-1)
+	if r.blocks.prefixN != len(c.testBlocks())-1 {
+		t.Fatalf("tail update prefix = %d, want %d", r.blocks.prefixN, len(c.testBlocks())-1)
 	}
 
 	prepares, renders = r.cardPrepares, r.blockRenders
-	unchanged := r.renderConversationFrame(c, false)
+	unchanged := r.renderConversationFrame(&c.scrollback, false)
 	if r.cardPrepares != prepares || r.blockRenders != renders {
 		t.Fatal("unchanged frame prepared or rendered cards")
 	}
@@ -156,7 +156,7 @@ func TestMecatuiFunctionalConversationCards_Scenario3_IncrementalCacheFastPath(t
 	if !c.resolveTool("non-tail", "changed", false) {
 		t.Fatal("resolve non-tail tool")
 	}
-	r.renderConversationFrame(c, false)
+	r.renderConversationFrame(&c.scrollback, false)
 	if r.cardPrepares != prepares+1 {
 		t.Fatalf("non-tail mutation prepared %d cards, want 1", r.cardPrepares-prepares)
 	}
@@ -174,10 +174,10 @@ func TestMecatuiFunctionalConversationCards_Scenario3_ScrollbackPerformanceContr
 		c.startAssistant()
 		c.appendAssistant("stream")
 		r := newCacheRenderer()
-		r.renderConversationFrame(c, false)
+		r.renderConversationFrame(&c.scrollback, false)
 		prepares, renders := r.cardPrepares, r.blockRenders
 		c.appendAssistant(" delta")
-		frame := r.renderConversationFrame(c, false)
+		frame := r.renderConversationFrame(&c.scrollback, false)
 		if r.cardPrepares != prepares || r.blockRenders-renders != 1 {
 			t.Fatalf("depth %d rebuilt settled cards: prepares=%d renders=%d", depth, r.cardPrepares-prepares, r.blockRenders-renders)
 		}

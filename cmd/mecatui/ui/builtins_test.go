@@ -34,9 +34,9 @@ func sessionState(m Model) sessionStateProjection {
 	return sessionStateProjection{
 		convEmpty:     m.conv.isEmpty(),
 		stuck:         m.conversationView.mode == followTail,
-		filesChanged:  m.conv.changedFiles(),
-		filesSeenLen:  len(m.conv.changedFiles()),
-		filesSeenNil:  m.conv.changedFiles() == nil,
+		filesChanged:  m.conv.testChangedFiles(),
+		filesSeenLen:  len(m.conv.testChangedFiles()),
+		filesSeenNil:  m.conv.testChangedFiles() == nil,
 		usage:         m.usage,
 		contextTokens: m.contextTokens,
 		activeTool:    m.activeTool,
@@ -546,7 +546,7 @@ func TestClearBuiltinCreateFailureKeepsOldSession(t *testing.T) {
 	if m.sessionID != oldID || m.conv.isEmpty() || m.phase != phaseIdle {
 		t.Errorf("failed /clear must retain old active state: id=%q empty=%v phase=%v", m.sessionID, m.conv.isEmpty(), m.phase)
 	}
-	if m.conv.changedFiles() == nil {
+	if m.conv.testChangedFiles() == nil {
 		t.Error("failed /clear must retain old derived UI state")
 	}
 	if got := conv.closed(); len(got) != 0 {

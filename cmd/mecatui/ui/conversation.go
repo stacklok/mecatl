@@ -212,24 +212,13 @@ const (
 	blockDelivery                   // a fire-result delivery note (scheduled-task affordance + outcome)
 )
 
-// block is one entry in the conversation scrollback. Assistant blocks accumulate
-// streamed deltas in raw (re-rendered through glamour each delta); tool blocks
-// carry their call args and, once resolved, their result. Keeping the raw text
-// on the block (not a pre-rendered string) lets a theme/width change re-render
-// the whole history correctly.
+// block is the renderer-owned, detached presentation input for one typed
+// scrollback snapshot. It is never retained as conversation state.
 type block struct {
 	id   uint64
 	kind blockKind
 
-	// rev is the block's render revision: bumped on EVERY post-append mutation of a
-	// render-visible field. The renderer's per-block cache (renderer.blocks)
-	// keys on it, so a settled block (rev unchanged) joins the conversation string
-	// from cache while a mutated block re-renders fresh. Blocks must therefore be
-	// mutated only through conversation methods — the bump sites are exactly four
-	// gateways (currentAssistant, subagentBlock, teamBlock, and resolveTool's
-	// matched branch), which together front every post-append mutator. The
-	// cache-equivalence oracle in render_cache_test.go is the drift tripwire: a
-	// mutation path that bypasses a bump renders stale and fails the oracle.
+	// rev is copied from the typed snapshot and participates in the render key.
 	rev int
 
 	raw string // user text, assistant markdown buffer, or notice text
@@ -394,11 +383,8 @@ type subagentLane struct {
 // f6 Subagents tab. It is part of the conversation so a /clear (which rebuilds
 // the conversation) drops it too.
 type conversation struct {
-	// scrollback is the authoritative logical document for ordinary conversation cards.
-	// blocks is a renderer compatibility projection retained for delegation cards until
-	// their dedicated migration; it is refreshed only from immutable snapshots here.
+	// scrollback is the authoritative logical conversation document.
 	scrollback scrollback.Conversation
-	blocks     []block
 	// subagentFleet preserves first-seen order; fleetIndex maps ChildID → its slot so
 	// repeated tool/end events for a child update the same lane in O(1).
 	subagentFleet []subagentLane
@@ -411,11 +397,15 @@ type conversation struct {
 	parallelIndex  map[string]int
 }
 
-func blockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
-	if s.Revision > uint64(^uint(0)>>1) {
+func rendererRevision(revision uint64) int {
+	if revision > uint64(^uint(0)>>1) {
 		panic("scrollback revision exceeds renderer capacity")
 	}
-	b := block{id: uint64(s.ID), rev: int(s.Revision)}
+	return int(revision)
+}
+
+func blockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
+	b := block{id: uint64(s.ID), rev: rendererRevision(s.Revision)}
 	switch p := s.Payload.(type) {
 	case scrollback.UserCardSnapshot:
 		b.kind, b.raw, b.media = blockUser, p.Text, p.Media
@@ -442,24 +432,6 @@ func blockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
 	return b, true
 }
 
-func (c *conversation) syncSnapshot(i int) {
-	c.syncBlock(c.scrollback.SnapshotAt(i))
-}
-
-func (c *conversation) syncBlock(snapshot scrollback.BlockSnapshot) {
-	b, ok := blockFromSnapshot(snapshot)
-	if !ok {
-		return
-	}
-	for j := range c.blocks {
-		if c.blocks[j].id == b.id {
-			c.blocks[j] = b
-			return
-		}
-	}
-	c.blocks = append(c.blocks, b)
-}
-
 func artifacts(blocks []client.ContentBlock) []scrollback.Artifact {
 	out := make([]scrollback.Artifact, len(blocks))
 	for i, b := range blocks {
@@ -479,26 +451,7 @@ func contentBlocks(artifacts []scrollback.Artifact) []client.ContentBlock {
 // recordFileChange records a first-seen mutated workspace path. The synthetic
 // appendix gets one stable identity at its first distinct member.
 func (c *conversation) recordFileChange(path string) {
-	id := c.scrollback.RecordFileChange(path)
-	if id == 0 {
-		return
-	}
-}
-
-func (c *conversation) changedFiles() []string {
-	appendix, ok := c.scrollback.AppendixSnapshot()
-	if !ok {
-		return nil
-	}
-	return appendix.Files
-}
-
-func (c *conversation) changedFilesAppendixID() uint64 {
-	appendix, ok := c.scrollback.AppendixSnapshot()
-	if !ok {
-		return 0
-	}
-	return uint64(appendix.ID)
+	c.scrollback.RecordFileChange(path)
 }
 
 // isEmpty reports whether the conversation has no blocks yet — the first-run
@@ -510,7 +463,6 @@ func (c *conversation) isEmpty() bool { return c.scrollback.Len() == 0 }
 // addUser appends a text-only user-prompt block.
 func (c *conversation) addUser(text string) {
 	c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text})
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // addUserWithMedia appends a user-prompt block carrying media-part placeholders.
@@ -520,14 +472,12 @@ func (c *conversation) addUser(text string) {
 // no media it is equivalent to addUser.
 func (c *conversation) addUserWithMedia(text string, media []string) {
 	c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text, Media: media})
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // startAssistant opens a fresh, empty assistant block to accumulate deltas into.
 // Called on turn.start so each turn is its own markdown block.
 func (c *conversation) startAssistant() {
 	c.scrollback.Messages().AddAssistant(scrollback.AssistantInput{})
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // appendAssistant appends streamed text to the current assistant block, opening
@@ -537,64 +487,31 @@ func (c *conversation) startAssistant() {
 // static collapsed header).
 func (c *conversation) appendAssistant(text string) {
 	c.scrollback.Messages().AppendAssistant(text)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 func (c *conversation) reviseAssistant(text string) {
 	c.scrollback.Messages().ReviseAssistant(text)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 func (c *conversation) appendReasoning(text string) {
 	c.scrollback.Messages().AppendReasoning(text)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 func (c *conversation) endReasoningStream() {
-	if c.scrollback.Messages().EndReasoningStream() {
-		c.syncSnapshot(c.scrollback.Len() - 1)
-	}
+	c.scrollback.Messages().EndReasoningStream()
 }
 
 // addTurnStat appends a muted per-turn usage/elapsed stat line.
 func (c *conversation) addTurnStat(text string) {
 	c.scrollback.Notices().AddTurnStat(text)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 func (c *conversation) addTool(id, name, args string) {
 	c.scrollback.Tools().Add(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
-	if !c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)}) {
-		return false
-	}
-	c.syncCall(callID)
-	return true
-}
-
-// subagentBlock is a typed read seam retained for focused presentation tests.
-func (c *conversation) subagentBlock(parentCallID string) *block {
-	snapshot, ok := c.scrollback.SnapshotForCall(parentCallID)
-	if !ok {
-		return nil
-	}
-	b, ok := delegationBlockFromSnapshot(snapshot)
-	if !ok || !b.subagent {
-		return nil
-	}
-	return &b
-}
-
-// setSubagentStart is a typed transition seam retained for focused presentation tests.
-func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, routedModel, routingReason, model string) bool {
-	ok := c.scrollback.Subagents().Start(parentCallID, scrollback.SubagentStart{Goal: goal, RoutedCategory: routedCategory, RoutedModel: routedModel, RoutingReason: routingReason, Model: model})
-	if ok {
-		c.syncCall(parentCallID)
-	}
-	return ok
+	return c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)})
 }
 
 // cloneRoutingDecision takes ownership of optional scalar presence as well as the
@@ -613,27 +530,6 @@ func cloneRoutingDecision(in *client.RoutingDecision) *client.RoutingDecision {
 		out.MinimumConfidence = &v
 	}
 	return &out
-}
-
-func (c *conversation) setSubagentRoutingDecision(parentCallID, childID string, decision *client.RoutingDecision) {
-	if p, ok := c.subagentCard(parentCallID); ok {
-		p.Start.Routing = scrollRouting(decision)
-		if c.scrollback.Subagents().UpdateStart(parentCallID, p.Start) {
-			c.syncCall(parentCallID)
-		}
-	}
-	if childID != "" {
-		c.fleetLane(childID).routingDecision = cloneRoutingDecision(decision)
-	}
-}
-
-// addSubagentTool is a typed transition seam retained for focused presentation tests.
-func (c *conversation) addSubagentTool(msg client.SubagentMsg) bool {
-	if _, ok := c.subagentCard(msg.ParentCallID); !ok {
-		return false
-	}
-	c.applySubagentTyped(msg)
-	return true
 }
 
 // routeTraceEvent is the shared InnerKind→trace projection every delegation family
@@ -657,15 +553,6 @@ func routeTraceEvent(trace []teamTrace, current, innerKind, toolName, detail, te
 		}
 	}
 	return trace, current
-}
-
-// setSubagentEnd is a typed transition seam retained for focused presentation tests.
-func (c *conversation) setSubagentEnd(parentCallID string, usage client.Usage, toolCount int, stop string, durationMs int64) bool {
-	if _, ok := c.subagentCard(parentCallID); !ok {
-		return false
-	}
-	c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentEnd, ParentCallID: parentCallID, Usage: usage, ToolCount: toolCount, Stop: stop, DurationMs: durationMs})
-	return true
 }
 
 // fleetLane returns the existing subagentLane for childID (creating one in first-seen
@@ -978,93 +865,6 @@ func (c *conversation) liveParallel() bool {
 	return false
 }
 
-// teamBlock returns the Team tool block whose toolID matches parentCallID, or nil
-// if none. Matching is by id only — the SAME contract as resolveTool/subagentBlock
-// — so a team.* event is attributed to its originating Team card even with several
-// tool cards interleaved. It scans from the end so the most recent match wins.
-//
-// teamBlock is a typed read seam retained for focused presentation tests.
-func (c *conversation) teamBlock(parentCallID string) *block {
-	snapshot, ok := c.scrollback.SnapshotForCall(parentCallID)
-	if !ok {
-		return nil
-	}
-	b, ok := delegationBlockFromSnapshot(snapshot)
-	if !ok || !b.team {
-		return nil
-	}
-	return &b
-}
-
-func (c *conversation) setTeamStart(parentCallID, teamID string, roster []client.TeamMemberSpec) bool {
-	if !c.ensureTeamCard(parentCallID, teamID, roster) {
-		return false
-	}
-	c.applyTeamTyped(client.TeamMsg{Kind: client.TeamStart, ParentCallID: parentCallID, TeamID: teamID, Roster: roster})
-	return true
-}
-
-func (c *conversation) addTeamMember(msg client.TeamMsg) bool {
-	if !c.ensureTeamCard(msg.ParentCallID, msg.TeamID, nil) {
-		return false
-	}
-	msg.Kind = client.TeamMember
-	c.applyTeamTyped(msg)
-	return true
-}
-
-func (c *conversation) setTeamEnd(parentCallID, teamID string, rounds int, stop string, usage client.Usage, dispositions []client.TeamMemberDisposition) bool {
-	p, ok := c.teamCard(parentCallID)
-	if !ok {
-		return false
-	}
-	u := p.Update
-	if teamID != "" {
-		u.TeamID = teamID
-	}
-	u.Rounds, u.Stop, u.Usage, u.Done = rounds, stop, scrollUsage(usage), true
-	for _, d := range dispositions {
-		var i int
-		u.Lanes, i = teamLaneFor(u.Lanes, d.Name)
-		u.Lanes[i].Stopped, u.Lanes[i].StopReason, u.Lanes[i].ErrorRounds = d.Stopped, d.Reason, d.ErrorRounds
-	}
-	if !c.scrollback.Teams().Update(parentCallID, u) {
-		return false
-	}
-	c.syncCall(parentCallID)
-	return true
-}
-
-func (c *conversation) setTeamTasks(parentCallID string, tasks []client.TeamTask) bool {
-	if !c.ensureTeamCard(parentCallID, "", nil) {
-		return false
-	}
-	p, ok := c.teamCard(parentCallID)
-	if !ok {
-		return false
-	}
-	p.Update.Tasks = scrollTasks(tasks)
-	if !c.scrollback.Teams().Update(parentCallID, p.Update) {
-		return false
-	}
-	c.syncCall(parentCallID)
-	return true
-}
-
-func (c *conversation) setTeamFindings(parentCallID string, findings []client.TeamFinding) {
-	if !c.ensureTeamCard(parentCallID, "", nil) {
-		return
-	}
-	p, ok := c.teamCard(parentCallID)
-	if !ok {
-		return
-	}
-	p.Update.Findings = scrollFindings(findings)
-	if c.scrollback.Teams().Update(parentCallID, p.Update) {
-		c.syncCall(parentCallID)
-	}
-}
-
 // latestTeamBlock returns the most-recent tool block that carries team lanes (a
 // Team card with at least one member lane), or nil if no team has been seen this
 // session. It scans from the end so a fresh team supersedes an earlier one — the
@@ -1096,7 +896,6 @@ func (c *conversation) liveTeamBlock() *block {
 // addNotice appends a muted info block (compaction / permission verb).
 func (c *conversation) addNotice(text string) {
 	c.scrollback.Notices().AddNotice(text)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // retractLatestNotice removes a provisional notice after its transport reply is
@@ -1113,12 +912,10 @@ func (c *conversation) retractLatestNotice(text string) {
 // event does not overwrite it before the user reads it.
 func (c *conversation) addRecoverNotice(text string) {
 	c.scrollback.Notices().AddRecoveryNotice(text)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 func (c *conversation) addDelivery(scheduleName, fireID, text string) {
 	c.scrollback.Notices().AddDeliveryWithSchedule(scheduleName, fireID, text)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // addHook appends a structured hook-notice block carrying the lifecycle phase,
@@ -1127,16 +924,13 @@ func (c *conversation) addDelivery(scheduleName, fireID, text string) {
 // coloured (blocked stands out from a benign info/modified notice).
 func (c *conversation) addHook(text, phase, tool, decision string) {
 	c.scrollback.Notices().AddHookText(text, phase, tool, decision)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 // addError appends an error block.
 func (c *conversation) addError(text string) {
 	c.scrollback.Notices().AddError(text, false)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }
 
 func (c *conversation) addPermanentError(text string) {
 	c.scrollback.Notices().AddError(text, true)
-	c.syncSnapshot(c.scrollback.Len() - 1)
 }

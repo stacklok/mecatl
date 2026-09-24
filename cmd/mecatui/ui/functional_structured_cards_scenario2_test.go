@@ -60,14 +60,14 @@ func TestMecatuiFunctionalConversationCards_Scenario2_PermanentErrorReplayMatche
 	live, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	live.phase = phaseRunning
 	live = applyAll(live, msg)
-	liveBlock := live.conv.blocks[len(live.conv.blocks)-1]
+	liveBlock := live.conv.testBlocks()[len(live.conv.testBlocks())-1]
 
 	replay := sessionsState{}
 	replay.applyReplayEvent(msg)
-	if len(replay.transcript.blocks) != 1 {
-		t.Fatalf("replay blocks = %d, want 1", len(replay.transcript.blocks))
+	if len(replay.transcript.testBlocks()) != 1 {
+		t.Fatalf("replay blocks = %d, want 1", len(replay.transcript.testBlocks()))
 	}
-	replayBlock := replay.transcript.blocks[0]
+	replayBlock := replay.transcript.testBlocks()[0]
 	if !replayBlock.permanent {
 		t.Fatal("persisted permanent result replayed as transient")
 	}

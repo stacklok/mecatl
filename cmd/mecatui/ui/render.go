@@ -584,21 +584,6 @@ func stripVS16(s string) string {
 	}, s)
 }
 
-// walkBlocks renders every block using the renderer-owned reusable backing slice.
-// It returns that render-pass output explicitly with the lowest changed block index.
-func (r *renderer) walkBlocks(conversationBlocks []block, expand bool) ([]string, int) {
-	firstChanged := len(conversationBlocks)
-	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
-	for i := range conversationBlocks {
-		before := r.blockRenders
-		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &conversationBlocks[i], expand))
-		if r.blockRenders != before && i < firstChanged {
-			firstChanged = i
-		}
-	}
-	return r.renderedBlocksScratch, firstChanged
-}
-
 // renderConversationLines returns the conversation as single newline-free lines
 // ready for vp.SetContentLines. It reuses the cached prefix of settled blocks and
 // builds only the changed suffix.
@@ -631,8 +616,8 @@ func (r *renderer) walkBlocks(conversationBlocks []block, expand bool) ([]string
 // walkConversation reads cheap typed metadata first. A detached payload snapshot
 // is materialized only for a whole-card cache miss; settled cards never clone or
 // prepare their payload merely to prove their cached output is still valid.
-func (r *renderer) walkConversation(c *conversation, expand bool) ([]string, []scrollback.BlockMetadata, []*block, int) {
-	n := c.scrollback.Len()
+func (r *renderer) walkConversation(c *scrollback.Conversation, expand bool) ([]string, []scrollback.BlockMetadata, []*block, int) {
+	n := c.Len()
 	firstChanged := n
 	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
 	if cap(r.metadataScratch) < n {
@@ -649,14 +634,14 @@ func (r *renderer) walkConversation(c *conversation, expand bool) ([]string, []s
 	metadata := r.metadataScratch
 	prepared := r.preparedScratch
 	for i := 0; i < n; i++ {
-		meta := c.scrollback.MetadataAt(i)
+		meta := c.MetadataAt(i)
 		metadata[i] = meta
-		key := blockRenderKey{revision: int(meta.Revision), context: r.renderContext(expand)}
+		key := blockRenderKey{revision: rendererRevision(meta.Revision), context: r.renderContext(expand)}
 		if entry, ok := r.blocks.renderedBlock(i, key); ok {
 			r.renderedBlocksScratch = append(r.renderedBlocksScratch, entry.out)
 			continue
 		}
-		b, ok := blockFromSnapshot(c.scrollback.SnapshotAt(i))
+		b, ok := blockFromSnapshot(c.SnapshotAt(i))
 		if !ok {
 			continue
 		}
@@ -669,7 +654,7 @@ func (r *renderer) walkConversation(c *conversation, expand bool) ([]string, []s
 	return r.renderedBlocksScratch, metadata, prepared, firstChanged
 }
 
-func (r *renderer) renderConversationLines(c *conversation, expand bool) []string {
+func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
 	return r.renderConversationFrame(c, expand).lines
 }
 
@@ -732,9 +717,9 @@ func blockBlankLinesAfter(conversationBlocks []block, i int) int {
 // match the cached entry, and otherwise renders fresh, stores the result, and
 // bumps blockRenders (the cache-miss test seam). idx is the block's stable conversation index (blocks are append-only within a
 // conversation; resetBlockCaches handles index reuse across rebuilds).
-// Correctness rests on the block.rev discipline: every post-append mutation of a
-// render-visible field bumps rev through a conversation gateway, so a cache hit
-// can never be stale. Update-goroutine-only.
+// Correctness rests on the typed model revision copied into block.rev: every
+// visible transition advances it, so a cache hit cannot be stale.
+// Update-goroutine-only.
 func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	key := r.blockRenderKey(b, expand)
 	if entry, ok := r.blocks.renderedBlock(idx, key); ok {

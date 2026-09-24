@@ -54,12 +54,12 @@ func TestRecordFileChangeDedupesAndOrders(t *testing.T) {
 	m.conv.recordFileChange("b.go") // dup
 
 	want := []string{"a.go", "b.go", "c.go"}
-	if len(m.conv.changedFiles()) != len(want) {
-		t.Fatalf("filesChanged = %v, want %v", m.conv.changedFiles(), want)
+	if len(m.conv.testChangedFiles()) != len(want) {
+		t.Fatalf("filesChanged = %v, want %v", m.conv.testChangedFiles(), want)
 	}
 	for i := range want {
-		if m.conv.changedFiles()[i] != want[i] {
-			t.Fatalf("filesChanged = %v, want %v", m.conv.changedFiles(), want)
+		if m.conv.testChangedFiles()[i] != want[i] {
+			t.Fatalf("filesChanged = %v, want %v", m.conv.testChangedFiles(), want)
 		}
 	}
 }
@@ -77,8 +77,8 @@ func TestChangedFilesAccumulatesFromToolCalls(t *testing.T) {
 		client.ToolCallMsg{ID: "4", Name: "Edit", Args: `{"path":"edited.go","old_string":"b","new_string":"c"}`}, // dup path
 	)
 	want := []string{"edited.go", "made.go"}
-	if strings.Join(m.conv.changedFiles(), ",") != strings.Join(want, ",") {
-		t.Errorf("filesChanged = %v, want %v", m.conv.changedFiles(), want)
+	if strings.Join(m.conv.testChangedFiles(), ",") != strings.Join(want, ",") {
+		t.Errorf("filesChanged = %v, want %v", m.conv.testChangedFiles(), want)
 	}
 }
 

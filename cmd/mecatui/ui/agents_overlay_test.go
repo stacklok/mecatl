@@ -128,7 +128,7 @@ func TestSubagentFleetLiveUsage(t *testing.T) {
 		t.Fatalf("fleet lane live usage = %+v, want {1200 340} mid-run", ln.usage)
 	}
 	// The inline card's live usage (subagentLiveLine reads b.subUsage) advances too.
-	if b := m.conv.subagentBlock("p1"); b == nil {
+	if b := m.conv.testSubagentBlock("p1"); b == nil {
 		t.Fatal("inline subagent block p1 missing")
 	} else if b.subUsage.InputTokens != 1200 || b.subUsage.OutputTokens != 340 {
 		t.Fatalf("inline card subUsage = %+v, want {1200 340} mid-run", b.subUsage)
@@ -168,7 +168,7 @@ func TestSubagentLiveUsageDoesNotResetToolCount(t *testing.T) {
 	if ln.usage.InputTokens != 500 || ln.usage.OutputTokens != 120 {
 		t.Fatalf("fleet lane usage = %+v, want the cumulative {500 120}", ln.usage)
 	}
-	if b := m.conv.subagentBlock("p1"); b == nil {
+	if b := m.conv.testSubagentBlock("p1"); b == nil {
 		t.Fatal("inline card p1 missing")
 	} else if b.subToolCount != 2 {
 		t.Fatalf("inline card subToolCount = %d, want 2 (monotonic)", b.subToolCount)

@@ -1,0 +1,114 @@
+package ui
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"testing"
+)
+
+func TestMecatuiTypedScrollbackModel_Scenario2_ProductionUsesTypedTransitions(t *testing.T) {
+	files := parseUIProductionFiles(t)
+	legacyWrappers := map[string]bool{
+		"syncSnapshot": true, "syncBlock": true, "syncCall": true,
+		"changedFiles": true, "changedFilesAppendixID": true,
+		"subagentBlock": true, "teamBlock": true, "walkBlocks": true,
+		"setSubagentStart": true, "setSubagentRoutingDecision": true,
+		"addSubagentTool": true, "setSubagentEnd": true,
+		"setTeamStart": true, "addTeamMember": true, "setTeamEnd": true,
+		"setTeamTasks": true, "setTeamFindings": true,
+	}
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			decl, ok := n.(*ast.FuncDecl)
+			if ok && decl.Recv != nil && legacyWrappers[decl.Name.Name] {
+				t.Errorf("production compatibility projection %s still exists", decl.Name.Name)
+			}
+			return true
+		})
+	}
+
+	conversationType := findStruct(t, files, "conversation")
+	for _, field := range conversationType.Fields.List {
+		for _, name := range field.Names {
+			if name.Name == "blocks" {
+				t.Fatal("conversation still retains the legacy mutable blocks transcript")
+			}
+		}
+	}
+}
+
+func TestMecatuiTypedScrollbackModel_Scenario3_ScrollbackBoundaryIsLogicalOnly(t *testing.T) {
+	files := parseUIProductionFiles(t)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "renderConversationFrame" {
+				continue
+			}
+			if len(fn.Type.Params.List) < 1 {
+				t.Fatal("renderConversationFrame has no typed scrollback input")
+			}
+			star, ok := fn.Type.Params.List[0].Type.(*ast.StarExpr)
+			if !ok {
+				t.Fatalf("renderConversationFrame scrollback input = %T, want pointer", fn.Type.Params.List[0].Type)
+			}
+			sel, ok := star.X.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Conversation" {
+				t.Fatalf("renderConversationFrame input is not *scrollback.Conversation: %#v", fn.Type.Params.List[0].Type)
+			}
+			return
+		}
+	}
+	t.Fatal("renderConversationFrame not found")
+}
+
+var osReadDir = os.ReadDir
+
+func parseUIProductionFiles(t *testing.T) []*ast.File {
+	t.Helper()
+	entries, err := osReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || len(name) < 3 || name[len(name)-3:] != ".go" || len(name) >= 8 && name[len(name)-8:] == "_test.go" {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, file)
+	}
+	return files
+}
+
+func findStruct(t *testing.T, files []*ast.File, name string) *ast.StructType {
+	t.Helper()
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				typeSpec, ok := spec.(*ast.TypeSpec)
+				if !ok || typeSpec.Name.Name != name {
+					continue
+				}
+				st, ok := typeSpec.Type.(*ast.StructType)
+				if !ok {
+					t.Fatalf("%s is not a struct", name)
+				}
+				return st
+			}
+		}
+	}
+	t.Fatalf("struct %s not found", name)
+	return nil
+}

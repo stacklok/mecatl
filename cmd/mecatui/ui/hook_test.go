@@ -167,9 +167,9 @@ func TestHookMsgRoutesToHookBlock(t *testing.T) {
 		Text: "blocked by policy", Phase: "PreToolUse", Tool: "Shell", Decision: client.HookBlocked,
 	})
 	var found *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockHook {
-			found = &m.conv.blocks[i]
+	for i := range m.conv.testBlocks() {
+		if m.conv.testBlocks()[i].kind == blockHook {
+			found = &m.conv.testBlocks()[i]
 		}
 	}
 	if found == nil {

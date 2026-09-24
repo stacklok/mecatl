@@ -137,7 +137,7 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 			big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 		}
 		c.setTeamStart("t1", "", big)
-		out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+		out := stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], false))
 		if !strings.Contains(out, "more · "+wantAgents) {
 			t.Errorf("team roll-up should carry the live agents chord %q, got %q", wantAgents, out)
 		}
@@ -608,7 +608,7 @@ func TestDefaultInlineCardsBytesUnchanged(t *testing.T) {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
 	c.setTeamStart("t1", "", big)
-	if got := stripANSIstr(r.renderBlock(0, &c.blocks[0], false)); !strings.Contains(got, "more · f6") {
+	if got := stripANSIstr(r.renderBlock(0, &c.testBlocks()[0], false)); !strings.Contains(got, "more · f6") {
 		t.Errorf("default team roll-up should carry f6, got %q", got)
 	}
 }

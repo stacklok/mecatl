@@ -203,11 +203,11 @@ func TestSuspendResumeEmitsNotice(t *testing.T) {
 	if m.suspendedFrom != phaseRunning {
 		t.Errorf("suspend should record phaseRunning, got %v", m.suspendedFrom)
 	}
-	blocksBefore := len(m.conv.blocks)
+	blocksBefore := len(m.conv.testBlocks())
 	mm, _ := m.Update(tea.ResumeMsg{})
 	m = mm.(Model)
-	if len(m.conv.blocks) != blocksBefore+1 {
-		t.Fatalf("resume should append one notice block, got %d (was %d)", len(m.conv.blocks), blocksBefore)
+	if len(m.conv.testBlocks()) != blocksBefore+1 {
+		t.Fatalf("resume should append one notice block, got %d (was %d)", len(m.conv.testBlocks()), blocksBefore)
 	}
 	if m.suspendedAtID != "" {
 		t.Error("resume should clear the suspended marker")
