@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
-import type { AuthenticationService } from "../auth/service.js";
+import { AuthenticationError, type AuthenticationService } from "../auth/service.js";
 import { csrfHeaders, fakeRuntime } from "../testing/fakes.js";
 
 function anonymousAuthentication(): AuthenticationService {
@@ -51,6 +52,48 @@ describe("security middleware", () => {
       headers: { Cookie: `studio_csrf=${token}` },
     });
     expect(second.headers.getSetCookie().some((c) => c.startsWith("studio_csrf="))).toBe(false);
+  });
+
+  it("popup COOP is limited to SPA documents and callback HTML", async () => {
+    const authentication: AuthenticationService = {
+      ...anonymousAuthentication(),
+      completeLogin: async () => {
+        throw new AuthenticationError("login_failed", "Login failed", true);
+      },
+    };
+    const app = createApp({
+      authentication,
+      runtime: fakeRuntime(),
+      webDist: fileURLToPath(new URL("../../../web", import.meta.url)),
+    });
+
+    for (const path of ["/", "/workspace/chat", "/index.html"]) {
+      const response = await app.request(path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      expect(response.headers.get("cross-origin-opener-policy")).toBe("same-origin-allow-popups");
+    }
+    for (const path of [
+      "/api/health",
+      "/api/v1/status",
+      "/api/v1/auth/session",
+      "/api/v1/auth/login",
+      "/api/v1/auth/callback.js",
+      "/public/stacklok-logo-mark.svg",
+    ]) {
+      const response = await app.request(path);
+      if (path === "/public/stacklok-logo-mark.svg") expect(response.status).toBe(200);
+      expect(response.headers.get("cross-origin-opener-policy"), path).toBe("same-origin");
+    }
+    for (const path of ["/api/v1/auth/callback", "/oauth/callback"]) {
+      const response = await app.request(path);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      expect(response.headers.get("cross-origin-opener-policy")).toBe("unsafe-none");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    }
+    expect((await app.request("/api/v1/auth/callback.js")).headers.get("referrer-policy")).toBe(
+      "no-referrer",
+    );
   });
 
   it("cross-site or token-less mutations under /api/v1 are rejected with 403", async () => {

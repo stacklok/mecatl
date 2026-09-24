@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRoute, type OpenAPIHono } from "@hono/zod-openapi";
-import { type PublicStatusResponse, publicStatusResponseSchema } from "@mecatl-studio/contracts";
+import {
+  type PublicStatusResponse,
+  problemDetailsSchema,
+  publicStatusResponseSchema,
+} from "@mecatl-studio/contracts";
 import type { ConnectionStatus } from "@stacklok-oss/mecatl-sdk";
 import type { AuthenticationService } from "../auth/service.js";
 import type { AppEnv } from "../http/env.js";
@@ -15,6 +19,10 @@ const statusRoute = createRoute({
     200: {
       content: { "application/json": { schema: publicStatusResponseSchema } },
       description: "Coarse Mecatl connection and browser sign-in facts.",
+    },
+    429: {
+      content: { "application/problem+json": { schema: problemDetailsSchema } },
+      description: "The client's public status request budget is exhausted.",
     },
   },
 });

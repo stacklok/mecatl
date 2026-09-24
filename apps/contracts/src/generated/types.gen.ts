@@ -214,6 +214,22 @@ export type GetPublicStatusData = {
     url: '/api/v1/status';
 };
 
+export type GetPublicStatusErrors = {
+    /**
+     * The client's public status request budget is exhausted.
+     */
+    429: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetPublicStatusError = GetPublicStatusErrors[keyof GetPublicStatusErrors];
+
 export type GetPublicStatusResponses = {
     /**
      * Coarse Mecatl connection and browser sign-in facts.

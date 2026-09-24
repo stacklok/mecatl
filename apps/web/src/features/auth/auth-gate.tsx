@@ -16,6 +16,7 @@ import {
   acceptsPopupResult,
   commitRecoveryCheck,
   isPublicQuery,
+  publicStatusFetchFailed,
   type RecoveryState,
   type SessionCheck,
 } from "./auth-recovery-state";
@@ -27,9 +28,11 @@ const initialRecovery: RecoveryState = {
   workspaceMounted: false,
 };
 
-function currentLoginUrl(): string {
+function currentLoginUrl(popup: boolean): string {
   const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  return `/api/v1/auth/login?${new URLSearchParams({ flow: "popup", return_to: returnTo })}`;
+  const query = new URLSearchParams({ return_to: returnTo });
+  if (popup) query.set("flow", "popup");
+  return `/api/v1/auth/login?${query}`;
 }
 
 /** Public status is always fetched; authenticated feature queries mount only after verification. */
@@ -174,7 +177,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const nextAttempt = ++attempt.current;
     popup.current?.window.close();
     // This call stays in the initiating click stack so browser popup policy can allow it.
-    const opened = window.open(currentLoginUrl(), "_blank", "popup,width=520,height=720");
+    const opened = window.open(currentLoginUrl(true), "_blank", "popup,width=520,height=720");
     if (!opened) {
       popup.current = null;
       setPopupIssue("blocked");
@@ -191,11 +194,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const context = {
     banner: {
       authenticated: recovery.phase === "ready",
-      publicStatus: bannerStatus,
-      publicStatusFailed: status.isError,
+      publicStatus: status.isError ? undefined : bannerStatus,
+      publicStatusFailed: publicStatusFetchFailed(status.isError, status.error),
       sessionCheckFailed: recovery.phase === "verification-unavailable",
     },
-    loginUrl: currentLoginUrl(),
+    loginUrl: currentLoginUrl(false),
     phase: recovery.phase,
     popupIssue,
     retrySession: () => {

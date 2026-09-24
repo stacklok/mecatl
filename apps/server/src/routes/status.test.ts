@@ -23,6 +23,10 @@ function authentication(status: CredentialResolution["status"]): AuthenticationS
   };
 }
 
+function peer(address: string) {
+  return { incoming: { socket: { remoteAddress: address } } };
+}
+
 describe("public status route", () => {
   it("anonymous status exposes only coarse connection and sign-in facts", async () => {
     const publicUrl = new URL("https://studio.example.com");
@@ -81,6 +85,32 @@ describe("public status route", () => {
         signInRequired: false,
       });
     }
+  });
+
+  it("public status has its own bounded rate budget", async () => {
+    let now = 1_000_000;
+    const app = createApp({
+      authentication: authentication("anonymous"),
+      runtime: fakeRuntime({ authMode: "oidc" }),
+      security: { now: () => now, rateLimit: { max: 1, windowMs: 60_000 } },
+    });
+    const hit = (address: string, path = "/api/v1/status") => app.request(path, {}, peer(address));
+
+    for (let index = 0; index < 120; index += 1) {
+      expect((await hit("10.0.0.1")).status).toBe(200);
+    }
+    const limited = await hit("10.0.0.1");
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("cache-control")).toBe("private, no-store");
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    await expect(limited.json()).resolves.toMatchObject({ code: "rate_limited", status: 429 });
+
+    // Public polling has no effect on the separately configured login budget.
+    expect((await hit("10.0.0.1", "/api/v1/auth/login")).status).toBe(302);
+    expect((await hit("10.0.0.1", "/api/v1/auth/login")).status).toBe(429);
+    expect((await hit("10.0.0.2")).status).toBe(200);
+    now += 60_001;
+    expect((await hit("10.0.0.1")).status).toBe(200);
   });
 
   it("status separates transport outage from authentication rejection", async () => {

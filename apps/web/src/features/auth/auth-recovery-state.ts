@@ -138,6 +138,17 @@ export function isRecoverableAuthError(error: unknown): boolean {
   return error.code === "session_expired" || error.code === "unauthenticated";
 }
 
+/** A status throttle is an unconfirmed observation, not an outage signal. */
+export function publicStatusFetchFailed(isError: boolean, error: unknown): boolean {
+  if (!isError) return false;
+  return !(
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    error.status === 429
+  );
+}
+
 /** Only new writes and streams are held; reads can settle and refetch after verification. */
 export function shouldPauseProtectedRequest(
   method: string,

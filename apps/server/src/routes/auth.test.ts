@@ -88,7 +88,7 @@ describe("authentication routes", () => {
     expect(callback.headers.get("content-type")).toContain("text/html");
     expect(callback.headers.get("cache-control")).toBe("private, no-store");
     expect(callback.headers.get("referrer-policy")).toBe("no-referrer");
-    expect(login.headers.get("cross-origin-opener-policy")).toBe("same-origin-allow-popups");
+    expect(login.headers.get("cross-origin-opener-policy")).toBe("same-origin");
     expect(callback.headers.get("cross-origin-opener-policy")).toBe("unsafe-none");
     expect(callback.headers.get("content-security-policy")).toContain("script-src 'self'");
     const html = await callback.text();

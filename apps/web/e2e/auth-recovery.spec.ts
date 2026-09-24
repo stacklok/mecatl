@@ -143,8 +143,15 @@ function setup(offlineBff: OfflineBff, initial: Partial<OfflineState> = {}): Off
   });
   offlineBff.on("GET", "/api/v1/auth/login", (request) => {
     const url = new URL(request.url());
-    expect(url.searchParams.get("flow")).toBe("popup");
     expect(url.searchParams.get("return_to")).toBe("/workspace/chat?sessionId=s1#draft");
+    if (!url.searchParams.has("flow")) {
+      if (state.popupCompletes) state.signedIn = true;
+      return {
+        headers: { Location: url.searchParams.get("return_to") ?? "/" },
+        status: 302,
+      };
+    }
+    expect(url.searchParams.get("flow")).toBe("popup");
     if (state.popupCompletes) state.signedIn = true;
     return {
       body: state.popupCompletes
@@ -303,6 +310,50 @@ test("blocked and closed popups offer a recoverable sign-in", async ({ offlineBf
   await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveValue(
     "Keep this unsent draft",
   );
+});
+
+test("manual new-tab sign-in redirects back to the current route", async ({ offlineBff, page }) => {
+  const state = setup(offlineBff);
+  await page.goto(draftRoute);
+  await expireWrite(page, state);
+  await page.evaluate(() => {
+    window.open = () => null;
+  });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const link = page.getByRole("link", { name: "Open sign-in in a new tab" }).first();
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("rel", /noopener noreferrer/);
+  const login = new URL((await link.getAttribute("href")) ?? "", page.url());
+  expect(login.searchParams.has("flow")).toBe(false);
+  expect(login.searchParams.get("return_to")).toBe(draftRoute);
+
+  offlineBff.on("GET", "/api/v1/auth/login", (request) => {
+    const url = new URL(request.url());
+    expect(url.searchParams.has("flow")).toBe(false);
+    expect(url.searchParams.get("return_to")).toBe(draftRoute);
+    state.signedIn = true;
+    return { headers: { Location: draftRoute }, status: 302 };
+  });
+  const opened = page.waitForEvent("popup");
+  await link.click();
+  const tab = await opened;
+  await expect
+    .poll(() => {
+      const url = new URL(tab.url());
+      return url.pathname + url.search + url.hash;
+    })
+    .toBe(draftRoute);
+  expect(await tab.evaluate(() => window.opener)).toBeNull();
+  expect(new URL(page.url()).pathname + new URL(page.url()).search + new URL(page.url()).hash).toBe(
+    draftRoute,
+  );
+  await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveValue(
+    "Keep this unsent draft",
+  );
+  await tab.close();
+  await page.bringToFront();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
 });
 
 test("expired session requires explicit retry for a write", async ({ offlineBff, page }) => {

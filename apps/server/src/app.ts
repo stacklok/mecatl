@@ -22,6 +22,7 @@ import {
   type SecurityOptions,
   sameOriginMutations,
   securityHeaders,
+  statusRateLimiter,
 } from "./http/security.js";
 import { spaHandler } from "./http/static.js";
 import { type Logger, silentLogger } from "./log.js";
@@ -124,6 +125,7 @@ export function createApp(dependencies: AppDependencies = {}) {
   for (const middleware of requestContext(security)) app.use(middleware);
   app.use(securityHeaders());
   app.use(hostAllowlist(security));
+  app.use("/api/v1/status", statusRateLimiter(security));
   app.use("/api/*", csrfCookieIssuer(security));
   const authLimiter = rateLimiter(security);
   app.use("/api/v1/auth/*", authLimiter);

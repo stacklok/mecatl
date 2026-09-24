@@ -40,10 +40,7 @@ export function requestContext(options: SecurityOptions): MiddlewareHandler<AppE
  */
 export function securityHeaders(): MiddlewareHandler<AppEnv> {
   const headers = secureHeaders({
-    // OAuth popups pass through a cross-origin issuer before returning to the
-    // same-origin callback. Keep their opener so the callback can report its
-    // result; origin and popup-source checks remain in the browser.
-    crossOriginOpenerPolicy: "same-origin-allow-popups",
+    crossOriginOpenerPolicy: "same-origin",
     contentSecurityPolicy: {
       baseUri: ["'self'"],
       connectSrc: ["'self'"],
@@ -60,19 +57,25 @@ export function securityHeaders(): MiddlewareHandler<AppEnv> {
   }) as MiddlewareHandler<AppEnv>;
   return async (context, next) => {
     await headers(context, next);
-    // The callback URL contains an authorization code. The global same-origin
-    // policy is overridden after secureHeaders has finished writing headers.
-    if (
-      context.req.path === "/api/v1/auth/callback" ||
-      context.req.path === "/oauth/callback" ||
-      context.req.path === "/api/v1/auth/callback.js"
-    ) {
+    const path = context.req.path;
+    const callback = path === "/api/v1/auth/callback" || path === "/oauth/callback";
+    const html = context.res.headers.get("content-type")?.startsWith("text/html") === true;
+    if (callback || path === "/api/v1/auth/callback.js") {
       context.header("Referrer-Policy", "no-referrer");
-      if (context.req.path !== "/api/v1/auth/callback.js") {
-        // The popup returns from an issuer document with COOP unsafe-none.
-        // Applying allow-popups to the callback would sever its opener here.
-        context.header("Cross-Origin-Opener-Policy", "unsafe-none");
-      }
+    }
+    if (callback && html) {
+      // The popup returns from an issuer document with COOP unsafe-none.
+      // Applying allow-popups to the callback would sever its opener here.
+      context.header("Cross-Origin-Opener-Policy", "unsafe-none");
+    } else if (
+      html &&
+      !path.startsWith("/api/") &&
+      !callback &&
+      (path === "/index.html" || !/\.[^/]+$/u.test(path))
+    ) {
+      // Only the served SPA document needs to retain its popup opener across
+      // the issuer hop. API responses and static assets keep same-origin.
+      context.header("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
     }
   };
 }
@@ -163,12 +166,39 @@ export function sameOriginMutations(options: SecurityOptions): MiddlewareHandler
  */
 export function rateLimiter(options: SecurityOptions): MiddlewareHandler<AppEnv> {
   const limit = options.rateLimit ?? { max: 20, windowMs: 60_000 };
-  const now = options.now ?? Date.now;
-  const windows = new Map<string, { count: number; startedAt: number }>();
-  return async (context, next) => {
+  const limitRequests = fixedWindowLimiter(
+    options,
+    limit,
+    "Too many authentication requests from this client; retry later.",
+  );
+  return (context, next) => {
     // The SPA polls the session on every load; limiting it would lock out
     // ordinary use long before it slowed down an attacker.
     if (context.req.method === "GET" && context.req.path === "/api/v1/auth/session") return next();
+    return limitRequests(context, next);
+  };
+}
+
+/** A separate budget keeps anonymous status polling from consuming login attempts. */
+export function statusRateLimiter(options: SecurityOptions): MiddlewareHandler<AppEnv> {
+  const limitRequests = fixedWindowLimiter(
+    options,
+    { max: 120, windowMs: 60_000 },
+    "Too many public status requests from this client; retry later.",
+    true,
+  );
+  return (context, next) => (context.req.method === "GET" ? limitRequests(context, next) : next());
+}
+
+function fixedWindowLimiter(
+  options: SecurityOptions,
+  limit: RateLimitConfig,
+  detail: string,
+  noStore = false,
+): MiddlewareHandler<AppEnv> {
+  const now = options.now ?? Date.now;
+  const windows = new Map<string, { count: number; startedAt: number }>();
+  return async (context, next) => {
     const address = context.get("clientAddress");
     const at = now();
     if (windows.size > 10_000) {
@@ -185,13 +215,8 @@ export function rateLimiter(options: SecurityOptions): MiddlewareHandler<AppEnv>
     if (window.count > limit.max) {
       const retryAfter = Math.max(1, Math.ceil((window.startedAt + limit.windowMs - at) / 1_000));
       context.header("Retry-After", String(retryAfter));
-      return problem(
-        context,
-        429,
-        "rate_limited",
-        "Too many requests",
-        "Too many authentication requests from this client; retry later.",
-      );
+      if (noStore) context.header("Cache-Control", "private, no-store");
+      return problem(context, 429, "rate_limited", "Too many requests", detail);
     }
     return next();
   };

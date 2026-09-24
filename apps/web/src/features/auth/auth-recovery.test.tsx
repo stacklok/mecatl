@@ -2,11 +2,13 @@
 
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
+import { statusBannerState } from "../../components/shell/connection-status-banner-state";
 import {
   acceptsPopupResult,
   commitRecoveryCheck,
   isRecoverableAuthError,
   nextRecoveryState,
+  publicStatusFetchFailed,
   type RecoveryState,
   shouldPauseProtectedRequest,
 } from "./auth-recovery-state";
@@ -69,6 +71,22 @@ describe("Studio auth recovery", () => {
     expect(
       acceptsPopupResult({ ...event, data: { ...event.data, sub: "raw-sub" } }, expected),
     ).toBe(false);
+  });
+
+  it("a throttled status check stays neutral", () => {
+    const limited = { code: "rate_limited", status: 429 };
+    expect(publicStatusFetchFailed(true, limited)).toBe(false);
+    expect(publicStatusFetchFailed(false, limited)).toBe(false);
+    expect(publicStatusFetchFailed(true, { code: "internal_error", status: 503 })).toBe(true);
+    expect(publicStatusFetchFailed(true, new Error("Network failure"))).toBe(true);
+    expect(
+      statusBannerState({
+        authenticated: false,
+        publicStatus: undefined,
+        publicStatusFailed: publicStatusFetchFailed(true, limited),
+        sessionCheckFailed: false,
+      }),
+    ).toBe("hidden");
   });
 
   it("expired session preserves a draft and never replays writes", () => {
