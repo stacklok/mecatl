@@ -8,7 +8,7 @@
 **Delivery:** Split. An independent Plan / Interface PR targets `main` before an implementation PR.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1844](https://github.com/stacklok/mecatl/issues/1844).
-**Plan PR:** pending
+**Plan PR:** [stacklok/mecatl#1858](https://github.com/stacklok/mecatl/pull/1858)
 **Approved baseline:** absent until the plan PR merges
 
 Studio presents one workspace frame at desktop and mobile widths: a brand/home link, four primary destinations, a global search trigger, a reserved status band, and a route outlet. Search stays within the inventories already authorized for the signed-in browser. Unknown routes and unexpected rendering failures give a way back to the workspace. The installable manifest and icons identify the app; an already-loaded shell describes a lost connection without suggesting that agent actions run offline.
