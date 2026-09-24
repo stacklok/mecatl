@@ -247,6 +247,23 @@ describe("mounted delegated activity", () => {
           event("result", "11", { stop: "end_turn" }),
         );
       }
+      if (path === "/api/v1/sessions/session-a/runs" && request.method === "POST") {
+        return completedStream(
+          { runId: "run-b", sessionId: "session-a", type: "run.started" },
+          {
+            event: {
+              kind: "result",
+              payload: { stop: "end_turn" },
+              runId: "run-b",
+              seq: "1",
+              text: "",
+              turn: 1,
+              unknown: false,
+            },
+            type: "run.event",
+          },
+        );
+      }
       throw new Error(`Unexpected request ${path}`);
     };
 
@@ -280,6 +297,7 @@ describe("mounted delegated activity", () => {
         ?.querySelector<HTMLButtonElement>('button[role="tab"][aria-label^="Teams"]')
         ?.click(),
     );
+    expect(container?.textContent).not.toContain("Activity history incomplete");
     await act(async () =>
       [
         ...(container?.querySelectorAll<HTMLButtonElement>(
@@ -290,6 +308,40 @@ describe("mounted delegated activity", () => {
         ?.click(),
     );
     expect(container?.textContent).toContain("Found evidence");
+    await act(async () =>
+      container
+        ?.querySelector<HTMLButtonElement>(
+          'aside[aria-label="Session activity"] button[aria-label="Close preview"]',
+        )
+        ?.click(),
+    );
+    const transcriptRequests = requests.filter(
+      (path) => path === "/api/v1/sessions/session-a/transcript",
+    ).length;
+    const textarea = container?.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Message Mecatl"]',
+    );
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(textarea, "Another task");
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () =>
+      container?.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')?.click(),
+    );
+    await act(async () =>
+      vi.waitFor(() =>
+        expect(
+          requests.filter((path) => path === "/api/v1/sessions/session-a/transcript").length,
+        ).toBeGreaterThan(transcriptRequests),
+      ),
+    );
+    await act(async () =>
+      container
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Open session activity"]')
+        ?.click(),
+    );
+    expect(container?.textContent).not.toContain("Activity history incomplete");
   });
 
   it("aborts settled replay when switching sessions and rejects the old activity", async () => {
@@ -517,6 +569,133 @@ describe("mounted delegated activity", () => {
       });
       newRun.close();
     });
+  });
+
+  it("discloses unread settled history when a new run starts after an observed child finished", async () => {
+    const oldStream = heldStream();
+    const newRun = heldStream();
+    let oldSignal: AbortSignal | undefined;
+    let activityRequests = 0;
+    let newRunRequests = 0;
+    const fetcher = async (request: Request): Promise<Response> => {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/v1/runtime") {
+        return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
+      }
+      if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
+      if (path === "/api/v1/sessions") {
+        return json({
+          complete: true,
+          items: [
+            {
+              capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+              createdAt: "2026-09-24T12:00:00Z",
+              debugTargetSessionId: "",
+              id: "session-a",
+              modelId: "test",
+              state: "idle",
+              title: "Session A",
+              titleProvenance: "",
+              titleRevision: "0",
+              turns: 1,
+              updatedAt: "2026-09-24T12:00:00Z",
+            },
+          ],
+        });
+      }
+      if (path === "/api/v1/sessions/session-a") {
+        return json({
+          capabilities: { image: false, manualCompaction: false, modelSelection: false },
+          id: "session-a",
+          mode: "default",
+          state: "idle",
+          usage: {
+            cacheReadTokens: "0",
+            cacheWriteTokens: "0",
+            inputTokens: "0",
+            outputTokens: "0",
+            reasoningTokens: "0",
+          },
+        });
+      }
+      if (path === "/api/v1/sessions/session-a/transcript") {
+        return json({ complete: true, messages: [], sessionId: "session-a" });
+      }
+      if (path === "/api/v1/sessions/session-a/activity") {
+        activityRequests += 1;
+        oldSignal = request.signal;
+        return oldStream.response;
+      }
+      if (path === "/api/v1/sessions/session-a/runs" && request.method === "POST") {
+        newRunRequests += 1;
+        return newRun.response;
+      }
+      throw new Error(`Unexpected request ${request.method} ${path}`);
+    };
+
+    await mountWorkspace(fetcher, () => <ChatWorkspace sessionId="session-a" />);
+    await act(async () => vi.waitFor(() => expect(oldSignal).toBeDefined()));
+    await act(async () => {
+      oldStream.send({ runId: "run-a", sessionId: "session-a", type: "run.started" });
+      oldStream.send(
+        event("subagent.start", "1", { parentCallId: "call-a", childId: "old-child" }),
+      );
+      oldStream.send(
+        event("subagent.end", "2", {
+          parentCallId: "call-a",
+          childId: "old-child",
+          stop: "end_turn",
+        }),
+      );
+      oldStream.send(event("result", "3", { stop: "end_turn" }));
+    });
+    const oldCard = [...(container?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+      (button) => button.textContent?.includes("Subagent old-child"),
+    );
+    expect(oldCard?.textContent).toContain("Finished");
+
+    const textarea = container?.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Message Mecatl"]',
+    );
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    await act(async () => {
+      setter?.call(textarea, "Another task");
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const send = container?.querySelector<HTMLButtonElement>('button[aria-label="Send message"]');
+    expect(send?.disabled).toBe(false);
+    await act(async () => send?.click());
+    await act(async () => vi.waitFor(() => expect(newRunRequests).toBe(1)));
+    expect(oldSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      newRun.send({ runId: "run-b", sessionId: "session-a", type: "run.started" });
+      newRun.send({
+        event: {
+          kind: "result",
+          payload: { stop: "end_turn" },
+          runId: "run-b",
+          seq: "1",
+          text: "",
+          turn: 1,
+          unknown: false,
+        },
+        type: "run.event",
+      });
+      newRun.close();
+    });
+    await act(async () =>
+      vi.waitFor(() => expect(container?.textContent).not.toContain("Mecatl is working")),
+    );
+    const completedCard = [
+      ...(container?.querySelectorAll<HTMLButtonElement>("button") ?? []),
+    ].find((button) => button.textContent?.includes("Subagent old-child"));
+    expect(completedCard?.textContent).toContain("Finished");
+    expect(container?.textContent).not.toContain("Subagent unseen-child");
+    await act(async () => completedCard?.click());
+    expect(container?.textContent).toContain("Activity history incomplete");
+    expect(container?.textContent).not.toContain("Subagent unseen-child");
+    expect(activityRequests).toBe(1);
   });
 
   it("retains an interrupted settled card when the same session becomes active elsewhere", async () => {

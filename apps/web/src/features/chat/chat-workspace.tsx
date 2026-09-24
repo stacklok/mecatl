@@ -913,6 +913,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     const controller = new AbortController();
     const owner: RunOwner = { controller, sessionId };
     const observedRuns = new Set<string>();
+    let replayCompleted = false;
     const owns = () =>
       !controller.signal.aborted &&
       viewedSessionId.current === sessionId &&
@@ -921,7 +922,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       setDelegationFleet((current) =>
         owns() && current.sessionId === sessionId ? update(current) : current,
       );
-    const markUnfinished = () =>
+    const markUnfinished = (interrupted = false) =>
       setDelegationFleet((current) => {
         if (viewedSessionId.current !== sessionId || current.sessionId !== sessionId)
           return current;
@@ -931,7 +932,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             next = markDelegationRunUnfollowed(next, runId);
           }
         }
-        return next;
+        // A stopped history read may have unseen later runs even when every
+        // observed child finished. Keep those cards intact and disclose the
+        // unread remainder without inventing its contents.
+        return interrupted ? { ...next, incompleteHistory: true } : next;
       });
     void (async () => {
       const streamFailure: StreamFailure = {};
@@ -966,6 +970,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         }
         if (streamFailure.error) throw streamFailure.error;
+        replayCompleted = owns();
       } catch {
         if (owns()) {
           updateFleet(markDelegationHistoryIncomplete);
@@ -981,7 +986,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       // but do not keep claiming its old child is still running. On a status
       // driven attach this cleanup precedes the live reader's setup.
       if (viewedSessionId.current === sessionId) {
-        markUnfinished();
+        markUnfinished(!replayCompleted);
         if (!activeRun.current) interruptedSettledSession.current = sessionId;
       }
     };
