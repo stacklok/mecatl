@@ -126,6 +126,7 @@ import {
   errorMessage,
   failureFromResult,
   payloadImages,
+  payloadRecord,
   payloadText,
   permissionAsk,
   permissionAskId,
@@ -266,6 +267,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
   const authorizationFlows = useRef(new Set<string>());
+  const authorizationUncertain = useRef(new Set<string>());
+  const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
   const [confirmPrompt, setConfirmPrompt] = useState<ConfirmPrompt>();
@@ -1140,6 +1143,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     prompt: string,
     replay = false,
     onAccepted?: () => void,
+    onAuthorizationStatus?: (kind: string, payload: unknown) => void,
+    onRunError?: () => void,
   ): Promise<RunStreamEnd> {
     let failure: RunFailure | undefined;
     let sawResult = false;
@@ -1171,6 +1176,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         }
         if (!shouldApply(delivery)) continue;
         if (delivery.type === "run.error") {
+          onRunError?.();
           failure = { message: delivery.message, permanent: false, prompt: activePrompt };
           setStatusFacts({ failure, phase: "following", runId: followedRunId });
           continue;
@@ -1280,7 +1286,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             ensureAssistant(activeAssistantId);
             updateAssistant(activeAssistantId, (message) => ({
               ...message,
-              tools: [...(message.tools ?? []), tool],
+              tools: [...(message.tools ?? []), { ...tool, runId: event.runId || undefined }],
             }));
           }
         } else if (event.kind === "tool.result") {
@@ -1300,11 +1306,25 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           event.kind === "authorization.resolved"
         ) {
           const authorizationSessionId = owner.sessionId;
+          onAuthorizationStatus?.(event.kind, event.payload);
           sawAuthorizationStatus = true;
           if (authorizationSessionId) {
             setMessages((current) =>
               recordAuthorizationEvent(current, event, authorizationSessionId, activeAssistantId),
             );
+            if (event.kind === "authorization.resolved") {
+              const payload = payloadRecord(event.payload);
+              if (
+                typeof payload?.authorizationId === "string" &&
+                typeof payload.status === "string" &&
+                payload.status !== "pending" &&
+                payload.status.length > 0
+              ) {
+                const key = `${authorizationSessionId}\u0000${payload.authorizationId}`;
+                if (authorizationUncertain.current.delete(key))
+                  setAuthorizationUncertainEpoch((current) => current + 1);
+              }
+            }
           }
           if (event.kind === "authorization.required") {
             sawAuthorizationPark = true;
@@ -1393,6 +1413,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     )
       return;
     const key = `${authorization.sessionId}\u0000${authorization.authorizationId}`;
+    if (authorizationUncertain.current.has(key)) return;
     // One view has one stream owner; another authorization control cannot
     // replace an in-flight control for a different handoff either.
     if (authorizationFlows.current.size > 0) return;
@@ -1410,6 +1431,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     oldOwner?.controller.abort();
     setIsRunning(true);
     let end: RunStreamEnd = { kind: "uncertain" };
+    let sawMatchingStatus = false;
+    let sawStreamError = false;
     try {
       const streamFailure: StreamFailure = {};
       const request = {
@@ -1425,10 +1448,43 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         operation === "recheck"
           ? await recheckAuthorization(request)
           : await cancelAuthorization(request);
-      end = await consumeRun(owner, response.stream, streamFailure, crypto.randomUUID(), "");
+      end = await consumeRun(
+        owner,
+        response.stream,
+        streamFailure,
+        crypto.randomUUID(),
+        "",
+        false,
+        undefined,
+        (_kind, payload) => {
+          const candidate = payloadRecord(payload);
+          if (
+            candidate?.authorizationId === authorization.authorizationId &&
+            typeof candidate.status === "string" &&
+            candidate.status.length > 0 &&
+            (_kind === "authorization.required"
+              ? candidate.status === "pending"
+              : candidate.status !== "pending")
+          )
+            sawMatchingStatus = true;
+        },
+        () => {
+          sawStreamError = true;
+        },
+      );
       if (streamFailure.error && !owner.controller.signal.aborted) throw streamFailure.error;
+      if (
+        !owner.controller.signal.aborted &&
+        (!sawMatchingStatus ||
+          sawStreamError ||
+          end.kind === "unfollowed" ||
+          (end.kind === "settled" && end.failure))
+      )
+        throw new Error("Authorization status was not confirmed by activity.");
     } catch (caught) {
       if (!owner.controller.signal.aborted && viewedSessionId.current === authorization.sessionId) {
+        authorizationUncertain.current.add(key);
+        setAuthorizationUncertainEpoch((current) => current + 1);
         setError(`Could not confirm authorization outcome: ${errorMessage(caught)}`);
       }
       throw caught;
@@ -2035,6 +2091,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       {displayedPreview && (
         <ContentPreviewPanel
           authorizationDisabled={authorizationBusy !== undefined}
+          authorizationUncertain={
+            displayedPreview?.kind === "authorization" &&
+            authorizationUncertain.current.has(
+              `${displayedPreview.authorization.sessionId}\u0000${displayedPreview.authorization.authorizationId}`,
+            )
+          }
           canvas={canvas.value}
           onCanvasChange={canvas.setValue}
           onAuthorizationOperation={operateAuthorization}

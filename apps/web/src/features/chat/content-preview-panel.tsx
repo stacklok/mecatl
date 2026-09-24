@@ -36,6 +36,7 @@ type StaticPreview = Exclude<ContentPreview, { kind: "thread" }>;
 
 export function ContentPreviewPanel({
   authorizationDisabled = false,
+  authorizationUncertain = false,
   canvas,
   onAuthorizationOperation,
   onCanvasChange,
@@ -43,6 +44,7 @@ export function ContentPreviewPanel({
   preview,
 }: {
   authorizationDisabled?: boolean;
+  authorizationUncertain?: boolean;
   canvas: string;
   onAuthorizationOperation?: (
     operation: AuthorizationOperation,
@@ -74,6 +76,7 @@ export function ContentPreviewPanel({
   return (
     <GenericPreviewPanel
       authorizationDisabled={authorizationDisabled}
+      authorizationUncertain={authorizationUncertain}
       canvas={canvas}
       onAuthorizationOperation={onAuthorizationOperation}
       onCanvasChange={onCanvasChange}
@@ -85,6 +88,7 @@ export function ContentPreviewPanel({
 
 function GenericPreviewPanel({
   authorizationDisabled,
+  authorizationUncertain,
   canvas,
   onAuthorizationOperation,
   onCanvasChange,
@@ -92,6 +96,7 @@ function GenericPreviewPanel({
   preview,
 }: {
   authorizationDisabled: boolean;
+  authorizationUncertain: boolean;
   canvas: string;
   onAuthorizationOperation?: (
     operation: AuthorizationOperation,
@@ -164,6 +169,7 @@ function GenericPreviewPanel({
             <AuthorizationReview
               authorization={preview.authorization}
               disabled={authorizationDisabled || !onAuthorizationOperation}
+              uncertain={authorizationUncertain}
               onOperate={onAuthorizationOperation ?? (async () => undefined)}
             />
           ) : preview.kind === "canvas" ? (

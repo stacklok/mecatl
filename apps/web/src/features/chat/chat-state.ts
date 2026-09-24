@@ -356,7 +356,7 @@ export function applyRunDelivery(
       ...next,
       messages: updateOrAppendMessage(next.messages, next.activeAssistantId, (message) => ({
         ...message,
-        tools: [...(message.tools ?? []), tool],
+        tools: [...(message.tools ?? []), { ...tool, runId: event.runId || undefined }],
       })),
     };
   }

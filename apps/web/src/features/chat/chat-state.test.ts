@@ -341,7 +341,7 @@ describe("applyRunDelivery", () => {
       options,
     );
     expect(next.messages[0]?.tools).toEqual([
-      { args: "{}", id: "call-1", isError: false, name: "Read", output: "ok" },
+      { args: "{}", id: "call-1", isError: false, name: "Read", output: "ok", runId: "run-1" },
     ]);
   });
 

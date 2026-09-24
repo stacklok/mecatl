@@ -28,7 +28,7 @@ describe("authorization review", () => {
       content: "",
       id: "assistant-1",
       role: "assistant",
-      tools: [{ args: "{}", id: "call-7", name: "Calendar" }],
+      tools: [{ args: "{}", id: "call-7", name: "Calendar", runId: "run-3" }],
     };
     const required = recordAuthorizationEvent(
       [message],
@@ -115,5 +115,57 @@ describe("authorization review", () => {
       );
       expect(screen.getByText(label)).toBeTruthy();
     }
+  });
+
+  it("attaches a handoff only to the exact run and call row", () => {
+    const messages = [
+      {
+        content: "Old",
+        id: "old",
+        role: "assistant",
+        tools: [{ args: "{}", id: "call-7", name: "Old", runId: "run-old" }],
+      },
+      {
+        content: "Unknown",
+        id: "unknown",
+        role: "assistant",
+        tools: [{ args: "{}", id: "call-7", name: "Unknown" }],
+      },
+      {
+        content: "Current",
+        id: "current",
+        role: "assistant",
+        tools: [{ args: "{}", id: "call-7", name: "Current", runId: "run-3" }],
+      },
+    ];
+    const event = {
+      kind: "authorization.required",
+      payload: {
+        authorizationId: "auth-1",
+        callId: "call-7",
+        displayName: "Calendar connector",
+        status: "pending",
+      },
+      runId: "run-3",
+    };
+    const exact = recordAuthorizationEvent(messages, event, "session-2", "current");
+    expect(exact[0]?.authorizations).toBeUndefined();
+    expect(exact[1]?.authorizations).toBeUndefined();
+    expect(exact[2]?.authorizations).toEqual([pending]);
+
+    const unprovable = recordAuthorizationEvent(
+      messages.slice(0, 2),
+      event,
+      "session-2",
+      "unknown",
+    );
+    expect(unprovable[0]?.authorizations).toBeUndefined();
+    expect(unprovable[1]?.authorizations).toEqual([pending]);
+    const view = render(<ChatTranscript messages={unprovable} showToolCalls />);
+    const unknownRow = screen.getByText("Tool: Unknown").closest("li");
+    if (!unknownRow) throw new Error("The unknown row is missing");
+    expect(within(unknownRow).queryByText("Calendar connector")).toBeNull();
+    expect(screen.getByText("Calendar connector")).toBeTruthy();
+    view.unmount();
   });
 });

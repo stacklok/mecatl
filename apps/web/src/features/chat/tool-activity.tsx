@@ -12,6 +12,8 @@ export interface ToolActivity {
   isError?: boolean;
   name: string;
   output?: string;
+  /** Present only for a tool.call observed on a specific live or replayed run. */
+  runId?: string;
 }
 
 export function ToolActivityList({

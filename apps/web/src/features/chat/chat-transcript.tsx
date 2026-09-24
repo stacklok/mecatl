@@ -182,7 +182,10 @@ function TranscriptRow({
                 </>
               )}
               {message.authorizations
-                ?.filter((authorization) => authorization.callId === tool.id)
+                ?.filter(
+                  (authorization) =>
+                    authorization.callId === tool.id && authorization.runId === tool.runId,
+                )
                 .map((authorization) => (
                   <AuthorizationReviewTrigger
                     authorization={authorization}
@@ -197,7 +200,10 @@ function TranscriptRow({
       {message.authorizations
         ?.filter(
           (authorization) =>
-            !showToolCalls || !message.tools?.some((tool) => tool.id === authorization.callId),
+            !showToolCalls ||
+            !message.tools?.some(
+              (tool) => tool.id === authorization.callId && tool.runId === authorization.runId,
+            ),
         )
         .map((authorization) => (
           <AuthorizationReviewTrigger

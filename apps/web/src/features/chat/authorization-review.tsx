@@ -81,7 +81,7 @@ export function recordAuthorizationEvent(
   };
   let target = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.tools?.some((tool) => tool.id === callId)) {
+    if (messages[index]?.tools?.some((tool) => tool.id === callId && tool.runId === event.runId)) {
       target = index;
       break;
     }
@@ -149,10 +149,12 @@ export function AuthorizationReviewTrigger({
 export function AuthorizationReview({
   authorization,
   disabled = false,
+  uncertain: inheritedUncertain = false,
   onOperate,
 }: {
   authorization: AuthorizationHandoff;
   disabled?: boolean;
+  uncertain?: boolean;
   onOperate: (
     operation: AuthorizationOperation,
     authorization: AuthorizationHandoff,
@@ -165,7 +167,7 @@ export function AuthorizationReview({
   const presentationPath = `/api/v1/sessions/${encodeURIComponent(authorization.sessionId)}/authorizations/${encodeURIComponent(authorization.authorizationId)}/presentation`;
 
   async function operate(operation: AuthorizationOperation) {
-    if (submitting.current || disabled || !pending || uncertain) return;
+    if (submitting.current || disabled || !pending || uncertain || inheritedUncertain) return;
     submitting.current = true;
     setBusy(true);
     try {
@@ -204,19 +206,19 @@ export function AuthorizationReview({
           >
             Open authorization <ExternalLink aria-hidden="true" className="size-4" />
           </a>
-          {uncertain && (
+          {(uncertain || inheritedUncertain) && (
             <p role="alert">The outcome is uncertain. Refresh activity before another action.</p>
           )}
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={busy || disabled || uncertain}
+              disabled={busy || disabled || uncertain || inheritedUncertain}
               onClick={() => void operate("recheck")}
               size="sm"
             >
               Recheck
             </Button>
             <Button
-              disabled={busy || disabled || uncertain}
+              disabled={busy || disabled || uncertain || inheritedUncertain}
               onClick={() => void operate("cancel")}
               size="sm"
               variant="outline"
