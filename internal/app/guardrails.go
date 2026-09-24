@@ -6,6 +6,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -97,16 +98,16 @@ type engineGuardrailsChecker struct {
 // Check drives the checker engine and parses the verdict. The prompt is fully
 // assembled by the Runner (trusted rubric + fenced/neutralised content); this only
 // drives + parses.
-func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.Verdict, error) {
-	text, err := agent.RunGuardrailCheck(ctx, c.engine, req.Prompt)
+func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
+	text, usage, err := agent.RunGuardrailCheck(ctx, c.engine, req.Prompt)
 	if err != nil {
-		return modelhook.Verdict{}, err
+		return modelhook.CheckResult{Usage: usage}, err
 	}
 	v, ok := modelhook.ParseVerdict(text)
 	if !ok {
-		return modelhook.Verdict{}, errGuardrailVerdictUnparseable
+		return modelhook.CheckResult{Usage: usage}, errGuardrailVerdictUnparseable
 	}
-	return v, nil
+	return modelhook.CheckResult{Verdict: v, Usage: usage}, nil
 }
 
 // errGuardrailVerdictUnparseable is the sentinel for a checker reply that was not a
@@ -352,19 +353,39 @@ func resolveGuardrailsCheckerModel(cfg Config) (model string, src guardrailSourc
 // new metrics label), the no-progress nudge disabled. Returns nil when the model
 // does not resolve (defensive — Build already failed fast via
 // normalizeGuardrailsModel).
-func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) modelhook.VerdictChecker {
-	resolved, _, configured := resolveGuardrailsCheckerModel(cfg)
-	if !configured {
+func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) modelhook.VerdictChecker {
+	deps, ok := guardrailsCheckerDeps(cfg, provReg, provider, parentProviderID, parentModel)
+	if !ok {
 		return nil
 	}
-	windowFn := childWindowFor(cfg, provReg, parentProviderID, resolved)
-	deps := childEngineDepsForProvider(cfg, "guardrail-checker", provider, resolved, windowFn,
+	return engineGuardrailsChecker{engine: agent.NewEngine(deps)}
+}
+
+// guardrailsCheckerDeps keeps the checker construction inspectable before its
+// dependencies become private inside the Engine.
+func guardrailsCheckerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) (agent.Deps, bool) {
+	resolved, _, configured := resolveGuardrailsCheckerModel(cfg)
+	if !configured {
+		return agent.Deps{}, false
+	}
+	providerID := parentProviderID
+	if providerID == "" {
+		providerID = cfg.auxiliaryProviderID
+		if providerID == "" && provReg != nil {
+			providerID = provReg.Default()
+		}
+	}
+	windowFn := childWindowFor(cfg, provReg, providerID, resolved)
+	utilityCfg := cfg
+	utilityCfg.auxiliaryProviderID = providerID
+	deps := childEngineDepsForProvider(utilityCfg, "guardrail-checker", provider, resolved, windowFn,
 		tool.NewCatalog(), promptConfig(modelCfgFor(cfg, resolved), cfg.gitStatus), nil)
 	// Disable the no-progress nudge: the checker caps at MaxTurns=1 and an empty
 	// (verdict-less) first turn must end in exactly ONE provider call (treated as a
 	// no-verdict failure), not be nudged into a second.
 	deps.MaxNoProgressNudges = -1
-	return engineGuardrailsChecker{engine: agent.NewEngine(deps)}
+	deps.ProviderModel = session.ProviderModelID{ProviderID: providerID, ModelID: resolved}
+	return deps, true
 }
 
 // buildGuardrailsEscapeChecker builds the ADR-0080 escape route's checker, or

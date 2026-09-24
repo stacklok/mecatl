@@ -236,6 +236,11 @@ type Deps struct {
 
 	// Model is the provider model identifier sent on every request.
 	Model string
+	// ProviderModel is the exact immutable provider/model identity selected by
+	// composition for this engine's primary LLM calls. Utility-result collection uses
+	// it to attribute this engine's main usage; nested auxiliary usage retains its
+	// producer's own attribution. The request itself remains provider-neutral.
+	ProviderModel session.ProviderModelID
 	// ContextWindow returns the model's context window in tokens, resolved LIVE at
 	// the point of use (the compaction check / Engine.ContextWindow) rather than
 	// frozen at construction — so a post-construction live-catalog refresh self-
@@ -649,6 +654,13 @@ type Run struct {
 	// NopDiagnostics returns NopDiagnostics. It is set before the run goroutine
 	// starts and only read after, so it needs no synchronisation.
 	diag port.Diagnostics
+	// auxiliaryUsageMu serializes utility/hook accounting emitted by concurrent
+	// read-only tool executions before they mutate the run-owned Session aggregate.
+	// It also fences detached child-review accounting against the end of this run's
+	// ownership capability.
+	auxiliaryUsageMu         sync.Mutex
+	auxiliaryUsageActive     bool
+	auxiliaryUsageDropWarned bool
 	// saveWarned makes the session-persistence WARN sticky per RUN. A store that
 	// is broken is broken for every save, and save runs at least once per turn, so
 	// logging unconditionally would emit up to MaxTurns near-identical lines per
@@ -898,7 +910,13 @@ func (r *Run) Events() <-chan session.Event { return r.events }
 // Outcome reports why this Run's event stream closed.
 func (r *Run) Outcome() RunOutcome { return RunOutcome(r.outcome.Load()) }
 
-func (r *Run) setOutcome(outcome RunOutcome) { r.outcome.Store(int32(outcome)) }
+func (r *Run) setOutcome(outcome RunOutcome) {
+	// End auxiliary mutation ownership before publishing the terminal outcome and
+	// before the terminal save. A review that wins this lock is included in that
+	// save; a detached result that loses it is dropped.
+	r.closeAuxiliaryUsageOwnership()
+	r.outcome.Store(int32(outcome))
+}
 
 // Approve resolves the permission.ask identified by askID with the client's
 // verdict: VerdictDeny refuses the call, VerdictAllowOnce permits this call only,
@@ -1423,7 +1441,8 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 		// engine, Role != "") to its agent role too. The main engine has Role=="" so
 		// only the "session" key is bound. With on NopDiagnostics returns Nop, so an
 		// engine with no injected sink stays silent.
-		diag: e.bindRunDiag(sess.ID),
+		diag:                 e.bindRunDiag(sess.ID),
+		auxiliaryUsageActive: true,
 	}
 	// Resolve the trailing askID discriminator once (ADR-0044 / ADR-0249); see
 	// askDiscriminatorFor for the precedence and the colon rule.
@@ -1504,10 +1523,12 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 			defer close(r.events)
 			defer r.children.seal()
 			defer cancel()
+			defer r.closeAuxiliaryUsageOwnership()
 			body(ctx, r)
 		}()
 	}
 	abort := func() {
+		r.closeAuxiliaryUsageOwnership()
 		cancel()
 		r.children.seal()
 		close(r.events)
@@ -2193,12 +2214,13 @@ func (e *Engine) effectiveMaxRunTokens(r *Run) int {
 	}
 }
 
-// budgetExhausted reports whether lifetime main usage accrued since this Run's
-// immutable baseline has crossed the effective loop-level token ceiling
-// (Deps.MaxRunTokens folded with the run's tighten-only RunRequest override). A
-// non-positive effective ceiling (the default) disables the budget and always
-// returns false. Ordinary runs have a zero baseline; only the package-private
-// team-lead synthesis path captures the current main total.
+// budgetExhausted reports whether lifetime budget usage has crossed the effective
+// loop-level token ceiling (Deps.MaxRunTokens folded with the run's tighten-only
+// RunRequest override). Callers supply main plus the separate router bucket; the
+// immutable baseline offsets main only, so internal continuation allowances never
+// erase router spend. A non-positive effective ceiling (the default) disables the
+// budget and always returns false. Ordinary runs have a zero baseline; only the
+// package-private team-lead synthesis path captures the current main total.
 func (e *Engine) budgetExhausted(r *Run, cumulative session.Usage) bool {
 	ceiling := e.effectiveMaxRunTokens(r)
 	return ceiling > 0 && cumulative.TotalTokens()-r.budgetBaseline.TotalTokens() >= ceiling
@@ -2244,7 +2266,8 @@ func (e *Engine) preTurnTerminal(ctx context.Context, r *Run, sess *session.Sess
 		e.terminate(ctx, r, sess, session.StopCancelled, lastText, total, nil, false)
 		return true
 	}
-	if e.budgetExhausted(r, sess.UsageFor(session.UsageKindMain)) {
+	budgetUsage := sess.UsageFor(session.UsageKindMain).Add(sess.UsageFor(session.UsageKindRouter))
+	if e.budgetExhausted(r, budgetUsage) {
 		if _, pending := sess.FailedStepRetryPending(); pending && sess.State == session.StateIdle {
 			e.deferFailedStepRetry(ctx, r, sess, session.StopBudget, lastText, total)
 		} else {
@@ -2743,6 +2766,40 @@ func (e *Engine) refreshOperatorProfile(ctx context.Context, r *Run, cfg *prompt
 	}
 }
 
+func (r *Run) recordAuxiliaryUsage(sess *session.Session, usage session.AuxiliaryUsage) {
+	if r == nil {
+		sess.RecordAuxiliaryUsage(usage)
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	sess.RecordAuxiliaryUsage(usage)
+	r.auxiliaryUsageMu.Unlock()
+}
+
+func (r *Run) recordAuxiliaryUsageWhileActive(ctx context.Context, sess *session.Session, purpose session.UsageKind, usage session.AuxiliaryUsage) {
+	if r == nil {
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	defer r.auxiliaryUsageMu.Unlock()
+	if !r.auxiliaryUsageActive {
+		if !r.auxiliaryUsageDropWarned {
+			r.auxiliaryUsageDropWarned = true
+			if r.diag != nil {
+				r.diag.Log(context.Background(), port.LevelDebug, "late auxiliary usage dropped after parent run ended")
+			}
+		}
+		return
+	}
+	sess.RecordAuxiliaryUsage(remapAuxiliaryUsage(ctx, r.diag, purpose, usage))
+}
+
+func (r *Run) closeAuxiliaryUsageOwnership() {
+	r.auxiliaryUsageMu.Lock()
+	r.auxiliaryUsageActive = false
+	r.auxiliaryUsageMu.Unlock()
+}
+
 func estimateRequestTokens(counter TokenCounter, req port.LLMRequest) int {
 	total := countLayered(counter, req.System) + counter.CountMessages(req.Messages)
 	for _, spec := range req.Tools {
@@ -2788,7 +2845,11 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 	if budget < 1 {
 		budget = 1
 	}
-	result, compacted, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	result, compacted, usage, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	usage = remapAuxiliaryUsage(ctx, r.diag, session.UsageKindCompaction, usage)
+	// The active run owns sess through its existing run capability; record all
+	// provider-reported usage before handling a terminal compaction error.
+	sess.RecordAuxiliaryUsage(usage)
 	if err != nil {
 		// Compaction is best-effort: a failure must not abort the run. Keep the
 		// existing history and continue — but no longer SILENTLY: surface the
@@ -3156,6 +3217,10 @@ func (e *Engine) terminateComplete(ctx context.Context, r *Run, sess *session.Se
 	e.emitResult(r, sess, reason, text, usage, errMsg, session.RetryDispositionUnknown, session.StreamProgressComplete)
 }
 
+type auxiliaryUsageObserver interface {
+	ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error)
+}
+
 // observeCompletion invokes the optional host observer after the aggregate has
 // reached a qualifying completed state. The owned message snapshot prevents an
 // observer from mutating the live conversation. Failures are operational facts:
@@ -3177,6 +3242,18 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 				break
 			}
 		}
+	}
+	if observer, ok := e.deps.LearningObserver.(auxiliaryUsageObserver); ok {
+		auxUsage, err := observer.ObserveWithUsage(ctx, tr)
+		auxUsage = remapAuxiliaryUsage(ctx, r.diag, session.UsageKindReflection, auxUsage)
+		sess.RecordAuxiliaryUsage(auxUsage)
+		if len(auxUsage.Buckets) > 0 {
+			e.save(ctx, r, sess)
+		}
+		if err != nil {
+			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory usage observer failed", "error", err)
+		}
+		return
 	}
 	if err := e.deps.LearningObserver.Observe(ctx, tr); err != nil {
 		r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)

@@ -74,7 +74,7 @@ func TestScheduleTool_FloorScopedAllowAllTiers(t *testing.T) {
 			t.Parallel()
 			cfg := applyPosture(Config{Posture: tc.tier})
 			policy := permpolicy.NewPolicy(mainRules(cfg), nil, mainEvaluatorOptions(cfg)...)
-			got := policy.Evaluate(context.Background(), "s1", session.ModeDefault, scheduleFloorCall(), nil)
+			got := policy.Evaluate(context.Background(), "s1", session.ModeDefault, scheduleFloorCall(), nil).Decision
 			if got.Effect != governance.Allow {
 				t.Fatalf("Schedule under posture %s: effect = %v (%s), want Allow (floor-scoped, no ask)", tc.name, got.Effect, got.Reason)
 			}
@@ -91,7 +91,7 @@ func TestScheduleTool_FloorScopedAllowAllTiers(t *testing.T) {
 			rules := append(mainRules(cfg),
 				governance.Rule{Scope: governance.ScopeUser, Tool: agent.ScheduleToolName, Effect: eff})
 			policy := permpolicy.NewPolicy(rules, nil, mainEvaluatorOptions(cfg)...)
-			got := policy.Evaluate(context.Background(), "s1", session.ModeDefault, scheduleFloorCall(), nil)
+			got := policy.Evaluate(context.Background(), "s1", session.ModeDefault, scheduleFloorCall(), nil).Decision
 			if got.Effect != eff {
 				t.Fatalf("a configured (ScopeUser) %v on Schedule under posture %s must beat the floor Allow; got %v (%s)", eff, tier, got.Effect, got.Reason)
 			}

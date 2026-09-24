@@ -59,18 +59,18 @@ func TestMainRulesPolicyAutoAllowsAskFloor(t *testing.T) {
 	editCall := session.NewToolCall("c2", "Edit", editArgs)
 
 	on := permpolicy.NewPolicy(mainRules(Config{AllowAllTools: true}), nil)
-	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, bashCall, nil); got.Effect != governance.Allow {
+	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, bashCall, nil).Decision; got.Effect != governance.Allow {
 		t.Fatalf("AllowAllTools=true Shell: expected Allow, got %v", got.Effect)
 	}
-	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, editCall, nil); got.Effect != governance.Allow {
+	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, editCall, nil).Decision; got.Effect != governance.Allow {
 		t.Fatalf("AllowAllTools=true Edit: expected Allow, got %v", got.Effect)
 	}
 
 	off := permpolicy.NewPolicy(mainRules(Config{AllowAllTools: false}), nil)
-	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, bashCall, nil); got.Effect != governance.Ask {
+	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, bashCall, nil).Decision; got.Effect != governance.Ask {
 		t.Fatalf("AllowAllTools=false Shell: expected Ask, got %v", got.Effect)
 	}
-	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, editCall, nil); got.Effect != governance.Ask {
+	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, editCall, nil).Decision; got.Effect != governance.Ask {
 		t.Fatalf("AllowAllTools=false Edit: expected Ask, got %v", got.Effect)
 	}
 }
@@ -90,13 +90,13 @@ func TestYoloLoosensSubstitutionFloorViaComposition(t *testing.T) {
 	// Built the SAME way buildEngine builds the main policy.
 	yoloCfg := Config{AllowAllTools: true}
 	yolo := permpolicy.NewPolicy(mainRules(yoloCfg), nil, mainEvaluatorOptions(yoloCfg)...)
-	if got := yolo.Evaluate(context.Background(), sid, session.ModeDefault, call, nil); got.Effect != governance.Allow {
+	if got := yolo.Evaluate(context.Background(), sid, session.ModeDefault, call, nil).Decision; got.Effect != governance.Allow {
 		t.Fatalf("--yolo substitution: expected Allow (the loose-substitution option must be wired), got %v (%s)", got.Effect, got.Reason)
 	}
 
 	plainCfg := Config{AllowAllTools: false}
 	plain := permpolicy.NewPolicy(mainRules(plainCfg), nil, mainEvaluatorOptions(plainCfg)...)
-	if got := plain.Evaluate(context.Background(), sid, session.ModeDefault, call, nil); got.Effect != governance.Ask {
+	if got := plain.Evaluate(context.Background(), sid, session.ModeDefault, call, nil).Decision; got.Effect != governance.Ask {
 		t.Fatalf("no-yolo substitution: expected Ask (floor stands), got %v (%s)", got.Effect, got.Reason)
 	}
 }
@@ -153,7 +153,7 @@ func TestChildPolicyAutoApprovesNonSubstitution(t *testing.T) {
 
 	for _, yolo := range []bool{true, false} {
 		p := childPermPolicy(Config{AllowAllTools: yolo})
-		if got := p.Evaluate(context.Background(), sid, session.ModeDefault, call, nil); got.Effect != governance.Allow {
+		if got := p.Evaluate(context.Background(), sid, session.ModeDefault, call, nil).Decision; got.Effect != governance.Allow {
 			t.Fatalf("child plain mutate (yolo=%v): expected Allow (blanket floor), got %v (%s)", yolo, got.Effect, got.Reason)
 		}
 	}
@@ -171,13 +171,13 @@ func TestYoloChildSubstitutionStillFailsSafe(t *testing.T) {
 
 	badArgs, _ := json.Marshal(map[string]string{"command": "cat $(zap)"}) // non-read-only inner
 	badCall := session.NewToolCall("c1", "Shell", badArgs)
-	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, badCall, nil); got.Effect != governance.Ask || got.FlooredConfiguredAllow || got.ConfiguredAsk {
+	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, badCall, nil).Decision; got.Effect != governance.Ask || got.FlooredConfiguredAllow || got.ConfiguredAsk {
 		t.Fatalf("--yolo child substitution (bad inner) must Ask with no Floored/Configured bits; got %+v", got)
 	}
 
 	goodArgs, _ := json.Marshal(map[string]string{"command": "go test $(git rev-parse HEAD)"}) // read-only inner
 	goodCall := session.NewToolCall("c2", "Shell", goodArgs)
-	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, goodCall, nil); got.Effect != governance.Ask || !got.FlooredConfiguredAllow {
+	if got := child.Evaluate(context.Background(), sid, session.ModeDefault, goodCall, nil).Decision; got.Effect != governance.Ask || !got.FlooredConfiguredAllow {
 		t.Fatalf("--yolo child substitution (read-only inner) must Ask with FlooredConfiguredAllow; got %+v", got)
 	}
 }
@@ -198,19 +198,19 @@ func TestYoloLoosensChildSubstitutionStrictDoesNot(t *testing.T) {
 
 	yolo := childPermPolicy(Config{LooseChildSubstitution: true})
 	for _, c := range []session.ToolCall{subCall, heredocCall} {
-		if got := yolo.Evaluate(context.Background(), sid, session.ModeDefault, c, nil); got.Effect != governance.Allow {
+		if got := yolo.Evaluate(context.Background(), sid, session.ModeDefault, c, nil).Decision; got.Effect != governance.Allow {
 			t.Fatalf("yolo child substitution must Allow; got %v (%s)", got.Effect, got.Reason)
 		}
 	}
 
 	notYolo := childPermPolicy(Config{LooseChildSubstitution: false})
 	for _, c := range []session.ToolCall{subCall, heredocCall} {
-		if got := notYolo.Evaluate(context.Background(), sid, session.ModeDefault, c, nil); got.Effect != governance.Allow && got.Effect != governance.Ask {
+		if got := notYolo.Evaluate(context.Background(), sid, session.ModeDefault, c, nil).Decision; got.Effect != governance.Allow && got.Effect != governance.Ask {
 			t.Fatalf("non-yolo child substitution must not auto-allow a non-read-only inner; got %v (%s)", got.Effect, got.Reason)
 		}
 	}
 	// Be exact: the bad-inner substitution ASKS under non-yolo (the floored child path).
-	if got := notYolo.Evaluate(context.Background(), sid, session.ModeDefault, subCall, nil); got.Effect != governance.Ask {
+	if got := notYolo.Evaluate(context.Background(), sid, session.ModeDefault, subCall, nil).Decision; got.Effect != governance.Ask {
 		t.Fatalf("non-yolo child substitution (bad inner) must Ask; got %v (%s)", got.Effect, got.Reason)
 	}
 
@@ -219,7 +219,7 @@ func TestYoloLoosensChildSubstitutionStrictDoesNot(t *testing.T) {
 		{Scope: governance.ScopeManaged, Tool: "Shell", Effect: governance.Deny, Audience: governance.AudienceSubagent},
 	}, childRules(Config{LooseChildSubstitution: true})...)
 	denyPolicy := permpolicy.NewPolicy(denyRules, nil, childEvaluatorOptions(Config{LooseChildSubstitution: true})...)
-	if got := denyPolicy.Evaluate(context.Background(), sid, session.ModeDefault, subCall, nil); got.Effect != governance.Deny {
+	if got := denyPolicy.Evaluate(context.Background(), sid, session.ModeDefault, subCall, nil).Decision; got.Effect != governance.Deny {
 		t.Fatalf("yolo must NOT override a ScopeManaged Deny; got %v (%s)", got.Effect, got.Reason)
 	}
 
@@ -230,14 +230,14 @@ func TestYoloLoosensChildSubstitutionStrictDoesNot(t *testing.T) {
 	askPolicy := permpolicy.NewPolicy(askRules, nil, childEvaluatorOptions(Config{LooseChildSubstitution: true})...)
 	plainArgs, _ := json.Marshal(map[string]string{"command": "zap -rf build"})
 	plainCall := session.NewToolCall("c3", "Shell", plainArgs)
-	if got := askPolicy.Evaluate(context.Background(), sid, session.ModeDefault, plainCall, nil); got.Effect != governance.Ask {
+	if got := askPolicy.Evaluate(context.Background(), sid, session.ModeDefault, plainCall, nil).Decision; got.Effect != governance.Ask {
 		t.Fatalf("yolo must NOT suppress a configured Ask; got %v (%s)", got.Effect, got.Reason)
 	}
 
 	// Locked-at-every-tier: PLAN MODE hard-denies a mutate even under yolo (plan-mode
 	// hard-deny runs FIRST, before any loosening). A plain mutate that yolo would
 	// otherwise allow must Deny under ModePlan.
-	if got := yolo.Evaluate(context.Background(), sid, session.ModePlan, plainCall, nil); got.Effect != governance.Deny {
+	if got := yolo.Evaluate(context.Background(), sid, session.ModePlan, plainCall, nil).Decision; got.Effect != governance.Deny {
 		t.Fatalf("plan mode must hard-deny a mutate even under yolo; got %v (%s)", got.Effect, got.Reason)
 	}
 }
@@ -288,11 +288,11 @@ func TestAllowAllToolsBindsMainAndChildren(t *testing.T) {
 	args, _ := json.Marshal(map[string]string{"command": "zap -rf build"}) // unknown-verb mutate stand-in
 	call := session.NewToolCall("c1", "Shell", args)
 	on := permpolicy.NewPolicy(mainRules(Config{AllowAllTools: true}), nil, mainEvaluatorOptions(Config{AllowAllTools: true})...)
-	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, call, nil); got.Effect != governance.Allow {
+	if got := on.Evaluate(context.Background(), sid, session.ModeDefault, call, nil).Decision; got.Effect != governance.Allow {
 		t.Fatalf("main posture under --yolo must Allow a plain mutate; got %v (%s)", got.Effect, got.Reason)
 	}
 	off := permpolicy.NewPolicy(mainRules(Config{AllowAllTools: false}), nil, mainEvaluatorOptions(Config{AllowAllTools: false})...)
-	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, call, nil); got.Effect != governance.Ask {
+	if got := off.Evaluate(context.Background(), sid, session.ModeDefault, call, nil).Decision; got.Effect != governance.Ask {
 		t.Fatalf("main posture without --yolo must Ask a plain mutate; got %v (%s)", got.Effect, got.Reason)
 	}
 }
@@ -318,7 +318,7 @@ func TestChildSubstitutionLooseningIsTierDependent(t *testing.T) {
 
 	eval := func(opts ...governance.EvaluatorOption) governance.Effect {
 		p := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil, opts...)
-		return p.Evaluate(context.Background(), sid, session.ModeDefault, call, nil).Effect
+		return p.Evaluate(context.Background(), sid, session.ModeDefault, call, nil).Decision.Effect
 	}
 
 	// applyPosture maps each tier to (AllowAllTools, LooseChildSubstitution); we drive

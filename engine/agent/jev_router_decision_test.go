@@ -22,13 +22,13 @@ func TestADR_0352_Scenario5_DecisionEvidence(t *testing.T) {
 		MinimumConfidence: &minimum,
 		Route: func(context.Context, string) ModelRouteResult {
 			return ModelRouteResult{
-				Category: "medium", Model: "coder", Usage: session.Usage{InputTokens: 3},
+				Category: "medium", Model: "coder", Usage: auxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: "jev", ModelID: "jev-1.13.0"}, session.Usage{InputTokens: 3}),
 				Reason: RouterMissLowConfidence, Confidence: &confidence,
 			}
 		},
 	}
 	breaker := &modelRouterBreaker{max: 3}
-	got := routeTaskBody(t.Context(), "review", router, breaker, nil, port.NopDiagnostics{}, func(session.Usage) {})
+	got := routeTaskBody(t.Context(), "review", router, breaker, nil, port.NopDiagnostics{}, func(session.AuxiliaryUsage) {})
 	if got.ok || got.category != "" || got.model != "" || got.reason != RouterMissLowConfidence {
 		t.Fatalf("low-confidence route = %+v", got)
 	}
@@ -46,7 +46,7 @@ func TestADR_0352_Scenario5_DecisionEvidence(t *testing.T) {
 		calls++
 		return ModelRouteResult{Category: "unmapped", Reason: "category-target-unresolvable"}
 	}
-	mapping := routeTaskBody(t.Context(), "mapping miss", router, breaker, nil, port.NopDiagnostics{}, func(session.Usage) {})
+	mapping := routeTaskBody(t.Context(), "mapping miss", router, breaker, nil, port.NopDiagnostics{}, func(session.AuxiliaryUsage) {})
 	if mapping.decision == nil || mapping.decision.CandidateCategory != "unmapped" || mapping.decision.CandidateModel != "" || mapping.decision.ConsecutiveMisses != 2 {
 		t.Fatalf("mapping-miss evidence = %+v", mapping.decision)
 	}
@@ -54,8 +54,8 @@ func TestADR_0352_Scenario5_DecisionEvidence(t *testing.T) {
 		calls++
 		return ModelRouteResult{Reason: RouterMissClassifierError}
 	}
-	opened := routeTaskBody(t.Context(), "classifier failure", router, breaker, nil, port.NopDiagnostics{}, func(session.Usage) {})
-	skipped := routeTaskBody(t.Context(), "skip", router, breaker, nil, port.NopDiagnostics{}, func(session.Usage) {})
+	opened := routeTaskBody(t.Context(), "classifier failure", router, breaker, nil, port.NopDiagnostics{}, func(session.AuxiliaryUsage) {})
+	skipped := routeTaskBody(t.Context(), "skip", router, breaker, nil, port.NopDiagnostics{}, func(session.AuxiliaryUsage) {})
 	if calls != 3 || opened.decision == nil || !opened.decision.BreakerOpen || skipped.decision == nil ||
 		skipped.decision.Outcome != "skipped" || skipped.decision.ConsecutiveMisses != 3 || !skipped.decision.BreakerOpen {
 		t.Fatalf("breaker evidence calls=%d opened=%+v skipped=%+v", calls, opened.decision, skipped.decision)
@@ -66,7 +66,7 @@ func TestADR_0352_Scenario5_DecisionEvidence(t *testing.T) {
 	router.Route = func(context.Context, string) ModelRouteResult {
 		return ModelRouteResult{Category: "deep", Model: "capable", OK: true}
 	}
-	hit := routeTaskBody(t.Context(), "deep work", router, hitBreaker, nil, port.NopDiagnostics{}, func(session.Usage) {})
+	hit := routeTaskBody(t.Context(), "deep work", router, hitBreaker, nil, port.NopDiagnostics{}, func(session.AuxiliaryUsage) {})
 	if !hit.ok || hit.decision == nil || hit.decision.Outcome != "routed" || hit.decision.ConsecutiveMisses != 0 {
 		t.Fatalf("hit evidence = %+v", hit)
 	}
@@ -99,7 +99,7 @@ func TestADR_0352_Scenario5_DecisionEvidence(t *testing.T) {
 	// A configured router with a nil Route skips safely and does not increment the breaker.
 	nilRouter := &SubagentModelRouter{Backend: "llm", ClassifierModel: "classifier"}
 	nilBreaker := &modelRouterBreaker{max: 3, consecutiveMiss: 1}
-	nilResult := routeTaskBody(t.Context(), "task", nilRouter, nilBreaker, nil, port.NopDiagnostics{}, func(session.Usage) {})
+	nilResult := routeTaskBody(t.Context(), "task", nilRouter, nilBreaker, nil, port.NopDiagnostics{}, func(session.AuxiliaryUsage) {})
 	if nilResult.decision == nil || nilResult.decision.Outcome != "skipped" || nilResult.decision.ConsecutiveMisses != 1 {
 		t.Fatalf("nil Route evidence = %+v", nilResult)
 	}

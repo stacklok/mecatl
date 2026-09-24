@@ -798,7 +798,11 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 	case len(succeeded) == 1:
 		rationale = "only one branch succeeded; selected without judging"
 	default:
-		winner, rationale = t.judgeWinner(ctx, results, succeeded, criteria)
+		var usage session.AuxiliaryUsage
+		winner, rationale, usage = t.judgeWinner(ctx, results, succeeded, criteria)
+		if caps.recordAuxiliaryUsage != nil {
+			caps.recordAuxiliaryUsage(remapAuxiliaryUsage(ctx, caps.diag, session.UsageKindParallelJudge, usage))
+		}
 	}
 	// The judge's rationale is judge-LLM prose written DIRECTLY beneath the join report's
 	// own markers, exactly like a branch summary — and the judge's input is the branch
@@ -835,7 +839,7 @@ func (t *ParallelTool) executeJudge(ctx context.Context, callID session.ToolCall
 // and falls back to the first successful branch on any judge error / out-of-range
 // verdict (the judge sees only summaries — never transcripts — preserving
 // isolation).
-func (t *ParallelTool) judgeWinner(ctx context.Context, results []branchResult, succeeded []int, criteria string) (winner int, rationale string) {
+func (t *ParallelTool) judgeWinner(ctx context.Context, results []branchResult, succeeded []int, criteria string) (winner int, rationale string, usage session.AuxiliaryUsage) {
 	candidates := make([]BranchSummary, 0, len(succeeded))
 	for _, idx := range succeeded {
 		candidates = append(candidates, BranchSummary{
@@ -844,11 +848,11 @@ func (t *ParallelTool) judgeWinner(ctx context.Context, results []branchResult, 
 			Failed:  false,
 		})
 	}
-	pos, why, err := t.judge.Judge(ctx, candidates, criteria)
+	pos, why, usage, err := t.judge.Judge(ctx, candidates, criteria)
 	if err != nil || pos < 0 || pos >= len(succeeded) {
-		return succeeded[0], "judge unavailable or returned an invalid verdict; selected the first successful branch"
+		return succeeded[0], "judge unavailable or returned an invalid verdict; selected the first successful branch", usage
 	}
-	return succeeded[pos], why
+	return succeeded[pos], why, usage
 }
 
 // runBranches forks and runs every branch in parallel under a worker-limited

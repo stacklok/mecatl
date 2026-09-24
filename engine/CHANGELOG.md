@@ -13,6 +13,26 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Auxiliary-usage purpose normalization** — adds `agent.RemapAuxiliaryUsage`,
+  allowing owner-side adapters to retain producer-reported model totals while
+  confining the returned result to their authorized auxiliary-purpose bucket.
+  Added (minor).
+
+- **Auxiliary provider/model identity** — adds `session.ProviderModelID`, the
+  opaque server-selected provider/model identity for an auxiliary model call, and
+  `agent.Deps.ProviderModel` so composition supplies that exact immutable identity
+  alongside the engine's LLM provider. It deliberately carries no selector/default,
+  context-window, reasoning-effort, provider-instance, or credential semantics.
+  Added (minor).
+
+- **Purpose-attributed auxiliary token usage foundation** — adds
+  `session.AuxiliaryUsage` with owned-copy merging and the recognized
+  `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and
+  `parallel_judge` usage-kind constants. Canonical ledgers preserve non-empty
+  opaque kinds for forward-compatible persistence; only the separate router
+  bucket joins main usage in the internal `MaxRunTokens` spend bound. Added
+  (minor).
+
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
   snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).
@@ -248,6 +268,29 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **`port.SessionLease.Renew` doc comment narrowed (issue #1333)** — clarifies that bare expiry of the caller's own owner/token, with nothing else having taken the lease over, is not by itself one of the definitive-loss conditions `ErrLeaseHeld` documents; loss is specifically a holder or token change. An implementation that can prove no one else could have raced it (e.g. a single-host backend re-checking its own durable record under its stable transition lock) may reclaim instead of declaring loss — `internal/adapter/flocklease.Lease.Renew` now does exactly this. This narrows, never widens, when `ErrLeaseHeld` may be returned, so it is a documentation clarification, not a contract change; no exported signature changed. No `task api:update` needed.
 
 ### Changed
+
+- **Exact reflection identity** — `agent.NewEvidenceReflector` now requires a
+  `session.ProviderModelID` and the identity-less
+  `NewEvidenceReflectorForProviderModel` compatibility constructor is removed.
+  Reflection usage is therefore always attributed to its composition-selected
+  provider/model rather than a fabricated `unknown/<model>` identity. Changed
+  (breaking, pre-v1 minor).
+
+- **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
+  `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
+  `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and
+  `agent.RunModelRouter` carry the same purpose-attributed result. Changes
+  `port.HookRunner.Run` to return `port.HookResult`, merging inner and checker
+  usage explicitly, and changes `port.PermissionPolicy.Evaluate` to return
+  `port.PermissionResult` so composition-owned escape checks use the same
+  explicit path. Removes the context-carried auxiliary reporter. Changed (breaking,
+  pre-v1 minor).
+
+- **Direct auxiliary usage results** — `agent.Compactor.Compact`,
+  `agent.EvidenceReflector.Reflect` / `ReflectProjection`, and the
+  `learning.Reflector` seam now return `session.AuxiliaryUsage`; direct compaction
+  and reflection callers record it only while they retain current session
+  ownership. Changed (minor).
 
 - **Exact Team parent-call correlation** — Team-tool member relationships now
   populate the existing `session.SessionRelationship.CallID`; validation permits

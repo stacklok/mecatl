@@ -119,7 +119,7 @@ func TestListDirExternalConfiguredRulesSurviveYolo(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: "ListDir", Effect: tc.effect}}, nil)
-			decision := newEscapePolicy(inner, PostureYolo).Evaluate(context.Background(), "s1", session.ModeDefault, call, ws)
+			decision := newEscapePolicy(inner, PostureYolo).Evaluate(context.Background(), "s1", session.ModeDefault, call, ws).Decision
 			if decision.Effect != tc.effect {
 				t.Fatalf("configured %s became %s at yolo", tc.effect, decision.Effect)
 			}

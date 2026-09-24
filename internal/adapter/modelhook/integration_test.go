@@ -49,9 +49,9 @@ type scriptedChecker struct {
 	calls   int
 }
 
-func (s *scriptedChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (s *scriptedChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	s.calls++
-	return s.verdict, nil
+	return modelhook.CheckResult{Verdict: s.verdict}, nil
 }
 
 func drain(r *agent.Run) []session.Event {
@@ -104,9 +104,9 @@ func shellDefaultRule(t *testing.T) modelhook.CompiledRule {
 // returns safe so the call passes through.
 type capturingChecker struct{ prompt string }
 
-func (c *capturingChecker) Check(_ context.Context, req modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (c *capturingChecker) Check(_ context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	c.prompt = req.Prompt
-	return modelhook.Verdict{Safe: boolp(true)}, nil
+	return modelhook.CheckResult{Verdict: modelhook.Verdict{Safe: boolp(true)}}, nil
 }
 
 // TestShellDefaultRuleModelSeesLocalWriteSafeRubric drives the real loop: a representative
@@ -147,9 +147,9 @@ func TestShellDefaultRuleModelSeesLocalWriteSafeRubric(t *testing.T) {
 // the ADVERSARIAL / uncooperative checker for the fail-open / fail-closed e2e.
 type erroringChecker struct{ calls int }
 
-func (c *erroringChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (c *erroringChecker) Check(_ context.Context, _ modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	c.calls++
-	return modelhook.Verdict{}, errCheckerUnavailable
+	return modelhook.CheckResult{}, errCheckerUnavailable
 }
 
 type checkerErr string
@@ -487,7 +487,7 @@ func TestPreBlockSetsAskApproval(t *testing.T) {
 	preOut, _ := preRunner.Run(context.Background(), governance.HookEvent{
 		Phase: governance.PhasePreToolUse, Tool: "WebSearch", Input: json.RawMessage(`{"query":"x"}`), SessionID: "s1", CallID: "c1",
 	})
-	if !preOut.Block || !preOut.AskApproval {
+	if !preOut.Outcome.Block || !preOut.Outcome.AskApproval {
 		t.Fatalf("a Pre block must set Block AND AskApproval; got %+v", preOut)
 	}
 
@@ -502,10 +502,10 @@ func TestPreBlockSetsAskApproval(t *testing.T) {
 	postOut, _ := postRunner.Run(context.Background(), governance.HookEvent{
 		Phase: governance.PhasePostToolUse, Tool: "WebSearch", Input: postIn, SessionID: "s1", CallID: "c1",
 	})
-	if postOut.AskApproval {
+	if postOut.Outcome.AskApproval {
 		t.Fatalf("a Post block must NOT set AskApproval (PreToolUse-only scope); got %+v", postOut)
 	}
-	if len(postOut.Mutated) == 0 {
+	if len(postOut.Outcome.Mutated) == 0 {
 		t.Fatalf("a Post block must rewrite the result via Mutated; got %+v", postOut)
 	}
 }

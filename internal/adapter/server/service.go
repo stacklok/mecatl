@@ -3457,7 +3457,8 @@ func (s *Service) WithAuthorizedSession(ctx context.Context, id session.SessionI
 // session at a turn boundary. caller is the verified transport principal; it is
 // bound to ctx only when the context has no principal, and a mismatch is rejected.
 // The operation is serialized against run entry and cross-process mutations.
-// A successful no-op neither saves nor appends events.
+// A successful no-op saves only when the compactor returned accounting; it never
+// appends compaction events.
 //
 //nolint:gocyclo // explicit authorization, state, liveness, lease, and persistence gates stay ordered.
 func (s *Service) CompactSession(ctx context.Context, id session.SessionID, caller *session.Principal) (agent.ManualCompactionResult, error) {
@@ -3521,12 +3522,19 @@ func (s *Service) CompactSession(ctx context.Context, id session.SessionID, call
 	if err != nil {
 		return agent.ManualCompactionResult{}, err
 	}
-	result, err := eng.CompactSession(compactCtx, sess)
-	if err != nil {
-		return agent.ManualCompactionResult{}, err
-	}
-	if !result.Changed {
-		return result, nil
+	beforeUsage := sess.UsageFor(session.UsageKindCompaction)
+	result, compactErr := eng.CompactSession(compactCtx, sess)
+	usageChanged := sess.UsageFor(session.UsageKindCompaction) != beforeUsage
+	if compactErr != nil || !result.Changed {
+		if usageChanged {
+			if !leaseHeld() {
+				return agent.ManualCompactionResult{}, fmt.Errorf("%w: session lease was lost during compaction", ErrSessionLeasedElsewhere)
+			}
+			if saveErr := s.saveSession(compactCtx, sess); saveErr != nil {
+				return agent.ManualCompactionResult{}, fmt.Errorf("%w: persist compaction usage: %v", ErrInternal, saveErr)
+			}
+		}
+		return result, compactErr
 	}
 	// The storage port has no lease-token CAS, so this is not fencing: it is the
 	// narrowest available pre-save loss check. Cancellation also lets a cooperative

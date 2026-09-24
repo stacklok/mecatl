@@ -32,6 +32,7 @@
     method func (*Session).PendingWorkspaceEnrollment() (PendingWorkspaceEnrollment, bool)
     method func (*Session).PrepareFailedStepRetry() error
     method func (*Session).RecordAssistant(m Message) error
+    method func (*Session).RecordAuxiliaryUsage(usage AuxiliaryUsage)
     method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
     method func (*Session).RecordLastError(cause string) error
     method func (*Session).RecordTitleAttempt(attempt TitleAttempt)
@@ -75,6 +76,7 @@
     method func (AuthorizationPayload).Valid() bool
     method func (AuthorizationResolution).Status() AuthorizationStatus
     method func (AuthorizationResolution).Valid() bool
+    method func (AuxiliaryUsage).Merge(other AuxiliaryUsage) AuxiliaryUsage
     method func (EnvironmentRef).Valid() bool
     method func (GrantType).Valid() bool
     method func (IncarnationID).Valid() bool
@@ -254,7 +256,13 @@ const TitleProvenanceFirstPrompt TitleProvenance = "first-prompt"
 const TitleProvenanceGenerated TitleProvenance = "generated"
 const TitleProvenanceOperator TitleProvenance = "operator"
 const TitleProvenanceUnknown TitleProvenance = ""
+const UsageKindAskReviewer UsageKind = "ask_reviewer"
+const UsageKindCompaction UsageKind = "compaction"
+const UsageKindGuardrail UsageKind = "guardrail"
 const UsageKindMain UsageKind = "main"
+const UsageKindParallelJudge UsageKind = "parallel_judge"
+const UsageKindReflection UsageKind = "reflection"
+const UsageKindRouter UsageKind = "router"
 const UsageKindSessionTitle UsageKind = "session_title"
 const VerdictAllowAlways ApprovalVerdict = 2
 const VerdictAllowOnce ApprovalVerdict = 1
@@ -330,6 +338,7 @@ type AuthorizationBinding string
 type AuthorizationPayload struct{AuthorizationID string; DisplayName string; Call ToolCallID; ExpiresAt time.Time; Status AuthorizationStatus}
 type AuthorizationResolution struct{}
 type AuthorizationStatus string
+type AuxiliaryUsage struct{Buckets map[UsageKind]TokenUsage}
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
@@ -358,6 +367,7 @@ type PendingWorkspaceEnrollment struct{ID WorkspaceEnrollmentID; RequiredService
 type PermissionMode string
 type PlacementMetadata struct{Kind string "json:\"kind,omitempty\""; Label string "json:\"label,omitempty\""; Branch string "json:\"branch,omitempty\""; Revision string "json:\"revision,omitempty\""}
 type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}
+type ProviderModelID struct{ProviderID string; ModelID string}
 type RequestManifestPayload struct{Provider string "json:\"provider,omitempty\""; Model string "json:\"model,omitempty\""; ReasoningEffort string "json:\"reasoning_effort,omitempty\""; ContextWindow int "json:\"context_window,omitempty\""; ToolNames []string "json:\"tool_names\""; ToolDecisions []RequestToolDecision "json:\"tool_decisions\""; AdvertisedToolSchemaBytes int "json:\"advertised_tool_schema_bytes\""; MessageCount int "json:\"message_count\""; MessageBytes int "json:\"message_bytes\""; Prompt []RequestPromptComponent "json:\"prompt\""}
 type RequestPromptComponent struct{Kind string "json:\"kind\""; Provenance string "json:\"provenance\""; Bytes int "json:\"bytes\""}
 type RequestToolDecision struct{Name string "json:\"name\""; Source string "json:\"source\""; Decision string "json:\"decision\""}

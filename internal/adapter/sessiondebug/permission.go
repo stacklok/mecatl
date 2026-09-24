@@ -41,31 +41,36 @@ func NewPermissionPolicy(base port.PermissionPolicy, store port.SessionStore, ta
 // configured asks, grants InspectSession only as a debugger floor, and forces
 // selected direct MCP calls through the debug approval posture after
 // revalidating the target incarnation.
-func (p *PermissionPolicy) Evaluate(ctx context.Context, id session.SessionID, mode session.PermissionMode, call session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
-	decision := p.base.Evaluate(ctx, id, mode, call, ws)
+func (p *PermissionPolicy) Evaluate(ctx context.Context, id session.SessionID, mode session.PermissionMode, call session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
+	result := p.base.Evaluate(ctx, id, mode, call, ws)
+	decision := result.Decision
+	withDecision := func(decision governance.PermissionDecision) port.PermissionResult {
+		result.Decision = decision
+		return result
+	}
 	if call.Name == ToolName {
 		if decision.Effect == governance.Deny || decision.Effect == governance.Ask && decision.ConfiguredAsk {
-			return decision
+			return result
 		}
-		return governance.PermissionDecision{Effect: governance.Allow, Reason: "target-bound debug evidence is read-only"}
+		return withDecision(governance.PermissionDecision{Effect: governance.Allow, Reason: "target-bound debug evidence is read-only"})
 	}
 	if !p.selected[call.Name] {
-		return decision
+		return result
 	}
 	if decision.Effect == governance.Deny || decision.Effect == governance.Ask && decision.ConfiguredAsk {
-		return decision
+		return result
 	}
 	target, err := p.store.Load(ctx, p.target)
 	principal := session.PrincipalFromContext(ctx)
 	if err != nil || target == nil || target.ID != p.target ||
 		session.DebugTargetFingerprint(target) != p.expectedFingerprint ||
 		p.ownershipEnforced && (session.PrincipalScopeHash(target.Owner) != p.expectedOwnerScope || principal == nil || session.PrincipalScopeHash(principal) != p.expectedOwnerScope) {
-		return governance.PermissionDecision{Effect: governance.Deny, Reason: "debug target is unavailable"}
+		return withDecision(governance.PermissionDecision{Effect: governance.Deny, Reason: "debug target is unavailable"})
 	}
 	if p.headless {
-		return governance.PermissionDecision{Effect: governance.Deny, Reason: "debug MCP calls require an interactive operator"}
+		return withDecision(governance.PermissionDecision{Effect: governance.Deny, Reason: "debug MCP calls require an interactive operator"})
 	}
-	return governance.PermissionDecision{Effect: governance.Ask, Reason: "debug MCP call requires fresh current operator approval"}
+	return withDecision(governance.PermissionDecision{Effect: governance.Ask, Reason: "debug MCP call requires fresh current operator approval"})
 }
 
 // Learn deliberately never persists approvals for selected debug MCP calls.

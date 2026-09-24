@@ -54,11 +54,11 @@ func (t *genericAuthorizationTool) AbortAuthorization(ctx context.Context, autho
 
 type authorizationPolicy struct{ order *[]string }
 
-func (p authorizationPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
+func (p authorizationPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
 	if p.order != nil {
 		*p.order = append(*p.order, "permission")
 	}
-	return governance.PermissionDecision{Effect: governance.Allow}
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (authorizationPolicy) Learn(session.SessionID, session.ToolCall) {}
 
@@ -67,23 +67,23 @@ type authorizationHook struct {
 	mutated []byte
 }
 
-func (h authorizationHook) Run(_ context.Context, event governance.HookEvent) (governance.HookOutcome, error) {
+func (h authorizationHook) Run(_ context.Context, event governance.HookEvent) (port.HookResult, error) {
 	if event.Phase != governance.PhasePreToolUse {
-		return governance.HookOutcome{}, nil
+		return port.HookResult{}, nil
 	}
 	if h.order != nil {
 		*h.order = append(*h.order, "pre")
 	}
-	return governance.HookOutcome{Mutated: h.mutated}, nil
+	return port.HookResult{Outcome: governance.HookOutcome{Mutated: h.mutated}}, nil
 }
 
 type askableAuthorizationHook struct{}
 
-func (askableAuthorizationHook) Run(_ context.Context, event governance.HookEvent) (governance.HookOutcome, error) {
+func (askableAuthorizationHook) Run(_ context.Context, event governance.HookEvent) (port.HookResult, error) {
 	if event.Phase == governance.PhasePreToolUse {
-		return governance.HookOutcome{Block: true, AskApproval: true, Message: "review"}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Block: true, AskApproval: true, Message: "review"}}, nil
 	}
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 type authorizationFailStore struct{ err error }

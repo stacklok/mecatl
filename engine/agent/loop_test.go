@@ -135,8 +135,8 @@ func allowAll() *permpolicy.Policy {
 // hookexec.New(nil) provided before the engine tree became self-contained.
 type noopHooks struct{}
 
-func (noopHooks) Run(context.Context, governance.HookEvent) (governance.HookOutcome, error) {
-	return governance.HookOutcome{}, nil
+func (noopHooks) Run(context.Context, governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{}, nil
 }
 
 // drain collects events until the channel closes, returning them in order.
@@ -1357,11 +1357,11 @@ type advisoryHooks struct {
 	msg string
 }
 
-func (h *advisoryHooks) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *advisoryHooks) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	if ev.Phase == governance.PhasePreToolUse || ev.Phase == governance.PhasePostToolUse {
-		return governance.HookOutcome{Message: h.msg}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Message: h.msg}}, nil
 	}
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 // TestAdvisoryHookEmitsEvHookAndLeavesResultUnchanged asserts that an advisory

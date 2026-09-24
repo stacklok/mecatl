@@ -46,12 +46,12 @@ type contextObservingCompactor struct {
 	ids []session.SessionID
 }
 
-func (c *contextObservingCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (c *contextObservingCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	id, _ := port.SessionIDFromContext(ctx)
 	c.mu.Lock()
 	c.ids = append(c.ids, id)
 	c.mu.Unlock()
-	return session.CloneMessages(conv.Messages), "compacted", nil
+	return session.CloneMessages(conv.Messages), "compacted", session.AuxiliaryUsage{}, nil
 }
 
 func (c *contextObservingCompactor) sessionIDs() []session.SessionID {

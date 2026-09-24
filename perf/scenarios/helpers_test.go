@@ -35,8 +35,8 @@ const scenarioModel = "perf-mock-model"
 // import the internal hookexec adapter — this mirrors hookexec.New(nil)).
 type noopHooks struct{}
 
-func (noopHooks) Run(context.Context, governance.HookEvent) (governance.HookOutcome, error) {
-	return governance.HookOutcome{}, nil
+func (noopHooks) Run(context.Context, governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{}, nil
 }
 
 // allowAll returns a policy that allows every tool call (the AllowAllFloorRules

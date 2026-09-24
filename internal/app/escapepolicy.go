@@ -138,17 +138,22 @@ func (p *escapePolicy) classifierFor(ws tool.WorkspaceReader) *escapeClassifier 
 //     strict/trusted (Scenarios 3+4 — never a silent un-asked mutation below
 //     yolo);
 //  6. everything else → the inner decision verbatim.
-func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
-	decision := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
+func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
+	result := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
+	decision := result.Decision
+	withDecision := func(decision governance.PermissionDecision) port.PermissionResult {
+		result.Decision = decision
+		return result
+	}
 	if decision.Effect == governance.Deny {
-		return decision // deny-dominance: never relax an inner deny
+		return result // deny-dominance: never relax an inner deny
 	}
 	if decision.Effect == governance.Ask && decision.ConfiguredAsk {
-		return decision // configured-Ask floor: the relax never suppresses a configured Ask
+		return result // configured-Ask floor: the relax never suppresses a configured Ask
 	}
 	clf := p.classifierFor(ws)
 	if clf == nil {
-		return decision
+		return result
 	}
 	kind := clf.classify(c.Name, c.Args)
 	switch kind {
@@ -156,22 +161,23 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 		// Never-relaxed at every posture: an FS read of a pseudo-fs path would
 		// exfiltrate the SERVER's raw environment, a channel Shell does not
 		// provide (the env-scrub gotcha). Hard-deny even at yolo.
-		return governance.PermissionDecision{
+		return withDecision(governance.PermissionDecision{
 			Effect: governance.Deny,
 			Reason: "path lies under a pseudo-filesystem (/proc, /sys, /dev): an in-process FS read would expose the server's raw environment — never relaxed at any posture",
-		}
+		})
 	case escapeEscape:
 		// ADR 0080 (auto + the operator-tier escape knob only): route the
 		// escape through the guardrail checker BEFORE the posture row. An
 		// unsafe verdict vetoes (Deny); a checker ERROR fails CLOSED to the
 		// write-escape Ask; a safe verdict falls through to the ordinary row.
 		if p.route != nil {
-			v, err := p.route.review(ctx, c)
+			v, usage, err := p.route.review(ctx, c)
+			result.AuxiliaryUsage = result.AuxiliaryUsage.Merge(usage)
 			if err != nil {
-				return p.route.failClosedDecision(err)
+				return withDecision(p.route.failClosedDecision(err))
 			}
 			if v.Safe != nil && !*v.Safe {
-				return p.route.denyDecision(v)
+				return withDecision(p.route.denyDecision(v))
 			}
 			// safe: fall through to the posture row below.
 		}
@@ -182,7 +188,7 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 				// Shell parity: at auto/yolo Shell already reads the same bytes, so
 				// the FS read boundary was cosmetic. The relaxed workspace serves
 				// the read; the wrapper only has to not stand in its way.
-				return governance.PermissionDecision{Effect: governance.Allow}
+				return withDecision(governance.PermissionDecision{Effect: governance.Allow})
 			}
 			// Scenario 4 (docs/acceptance/path-escape-posture.md): at
 			// strict/trusted a read-only escape ASKS on the FS tool itself instead
@@ -196,10 +202,10 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 			// both key off those bits), and an allow-always verdict learns
 			// NOTHING out-of-root (the Learn guard below — v1 asks are
 			// allow-once only).
-			return governance.PermissionDecision{
+			return withDecision(governance.PermissionDecision{
 				Effect: governance.Ask,
 				Reason: fmt.Sprintf("out-of-workspace read-only access: %q lies outside the workspace root — approve to run %s through the FS tool (an opaque Shell workaround is NOT a substitute)", path, c.Name),
-			}
+			})
 		case "Write", "Edit":
 			// Scenario 3: a WRITE escape is allowed at yolo and ASKS at auto —
 			// never a silent un-asked mutation below yolo. Scenario 4 extends
@@ -211,21 +217,21 @@ func (p *escapePolicy) Evaluate(ctx context.Context, sessionID session.SessionID
 			// configured-Ask floor), so the relax only ever replaces an inner
 			// ALLOW or an unconfigured floor Ask — never a configured one.
 			if p.posture >= PostureYolo {
-				return governance.PermissionDecision{Effect: governance.Allow}
+				return withDecision(governance.PermissionDecision{Effect: governance.Allow})
 			}
 			if p.posture >= PostureAuto {
-				return governance.PermissionDecision{
+				return withDecision(governance.PermissionDecision{
 					Effect: governance.Ask,
 					Reason: "out-of-workspace write: the path escapes the session workspace root (posture auto allows reads but never writes silently)",
-				}
+				})
 			}
-			return governance.PermissionDecision{
+			return withDecision(governance.PermissionDecision{
 				Effect: governance.Ask,
 				Reason: fmt.Sprintf("out-of-workspace write: %q lies outside the workspace root — approve to write it through the FS tool (never a silent un-asked mutation below yolo)", path),
-			}
+			})
 		}
 	}
-	return decision
+	return result
 }
 
 // --- the ADR-0080 guardrail-routed escape checker (auto + knob only) ---
@@ -271,17 +277,18 @@ const escapeGuardrailPrompt = `You are a path-escape guardrail for a coding agen
 // error when the checker could not produce one (the caller fails closed). The
 // verdict is never fabricated here — an unparseable reply is an error from
 // the engineGuardrailsChecker, exactly as on the hook path.
-func (r *escapeGuardrailRoute) review(ctx context.Context, c session.ToolCall) (modelhook.Verdict, error) {
+func (r *escapeGuardrailRoute) review(ctx context.Context, c session.ToolCall) (modelhook.Verdict, session.AuxiliaryUsage, error) {
 	var sb strings.Builder
 	sb.WriteString(escapeGuardrailPrompt)
 	sb.WriteString("\n\n")
 	governance.WriteUntrustedBlock(&sb, string(c.Args))
-	return r.checker.Check(ctx, modelhook.CheckRequest{
+	result, err := r.checker.Check(ctx, modelhook.CheckRequest{
 		Phase:   modelhook.PhasePre,
 		Tool:    c.Name,
 		Content: string(c.Args),
 		Prompt:  sb.String(),
 	})
+	return result.Verdict, result.Usage, err
 }
 
 // denyDecision is the veto the route returns on an unsafe verdict — a checker

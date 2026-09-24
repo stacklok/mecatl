@@ -529,7 +529,7 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 		t.Run(tc.mode.String(), func(t *testing.T) {
 			workspace := t.TempDir()
 			provider := mockllm.New(mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`))
-			cfg := Config{Model: "model", Workspace: workspace, LearningMode: tc.mode}
+			cfg := Config{Model: "model", Workspace: workspace, auxiliaryProviderID: "test", LearningMode: tc.mode}
 			if tc.mode == learning.Off && buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil, nil) != nil {
 				t.Fatal("off mode wired an automatic reflection observer")
 			}

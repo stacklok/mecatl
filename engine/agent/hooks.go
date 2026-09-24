@@ -19,6 +19,13 @@ import (
 // site a clean no-op. The hookexec adapter likewise treats an empty phase map as
 // "allow", so firing these phases with no configured command never blocks.
 
+// runOwnedHook records returned hook usage while this Engine owns the session.
+func (e *Engine) runOwnedHook(ctx context.Context, r *Run, sess *session.Session, ev governance.HookEvent) (governance.HookOutcome, error) {
+	result, err := e.deps.Hooks.Run(ctx, ev)
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, result.AuxiliaryUsage))
+	return result.Outcome, err
+}
+
 // fireSessionStart fires the SessionStart phase once at the very start of a run,
 // before the prompt is recorded. This is a BLOCKING run-level gate, symmetric
 // with UserPromptSubmit: a Block outcome (hookexec exit 2) aborts the run before
@@ -39,7 +46,7 @@ func (e *Engine) fireSessionStart(ctx context.Context, r *Run, sess *session.Ses
 		Phase:     governance.PhaseSessionStart,
 		SessionID: string(sess.ID),
 	}
-	outcome, err := e.deps.Hooks.Run(ctx, ev)
+	outcome, err := e.runOwnedHook(ctx, r, sess, ev)
 	if err != nil {
 		// A hook execution fault aborts the run: a vetoing phase whose verdict is
 		// unknown cannot be assumed to allow.
@@ -83,7 +90,7 @@ func (e *Engine) fireUserPromptSubmit(ctx context.Context, r *Run, sess *session
 		Input:     input,
 		SessionID: string(sess.ID),
 	}
-	outcome, err := e.deps.Hooks.Run(ctx, ev)
+	outcome, err := e.runOwnedHook(ctx, r, sess, ev)
 	if err != nil {
 		// A hook execution fault rejects the prompt: the run cannot proceed past a
 		// vetoing phase whose verdict is unknown.
@@ -144,7 +151,7 @@ func (e *Engine) fireStop(ctx context.Context, r *Run, sess *session.Session, re
 		Input:     input,
 		SessionID: string(sess.ID),
 	}
-	outcome, err := e.deps.Hooks.Run(hookCtx, ev)
+	outcome, err := e.runOwnedHook(hookCtx, r, sess, ev)
 	if err == nil && outcome.Block && outcome.Message != "" {
 		// Stop is terminal — a Block can't veto an already-ended run, so this is an
 		// informational notice, not a blocking one.

@@ -9,6 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/team"
 )
 
@@ -22,15 +23,15 @@ type teamHooks struct {
 	blockMsg string
 }
 
-func (h *teamHooks) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *teamHooks) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	h.mu.Lock()
 	h.phases = append(h.phases, ev.Phase)
 	h.events = append(h.events, ev)
 	h.mu.Unlock()
 	if h.block {
-		return governance.HookOutcome{Block: true, Message: h.blockMsg}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Block: true, Message: h.blockMsg}}, nil
 	}
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 // eventFor returns the first recorded HookEvent for phase p (and whether one was

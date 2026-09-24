@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/procgroup"
 )
 
@@ -98,16 +99,16 @@ func New(hooks map[governance.HookPhase]string, opts ...Option) *Runner {
 
 // Run executes the hook registered for ev.Phase. With no hook for the phase the
 // event is allowed. The HookEvent is delivered as JSON on the hook's stdin.
-func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	cmd, ok := r.hooks[ev.Phase]
 	if !ok || strings.TrimSpace(cmd) == "" {
 		// No hook configured for this phase: allow.
-		return governance.HookOutcome{}, nil
+		return port.HookResult{}, nil
 	}
 
 	payload, err := json.Marshal(ev)
 	if err != nil {
-		return governance.HookOutcome{}, fmt.Errorf("hookexec: marshal event: %w", err)
+		return port.HookResult{}, fmt.Errorf("hookexec: marshal event: %w", err)
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, r.timeout)
@@ -133,33 +134,33 @@ func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (governance.H
 	// Surface context cancellation / timeout explicitly rather than as a plain
 	// exit error, so callers can distinguish an aborted run from a hook verdict.
 	if ctxErr := runCtx.Err(); ctxErr != nil {
-		return governance.HookOutcome{}, fmt.Errorf("hookexec: %s hook: %w", ev.Phase, ctxErr)
+		return port.HookResult{}, fmt.Errorf("hookexec: %s hook: %w", ev.Phase, ctxErr)
 	}
 
 	if runErr == nil {
 		// Exit 0 → allow (possibly carrying a mutation envelope on stdout).
-		return allowOutcome(stdout.String()), nil
+		return port.HookResult{Outcome: allowOutcome(stdout.String())}, nil
 	}
 
 	var exitErr *exec.ExitError
 	if errors.As(runErr, &exitErr) {
 		switch exitErr.ExitCode() {
 		case exitAllow:
-			return allowOutcome(stdout.String()), nil
+			return port.HookResult{Outcome: allowOutcome(stdout.String())}, nil
 		case exitBlock:
-			return governance.HookOutcome{
+			return port.HookResult{Outcome: governance.HookOutcome{
 				Block:   true,
 				Message: blockMessage(&stdout, &stderr),
-			}, nil
+			}}, nil
 		default:
-			return governance.HookOutcome{}, fmt.Errorf(
+			return port.HookResult{}, fmt.Errorf(
 				"hookexec: %s hook exited %d: %s",
 				ev.Phase, exitErr.ExitCode(), blockMessage(&stdout, &stderr))
 		}
 	}
 
 	// Failure to start the process (e.g. bad shell): treat as an error.
-	return governance.HookOutcome{}, fmt.Errorf("hookexec: %s hook: %w", ev.Phase, runErr)
+	return port.HookResult{}, fmt.Errorf("hookexec: %s hook: %w", ev.Phase, runErr)
 }
 
 // allowOutcome builds the HookOutcome for an allowing hook (exit 0). When stdout

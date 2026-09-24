@@ -49,7 +49,7 @@ func (r *automaticCaptureReflector) RequestTokenEstimate(_ learning.Input) (int,
 	return r.estimate, nil
 }
 
-func (r *automaticCaptureReflector) Reflect(_ context.Context, in learning.Input) (learning.Outcome, error) {
+func (r *automaticCaptureReflector) Reflect(_ context.Context, in learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.inputs = append(r.inputs, in)
 	if r.order != nil {
@@ -59,7 +59,7 @@ func (r *automaticCaptureReflector) Reflect(_ context.Context, in learning.Input
 	if r.called != nil {
 		r.called <- in
 	}
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
 func automaticTrajectory(id session.SessionID, messages []session.Message, current learning.MessageSpan) learning.Trajectory {
@@ -310,9 +310,9 @@ func (passingSkillEvaluator) Evaluate(context.Context, learning.SkillEvaluationR
 	return learning.SkillEvaluation{Verdict: learning.EvaluationPass, FixtureIDs: []string{"fixture-pass"}}, nil
 }
 
-func (r captureReflectionInput) Reflect(_ context.Context, in learning.Input) (learning.Outcome, error) {
+func (r captureReflectionInput) Reflect(_ context.Context, in learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.input <- in
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 }
 
 func reflectionOutcomeFixture(t *testing.T, kind learning.CandidateKind) (learning.Input, learning.Outcome, string) {
@@ -362,7 +362,7 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	sourceStore := memstore.New()
 	ledger := automaticStoreForTest(t, t.TempDir(), automatic)
 	cfg := Config{
-		Model: "test-model", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
+		Model: "test-model", auxiliaryProviderID: "test", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
 		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
 		attemptRepository: memattempt.New(wallclock.Clock{}), automaticAdmissionLedger: ledger, learningSourceStore: sourceStore,
 	}

@@ -215,7 +215,7 @@ type Outcome struct {
 
 // Reflector conservatively proposes durable learning from bounded evidence.
 type Reflector interface {
-	Reflect(context.Context, Input) (Outcome, error)
+	Reflect(context.Context, Input) (Outcome, session.AuxiliaryUsage, error)
 }
 
 // ValidateInput enforces domain bounds and validates caller-supplied signals.

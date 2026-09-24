@@ -85,18 +85,23 @@ func TestBuildModelRouterTaskMapsCategoryToModel(t *testing.T) {
 	if fn == nil {
 		t.Fatal("router task must be non-nil when enabled with a taxonomy")
 	}
-	cat, model, usage, reason, ok := callModelRouter(context.Background(), fn, "redesign the storage layer")
-	if !ok {
+	result := fn.Route(context.Background(), "redesign the storage layer")
+	if !result.OK {
 		t.Fatal("a valid classification must resolve")
 	}
-	if cat != "large" || model != routerLarge {
-		t.Fatalf("routed (category, model) = (%q, %q), want (large, %q)", cat, model, routerLarge)
+	if result.Category != "large" || result.Model != routerLarge {
+		t.Fatalf("routed (category, model) = (%q, %q), want (large, %q)", result.Category, result.Model, routerLarge)
 	}
-	if reason != "" {
-		t.Fatalf("a successful route must carry no miss reason; got %q", reason)
+	if result.Reason != "" {
+		t.Fatalf("a successful route must carry no miss reason; got %q", result.Reason)
 	}
-	if usage.TotalTokens() != inputTok+outputTok {
-		t.Fatalf("hit usage.TotalTokens() = %d, want %d (classifier spend must propagate through the composition closure)", usage.TotalTokens(), inputTok+outputTok)
+	wantUsage := session.Usage{InputTokens: inputTok, OutputTokens: outputTok}
+	bucket := result.Usage.Buckets[session.UsageKindRouter]
+	if bucket.Total.TotalTokens() != inputTok+outputTok {
+		t.Fatalf("hit usage.TotalTokens() = %d, want %d (classifier spend must propagate through the composition closure)", bucket.Total.TotalTokens(), inputTok+outputTok)
+	}
+	if bucket.Total != wantUsage || bucket.Models[providerAnthropic+"/session-model"] != wantUsage {
+		t.Fatalf("router composition attribution = %#v, want exact %s/session-model=%+v", bucket, providerAnthropic, wantUsage)
 	}
 }
 

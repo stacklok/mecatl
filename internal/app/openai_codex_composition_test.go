@@ -680,11 +680,11 @@ type codexSentinelHookCapture struct {
 	captured []governance.HookEvent
 }
 
-func (h *codexSentinelHookCapture) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *codexSentinelHookCapture) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.captured = append(h.captured, ev)
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 func (h *codexSentinelHookCapture) events() []governance.HookEvent {

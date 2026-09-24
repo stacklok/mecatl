@@ -8,6 +8,13 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 )
 
+// PermissionResult is the complete result of one permission evaluation.
+// AuxiliaryUsage is non-zero only when composition performs auxiliary model work.
+type PermissionResult struct {
+	Decision       governance.PermissionDecision
+	AuxiliaryUsage session.AuxiliaryUsage
+}
+
 // PermissionPolicy evaluates a tool call under a permission mode, resolving
 // across merged scopes with deny → ask → allow precedence. It is implemented by
 // the permpolicy adapter (a session-aware wrapper over the session-free
@@ -27,7 +34,7 @@ type PermissionPolicy interface {
 	// session, so two sessions rooted at different workspaces can resolve the SAME
 	// tool call differently. ws may be nil (e.g. a child/member engine with no
 	// resolver wired) — implementations must treat a nil ws as "no project config".
-	Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision
+	Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) PermissionResult
 
 	// Learn records a per-session allow rule derived from tool call c (the model's
 	// "allow always" verdict). It is a no-op when c is not safely learnable (a

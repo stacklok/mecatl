@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -37,14 +38,14 @@ func newRecordingHooks(block map[governance.HookPhase]string) *recordingHooks {
 	return &recordingHooks{block: block}
 }
 
-func (h *recordingHooks) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *recordingHooks) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	h.mu.Lock()
 	h.phases = append(h.phases, ev.Phase)
 	h.mu.Unlock()
 	if msg, ok := h.block[ev.Phase]; ok {
-		return governance.HookOutcome{Block: true, Message: msg}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Block: true, Message: msg}}, nil
 	}
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 func (h *recordingHooks) recorded() []governance.HookPhase {
@@ -158,14 +159,14 @@ type mutatingHooks struct {
 	mutate map[governance.HookPhase]json.RawMessage
 }
 
-func (h *mutatingHooks) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *mutatingHooks) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	h.mu.Lock()
 	h.phases = append(h.phases, ev.Phase)
 	h.mu.Unlock()
 	if m, ok := h.mutate[ev.Phase]; ok {
-		return governance.HookOutcome{Mutated: m}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Mutated: m}}, nil
 	}
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 // capturingHookRunner is a port.HookRunner that records the last HookEvent.Input
@@ -177,13 +178,13 @@ type capturingHookRunner struct {
 	last  json.RawMessage
 }
 
-func (h *capturingHookRunner) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *capturingHookRunner) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	if ev.Phase == h.phase {
 		h.mu.Lock()
 		h.last = ev.Input
 		h.mu.Unlock()
 	}
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 func (h *capturingHookRunner) input() json.RawMessage {

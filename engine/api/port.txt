@@ -14,11 +14,11 @@
     ifacemethod func (EventLog).Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error]
     ifacemethod func (EventSink).Emit(ctx context.Context, ev session.Event)
     ifacemethod func (HookApprovalLearner).LearnHookApproval(ctx context.Context, ev governance.HookEvent)
-    ifacemethod func (HookRunner).Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)
+    ifacemethod func (HookRunner).Run(ctx context.Context, ev governance.HookEvent) (HookResult, error)
     ifacemethod func (LLMProvider).Capabilities() ProviderCapabilities
     ifacemethod func (LLMProvider).Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)
     ifacemethod func (MetaLister).MetaList(ctx context.Context) ([]SessionMeta, error)
-    ifacemethod func (PermissionPolicy).Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision
+    ifacemethod func (PermissionPolicy).Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) PermissionResult
     ifacemethod func (PermissionPolicy).Learn(sessionID session.SessionID, c session.ToolCall)
     ifacemethod func (PermissionStore).Record(sessionID session.SessionID, rule governance.Rule)
     ifacemethod func (PermissionStore).Rules(sessionID session.SessionID) []governance.Rule
@@ -160,7 +160,8 @@ type Diagnostics interface{Log(ctx context.Context, level Level, msg string, arg
 type EventLog interface{Append(ctx context.Context, id session.SessionID, ev session.Event) error; Read(ctx context.Context, id session.SessionID) iter.Seq2[session.Event, error]}
 type EventSink interface{Emit(ctx context.Context, ev session.Event)}
 type HookApprovalLearner interface{LearnHookApproval(ctx context.Context, ev governance.HookEvent)}
-type HookRunner interface{Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)}
+type HookResult struct{Outcome governance.HookOutcome; AuxiliaryUsage session.AuxiliaryUsage}
+type HookRunner interface{Run(ctx context.Context, ev governance.HookEvent) (HookResult, error)}
 type LLMProvider interface{Capabilities() ProviderCapabilities; Stream(ctx context.Context, req LLMRequest) (iter.Seq2[Chunk, error], error)}
 type LLMRequest struct{System prompt.Layered; Messages []session.Message; Tools []tool.ToolSpec; Model string}
 type Lease struct{SessionID session.SessionID; Owner string; Token uint64; Expiry time.Time}
@@ -171,7 +172,8 @@ type MetaLister interface{MetaList(ctx context.Context) ([]SessionMeta, error)}
 type MisfirePolicy int
 type NopDeliveryQueue struct{}
 type NopDiagnostics struct{}
-type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
+type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) PermissionResult; Learn(sessionID session.SessionID, c session.ToolCall)}
+type PermissionResult struct{Decision governance.PermissionDecision; AuxiliaryUsage session.AuxiliaryUsage}
 type PermissionStore interface{Record(sessionID session.SessionID, rule governance.Rule); Rules(sessionID session.SessionID) []governance.Rule}
 type ProviderCapabilities struct{Image bool; Audio bool; EmbeddedContext bool}
 type ProviderErrorMetadataError interface{ProviderErrorCode() string; ProviderErrorCorrelationID() string; ProviderErrorCorrelationKind() string; ProviderHTTPStatus() int; ProviderInBandStatus() int; error}

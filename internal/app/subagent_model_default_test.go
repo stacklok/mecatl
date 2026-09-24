@@ -193,17 +193,30 @@ func TestParallelJudgeStaysOnParentModel(t *testing.T) {
 		mu     sync.Mutex
 		models []string
 	)
-	prov := observedProvider(&models, &mu, mockllm.TextTurn("winner: 1"))
+	usage := session.Usage{InputTokens: 6, OutputTokens: 2}
+	prov := observedProvider(&models, &mu, mockllm.ChunksTurn(
+		mockllm.TextChunk(`{"winner":1,"rationale":"best"}`),
+		mockllm.UsageChunk(usage),
+		mockllm.DoneChunk(session.StopEndTurn),
+	))
 	cfg := Config{Model: "parent-model", SubagentModel: "cheap-model-1.0"}
 
 	reg := regForTest(prov, providerOpenAI, "parent-model")
 	reg.contextWindows = map[string]map[string]int{providerOpenAI: {"parent-model": 333_000}}
 	cfg.contextWindows = reg.contextWindows
-	judge := buildParallelJudgeEngine(modelCfgFor(cfg, "parent-model"), reg, providerOpenAI, prov)
-	if got := judge.ContextWindow(); got != 333_000 {
+	judgeEngine := buildParallelJudgeEngine(modelCfgFor(cfg, "parent-model"), reg, providerOpenAI, prov)
+	if got := judgeEngine.ContextWindow(); got != 333_000 {
 		t.Fatalf("judge ContextWindow = %d, want exact configured window 333000", got)
 	}
-	drainEngine(t, judge)
+	judge := agent.NewEngineJudge(judgeEngine)
+	winner, _, gotUsage, err := judge.Judge(t.Context(), []agent.BranchSummary{{Label: "one"}, {Label: "two"}}, "best")
+	if err != nil || winner != 0 {
+		t.Fatalf("composition judge winner=%d err=%v", winner, err)
+	}
+	bucket := gotUsage.Buckets[session.UsageKindParallelJudge]
+	if bucket.Total != usage || bucket.Models[providerOpenAI+"/parent-model"] != usage {
+		t.Fatalf("parallel judge composition attribution = %#v, want exact %s/parent-model=%+v", bucket, providerOpenAI, usage)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(models) == 0 || models[0] != "parent-model" {

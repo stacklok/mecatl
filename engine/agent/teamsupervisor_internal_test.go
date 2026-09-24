@@ -19,8 +19,8 @@ import (
 // agent_test package's noopHooks, unreachable from this internal test file).
 type noopHookRunner struct{}
 
-func (noopHookRunner) Run(context.Context, governance.HookEvent) (governance.HookOutcome, error) {
-	return governance.HookOutcome{}, nil
+func (noopHookRunner) Run(context.Context, governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{}, nil
 }
 
 // recordedWarn captures one Diagnostics record for the WI-9 helper test.

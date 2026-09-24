@@ -19,8 +19,8 @@ type policyStub struct {
 	learned  int
 }
 
-func (p *policyStub) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return p.decision
+func (p *policyStub) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: p.decision}
 }
 func (p *policyStub) Learn(session.SessionID, session.ToolCall) { p.learned++ }
 
@@ -60,7 +60,7 @@ func TestDebugMCPPermissionPolicy(t *testing.T) {
 		{"inspect floors default ask", governance.PermissionDecision{Effect: governance.Ask, Reason: "default ask"}, governance.PermissionDecision{Effect: governance.Allow, Reason: "target-bound debug evidence is read-only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := newPolicy(&policyStub{decision: tc.base}, false, nil).Evaluate(t.Context(), "debug", session.ModeDefault, call(sessiondebug.ToolName), nil)
+			got := newPolicy(&policyStub{decision: tc.base}, false, nil).Evaluate(t.Context(), "debug", session.ModeDefault, call(sessiondebug.ToolName), nil).Decision
 			if got != tc.want {
 				t.Fatalf("decision=%+v want %+v", got, tc.want)
 			}
@@ -81,7 +81,7 @@ func TestDebugMCPPermissionPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := &policyStub{decision: governance.PermissionDecision{Effect: tc.base}}
 			p := newPolicy(base, false, []tool.Tool{tc.tool})
-			if got := p.Evaluate(t.Context(), "debug", session.ModeDefault, call(tc.tool.name), nil).Effect; got != tc.want {
+			if got := p.Evaluate(t.Context(), "debug", session.ModeDefault, call(tc.tool.name), nil).Decision.Effect; got != tc.want {
 				t.Fatalf("effect=%v want %v", got, tc.want)
 			}
 		})
@@ -89,17 +89,17 @@ func TestDebugMCPPermissionPolicy(t *testing.T) {
 
 	configuredBase := &policyStub{decision: governance.PermissionDecision{Effect: governance.Ask, ConfiguredAsk: true, Reason: "configured"}}
 	configured := newPolicy(configuredBase, false, []tool.Tool{write})
-	configuredDecision := configured.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil)
+	configuredDecision := configured.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil).Decision
 	if !configuredDecision.ConfiguredAsk || configuredDecision.Reason != "configured" {
 		t.Fatalf("debug policy did not preserve the configured ask: %+v", configuredDecision)
 	}
-	if again := configured.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil); again.Effect != governance.Ask {
-		t.Fatalf("second mutation effect=%v want ask", again.Effect)
+	if again := configured.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil); again.Decision.Effect != governance.Ask {
+		t.Fatalf("second mutation effect=%v want ask", again.Decision.Effect)
 	}
 
 	base := &policyStub{decision: governance.PermissionDecision{Effect: governance.Allow}}
 	headless := newPolicy(base, true, []tool.Tool{write})
-	if got := headless.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil).Effect; got != governance.Deny {
+	if got := headless.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil).Decision.Effect; got != governance.Deny {
 		t.Fatalf("headless mutation effect=%v want deny", got)
 	}
 	p := newPolicy(base, false, []tool.Tool{read, write})
@@ -114,7 +114,7 @@ func TestDebugMCPPermissionPolicy(t *testing.T) {
 	if err := store.Delete(t.Context(), target.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil).Effect; got != governance.Deny {
+	if got := p.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil).Decision.Effect; got != governance.Deny {
 		t.Fatalf("deleted target effect=%v want deny", got)
 	}
 }

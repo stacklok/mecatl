@@ -762,12 +762,16 @@ func (e *Engine) surfaceAsk(ctx context.Context, r *Run, sess *session.Session, 
 // permissionDecision evaluates normal Shell authority and, only for the declared
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
-func (e *Engine) permissionDecision(ctx context.Context, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
-	ordinary := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+	ordinaryResult := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, ordinaryResult.AuxiliaryUsage))
+	ordinary := ordinaryResult.Decision
 	if !shellSystemScope(c) || ordinary.Effect == governance.Deny {
 		return ordinary
 	}
-	system := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	systemResult := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, systemResult.AuxiliaryUsage))
+	system := systemResult.Decision
 	if system.Effect == governance.Deny {
 		return system
 	}
@@ -781,7 +785,9 @@ func (e *Engine) authorizeMutatedSystemScope(ctx context.Context, r *Run, sess *
 	if shellSystemScope(original) || !shellSystemScope(effective) {
 		return governance.PermissionDecision{Effect: governance.Allow}, false
 	}
-	decision := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	result := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, result.AuxiliaryUsage))
+	decision := result.Decision
 	if decision.Effect == governance.Deny {
 		return decision, false
 	}
@@ -843,7 +849,7 @@ func systemScopeApprovalArgs(c session.ToolCall) []byte {
 // cancelled Ask becomes Deny) and a cancelled flag set only when ctx was
 // cancelled while awaiting.
 func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall) (governance.PermissionDecision, bool) {
-	decision := e.permissionDecision(ctx, sess, env, c)
+	decision := e.permissionDecision(ctx, r, sess, env, c)
 	if decision.Effect != governance.Ask {
 		// Operator visibility for a policy DENY: the deny reason otherwise reaches
 		// only the client event (via denyResult), never the operator channel. Emit
@@ -977,7 +983,7 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 		SessionID: string(sess.ID),
 		CallID:    string(c.ID),
 	}
-	outcome, herr := e.deps.Hooks.Run(ctx, ev)
+	outcome, herr := e.runOwnedHook(ctx, r, sess, ev)
 
 	// Normalize the hook's producer-influenced output to valid UTF-8 HERE — the
 	// one point both values arrive (issue #402). A hook is a subprocess and its
@@ -1597,6 +1603,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	// snapshot it before any detach), never inside a detached background goroutine.
 	// nil when no parent session is threaded (plain Execute) — fork then unsupported.
 	if sess != nil {
+		caps.recordAuxiliaryUsage = func(usage session.AuxiliaryUsage) { r.recordAuxiliaryUsage(sess, usage) }
 		caps.forkHistory = func() []session.Message {
 			return session.ForkSnapshot(sess.Conversation)
 		}
@@ -1642,7 +1649,8 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 			// wedged reviewer. A timed-out review is a failure → fall-through deny.
 			ctx, cancel := context.WithTimeout(context.Background(), askReviewTimeout)
 			defer cancel()
-			review, err := reviewer.Review(ctx, ChildAskReviewRequest{Ask: ask, Isolated: isolated})
+			review, usage, err := reviewer.Review(ctx, ChildAskReviewRequest{Ask: ask, Isolated: isolated})
+			r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindAskReviewer, usage)
 			switch {
 			case errors.Is(err, ErrNotReviewable):
 				// ABSTENTION: the reviewer cannot judge THIS ask. Fall through to the
@@ -1674,14 +1682,10 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	// any miss (classifier failure, unknown category, breaker open) returns ok=false and
 	// the caller inherits the default explorer model.
 	//
-	// CLASSIFIER SPEND ACCOUNTING (#92 fix): after every route() call — hit OR miss —
-	// the classifier's usage is folded into sess.Usage UNCONDITIONALLY before the
-	// miss/hit branches. This makes the single budget brake authority (budgetExhausted
-	// reads sess.Usage.TotalTokens()) cover classifier spend, preventing CWE-770
-	// unbounded accumulation. The fold is SYNCHRONOUS on this dispatch goroutine
-	// (sess is StateRunning here; RecordUsage is legal). The error is swallowed (`_ =`)
-	// as defense-in-depth: a guard error means a best-effort undercount (tolerable),
-	// never a correctness fault — mirroring loop.go's own `_ = sess.RecordUsage(usage)`.
+	// CLASSIFIER SPEND ACCOUNTING: after every route() call — hit OR miss —
+	// record the complete auxiliary result on the invoking session. The router
+	// bucket remains separate from main while preTurnTerminal includes it in the
+	// internal MaxRunTokens spend bound.
 	// The two diagnostics below (breaker-OPEN INFO and "subagent routed" INFO) are
 	// emitted from THIS dispatch-path closure, NOT the resolveChildAsk child chokepoint
 	// (the loop still emits exactly THREE lines; the router INFOs are dispatch-time
@@ -1689,7 +1693,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	if e.deps.SubagentModelRouter != nil && r.router != nil {
 		// Pre-build a nil-safe usage-fold func to keep the closure branch-free (#92 fix,
 		// avoids +1 cyclomatic complexity inside the already-branchy closure).
-		foldUsage := foldClassifierUsage(sess)
+		foldUsage := foldClassifierUsage(r, sess)
 		// The classification body lives in a package-level func (routeTaskBody) so this
 		// already-branchy constructor stays under the gocyclo budget; the closure here is
 		// a one-line adapter capturing the run-scoped breaker/hardAbort/diag/foldUsage.
@@ -1755,19 +1759,16 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	return caps
 }
 
-// foldClassifierUsage returns a nil-safe fold function that accumulates a classifier's
-// session.Usage into sess (#92 fix, CWE-770): the returned func calls sess.RecordUsage
-// unconditionally, swallowing the error as defense-in-depth (a guard error is a
-// best-effort undercount, never a correctness fault — mirroring loop.go's own
-// `_ = sess.RecordUsage(usage)`). When sess is nil (plain Execute with no parent
-// session threaded), the returned func is a no-op, keeping the parentCaps closure
-// branch-free (no `if sess != nil` inside the hot routeTask loop).
-func foldClassifierUsage(sess *session.Session) func(session.Usage) {
+// foldClassifierUsage returns a nil-safe fold function that records a classifier's
+// purpose-attributed usage on the invoking session. The separate router bucket is
+// included by the loop's budget calculation without changing main usage. When sess
+// is nil (plain Execute with no parent session threaded), the returned func is a no-op.
+func foldClassifierUsage(r *Run, sess *session.Session) func(session.AuxiliaryUsage) {
 	if sess == nil {
-		return func(session.Usage) {} // nil-safe nop: plain Execute, no parent session.
+		return func(session.AuxiliaryUsage) {} // nil-safe nop: plain Execute, no parent session.
 	}
-	return func(u session.Usage) {
-		_ = sess.RecordUsage(u)
+	return func(u session.AuxiliaryUsage) {
+		r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(context.Background(), r.diag, session.UsageKindRouter, u))
 	}
 }
 
@@ -1789,7 +1790,7 @@ func routeTaskBody(
 	breaker *modelRouterBreaker,
 	hardAbort chan struct{},
 	diag port.Diagnostics,
-	foldUsage func(session.Usage),
+	foldUsage func(session.AuxiliaryUsage),
 ) modelRoutingResult {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
@@ -1960,7 +1961,7 @@ func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, tu
 		SessionID: string(sess.ID),
 		CallID:    string(c.ID),
 	}
-	outcome, err := e.deps.Hooks.Run(ctx, ev)
+	outcome, err := e.runOwnedHook(ctx, r, sess, ev)
 	if err != nil {
 		// Best-effort: a PostToolUse execution error never aborts and never alters
 		// the result.

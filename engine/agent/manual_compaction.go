@@ -20,7 +20,7 @@ type ManualCompactionResult struct {
 // compaction. Manual compaction continues to use the compactor's configured
 // Compact behaviour.
 type budgetedCompactor interface {
-	compactToBudget(context.Context, *session.Conversation, int) ([]session.Message, string, error)
+	compactToBudget(context.Context, *session.Conversation, int) ([]session.Message, string, session.AuxiliaryUsage, error)
 }
 
 // compactionCandidate runs a compactor and applies the one candidate-admission
@@ -28,29 +28,30 @@ type budgetedCompactor interface {
 // ownership: the hot automatic path passes the live immutable conversation,
 // while CompactSession passes a deep copy to isolate the aggregate from an
 // out-of-band compactor.
-func (e *Engine) compactionCandidate(ctx context.Context, input *session.Conversation, budget int) (ManualCompactionResult, []session.Message, error) {
+func (e *Engine) compactionCandidate(ctx context.Context, input *session.Conversation, budget int) (ManualCompactionResult, []session.Message, session.AuxiliaryUsage, error) {
 	original := input.Messages
 	var candidate []session.Message
 	var summary string
+	var usage session.AuxiliaryUsage
 	var err error
 	if c, ok := e.deps.Compactor.(budgetedCompactor); ok && budget > 0 {
-		candidate, summary, err = c.compactToBudget(ctx, input, budget)
+		candidate, summary, usage, err = c.compactToBudget(ctx, input, budget)
 	} else {
-		candidate, summary, err = e.deps.Compactor.Compact(ctx, input)
+		candidate, summary, usage, err = e.deps.Compactor.Compact(ctx, input)
 	}
 	if err != nil {
-		return ManualCompactionResult{}, nil, err
+		return ManualCompactionResult{}, nil, usage, err
 	}
 	if len(candidate) == 0 {
-		return ManualCompactionResult{}, nil, nil
+		return ManualCompactionResult{}, nil, usage, nil
 	}
 	if err := session.ValidateToolPairing(candidate); err != nil {
-		return ManualCompactionResult{}, nil, fmt.Errorf("%w: %v", ErrCompactionWouldOrphan, err)
+		return ManualCompactionResult{}, nil, usage, fmt.Errorf("%w: %v", ErrCompactionWouldOrphan, err)
 	}
 	if e.deps.TokenCounter.CountMessages(candidate) >= e.deps.TokenCounter.CountMessages(original) {
-		return ManualCompactionResult{}, nil, nil
+		return ManualCompactionResult{}, nil, usage, nil
 	}
-	return ManualCompactionResult{Changed: true, Summary: summary}, candidate, nil
+	return ManualCompactionResult{Changed: true, Summary: summary}, candidate, usage, nil
 }
 
 func cloneCompactionMessages(messages []session.Message) []session.Message {
@@ -94,7 +95,11 @@ func (e *Engine) CompactSession(ctx context.Context, sess *session.Session) (Man
 
 	original := sess.Conversation.Messages
 	input := &session.Conversation{Messages: cloneCompactionMessages(original)}
-	result, candidate, err := e.compactionCandidate(ctx, input, 0)
+	result, candidate, usage, err := e.compactionCandidate(ctx, input, 0)
+	usage = remapAuxiliaryUsage(ctx, e.deps.Diagnostics, session.UsageKindCompaction, usage)
+	// The caller already owns this aggregate at a legal turn boundary, so returned
+	// accounting is recorded synchronously even when compaction itself fails.
+	sess.RecordAuxiliaryUsage(usage)
 	if err != nil || !result.Changed {
 		return result, err
 	}

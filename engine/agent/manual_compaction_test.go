@@ -19,9 +19,9 @@ type manualCompactor struct {
 	calls   int
 }
 
-func (c *manualCompactor) Compact(_ context.Context, _ *session.Conversation) ([]session.Message, string, error) {
+func (c *manualCompactor) Compact(_ context.Context, _ *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	c.calls++
-	return c.out, c.summary, c.err
+	return c.out, c.summary, session.AuxiliaryUsage{}, c.err
 }
 
 type textLengthCounter struct{}
@@ -101,13 +101,13 @@ type mutatingManualCompactor struct {
 	err error
 }
 
-func (c mutatingManualCompactor) Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (c mutatingManualCompactor) Compact(_ context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	conv.Messages[0].Text = "mutated"
 	conv.Messages[0].Parts[0].Data[0] = 99
 	if c.err == nil {
-		return []session.Message{session.NewUserMessage(strings.Repeat("non-reducing", 100))}, "", nil
+		return []session.Message{session.NewUserMessage(strings.Repeat("non-reducing", 100))}, "", session.AuxiliaryUsage{}, nil
 	}
-	return conv.Messages, "", c.err
+	return conv.Messages, "", session.AuxiliaryUsage{}, c.err
 }
 
 func TestEngineCompactSessionIsolatesMutatingCompactor(t *testing.T) {

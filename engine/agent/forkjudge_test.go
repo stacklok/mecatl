@@ -23,7 +23,7 @@ func TestEngineJudgePicksScriptedWinner(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"winner": 3, "rationale": "medium is best"}`))
 	j := agent.NewEngineJudge(childEngineWith(llm, tool.NewCatalog()))
 
-	pos, rationale, err := j.Judge(context.Background(), judgeCandidates(), "prefer the smallest diff")
+	pos, rationale, _, err := j.Judge(context.Background(), judgeCandidates(), "prefer the smallest diff")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestEngineJudgeTolerantParse(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("Sure! Here is my pick:\n```json\n{\"winner\":1,\"rationale\":\"smallest\"}\n```\nDone."))
 	j := agent.NewEngineJudge(childEngineWith(llm, tool.NewCatalog()))
 
-	pos, rationale, err := j.Judge(context.Background(), judgeCandidates(), "")
+	pos, rationale, _, err := j.Judge(context.Background(), judgeCandidates(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestEngineJudgeUnparseableFallsBack(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("I really cannot decide, sorry."))
 	j := agent.NewEngineJudge(childEngineWith(llm, tool.NewCatalog()))
 
-	pos, rationale, err := j.Judge(context.Background(), judgeCandidates(), "")
+	pos, rationale, _, err := j.Judge(context.Background(), judgeCandidates(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestEngineJudgeOutOfRangeFallsBack(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"winner": 99, "rationale": "nope"}`))
 	j := agent.NewEngineJudge(childEngineWith(llm, tool.NewCatalog()))
 
-	pos, _, err := j.Judge(context.Background(), judgeCandidates(), "")
+	pos, _, _, err := j.Judge(context.Background(), judgeCandidates(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

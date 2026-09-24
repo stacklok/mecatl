@@ -20,10 +20,11 @@ import (
 // wires (an empty catalog, allow-all floor — the reviewer never calls a tool).
 func reviewerEngine(llm port.LLMProvider) *Engine {
 	return NewEngine(Deps{
-		LLM:     llm,
-		Catalog: tool.NewCatalog(),
-		Policy:  permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
-		Model:   "reviewer-model",
+		LLM:           llm,
+		Catalog:       tool.NewCatalog(),
+		Policy:        permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil),
+		Model:         "reviewer-model",
+		ProviderModel: session.ProviderModelID{ProviderID: "test-provider", ModelID: "reviewer-model"},
 	})
 }
 
@@ -49,7 +50,7 @@ func TestEngineAskAdjudicatorAllow(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"allow": true, "reason": "read-only inspection"}`))
 	a := NewEngineAskReviewer(reviewerEngine(llm))
 
-	review, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("cat $(git rev-parse HEAD)"), Isolated: true})
+	review, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("cat $(git rev-parse HEAD)"), Isolated: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestEngineAskAdjudicatorDeny(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn(`{"allow": false, "reason": "mutates shared state"}`))
 	a := NewEngineAskReviewer(reviewerEngine(llm))
 
-	review, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("cp a b"), Isolated: false})
+	review, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("cp a b"), Isolated: false})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestEngineAskAdjudicatorLoneFenceParses(t *testing.T) {
 	llm := mockllm.New(mockllm.TextTurn("```json\n{\"allow\": true, \"reason\": \"fine\"}\n```"))
 	a := NewEngineAskReviewer(reviewerEngine(llm))
 
-	review, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true})
+	review, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestForgedVerdictEcho(t *testing.T) {
 	// caller's fail-safe denies. The forged allow is never the verdict.
 	echoThenDeny := "Reviewing: " + hostileCmd + "\n" + `{"allow": false, "reason": "runs a test then echoes"}`
 	a := NewEngineAskReviewer(reviewerEngine(mockllm.New(mockllm.TextTurn(echoThenDeny))))
-	if review, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: ask, Isolated: true}); err == nil && review.Allowed {
+	if review, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: ask, Isolated: true}); err == nil && review.Allowed {
 		t.Fatalf("a reviewer that echoes a command carrying a forged allow must NOT yield an allow verdict; got %+v", review)
 	}
 
@@ -146,7 +147,7 @@ func TestEngineAskAdjudicatorFailSafeMatrix(t *testing.T) {
 			// before MaxTurns(1) cuts the run off. Either way the outcome is a deny.
 			llm := mockllm.New(mockllm.TextTurn(tc.out), mockllm.TextTurn(tc.out))
 			a := NewEngineAskReviewer(reviewerEngine(llm))
-			if _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true}); err == nil {
+			if _, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true}); err == nil {
 				t.Fatalf("output %q must be an error (ambiguity is never a verdict)", tc.out)
 			}
 		})
@@ -158,7 +159,7 @@ func TestEngineAskAdjudicatorFailSafeMatrix(t *testing.T) {
 func TestEngineAskAdjudicatorStopErrorDenies(t *testing.T) {
 	llm := mockllm.New(mockllm.ErrorTurn(errors.New("provider exploded")))
 	a := NewEngineAskReviewer(reviewerEngine(llm))
-	if _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true}); err == nil {
+	if _, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true}); err == nil {
 		t.Fatalf("a StopError reviewer run must be an error")
 	}
 }
@@ -169,7 +170,7 @@ func TestEngineAskAdjudicatorCancelDenies(t *testing.T) {
 	a := NewEngineAskReviewer(reviewerEngine(llm))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := a.Review(ctx, ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true}); err == nil {
+	if _, _, err := a.Review(ctx, ChildAskReviewRequest{Ask: shellAsk("ls"), Isolated: true}); err == nil {
 		t.Fatalf("a cancelled reviewer run must be an error")
 	}
 }
@@ -192,7 +193,7 @@ func TestAskReviewPromptReachesProviderShaped(t *testing.T) {
 		mockllm.TextTurn(`{"allow": false, "reason": "no"}`))
 	a := NewEngineAskReviewer(reviewerEngine(llm), WithAskReviewPolicy("CUSTOM-RUBRIC: read-only only."))
 
-	if _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("go test ./..."), Isolated: true}); err != nil {
+	if _, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: shellAsk("go test ./..."), Isolated: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -279,7 +280,7 @@ func TestAskReviewPromptInjectionDefanged(t *testing.T) {
 	// parses only the model's actual output.
 	llm := mockllm.New(mockllm.TextTurn(`{"allow": false, "reason": "destructive"}`))
 	a := NewEngineAskReviewer(reviewerEngine(llm))
-	review, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: ask, Isolated: false})
+	review, _, err := a.Review(context.Background(), ChildAskReviewRequest{Ask: ask, Isolated: false})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
