@@ -197,7 +197,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Agent model discovery](agent-model-discovery.md) — replaces the alpha `DiscoverModels`
   contract in place with selectable-provider facets, bounded literal-term search, opaque
   snapshot-bound continuation, and stable model-visible workflow guidance while preserving
-  exact `(provider_id, model_id)` selection identity. Status: proposed amendment.
+  exact `(provider_id, model_id)` selection identity. Status: implementation candidate.
 - [Jev delegated-model router](jev-model-router.md) — adds an explicitly selected,
   bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
   existing delegation event, mecatui, and session-debugger paths. Status: landed implementation

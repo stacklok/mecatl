@@ -8367,7 +8367,7 @@ func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.
 	return pc
 }
 
-const agentModelDiscoveryPostureNote = "You have a DiscoverModels tool for bounded inspection of the currently resolved model inventory. Use each returned (provider_id, model_id) pair together as the exact selection handle; never infer provider_id from model_id. Discovery is read-only and does not change this session's selected model."
+const agentModelDiscoveryPostureNote = "You have a DiscoverModels tool for bounded inspection of the currently resolved model inventory. When the provider is unknown, call DiscoverModels without provider_id; omission searches all selectable providers, and the unfiltered result lists their exact selectable provider IDs. Only use a returned exact (provider_id, model_id) pair with an existing surface that explicitly accepts both, or return it to the caller for selection. DiscoverModels itself cannot switch the session."
 
 func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
 	if catalog == nil {

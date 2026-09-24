@@ -510,12 +510,21 @@ configured at startup. A provider's live model catalog may refresh while the
 server is running.
 
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
-inspect this same resolved inventory. Results contain the exact `provider_id`
-plus `model_id` selection handle and the same safe metadata as `ListModels`;
-equal model IDs under different providers remain separate. Exact provider/model
-filters are supported. Output defaults to 20 entries and is capped at 50 entries
-and 32 KiB. The tool does not probe providers, accept endpoints or credentials,
-or change the current session, and remains available in no-filesystem sessions.
+inspect this same resolved inventory. Start without `provider_id` when the
+provider is unknown. The first unfiltered result includes every selectable
+provider ID and its model count, plus the first bounded model page. You can then
+search across all providers or add an exact provider filter. A query is a set of
+case-lowered literal terms; every term must occur in the provider ID, model ID,
+or display name of a result. Punctuation has no special query syntax.
+
+Each result contains the exact `provider_id` plus `model_id` selection handle and
+the same safe metadata as `ListModels`; equal model IDs under different providers
+remain separate. Output defaults to 20 entries and is capped at 50 entries and
+32 KiB. When `next_cursor` is present, call the tool again with only that value as
+`cursor`. A changed inventory invalidates the cursor, so restart without it. The
+tool does not probe or refresh providers, accept endpoints or credentials, select
+or route a model, or change the current session. It remains available in
+no-filesystem sessions.
 
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued

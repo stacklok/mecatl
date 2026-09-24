@@ -392,16 +392,27 @@ joins the registry's AVAILABLE providers to the embedded catalog and projects ea
 model into the proto `ModelInfo` (public metadata only — id, provider_id, display_name,
 image/reasoning flags, context_limit — never a key/env/base-URL). Composition stores
 that projection in one atomic resolved inventory shared by `ListModels` and the
-read-only `DiscoverModels` tool. Live refresh swaps that same inventory, so both views
-retain the existing floor/last-known-good/empty semantics without a second lister or
-probe. `DiscoverModels` exact-filters only `provider_id` and `model_id`, returns at most
-50 complete provider/model handles (20 by default), and has a 32 KiB output ceiling.
-The pair is the exact selection handle; a model id never implies its provider. The tool
-is registered through the common catalog assembly, including no-FS sessions, and
-receives no workspace or shell input. The `mock` provider advertises no selectable
-models. `ServerCapabilities.model_selection` is true iff the inventory is non-empty or
-a refresh source is available, gating the client's model picker. Provider key/base-URL
-flags landed in `cmd/mecated` earlier; the picker UX is a client concern.
+read-only `DiscoverModels` tool. Publication and reads deep-copy every `ModelInfo`,
+and each discovery call captures its own canonically sorted scalar projection, so
+publisher or reader mutation cannot change a page or its inventory digest. Live
+refresh swaps that same inventory, so both views retain the existing
+floor/last-known-good/empty semantics without a second lister or probe.
+
+An unfiltered first call returns a complete selectable-provider facet alongside the
+bounded model page. Optional byte-exact provider/model filters compose with a bounded
+literal-term query over provider ID, model ID, and display name. Omission of the
+provider searches all selectable providers. Results return at most 50 complete handles
+(20 by default) within a 32 KiB ceiling. When more matches remain, `next_cursor` is a
+canonical unpadded base64url envelope bound by SHA-256 to the complete captured safe
+inventory. A continuation restores its filters, normalized terms, limit, and next
+offset without retained server state; changed inventory returns a restart instruction.
+The pair remains the exact selection handle, and discovery never probes, refreshes,
+routes, or selects. The tool is registered through the common catalog assembly,
+including no-FS sessions, and receives no workspace or shell input. The `mock`
+provider advertises no selectable models. `ServerCapabilities.model_selection` is true
+iff the inventory is non-empty or a refresh source is available, gating the client's
+model picker. Provider key/base-URL flags landed in `cmd/mecated` earlier; the picker
+UX is a client concern.
 
 **Capability single-source (`internal/app/capability.go`).** A model's true input
 capability is the INTERSECTION `catalog-per-model-modalities ∩ adapter-Capabilities()`,
