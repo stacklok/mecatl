@@ -1692,6 +1692,12 @@ One media part as represented on the protobuf event payloads.
 export interface EventContent
 ```
 
+<Heading as="h4" id="api-eventcontent-artifactid-propertysignature"><code>EventContent.artifactId</code></Heading>
+
+```ts
+readonly artifactId: string;
+```
+
 <Heading as="h4" id="api-eventcontent-data-propertysignature"><code>EventContent.data</code></Heading>
 
 ```ts
@@ -1701,13 +1707,31 @@ readonly data: Uint8Array;
 <Heading as="h4" id="api-eventcontent-kind-propertysignature"><code>EventContent.kind</code></Heading>
 
 ```ts
-readonly kind: 0 | 1 | 2;
+readonly kind: 0 | 1 | 2 | 3;
 ```
 
 <Heading as="h4" id="api-eventcontent-mimetype-propertysignature"><code>EventContent.mimeType</code></Heading>
 
 ```ts
 readonly mimeType: string;
+```
+
+<Heading as="h4" id="api-eventcontent-name-propertysignature"><code>EventContent.name</code></Heading>
+
+```ts
+readonly name: string;
+```
+
+<Heading as="h4" id="api-eventcontent-sha256-propertysignature"><code>EventContent.sha256</code></Heading>
+
+```ts
+readonly sha256: string;
+```
+
+<Heading as="h4" id="api-eventcontent-size-propertysignature"><code>EventContent.size</code></Heading>
+
+```ts
+readonly size: bigint;
 ```
 
 <Heading as="h4" id="api-eventcontent-url-propertysignature"><code>EventContent.url</code></Heading>
@@ -1722,6 +1746,12 @@ One raw protobuf content block carried by a tool result.
 
 ```ts
 export interface EventContentBlock
+```
+
+<Heading as="h4" id="api-eventcontentblock-artifactid-propertysignature"><code>EventContentBlock.artifactId</code></Heading>
+
+```ts
+readonly artifactId: string;
 ```
 
 <Heading as="h4" id="api-eventcontentblock-audience-propertysignature"><code>EventContentBlock.audience</code></Heading>
@@ -1745,7 +1775,7 @@ readonly description: string;
 <Heading as="h4" id="api-eventcontentblock-kind-propertysignature"><code>EventContentBlock.kind</code></Heading>
 
 ```ts
-readonly kind: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+readonly kind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 ```
 
 <Heading as="h4" id="api-eventcontentblock-lastmodified-propertysignature"><code>EventContentBlock.lastModified</code></Heading>
@@ -1770,6 +1800,12 @@ readonly name: string;
 
 ```ts
 readonly priority: number;
+```
+
+<Heading as="h4" id="api-eventcontentblock-sha256-propertysignature"><code>EventContentBlock.sha256</code></Heading>
+
+```ts
+readonly sha256: string;
 ```
 
 <Heading as="h4" id="api-eventcontentblock-size-propertysignature"><code>EventContentBlock.size</code></Heading>
@@ -4326,6 +4362,12 @@ readonly memory: boolean;
 readonly modelSelection: boolean;
 ```
 
+<Heading as="h4" id="api-servercapabilities-pdfartifacts-propertysignature"><code>ServerCapabilities.pdfArtifacts</code></Heading>
+
+```ts
+readonly pdfArtifacts: boolean;
+```
+
 <Heading as="h4" id="api-servercapabilities-posture-propertysignature"><code>ServerCapabilities.posture</code></Heading>
 
 ```ts
@@ -4918,6 +4960,12 @@ readonly audio: boolean;
 
 ```ts
 readonly image: boolean;
+```
+
+<Heading as="h4" id="api-sessioncapabilities-pdf-propertysignature"><code>SessionCapabilities.pdf</code></Heading>
+
+```ts
+readonly pdf: boolean;
 ```
 
 <Heading as="h3" id="api-sessionlimits-interface"><code>SessionLimits</code></Heading>

@@ -73,6 +73,7 @@ func TestADR_0294_NewSessionBoundRPCsRequireAffinityClassification(t *testing.T)
 		"ListSessionMcpConnectors": true, "ListGuardrailCoverage": true, "GetGuardrailReviewDetail": true,
 		"ConnectWorkspaceServices": true, "RetryWorkspaceEnrollment": true, "CancelWorkspaceEnrollment": true,
 		"RefreshMcpSources": true,
+		"DownloadPdf":       true,
 	}
 	service := mecatlv1.File_mecatl_v1_harness_proto.Services().ByName("HarnessService")
 	for i := range service.Methods().Len() {

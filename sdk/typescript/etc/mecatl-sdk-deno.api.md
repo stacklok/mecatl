@@ -327,11 +327,19 @@ export interface EventCommon {
 // @public
 export interface EventContent {
     // (undocumented)
+    readonly artifactId: string;
+    // (undocumented)
     readonly data: Uint8Array;
     // (undocumented)
-    readonly kind: 0 | 1 | 2;
+    readonly kind: 0 | 1 | 2 | 3;
     // (undocumented)
     readonly mimeType: string;
+    // (undocumented)
+    readonly name: string;
+    // (undocumented)
+    readonly sha256: string;
+    // (undocumented)
+    readonly size: bigint;
     // (undocumented)
     readonly url: string;
 }
@@ -339,13 +347,15 @@ export interface EventContent {
 // @public
 export interface EventContentBlock {
     // (undocumented)
+    readonly artifactId: string;
+    // (undocumented)
     readonly audience: readonly string[];
     // (undocumented)
     readonly data: Uint8Array;
     // (undocumented)
     readonly description: string;
     // (undocumented)
-    readonly kind: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+    readonly kind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
     // (undocumented)
     readonly lastModified: string;
     // (undocumented)
@@ -354,6 +364,8 @@ export interface EventContentBlock {
     readonly name: string;
     // (undocumented)
     readonly priority: number;
+    // (undocumented)
+    readonly sha256: string;
     // (undocumented)
     readonly size: bigint;
     // (undocumented)
@@ -1276,6 +1288,8 @@ export interface ServerCapabilities {
     // (undocumented)
     readonly modelSelection: boolean;
     // (undocumented)
+    readonly pdfArtifacts: boolean;
+    // (undocumented)
     readonly posture: string;
     // (undocumented)
     readonly reflection: boolean;
@@ -1423,6 +1437,8 @@ export interface SessionCapabilities {
     readonly audio: boolean;
     // (undocumented)
     readonly image: boolean;
+    // (undocumented)
+    readonly pdf: boolean;
 }
 
 // @public

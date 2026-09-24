@@ -131,6 +131,7 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
 			Image: scaps.Image,
 			Audio: scaps.Audio,
+			Pdf:   scaps.PDF,
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.resolvedModelFor(sess)),
 		Placement:     placementMetadataToProto(sess.Placement),

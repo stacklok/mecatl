@@ -3446,6 +3446,7 @@ func sessionEngineFactoryWithTools(
 		// has no tool, so the note is withheld (the model is never told about a
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(runtimeAssets))
+		deps.PromptConfig = applyPDFAttachmentPosture(deps.PromptConfig, sessionCaps.PDF)
 		deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
 		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
@@ -8547,6 +8548,19 @@ func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.
 }
 
 const agentModelDiscoveryPostureNote = "You have a DiscoverModels tool for bounded inspection of the currently resolved model inventory. When the provider is unknown, call DiscoverModels without provider_id; omission searches all selectable providers, and the unfiltered result lists their exact selectable provider IDs. Only use a returned exact (provider_id, model_id) pair with an existing surface that explicitly accepts both, or return it to the caller for selection. DiscoverModels itself cannot switch the session."
+
+const pdfAttachmentPostureNote = "The user may attach a PDF to a chat message. Read the attached PDF as part of that message when answering; a PDF artifact reference belongs to this session and is not a public URL."
+
+func applyPDFAttachmentPosture(pc prompt.Config, enabled bool) prompt.Config {
+	if !enabled {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + pdfAttachmentPostureNote
+	return pc
+}
 
 func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
 	if catalog == nil {

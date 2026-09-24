@@ -35,7 +35,7 @@ var sdkRPCCatalogRowPattern = regexp.MustCompile(`(?s)rpc\(\{\s*` +
 	`shape:\s*"([^"]+)",\s*` +
 	`backingService:\s*"([^"]+)",\s*` +
 	`grpc:\s*grpc\(([A-Za-z0-9]+)\.method\.([A-Za-z0-9]+)\),\s*` +
-	`http:\s*(http|grpcOnly|routeFamily)\(`)
+	`http:\s*(http|httpBinary|grpcOnly|routeFamily)\(`)
 
 func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) {
 	t.Parallel()
@@ -56,7 +56,7 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 		t.Fatalf("stale generated mecatl.v1 service catalog/exclusion decision: %v", missing)
 	}
 
-	wantCounts := map[string]int{"HarnessService": 77, "ScheduleService": 10}
+	wantCounts := map[string]int{"HarnessService": 79, "ScheduleService": 10}
 	wantKeys := make(map[string]struct{}, 90)
 	for service := range targetServices {
 		methods := descriptorsByService[service]
@@ -87,7 +87,7 @@ func TestSDKTypescriptRelease_Scenario1_RPCTransportCatalogParity(t *testing.T) 
 		if row.descriptorMethod != lowerFirstASCII(row.method) {
 			t.Errorf("catalog row %q dispatches through generated method key %q", row.key, row.descriptorMethod)
 		}
-		if row.httpFactory != "http" && row.httpFactory != "grpcOnly" && row.httpFactory != "routeFamily" {
+		if row.httpFactory != "http" && row.httpFactory != "httpBinary" && row.httpFactory != "grpcOnly" && row.httpFactory != "routeFamily" {
 			t.Errorf("catalog row %q has no closed HTTP-side classification", row.key)
 		}
 	}
@@ -116,7 +116,7 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 		t,
 		source,
 		"MECATL_RPC_TRANSPORT_KINDS",
-		stringSet("grpc", "http", "route-family"),
+		stringSet("grpc", "http", "http-binary", "route-family"),
 	)
 	assertSDKRPCTypeUnion(
 		t,
@@ -125,6 +125,7 @@ func TestADR_0304_ExactGRPCOnlySet(t *testing.T) {
 		stringSet(
 			"GRPCTransportClassification",
 			"HTTPTransportClassification",
+			"HTTPBinaryTransportClassification",
 			"RouteFamilyTransportClassification",
 		),
 	)
@@ -302,6 +303,8 @@ func TestSDKTypescriptRelease_Scenario1_StreamingShapeParity(t *testing.T) {
 	}
 
 	wantSentinels := map[string]string{
+		"HarnessService.UploadPdf":           "client_streaming",
+		"HarnessService.DownloadPdf":         "server_streaming",
 		"HarnessService.ApprovePlan":         "server_streaming",
 		"HarnessService.Converse":            "bidi_streaming",
 		"HarnessService.RunTeam":             "server_streaming",

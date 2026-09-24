@@ -1,6 +1,7 @@
 import type {
   DescMessage,
   DescMethodBiDiStreaming,
+  DescMethodClientStreaming,
   DescMethodServerStreaming,
   DescMethodStreaming,
   DescMethodUnary,
@@ -19,7 +20,7 @@ export const RPC_CATALOG_EXCLUDED_SERVICES = ["LocalSessionContextService"] as c
 // END MECATL_RPC_CATALOG_EXCLUDED_SERVICES
 
 // BEGIN MECATL_RPC_TRANSPORT_KINDS
-export type RPCTransportKind = "grpc" | "http" | "route-family";
+export type RPCTransportKind = "grpc" | "http" | "http-binary" | "route-family";
 // END MECATL_RPC_TRANSPORT_KINDS
 
 // BEGIN MECATL_RPC_ROUTE_FAMILIES
@@ -27,19 +28,29 @@ export const RPC_ROUTE_FAMILIES = ["Converse"] as const;
 // END MECATL_RPC_ROUTE_FAMILIES
 
 export type RPCServiceName = (typeof RPC_CATALOG_SERVICES)[number];
-export type RPCStreamingShape = "unary" | "server_streaming" | "bidi_streaming";
+export type RPCStreamingShape =
+  | "unary"
+  | "client_streaming"
+  | "server_streaming"
+  | "bidi_streaming";
 export type RPCRouteFamily = (typeof RPC_ROUTE_FAMILIES)[number];
 export type HTTPMethod = "DELETE" | "GET" | "POST" | "PUT";
 export type HTTPRequestBody = "json" | "none" | "optional-json";
 export type HTTPResponseKind = "json" | "sse";
 
-type RPCDescriptor = DescMethodUnary | DescMethodServerStreaming | DescMethodBiDiStreaming;
+type RPCDescriptor =
+  | DescMethodUnary
+  | DescMethodClientStreaming
+  | DescMethodServerStreaming
+  | DescMethodBiDiStreaming;
 
 type DescriptorForShape<S extends RPCStreamingShape> = S extends "unary"
   ? DescMethodUnary
-  : S extends "server_streaming"
-    ? DescMethodServerStreaming
-    : DescMethodBiDiStreaming;
+  : S extends "client_streaming"
+    ? DescMethodClientStreaming
+    : S extends "server_streaming"
+      ? DescMethodServerStreaming
+      : DescMethodBiDiStreaming;
 
 export interface GRPCTransportClassification<D extends RPCDescriptor = RPCDescriptor> {
   readonly descriptor: D;
@@ -64,6 +75,17 @@ export interface HTTPTransportClassification {
   readonly response: HTTPResponseKind;
 }
 
+/** A reviewed binary route; its stream is handled by the PDF transport path. */
+export interface HTTPBinaryTransportClassification {
+  readonly kind: "http-binary";
+  readonly method: HTTPMethod;
+  readonly pathTemplate: string;
+  readonly pathParameters: readonly string[];
+  readonly queryParameters: readonly string[];
+  readonly requestBody: "binary" | "none";
+  readonly response: "json" | "binary";
+}
+
 export interface RouteFamilyTransportClassification {
   readonly controls: readonly HTTPOnlyControlName[];
   readonly family: RPCRouteFamily;
@@ -74,6 +96,7 @@ export interface RouteFamilyTransportClassification {
 export type RPCTransportClassification =
   | GRPCTransportClassification
   | HTTPTransportClassification
+  | HTTPBinaryTransportClassification
   | RouteFamilyTransportClassification;
 // END MECATL_RPC_TRANSPORT_CLASSIFICATIONS
 
@@ -109,13 +132,15 @@ interface GRPCOnlyReview {
   readonly rationale: string;
 }
 
+type HTTPBinaryReview = HTTPBinaryTransportClassification;
+
 interface RouteFamilyReview {
   readonly controls: readonly HTTPOnlyControlName[];
   readonly family: RPCRouteFamily;
   readonly kind: "route-family";
 }
 
-type HTTPReview = HTTPRouteReview | GRPCOnlyReview | RouteFamilyReview;
+type HTTPReview = HTTPRouteReview | HTTPBinaryReview | GRPCOnlyReview | RouteFamilyReview;
 
 function grpc<D extends RPCDescriptor>(descriptor: D): GRPCTransportClassification<D> {
   return { descriptor, kind: "grpc" };
@@ -146,6 +171,25 @@ function http(
 
 function grpcOnly(rationale: string): GRPCOnlyReview {
   return { kind: "grpc", rationale };
+}
+
+function httpBinary(
+  method: HTTPMethod,
+  pathTemplate: string,
+  pathParameters: readonly string[],
+  queryParameters: readonly string[],
+  requestBody: "binary" | "none",
+  response: "json" | "binary",
+): HTTPBinaryReview {
+  return {
+    kind: "http-binary",
+    method,
+    pathTemplate,
+    pathParameters,
+    queryParameters,
+    requestBody,
+    response,
+  };
 }
 
 function routeFamily(
@@ -416,6 +460,38 @@ const rpcCatalogRows = [
     backingService: "GetGuardrailReviewDetail",
     grpc: grpc(HarnessService.method.getGuardrailReviewDetail),
     http: grpcOnly("No HTTP route is defined for this guardrail RPC."),
+  }),
+  rpc({
+    key: "HarnessService.UploadPdf",
+    service: "HarnessService",
+    method: "UploadPdf",
+    shape: "client_streaming",
+    backingService: "UploadPdf",
+    grpc: grpc(HarnessService.method.uploadPdf),
+    http: httpBinary(
+      "POST",
+      "/v1/sessions/{id}/pdfs",
+      ["id=metadata.session_id"],
+      ["name=metadata.name"],
+      "binary",
+      "json",
+    ),
+  }),
+  rpc({
+    key: "HarnessService.DownloadPdf",
+    service: "HarnessService",
+    method: "DownloadPdf",
+    shape: "server_streaming",
+    backingService: "DownloadPdf",
+    grpc: grpc(HarnessService.method.downloadPdf),
+    http: httpBinary(
+      "GET",
+      "/v1/sessions/{id}/pdfs/{artifact_id}",
+      ["id=session_id", "artifact_id=artifact_id"],
+      [],
+      "none",
+      "binary",
+    ),
   }),
   rpc({
     key: "HarnessService.GetSessionTranscript",

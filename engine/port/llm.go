@@ -139,6 +139,8 @@ type ProviderCapabilities struct {
 	Image bool
 	// Audio reports whether the provider consumes audio parts.
 	Audio bool
+	// PDF reports whether the provider consumes native PDF prompt parts.
+	PDF bool
 	// EmbeddedContext reports whether the provider ADVERTISES embedded-context
 	// support. Inline-text resources always flatten into the prompt text
 	// regardless; this gates whether the adapter declares the capability.

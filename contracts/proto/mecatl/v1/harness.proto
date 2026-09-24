@@ -65,6 +65,13 @@ service HarnessService {
   rpc ListGuardrailCoverage(ListGuardrailCoverageRequest) returns (ListGuardrailCoverageResponse);
   rpc GetGuardrailReviewDetail(GetGuardrailReviewDetailRequest) returns (GetGuardrailReviewDetailResponse);
 
+  // UploadPdf stages a session-owned PDF from one metadata frame followed by
+  // bounded nonempty byte chunks. The server validates and publishes the object.
+  rpc UploadPdf(stream UploadPdfRequest) returns (UploadPdfResponse);
+
+  // DownloadPdf streams one previously published, owned PDF artifact.
+  rpc DownloadPdf(DownloadPdfRequest) returns (stream DownloadPdfResponse);
+
   // GetSessionTranscript returns the authoritative, snapshot-derived human
   // transcript for one owned session. It is read-only and does not use EventLog.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);
@@ -805,6 +812,8 @@ message ServerCapabilities {
   // mcp_refresh is true when direct/global MCP source reconciliation is wired.
   // It is mutually exclusive with workspace_enrollment in a valid deployment.
   bool mcp_refresh = 30;
+  // pdf_artifacts is true when this deployment can store and serve private PDFs.
+  bool pdf_artifacts = 31;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -911,6 +920,9 @@ message SessionCapabilities {
   bool image = 1;
   // audio is true when the resolved provider+model can consume audio prompt parts.
   bool audio = 2;
+  // pdf is true only when the selected model and native provider accept PDFs
+  // and this deployment has PDF artifact storage enabled.
+  bool pdf = 3;
 }
 
 // GetSessionRequest looks up an existing session by id.
@@ -1459,6 +1471,8 @@ message Content {
     KIND_IMAGE = 1;
     // KIND_AUDIO is an audio part.
     KIND_AUDIO = 2;
+    // KIND_PDF is a session-owned PDF artifact reference.
+    KIND_PDF = 3;
   }
   // kind is the media kind (image / audio); UNSPECIFIED is rejected.
   Kind kind = 1;
@@ -1468,6 +1482,12 @@ message Content {
   bytes data = 3;
   // url is the remote reference; empty when inline.
   string url = 4;
+  // artifact_id is required for PDF parts; data/url must be empty.
+  string artifact_id = 5;
+  // Server-filled metadata on transcript/event projections, never client input.
+  string name = 6;
+  int64 size = 7;
+  string sha256 = 8;
 }
 
 // ContentBlock is a typed content block on a tool result (mirrors
@@ -1489,6 +1509,8 @@ message ContentBlock {
     KIND_EMBEDDED_RESOURCE = 5;
     // KIND_STRUCTURED_CONTENT is a JSON structured-content block.
     KIND_STRUCTURED_CONTENT = 6;
+    // KIND_PDF_ARTIFACT is a reference to a session-owned PDF result.
+    KIND_PDF_ARTIFACT = 7;
   }
   // kind is the block kind.
   Kind kind = 1;
@@ -1515,6 +1537,8 @@ message ContentBlock {
   double priority = 11;
   // last_modified is the resource-link last-modified timestamp (RFC 3339).
   string last_modified = 12;
+  string artifact_id = 13;
+  string sha256 = 14;
 }
 
 message RetryStart {
@@ -3900,4 +3924,34 @@ message WorkspaceEnrollment {
   string status = 2;
   uint32 required_services = 3;
   string presentation_url = 4;
+}
+
+// UploadPdfMetadata is the first frame of a PDF upload.
+message UploadPdfMetadata {
+  string session_id = 1;
+  string name = 2;
+  string mime_type = 3;
+}
+
+message UploadPdfRequest {
+  oneof payload {
+    UploadPdfMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+message UploadPdfResponse {
+  string artifact_id = 1;
+  string name = 2;
+  int64 size = 3;
+  string sha256 = 4;
+}
+
+message DownloadPdfRequest {
+  string session_id = 1;
+  string artifact_id = 2;
+}
+
+message DownloadPdfResponse {
+  bytes chunk = 1;
 }

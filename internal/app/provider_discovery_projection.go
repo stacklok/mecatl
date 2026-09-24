@@ -25,12 +25,16 @@ func modelCapabilityCandidate(reg *providerRegistry, view *discoverySnapshot, pi
 	if m, ok := view.lookup(pid, model); ok && m.InputModalities != nil {
 		caps.Image = caps.Image && hasImageModality(m.InputModalities)
 		caps.Audio = caps.Audio && hasAudioModality(m.InputModalities)
+		caps.PDF = caps.PDF && hasPDFModality(m.InputModalities)
 		return caps
 	}
 	image, audio, known := catalogModalities(pid, model)
 	if known {
 		caps.Image = caps.Image && image
 		caps.Audio = caps.Audio && audio
+		caps.PDF = caps.PDF && catalogPDFModality(pid, model)
+	} else {
+		caps.PDF = false
 	}
 	return caps
 }

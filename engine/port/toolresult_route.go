@@ -88,7 +88,7 @@ func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []se
 			// user-message media path. Dropping it here keeps the projection honest
 			// (a tool result never carries legacy media).
 			continue
-		case session.BlockText, session.BlockResourceLink, session.BlockEmbeddedResource, session.BlockStructuredContent:
+		case session.BlockText, session.BlockResourceLink, session.BlockEmbeddedResource, session.BlockStructuredContent, session.BlockPDFArtifact:
 			// Text-summarised blocks survive — no modality gate — UNLESS they render
 			// to empty text: a strict provider (Moonshot via OpenRouter, Anthropic)
 			// rejects an empty text content block, and stateless full-replay makes

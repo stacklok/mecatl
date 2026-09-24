@@ -262,6 +262,8 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"ClearSessionSuccessor":     {KindCallerOwned, "serializes and leases an owner-authorized source before atomically publishing an empty-history placed successor"},
 	"ForkSessionSuccessor":      {KindCallerOwned, "serializes and leases an owner-authorized source before atomically publishing a history-carrying placed successor"},
 	"GetSession":                {KindCallerOwned, "authorizeSession: owner mismatch or absence both return ErrNotFound"},
+	"UploadPdf":                 {KindCallerOwned, "checks exact session ownership before the PDF upload seam can accept any bytes"},
+	"DownloadPdf":               {KindCallerOwned, "checks exact session ownership before the PDF download seam can release any bytes"},
 	"WithAuthorizedSession":     {KindCallerOwned, "ownership preflight excludes foreign lock contention; authoritative reload under runEntryMu precedes the caller-owned effect"},
 	"GetTranscript":             {KindCallerOwned, "one SessionStore.Load followed by authorizeSession; no run-entry side effects"},
 	"LoadSession":               {KindCallerOwned, "authorizeSession before rehydration"},

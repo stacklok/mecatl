@@ -95,6 +95,7 @@ var errorRegistry = []errorCodeEntry{
 	{Sentinel: ErrTeamNotFound, Code: "team_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Team not found"},
 	{Sentinel: ErrChildNotFound, Code: "child_not_found", GRPC: codes.NotFound, HTTPStatus: http.StatusNotFound, Title: "Child agent not found or already finished"},
 	{Sentinel: ErrLearningUnavailable, Code: "learning_unavailable", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "Learning proposals are not configured"},
+	{Sentinel: ErrPDFArtifactsUnavailable, Code: "pdf_artifacts_unavailable", GRPC: codes.Unimplemented, HTTPStatus: http.StatusNotImplemented, Title: "PDF artifacts are unavailable"},
 	{Sentinel: ErrAttemptVersionConflict, Code: "attempt_version_conflict", GRPC: codes.Aborted, HTTPStatus: http.StatusConflict, Title: "Learning attempt version conflict"},
 	{Sentinel: ErrAttemptTerminalConflict, Code: "attempt_terminal_conflict", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Learning attempt terminal conflict"},
 	{Sentinel: ErrAttemptLiveClaimConflict, Code: "attempt_live_claim_conflict", GRPC: codes.FailedPrecondition, HTTPStatus: http.StatusConflict, Title: "Learning attempt has a live claim"},

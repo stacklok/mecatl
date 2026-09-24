@@ -97,7 +97,7 @@ describe("session projections", () => {
         providerId: "provider",
         reasoningEffort: "high",
       },
-      sessionCapabilities: { audio: true, image: false },
+      sessionCapabilities: { audio: true, image: false, pdf: false },
       sessionId: "session",
       state: "future-state",
       title: {
@@ -185,7 +185,18 @@ describe("session projections", () => {
       kind: "main",
       messages: [
         {
-          parts: [{ data: new Uint8Array([1, 2]), kind: 1, mimeType: "image/png", url: "" }],
+          parts: [
+            {
+              artifactId: "",
+              data: new Uint8Array([1, 2]),
+              kind: 1,
+              mimeType: "image/png",
+              name: "",
+              sha256: "",
+              size: 0n,
+              url: "",
+            },
+          ],
           role: "assistant",
           text: "hello",
           toolCalls: [{ args: "{}", id: "call", name: "Read" }],
@@ -302,6 +313,7 @@ describe("session projections", () => {
         "mcpRefresh",
         "memory",
         "modelSelection",
+        "pdfArtifacts",
         "posture",
         "reflection",
         "scheduling",
@@ -318,7 +330,7 @@ describe("session projections", () => {
         "worktrees",
       ].sort(),
     );
-    expect(fields(SessionCapabilitiesSchema)).toEqual(["audio", "image"]);
+    expect(fields(SessionCapabilitiesSchema)).toEqual(["audio", "image", "pdf"]);
     expect(fields(ManualDreamCapabilitiesSchema)).toEqual(["projectMemory", "userModel"]);
     expect(fields(DreamTargetCapabilitySchema)).toEqual([
       "decide",
