@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 
 import { getAuthSessionOptions, listSessionsQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

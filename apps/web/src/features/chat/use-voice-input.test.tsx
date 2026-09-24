@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { useState } from "react";
