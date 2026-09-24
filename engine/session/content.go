@@ -259,9 +259,10 @@ func validPDFID(id string) bool {
 		return false
 	}
 	for _, r := range id {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
-			return false
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
 		}
+		return false
 	}
 	return true
 }
@@ -283,9 +284,10 @@ func validPDFSHA256(sha256 string) bool {
 		return false
 	}
 	for _, ch := range sha256 {
-		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
-			return false
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') {
+			continue
 		}
+		return false
 	}
 	return true
 }
