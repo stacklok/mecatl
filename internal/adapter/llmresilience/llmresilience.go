@@ -303,6 +303,11 @@ const (
 	decisionTerminal attemptDecision = "terminal"
 )
 
+// diagnosticUnknown is the shared "no classification available" string used
+// across the plain-string diagnostic fields (retry disposition, stream
+// progress, suppression reason, failure class) so the literal isn't repeated.
+const diagnosticUnknown = "unknown"
+
 type replaySuppressedReason string
 
 const (
@@ -366,6 +371,16 @@ func (s *attemptStructure) fields() (*bool, string) {
 	return s.observed, s.outcome
 }
 
+// attemptStructuralFields reports an attempt's structural evidence, unless the
+// attempt has no structure tracker or timed out before establishment (a
+// per-attempt timeout carries no meaningful stream-structural evidence).
+func attemptStructuralFields(attempt attemptDiagnostic, err error) (*bool, string) {
+	if attempt.structure == nil || errors.Is(err, errFirstChunkTimeout) {
+		return nil, ""
+	}
+	return attempt.structure.fields()
+}
+
 // logAttemptDecision is the single failed-attempt decision log path. It records
 // causal classification and sanitized errors.As metadata without rendering the
 // raw error, which may contain response bodies, URLs, headers, or credentials.
@@ -391,9 +406,7 @@ func (p *resilientProvider) logAttemptDecision(
 		Decision:         string(decision),
 		FailureClass:     attemptFailureClass(err, metadata),
 	}
-	if attempt.structure != nil && !errors.Is(err, errFirstChunkTimeout) {
-		observation.ProviderTerminalObserved, observation.StreamOutcome = attempt.structure.fields()
-	}
+	observation.ProviderTerminalObserved, observation.StreamOutcome = attemptStructuralFields(attempt, err)
 	if id, ok := port.SessionIDFromContext(attempt.ctx); ok {
 		observation.SessionID = id
 	}
@@ -476,7 +489,7 @@ func retryDispositionDiagnostic(disposition session.RetryDisposition) string {
 	case session.RetryDispositionPermanent:
 		return "permanent"
 	default:
-		return "unknown"
+		return diagnosticUnknown
 	}
 }
 
@@ -489,7 +502,7 @@ func streamProgressDiagnostic(progress session.StreamProgress) string {
 	case session.StreamProgressComplete:
 		return "complete"
 	default:
-		return "unknown"
+		return diagnosticUnknown
 	}
 }
 
@@ -583,7 +596,7 @@ func attemptFailureClass(err error, metadata attemptErrorMetadata) string {
 	if metadata.inBandStatus != 0 || metadata.providerCode != "" {
 		return "provider"
 	}
-	return "unknown"
+	return diagnosticUnknown
 }
 
 func transportFailureClass(err error) string {
@@ -642,8 +655,8 @@ func (p *resilientProvider) observeFinalStructure(attempt attemptDiagnostic, pro
 	}
 	port.ObserveAttempt(attempt.ctx, session.NetworkAttemptPayload{
 		Attempt: attempt.attempt, MaxAttempts: attempt.maxAttempts, ElapsedMs: elapsed.Milliseconds(),
-		RetryDisposition: "unknown", StreamProgress: streamProgressDiagnostic(progress),
-		Decision: "terminal", SuppressionReason: "unknown", FailureClass: "unknown",
+		RetryDisposition: diagnosticUnknown, StreamProgress: streamProgressDiagnostic(progress),
+		Decision: "terminal", SuppressionReason: diagnosticUnknown, FailureClass: diagnosticUnknown,
 		ProviderTerminalObserved: observed, StreamOutcome: outcome,
 	})
 }
