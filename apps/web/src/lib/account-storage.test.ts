@@ -132,15 +132,15 @@ describe("account-scoped browser storage", () => {
     ]);
   });
 
-  it("keeps data for the same account and on first sight of an account", () => {
+  it("keeps marked data for the same account and clears unmarked data on first sight", () => {
     const same = memoryStore({ "studio.account": "alice", "studio.chat.folders": "[]" });
     expect(reconcileAccount("alice", same)).toBe(false);
     expect(same.data.get("studio.chat.folders")).toBe("[]");
 
     const first = memoryStore({ "studio.chat.folders": "[]" });
-    expect(reconcileAccount("alice", first)).toBe(false);
+    expect(reconcileAccount("alice", first)).toBe(true);
     expect(first.data.get("studio.account")).toBe("alice");
-    expect(first.data.get("studio.chat.folders")).toBe("[]");
+    expect(first.data.get("studio.chat.folders")).toBeUndefined();
 
     expect(reconcileAccount(undefined, first)).toBe(false);
   });
