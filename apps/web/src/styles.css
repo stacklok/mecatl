@@ -350,7 +350,7 @@
      mobile glyphs need the same fixed 20px size as explicit size-4 icons. */
   svg.lucide.size-4,
   svg.lucide.h-4.w-4,
-  [data-slot="button"] svg.lucide:not([class*="size-"]),
+  [data-slot="button"] svg.lucide:not([class*="size-"]):not([class*="h-"]):not([class*="w-"]),
   [data-slot="dropdown-menu-item"] svg.lucide:not([class*="size-"]),
   [data-slot="dropdown-menu-checkbox-item"] svg.lucide:not([class*="size-"]),
   [data-slot="dropdown-menu-radio-item"] svg.lucide:not([class*="size-"]),

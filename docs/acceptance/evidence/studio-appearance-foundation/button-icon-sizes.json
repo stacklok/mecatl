@@ -1,0 +1,24 @@
+[
+  {
+    "width": 499,
+    "bare": {
+      "width": "20px",
+      "height": "20px"
+    },
+    "explicitLarge": {
+      "width": "27px",
+      "height": "27px"
+    }
+  },
+  {
+    "width": 500,
+    "bare": {
+      "width": "16px",
+      "height": "16px"
+    },
+    "explicitLarge": {
+      "width": "24px",
+      "height": "24px"
+    }
+  }
+]

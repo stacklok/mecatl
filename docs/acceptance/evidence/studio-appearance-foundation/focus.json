@@ -3,6 +3,7 @@
     "label": "light desktop OptionField trigger",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 2px, rgb(107, 107, 117) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(107, 107, 117) none 1px"
   },
@@ -10,6 +11,7 @@
     "label": "light desktop Button",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 2px, rgb(107, 107, 117) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(107, 107, 117) none 1px"
   },
@@ -17,13 +19,15 @@
     "label": "light desktop Switch",
     "active": true,
     "focusVisible": true,
-    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
-    "outline": "rgb(107, 107, 117) none 3px"
+    "visibleFocus": true,
+    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(107, 107, 117) 0px 0px 0px 2px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
+    "outline": "rgb(107, 107, 117) none 1px"
   },
   {
     "label": "light desktop DropdownMenu option",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(107, 107, 117) 0px 0px 0px 2px inset, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(107, 107, 117) none 1px"
   },
@@ -31,6 +35,7 @@
     "label": "light desktop Dialog close",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 2px, rgb(107, 107, 117) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(107, 107, 117) none 1px"
   },
@@ -38,13 +43,15 @@
     "label": "light desktop Input",
     "active": true,
     "focusVisible": true,
-    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+    "visibleFocus": true,
+    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(107, 107, 117) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(107, 107, 117) none 1px"
   },
   {
     "label": "light mobile OptionField trigger",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(255, 255, 255) 0px 0px 0px 2px, rgb(107, 107, 117) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(107, 107, 117) none 1px"
   },
@@ -52,6 +59,7 @@
     "label": "light mobile Sheet radio",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(107, 107, 117) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(107, 107, 117) auto 1px"
   },
@@ -59,6 +67,7 @@
     "label": "dark desktop OptionField trigger",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(24, 24, 27) 0px 0px 0px 2px, rgb(160, 160, 160) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(160, 160, 160) none 1px"
   },
@@ -66,6 +75,7 @@
     "label": "dark desktop Button",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(24, 24, 27) 0px 0px 0px 2px, rgb(160, 160, 160) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(160, 160, 160) none 1px"
   },
@@ -73,13 +83,15 @@
     "label": "dark desktop Switch",
     "active": true,
     "focusVisible": true,
-    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
-    "outline": "rgb(160, 160, 160) none 3px"
+    "visibleFocus": true,
+    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(160, 160, 160) 0px 0px 0px 2px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
+    "outline": "rgb(160, 160, 160) none 1px"
   },
   {
     "label": "dark desktop DropdownMenu option",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(160, 160, 160) 0px 0px 0px 2px inset, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(160, 160, 160) none 1px"
   },
@@ -87,6 +99,7 @@
     "label": "dark desktop Dialog close",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(24, 24, 27) 0px 0px 0px 2px, rgb(160, 160, 160) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(160, 160, 160) none 1px"
   },
@@ -94,13 +107,15 @@
     "label": "dark desktop Input",
     "active": true,
     "focusVisible": true,
-    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+    "visibleFocus": true,
+    "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(160, 160, 160) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(160, 160, 160) none 1px"
   },
   {
     "label": "dark mobile OptionField trigger",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(24, 24, 27) 0px 0px 0px 2px, rgb(160, 160, 160) 0px 0px 0px 4px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(160, 160, 160) none 1px"
   },
@@ -108,6 +123,7 @@
     "label": "dark mobile Sheet radio",
     "active": true,
     "focusVisible": true,
+    "visibleFocus": true,
     "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgb(160, 160, 160) 0px 0px 0px 2px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
     "outline": "rgb(160, 160, 160) auto 1px"
   }
