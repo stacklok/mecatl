@@ -19,8 +19,7 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 
 | Key | Action |
 | --- | --- |
-| `enter` | Complete the selected path when the `@` file list is visible. Otherwise, send a prompt; while work is running, steer when the server supports it or queue a follow-up. |
-| `esc` in the `@` file list | Dismiss file completion. While the list is visible, this takes precedence over cancelling a running turn. |
+| `enter` | Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise. |
 | `shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter` | Insert a newline. Your terminal decides which of these chords it can send; see [Newline chords and your terminal](#newline-chords-and-your-terminal). |
 | `↑` | With empty input, bring queued follow-ups back for editing. |
 | `ctrl+u` | Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable). |
