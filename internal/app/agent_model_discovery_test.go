@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -247,10 +248,15 @@ func TestInvariant_agent_model_discovery_Scenario2_ExactFilterValidation(t *test
 		`{"provider_id":"beta "}`,
 		`{"model_id":"shared\u0085model"}`,
 		fmt.Sprintf(`{"provider_id":%q}`, strings.Repeat("p", 513)),
+		`{"Provider_Id":"beta"}`,
+		`{"pRoViDeR_Id":"beta"}`,
+		`{"provider_id":"alpha","provider_id":"beta"}`,
+		`{"provider_id":"alpha","Provider_Id":"beta"}`,
+		`{"provider_id":null}`,
 	} {
 		result, _ := executeDiscovery(t, inventory, args)
-		if !result.IsError {
-			t.Errorf("invalid exact filter accepted: %s", args)
+		if !result.IsError || len(result.Content) > maxAgentModelDiscoveryErrorBytes || strings.Contains(result.Content, "alpha") || strings.Contains(result.Content, "beta") {
+			t.Errorf("invalid raw or exact filter accepted or disclosed: args=%q result=%+v", args, result)
 		}
 	}
 	_, exact := executeDiscovery(t, inventory, `{"provider_id":"beta","model_id":"Shared-Model"}`)
@@ -313,15 +319,31 @@ func TestInvariant_agent_model_discovery_Scenario3_InventoryBoundCursor(t *testi
 	variants := map[string][]*mecatlv1.ModelInfo{
 		"addition": append(append([]*mecatlv1.ModelInfo(nil), original...), &mecatlv1.ModelInfo{ProviderId: "zeta", Id: "added"}),
 		"removal":  original[:2],
-		"metadata": {
-			{ProviderId: "beta", Id: "shared-model", DisplayName: "secret-metadata-marker", Reasoning: true, ContextLimit: 200000, Image: true},
-			original[1], original[2],
-		},
+	}
+	for _, field := range []string{"provider_id", "model_id", "display_name", "image", "reasoning", "context_limit"} {
+		changed := append([]*mecatlv1.ModelInfo(nil), original...)
+		modelCopy := copyModelInfo(original[0])
+		changed[0] = &modelCopy
+		switch field {
+		case "provider_id":
+			changed[0].ProviderId = "changed-provider"
+		case "model_id":
+			changed[0].Id = "changed-model"
+		case "display_name":
+			changed[0].DisplayName = "changed-display"
+		case "image":
+			changed[0].Image = !changed[0].Image
+		case "reasoning":
+			changed[0].Reasoning = !changed[0].Reasoning
+		case "context_limit":
+			changed[0].ContextLimit++
+		}
+		variants[field] = changed
 	}
 	for name, changed := range variants {
 		inventory.SetModels(changed)
 		stale, _ := executeDiscovery(t, inventory, fmt.Sprintf(`{"cursor":%q}`, first.NextCursor))
-		if !stale.IsError || !strings.Contains(stale.Content, "restart without a cursor") || strings.Contains(stale.Content, "secret-metadata-marker") {
+		if !stale.IsError || !strings.Contains(stale.Content, "restart without a cursor") || strings.Contains(stale.Content, first.NextCursor) {
 			t.Errorf("%s did not produce fixed restart error: %+v", name, stale)
 		}
 	}
@@ -372,11 +394,24 @@ func TestInvariant_agent_model_discovery_Scenario3_CursorValidation(t *testing.T
 	for _, invalidCursor := range invalidCursors {
 		invalidArgs = append(invalidArgs, fmt.Sprintf(`{"cursor":%q}`, invalidCursor))
 	}
-	for _, args := range invalidArgs {
+	for _, invalidCursor := range invalidCursors {
+		args := fmt.Sprintf(`{"cursor":%q}`, invalidCursor)
 		result, _ := executeDiscovery(t, inventory, args)
-		if !result.IsError || len(result.Content) > maxAgentModelDiscoveryErrorBytes || strings.Contains(result.Content, cursor) {
+		if !result.IsError || len(result.Content) > maxAgentModelDiscoveryErrorBytes || strings.Contains(result.Content, invalidCursor) {
 			t.Errorf("invalid cursor accepted or disclosed: args length=%d result=%+v", len(args), result)
 		}
+	}
+	for _, args := range invalidArgs[:3] {
+		result, _ := executeDiscovery(t, inventory, args)
+		if !result.IsError || len(result.Content) > maxAgentModelDiscoveryErrorBytes || strings.Contains(result.Content, cursor) {
+			t.Errorf("invalid cursor arguments accepted or disclosed: args length=%d result=%+v", len(args), result)
+		}
+	}
+	oversizedFilter := strings.Repeat("<", maxAgentModelDiscoveryFilterBytes)
+	oversizedInventory := newResolvedModelInventory([]*mecatlv1.ModelInfo{{ProviderId: oversizedFilter, Id: "one"}, {ProviderId: oversizedFilter, Id: "two"}})
+	unrepresentableCursor, _ := executeDiscovery(t, oversizedInventory, fmt.Sprintf(`{"provider_id":%q,"limit":1}`, oversizedFilter))
+	if !unrepresentableCursor.IsError || unrepresentableCursor.Content != agentModelDiscoveryOutputError {
+		t.Fatalf("overlong emitted cursor was usable instead of rejected: %+v", unrepresentableCursor)
 	}
 	result, got := executeDiscovery(t, inventory, fmt.Sprintf(`{"cursor":%q}`, cursor))
 	requireSuccess(t, result)
@@ -401,6 +436,24 @@ func TestInvariant_agent_model_discovery_Scenario3_ByteBoundMakesProgress(t *tes
 	if continued.Returned == 0 || continued.Models[0].ModelID != fmt.Sprintf("m-%02d", first.Returned) || strings.Contains(continuedResult.Content, `"providers"`) {
 		t.Fatalf("continuation skipped first unreturned row or repeated facet: %+v", continued)
 	}
+	facetModels := make([]*mecatlv1.ModelInfo, 0, 1000)
+	for i := range 1000 {
+		facetModels = append(facetModels, &mecatlv1.ModelInfo{ProviderId: fmt.Sprintf("p%04d", i), Id: "same"})
+	}
+	facetInventory := newResolvedModelInventory(facetModels)
+	facetOnly, _ := executeDiscovery(t, facetInventory, `{"limit":1}`)
+	if !facetOnly.IsError || facetOnly.Content != agentModelDiscoveryOutputError {
+		t.Fatalf("unrepresentable provider facet did not return bounded error: %+v", facetOnly)
+	}
+	filteredFacet, filtered := executeDiscovery(t, facetInventory, `{"query":"same","limit":1}`)
+	requireSuccess(t, filteredFacet)
+	if filtered.NextCursor == "" || strings.Contains(filteredFacet.Content, `"providers"`) {
+		t.Fatalf("filtered page did not remain usable without facets: %+v", filtered)
+	}
+	continuedFacet, _ := executeDiscovery(t, facetInventory, fmt.Sprintf(`{"cursor":%q}`, filtered.NextCursor))
+	if continuedFacet.IsError || strings.Contains(continuedFacet.Content, `"providers"`) {
+		t.Fatalf("cursor page did not remain usable without facets: %+v", continuedFacet)
+	}
 	unrepresentable := newResolvedModelInventory([]*mecatlv1.ModelInfo{{ProviderId: strings.Repeat("p", maxAgentModelDiscoveryOutputBytes), Id: "m"}})
 	tooLarge, _ := executeDiscovery(t, unrepresentable, `{}`)
 	if !tooLarge.IsError || len(tooLarge.Content) > maxAgentModelDiscoveryErrorBytes {
@@ -411,10 +464,15 @@ func TestInvariant_agent_model_discovery_Scenario3_ByteBoundMakesProgress(t *tes
 func TestInvariant_agent_model_discovery_Scenario4_SystemPromptContainsWorkflowNotInventory(t *testing.T) {
 	const model = "gpt-5"
 	const inventoryMarker = "private-live-model-marker"
+	const inventoryCount = 10007
+	liveInventory := make([]*mecatlv1.ModelInfo, 0, inventoryCount)
+	for i := range inventoryCount {
+		liveInventory = append(liveInventory, &mecatlv1.ModelInfo{ProviderId: "live-provider-marker", Id: fmt.Sprintf("%s-%d", inventoryMarker, i)})
+	}
 	var captured prompt.Layered
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { captured = req.System })}, mockllm.TextTurn("ok"))
 	reg := regForTest(provider, providerOpenAI, model)
-	assets := catalogAssets{modelInventory: newResolvedModelInventory([]*mecatlv1.ModelInfo{{ProviderId: "live-provider-marker", Id: inventoryMarker}})}
+	assets := catalogAssets{modelInventory: newResolvedModelInventory(liveInventory)}
 	factory := sessionEngineFactory(Config{Model: model}, reg, provider, memstore.New(), permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil, prompt.RootAssembler{}, assets, nil)
 	built, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
 	if err != nil {
@@ -430,7 +488,7 @@ func TestInvariant_agent_model_discovery_Scenario4_SystemPromptContainsWorkflowN
 			t.Errorf("StablePrefix missing workflow clause %q", clause)
 		}
 	}
-	for _, forbidden := range []string{inventoryMarker, "live-provider-marker"} {
+	for _, forbidden := range []string{inventoryMarker, "live-provider-marker", strconv.Itoa(len(liveInventory))} {
 		if strings.Contains(captured.StablePrefix, forbidden) {
 			t.Errorf("StablePrefix embedded live inventory value %q", forbidden)
 		}

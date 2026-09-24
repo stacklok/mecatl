@@ -242,6 +242,9 @@ func renderAgentModelDiscoveryPage(projection []agentModelDiscoveryModel, scope 
 
 	for next := scope.Offset; next < len(matching) && len(out.Models) < scope.Limit; next++ {
 		candidate := nextAgentModelDiscoveryResult(out, matching[next], next+1, len(matching), scope, digest)
+		if candidate.Truncated && candidate.NextCursor == "" {
+			break
+		}
 		encoded, err := json.Marshal(candidate)
 		if err != nil || len(encoded) > maxAgentModelDiscoveryOutputBytes {
 			break
@@ -357,9 +360,8 @@ func parseAgentModelDiscoveryArgs(raw json.RawMessage) (agentModelDiscoveryArgs,
 	if len(raw) == 0 {
 		return args, ""
 	}
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return agentModelDiscoveryArgs{}, agentModelDiscoveryInvalidArgs
+	if errMessage := validateAgentModelDiscoveryRawFields(raw); errMessage != "" {
+		return agentModelDiscoveryArgs{}, errMessage
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -369,9 +371,6 @@ func parseAgentModelDiscoveryArgs(raw json.RawMessage) (agentModelDiscoveryArgs,
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return agentModelDiscoveryArgs{}, agentModelDiscoveryInvalidArgs
-	}
-	if errMessage := validateAgentModelDiscoveryRawFields(raw); errMessage != "" {
-		return agentModelDiscoveryArgs{}, errMessage
 	}
 	if errMessage := normalizeAndValidateAgentModelDiscoveryArgs(&args); errMessage != "" {
 		return agentModelDiscoveryArgs{}, errMessage
@@ -407,21 +406,46 @@ func normalizeAndValidateAgentModelDiscoveryArgs(args *agentModelDiscoveryArgs) 
 }
 
 func validateAgentModelDiscoveryRawFields(raw json.RawMessage) string {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !utf8.Valid(raw) {
 		return agentModelDiscoveryInvalidArgs
 	}
-	for _, name := range []string{"provider_id", "model_id", "query", "cursor", "limit"} {
-		value, ok := fields[name]
-		if !ok {
-			continue
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return agentModelDiscoveryInvalidArgs
+	}
+	allowed := map[string]struct{}{
+		"provider_id": {}, "model_id": {}, "query": {}, "cursor": {}, "limit": {},
+	}
+	seen := make(map[string]struct{}, len(allowed))
+	for decoder.More() {
+		token, err := decoder.Token()
+		name, ok := token.(string)
+		if err != nil || !ok {
+			return agentModelDiscoveryInvalidArgs
 		}
-		if !utf8.Valid(value) {
+		if _, ok := allowed[name]; !ok {
+			return agentModelDiscoveryInvalidArgs
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return agentModelDiscoveryInvalidArgs
+		}
+		seen[name] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil || !utf8.Valid(value) {
 			return agentModelDiscoveryInvalidArgs
 		}
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return "invalid model discovery arguments; values cannot be null"
 		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return agentModelDiscoveryInvalidArgs
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return agentModelDiscoveryInvalidArgs
 	}
 	return ""
 }
@@ -485,8 +509,15 @@ func containsUnicodeControl(value string) bool {
 }
 
 func encodeAgentModelDiscoveryCursor(cursor agentModelDiscoveryCursor) string {
-	encoded, _ := json.Marshal(cursor)
-	return base64.RawURLEncoding.EncodeToString(encoded)
+	encoded, err := json.Marshal(cursor)
+	if err != nil {
+		return ""
+	}
+	cursorValue := base64.RawURLEncoding.EncodeToString(encoded)
+	if len(cursorValue) > maxAgentModelDiscoveryCursorBytes {
+		return ""
+	}
+	return cursorValue
 }
 
 func decodeAgentModelDiscoveryCursor(encoded string) (agentModelDiscoveryCursor, bool) {
