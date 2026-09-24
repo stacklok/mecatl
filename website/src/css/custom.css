@@ -216,8 +216,26 @@ td, th {
   padding: 0.6rem 0.85rem;
 }
 
+.grpc-service-table table {
+  table-layout: fixed;
+}
+
+.grpc-service-table th:first-child {
+  width: 34%;
+}
+
+.grpc-service-table th:nth-child(2),
+.grpc-service-table th:nth-child(3) {
+  width: 12%;
+}
+
+.grpc-service-table th:last-child {
+  width: 42%;
+}
+
 .grpc-service-table td {
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .grpc-mobile-label {
@@ -376,7 +394,6 @@ tr:nth-child(even) {
     min-width: 0;
     padding: 0.65rem 0.85rem;
     border: 0;
-    overflow-wrap: anywhere;
   }
 
   .grpc-service-table td:first-child,
