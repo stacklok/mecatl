@@ -478,11 +478,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           return;
         }
         lastInventoryRow.current = row;
-        if (
-          refreshed &&
-          !activeRun.current &&
-          isActiveSessionState(row?.state)
-        ) {
+        if (refreshed && !activeRun.current && isActiveSessionState(row?.state)) {
           setReconnectGeneration((current) => current + 1);
         }
         const notice = awayTracker.current.resume(
@@ -1168,13 +1164,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           if (title) adoptTitle(title);
         }
         if (event.kind === "user_prompt" && (replay || event.delivery)) {
-          activePrompt = event.delivery ? event.text : payloadText(event.payload) || event.text;
+          const promptText = event.delivery ? event.text : payloadText(event.payload) || event.text;
+          activePrompt = promptText;
           const images = payloadImages(event.payload);
           activeAssistantId = crypto.randomUUID();
           setMessages((current) => [
             ...current,
             {
-              content: activePrompt,
+              content: promptText,
               delivery: event.delivery,
               id: crypto.randomUUID(),
               images: images.length ? images : undefined,
