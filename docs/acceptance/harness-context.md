@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — separates harness source authority from execution across composition, trust, and public engine interfaces.
-**Decision record:** [ADR 0357](../adr/0357-harness-context-source-authority.md)
+**Decision record:** [ADR 0359](../adr/0359-harness-context-source-authority.md)
 **Phase:** harness context model and shared source binding
 **Status:** proposed, 2026-09-23. Model and exact interface contract ready for human Plan / Interface review; runtime behavior is not implemented.
 **Delivery:** Split docs → shared implementation → PR #580 / Redis siblings. The operator explicitly authorizes the shared implementation to proceed as a draft stacked PR from the exact proposed-docs commit before this plan merges. This narrow exception does not mark the plan approved, authorize any merge, relax contract-drift stops, or remove either human merge gate.
@@ -314,13 +314,13 @@ has already passed.
 
 **Acceptance:**
 - AC1.1: The same configured source selection provides the same admitted context with two different execution namespaces, without deriving sources from either execution root.
-  - verify: `TestADR_0357_HarnessContext_Scenario1_SourceIndependentOfExecution`
+  - verify: `TestADR_0359_HarnessContext_Scenario1_SourceIndependentOfExecution`
 - AC1.2: Conflicting instructions and customizations planted only in an unselected execution namespace do not enter automatic context assembly, the command palette, or customization catalogs.
-  - verify: `TestADR_0357_HarnessContext_Scenario1_UnselectedExecutionContentIgnored`
+  - verify: `TestADR_0359_HarnessContext_Scenario1_UnselectedExecutionContentIgnored`
 - AC1.3: An explicitly configured source can read execution files through their actual backend, and admitted contents reach the harness without reopening a virtual root as a host path.
-  - verify: `TestADR_0357_HarnessContext_Scenario1_ExplicitExecutionFileSource`
+  - verify: `TestADR_0359_HarnessContext_Scenario1_ExplicitExecutionFileSource`
 - AC1.4: No-FS execution retains admitted logical sources, including file-backed sources inaccessible to agent file tools; file tools and Shell remain unavailable.
-  - verify: `TestADR_0357_HarnessContext_Scenario1_NoFSKeepsConfiguredSources`
+  - verify: `TestADR_0359_HarnessContext_Scenario1_NoFSKeepsConfiguredSources`
 
 ### Scenario 2 - Discovery and invocation share source authority
 
@@ -332,11 +332,11 @@ ordinary misses and established fail-soft behavior remain distinct from authorit
 
 **Acceptance:**
 - AC2.1: For a stable three-source fixture, palette listing and prompt expansion/body retrieval expose the same visible names and select the same winners, including a positive control with conflicting same-name execution content; a listed name without a retrievable body and a retrieved name absent from the stable listing fail conformance.
-  - verify: `TestADR_0357_HarnessContext_Scenario2_PaletteAndExpansionAgree`
+  - verify: `TestADR_0359_HarnessContext_Scenario2_PaletteAndExpansionAgree`
 - AC2.2: A selected command source edit between calls appears on the next List/Expand observation. This holds for API-backed fixtures and for explicitly selected execution-file sources; merely changing an unselected execution file has no effect, and no cross-call transaction snapshot is implied.
-  - verify: `TestADR_0357_HarnessContext_Scenario2_SelectedCommandsRemainLive`
+  - verify: `TestADR_0359_HarnessContext_Scenario2_SelectedCommandsRemainLive`
 - AC2.3: With an independent healthy source and unavailable execution backend, owner-authorized command listing succeeds without calling execution reattachment. An explicitly execution-file-backed source still reports its own backend failure according to its source contract.
-  - verify: `TestADR_0357_HarnessContext_Scenario2_SourceOnlyDiscovery`
+  - verify: `TestADR_0359_HarnessContext_Scenario2_SourceOnlyDiscovery`
 
 ### Scenario 3 - Project instructions and customizations preserve their contracts
 
@@ -346,31 +346,31 @@ The source boundaries build on [ADR 0081](../adr/0081-rules-source-port.md),
 
 **Acceptance:**
 - AC3.1: Root instructions are read once per run from the configured source, refresh on a subsequent run, and remain ephemeral. Both manifest-enabled and ordinary assembly consume the same source with unchanged project provenance.
-  - verify: `TestADR_0357_HarnessContext_Scenario3_ProjectInstructionsPerRun`
+  - verify: `TestADR_0359_HarnessContext_Scenario3_ProjectInstructionsPerRun`
 - AC3.2: The file-backed source preserves root-only AGENTS.md/CLAUDE.md precedence, whitespace-only fallback, absence, genuine read errors, and existing framing without reading unrelated execution files.
-  - verify: `TestADR_0357_HarnessContext_Scenario3_RootDiscoveryCompatibility`
+  - verify: `TestADR_0359_HarnessContext_Scenario3_RootDiscoveryCompatibility`
 - AC3.3: Rules, skills, agent definitions, and instruction manifests preserve their current lifetimes, admission, caps, and source-specific error behavior. Fixed-origin sources stamp their registered tier; trusted mixed local adapters preserve only allowed per-entry user/project/explicit tiers; a fixed-driver remote source cannot promote a payload tier. Root instructions remain project-tier and project admission occurs before overrides.
-  - verify: `TestADR_0357_HarnessContext_Scenario3_ProvenanceAndSourceContracts`
+  - verify: `TestADR_0359_HarnessContext_Scenario3_ProvenanceAndSourceContracts`
 - AC3.4: Source reads never update the execution ReadLedger, including when both capabilities reference the same files. Sharing a context source does not share session read evidence.
-  - verify: `TestADR_0357_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits`
+  - verify: `TestADR_0359_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits`
 - AC3.5: Inherited sources do not widen a child's existing specialist catalog, profile, trust admission, or delegation capabilities; an isolated execution fork alone does not retarget its context sources.
-  - verify: `TestADR_0357_HarnessContext_Scenario3_ChildAttenuationPreserved`
+  - verify: `TestADR_0359_HarnessContext_Scenario3_ChildAttenuationPreserved`
 
 ### Scenario 4 - Source failure does not change authority
 
-The [source-authority ADR](../adr/0357-harness-context-source-authority.md) separates
+The [source-authority ADR](../adr/0359-harness-context-source-authority.md) separates
 configuration failure from optional absence. Restart proofs exercise current-policy rebinding without
 a durable context identity or legacy-state rejection.
 
 **Acceptance:**
 - AC4.1: Optional absence and ordinary configured-chain lookup retain established behavior. Failure resolving a required source is reported rather than replaced by execution files, process cwd, or an unrelated default.
-  - verify: `TestADR_0357_HarnessContext_Scenario4_NoUnconfiguredAuthorityFallback`
+  - verify: `TestADR_0359_HarnessContext_Scenario4_NoUnconfiguredAuthorityFallback`
 - AC4.2: Both shared-file and independent-source paths preserve source-specific error semantics; a configured fail-soft chain can still consult its next admitted source without inventing a new source.
-  - verify: `TestADR_0357_HarnessContext_Scenario4_ConfiguredChainFailureSemantics`
+  - verify: `TestADR_0359_HarnessContext_Scenario4_ConfiguredChainFailureSemantics`
 - AC4.3: After restart, an existing session and a scheduled fire resolve the current operator policy and current authorization. A changed configuration can change resumed context without a stored context reference, destructive migration, or fallback to stored execution placement.
-  - verify: `TestADR_0357_HarnessContext_Scenario4_RestartRebindsCurrentPolicy`
+  - verify: `TestADR_0359_HarnessContext_Scenario4_RestartRebindsCurrentPolicy`
 - AC4.4: Concurrent first use creates one principal-scoped binding generation per session ID; same-owner/profile calls reuse it without sharing snapshots, live lookups, or caches across owners. Failed creation is retryable, mismatched principal/profile reuse fails closed, and retirement is idempotent and lets existing borrowers drain. Actual session teardown retires that generation. Explicit owner-authorized supported reload can activate a fresh generation under current source authorization; stale queued Borrow alone cannot reactivate it, and old releases or cleanup cannot evict or close the replacement. Build shutdown retires all generations and prevents later activation. Caller-neutral process sources remain safely shared.
-  - verify: `TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation`
+  - verify: `TestADR_0359_HarnessContext_Scenario4_PrincipalScopedBindingIsolation`
 
 ### Scenario 5 - Hybrid context composition and controlled overrides
 
@@ -382,15 +382,15 @@ these proofs.
 
 **Acceptance:**
 - AC5.1: A helpdesk composition combines deployment-file instructions with configured service-provided instructions, rules, and skills without a repository or command runner. Equivalent admitted source data served through a file or service adapter has the same precedence and trust.
-  - verify: `TestADR_0357_HarnessContext_Scenario5_HelpdeskDeploymentAndServiceSources`
+  - verify: `TestADR_0359_HarnessContext_Scenario5_HelpdeskDeploymentAndServiceSources`
 - AC5.2: A coding composition combines deployment instructions, organization service skills, and mounted-repository instructions, rules, and skills while file tools and Shell still use the coherent repository execution binding.
-  - verify: `TestADR_0357_HarnessContext_Scenario5_HybridCodingContext`
+  - verify: `TestADR_0359_HarnessContext_Scenario5_HybridCodingContext`
 - AC5.3: A three-source adversarial fixture proves named override resolution after exclusion: only candidates named in `replaces` are removed when the winner is present, an earlier non-replaced candidate still wins, the configured winner wins when that blocker is absent, and an absent winner restores normal order. Listing and invocation/body retrieval choose the same definitions for commands, rules, skills, and agent definitions. Duplicate/unknown/self-replacing and structurally no-op declarations fail startup; source transport or discovery timing never selects a winner.
-  - verify: `TestADR_0357_HarnessContext_Scenario5_PerKindOverrideResolution`
+  - verify: `TestADR_0359_HarnessContext_Scenario5_PerKindOverrideResolution`
 - AC5.4: Instruction and rule contributions combine, replace, or are excluded according to their approved per-kind policy, with retained provenance. They are not processed by an implicit recursive merge of arbitrary source objects. Disabling repository context leaves deployment/service context and repository execution available.
-  - verify: `TestADR_0357_HarnessContext_Scenario5_CombineExcludeAndDisableRepositoryContext`
+  - verify: `TestADR_0359_HarnessContext_Scenario5_CombineExcludeAndDisableRepositoryContext`
 - AC5.5: A lower-admission contribution claiming deployment origin or requesting changed override policy cannot promote itself, bypass project admission, weaken a permission deny, or expand a child's tool catalog.
-  - verify: `TestADR_0357_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority`
+  - verify: `TestADR_0359_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority`
 
 ## Dependency stack
 

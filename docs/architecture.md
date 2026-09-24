@@ -1392,7 +1392,7 @@ server's `audience:["user"]` is not a suppression control). Server-returned
 fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
 backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
-**Proposed harness context boundary.** [ADR 0357](adr/0357-harness-context-source-authority.md)
+**Proposed harness context boundary.** [ADR 0359](adr/0359-harness-context-source-authority.md)
 and the [acceptance plan](acceptance/harness-context.md) define a Plan / Interface contract that
 is not implemented yet. Deployment composition selects project instructions, commands, rules,
 skills, and agent definitions independently from execution. Sources can read APIs, host files,
