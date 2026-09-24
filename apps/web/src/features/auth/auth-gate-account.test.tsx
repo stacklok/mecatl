@@ -10,8 +10,10 @@ import { clearUserScopedStorage } from "../../lib/account-storage";
 import { useDisabledModels } from "../../lib/model-preferences";
 import { usePanelWidth } from "../../lib/panel-width";
 import {
+  initializeProfilePreferences,
   useAgentAvatar,
   useAgentDisplayName,
+  useUiScale,
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
@@ -24,6 +26,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
   clearUserScopedStorage();
+  document.documentElement.style.removeProperty("--ui-scale");
 });
 
 function AccountData() {
@@ -47,6 +50,7 @@ function ScopedAccountData() {
   const chatListWidth = usePanelWidth("chatList");
   const contentWidth = usePanelWidth("contentPreview");
   const folders = useChatFolders();
+  const uiScale = useUiScale();
 
   return (
     <>
@@ -62,6 +66,8 @@ function ScopedAccountData() {
           sessionCanvas: sessionCanvas.value,
           threadIds: [...threadIds].sort(),
           threads,
+          uiScale: uiScale.value,
+          appliedScale: document.documentElement.style.getPropertyValue("--ui-scale"),
           userAvatar: userAvatar.value,
           userName: userName.value,
         })}
@@ -153,11 +159,13 @@ it("quarantines every account-scoped caller after partial removal, including sto
     "studio.chat.panelWidth": "311",
     "studio.chat.contentPanelWidth": "333",
     "studio.chat.folders": oldFolders,
+    "studio.profile.ui-scale": "1.3",
   })) {
     window.localStorage.setItem(key, value);
   }
   window.sessionStorage.setItem("studio.account", "alice");
   window.localStorage.setItem("theme", "dark");
+  initializeProfilePreferences();
 
   render(
     <QueryClientProvider client={client}>
@@ -179,6 +187,8 @@ it("quarantines every account-scoped caller after partial removal, including sto
     chatListWidth: 311,
     contentWidth: 333,
     disabledModels: ["alice-model"],
+    uiScale: 1.3,
+    appliedScale: "1.3",
   });
 
   const remove = window.localStorage.removeItem.bind(window.localStorage);
@@ -196,6 +206,8 @@ it("quarantines every account-scoped caller after partial removal, including sto
     chatListWidth: 256,
     contentWidth: 256,
     disabledModels: [],
+    uiScale: 1,
+    appliedScale: "",
     draftCanvas: "",
     folderNames: [],
     sessionCanvas: "",
@@ -242,5 +254,6 @@ it("quarantines every account-scoped caller after partial removal, including sto
   expect(window.localStorage.getItem("studio.chat.panelWidth")).toBe("311");
   expect(window.localStorage.getItem("studio.chat.contentPanelWidth")).toBe("333");
   expect(window.localStorage.getItem("studio.chat.folders")).toBe(oldFolders);
+  expect(window.localStorage.getItem("studio.profile.ui-scale")).toBe("1.3");
   client.clear();
 });

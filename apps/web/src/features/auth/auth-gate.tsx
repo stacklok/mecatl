@@ -12,6 +12,7 @@ import { GlobalStatusSlot } from "../../components/shell/global-status-slot";
 import { Button } from "../../components/ui/button";
 import { accountStorageKey } from "../../lib/account-storage";
 import { onAuthenticationRequired, setRequestRecoveryState } from "../../lib/api-client";
+import { initializeProfilePreferences } from "../../lib/profile-preferences";
 import { AuthRecoveryContext, useAuthRecovery } from "./auth-recovery-context";
 import {
   acceptsPopupResult,
@@ -68,6 +69,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const applyCheck = useCallback(
     (check: SessionCheck) => {
       const transition = commitRecoveryCheck(recoveryRef.current, check, queryClient);
+      // Apply account-scoped scale only after storage reconciliation, before
+      // this identity's workspace renders. A sign-out resets it to default.
+      if (transition.state.phase === "ready" || transition.clearAccount) {
+        initializeProfilePreferences();
+      }
       recoveryRef.current = transition.state;
       setRequestRecoveryState(transition.state);
       setRecovery(transition.state);
