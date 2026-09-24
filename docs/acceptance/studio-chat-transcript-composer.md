@@ -13,7 +13,7 @@
 
 The existing chat retains its durable streamed run, bounded replay, queue, and controls while the transcript becomes a flat, readable conversation and the composer remains usable from desktop to a 320 px viewport. The same BFF owns SDK access and projects the few additional title and scheduled-delivery facts needed for honest live UI. The [Studio architecture topic](../architecture.md#mecatl-studio), [original chat contract](studio-chat.md), and [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) govern the boundary.
 
-The proposed [appearance contract](https://github.com/stacklok/mecatl/pull/1861) owns semantic tokens, fonts, palettes, and shared controls; the proposed [shell contract](https://github.com/stacklok/mecatl/pull/1858) owns navigation, route framing, and its status bands. Both use a 500 px control pivot. Chat consumes those contracts for colors, focus, typography, and responsive layout without amending their roles or moving their controls into this plan. Implementation rebases after their approved versions land. The 2026-09-24 [design review](https://github.com/stacklok/mecatl/issues/1779) owns desktop/mobile visual review. `user-docs/building/deployment/studio.md` is the public behavior owner when this plan is implemented; this plan does not publish unimplemented behavior there.
+The proposed [appearance contract](https://github.com/stacklok/mecatl/pull/1861) owns semantic tokens, fonts, palettes, and shared controls. The [shell contract](https://github.com/stacklok/mecatl/pull/1858), now merged with its [implementation](https://github.com/stacklok/mecatl/pull/1869), owns navigation, route framing, and its status bands. Both use a 500 px control pivot. Chat consumes those contracts for colors, focus, typography, and responsive layout without amending their roles or moving their controls into this plan. The merged shell keeps the specified pivot and status placement; chat implementation rebases onto it. The 2026-09-24 [design review](https://github.com/stacklok/mecatl/issues/1779) owns desktop/mobile visual review. `user-docs/building/deployment/studio.md` is the public behavior owner when this plan is implemented; this plan does not publish unimplemented behavior there.
 
 ## Human decisions
 
@@ -151,7 +151,7 @@ The daemon's [delivery renderer](../../internal/app/scheduler_delivery.go) recor
 
 ## Deferred decisions and known risks
 
-- The two foundation contracts are proposed, not yet approved. If either changes its 500 px pivot, semantic roles, shared-control props, or shell placement before merge, amend this chat contract before implementation rather than silently diverging.
+- The appearance contract remains proposed. If its approved version changes the 500 px pivot, semantic roles, or shared-control props, amend this chat contract before landing implementation. The shell plan and implementation have merged with the pivot and status placement used here.
 - Speech recognition availability and recognition text vary by browser and OS. The browser proof requires a usable permission failure path and typed fallback, not identical recognized words.
 - #1777 may relocate `apps/` and proof paths. Rebase paths without changing the BFF or behavior contract.
 - The existing stream identifies origin-chat delivery by fenced `user_prompt` text, not by an authenticated event kind. A byte-identical user-authored prompt is indistinguishable in saved transcript and may receive the same inert note presentation; stronger provenance requires a separate daemon and SDK contract.
