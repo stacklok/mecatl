@@ -1,4 +1,4 @@
-# ADR 0357 — Studio exposes coarse status and completes browser login in a popup
+# ADR 0358 — Studio exposes coarse status and completes browser login in a popup
 
 - Status: Proposed
 - Date: 2026-09-24
