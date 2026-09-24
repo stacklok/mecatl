@@ -4,7 +4,7 @@
 **Work classification:** Architectural — PDF input and output change the public SDK and wire contracts, durable content ownership, provider translation, and mecak8s storage topology.
 **Decision record:** [ADR 0367](../adr/0367-session-owned-pdf-artifacts.md)
 **Phase:** Generic artifact transport and storage with PDF input and tool-result download
-**Status:** in-progress, 2026-09-25. The directing human selected both PDF directions, tool-result output, S3-compatible object storage outside Redis, and generic artifact API names with PDF as the only supported file type in this release.
+**Status:** landed, 2026-09-25. The directing human selected both PDF directions, tool-result output, S3-compatible object storage outside Redis, and generic artifact API names with PDF as the only supported file type in this release.
 **Delivery:** Split. Public wire, engine, persistence, security, and deployment interfaces need separate contract review.
 **Expected tasks:** deferred to orchestration
 
