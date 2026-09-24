@@ -846,8 +846,12 @@ func (c *conversation) liveParallel() bool {
 // roster) is skipped so the overlay never opens onto an empty roster.
 func (c *conversation) latestTeamBlock() *block {
 	for i := c.scrollback.Len() - 1; i >= 0; i-- {
-		if b, ok := delegationBlockFromSnapshot(c.scrollback.SnapshotAt(i)); ok && b.team && len(b.teamLanes) > 0 {
-			return &b
+		snapshot := c.scrollback.SnapshotAt(i)
+		if payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot); ok {
+			b := teamBlockFromSnapshot(snapshot, payload)
+			if len(b.teamLanes) > 0 {
+				return b
+			}
 		}
 	}
 	return nil

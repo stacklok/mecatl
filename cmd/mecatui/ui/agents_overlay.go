@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // agentsTab selects which body the unified f6 "agents" overlay renders. The
@@ -73,8 +74,12 @@ func (m Model) teamBlockForOverlay() *block {
 		return m.conv.latestTeamBlock()
 	}
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
-		if b, ok := delegationBlockFromSnapshot(m.conv.scrollback.SnapshotAt(i)); ok && b.team && teamBlockIdentity(&b) == m.team.aggregate {
-			return &b
+		snapshot := m.conv.scrollback.SnapshotAt(i)
+		if payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot); ok {
+			b := teamBlockFromSnapshot(snapshot, payload)
+			if teamBlockIdentity(b) == m.team.aggregate {
+				return b
+			}
 		}
 	}
 	return nil

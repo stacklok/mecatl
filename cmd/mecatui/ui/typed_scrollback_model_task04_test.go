@@ -198,3 +198,15 @@ func TestRenderPassCarriesCachedFrameMetadata(t *testing.T) {
 		t.Fatalf("settled cache hit rendered %d cards", got)
 	}
 }
+
+func TestMecatuiTypedScrollbackModel_Scenario3_DelegationCardsUseTypedPresentationAdapters(t *testing.T) {
+	files := parseUIProductionFiles(t)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Name.Name == "delegationBlockFromSnapshot" {
+				t.Fatal("Subagent and Team snapshots are still converted through a generic union adapter")
+			}
+		}
+	}
+}

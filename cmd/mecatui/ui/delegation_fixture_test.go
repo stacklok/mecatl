@@ -37,8 +37,10 @@ func testBlockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
 		b.kind, b.raw, b.hookPhase, b.hookTool, b.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
 	case scrollback.DeliveryCardSnapshot:
 		b.kind, b.raw, b.toolName, b.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
-	case scrollback.SubagentCardSnapshot, scrollback.TeamCardSnapshot:
-		return delegationBlockFromSnapshot(s)
+	case scrollback.SubagentCardSnapshot:
+		return *subagentBlockFromSnapshot(s, p), true
+	case scrollback.TeamCardSnapshot:
+		return *teamBlockFromSnapshot(s, p), true
 	default:
 		return block{}, false
 	}
@@ -66,11 +68,11 @@ func (c *conversation) testSubagentBlock(callID string) *block {
 	if !ok {
 		return nil
 	}
-	b, ok := delegationBlockFromSnapshot(snapshot)
-	if !ok || !b.subagent {
+	payload, ok := snapshot.Payload.(scrollback.SubagentCardSnapshot)
+	if !ok {
 		return nil
 	}
-	return &b
+	return subagentBlockFromSnapshot(snapshot, payload)
 }
 
 // addTeamFixture adapts presentation fixtures through the typed model.

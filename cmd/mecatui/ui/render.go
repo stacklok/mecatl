@@ -674,12 +674,10 @@ func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bo
 		base.kind, base.raw, base.hookPhase, base.hookTool, base.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
 	case scrollback.DeliveryCardSnapshot:
 		base.kind, base.raw, base.toolName, base.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
-	case scrollback.SubagentCardSnapshot, scrollback.TeamCardSnapshot:
-		var ok bool
-		base, ok = delegationBlockFromSnapshot(s)
-		if !ok {
-			return ""
-		}
+	case scrollback.SubagentCardSnapshot:
+		return r.renderBlock(idx, subagentBlockFromSnapshot(s, p), expand)
+	case scrollback.TeamCardSnapshot:
+		return r.renderBlock(idx, teamBlockFromSnapshot(s, p), expand)
 	default:
 		return ""
 	}
