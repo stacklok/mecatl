@@ -8,7 +8,7 @@
 **Delivery:** Split. The replacement model-facing schema, disclosure boundary, search semantics, and stale-continuation behavior require amended contract review before implementation resumes.
 **Expected tasks:** deferred to orchestration
 **Issue:** [#1064](https://github.com/stacklok/mecatl/issues/1064)
-**Plan PR:** added when opened
+**Plan PR:** [#1864](https://github.com/stacklok/mecatl/pull/1864)
 **Prior approval:** Plan / Interface PR [#1857](https://github.com/stacklok/mecatl/pull/1857), merged as `dd77497c10071be17b1a3c302ac18eec3aadca8f`, is superseded by this amendment.
 **Approved baseline:** absent until the amendment Plan / Interface PR merges
 
