@@ -113,6 +113,9 @@ message AttachResponse {
   string broker_incarnation = 5;
   // Whether pre-prompt workspace enrollment is supported by this attachment.
   bool workspace_enrollment = 6;
+  // Whether this attachment offers credential continuity (encrypted custody is
+  // configured). When true the host must stage custody or fail enrollment closed.
+  bool credential_continuity = 7;
 }
 
 // CommitRequest targets current attachment lifecycle state.
@@ -408,6 +411,8 @@ message StageCredentialCustodyRequest {
 message StageCredentialCustodyResponse {
   string recovery_reference = 1;
   google.protobuf.Timestamp custody_expires_at = 2;
+  bytes profile_digest = 3;
+  repeated string providers = 4;
 }
 message CommitCredentialCustodyRequest { CustodyAssertion assertion = 1; }
 message CommitCredentialCustodyResponse {}

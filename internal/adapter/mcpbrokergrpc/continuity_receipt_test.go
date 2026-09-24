@@ -115,7 +115,9 @@ func (*continuityReceiptHandle) CancelAuthorization(context.Context, session.Ext
 }
 func (h *continuityReceiptHandle) StageCredentialCustody(_ context.Context, _ string, _ mcpbroker.ContinuityGuard, _ mcpbroker.WorkspaceEnrollmentRef, _ time.Time) (mcpbroker.StagedCredentialCustody, error) {
 	h.call()
-	return mcpbroker.StagedCredentialCustody{RecoveryReference: receiptRecoveryReference, ExpiresAt: time.Now().Add(time.Minute)}, nil
+	var digest [32]byte
+	digest[0] = 1
+	return mcpbroker.StagedCredentialCustody{RecoveryReference: receiptRecoveryReference, ExpiresAt: time.Now().Add(time.Minute), ProfileDigest: digest, Providers: []string{"provider"}}, nil
 }
 
 func TestContinuityReceiptsUseCountCapacityAndReleaseOnExpiry(t *testing.T) {
@@ -596,7 +598,7 @@ func newContinuityReceiptServer(t *testing.T) (*Server, context.Context, mcpbrok
 }
 
 func stageReceiptRequest(server *Server, guard mcpbroker.ContinuityGuard, deadline time.Time) *brokerv1.StageCredentialCustodyRequest {
-	return &brokerv1.StageCredentialCustodyRequest{RequestId: "stage-retry", BrokerIncarnation: server.instanceID, Handle: "stage-handle", Guard: continuityGuardToWire(guard), CompletedEnrollment: &brokerv1.WorkspaceRef{Id: "enrollment", RequiredServices: 1, ExpiresAt: timestamppb.New(deadline)}, AttemptDeadline: timestamppb.New(deadline)}
+	return &brokerv1.StageCredentialCustodyRequest{RequestId: "stage-retry", BrokerIncarnation: server.instanceID, Handle: "stage-handle", Guard: stageGuardToWire(guard), CompletedEnrollment: &brokerv1.WorkspaceRef{Id: "enrollment", RequiredServices: 1, ExpiresAt: timestamppb.New(deadline)}, AttemptDeadline: timestamppb.New(deadline)}
 }
 func custodyAssertion(guard mcpbroker.ContinuityGuard, deadline time.Time) *brokerv1.CustodyAssertion {
 	return &brokerv1.CustodyAssertion{Guard: continuityGuardToWire(guard), RecoveryReference: receiptRecoveryReference, AttemptDeadline: timestamppb.New(deadline)}

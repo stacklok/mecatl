@@ -224,6 +224,20 @@ func (c *credentialCustody) Load(ctx context.Context, assertion custodyAssertion
 	return record, nil
 }
 
+func (c *credentialCustody) LoadCurrent(ctx context.Context, ref recoveryID, guard custodyGuard) (custodyRecord, error) {
+	if validateGuard(guard) != nil || !validRecoveryID(ref) {
+		return custodyRecord{}, errCustodyUnavailable
+	}
+	record, _, err := c.readRecord(ctx, ref)
+	if err != nil {
+		return custodyRecord{}, custodyError(ctx, err)
+	}
+	if record.State != custodyCurrent || !sameGuard(record.Guard, guard) || !record.ExpiresAt.After(c.clock.Now()) {
+		return custodyRecord{}, errCustodyUnavailable
+	}
+	return record, nil
+}
+
 func (c *credentialCustody) Tombstone(ctx context.Context, request custodyRequest, ref recoveryID) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -366,7 +380,7 @@ func validateRecord(record custodyRecord) error {
 	return nil
 }
 func validateGuard(guard custodyGuard) error {
-	if !contract.ValidLogicalSessionID(guard.SessionID) || !guard.Incarnation.Valid() || len(guard.Providers) == 0 || len(guard.Providers) > contract.MaxContinuityProviders {
+	if !contract.ValidLogicalSessionID(guard.SessionID) || !guard.Incarnation.Valid() || guard.OwnerPartition == ([32]byte{}) || guard.WorkloadPartition == ([32]byte{}) || len(guard.Providers) == 0 || len(guard.Providers) > contract.MaxContinuityProviders {
 		return errCustodyUnavailable
 	}
 	prior := ""

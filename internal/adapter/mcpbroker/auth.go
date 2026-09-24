@@ -1054,6 +1054,10 @@ func (l *logicalSession) expireAuthorizationsLocked(runtime *Runtime, now time.T
 func (l *logicalSession) markDeletedLocked(status session.AuthorizationStatus) {
 	l.deleted = true
 	l.provisional = false
+	if l.recoveredSource != nil {
+		l.recoveredSource.close()
+		l.recoveredSource = nil
+	}
 	l.cleanupStatus = status
 	l.cancelOps()
 }
@@ -1138,23 +1142,29 @@ func (r *Runtime) sweep() {
 		case <-r.sweepStop:
 			return
 		case now := <-ticker.C:
-			var expired []*logicalSession
-			r.mu.Lock()
-			for id, logical := range r.sessions {
-				logical.mu.Lock()
-				logical.expireAuthorizationsLocked(r, now)
-				if logical.attachments == 0 && logical.activeOps == 0 && !logical.expiresAt.IsZero() && !now.Before(logical.expiresAt) {
-					delete(r.sessions, id)
-					logical.markDeletedLocked(session.AuthorizationExpired)
-					expired = append(expired, logical)
-				}
-				logical.mu.Unlock()
-			}
-			r.mu.Unlock()
-			for _, logical := range expired {
-				logical.maybeCleanupLocked(r)
-			}
+			r.sweepAt(now)
 		}
+	}
+}
+
+// sweepAt performs one retention pass. Keeping the pass separate from the
+// ticker makes the time boundary explicit and lets tests prove it directly.
+func (r *Runtime) sweepAt(now time.Time) {
+	var expired []*logicalSession
+	r.mu.Lock()
+	for id, logical := range r.sessions {
+		logical.mu.Lock()
+		logical.expireAuthorizationsLocked(r, now)
+		if logical.attachments == 0 && logical.activeOps == 0 && !logical.expiresAt.IsZero() && !now.Before(logical.expiresAt) {
+			delete(r.sessions, id)
+			logical.markDeletedLocked(session.AuthorizationExpired)
+			expired = append(expired, logical)
+		}
+		logical.mu.Unlock()
+	}
+	r.mu.Unlock()
+	for _, logical := range expired {
+		logical.maybeCleanupLocked(r)
 	}
 }
 

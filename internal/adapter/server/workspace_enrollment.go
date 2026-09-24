@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -51,6 +53,11 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	}
 
 	expectedRef := enrollmentRef(pending)
+	if custody, ok := sess.BrokerCredentialCustody(); ok {
+		if err := s.commitPendingCustody(ctx, sess, custody); err != nil {
+			return WorkspaceEnrollmentProjection{}, err
+		}
+	}
 	result, err := enroller.ObserveWorkspaceEnrollment(ctx, expectedRef)
 	if errors.Is(err, brokercontract.ErrBrokerIncarnationLost) {
 		local, rebindErr := s.rebindBrokerAttachment(ctx, sess, s.brokerAttachmentGenerationFor(sess.ID), true)
@@ -71,6 +78,9 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 		return s.recordObservedWorkspaceEnrollment(ctx, sess, pending, result)
 	}
 
+	if err := s.stageInitialCustody(ctx, sess, enroller, pending); err != nil {
+		return WorkspaceEnrollmentProjection{}, err
+	}
 	// The authenticated result is the single snapshot for both executable wrappers
 	// and durable authority. Never re-read SessionHandle.Tools during this rebuild: a
 	// remote session handle may advance between observation and engine construction.
@@ -81,14 +91,20 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 	release()
 	release = func() {}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+	// Build first, then persist durable completion, then register. A build failure
+	// leaves the pending enrollment in place so the same Connect retries it; engine
+	// registration is always the final step.
+	persistCompletion := func() error {
+		if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
+			return fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
+		}
+		if err := s.saveSession(ctx, sess); err != nil {
+			return fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
+		}
+		return nil
+	}
+	if _, err := s.buildPersistAndRegisterSessionEngine(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true, persistCompletion); err != nil {
 		return WorkspaceEnrollmentProjection{}, err
-	}
-	if err := sess.CompleteWorkspaceEnrollment(pending, toolNames); err != nil {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: complete workspace enrollment", ErrFailedPrecondition)
-	}
-	if err := s.saveSession(ctx, sess); err != nil {
-		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: persist workspace enrollment completion", ErrInternal)
 	}
 	return WorkspaceEnrollmentProjection{Ref: result.Ref, Status: result.Status}, nil
 }
@@ -236,6 +252,148 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 		return nil, nil, nil, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
 	}
 	return sess, enroller, brokerUnlock, nil
+}
+
+func (s *Service) stageInitialCustody(ctx context.Context, sess *session.Session, enroller brokercontract.WorkspaceEnrollmentHandle, pending session.PendingWorkspaceEnrollment) error {
+	// Custody is required exactly when the broker offers continuity on this
+	// attachment. A broker without encrypted custody, or an older broker, keeps
+	// the legacy path; once offered, every missing input fails closed rather than
+	// completing an enrollment that could never be recovered.
+	advertiser, advertises := enroller.(brokercontract.CredentialContinuityAdvertiser)
+	if !advertises || !advertiser.CredentialContinuity() {
+		return nil
+	}
+	if _, exists := sess.BrokerCredentialCustody(); exists {
+		return nil
+	}
+	stager, ok := enroller.(brokercontract.CredentialCustodyStager)
+	if !ok || s.cfg.BrokerWorkloadIdentity == nil || sess.Owner == nil {
+		return fmt.Errorf("%w: credential continuity is offered but custody cannot be staged", ErrFailedPrecondition)
+	}
+	ownerPartition, err := brokercontract.ContinuityPrincipalPartition(brokercontract.ContinuityPartitionOwner, sess.Owner)
+	if err != nil {
+		return fmt.Errorf("%w: derive broker owner partition", ErrFailedPrecondition)
+	}
+	workloadPartition, err := brokercontract.ContinuityPrincipalPartition(brokercontract.ContinuityPartitionWorkload, s.cfg.BrokerWorkloadIdentity)
+	if err != nil {
+		return fmt.Errorf("%w: derive broker workload partition", ErrFailedPrecondition)
+	}
+	now := time.Now()
+	if s.cfg.Now != nil {
+		now = s.cfg.Now()
+	}
+	deadline := now.Add(brokercontract.ContinuityAttemptTTL)
+	if pending.ExpiresAt.Before(deadline) {
+		deadline = pending.ExpiresAt
+	}
+	staged, err := stager.StageCredentialCustody(ctx, "stage-"+string(pending.ID), brokercontract.ContinuityGuard{
+		SessionID: sess.ID, SessionIncarnation: sess.Incarnation(), OwnerPartition: ownerPartition, WorkloadPartition: workloadPartition,
+	}, enrollmentRef(pending), deadline)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("%w: stage credential custody", ErrFailedPrecondition)
+	}
+	custody, err := session.NewBrokerCredentialCustody(staged.RecoveryReference, sess.Incarnation(), ownerPartition, workloadPartition, staged.ProfileDigest, staged.Providers, staged.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("%w: construct broker credential custody", ErrFailedPrecondition)
+	}
+	if err := sess.InstallBrokerCredentialCustody(pending, custody, now); err != nil {
+		s.tombstoneStagedCustodyDetached(ctx, sess.ID, custody)
+		return fmt.Errorf("%w: install broker credential custody", ErrFailedPrecondition)
+	}
+	if err := s.saveSession(ctx, sess); err != nil {
+		// A store error does not say whether the write landed. Reload: continue
+		// only if this exact custody is durable, otherwise retire the staged row.
+		if !s.custodyPersisted(ctx, sess.ID, custody) {
+			s.tombstoneStagedCustodyDetached(ctx, sess.ID, custody)
+			return fmt.Errorf("%w: persist broker credential custody", ErrInternal)
+		}
+	}
+	if err := s.commitPendingCustody(ctx, sess, custody); err != nil {
+		return err
+	}
+	return nil
+}
+
+// custodyPersisted reports whether the stored session holds exactly custody.
+func (s *Service) custodyPersisted(ctx context.Context, id session.SessionID, custody session.BrokerCredentialCustody) bool {
+	loaded, err := s.cfg.Store.Load(ctx, id)
+	if err != nil || loaded == nil {
+		return false
+	}
+	stored, ok := loaded.BrokerCredentialCustody()
+	return ok && stored.RecoveryReference() == custody.RecoveryReference() && stored.SessionIncarnation() == custody.SessionIncarnation()
+}
+
+// tombstoneStagedCustodyDetached retires a staged custody row whose host save
+// failed. It is best effort: an unretired staged row is never resolvable (Load
+// never promotes staged custody) and expires at its native expiry.
+func (s *Service) tombstoneStagedCustodyDetached(ctx context.Context, id session.SessionID, custody session.BrokerCredentialCustody) {
+	service, ok := s.brokerService().(brokercontract.CredentialContinuityService)
+	if !ok {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineCloseTimeout)
+	defer cancel()
+	now := time.Now()
+	if s.cfg.Now != nil {
+		now = s.cfg.Now()
+	}
+	deadline := now.Add(brokercontract.ContinuityAttemptTTL)
+	if custody.ExpiresAt().Before(deadline) {
+		deadline = custody.ExpiresAt()
+	}
+	_ = service.TombstoneCredentialCustody(cleanupCtx, brokercontract.CustodyAssertion{
+		Guard: brokercontract.ContinuityGuard{
+			SessionID: id, SessionIncarnation: custody.SessionIncarnation(),
+			OwnerPartition: custody.OwnerPartition(), WorkloadPartition: custody.WorkloadPartition(),
+			ProfileDigest: custody.ProfileDigest(), Providers: custody.Providers(),
+		}, RecoveryReference: custody.RecoveryReference(), AttemptDeadline: deadline,
+	})
+}
+
+func (s *Service) commitPendingCustody(ctx context.Context, sess *session.Session, custody session.BrokerCredentialCustody) error {
+	if sess == nil || s.cfg.BrokerWorkloadIdentity == nil {
+		return fmt.Errorf("%w: credential continuity is unavailable", ErrFailedPrecondition)
+	}
+	ownerPartition, err := brokercontract.ContinuityPrincipalPartition(brokercontract.ContinuityPartitionOwner, sess.Owner)
+	storedOwner := custody.OwnerPartition()
+	if err != nil || subtle.ConstantTimeCompare(ownerPartition[:], storedOwner[:]) != 1 {
+		return fmt.Errorf("%w: broker owner partition changed", ErrFailedPrecondition)
+	}
+	workloadPartition, err := brokercontract.ContinuityPrincipalPartition(brokercontract.ContinuityPartitionWorkload, s.cfg.BrokerWorkloadIdentity)
+	storedWorkload := custody.WorkloadPartition()
+	if err != nil || subtle.ConstantTimeCompare(workloadPartition[:], storedWorkload[:]) != 1 {
+		return fmt.Errorf("%w: broker workload partition changed", ErrFailedPrecondition)
+	}
+	service, ok := s.brokerService().(brokercontract.CredentialContinuityService)
+	if !ok {
+		return fmt.Errorf("%w: credential continuity is unavailable", ErrFailedPrecondition)
+	}
+	now := time.Now()
+	if s.cfg.Now != nil {
+		now = s.cfg.Now()
+	}
+	deadline := now.Add(brokercontract.ContinuityAttemptTTL)
+	if custody.ExpiresAt().Before(deadline) {
+		deadline = custody.ExpiresAt()
+	}
+	assertion := brokercontract.CustodyAssertion{
+		Guard: brokercontract.ContinuityGuard{
+			SessionID: sess.ID, SessionIncarnation: custody.SessionIncarnation(),
+			OwnerPartition: custody.OwnerPartition(), WorkloadPartition: custody.WorkloadPartition(),
+			ProfileDigest: custody.ProfileDigest(), Providers: custody.Providers(),
+		}, RecoveryReference: custody.RecoveryReference(), AttemptDeadline: deadline,
+	}
+	if err := service.CommitCredentialCustody(ctx, assertion); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("%w: commit credential custody", ErrFailedPrecondition)
+	}
+	return nil
 }
 
 func cancelWorkspaceEnrollmentDetached(ctx context.Context, enroller brokercontract.WorkspaceEnrollmentHandle, ref brokercontract.WorkspaceEnrollmentRef) {

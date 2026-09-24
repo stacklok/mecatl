@@ -3,6 +3,8 @@ package mcpbroker
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/authserver"
@@ -52,6 +55,14 @@ type ownedResource struct {
 	close func() error
 }
 
+type recoveredAttempt struct {
+	assertion  contract.CustodyAssertion
+	binding    session.ExternalBinding
+	done       chan struct{}
+	doneClosed bool
+	success    bool
+}
+
 // Process is the single owner of a valid broker Runtime and all bundled
 // ToolHive resources. ToolHive values never cross the neutral broker boundary.
 type Process struct {
@@ -59,15 +70,22 @@ type Process struct {
 	Handlers     HandlerBundle
 	CallbackPath string
 
-	ctx              context.Context
-	cancel           context.CancelFunc
-	lifecycleMu      sync.Mutex
-	closed           bool
-	construction     toolHiveConstruction
-	discovery        *authenticatedDiscovery
-	protectedTarget  *oauthRoute
-	protectedStorage *protectedToolHiveStorage
-	custody          *credentialCustody
+	ctx               context.Context
+	cancel            context.CancelFunc
+	lifecycleMu       sync.Mutex
+	continuityMu      sync.Mutex
+	recoveredAttempts map[string]*recoveredAttempt
+	closed            bool
+	construction      toolHiveConstruction
+	discovery         *authenticatedDiscovery
+	protectedTarget   *oauthRoute
+	protectedStorage  *protectedToolHiveStorage
+	custody           *credentialCustody
+	authStorage       storage.Storage
+	authKeyProvider   keys.KeyProvider
+	issuer            string
+	profileDigest     [32]byte
+	providers         []string
 	// reservedToolNames is the immutable model-visible name set outside this Process's
 	// broker catalogue (core/global tools), captured once at construction so a
 	// later workspace-enrollment freeze can reuse it without re-deriving it.
@@ -86,6 +104,363 @@ type toolHiveProcessOptions struct {
 	runtimeOptions                []Option
 	brokerHTTPClient              *http.Client
 	allowLoopbackUpstreamsForTest bool
+}
+
+// Process exposes the neutral runtime plus the process-owned continuity custody.
+// Keeping this adapter as the production service prevents the custody capability
+// from being lost when the ToolHive process is composed into the RPC server.
+var _ contract.Service = (*Process)(nil)
+var _ contract.BindingSessionDeleter = (*Process)(nil)
+var _ contract.ExpectedBindingAttacher = (*Process)(nil)
+var _ contract.CredentialContinuityService = (*Process)(nil)
+
+func (p *Process) AttachSession(ctx context.Context, id session.SessionID) (contract.SessionHandle, contract.AttachOutcome, error) {
+	if p == nil || p.Runtime == nil {
+		return nil, "", contract.ErrStateUnavailable
+	}
+	return p.Runtime.AttachSession(ctx, id)
+}
+
+func (p *Process) DeleteSession(ctx context.Context, id session.SessionID) (contract.DeleteOutcome, error) {
+	if p == nil || p.Runtime == nil {
+		return "", contract.ErrStateUnavailable
+	}
+	return p.Runtime.DeleteSession(ctx, id)
+}
+
+func (p *Process) DeleteSessionIfBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (contract.DeleteOutcome, error) {
+	if p == nil || p.Runtime == nil {
+		return "", contract.ErrStateUnavailable
+	}
+	return p.Runtime.DeleteSessionIfBinding(ctx, id, binding)
+}
+
+func (p *Process) AttachSessionExpectedBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (contract.SessionHandle, contract.AttachOutcome, error) {
+	if p == nil || p.Runtime == nil {
+		return nil, "", contract.ErrStateUnavailable
+	}
+	return p.Runtime.AttachSessionExpectedBinding(ctx, id, binding)
+}
+
+func (p *Process) continuityProfile() ([32]byte, []string, error) {
+	if p == nil {
+		return [32]byte{}, nil, contract.ErrContinuityUnavailable
+	}
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+	if p.closed || len(p.providers) == 0 {
+		return [32]byte{}, nil, contract.ErrContinuityUnavailable
+	}
+	return p.profileDigest, append([]string(nil), p.providers...), nil
+}
+
+func (p *Process) matchesCurrentContinuityProfile(guard contract.ContinuityGuard) bool {
+	digest, providers, err := p.continuityProfile()
+	if err != nil || len(providers) != len(guard.Providers) || subtle.ConstantTimeCompare(digest[:], guard.ProfileDigest[:]) != 1 {
+		return false
+	}
+	matched := 1
+	for i := range providers {
+		matched &= subtle.ConstantTimeCompare([]byte(providers[i]), []byte(guard.Providers[i]))
+	}
+	return matched == 1
+}
+
+func (p *Process) CommitCredentialCustody(ctx context.Context, assertion contract.CustodyAssertion) error {
+	if !p.matchesCurrentContinuityProfile(assertion.Guard) {
+		return contract.ErrContinuityUnavailable
+	}
+	custody, err := p.continuityCustody()
+	if err != nil {
+		return err
+	}
+	if err := custody.Commit(ctx, custodyAssertionFromContract(assertion)); err != nil {
+		return continuityCustodyError(ctx, err)
+	}
+	return nil
+}
+
+func (p *Process) TombstoneCredentialCustody(ctx context.Context, assertion contract.CustodyAssertion) error {
+	custody, err := p.continuityCustody()
+	if err != nil {
+		return err
+	}
+	request := custodyRequest{Guard: custodyGuardFromContract(assertion.Guard), AttemptDeadline: assertion.AttemptDeadline}
+	if err := custody.Tombstone(ctx, request, recoveryID(assertion.RecoveryReference)); err != nil {
+		return continuityCustodyError(ctx, err)
+	}
+	return nil
+}
+
+func newRecoveredCatalogueRef(deadline time.Time, services uint32) (contract.WorkspaceEnrollmentRef, error) {
+	var raw [18]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return contract.WorkspaceEnrollmentRef{}, err
+	}
+	return contract.WorkspaceEnrollmentRef{ID: session.WorkspaceEnrollmentID("recovered-" + base64.RawURLEncoding.EncodeToString(raw[:])), RequiredServices: services, ExpiresAt: deadline}, nil
+}
+
+func (p *Process) recoveryAttemptKey(assertion contract.CustodyAssertion, requestID string) string {
+	return base64.RawURLEncoding.EncodeToString(assertion.Guard.WorkloadPartition[:]) + ":" + requestID
+}
+
+func sameRecoveryAssertion(a, b contract.CustodyAssertion) bool {
+	return a.RecoveryReference == b.RecoveryReference && a.AttemptDeadline.Equal(b.AttemptDeadline) && a.Guard.SessionID == b.Guard.SessionID && a.Guard.SessionIncarnation == b.Guard.SessionIncarnation && a.Guard.OwnerPartition == b.Guard.OwnerPartition && a.Guard.WorkloadPartition == b.Guard.WorkloadPartition && a.Guard.ProfileDigest == b.Guard.ProfileDigest && slices.Equal(a.Guard.Providers, b.Guard.Providers)
+}
+
+func (p *Process) reserveRecoveredAttempt(assertion contract.CustodyAssertion, requestID string) (*recoveredAttempt, bool, error) {
+	if requestID == "" || len(requestID) > 256 || !utf8.ValidString(requestID) {
+		return nil, false, contract.ErrContinuityUnavailable
+	}
+	key := p.recoveryAttemptKey(assertion, requestID)
+	p.continuityMu.Lock()
+	defer p.continuityMu.Unlock()
+	if p.recoveredAttempts == nil {
+		p.recoveredAttempts = make(map[string]*recoveredAttempt)
+	}
+	for key, attempt := range p.recoveredAttempts {
+		if !attempt.assertion.AttemptDeadline.After(time.Now()) {
+			delete(p.recoveredAttempts, key)
+			if !attempt.doneClosed {
+				attempt.doneClosed = true
+				close(attempt.done)
+			}
+		}
+	}
+	if attempt := p.recoveredAttempts[key]; attempt != nil {
+		if !sameRecoveryAssertion(attempt.assertion, assertion) {
+			return nil, false, contract.ErrContinuityUnavailable
+		}
+		return attempt, false, nil
+	}
+	if len(p.recoveredAttempts) >= 128 {
+		return nil, false, contract.ErrContinuityUnavailable
+	}
+	attempt := &recoveredAttempt{assertion: assertion, done: make(chan struct{})}
+	p.recoveredAttempts[key] = attempt
+	time.AfterFunc(time.Until(assertion.AttemptDeadline), func() {
+		p.continuityMu.Lock()
+		defer p.continuityMu.Unlock()
+		if p.recoveredAttempts[key] == attempt {
+			delete(p.recoveredAttempts, key)
+			if !attempt.doneClosed {
+				attempt.doneClosed = true
+				close(attempt.done)
+			}
+		}
+	})
+	return attempt, true, nil
+}
+
+func (p *Process) finishRecoveredAttempt(assertion contract.CustodyAssertion, requestID string, attempt *recoveredAttempt, binding session.ExternalBinding, success bool) {
+	p.continuityMu.Lock()
+	defer p.continuityMu.Unlock()
+	if p.recoveredAttempts[p.recoveryAttemptKey(assertion, requestID)] != attempt {
+		return
+	}
+	attempt.binding, attempt.success = binding, success
+	if !success {
+		delete(p.recoveredAttempts, p.recoveryAttemptKey(assertion, requestID))
+	}
+	if !attempt.doneClosed {
+		attempt.doneClosed = true
+		close(attempt.done)
+	}
+}
+
+func (p *Process) replayRecoveredAttempt(ctx context.Context, attempt *recoveredAttempt) (contract.RecoveredCredentialAttachment, error) {
+	select {
+	case <-attempt.done:
+	case <-ctx.Done():
+		return contract.RecoveredCredentialAttachment{}, ctx.Err()
+	}
+	if !attempt.success || attempt.binding == "" {
+		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
+	}
+	handle, _, err := p.Runtime.AttachSessionExpectedBinding(ctx, attempt.assertion.Guard.SessionID, attempt.binding)
+	if err != nil {
+		return contract.RecoveredCredentialAttachment{}, err
+	}
+	return contract.RecoveredCredentialAttachment{Attachment: handle}, nil
+}
+
+func (p *Process) RecoverCredentialAttachment(ctx context.Context, assertion contract.CustodyAssertion, requestID string) (contract.RecoveredCredentialAttachment, error) {
+	if !p.matchesCurrentContinuityProfile(assertion.Guard) {
+		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
+	}
+	attempt, creator, err := p.reserveRecoveredAttempt(assertion, requestID)
+	if err != nil {
+		return contract.RecoveredCredentialAttachment{}, err
+	}
+	if !creator {
+		return p.replayRecoveredAttempt(ctx, attempt)
+	}
+	completed := false
+	defer func() {
+		if !completed {
+			p.finishRecoveredAttempt(assertion, requestID, attempt, "", false)
+		}
+	}()
+	custody, err := p.continuityCustody()
+	if err != nil {
+		return contract.RecoveredCredentialAttachment{}, err
+	}
+	custodyAssertion := custodyAssertionFromContract(assertion)
+	record, err := custody.Load(ctx, custodyAssertion)
+	if err != nil {
+		return contract.RecoveredCredentialAttachment{}, continuityCustodyError(ctx, err)
+	}
+	for _, provider := range assertion.Guard.Providers {
+		if _, err := custody.Resolve(ctx, custodyAssertion, provider); err != nil {
+			return contract.RecoveredCredentialAttachment{}, continuityCustodyError(ctx, err)
+		}
+	}
+	p.lifecycleMu.Lock()
+	storage, keyProvider, issuer := p.authStorage, p.authKeyProvider, p.issuer
+	clientID := ""
+	if p.protectedTarget != nil {
+		clientID = p.protectedTarget.clientID
+	}
+	open := !p.closed && p.Runtime != nil && p.discovery != nil
+	p.lifecycleMu.Unlock()
+	if !open || storage == nil || keyProvider == nil || clientID == "" {
+		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
+	}
+
+	var logical *logicalSession
+	source := &recoveredCredentialSource{}
+	source.active = func() bool {
+		if logical == nil {
+			return false
+		}
+		p.lifecycleMu.Lock()
+		processOpen := !p.closed
+		p.lifecycleMu.Unlock()
+		if !processOpen {
+			return false
+		}
+		logical.mu.RLock()
+		valid := !logical.deleted && logical.recoveredSource == source
+		logical.mu.RUnlock()
+		return valid
+	}
+	guard := custodyGuardFromContract(assertion.Guard)
+	source.validate = func(checkCtx context.Context) error {
+		if !source.active() {
+			return errCustodyUnavailable
+		}
+		_, err := custody.LoadCurrent(checkCtx, custodyAssertion.Recovery, guard)
+		return err
+	}
+	source.issue = func(issueCtx context.Context) (*oauth2.Token, error) {
+		if !source.active() {
+			return nil, errCustodyUnavailable
+		}
+		logical.mu.RLock()
+		provisional := logical.provisional
+		logical.mu.RUnlock()
+		var current custodyRecord
+		var err error
+		if provisional {
+			current, err = custody.Load(issueCtx, custodyAssertion)
+		} else {
+			current, err = custody.LoadCurrent(issueCtx, custodyAssertion.Recovery, guard)
+		}
+		if err != nil || current.TSID != record.TSID {
+			return nil, errCustodyUnavailable
+		}
+		return issueRecoveredBrokerCredential(issueCtx, storage, keyProvider, issuer, clientID, assertion.Guard.OwnerPartition, current.TSID, current.ExpiresAt)
+	}
+	handle, err := p.Runtime.newRecoveredProvisional(assertion.Guard.SessionID, assertion.AttemptDeadline, source)
+	if err != nil {
+		return contract.RecoveredCredentialAttachment{}, continuityCustodyError(ctx, err)
+	}
+	logical = handle.logical
+	if _, err := source.Token(); err != nil {
+		_ = handle.Abort(context.Background())
+		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
+	}
+	ref, err := newRecoveredCatalogueRef(assertion.AttemptDeadline, uint32(len(assertion.Guard.Providers)))
+	if err != nil {
+		_ = handle.Abort(context.Background())
+		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
+	}
+	if _, err := handle.FreezeAuthenticatedCatalogue(ctx, ref, p, source, p.reservedToolNames); err != nil {
+		_ = handle.Abort(context.Background())
+		return contract.RecoveredCredentialAttachment{}, continuityCustodyError(ctx, err)
+	}
+	if _, err := custody.Load(ctx, custodyAssertion); err != nil || source.validateCurrent(ctx) != nil {
+		_ = handle.Abort(context.Background())
+		return contract.RecoveredCredentialAttachment{}, contract.ErrContinuityUnavailable
+	}
+	attachment := contract.RecoveredCredentialAttachment{Attachment: handle}
+	p.finishRecoveredAttempt(assertion, requestID, attempt, handle.Binding(), true)
+	completed = true
+	return attachment, nil
+}
+
+func (p *Process) continuityCustody() (*credentialCustody, error) {
+	if p == nil {
+		return nil, contract.ErrContinuityUnavailable
+	}
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+	if p.closed || p.custody == nil {
+		return nil, contract.ErrContinuityUnavailable
+	}
+	return p.custody, nil
+}
+
+func custodyAssertionFromContract(assertion contract.CustodyAssertion) custodyAssertion {
+	return custodyAssertion{custodyRequest: custodyRequest{Guard: custodyGuardFromContract(assertion.Guard), AttemptDeadline: assertion.AttemptDeadline}, Recovery: recoveryID(assertion.RecoveryReference)}
+}
+
+func custodyGuardFromContract(guard contract.ContinuityGuard) custodyGuard {
+	return custodyGuard{SessionID: guard.SessionID, Incarnation: guard.SessionIncarnation, OwnerPartition: guard.OwnerPartition, WorkloadPartition: guard.WorkloadPartition, ProfileDigest: guard.ProfileDigest, Providers: append([]string(nil), guard.Providers...)}
+}
+
+func continuityCustodyError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return contract.ErrContinuityUnavailable
+}
+
+func continuityProfileFromConfig(config ToolHiveConfig, issuer string, construction toolHiveConstruction) ([32]byte, []string, error) {
+	profiles := make([]contract.ProtectedProfile, 0, len(construction.protectedBackends))
+	for _, profile := range config.Profiles {
+		if profile.Auth != authOAuth || profile.OAuth == nil {
+			continue
+		}
+		provider, ok := construction.providerByBackend[profile.Name]
+		if !ok {
+			return [32]byte{}, nil, contract.ErrContinuityUnavailable
+		}
+		profiles = append(profiles, contract.ProtectedProfile{
+			Provider: provider, Destination: profile.URL, Issuer: profile.OAuth.Issuer,
+			AuthorizationEndpoint: profile.OAuth.AuthorizationEndpoint, TokenEndpoint: profile.OAuth.TokenEndpoint,
+			DCRDiscoveryURL: profile.OAuth.DCRDiscoveryURL, ClientID: profile.OAuth.ClientID, AuthMode: profile.Auth,
+			Scopes: append([]string(nil), profile.OAuth.Scopes...), RequestRefreshToken: profile.OAuth.RequestRefreshToken,
+		})
+	}
+	if len(profiles) == 0 {
+		return [32]byte{}, nil, nil
+	}
+	return contract.ProtectedProfileDigest(config.CallbackURL, issuer, profiles)
+}
+
+func continuityProfileForProcess(config ToolHiveConfig, issuer string, construction toolHiveConstruction) ([32]byte, []string, error) {
+	digest, providers, err := continuityProfileFromConfig(config, issuer, construction)
+	if err != nil && config.ProtectedStorage != nil {
+		return [32]byte{}, nil, err
+	}
+	if err != nil {
+		return [32]byte{}, nil, nil
+	}
+	return digest, providers, nil
 }
 
 // NewToolHiveProcess discovers anonymous upstreams, constructs one ordered
@@ -171,7 +546,13 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 	runtime.queryCaller = toolHiveQueryCaller(construction.anonymous, issuer+"/mcp", client)
 
 	processCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget, reservedToolNames: append([]string(nil), config.ReservedToolNames...), diag: diag}
+	profileDigest, providers, profileErr := continuityProfileForProcess(config, issuer, construction)
+	if profileErr != nil {
+		cancel()
+		_ = runtime.Close()
+		return nil, errors.New("mcpbroker: protected continuity profile unavailable")
+	}
+	process := &Process{Runtime: runtime, ctx: processCtx, cancel: cancel, construction: construction, protectedTarget: protectedTarget, reservedToolNames: append([]string(nil), config.ReservedToolNames...), profileDigest: profileDigest, providers: providers, issuer: issuer, diag: diag}
 	runtime.process = process
 	process.resources = append(process.resources, ownedResource{name: "process-context", close: func() error { cancel(); return nil }})
 	rollback := func(cause error) (*Process, error) {
@@ -250,6 +631,8 @@ func newToolHiveProcess(ctx context.Context, config ToolHiveConfig, options tool
 		if err != nil {
 			return rollback(fmt.Errorf("mcpbroker: create embedded auth server: %w", err))
 		}
+		process.authStorage = authStore
+		process.authKeyProvider = authKeyProvider
 		process.resources = append(process.resources, ownedResource{name: "authserver", close: auth.Close})
 		reader := upstreamtoken.NewInProcessService(auth.IDPTokenStorage(), auth.UpstreamTokenRefresher())
 		if protectedStorage != nil {

@@ -191,6 +191,8 @@ type CustodyAssertion struct {
 type StagedCredentialCustody struct {
 	RecoveryReference string
 	ExpiresAt         time.Time
+	ProfileDigest     [32]byte
+	Providers         []string
 }
 
 // RecoveredCredentialAttachment contains only a process-local provisional
@@ -203,6 +205,16 @@ type RecoveredCredentialAttachment struct {
 // enrollment and can derive a verified ToolHive session identity.
 type CredentialCustodyStager interface {
 	StageCredentialCustody(context.Context, string, ContinuityGuard, WorkspaceEnrollmentRef, time.Time) (StagedCredentialCustody, error)
+}
+
+// CredentialContinuityAdvertiser reports whether a handle's broker offers
+// credential continuity (encrypted custody is configured). A host requires
+// custody exactly when this reports true: it fails enrollment closed rather than
+// silently completing without custody, and keeps the legacy path otherwise, so a
+// broker without protected storage (or an older broker) is never mistaken for a
+// continuity failure.
+type CredentialContinuityAdvertiser interface {
+	CredentialContinuity() bool
 }
 
 // CredentialContinuityService remains usable after B1's handle is gone.

@@ -875,6 +875,10 @@ type Config struct {
 	// silently constructing an in-process ToolHive broker when remote custody is
 	// part of its deployment contract.
 	MCPBrokerFactoryRequired bool
+	// MCPBrokerWorkloadIdentity is the issuer/subject the remote broker verifies
+	// for this host. It enables credential-continuity guard derivation; nil keeps
+	// enrollment on the legacy path without custody.
+	MCPBrokerWorkloadIdentity *session.Principal
 	// MCPProfileLoader resolves operator-tier profiles with the same permission
 	// resolver Build already owns. Command roots install it so settings are not
 	// parsed a second time and secret lookup remains a runtime-only operation.
@@ -2594,6 +2598,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		if cfg.MCPBrokerFactory != nil {
 			svcCfg.MCPBrokerFactory = cfg.MCPBrokerFactory
 			svcCfg.MCPBrokerClose = brokerRemoteClose
+			svcCfg.BrokerWorkloadIdentity = cfg.MCPBrokerWorkloadIdentity.Clone()
 		}
 	}
 	// Workspace enrollment (pre-prompt authenticate-then-discover) applies to the

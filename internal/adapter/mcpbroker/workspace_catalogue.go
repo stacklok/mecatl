@@ -120,10 +120,6 @@ func (a *SessionHandle) freezeAuthenticatedCatalogue(ctx context.Context, ref co
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if a == nil || process == nil || brokerCredential == nil || !ref.Valid() {
-		return nil, nil, ErrAuthenticatedDiscovery
-	}
-
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -148,7 +144,7 @@ func (a *SessionHandle) freezeAuthenticatedCatalogue(ctx context.Context, ref co
 		return nil, nil, ErrAuthenticatedDiscovery
 	}
 
-	stagedRoutes, err := stageAuthenticatedRoutes(ctx, process, brokerCredential, backends, base, reservedToolNames)
+	stagedRoutes, err := stageAuthenticatedRoutes(ctx, a, process, brokerCredential, backends, base, reservedToolNames)
 	if err != nil {
 		reason := diagnosticReasonDiscoveryFailed
 		if errors.Is(err, ErrInvalidCatalogue) {
@@ -201,7 +197,7 @@ func (a *SessionHandle) stateErrorLocked() error {
 	return nil
 }
 
-func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCredential oauth2.TokenSource, backends []string, base *attachmentCatalogue, reservedToolNames []string) ([]route, error) {
+func stageAuthenticatedRoutes(ctx context.Context, attachment *SessionHandle, process *Process, brokerCredential oauth2.TokenSource, backends []string, base *attachmentCatalogue, reservedToolNames []string) ([]route, error) {
 	// The attachment lock remains held by FreezeAuthenticatedCatalogue throughout
 	// this work. Cancel/close races have one winner, and Tools cannot expose a
 	// partly staged catalogue.
@@ -218,6 +214,7 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 		}
 	}
 	staged := make([]route, 0)
+	verifiedTSID := ""
 	for backendIndex, backend := range backends {
 		capabilities, err := process.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
 		if err != nil || capabilities.Backend != backend {
@@ -230,6 +227,12 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 			// all-or-nothing, without logging its configured name.
 			process.diagnostics().Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscoveryFailed, "backend_index", backendIndex)
 			return nil, ErrAuthenticatedDiscovery
+		}
+		if process.discovery != nil && process.discovery.captureTSID {
+			if capabilities.verifiedTSID == "" || (verifiedTSID != "" && capabilities.verifiedTSID != verifiedTSID) {
+				return nil, ErrAuthenticatedDiscovery
+			}
+			verifiedTSID = capabilities.verifiedTSID
 		}
 		process.diagnostics().Log(ctx, port.LevelInfo, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscovered, "backend_index", backendIndex, "tools", len(capabilities.Tools))
 		declaredTools := process.construction.staticByBackend[backend]
@@ -264,6 +267,12 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if process.discovery != nil && process.discovery.captureTSID {
+		if verifiedTSID == "" {
+			return nil, ErrAuthenticatedDiscovery
+		}
+		attachment.verifiedTSID = verifiedTSID
 	}
 	return staged, nil
 }

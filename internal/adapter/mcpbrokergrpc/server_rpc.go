@@ -96,10 +96,12 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 		owner.published = true
 	}
 	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentHandle)
+	advertiser, advertises := a.(mcpbroker.CredentialContinuityAdvertiser)
+	continuity := advertises && advertiser.CredentialContinuity()
 	now := time.Now()
 	s.handles[h] = &serverHandle{sessionHandle: a, principal: principal, logicalID: logicalID, owner: owner, binding: string(a.Binding()), tools: tools, expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{}), receipts: make(map[session.ToolCallID]*executeReceipt)}
 	attached = true
-	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.instanceID, WorkspaceEnrollment: enrollment}, nil
+	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.instanceID, WorkspaceEnrollment: enrollment, CredentialContinuity: continuity}, nil
 }
 
 func (s *Server) discardUnpublishedHandle(handle mcpbroker.SessionHandle, outcome mcpbroker.AttachOutcome) {

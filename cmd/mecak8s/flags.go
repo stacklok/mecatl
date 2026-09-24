@@ -22,6 +22,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -652,6 +653,11 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// The legacy --mcp-server surface is global-only.
 		mcpAuthorityDefault = mcpauthority.Global
 	}
+	brokerIdentity, identityErr := brokerWorkloadIdentity(cfg.mcpBrokerTokenFile)
+	if identityErr != nil && diag != nil {
+		// Continuity custody stays off; ordinary broker use is unaffected.
+		diag.Log(context.Background(), port.LevelWarn, "mcp broker credential continuity disabled", "reason", "workload_identity_unavailable")
+	}
 	out := app.Config{
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
@@ -735,25 +741,26 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		// mecak8s defaults configured MCP profiles to session-scoped broker
 		// authority; the Helm chart explicitly selects global mode for an empty
 		// server list so zero-MCP deployments do not start broker resources.
-		MCPAuthorityLoader:       cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
-		MCPAuthorityDefault:      mcpAuthorityDefault,
-		MCPBrokerSupported:       true,
-		MCPBrokerFactory:         mcpBrokerFactory(cfg),
-		MCPBrokerFactoryRequired: true,
-		ProviderCredentialLoader: cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
-		ProviderOverrides:        cfg.providerFlags.EndpointOverrides(),
-		EnableParallel:           cfg.enableParallel,
-		EnableTeams:              cfg.enableTeams,
-		SoulPath:                 cfg.soulFile,
-		NoSoul:                   cfg.noSoul,
-		UserModelDir:             cfg.userModelDir,
-		NoUserModel:              cfg.noUserModel,
-		PermissionsConventional:  cfg.permissionsConventional,
-		ImportClaudePermissions:  cfg.importClaudePermissions,
-		TrustProject:             cfg.trustProject,
-		PermissionConfigs:        cfg.permissionConfigs,
-		Posture:                  app.ParsePosture(cfg.posture),
-		PostureFlagSet:           cfg.postureFlagSet,
+		MCPAuthorityLoader:        cliconfig.NewMCPProfileResolver(cfg.mcpServers, os.LookupEnv),
+		MCPAuthorityDefault:       mcpAuthorityDefault,
+		MCPBrokerSupported:        true,
+		MCPBrokerFactory:          mcpBrokerFactory(cfg),
+		MCPBrokerFactoryRequired:  true,
+		MCPBrokerWorkloadIdentity: brokerIdentity,
+		ProviderCredentialLoader:  cliconfig.NewProviderCredentialResolver(cfg.providerFlags, cfg.providerCredentials),
+		ProviderOverrides:         cfg.providerFlags.EndpointOverrides(),
+		EnableParallel:            cfg.enableParallel,
+		EnableTeams:               cfg.enableTeams,
+		SoulPath:                  cfg.soulFile,
+		NoSoul:                    cfg.noSoul,
+		UserModelDir:              cfg.userModelDir,
+		NoUserModel:               cfg.noUserModel,
+		PermissionsConventional:   cfg.permissionsConventional,
+		ImportClaudePermissions:   cfg.importClaudePermissions,
+		TrustProject:              cfg.trustProject,
+		PermissionConfigs:         cfg.permissionConfigs,
+		Posture:                   app.ParsePosture(cfg.posture),
+		PostureFlagSet:            cfg.postureFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key
 		// (folded by foldOperatorReasoningEffort in app.Build, like posture).

@@ -25,6 +25,10 @@ var ErrAuthenticatedDiscovery = errors.New("mcpbroker: authenticated capability 
 type AuthenticatedCapabilities struct {
 	Backend string
 	Tools   []ToolDefinition
+	// verifiedTSID is adapter-private evidence captured only after ToolHive's
+	// incoming middleware has authenticated the request and loaded credentials.
+	// It never crosses the neutral broker boundary.
+	verifiedTSID string
 }
 
 // capabilityQuerier intentionally exposes no aggregate query operation. The
@@ -144,6 +148,7 @@ func (d *authenticatedDiscovery) queryVerified(ctx context.Context, brokerToken,
 	if d.captureTSID && capture.tsid == "" {
 		return AuthenticatedCapabilities{}, "", ErrAuthenticatedDiscovery
 	}
+	result.verifiedTSID = capture.tsid
 	return result, capture.tsid, nil
 }
 

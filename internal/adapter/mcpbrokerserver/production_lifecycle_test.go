@@ -13,6 +13,7 @@ import (
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 func TestProductionLifecycleIsReadyWithAnIdleToolHiveRuntime(t *testing.T) {
@@ -36,6 +37,30 @@ func TestProductionLifecycleIsReadyWithAnIdleToolHiveRuntime(t *testing.T) {
 	defer cancel()
 	if err := lifecycle.Close(closeCtx); err != nil {
 		t.Fatalf("idle production lifecycle Close: %v", err)
+	}
+}
+
+func TestProductionLifecycleExposesProcessCredentialContinuity(t *testing.T) {
+	issuer := newIdentityFixture(t)
+	lifecycle, err := NewProduction(t.Context(), ProductionConfig{
+		PublicAddress: "127.0.0.1:0", AdminAddress: "127.0.0.1:0",
+		TLSConfig:       &tls.Config{Certificates: issuer.server.TLS.Certificates, MinVersion: tls.VersionTLS12},
+		WorkloadJWT:     productionOIDC(issuer, time.Minute),
+		ToolHive:        mcpbroker.ToolHiveConfig{},
+		PropagationWait: time.Millisecond, DrainTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewProduction: %v", err)
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		if err := lifecycle.Close(closeCtx); err != nil {
+			t.Errorf("production lifecycle Close: %v", err)
+		}
+	}()
+	if _, ok := lifecycle.broker.service.(contract.CredentialContinuityService); !ok {
+		t.Fatal("production broker service does not expose credential continuity")
 	}
 }
 

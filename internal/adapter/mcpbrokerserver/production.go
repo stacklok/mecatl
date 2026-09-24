@@ -81,7 +81,7 @@ func NewProduction(ctx context.Context, cfg ProductionConfig) (*Lifecycle, error
 		if processErr != nil {
 			return brokerRuntime{}, processErr
 		}
-		return brokerRuntime{Service: process.Runtime, Handlers: process.Handlers, CallbackPath: process.CallbackPath, Close: process.Close}, nil
+		return brokerRuntime{Service: process, Handlers: process.Handlers, CallbackPath: process.CallbackPath, Close: process.Close}, nil
 	}})
 	if err != nil {
 		return nil, err

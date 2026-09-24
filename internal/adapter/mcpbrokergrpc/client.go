@@ -87,7 +87,7 @@ func (c *Client) attachResponse(r *brokerv1.AttachResponse, expectedBinding bool
 		c.discardAttachResponse(r)
 		return nil, "", e
 	}
-	base := &clientSessionHandle{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), instanceID: r.GetBrokerIncarnation(), tools: tools}
+	base := &clientSessionHandle{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), instanceID: r.GetBrokerIncarnation(), tools: tools, continuity: r.GetCredentialContinuity()}
 	c.mu.Lock()
 	current := c.instanceID
 	if expectedBinding {
@@ -159,6 +159,8 @@ type clientSessionHandle struct {
 	binding    session.ExternalBinding
 	instanceID string
 	tools      []tool.Tool
+	// continuity is the broker's per-attachment credential-continuity offer.
+	continuity bool
 	mu         sync.Mutex
 	closed     bool
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
 
 	"github.com/stacklok/mecatl/engine/session"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 type custodyTestClock struct{ now time.Time }
@@ -77,6 +78,7 @@ func TestCredentialCustodyStageDerivesEarliestNativeSessionExpiry(t *testing.T) 
 		t.Fatal(err)
 	}
 	request := custodyRequest{Guard: custodyGuard{SessionID: "session", Incarnation: session.NewIncarnationID(), Providers: []string{"one", "two"}}, AttemptDeadline: now.Add(time.Minute)}
+	request.Guard.OwnerPartition[0], request.Guard.WorkloadPartition[0] = 1, 2
 	staged, err := core.Stage(t.Context(), request, "tsid")
 	if err != nil {
 		t.Fatal(err)
@@ -857,6 +859,45 @@ func committedFixture(t *testing.T) (*custodyFixture, custodyAssertion) {
 	}
 	return f, a
 }
+func TestProcessCredentialContinuityCommitAndTombstoneUseCustody(t *testing.T) {
+	fixture := newFixture(t)
+	staged, err := fixture.core.Stage(t.Context(), fixture.request, "tsid")
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	assertion := contract.CustodyAssertion{
+		Guard: contract.ContinuityGuard{
+			SessionID:          fixture.request.Guard.SessionID,
+			SessionIncarnation: fixture.request.Guard.Incarnation,
+			OwnerPartition:     fixture.request.Guard.OwnerPartition,
+			WorkloadPartition:  fixture.request.Guard.WorkloadPartition,
+			ProfileDigest:      fixture.request.Guard.ProfileDigest,
+			Providers:          append([]string(nil), fixture.request.Guard.Providers...),
+		},
+		RecoveryReference: string(staged.Recovery),
+		AttemptDeadline:   fixture.request.AttemptDeadline,
+	}
+	process := &Process{custody: fixture.core, profileDigest: fixture.request.Guard.ProfileDigest, providers: append([]string(nil), fixture.request.Guard.Providers...)}
+	mismatched := assertion
+	mismatched.Guard.ProfileDigest[0]++
+	if err := process.CommitCredentialCustody(t.Context(), mismatched); !errors.Is(err, contract.ErrContinuityUnavailable) {
+		t.Fatalf("mismatched CommitCredentialCustody = %v", err)
+	}
+	if err := process.CommitCredentialCustody(t.Context(), assertion); err != nil {
+		t.Fatalf("CommitCredentialCustody: %v", err)
+	}
+	privateAssertion := custodyAssertionFromContract(assertion)
+	if record, err := fixture.core.Load(t.Context(), privateAssertion); err != nil || record.State != custodyCurrent {
+		t.Fatalf("committed custody = %#v, %v", record, err)
+	}
+	if err := process.TombstoneCredentialCustody(t.Context(), assertion); err != nil {
+		t.Fatalf("TombstoneCredentialCustody: %v", err)
+	}
+	if _, err := fixture.core.Load(t.Context(), privateAssertion); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("Load after tombstone = %v, want custody unavailable", err)
+	}
+}
+
 func newFixture(t *testing.T) *custodyFixture {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -890,4 +931,40 @@ func newMiniRedis(t *testing.T) redis.UniversalClient {
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	return client
+}
+
+// After a broker configuration change the stored guard no longer matches the
+// current profile: Commit and Recover must refuse it, while Tombstone still
+// invalidates custody using the stored old guard.
+func TestProcessContinuityAfterProfileChangeTombstonesOldGuard(t *testing.T) {
+	fixture := newFixture(t)
+	staged, err := fixture.core.Stage(t.Context(), fixture.request, "tsid")
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	oldGuard := contract.ContinuityGuard{
+		SessionID:          fixture.request.Guard.SessionID,
+		SessionIncarnation: fixture.request.Guard.Incarnation,
+		OwnerPartition:     fixture.request.Guard.OwnerPartition,
+		WorkloadPartition:  fixture.request.Guard.WorkloadPartition,
+		ProfileDigest:      fixture.request.Guard.ProfileDigest,
+		Providers:          append([]string(nil), fixture.request.Guard.Providers...),
+	}
+	assertion := contract.CustodyAssertion{Guard: oldGuard, RecoveryReference: string(staged.Recovery), AttemptDeadline: fixture.request.AttemptDeadline}
+	changed := fixture.request.Guard.ProfileDigest
+	changed[0]++
+	process := &Process{custody: fixture.core, profileDigest: changed, providers: append([]string(nil), fixture.request.Guard.Providers...)}
+
+	if err := process.CommitCredentialCustody(t.Context(), assertion); !errors.Is(err, contract.ErrContinuityUnavailable) {
+		t.Fatalf("Commit after profile change = %v, want ErrContinuityUnavailable", err)
+	}
+	if _, err := process.RecoverCredentialAttachment(t.Context(), assertion, "recover-1"); !errors.Is(err, contract.ErrContinuityUnavailable) {
+		t.Fatalf("Recover after profile change = %v, want ErrContinuityUnavailable", err)
+	}
+	if err := process.TombstoneCredentialCustody(t.Context(), assertion); err != nil {
+		t.Fatalf("Tombstone with stored old guard: %v", err)
+	}
+	if _, err := fixture.core.Load(t.Context(), custodyAssertionFromContract(assertion)); !errors.Is(err, errCustodyUnavailable) {
+		t.Fatalf("Load after tombstone = %v, want custody unavailable", err)
+	}
 }

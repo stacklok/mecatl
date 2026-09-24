@@ -15,6 +15,10 @@ import (
 func continuityGuardToWire(guard mcpbroker.ContinuityGuard) *brokerv1.ContinuityGuard {
 	return &brokerv1.ContinuityGuard{SessionId: string(guard.SessionID), SessionIncarnation: string(guard.SessionIncarnation), OwnerPartition: append([]byte(nil), guard.OwnerPartition[:]...), WorkloadPartition: append([]byte(nil), guard.WorkloadPartition[:]...), ProfileDigest: append([]byte(nil), guard.ProfileDigest[:]...), Providers: append([]string(nil), guard.Providers...)}
 }
+func stageGuardToWire(guard mcpbroker.ContinuityGuard) *brokerv1.ContinuityGuard {
+	return &brokerv1.ContinuityGuard{SessionId: string(guard.SessionID), SessionIncarnation: string(guard.SessionIncarnation), OwnerPartition: append([]byte(nil), guard.OwnerPartition[:]...), WorkloadPartition: append([]byte(nil), guard.WorkloadPartition[:]...)}
+}
+
 func custodyAssertionToWire(assertion mcpbroker.CustodyAssertion) *brokerv1.CustodyAssertion {
 	return &brokerv1.CustodyAssertion{Guard: continuityGuardToWire(assertion.Guard), RecoveryReference: assertion.RecoveryReference, AttemptDeadline: timestamppb.New(assertion.AttemptDeadline)}
 }
@@ -25,14 +29,24 @@ func (a *clientSessionHandle) StageCredentialCustody(ctx context.Context, reques
 	}
 	rpcCtx, cancel := context.WithTimeout(ctx, a.client.cfg.RPCDeadline)
 	defer cancel()
-	response, err := a.client.rpc.StageCredentialCustody(rpcCtx, &brokerv1.StageCredentialCustodyRequest{RequestId: requestID, Handle: a.handle, BrokerIncarnation: a.instanceID, Guard: continuityGuardToWire(guard), CompletedEnrollment: workspaceRefToWire(enrollment), AttemptDeadline: timestamppb.New(deadline)})
+	response, err := a.client.rpc.StageCredentialCustody(rpcCtx, &brokerv1.StageCredentialCustodyRequest{RequestId: requestID, Handle: a.handle, BrokerIncarnation: a.instanceID, Guard: stageGuardToWire(guard), CompletedEnrollment: workspaceRefToWire(enrollment), AttemptDeadline: timestamppb.New(deadline)})
 	if err != nil {
 		return mcpbroker.StagedCredentialCustody{}, continuityClientError(err)
 	}
-	if !validRecoveryReference(response.GetRecoveryReference()) || response.GetCustodyExpiresAt() == nil || !response.GetCustodyExpiresAt().IsValid() {
+	if !validRecoveryReference(response.GetRecoveryReference()) || response.GetCustodyExpiresAt() == nil || !response.GetCustodyExpiresAt().IsValid() || len(response.GetProfileDigest()) != 32 || len(response.GetProviders()) == 0 || len(response.GetProviders()) > mcpbroker.MaxContinuityProviders {
 		return mcpbroker.StagedCredentialCustody{}, errors.New("mcpbrokergrpc: malformed custody stage response")
 	}
-	return mcpbroker.StagedCredentialCustody{RecoveryReference: response.GetRecoveryReference(), ExpiresAt: response.GetCustodyExpiresAt().AsTime()}, nil
+	var profileDigest [32]byte
+	copy(profileDigest[:], response.GetProfileDigest())
+	if profileDigest == ([32]byte{}) {
+		return mcpbroker.StagedCredentialCustody{}, errors.New("mcpbrokergrpc: malformed custody stage response")
+	}
+	for i, provider := range response.GetProviders() {
+		if !mcpbroker.ValidContinuityProvider(provider) || (i > 0 && provider <= response.GetProviders()[i-1]) {
+			return mcpbroker.StagedCredentialCustody{}, errors.New("mcpbrokergrpc: malformed custody stage response")
+		}
+	}
+	return mcpbroker.StagedCredentialCustody{RecoveryReference: response.GetRecoveryReference(), ExpiresAt: response.GetCustodyExpiresAt().AsTime(), ProfileDigest: profileDigest, Providers: append([]string(nil), response.GetProviders()...)}, nil
 }
 
 func (c *Client) CommitCredentialCustody(ctx context.Context, assertion mcpbroker.CustodyAssertion) error {
@@ -75,4 +89,12 @@ func continuityClientError(err error) error {
 }
 
 var _ mcpbroker.CredentialContinuityService = (*Client)(nil)
-var _ mcpbroker.CredentialCustodyStager = (*clientSessionHandle)(nil)
+
+// CredentialContinuity reports the broker's per-attachment continuity offer. An
+// older broker never sets it, so the host keeps the legacy enrollment path.
+func (a *clientSessionHandle) CredentialContinuity() bool { return a != nil && a.continuity }
+
+var (
+	_ mcpbroker.CredentialCustodyStager        = (*clientSessionHandle)(nil)
+	_ mcpbroker.CredentialContinuityAdvertiser = (*clientSessionHandle)(nil)
+)

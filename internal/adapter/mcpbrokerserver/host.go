@@ -50,6 +50,7 @@ type readyBrokerService interface{ Ready(context.Context) error }
 // brokerHost owns the verifier, RPC adapter, mounted callback routes, and the
 // process-owned runtime closer.
 type brokerHost struct {
+	service         contract.Service
 	verifier        workloadVerifier
 	rpc             *mcpbrokergrpc.Server
 	mux             *http.ServeMux
@@ -139,7 +140,7 @@ func newBrokerHost(ctx context.Context, cfg hostConfig) (*brokerHost, error) {
 	for _, subject := range cfg.WorkloadJWT.AllowedSubjects {
 		allowedSubjects[subject] = struct{}{}
 	}
-	h := &brokerHost{verifier: verifier, rpc: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: runtime.Close, admission: admission, allowedSubjects: allowedSubjects}
+	h := &brokerHost{service: runtime.Service, verifier: verifier, rpc: rpc, mux: http.NewServeMux(), diagnostics: diagnostics, observe: cfg.Observe, closeProcess: runtime.Close, admission: admission, allowedSubjects: allowedSubjects}
 	if !runtime.Handlers.Empty() {
 		if err := runtime.Handlers.Mount(h.mux, runtime.CallbackPath); err != nil {
 			_ = rpc.Shutdown(context.Background())

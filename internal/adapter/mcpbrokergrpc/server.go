@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
@@ -26,6 +27,7 @@ type Server struct {
 	// Immutable dependencies and configuration, set before the server accepts RPCs.
 	service     mcpbroker.Service // Owns the underlying logical broker sessions.
 	diagnostics port.Diagnostics  // Receives safe operational RPC observations.
+	clock       port.Clock        // Supplies continuity-deadline validation time.
 	cfg         Config            // Validated deadlines, retention periods, and capacity limits.
 	// instanceID is generated when the Server is constructed. Clients echo it so a
 	// replacement server rejects requests tied to the lost process-local state.
@@ -87,7 +89,7 @@ func NewServer(service mcpbroker.Service, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("mcpbrokergrpc: mint broker instance ID: %w", err)
 	}
 	executeCtx, executeStop := context.WithCancel(context.Background())
-	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), continuityReceipts: make(map[continuityReceiptKey]*continuityReceipt), continuityReceiptUsage: make(map[[32]byte]continuityReceiptUsage), done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
+	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, clock: wallclock.Clock{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), continuityReceipts: make(map[continuityReceiptKey]*continuityReceipt), continuityReceiptUsage: make(map[[32]byte]continuityReceiptUsage), done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
 	go s.sweep()
 	return s, nil
 }
@@ -99,6 +101,13 @@ func (s *Server) WithDiagnostics(diagnostics port.Diagnostics) *Server {
 		diagnostics = port.NopDiagnostics{}
 	}
 	s.diagnostics = diagnostics
+	return s
+}
+
+func (s *Server) WithClock(clock port.Clock) *Server {
+	if clock != nil {
+		s.clock = clock
+	}
 	return s
 }
 

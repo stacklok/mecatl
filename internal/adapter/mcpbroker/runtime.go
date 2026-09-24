@@ -285,6 +285,9 @@ type logicalSession struct {
 	createdAt            time.Time
 	expiresAt            time.Time
 	attachments          int
+	recoveredSource      *recoveredCredentialSource
+	recoveryValid        func(context.Context) error
+	recoveryDeadline     time.Time
 }
 
 // Caller is the private execution seam used by the in-process transport. The
@@ -529,6 +532,54 @@ func (r *Runtime) AttachSessionExpectedBinding(ctx context.Context, id session.S
 	return handle, contract.AttachReattached, nil
 }
 
+func (r *Runtime) newRecoveredProvisional(id session.SessionID, deadline time.Time, source *recoveredCredentialSource) (*SessionHandle, error) {
+	if !validLogicalSessionID(id) || source == nil || !deadline.After(time.Now()) {
+		return nil, contract.ErrContinuityUnavailable
+	}
+	r.mu.Lock()
+	if r.closed || r.sessions[id] != nil || len(r.sessions) >= r.limits.MaxLogicalSessions {
+		r.mu.Unlock()
+		return nil, contract.ErrContinuityUnavailable
+	}
+	r.nextGeneration++
+	operationCtx, cancelOps := context.WithCancel(context.Background())
+	logical := &logicalSession{
+		ref:                  SessionRef{id: id, generation: r.nextGeneration},
+		operationCtx:         operationCtx,
+		cancelOps:            cancelOps,
+		provisional:          true,
+		recoveredProvisional: true,
+		authorizations:       make(map[authorizationIdentity]*authorizationTransaction),
+		grants:               make(map[string]*oauthGrant),
+		createdAt:            time.Now(),
+		expiresAt:            deadline,
+		attachments:          1,
+		recoveredSource:      source,
+		recoveryValid:        source.validateCurrent,
+		recoveryDeadline:     deadline,
+	}
+	r.sessions[id] = logical
+	r.mu.Unlock()
+	handle, err := r.newAttachedHandle(logical, false, true)
+	if err != nil {
+		_, _ = r.DeleteSession(context.Background(), id)
+		return nil, err
+	}
+	time.AfterFunc(time.Until(deadline), func() {
+		r.mu.Lock()
+		if r.sessions[id] == logical {
+			logical.mu.Lock()
+			if logical.recoveredProvisional && logical.provisional {
+				delete(r.sessions, id)
+				logical.markDeletedLocked(session.AuthorizationExpired)
+			}
+			logical.mu.Unlock()
+		}
+		r.mu.Unlock()
+	})
+	return handle, nil
+}
+
 func (r *Runtime) bindingFor(generation uint64) session.ExternalBinding {
 	return session.ExternalBinding(r.bindingPrefix + "." + fmt.Sprint(generation))
 }
@@ -623,6 +674,7 @@ type SessionHandle struct {
 	settled              bool
 	activeOps            int
 	operationsDone       chan struct{}
+	verifiedTSID         string
 	catalogue            *attachmentCatalogue
 }
 
@@ -649,6 +701,14 @@ func (a *SessionHandle) Commit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	a.logical.mu.RLock()
+	recoveredProvisional := a.logical.recoveredProvisional && a.logical.provisional
+	recoverySource := a.logical.recoveredSource
+	recoveryValid := a.logical.recoveryValid
+	a.logical.mu.RUnlock()
+	if recoveredProvisional && recoverySource != nil && (recoveryValid == nil || recoveryValid(ctx) != nil) {
+		return contract.ErrContinuityUnavailable
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.settled {
@@ -667,8 +727,18 @@ func (a *SessionHandle) Commit(ctx context.Context) error {
 			return contract.ErrStateUnavailable
 		}
 		if !a.recoveredProvisional || (a.logical.recoveredProvisional && a.logical.provisional) {
+			wasRecovered := a.logical.recoveredProvisional && a.logical.provisional
+			if wasRecovered && !a.logical.recoveryDeadline.IsZero() && !a.logical.recoveryDeadline.After(time.Now()) {
+				a.logical.mu.Unlock()
+				a.runtime.mu.Unlock()
+				return contract.ErrContinuityUnavailable
+			}
 			a.logical.provisional = false
 			a.logical.recoveredProvisional = false
+			if wasRecovered {
+				a.logical.expiresAt = time.Now().Add(a.runtime.limits.LogicalRetention)
+				a.logical.recoveryDeadline = time.Time{}
+			}
 		}
 		a.logical.mu.Unlock()
 		a.runtime.mu.Unlock()
@@ -677,8 +747,15 @@ func (a *SessionHandle) Commit(ctx context.Context) error {
 		a.logical.mu.Lock()
 		available := !a.runtime.closed && a.runtime.sessions[a.logical.ref.id] == a.logical && !a.logical.deleted
 		if available && a.logical.recoveredProvisional && a.logical.provisional {
+			if !a.logical.recoveryDeadline.IsZero() && !a.logical.recoveryDeadline.After(time.Now()) {
+				a.logical.mu.Unlock()
+				a.runtime.mu.RUnlock()
+				return contract.ErrContinuityUnavailable
+			}
 			a.logical.provisional = false
 			a.logical.recoveredProvisional = false
+			a.logical.expiresAt = time.Now().Add(a.runtime.limits.LogicalRetention)
+			a.logical.recoveryDeadline = time.Time{}
 		}
 		a.logical.mu.Unlock()
 		a.runtime.mu.RUnlock()
@@ -703,6 +780,7 @@ func (a *SessionHandle) Abort(ctx context.Context) error {
 	}
 	rollback := (a.creator || a.recoveredProvisional) && !a.settled
 	a.closed = true
+	a.verifiedTSID = ""
 	a.settled = true
 	done := a.operationsDone
 	if rollback {
@@ -759,6 +837,7 @@ func (a *SessionHandle) Close(ctx context.Context) (contract.CloseOutcome, error
 		return contract.CloseAlreadyClosed, nil
 	}
 	a.closed = true
+	a.verifiedTSID = ""
 	done := a.operationsDone
 	a.mu.Unlock()
 	if done != nil {

@@ -5,8 +5,30 @@ import (
 	"testing"
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/session"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
+
+func TestStageCredentialCustodyRejectsHostProfileGuard(t *testing.T) {
+	guard := &brokerv1.ContinuityGuard{
+		SessionId:          "session",
+		SessionIncarnation: string(session.NewIncarnationID()),
+		OwnerPartition:     append([]byte{1}, make([]byte, 31)...),
+		WorkloadPartition:  append([]byte{2}, make([]byte, 31)...),
+		ProfileDigest:      append([]byte{3}, make([]byte, 31)...),
+		Providers:          []string{"provider"},
+	}
+	if _, err := stageContinuityGuardFromWire(guard); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("stage guard with host profile fields = %v, want invalid argument", err)
+	}
+	guard.ProfileDigest = nil
+	guard.Providers = nil
+	if _, err := stageContinuityGuardFromWire(guard); err != nil {
+		t.Fatalf("stage guard without host profile fields = %v", err)
+	}
+}
 
 func TestCredentialContinuityWireFieldNumbers(t *testing.T) {
 	file := brokerv1.File_mecatl_broker_v1_broker_proto
@@ -21,6 +43,13 @@ func TestCredentialContinuityWireFieldNumbers(t *testing.T) {
 	}
 	if got := file.Enums().ByName("BrokerErrorReason").Values().ByName("BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE").Number(); got != 7 {
 		t.Fatalf("continuity reason = %d, want 7", got)
+	}
+	stage := file.Messages().ByName("StageCredentialCustodyResponse")
+	if field := stage.Fields().ByName("profile_digest"); field == nil || field.Number() != 3 {
+		t.Fatalf("StageCredentialCustodyResponse.profile_digest = %v, want field 3", field)
+	}
+	if field := stage.Fields().ByName("providers"); field == nil || field.Number() != 4 {
+		t.Fatalf("StageCredentialCustodyResponse.providers = %v, want field 4", field)
 	}
 }
 

@@ -20,18 +20,26 @@ import (
 const maxContinuityRequestIDBytes = 128
 
 func continuityGuardFromWire(in *brokerv1.ContinuityGuard) (mcpbroker.ContinuityGuard, error) {
+	return continuityGuardFromWireMode(in, true)
+}
+
+func stageContinuityGuardFromWire(in *brokerv1.ContinuityGuard) (mcpbroker.ContinuityGuard, error) {
+	return continuityGuardFromWireMode(in, false)
+}
+
+func continuityGuardFromWireMode(in *brokerv1.ContinuityGuard, requireProfile bool) (mcpbroker.ContinuityGuard, error) {
 	if in == nil || !mcpbroker.ValidLogicalSessionID(session.SessionID(in.GetSessionId())) {
 		return mcpbroker.ContinuityGuard{}, invalid("malformed continuity guard")
 	}
 	incarnation := session.IncarnationID(in.GetSessionIncarnation())
-	if !incarnation.Valid() || len(in.GetOwnerPartition()) != 32 || len(in.GetWorkloadPartition()) != 32 || len(in.GetProfileDigest()) != 32 || len(in.GetProviders()) == 0 || len(in.GetProviders()) > mcpbroker.MaxContinuityProviders {
+	if !incarnation.Valid() || len(in.GetOwnerPartition()) != 32 || len(in.GetWorkloadPartition()) != 32 || (requireProfile && (len(in.GetProfileDigest()) != 32 || len(in.GetProviders()) == 0 || len(in.GetProviders()) > mcpbroker.MaxContinuityProviders)) || (!requireProfile && (len(in.GetProfileDigest()) != 0 || len(in.GetProviders()) != 0)) {
 		return mcpbroker.ContinuityGuard{}, invalid("malformed continuity guard")
 	}
 	out := mcpbroker.ContinuityGuard{SessionID: session.SessionID(in.GetSessionId()), SessionIncarnation: incarnation, Providers: append([]string(nil), in.GetProviders()...)}
 	copy(out.OwnerPartition[:], in.GetOwnerPartition())
 	copy(out.WorkloadPartition[:], in.GetWorkloadPartition())
 	copy(out.ProfileDigest[:], in.GetProfileDigest())
-	if zeroPartition(out.OwnerPartition) || zeroPartition(out.WorkloadPartition) || zeroPartition(out.ProfileDigest) {
+	if zeroPartition(out.OwnerPartition) || zeroPartition(out.WorkloadPartition) || (requireProfile && zeroPartition(out.ProfileDigest)) {
 		return mcpbroker.ContinuityGuard{}, invalid("malformed continuity guard")
 	}
 	for i, provider := range out.Providers {
@@ -105,7 +113,7 @@ func stageReceiptIdentity(ctx context.Context, req *brokerv1.StageCredentialCust
 	if err != nil {
 		return continuityReceiptKey{}, [32]byte{}, err
 	}
-	parts := continuityGuardParts([3][32]byte{guard.OwnerPartition, guard.WorkloadPartition, guard.ProfileDigest}, string(guard.SessionID), string(guard.SessionIncarnation), guard.Providers)
+	parts := continuityGuardParts([3][32]byte{guard.OwnerPartition, guard.WorkloadPartition}, string(guard.SessionID), string(guard.SessionIncarnation), nil)
 	parts = append(parts, []byte("stage/v1"), []byte(req.GetBrokerIncarnation()), []byte(req.GetHandle()), []byte(ref.ID), continuityUint32Part(ref.RequiredServices), continuityTimePart(ref.ExpiresAt), continuityTimePart(req.GetAttemptDeadline().AsTime()))
 	return key, continuityDigest(parts...), nil
 }
@@ -132,7 +140,7 @@ func (s *Server) StageCredentialCustody(ctx context.Context, req *brokerv1.Stage
 	if !validContinuityRequestID(req.GetRequestId()) {
 		return nil, invalid("malformed continuity request")
 	}
-	guard, err := continuityGuardFromWire(req.GetGuard())
+	guard, err := stageContinuityGuardFromWire(req.GetGuard())
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +148,7 @@ func (s *Server) StageCredentialCustody(ctx context.Context, req *brokerv1.Stage
 		return nil, err
 	}
 	deadline := req.GetAttemptDeadline()
-	if deadline == nil || !deadline.IsValid() || !mcpbroker.ValidContinuityAttemptDeadline(time.Now(), deadline.AsTime()) {
+	if deadline == nil || !deadline.IsValid() || !mcpbroker.ValidContinuityAttemptDeadline(s.clock.Now(), deadline.AsTime()) {
 		return nil, invalid("malformed continuity request")
 	}
 	ref, err := workspaceRefFromWire(req.GetCompletedEnrollment())
@@ -185,10 +193,18 @@ func (s *Server) StageCredentialCustody(ctx context.Context, req *brokerv1.Stage
 	receiptExpiry := deadline.AsTime()
 	if out, stageErr := stager.StageCredentialCustody(ctx, req.GetRequestId(), guard, ref, deadline.AsTime()); stageErr != nil {
 		callErr = brokerStatus(stageErr)
-	} else if !validRecoveryReference(out.RecoveryReference) || out.ExpiresAt.IsZero() {
+	} else if !validRecoveryReference(out.RecoveryReference) || out.ExpiresAt.IsZero() || zeroPartition(out.ProfileDigest) || len(out.Providers) == 0 || len(out.Providers) > mcpbroker.MaxContinuityProviders {
 		callErr = continuityUnavailable()
 	} else {
-		response = &brokerv1.StageCredentialCustodyResponse{RecoveryReference: out.RecoveryReference, CustodyExpiresAt: timestamppb.New(out.ExpiresAt)}
+		for i, provider := range out.Providers {
+			if !mcpbroker.ValidContinuityProvider(provider) || (i > 0 && provider <= out.Providers[i-1]) {
+				callErr = continuityUnavailable()
+				break
+			}
+		}
+		if callErr == nil {
+			response = &brokerv1.StageCredentialCustodyResponse{RecoveryReference: out.RecoveryReference, CustodyExpiresAt: timestamppb.New(out.ExpiresAt), ProfileDigest: append([]byte(nil), out.ProfileDigest[:]...), Providers: append([]string(nil), out.Providers...)}
+		}
 		if proto.Size(response) > stageReceiptReservationBytes {
 			response = nil
 			callErr = continuityUnavailable()

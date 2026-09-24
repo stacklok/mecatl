@@ -5919,6 +5919,27 @@ Restart interrupts attachments and outer OAuth correlation; none of these
 controls provides ownership transfer, callback failover, or HA. The complete topology and
 resource ledger are [ADR 0327](../adr/0327-single-replica-mcp-broker-topology.md).
 
+**Credential continuity ([ADR 0329](../adr/0329-broker-replacement-fresh-authority.md), implementation in progress):** the
+current production slice captures verified ToolHive identity only inside the adapter
+(every protected provider must yield the same session) and runs initial enrollment as
+Stage → install custody → Save → Commit → build engine → complete → Save → register. The
+broker derives the profile digest and provider set; the host derives the owner partition
+from the session owner and the workload partition from its own projected broker token
+(`cmd/mecak8s`). Custody is required exactly when the broker attachment offers credential
+continuity (`AttachResponse.credential_continuity`, set only when encrypted custody is
+configured): an offered enrollment without an owner or workload identity fails closed,
+and a broker without protected storage keeps the legacy enrollment path. After Stage, a
+Save error reloads the session and continues only if the exact custody is durable,
+otherwise it best-effort Tombstones the staged row. Fresh B2 authority, the replacement
+transaction, and invalidation ordering are not yet shipped; no caller may infer recovery
+from custody alone.
+The intended boundary remains that encrypted ToolHive custody is subordinate evidence: only
+the current durable Mecatl session plus the presenting verified workload may authorize a
+confirmed pre-prompt replacement after structured broker-instance loss. The replacement
+must create fresh outer state and save host authority before publication; pending browser
+flows, parked calls, and uncertain Execute operations remain interrupted. No HA,
+distributed revocation, takeover, or execution replay is implied.
+
 **Server-global MCP on every session (bug #3 fix, `sessionEngineFactory`):** the
 per-session catalog mounts the SERVER-GLOBAL MCP tools (`cfg.MCPServers` + ToolHive — the
 same tools the build-time `buildCatalog`→`connectMCP`+`assembleCatalog` path mounts on the main engine), NOT just core + client

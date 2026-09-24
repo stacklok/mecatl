@@ -113,6 +113,10 @@ func (a *SessionHandle) BeginWorkspaceEnrollment(ctx context.Context) (contract.
 	}
 	logical.mu.Unlock()
 
+	a.mu.Lock()
+	a.verifiedTSID = ""
+	a.mu.Unlock()
+
 	// Secret resolution is potentially slow and must NOT run while holding
 	// logical.mu: see the identical rationale on RequestAuthorization. Delegates
 	// to the shared resolveClientSecret (rather than re-reading it here) so the
@@ -316,6 +320,9 @@ func (a *SessionHandle) CancelWorkspaceEnrollment(ctx context.Context, ref contr
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
+	a.mu.Lock()
+	a.verifiedTSID = ""
+	a.mu.Unlock()
 	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonRequestCancelled)
 	logical := a.logical
 	a.enrollmentMu.Lock()

@@ -542,6 +542,10 @@ type Config struct {
 	SessionEngineWithTools SessionEngineWithToolsFactory
 	// MCPBroker owns logical broker state; Service owns only local attachments.
 	MCPBroker brokercontract.Service
+	// BrokerWorkloadIdentity is the composition-supplied issuer/subject of the
+	// host workload token used for continuity guard derivation. Nil preserves the
+	// legacy enrollment path without custody.
+	BrokerWorkloadIdentity *session.Principal
 	// MCPConnectorInspector exposes local-only inventory for the bundled broker.
 	MCPConnectorInspector brokercontract.ConnectorInspector
 	// MCPBrokerFactory creates a replacement process-local client after confirmed
@@ -5190,6 +5194,14 @@ func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *sessi
 
 //nolint:gocyclo // rehydration keeps validation, factory selection, broker, capacity, and rollback gates ordered; inherent.
 func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool) (*sessionEngine, error) {
+	return s.buildPersistAndRegisterSessionEngine(ctx, sess, sel, profile, mode, replace, exactTools, useExactTools, nil)
+}
+
+// buildPersistAndRegisterSessionEngine builds the engine, then runs persist (when
+// non-nil) before registering it. Workspace enrollment uses persist to save durable
+// completion between a successful build and registration: a build failure leaves the
+// pending enrollment retryable, and registration is always the last step.
+func (s *Service) buildPersistAndRegisterSessionEngine(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool, persist func() error) (*sessionEngine, error) {
 	id := sess.ID
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
@@ -5246,6 +5258,14 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		reasoningEffort: res.ReasoningEffort,
 		builtForMode:    res.BuiltForMode,
 		close:           res.Close,
+	}
+	if persist != nil {
+		if err := persist(); err != nil {
+			if se.close != nil {
+				_ = se.close()
+			}
+			return nil, err
+		}
 	}
 	s.mu.Lock()
 	prior, hadPrior := s.sessionEngines[id]
