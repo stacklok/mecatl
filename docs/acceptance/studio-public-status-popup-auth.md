@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — adds a deliberately anonymous BFF contract and changes the browser OIDC callback trust boundary while preserving the authenticated runtime contract.
-**Decision record:** [ADR 0358](../adr/0358-studio-anonymous-status-and-popup-login.md)
+**Decision record:** [ADR 0360](../adr/0360-studio-anonymous-status-and-popup-login.md)
 **Phase:** Studio design parity — sign-in and recovery
 **Status:** proposed, 2026-09-24. Based on issue #1845, the #1779 design baseline, ADR 0351, repository behavior, and the directing human's status, fallback, retry, email, and identity decisions.
 **Delivery:** Split. The Plan / Interface PR targets `main` independently. At the directing human's request, a draft Implementation PR is stacked on this proposed plan for early review; contract approval still occurs when the Plan PR merges.
@@ -15,7 +15,7 @@ An anonymous browser can distinguish a reachable Studio BFF, an unavailable daem
 
 ## Human decisions
 
-- [x] Work class and delivery path. — Decision: Architectural under the security/trust and public API criteria; create ADR 0358 and open an independent Split Plan / Interface PR targeting `main`.
+- [x] Work class and delivery path. — Decision: Architectural under the security/trust and public API criteria; create ADR 0360 and open an independent Split Plan / Interface PR targeting `main`.
 - [x] Public response. — Decision: `GET /api/v1/status` returns exactly `connection: "checking" | "reachable" | "unavailable"` and `signInRequired: boolean`; HTTP success establishes BFF reachability, while the existing auth-session response owns account and email.
 - [x] Anonymous outage precedence. — Decision: a daemon authentication rejection proves reachability; a transport failure shows daemon unavailable even if sign-in is also required; a pending observation is checking.
 - [x] Blocked or closed popup. — Decision: keep the original tab mounted and offer another user-initiated popup attempt or a manual new-tab sign-in link, then recheck the session on focus; no automatic same-tab redirect or draft serialization.
@@ -126,7 +126,7 @@ The current [auth gate](../../apps/web/src/features/auth/auth-gate.tsx) unmounts
 1. Source schema, generated OpenAPI/browser client, BFF tests, web state tests, and an adversarial security review prove the public-response allowlist, authenticated routes, callback message checks, cookie/CSRF/origin controls, and absence of the raw subject from browser data and audit logs.
 2. #1845's focused offline Playwright setup and Studio proof resolver resolve the named popup, blocked/closed, and expired-session journeys; browser runs exercise desktop and mobile widths without live provider calls. Record route/draft and banner interaction evidence for #1779 review and the overlap with #1776.
 3. `task studio:check`, `task studio:browser`, `task docs`, `task site:build`, `task lint`, `task test:race`, and `task ac-trace-strict` pass on the implementation candidate; the offline demo remains green if runtime behavior outside Studio changes.
-4. Update the [Studio architecture owner](../architecture.md#mecatl-studio) for implemented behavior and the [Studio deployment guide](https://github.com/stacklok/mecatl/blob/main/user-docs/building/deployment/studio.md) for browser sign-in and recovery in the implementation PR. The Plan / Interface PR keeps intended behavior here and in ADR 0358.
+4. Update the [Studio architecture owner](../architecture.md#mecatl-studio) for implemented behavior and the [Studio deployment guide](https://github.com/stacklok/mecatl/blob/main/user-docs/building/deployment/studio.md) for browser sign-in and recovery in the implementation PR. The Plan / Interface PR keeps intended behavior here and in ADR 0360.
 5. The draft Implementation PR links this Plan / Interface PR and its proposed commit, reports contract conformance and #1844/#1846 coordination, and passes `/panel-review` without ship blockers. Record the approved baseline after this plan merges. Humans alone merge either PR.
 
 ## Deferred decisions and known risks
