@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Components } from "react-markdown";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { HighlightedCode, langForClassName } from "./code-highlight";
 
@@ -74,7 +74,17 @@ const mdComponents: Components = {
 export function MarkdownMessage({ children }: { children: string }) {
   return (
     <div className="min-w-0 max-w-full break-words">
-      <ReactMarkdown components={mdComponents} remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown
+        components={mdComponents}
+        remarkPlugins={[remarkGfm]}
+        urlTransform={(url, key, node) =>
+          key === "src" &&
+          node.tagName === "img" &&
+          (url.startsWith("data:image/") || url.startsWith("blob:"))
+            ? url
+            : defaultUrlTransform(url)
+        }
+      >
         {children}
       </ReactMarkdown>
     </div>

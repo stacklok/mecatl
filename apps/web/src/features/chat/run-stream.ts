@@ -20,6 +20,11 @@ export const MISSING_HISTORY_NOTICE =
 export const REPLAY_LIMIT_NOTICE =
   "This chat's history is too long to replay in full, so this view stopped following the run. The transcript below shows the saved history; reopen the chat to follow the run again.";
 
+/** Match the daemon's active states when deciding whether a chat needs a live stream. */
+export function isActiveSessionState(state: string | undefined): boolean {
+  return state === "running" || state === "awaiting" || state === "authorizing";
+}
+
 /** What the workspace does when a stream ends with `run.truncated`. */
 export type TruncationDecision =
   /** Keep reading: reattach the activity stream from `cursor`. */

@@ -15,7 +15,7 @@ describe("chat transcript", () => {
       { content: "Please inspect this", id: "u1", role: "user" },
       {
         content:
-          "A [safe link](https://example.com) and `inline`.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst answer = 42;\n```\n\n```made-up-lang\nplain text\n```\n\n![remote](https://example.com/track.png)\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))",
+          "A [safe link](https://example.com) and `inline`.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst answer = 42;\n```\n\n```made-up-lang\nplain text\n```\n\n![inline](data:image/png;base64,aGVsbG8=)\n\n![preview](blob:https://studio.example/image-1)\n\n![remote](https://example.com/track.png)\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))",
         id: "a1",
         images: [
           { data: "aGVsbG8=", mimeType: "image/png", name: "Inline" },
@@ -41,6 +41,8 @@ describe("chat transcript", () => {
     expect(html).toContain("overflow-x-auto");
     expect(html).toContain("break-words");
     expect(html).toContain('src="data:image/png;base64,aGVsbG8="');
+    expect(html).toMatch(/<img alt="inline"[^>]+src="data:image\/png;base64,aGVsbG8="/u);
+    expect(html).toContain('src="blob:https://studio.example/image-1"');
     expect(html).toContain('href="https://example.com/photo.png"');
     expect(html).toContain("remote (external image)");
     expect(html).not.toContain('src="https://example.com/track.png"');

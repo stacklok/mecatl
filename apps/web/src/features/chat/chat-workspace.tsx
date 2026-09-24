@@ -159,6 +159,7 @@ import {
   createActivityDeduplicator,
   decideTruncation,
   drainsQueue,
+  isActiveSessionState,
   isStaleRunControl,
   ownsChatView,
   type RunOwnership,
@@ -432,7 +433,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         if (
           shouldCheckDeliveryAfterInventory({
             connected: runtime.data?.connection === "online",
-            idle: !activeRun.current && next?.state !== "running" && next?.state !== "awaiting",
+            idle: !activeRun.current && !isActiveSessionState(next?.state),
             next,
             previous,
             sessionId,
@@ -453,7 +454,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       phase:
         selectedSession?.state === "awaiting"
           ? "awaiting"
-          : selectedSession?.state === "running" || isRunning
+          : isActiveSessionState(selectedSession?.state) || isRunning
             ? "working"
             : selectedSession
               ? "idle"
@@ -486,7 +487,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         if (
           refreshed &&
           !activeRun.current &&
-          (row?.state === "running" || row?.state === "awaiting")
+          isActiveSessionState(row?.state)
         ) {
           setReconnectGeneration((current) => current + 1);
         }
@@ -496,7 +497,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             phase:
               row?.state === "awaiting"
                 ? "awaiting"
-                : row?.state === "running"
+                : isActiveSessionState(row?.state)
                   ? "working"
                   : row
                     ? "idle"
@@ -554,7 +555,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         label: model.displayName,
         providerId: model.providerId,
       })) ?? [];
-  const watchable = selectedSession?.state === "running" || selectedSession?.state === "awaiting";
+  const watchable = isActiveSessionState(selectedSession?.state);
   const imageAttachmentsSupported = sessionId
     ? sessionDetail.data?.capabilities.image === true
     : draftConfiguration.model
@@ -625,7 +626,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               // A failed refresh cannot certify that an old replay result is current.
             }
           }
-          if (!refreshed || refreshed.state === "running" || refreshed.state === "awaiting") {
+          if (!refreshed || isActiveSessionState(refreshed.state)) {
             if (end.kind === "settled") end = { kind: "uncertain" };
           }
           activeRun.current = undefined;

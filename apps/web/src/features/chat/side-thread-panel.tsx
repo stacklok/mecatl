@@ -72,6 +72,7 @@ import { groupModels, ModelEffortMenu } from "./model-effort-menu";
 import {
   CATCHING_UP_NOTICE,
   decideTruncation,
+  isActiveSessionState,
   type RunStreamEnd,
   runStreamEnd,
 } from "./run-stream";
@@ -442,7 +443,7 @@ function useSideThreadRun(sessionId: string) {
   }, [sessionId]);
 
   const selected = sessions.data?.items.find((session) => session.id === sessionId);
-  const watchable = selected?.state === "running" || selected?.state === "awaiting";
+  const watchable = isActiveSessionState(selected?.state);
 
   // Reattachment is keyed only to session identity and its watchable state,
   // mirroring the parent chat's own reattach effect.
