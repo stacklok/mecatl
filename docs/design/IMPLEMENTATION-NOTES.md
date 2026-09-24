@@ -5951,12 +5951,10 @@ continuity service is intentionally only a closed-field diagnostic after durable
 revocation. The accepted residual is that a recovered bearer already copied by an upstream
 may remain valid until its fixed expiry of at most two minutes; once its source is cleared,
 it has no renewal path. Mecatl does not add a cleanup worker, distributed revocation,
-signature deletion, or a recovered-token gate for that bounded residual. Known gap: a
-broker profile change is detected as `ErrContinuityProfileChanged` only for the in-process
-broker; over gRPC every authorized continuity failure is the single generic reason 7, so a
-remote host cannot tell a changed profile from other refusals and does not invalidate on
-its own. Such custody stays unusable until its native expiry or until the session is
-deleted or its enrollment cancelled.
+signature deletion, or a recovered-token gate for that bounded residual.  A broker whose
+current profile no longer matches the stored custody refuses with the distinct gRPC reason 8
+(`broker continuity profile changed`); the host maps it to `ErrContinuityProfileChanged` and
+invalidates the custody. Every other authorized refusal stays the generic reason 7.
 The intended boundary remains that encrypted ToolHive custody is subordinate evidence: only
 the current durable Mecatl session plus the presenting verified workload may authorize a
 confirmed pre-prompt replacement after structured broker-instance loss. The replacement

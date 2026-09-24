@@ -65,8 +65,14 @@ func continuityUnavailable() error {
 	return reasonStatus(codes.FailedPrecondition, "broker continuity is not available", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE, "")
 }
 
+func continuityProfileChanged() error {
+	return reasonStatus(codes.FailedPrecondition, "broker continuity profile changed", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED, "")
+}
+
 func brokerStatus(err error) error {
 	switch {
+	case errors.Is(err, mcpbroker.ErrContinuityProfileChanged):
+		return continuityProfileChanged()
 	case errors.Is(err, mcpbroker.ErrBrokerIncarnationLost):
 		return reasonStatus(codes.FailedPrecondition, "broker incarnation mismatch", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST, "")
 	case errors.Is(err, mcpbroker.ErrContinuityUnavailable):
@@ -111,7 +117,8 @@ func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST,
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED,
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND,
-		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE:
+		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE,
+		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED:
 		if found.GetDispatchMethod() != "" {
 			return 0, "", false, errors.New("mcpbrokergrpc: malformed broker error reason")
 		}
@@ -171,6 +178,12 @@ func clientError(err error) error {
 			return errors.New("mcpbrokergrpc: malformed continuity unavailable reason")
 		}
 		return mcpbroker.ErrContinuityUnavailable
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED:
+		st := status.Convert(err)
+		if st.Code() != codes.FailedPrecondition || st.Message() != "broker continuity profile changed" {
+			return errors.New("mcpbrokergrpc: malformed continuity profile changed reason")
+		}
+		return errors.Join(mcpbroker.ErrContinuityUnavailable, mcpbroker.ErrContinuityProfileChanged)
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED:
 		return mcpbroker.ErrCapacity
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED:

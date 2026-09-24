@@ -188,3 +188,28 @@ func (c reasonConn) Invoke(context.Context, string, any, any, ...grpc.CallOption
 func (reasonConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.CallOption) (grpc.ClientStream, error) {
 	return nil, errors.New("unexpected stream")
 }
+
+// A changed broker profile has its own exact tuple so a remote host can
+// invalidate custody instead of retrying forever; it stays continuity-unavailable
+// for callers that only check the generic sentinel.
+func TestContinuityProfileChangedExactMapping(t *testing.T) {
+	changed := status.New(codes.FailedPrecondition, "broker continuity profile changed")
+	withDetail, err := changed.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := mcpbrokergrpc.NewClient(reasonConn{err: withDetail.Err()})
+	_, _, got := client.AttachSession(t.Context(), "profile-changed")
+	if !errors.Is(got, mcpbroker.ErrContinuityProfileChanged) || !errors.Is(got, mcpbroker.ErrContinuityUnavailable) {
+		t.Fatalf("profile-changed mapping = %v", got)
+	}
+	wrongMessage := status.New(codes.FailedPrecondition, "something else")
+	malformed, err := wrongMessage.WithDetails(&brokerv1.BrokerErrorDetail{Reason: brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client = mcpbrokergrpc.NewClient(reasonConn{err: malformed.Err()})
+	if _, _, got := client.AttachSession(t.Context(), "malformed"); errors.Is(got, mcpbroker.ErrContinuityProfileChanged) {
+		t.Fatalf("malformed tuple mapped to profile changed: %v", got)
+	}
+}

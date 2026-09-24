@@ -326,3 +326,27 @@ func TestBrokerCredentialContinuity_Scenario3_PendingBrowserFlowIsInterrupted(t 
 func errorsIsInstanceLost(err error) bool {
 	return err != nil && errors.Is(err, brokercontract.ErrBrokerIncarnationLost)
 }
+
+// A broker restarted with a changed OAuth profile refuses the stored custody
+// with the distinct profile-changed reason over gRPC; the remote host then
+// invalidates the custody instead of failing on every attempt until expiry.
+func TestBrokerCredentialContinuity_RemoteProfileChangeInvalidatesCustody(t *testing.T) {
+	f := newContinuityFixture(t)
+	f.enroll()
+	if _, custody := f.stored().BrokerCredentialCustody(); !custody {
+		t.Fatal("enrollment produced no custody")
+	}
+	changed := *f.profiles[0].OAuth
+	changed.Scopes = []string{"openid", "profile"}
+	f.profiles[0].OAuth = &changed
+	f.replaceBroker()
+	f.service.closeSessionLocal(f.session.ID)
+	sess := f.stored()
+	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
+	if _, err := f.service.buildAndRegisterSessionEngine(t.Context(), sess, sel, profileForSession(sess), sess.Mode, true); err == nil {
+		t.Fatal("recovery succeeded against a changed broker profile")
+	}
+	if _, custody := f.stored().BrokerCredentialCustody(); custody {
+		t.Fatal("custody survived a remote broker profile change")
+	}
+}

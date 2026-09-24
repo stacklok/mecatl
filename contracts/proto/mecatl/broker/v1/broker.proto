@@ -79,6 +79,9 @@ enum BrokerErrorReason {
   BROKER_ERROR_REASON_INCARNATION_LOST = 6;
   // Authorized continuity data is unavailable without revealing why.
   BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE = 7;
+  // Stored custody was bound to a broker profile that no longer matches the
+  // broker's configuration; the custody can never be used again.
+  BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED = 8;
 }
 
 // BrokerErrorDetail provides stable error identity without status-text inference.
