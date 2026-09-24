@@ -11,14 +11,29 @@ import {
   useState,
 } from "react";
 import { Button } from "../../components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from "../../components/ui/sheet";
 import { Textarea } from "../../components/ui/textarea";
 import type { EnterSendBehavior } from "../../lib/profile-preferences";
 import { ComposerOptionMenu } from "./composer-option-menu";
 import {
+  acceptImageAttachments,
   type ImageAttachment,
   imageSource,
   maxImageAttachmentCount,
-  maxImagePromptBytes,
   readImageAttachment,
 } from "./local-file-preview";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
@@ -83,6 +98,8 @@ interface ChatComposerProps {
     images: ImageAttachment[],
   ) => Promise<boolean>;
   safetyLevel?: string;
+  seedCanConfirm?: boolean;
+  seedRequiresConfirmation?: boolean;
   seedText?: string;
   working?: boolean;
   workingBehavior?: EnterSendBehavior;
@@ -100,6 +117,8 @@ export function ChatComposer({
   onSeedConsumed,
   onSend,
   safetyLevel = "managed",
+  seedCanConfirm = true,
+  seedRequiresConfirmation = false,
   seedText,
   working = false,
   workingBehavior = "queue",
@@ -110,7 +129,16 @@ export function ChatComposer({
   const [readingAttachments, setReadingAttachments] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [mobileOptionsOpen, setMobileOptionsOpen] = useState(false);
+  const [seedConfirmation, setSeedConfirmation] = useState<string>();
   const fileInput = useRef<HTMLInputElement>(null);
+  const imageCapability = useRef(imageAttachmentsSupported);
+  imageCapability.current = imageAttachmentsSupported;
+  const optionsButton = useRef<HTMLButtonElement>(null);
+  const composing = useRef(false);
+  const compositionSequence = useRef(0);
+  const sawCompositionEnter = useRef(false);
+  const suppressCommitEnter = useRef(false);
+  const submittingRef = useRef(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const updatePrompt = useCallback((value: string) => setPrompt(value), []);
   const voice = useVoiceInput(prompt, updatePrompt);
@@ -122,8 +150,9 @@ export function ChatComposer({
   useEffect(() => {
     if (seedText === undefined) return;
     setPrompt(seedText);
+    setSeedConfirmation(seedRequiresConfirmation ? seedText : undefined);
     onSeedConsumed?.();
-    textarea.current?.focus();
+    if (!seedRequiresConfirmation) textarea.current?.focus();
   }, [seedText]);
   useEffect(() => {
     if (imageAttachmentsSupported || images.length === 0) return;
@@ -133,22 +162,36 @@ export function ChatComposer({
   const groupedModels = useMemo(() => groupModels(models), [models]);
   const busy = disabled || submitting;
 
-  async function submit(action: ComposerEnterAction = working ? workingBehavior : "send") {
+  async function submit(
+    action: ComposerEnterAction = working ? workingBehavior : "send",
+    confirmedSeed = false,
+  ): Promise<boolean> {
     const nextPrompt = prompt.trim();
-    if ((!nextPrompt && images.length === 0) || busy) return;
+    if (
+      (!nextPrompt && images.length === 0) ||
+      disabled ||
+      submittingRef.current ||
+      (seedConfirmation !== undefined && !confirmedSeed)
+    )
+      return false;
     if (working && images.length > 0) {
       setAttachmentError("Wait for the active run to finish before sending images.");
-      return;
+      return false;
     }
     voice.stop();
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       if (await onSend(nextPrompt, action, images)) {
         setPrompt("");
         setImages([]);
         setAttachmentError("");
+        setSeedConfirmation(undefined);
+        return true;
       }
+      return false;
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -165,6 +208,10 @@ export function ChatComposer({
       }
       const selected = files.slice(0, remaining);
       const results = await Promise.allSettled(selected.map(readImageAttachment));
+      if (!imageCapability.current) {
+        setAttachmentError("Images were not attached because this model does not support them.");
+        return;
+      }
       const next = results.flatMap((result) =>
         result.status === "fulfilled" ? [result.value] : [],
       );
@@ -173,15 +220,9 @@ export function ChatComposer({
           ? [result.reason instanceof Error ? result.reason.message : "An image could not be read."]
           : [],
       );
-      let totalBytes = images.reduce((sum, image) => sum + image.size, 0);
-      const accepted = next.filter((image) => {
-        if (totalBytes + image.size > maxImagePromptBytes) {
-          errors.push(`${image.name} exceeds the 20 MB total image limit.`);
-          return false;
-        }
-        totalBytes += image.size;
-        return true;
-      });
+      const selectedImages = acceptImageAttachments(images, next);
+      const { accepted } = selectedImages;
+      errors.push(...selectedImages.errors);
       setImages((current) => [...current, ...accepted]);
       if (files.length > selected.length) {
         errors.push(`A prompt can include up to ${maxImageAttachmentCount} images.`);
@@ -198,6 +239,19 @@ export function ChatComposer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      event.key === "Enter" &&
+      (composing.current ||
+        event.nativeEvent.isComposing ||
+        event.nativeEvent.keyCode === 229 ||
+        suppressCommitEnter.current)
+    ) {
+      if (composing.current) sawCompositionEnter.current = true;
+      if (!composing.current) suppressCommitEnter.current = false;
+      event.preventDefault();
+      return;
+    }
+    if (event.key !== "Enter") suppressCommitEnter.current = false;
     const action = resolveComposerAction({
       behavior: workingBehavior,
       shift: event.shiftKey,
@@ -216,13 +270,30 @@ export function ChatComposer({
   };
 
   return (
-    <form className="mx-auto w-full max-w-3xl px-4 pb-4 sm:px-6 sm:pb-6" onSubmit={handleSubmit}>
+    <form
+      className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6 sm:pb-6"
+      onSubmit={handleSubmit}
+    >
       <div className="rounded-2xl border bg-card p-2 shadow-[0_8px_30px_rgb(0_0_0/0.06)] focus-within:ring-2 focus-within:ring-ring/40">
         <Textarea
           aria-label="Message Mecatl"
           className="max-h-48 min-h-16 resize-none border-0 bg-transparent px-2 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
           disabled={busy}
           onChange={(event) => setPrompt(event.target.value)}
+          onCompositionEnd={() => {
+            composing.current = false;
+            suppressCommitEnter.current = !sawCompositionEnter.current;
+            const sequence = compositionSequence.current;
+            queueMicrotask(() => {
+              if (compositionSequence.current === sequence) suppressCommitEnter.current = false;
+            });
+          }}
+          onCompositionStart={() => {
+            composing.current = true;
+            compositionSequence.current += 1;
+            sawCompositionEnter.current = false;
+            suppressCommitEnter.current = false;
+          }}
           onKeyDown={handleKeyDown}
           placeholder={
             busy
@@ -279,6 +350,16 @@ export function ChatComposer({
         {attachmentError && (
           <p className="px-2 pb-2 text-xs text-destructive" role="alert">
             {attachmentError}
+          </p>
+        )}
+        {voice.errorMessage && (
+          <p className="px-2 pb-2 text-xs text-destructive" role="alert">
+            {voice.errorMessage}
+          </p>
+        )}
+        {voice.interimTranscript && (
+          <p className="px-2 pb-2 text-xs text-muted-foreground" role="status">
+            Hearing: {voice.interimTranscript}
           </p>
         )}
 
@@ -341,7 +422,7 @@ export function ChatComposer({
 
         <div className="flex items-center justify-between gap-3 px-1 pb-1 pt-2">
           <div className="flex min-w-0 items-center gap-2">
-            {onPreviewImage && (
+            {onPreviewImage && imageAttachmentsSupported && (
               <>
                 <input
                   accept="image/*"
@@ -358,16 +439,14 @@ export function ChatComposer({
                 />
                 <Button
                   aria-label="Attach images"
-                  className="size-8 shrink-0 rounded-full"
-                  disabled={busy || readingAttachments || working || !imageAttachmentsSupported}
+                  className="size-11 shrink-0 rounded-full"
+                  disabled={busy || readingAttachments || working}
                   onClick={() => fileInput.current?.click()}
                   size="icon"
                   title={
-                    imageAttachmentsSupported
-                      ? working
-                        ? "Wait for the active run to finish before attaching images"
-                        : "Attach images"
-                      : "The selected model does not support image attachments"
+                    working
+                      ? "Wait for the active run to finish before attaching images"
+                      : "Attach images"
                   }
                   type="button"
                   variant="ghost"
@@ -379,9 +458,10 @@ export function ChatComposer({
             {configuration && (
               <Button
                 aria-label="Chat options"
-                className="size-8 shrink-0 rounded-full sm:hidden"
+                className="size-11 shrink-0 rounded-full sm:hidden"
                 disabled={busy || working}
                 onClick={() => setMobileOptionsOpen(true)}
+                ref={optionsButton}
                 size="icon"
                 type="button"
                 variant="ghost"
@@ -389,21 +469,20 @@ export function ChatComposer({
                 <SlidersHorizontal aria-hidden="true" />
               </Button>
             )}
-            {voice.isSupported && (
-              <Button
-                aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
-                aria-pressed={voice.isListening}
-                className="size-8 shrink-0 rounded-full"
-                disabled={busy}
-                onClick={voice.toggle}
-                size="icon"
-                type="button"
-                variant={voice.isListening ? "secondary" : "ghost"}
-              >
-                {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
-              </Button>
-            )}
-            <p className="truncate text-xs text-muted-foreground">
+            <Button
+              aria-label={voice.isListening ? "Stop dictation" : "Start dictation"}
+              aria-pressed={voice.isListening}
+              className="size-11 shrink-0 rounded-full"
+              disabled={busy}
+              onClick={voice.toggle}
+              size="icon"
+              title={voice.isSupported ? "Dictate a message" : "Check dictation availability"}
+              type="button"
+              variant={voice.isListening ? "secondary" : "ghost"}
+            >
+              {voice.isListening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+            </Button>
+            <p className="hidden truncate text-xs text-muted-foreground md:block">
               {working
                 ? `Enter to ${workingBehavior} · Shift + Enter does the opposite`
                 : "Enter to send · Shift + Enter for a line break"}
@@ -417,7 +496,7 @@ export function ChatComposer({
                   ? "Mecatl is working"
                   : "Send message"
             }
-            className="size-8 shrink-0 rounded-full"
+            className="size-11 shrink-0 rounded-full"
             disabled={busy || (!prompt.trim() && images.length === 0)}
             size="icon"
             type="submit"
@@ -430,14 +509,52 @@ export function ChatComposer({
           </Button>
         </div>
       </div>
-      {configuration && mobileOptionsOpen && (
+      {configuration && (
         <MobileConfigurationSheet
           configuration={configuration}
           models={models}
           onChange={update}
-          onClose={() => setMobileOptionsOpen(false)}
+          onOpenChange={setMobileOptionsOpen}
+          open={mobileOptionsOpen}
+          returnFocus={optionsButton}
         />
       )}
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setSeedConfirmation(undefined);
+        }}
+        open={seedConfirmation !== undefined}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            textarea.current?.focus();
+          }}
+          showCloseButton={false}
+        >
+          <DialogHeader>
+            <DialogTitle>Send this prompt?</DialogTitle>
+            <DialogDescription>
+              This link filled the composer. Review the text before starting a run.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 text-sm">
+            {seedConfirmation}
+          </p>
+          <DialogFooter>
+            <Button onClick={() => setSeedConfirmation(undefined)} type="button" variant="outline">
+              Edit prompt
+            </Button>
+            <Button
+              disabled={busy || working || !seedCanConfirm || !prompt.trim()}
+              onClick={() => void submit("send", true)}
+              type="button"
+            >
+              Send prompt
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }
@@ -446,45 +563,45 @@ function MobileConfigurationSheet({
   configuration,
   models,
   onChange,
-  onClose,
+  onOpenChange,
+  open,
+  returnFocus,
 }: {
   configuration: DraftChatConfiguration;
   models: ComposerModelOption[];
   onChange: (change: Partial<DraftChatConfiguration>) => void;
-  onClose: () => void;
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+  returnFocus: React.RefObject<HTMLButtonElement | null>;
 }) {
   const groupedModels = groupModels(models);
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/45 sm:hidden">
-      <button
-        aria-label="Close chat options"
-        className="absolute inset-0"
-        onClick={onClose}
-        type="button"
-      />
-      <section
-        aria-labelledby="mobile-chat-options-title"
-        aria-modal="true"
-        className="relative z-10 w-full rounded-t-2xl border bg-background p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl"
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
+    <Sheet onOpenChange={onOpenChange} open={open}>
+      <SheetContent
+        className="max-h-[min(85dvh,40rem)] overflow-y-auto rounded-t-2xl p-5 sm:hidden"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocus.current?.focus();
         }}
-        role="dialog"
+        side="bottom"
       >
         <div className="flex items-center justify-between gap-3">
-          <h2 className="font-semibold" id="mobile-chat-options-title">
-            Chat options
-          </h2>
-          <Button
-            aria-label="Close chat options"
-            onClick={onClose}
-            size="icon"
-            type="button"
-            variant="ghost"
-          >
-            <X aria-hidden="true" />
-          </Button>
+          <SheetTitle>Chat options</SheetTitle>
+          <SheetClose asChild>
+            <Button
+              aria-label="Close chat options"
+              className="size-11"
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </SheetClose>
         </div>
+        <SheetDescription className="sr-only">
+          Choose the chat model, mode, and tools.
+        </SheetDescription>
         <div className="mt-4 grid gap-4">
           <MobileSelect
             label="Mode"
@@ -552,8 +669,8 @@ function MobileConfigurationSheet({
             <option value="noFilesystem">No filesystem</option>
           </MobileSelect>
         </div>
-      </section>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
