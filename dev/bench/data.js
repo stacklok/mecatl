@@ -266718,6 +266718,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790229622896,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2b70b44c656914818422ff8f5ee6fa37fde841c4",
+          "message": "docs: model provider discovery and model metadata (#1800)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T09:00:19+03:00",
+          "tree_id": "037b7db2b9e4ee7d9ce78d5add644d082dd0ed4b",
+          "url": "https://github.com/stacklok/mecatl/commit/2b70b44c656914818422ff8f5ee6fa37fde841c4"
+        },
+        "date": 1790230316868,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3319.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -349748,6 +349787,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790230314204,
+  "lastUpdate": 1790230317612,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
