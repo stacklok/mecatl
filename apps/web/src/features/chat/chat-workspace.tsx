@@ -7,7 +7,9 @@ import type {
   SessionUsageResponse,
 } from "@mecatl-studio/contracts";
 import {
+  cancelAuthorization,
   cancelRun,
+  recheckAuthorization,
   resolveRunPermission,
   retrySession,
   startRun,
@@ -102,6 +104,11 @@ import {
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { useShortcut } from "../shortcuts/shortcut-provider";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import {
+  type AuthorizationHandoff,
+  type AuthorizationOperation,
+  recordAuthorizationEvent,
+} from "./authorization-review";
 import { type AwayFacts, AwayNoticeTracker } from "./away-notice";
 import {
   ChatComposer,
@@ -258,6 +265,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
+  const authorizationFlows = useRef(new Set<string>());
+  const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
   const [confirmPrompt, setConfirmPrompt] = useState<ConfirmPrompt>();
   const [textPrompt, setTextPrompt] = useState<TextPrompt>();
@@ -550,6 +559,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     [],
   );
   const approval = approvals[0];
+  const displayedPreview =
+    contentPreview?.kind === "authorization"
+      ? {
+          ...contentPreview,
+          authorization:
+            messages
+              .flatMap((message) => message.authorizations ?? [])
+              .find(
+                (authorization) =>
+                  authorization.sessionId === contentPreview.authorization.sessionId &&
+                  authorization.authorizationId === contentPreview.authorization.authorizationId,
+              ) ?? contentPreview.authorization,
+        }
+      : contentPreview;
   const models: ComposerModelOption[] =
     runtimeSettings.data?.models
       .filter((model) => !disabledModels.has(modelPreferenceId(model)))
@@ -661,11 +684,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (end.kind === "settled") end = { kind: "uncertain" };
           }
           activeRun.current = undefined;
-          if (end.kind === "settled") setRunTarget(undefined);
+          if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
           setApprovals([]);
           setIsRunning(false);
           setReattached(false);
-          if (end.kind !== "settled")
+          if (end.kind === "authorization")
+            setStatusFacts((current) => ({
+              authorizationPending: current.authorizationPending,
+              phase: "idle",
+            }));
+          else if (end.kind !== "settled")
             setStatusFacts((current) => ({ phase: "closed", runId: current.runId }));
           if (end.kind === "settled") {
             if (end.failure) setFailedRun(end.failure);
@@ -951,7 +979,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     const owned = activeRun.current === owner;
     if (owned) {
       activeRun.current = undefined;
-      if (end.kind === "settled") setRunTarget(undefined);
+      if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
       setApprovals([]);
     }
     if (owner.sessionId) {
@@ -964,7 +992,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (!owned) return;
     setLiveUsage(undefined);
     setIsRunning(false);
-    if (end.kind !== "settled")
+    if (end.kind === "authorization")
+      setStatusFacts((current) => ({
+        authorizationPending: current.authorizationPending,
+        phase: "idle",
+      }));
+    else if (end.kind !== "settled")
       setStatusFacts((current) => ({ phase: "closed", runId: current.runId }));
     if (
       drainsQueue(end, owner.sessionId, viewedSessionId.current, owner.controller.signal.aborted)
@@ -1110,6 +1143,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   ): Promise<RunStreamEnd> {
     let failure: RunFailure | undefined;
     let sawResult = false;
+    let sawAuthorizationPark = false;
+    let sawAuthorizationStatus = false;
+    let continuationStarted = false;
     let activeAssistantId = assistantId;
     let activePrompt = prompt;
     let turnStartedAt = Date.now();
@@ -1168,6 +1204,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           break;
         }
         if (delivery.type === "run.started") {
+          if (sawAuthorizationStatus) {
+            continuationStarted = true;
+            sawAuthorizationPark = false;
+          }
           // A repeated start of the run already followed (a reattach may or
           // may not replay it) keeps the active assistant message and turn.
           if (!startsNewRun(followedRunId, delivery.runId)) continue;
@@ -1184,6 +1224,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           continue;
         }
         const event = delivery.event;
+        if (sawAuthorizationStatus && event.runId) {
+          continuationStarted = true;
+          sawAuthorizationPark = false;
+        }
         // A stream resumed from a cursor carries no run.started for its first
         // run. When that first durable event belongs to another run, it still
         // moves the controls there; its user_prompt starts the new message.
@@ -1251,6 +1295,24 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               ),
             }));
           }
+        } else if (
+          event.kind === "authorization.required" ||
+          event.kind === "authorization.resolved"
+        ) {
+          const authorizationSessionId = owner.sessionId;
+          sawAuthorizationStatus = true;
+          if (authorizationSessionId) {
+            setMessages((current) =>
+              recordAuthorizationEvent(current, event, authorizationSessionId, activeAssistantId),
+            );
+          }
+          if (event.kind === "authorization.required") {
+            sawAuthorizationPark = true;
+            setRunTarget(undefined);
+            setStatusFacts({ authorizationPending: true, phase: "following" });
+          } else if (!event.runId) {
+            setStatusFacts({ phase: "idle" });
+          }
         } else if (event.kind === "permission.ask") {
           const approval = permissionAsk(event.payload);
           if (approval) setApprovals((current) => enqueueApproval(current, approval));
@@ -1308,7 +1370,73 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (!unfollowed && owns()) {
       setNotice((current) => (current === CATCHING_UP_NOTICE ? undefined : current));
     }
-    return runStreamEnd({ failure, sawResult }, unfollowed);
+    return runStreamEnd(
+      {
+        authorizationPark: sawAuthorizationPark,
+        authorizationStatus: sawAuthorizationStatus,
+        continuationStarted,
+        failure,
+        sawResult,
+      },
+      unfollowed,
+    );
+  }
+
+  async function operateAuthorization(
+    operation: AuthorizationOperation,
+    authorization: AuthorizationHandoff,
+  ) {
+    if (
+      viewedSessionId.current !== authorization.sessionId ||
+      authorization.status !== "pending" ||
+      protectedRequestsPaused()
+    )
+      return;
+    const key = `${authorization.sessionId}\u0000${authorization.authorizationId}`;
+    // One view has one stream owner; another authorization control cannot
+    // replace an in-flight control for a different handoff either.
+    if (authorizationFlows.current.size > 0) return;
+    authorizationFlows.current.add(key);
+    setAuthorizationBusy(key);
+
+    // The previous activity reader only follows this view. Aborting it does
+    // not cancel the server-owned authorization; the SDK control is separate.
+    const oldOwner = activeRun.current;
+    const owner: RunOwner = {
+      controller: new AbortController(),
+      sessionId: authorization.sessionId,
+    };
+    activeRun.current = owner;
+    oldOwner?.controller.abort();
+    setIsRunning(true);
+    let end: RunStreamEnd = { kind: "uncertain" };
+    try {
+      const streamFailure: StreamFailure = {};
+      const request = {
+        onSseError: captureSseFailure(streamFailure),
+        path: {
+          authorizationId: authorization.authorizationId,
+          sessionId: authorization.sessionId,
+        },
+        signal: owner.controller.signal,
+        sseMaxRetryAttempts: 1,
+      };
+      const response =
+        operation === "recheck"
+          ? await recheckAuthorization(request)
+          : await cancelAuthorization(request);
+      end = await consumeRun(owner, response.stream, streamFailure, crypto.randomUUID(), "");
+      if (streamFailure.error && !owner.controller.signal.aborted) throw streamFailure.error;
+    } catch (caught) {
+      if (!owner.controller.signal.aborted && viewedSessionId.current === authorization.sessionId) {
+        setError(`Could not confirm authorization outcome: ${errorMessage(caught)}`);
+      }
+      throw caught;
+    } finally {
+      authorizationFlows.current.delete(key);
+      setAuthorizationBusy((current) => (current === key ? undefined : current));
+      await finishRun(owner, end);
+    }
   }
 
   async function refreshSession(
@@ -1704,7 +1832,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             <div className="flex items-center gap-2">
               {isRunning && (
                 <Badge variant="success">
-                  {reattached ? "Reconnected to run" : "Mecatl is working"}
+                  {statusFacts.authorizationPending
+                    ? "Waiting for authorization"
+                    : reattached
+                      ? "Reconnected to run"
+                      : "Mecatl is working"}
                 </Badge>
               )}
               {controlTarget(runTarget, sessionId) && (
@@ -1752,6 +1884,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 agentName={agentName}
                 messages={messages}
                 onOpenThread={(message) => void openSideThread(message)}
+                onReviewAuthorization={(authorization) =>
+                  setContentPreview({ authorization, kind: "authorization" })
+                }
                 onPreviewImage={(image) =>
                   setContentPreview({ file: imagePreview(image, true), kind: "file" })
                 }
@@ -1897,12 +2032,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           workingBehavior={enterSendBehavior}
         />
       </section>
-      {contentPreview && (
+      {displayedPreview && (
         <ContentPreviewPanel
+          authorizationDisabled={authorizationBusy !== undefined}
           canvas={canvas.value}
           onCanvasChange={canvas.setValue}
+          onAuthorizationOperation={operateAuthorization}
           onClose={() => setContentPreview(undefined)}
-          preview={contentPreview}
+          preview={displayedPreview}
         />
       )}
       {selectionAction && (

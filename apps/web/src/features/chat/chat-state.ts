@@ -6,6 +6,7 @@ import type {
   SessionUsageResponse,
 } from "@mecatl-studio/contracts";
 import type { ApprovalRequest } from "./approval-panel";
+import type { AuthorizationHandoff } from "./authorization-review";
 import type { ChatImage } from "./local-file-preview";
 import type { ToolActivity } from "./tool-activity";
 import { formatTurnStat } from "./turn-stats";
@@ -17,6 +18,7 @@ export interface RunFailure {
 }
 
 export interface ChatMessage {
+  authorizations?: AuthorizationHandoff[];
   content: string;
   delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
   failure?: { detail: string; message: string; permanent: boolean };

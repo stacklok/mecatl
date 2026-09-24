@@ -57,6 +57,8 @@ export function decideTruncation(
 export type RunStreamEnd =
   /** A result or run.error supplied an authoritative run outcome. */
   | { kind: "settled"; failure?: RunFailure }
+  /** A run parked on, or a control reported, an external authorization without a result. */
+  | { kind: "authorization" }
   /** The stream closed without an outcome; controls and queued prompts remain available. */
   | { kind: "uncertain" }
   /** The view stopped following the run because of a truncation; the run's outcome is unknown. */
@@ -67,10 +69,20 @@ export type RunStreamEnd =
  * must not drain the queue: the run may still be working.
  */
 export function runStreamEnd(
-  state: Pick<RunDeliveryState, "failure" | "sawResult">,
+  state: Pick<RunDeliveryState, "failure" | "sawResult"> & {
+    authorizationPark?: boolean;
+    authorizationStatus?: boolean;
+    continuationStarted?: boolean;
+  },
   unfollowed: boolean,
 ): RunStreamEnd {
   if (unfollowed) return { kind: "unfollowed" };
+  if (
+    !state.failure &&
+    !state.sawResult &&
+    (state.authorizationPark || (state.authorizationStatus && !state.continuationStarted))
+  )
+    return { kind: "authorization" };
   if (!state.sawResult && !state.failure) return { kind: "uncertain" };
   return { failure: state.failure, kind: "settled" };
 }

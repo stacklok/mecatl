@@ -60,7 +60,13 @@ export function securityHeaders(): MiddlewareHandler<AppEnv> {
     const path = context.req.path;
     const callback = path === "/api/v1/auth/callback" || path === "/oauth/callback";
     const html = context.res.headers.get("content-type")?.startsWith("text/html") === true;
-    if (callback || path === "/api/v1/auth/callback.js") {
+    if (
+      callback ||
+      path === "/api/v1/auth/callback.js" ||
+      (path.startsWith("/api/v1/sessions/") &&
+        path.includes("/authorizations/") &&
+        path.endsWith("/presentation"))
+    ) {
       context.header("Referrer-Policy", "no-referrer");
     }
     if (callback && html) {

@@ -396,6 +396,124 @@ afterEach(() => {
 });
 
 describe("mounted chat workspace BFF boundary", () => {
+  it("does not treat a broken continuation as the earlier authorization park", async () => {
+    const bff = new BffFixture(session("chat-a", "authorizing"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(
+        runEvent("authorization.required", "1", "", "run-a", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "pending",
+        }),
+      );
+      activity.send(
+        runEvent("authorization.resolved", "2", "", "", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "granted",
+        }),
+      );
+      activity.send(runStarted("chat-a", "run-next"));
+      activity.close();
+    });
+    await waitFor(() => expect(screen.getByText(/Unknown outcome/)).toBeTruthy());
+    expect(screen.queryByText("Waiting for authorization")).toBeNull();
+  });
+
+  it("keeps an observed authorization on its call through review and continuation", async () => {
+    window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+    const bff = new BffFixture(session("chat-a", "authorizing"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const recheck = heldStream();
+    const recheckPath = "/api/v1/sessions/chat-a/authorizations/auth-1/recheck";
+    bff.nextReplies.set(recheckPath, [Promise.resolve(recheck.response)]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a/runs/run-next/permissions/ask-next", [
+      Promise.resolve(new Response(null, { status: 204 })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(
+        runEvent("tool.call", "1", "", "run-a", {
+          args: "{}",
+          id: "call-1",
+          name: "Calendar",
+        }),
+      );
+      activity.send(
+        runEvent("authorization.required", "2", "", "run-a", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "pending",
+        }),
+      );
+      activity.close();
+    });
+    await waitFor(() => expect(screen.getAllByText("Waiting for authorization")).toHaveLength(1));
+    expect(screen.queryByText(/Unknown outcome/)).toBeNull();
+    const tool = (await screen.findByText("Tool: Calendar")).closest("li");
+    if (!tool) throw new Error("The tool call row is missing");
+    fireEvent.click(within(tool).getByRole("button", { name: "Review authorization" }));
+    const review = screen.getByRole("complementary", { name: "Authorization review" });
+    expect(
+      within(review).getByRole("link", { name: "Open authorization" }).getAttribute("href"),
+    ).toBe("/api/v1/sessions/chat-a/authorizations/auth-1/presentation");
+    fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
+    fireEvent.click(within(review).getByRole("button", { name: "Cancel authorization" }));
+    await waitFor(() => expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1));
+    expect(
+      bff.requestsAt("POST", "/api/v1/sessions/chat-a/authorizations/auth-1/cancel"),
+    ).toHaveLength(0);
+
+    await act(async () => {
+      recheck.send(
+        runEvent("authorization.resolved", "3", "", "", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "granted",
+        }),
+      );
+      recheck.send(runStarted("chat-a", "run-next"));
+      recheck.send(
+        runEvent("permission.ask", "4", "", "run-next", {
+          askId: "ask-next",
+          args: "{}",
+          reason: "Proceed",
+          tool: "Read",
+        }),
+      );
+    });
+    await waitFor(() => expect(within(review).getByText("Access granted")).toBeTruthy());
+    expect(screen.getByText("Waiting for approval")).toBeTruthy();
+    expect(within(review).queryByRole("link", { name: "Open authorization" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Deny" }));
+    await waitFor(() =>
+      expect(
+        bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs/run-next/permissions/ask-next"),
+      ).toHaveLength(1),
+    );
+    await act(async () => {
+      recheck.send(runEvent("approval", "5", "", "run-next", { askId: "ask-next" }));
+      recheck.send(runEvent("result", "6", "", "run-next", { stop: "end_turn" }));
+      recheck.close();
+    });
+    fireEvent.click(within(review).getByRole("button", { name: "Close preview" }));
+    expect(
+      bff.requestsAt("POST", "/api/v1/sessions/chat-a/authorizations/auth-1/cancel"),
+    ).toHaveLength(0);
+  });
+
   it("creates a draft with its selected controls and excludes a disabled model", async () => {
     const user = userEvent.setup();
     const bff = new BffFixture();

@@ -63,6 +63,22 @@ describe("decideTruncation", () => {
 });
 
 describe("runStreamEnd", () => {
+  it("settles an authorization handoff but leaves an incomplete continuation uncertain", () => {
+    expect(runStreamEnd({ sawResult: false, authorizationStatus: true }, false)).toEqual({
+      kind: "authorization",
+    });
+    expect(
+      runStreamEnd(
+        { sawResult: false, authorizationStatus: true, continuationStarted: true },
+        false,
+      ),
+    ).toEqual({ kind: "uncertain" });
+    expect(
+      runStreamEnd({ sawResult: false, authorizationPark: true, continuationStarted: true }, false),
+    ).toEqual({ kind: "authorization" });
+    expect(drainsQueue({ kind: "authorization" }, "chat-a", "chat-a", false)).toBe(false);
+  });
+
   it("reports no failure for a stream the view stopped following", () => {
     expect(runStreamEnd({ sawResult: false }, true)).toEqual({ kind: "unfollowed" });
   });

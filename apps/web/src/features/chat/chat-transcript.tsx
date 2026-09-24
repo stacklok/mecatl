@@ -2,6 +2,7 @@
 
 import { ExternalLink, MessageSquareText } from "lucide-react";
 import { memo, useCallback, useRef } from "react";
+import { type AuthorizationHandoff, AuthorizationReviewTrigger } from "./authorization-review";
 import type { ChatMessage } from "./chat-state";
 import { FailedTurnCard } from "./failed-turn-card";
 import { type ChatImage, chatImageDisplay } from "./local-file-preview";
@@ -43,6 +44,7 @@ export function shouldUpdateTranscriptRow(
 interface TranscriptRowProps extends TranscriptRowState {
   agentName: string;
   onOpenThread?: (message: ChatMessage) => void;
+  onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
   threadDisabled: boolean;
@@ -54,6 +56,7 @@ function TranscriptRow({
   agentName,
   message,
   onOpenThread,
+  onReviewAuthorization,
   onPreviewImage,
   onPreviewTool,
   showToolCalls,
@@ -74,6 +77,7 @@ function TranscriptRow({
     message.images?.length ||
     message.reasoning ||
     (showToolCalls && message.tools?.length) ||
+    message.authorizations?.length ||
     message.failure ||
     hasVisibleStopReason(message.stopReason ?? "") ||
     message.turnStat;
@@ -177,10 +181,31 @@ function TranscriptRow({
                   )}
                 </>
               )}
+              {message.authorizations
+                ?.filter((authorization) => authorization.callId === tool.id)
+                .map((authorization) => (
+                  <AuthorizationReviewTrigger
+                    authorization={authorization}
+                    key={authorization.authorizationId}
+                    onReview={onReviewAuthorization ?? (() => undefined)}
+                  />
+                ))}
             </li>
           ))}
         </ol>
       )}
+      {message.authorizations
+        ?.filter(
+          (authorization) =>
+            !showToolCalls || !message.tools?.some((tool) => tool.id === authorization.callId),
+        )
+        .map((authorization) => (
+          <AuthorizationReviewTrigger
+            authorization={authorization}
+            key={authorization.authorizationId}
+            onReview={onReviewAuthorization ?? (() => undefined)}
+          />
+        ))}
       {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
       {message.failure && (
         <FailedTurnCard
@@ -217,6 +242,7 @@ const MemoTranscriptRow = memo(
     previous.threadDisabled === next.threadDisabled &&
     previous.threadSessionId === next.threadSessionId &&
     previous.onOpenThread === next.onOpenThread &&
+    previous.onReviewAuthorization === next.onReviewAuthorization &&
     previous.onPreviewImage === next.onPreviewImage &&
     previous.onPreviewTool === next.onPreviewTool,
 );
@@ -225,6 +251,7 @@ export interface ChatTranscriptProps {
   agentName?: string;
   messages: ChatMessage[];
   onOpenThread?: (message: ChatMessage) => void;
+  onReviewAuthorization?: (authorization: AuthorizationHandoff) => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
   showToolCalls: boolean;
@@ -239,6 +266,7 @@ export function ChatTranscript({
   agentName = "Mecatl",
   messages,
   onOpenThread,
+  onReviewAuthorization,
   onPreviewImage,
   onPreviewTool,
   showToolCalls,
@@ -247,14 +275,18 @@ export function ChatTranscript({
   threadSessionIdForMessage,
   userName = "You",
 }: ChatTranscriptProps) {
-  const actions = useRef({ onOpenThread, onPreviewImage, onPreviewTool });
-  actions.current = { onOpenThread, onPreviewImage, onPreviewTool };
+  const actions = useRef({ onOpenThread, onPreviewImage, onPreviewTool, onReviewAuthorization });
+  actions.current = { onOpenThread, onPreviewImage, onPreviewTool, onReviewAuthorization };
   const previewImage = useCallback(
     (image: ChatImage) => actions.current.onPreviewImage?.(image),
     [],
   );
   const previewTool = useCallback(
     (tool: ToolActivity) => actions.current.onPreviewTool?.(tool),
+    [],
+  );
+  const reviewAuthorization = useCallback(
+    (authorization: AuthorizationHandoff) => actions.current.onReviewAuthorization?.(authorization),
     [],
   );
   const openThread = useCallback(
@@ -270,6 +302,7 @@ export function ChatTranscript({
           key={message.id}
           message={message}
           onOpenThread={onOpenThread ? openThread : undefined}
+          onReviewAuthorization={onReviewAuthorization ? reviewAuthorization : undefined}
           onPreviewImage={onPreviewImage ? previewImage : undefined}
           onPreviewTool={onPreviewTool ? previewTool : undefined}
           showToolCalls={showToolCalls}
