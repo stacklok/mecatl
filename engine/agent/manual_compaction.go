@@ -96,6 +96,7 @@ func (e *Engine) CompactSession(ctx context.Context, sess *session.Session) (Man
 	original := sess.Conversation.Messages
 	input := &session.Conversation{Messages: cloneCompactionMessages(original)}
 	result, candidate, usage, err := e.compactionCandidate(ctx, input, 0)
+	usage = remapAuxiliaryUsage(ctx, e.deps.Diagnostics, session.UsageKindCompaction, usage)
 	// The caller already owns this aggregate at a legal turn boundary, so returned
 	// accounting is recorded synchronously even when compaction itself fails.
 	sess.RecordAuxiliaryUsage(usage)

@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"strings"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -21,4 +23,32 @@ func auxiliaryUsage(kind session.UsageKind, identity session.ProviderModelID, us
 	return session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
 		kind: {Total: usage, Models: map[string]session.Usage{attribution: usage}},
 	}}
+}
+
+// remapAuxiliaryUsage confines a producer result to the caller-owned purpose while
+// preserving every non-empty model attribution and its reported totals.
+func remapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose session.UsageKind, in session.AuxiliaryUsage) session.AuxiliaryUsage {
+	out := session.AuxiliaryUsage{}
+	unexpected, empty := false, false
+	for kind, bucket := range in.Buckets {
+		if kind == "" || kind != purpose {
+			unexpected = true
+		}
+		if len(bucket.Models) == 0 {
+			empty = true
+		}
+		for model, usage := range bucket.Models {
+			if model == "" || usage == (session.Usage{}) {
+				empty = true
+				continue
+			}
+			out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+				purpose: {Models: map[string]session.Usage{model: usage}},
+			}})
+		}
+	}
+	if (unexpected || empty) && diag != nil {
+		diag.Log(ctx, port.LevelDebug, "auxiliary usage result normalized", "unexpected_bucket", unexpected, "empty_bucket", empty)
+	}
+	return out
 }
