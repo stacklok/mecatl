@@ -539,6 +539,11 @@ function SearchResult({
       }}
       onMouseDown={(event) => event.preventDefault()}
       onMouseMove={active ? undefined : onHover}
+      onPointerDown={(event) => {
+        // A touch scroll may suppress its click, leaving the movement flag
+        // behind. A new mouse/pen press is a separate choice, not that scroll.
+        if (event.pointerType !== "touch") touchStart.current = null;
+      }}
       onTouchCancel={() => {
         touchStart.current = null;
       }}

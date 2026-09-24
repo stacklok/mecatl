@@ -173,7 +173,7 @@ describe("GlobalSearch", () => {
     await act(async () => keydown(input as HTMLInputElement, "Enter"));
     await settleNavigationFocus();
     expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
-    expect(document.activeElement).toBe(heading);
+    await vi.waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
   it("closes on account change and does not reuse another account's cached results", async () => {
@@ -271,6 +271,33 @@ describe("GlobalSearch", () => {
       option?.click();
     });
     expect(navigation).toHaveBeenCalledOnce();
+    await settleNavigationFocus();
+  });
+
+  it("accepts a mouse click after a touch scroll that emitted no click", async () => {
+    await mount();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Search"]')?.click(),
+    );
+    await searchFor("shortcuts");
+    const option = document.querySelector<HTMLElement>('[role="option"]');
+    expect(option).not.toBeNull();
+
+    await act(async () => {
+      touch(option as HTMLElement, "touchstart", 40, 100);
+      touch(option as HTMLElement, "touchmove", 40, 145);
+      touch(option as HTMLElement, "touchend", 40, 145);
+    });
+    expect(navigation).not.toHaveBeenCalled();
+
+    await act(async () => {
+      option?.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
+      );
+      option?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    });
+    expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/shortcuts" });
+    await settleNavigationFocus();
   });
 
   it("keeps static results when an inventory fails and reports the partial search", async () => {
@@ -365,6 +392,6 @@ describe("GlobalSearch", () => {
     await settleNavigationFocus();
     expect(navigation).toHaveBeenCalledExactlyOnceWith({ to: "/workspace/settings" });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(document.activeElement).toBe(main);
+    await vi.waitFor(() => expect(document.activeElement).toBe(main));
   });
 });
