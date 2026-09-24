@@ -52,7 +52,6 @@ type listLayout struct {
 // padding cell separates that gutter from content.
 func (l *List) SetGeometry(width, height, gutterCells int, policy Policy) {
 	l.viewport.SetGeometry(width, height, listGutterCells(gutterCells)+1, policy)
-	l.clamp(l.layout())
 }
 
 // Valid reports whether the list viewport has usable dimensions.
@@ -75,6 +74,9 @@ func (l *List) RevealPending() bool { return l.reveal }
 
 // SetItems replaces the list contents while preserving compatible viewport anchors.
 func (l *List) SetItems(items []ListItem) {
+	if sameListItems(l.items, items) {
+		return
+	}
 	old := l.layout()
 	oldOffset, oldCursor, oldID, oldLine := l.viewport.offset, l.cursor, l.cursorID, l.cursorLine
 	topID, topLine, haveTop := "", 0, false
@@ -240,53 +242,131 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 	}
 
 	layout := l.layout()
-	reservedAbove, reservedBelow := false, false
-	for range 3 {
-		reserved := 0
-		if reservedAbove {
-			reserved++
+	if len(layout.rows) == 0 {
+		l.viewport.height, l.viewport.offset, l.reveal = capacity, 0, false
+		return ListView{}
+	}
+	existingOffset := l.viewport.offset
+	l.cursor = clampBounded(l.cursor, len(l.items))
+	if l.cursorID == "" || l.itemIndex(l.cursorID) < 0 {
+		l.cursorID = l.items[l.cursor].ID
+	} else {
+		l.cursor = l.itemIndex(l.cursorID)
+	}
+	selectedHeight := layout.ends[l.cursor] - layout.starts[l.cursor]
+	l.cursorLine = min(max(0, l.cursorLine), max(0, selectedHeight-1))
+
+	type candidate struct {
+		start, height int
+		above, below  int
+		singletons    int
+	}
+	var best *candidate
+	for mask := 0; mask < 4; mask++ {
+		chrome := 0
+		if mask&1 != 0 {
+			chrome++
 		}
-		if reservedBelow {
-			reserved++
+		if mask&2 != 0 {
+			chrome++
 		}
-		// Always retain one physical row for content. Tiny surfaces may present the
-		// returned indicator metadata in their header instead of as chrome rows.
-		reserved = min(reserved, capacity-1)
-		l.viewport.height = max(1, capacity-reserved)
+		if chrome >= capacity {
+			continue
+		}
+		height := capacity - chrome
+		first, last := existingOffset, existingOffset+1
 		if reveal {
-			l.revealCursor(layout)
+			first, last = 0, max(1, len(layout.rows)-height+1)
 		}
-		l.clamp(layout)
+		for start := first; start < last; start++ {
+			if start < 0 || start >= len(layout.rows) || (len(layout.rows) >= height && start+height > len(layout.rows)) {
+				continue
+			}
+			end := min(len(layout.rows), start+height)
+			above, below := hiddenCompleteItems(layout, start, end)
+			if (mask&1 != 0) != (above > 1) || (mask&2 != 0) != (below > 1) {
+				continue
+			}
+			if reveal {
+				selectedStart, selectedEnd := layout.starts[l.cursor], layout.ends[l.cursor]
+				if selectedHeight <= height {
+					if selectedStart < start || selectedEnd > end {
+						continue
+					}
+				} else {
+					cursorLine := selectedStart + l.cursorLine
+					if cursorLine < start || cursorLine >= end {
+						continue
+					}
+				}
+			}
+			c := candidate{start: start, height: height, above: above, below: below}
+			if above == 1 {
+				c.singletons++
+			}
+			if below == 1 {
+				c.singletons++
+			}
+			if best == nil || (reveal && (c.singletons < best.singletons ||
+				(c.singletons == best.singletons && (abs(c.start-existingOffset) < abs(best.start-existingOffset) ||
+					(abs(c.start-existingOffset) == abs(best.start-existingOffset) && c.start < best.start))))) {
+				best = &c
+			}
+		}
+	}
+	if best == nil {
+		l.viewport.height = capacity
+		if reveal {
+			l.viewport.offset = existingOffset
+			l.revealCursor(layout)
+		} else {
+			l.viewport.height = min(max(1, l.viewport.height), len(layout.rows)-existingOffset)
+			l.viewport.offset = existingOffset
+		}
 		w := l.viewport.window(len(layout.rows))
 		above, below := hiddenCompleteItems(layout, w.start, w.end)
-		nextAbove, nextBelow := above > 1, below > 1
-		if nextAbove == reservedAbove && nextBelow == reservedBelow {
-			break
-		}
-		reservedAbove, reservedBelow = nextAbove, nextBelow
+		best = &candidate{start: w.start, height: l.viewport.height, above: above, below: below}
 	}
 
-	reserved := 0
-	if reservedAbove {
-		reserved++
-	}
-	if reservedBelow {
-		reserved++
-	}
-	l.viewport.height = max(1, capacity-min(reserved, capacity-1))
-	if reveal {
-		l.revealCursor(layout)
-	}
-	v := l.View()
-	v.Above, v.Below = hiddenCompleteItems(layout, l.viewport.window(len(layout.rows)).start, l.viewport.window(len(layout.rows)).end)
-	if v.Above <= 1 {
-		v.Above = 0
-	}
-	if v.Below <= 1 {
-		v.Below = 0
+	l.viewport.height, l.viewport.offset = best.height, best.start
+	w := l.viewport.window(len(layout.rows))
+	rows := append([]ListRow(nil), layout.rows[w.start:w.end]...)
+	marked := false
+	for i := range rows {
+		rows[i].Selected = rows[i].ID == l.cursorID
+		if rows[i].Selected && !marked {
+			rows[i].CursorMarker = true
+			marked = true
+		}
 	}
 	l.reveal = false
+	view := ListView{Rows: rows}
+	if best.above > 1 {
+		view.Above = best.above
+	}
+	if best.below > 1 {
+		view.Below = best.below
+	}
+	return view
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
 	return v
+}
+
+func sameListItems(left, right []ListItem) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func hiddenCompleteItems(layout listLayout, start, end int) (above, below int) {

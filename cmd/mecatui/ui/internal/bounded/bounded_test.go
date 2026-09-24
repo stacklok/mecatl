@@ -146,7 +146,7 @@ func TestListViewWithIndicatorsCountsHiddenLogicalItemsIndependently(t *testing.
 		wantRowCount int
 	}{
 		{name: "below only", offset: 0, wantBelow: 6, wantRowCount: 3},
-		{name: "above only", offset: 6, wantAbove: 5, wantRowCount: 3},
+		{name: "above only", offset: 6, wantAbove: 6, wantRowCount: 3},
 		{name: "both sides", offset: 3, wantAbove: 3, wantBelow: 4, wantRowCount: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,6 +160,22 @@ func TestListViewWithIndicatorsCountsHiddenLogicalItemsIndependently(t *testing.
 				t.Fatalf("indicator projection = above=%d below=%d rows=%d, want above=%d below=%d rows=%d", view.Above, view.Below, len(view.Rows), tc.wantAbove, tc.wantBelow, tc.wantRowCount)
 			}
 		})
+	}
+}
+
+func TestListViewWithIndicatorsPreservesPhysicalOffsetWithoutReveal(t *testing.T) {
+	items := make([]ListItem, 9)
+	for i := range items {
+		items[i] = ListItem{ID: string(rune('a' + i)), Text: string(rune('a' + i))}
+	}
+	list := new(List)
+	list.SetGeometry(20, 4, 1, Clip)
+	list.SetItems(items)
+	list.viewport.offset = 6
+
+	view := list.ViewWithIndicators(4, false)
+	if list.Offset() != 6 || view.Above != 6 || view.Below != 0 || len(view.Rows) != 3 || view.Rows[0].ID != "g" {
+		t.Fatalf("non-revealing projection relocated physical scroll: offset=%d view=%#v", list.Offset(), view)
 	}
 }
 

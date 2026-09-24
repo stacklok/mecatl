@@ -327,3 +327,21 @@ func TestMecatuiMentionBoundedList_Scenario1_PreservesCompletionAndAttachmentCon
 		t.Fatalf("regular-file attachment contract changed: %+v", got)
 	}
 }
+
+func TestMecatuiMentionBoundedList_Scenario1_FinalMatchVisibleWithoutBelowIndicator(t *testing.T) {
+	for matches := 2; matches <= maxMentionCandidates; matches++ {
+		st := scenarioMentionState(scenarioMentionMatches(matches))
+		for cursor := range st.matches {
+			st.list.SetCursor(cursor)
+			_ = renderMentionSized(testTheme(), st, 32, 4)
+			view := st.list.ViewWithIndicators(4, true)
+			if view.Below != 0 {
+				continue
+			}
+			final := st.matches[len(st.matches)-1]
+			if !slices.ContainsFunc(view.Rows, func(row bounded.ListRow) bool { return row.ID == final }) {
+				t.Fatalf("matches=%d cursor=%d omitted final %q without a below indicator: %+v", matches, cursor, final, view)
+			}
+		}
+	}
+}
