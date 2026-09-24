@@ -86,6 +86,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0349 - Cause-free TypeScript SDK malformed-success decoding](./0349-typescript-sdk-malformed-success-decoding.md) *(proposed; narrows decoder diagnostics at the HTTP successful-response boundary)*
 - [0351 — Mecatl Studio: in-repo web UI behind a BFF over the published SDK](./0351-mecatl-studio-in-repo-web-ui.md) *(proposed; `apps/` workspace, one-origin image, `MECATL_*`/`STUDIO_*` split)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
+- [0356 — Durable context occupancy in session snapshots](./0356-durable-context-occupancy.md) *(proposed; extends ADR 0307 without changing lifetime-ledger or budget semantics)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
