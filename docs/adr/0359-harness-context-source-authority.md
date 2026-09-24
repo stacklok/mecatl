@@ -1,7 +1,7 @@
 # ADR 0359 - Harness context source authority is independent of execution
 
-- Status: Proposed; ready for human Plan / Interface review
-- Date: 2026-09-23
+- Status: Proposed amendment to the decision approved in #1814; implementation has not landed
+- Date: 2026-09-24
 - Scope: project instructions, commands, rules, skills, agent definitions, source admission, and deployment composition
 - Supersedes: none
 - Superseded by: none
@@ -47,6 +47,42 @@ This distinction has two observable cases:
 The latter is intentional sharing, not an exception for MicroVM or Redis. A local MicroVM
 deployment can select host files, while a Kubernetes deployment can select APIs or other drivers.
 Changing the execution backend alone does not select another context source.
+
+### Acquire a selected session source by exact authority
+
+Two sessions can share an owner and profile while using different execution
+worktrees. A binder receiving only that owner/profile pair cannot select the
+correct worktree. Capturing one workspace before session creation proves backend
+preservation but does not establish dynamic per-session acquisition.
+
+A trusted registration explicitly declares whether it needs session execution
+files. Only selected, admitted registrations receive a lazy capability capturing
+the server-authorized source session and exact environment reference. The
+capability accepts no root or selector. It supplies read-only files and a
+source-owned release, not the execution owner's cleanup, a runner, or read evidence.
+Independent sources never need to exercise it. During creation it can borrow an
+authorized provisional binding before the session is persisted; failed binding or
+publication releases attempt-owned resources without destroying retained execution.
+
+The [interface contract](../acceptance/harness-context.md#interface-contract)
+defines the internal request, registration, acquisition, and lifetime signatures.
+It keeps execution workspaces out of the engine's per-call prompt interfaces.
+
+### Show the context selected for the session
+
+Skill and agent inventories are session-effective, like command discovery.
+Human discovery and model consumption borrow the same resolved binding and retain
+its winning metadata/body pairs. Principal sources are never published by adding
+them to a process-wide snapshot. Learned skills use the same session-specific
+catalog and owner/project partitions as the Skill tool, without rediscovering
+external sources.
+
+Existing inventory RPCs require the target session ID and authorize ownership
+before binding. Empty IDs fail instead of selecting global defaults. The client
+uses its active session and discards stale replies after switching sessions.
+Inventory membership describes admitted definitions, not available execution tools
+or permission to invoke them. This allows a restricted native session to inspect
+context without enabling delegation. No extra global inventory API is introduced.
 
 ### Compose sources and resolve each content kind explicitly
 
@@ -127,32 +163,46 @@ No-FS describes execution capability, not the storage used by a logical context 
 not prohibit an admitted source from reading host files. Conversely, an adapter explicitly bound
 to unavailable execution files still depends on that backend and follows its source error policy.
 
-Command listing first loads and owner-authorizes the session, then binds from its authoritative stored
-owner and profile; it does not reattach an unrelated execution backend. Build owns a concurrency-safe
-per-session binding cache: first creation is single-flight, failed creation is retryable, and reuse
-verifies principal/profile consistency. Retirement closes a binding generation, not the durable
-session ID forever. It rejects new borrows of that generation and delays cleanup until its existing
-borrowers release. Explicit owner-authorized supported reload calls the consumer-local
-`CommandSourceResolver.Activate(context.Context, session.SessionID, *session.Principal, string) error`
-under the Service's existing per-session lifecycle serialization. It verifies the stored owner/profile
-and current source authorization before publishing a fresh generation; failure leaves retirement
-intact, and an already-active matching generation remains unchanged. Ordinary or stale queued Borrow
-cannot reactivate a retired generation. Each release targets its exact generation, so draining old
-borrowers and old cleanup cannot close or evict a replacement. Actual session teardown retires the
-current generation; Build shutdown retires all generations and permanently prevents both borrowing
-and activation. This preserves existing close/reload compatibility without a public or durable
-generation identity. An explicitly execution-file-backed source may still authorize and bind that
-source backend. Actual runs separately admit the execution capabilities they need.
+Command, skill, and agent listing first load and owner-authorize the session,
+then borrow its effective binding from authoritative session/source metadata.
+Independent sources do not reattach execution. The Build-owned resolver checks
+consumer identity, owner/profile, and the exact source anchor on reuse. It creates
+a generation single-flight, retries failed creation, and snapshots each source at
+its defined lifetime. Retirement rejects new borrows but drains existing users.
+Supported owner-authorized reload prepares a private candidate, constructs its
+engine against that candidate, and commits both under the session publication
+barrier only after construction and registration preconditions succeed. Failure
+aborts the candidate and preserves the prior engine/inventory pair. Retirement
+checks the expected binding's exact generation identity, so delayed teardown,
+cleanup, and release cannot retire or close replacements. Stale borrows cannot
+reactivate retirement. Build shutdown separately retires all owned generations,
+cancels pending acquisition, and permanently closes admission; a successfully bound source
+outlives its initiating request. The exact internal interfaces live in the
+acceptance contract, not a parallel signature specification here.
 
 Keep existing command precedence as the compatibility default and preserve established miss and
 fail-soft behavior within an explicitly configured composition. A missing optional source can
 remain empty. Failure to resolve a required source must not silently add execution files, process
 cwd, or another unconfigured namespace as fallback.
 
-A child inherits source authority only within its existing specialist, profile, trust, and tool
-restrictions. Context inheritance does not copy a parent's broader tool catalog. Source reads do
-not create file-mutation evidence in the execution `ReadLedger`, even when the backing files are
-shared.
+A child inherits source authority only within its existing specialist, profile,
+trust, and tool restrictions. A lifecycle callback on the selected child engine
+registers its effective binding and holds an independent source borrow after its
+identity and restrictions are known. It retains the parent's external snapshots
+rather than rebinding changed sources. Live commands and per-Run instructions keep
+their freshness semantics. Parent cleanup cannot release a still-borrowed source
+or invalidate its backing files. An isolated execution fork does not change the
+source anchor. Reconstructed child inventories require the actual attenuated child
+binding, not a broader parent or global snapshot. Source reads never create
+execution read evidence, even when storage is shared.
+
+The proposed minimum resume rule uses persisted parent ID and incarnation to
+require the original parent on child resume. This would narrow the existing
+same-owner cross-parent resume behavior and therefore remains an explicit open
+human decision in the plan. The alternative requires a reviewed original-anchor
+reconstruction path; neither implicit retargeting nor new durable context identity
+is an implementation fallback. No child transcript is deleted to resolve missing
+authority.
 
 ## Restart and reconfiguration
 
@@ -163,7 +213,8 @@ concurrency-safe adapter. A principal-scoped registration binds the owned sessio
 profile and cannot share its source, snapshot, live lookup, or cache with another principal. Snapshot
 sources bind once for the current Build or principal binding; command sources remain live only inside
 that binding. Build-owned resources close from `Built.Close`, and principal/session resources close
-when their binding retires or Build shuts down. The implementation inventories every long-lived
+only after their generation retires and its final borrower releases, including during Build shutdown.
+The implementation inventories every long-lived
 connection, cache, and binding in ADR 0027.
 
 Existing sessions and scheduled fires create fresh bindings from the current composition and current
@@ -190,13 +241,18 @@ The model separates source selection from execution while allowing explicit stor
 Both palette listing and invocation consult the same admitted source chain. File tools retain
 the exact execution backend, and source reads retain their own admission and freshness rules.
 
-The model defines the domain; implementation and approval status belong in the acceptance plan
-and this ADR's metadata. The dependency stack is model/contract, then shared implementation,
-followed by MicroVM PR #580 and the Redis #1811 sibling integration. The operator has narrowly
-authorized the shared implementation to start as a draft stacked PR from the exact proposed-docs
-commit before plan merge. That exception does not make this ADR accepted, authorize either merge,
-or relax contract-drift stops and human merge gates. Shared acceptance uses offline reference
-adapters; real backend qualification belongs to the integration that owns it.
+The model defines domain responsibilities; the acceptance plan owns exact
+interfaces, approval status, and backend proof obligations. Its dependency stack
+is the shared amendment, #1875, then sibling MicroVM #580, Redis #1811, and native
+Kubernetes #1614 integrations. Native plan #1579 must replace backend-selected
+context restrictions with explicit source policy. A first native slice can leave
+PVC context unselected while admitting independent deployment/API sources.
+
+The directing operator authorized amending this decision in place before
+implementation lands. It is renumbered from the colliding 0357 to 0359; the
+unrelated model-stream ADR retains 0357. Shared reference proofs do not establish
+real-backend qualification. Plan approval and implementation merge remain separate
+human checkpoints.
 
 Any implementation adding long-lived connections, caches, or bindings must record their owner,
 cleanup, and restart behavior in ADR 0027's inventories. This model-only PR adds no such runtime

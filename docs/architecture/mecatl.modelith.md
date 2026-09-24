@@ -134,6 +134,12 @@ The deployment-configured composition of admitted sources for model-facing instr
 
 - **harness-context-preserves-source-freshness** — Commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
 
+- **harness-context-execution-source-exact** — An explicitly selected execution-file source binds the authorized session's exact logical files. Two sessions with the same principal and profile but different execution files remain distinguishable. Acquiring those files does not select a source, grant a command runner, or authorize execution-file mutation. Independent sources do not require execution attachment.
+
+- **harness-context-inventory-session-effective** — A session's human-facing command, skill, and agent-definition inventories describe the same admitted and resolved definitions used by that session's model. The same observation has the same names and winners, including owner-specific contributions and applicable child restrictions. Inventory membership does not grant tool capability or invocation permission and never publishes another owner's context.
+
+- **harness-context-inheritance-preserves-source** — A delegated child inherits its parent's admitted source authority subject to the child's restrictions. Forking execution files does not retarget an inherited source. Reconstruction reauthorizes that source under current policy; missing authority is not replaced with the child's execution files or another namespace.
+
 - **harness-context-does-not-share-read-evidence** — Harness-source reads never consult or update the execution `ReadLedger`, including when source and execution share backing files. `Sessions` sharing a harness context retain independent read evidence.
 
 
@@ -731,6 +737,63 @@ erDiagram
 - **harness-context-preserves-source-freshness** — Commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
 
 - **harness-context-provenance-governs-trust** — Source trust follows configured provenance and admission. Host-backed content is not trusted by locality, and project-tier content is admitted only by the resolved project-ingestion decision.
+
+
+### Same-owner sessions select their exact execution-file sources
+
+**Actors:** Principal, Operator
+
+**Steps**
+
+1. Two sessions have the same principal and profile but distinct execution worktrees. The operator explicitly selects each session's execution files as its repository context source.
+2. Composition obtains each exact authorized source backend. Conflicting command and instruction markers remain local to the selected session in both discovery and consumption.
+3. After restart, discovery before a Run reconstructs each selected source under current authorization. An independent-source configuration performs no unrelated execution attachment.
+
+**Invariants touched**
+
+- **harness-context-execution-source-exact** — An explicitly selected execution-file source binds the authorized session's exact logical files. Two sessions with the same principal and profile but different execution files remain distinguishable. Acquiring those files does not select a source, grant a command runner, or authorize execution-file mutation. Independent sources do not require execution attachment.
+
+- **harness-context-explicit-storage-sharing** — A context source may explicitly read the same logical files as the execution `Workspace`, using that backend's capabilities. Those files then follow the source's admission and freshness rules. Sharing storage does not merge source authority with execution authority or permit reopening a virtual root through a different backend.
+
+- **harness-context-preserves-source-freshness** — Commands remain live on each List and Expand, project instructions are read once per `Run`, and rules, skills, and agent definitions retain their source-lifetime snapshot semantics. Listing and consumption use the same configured source authority.
+
+
+### Human inventories describe the session's resolved context
+
+**Actors:** Principal, Client, Operator
+
+**Steps**
+
+1. The operator selects organization and owner-specific sources with a permitted repository override for a same-name skill and agent definition.
+2. The session's inventory displays the winning definitions that its model receives and consumes. Another owner's contributions and overridden definitions are absent.
+3. A restricted session can inspect admitted definitions without gaining an unavailable tool or bypassing an invocation permission check.
+
+**Invariants touched**
+
+- **harness-context-inventory-session-effective** — A session's human-facing command, skill, and agent-definition inventories describe the same admitted and resolved definitions used by that session's model. The same observation has the same names and winners, including owner-specific contributions and applicable child restrictions. Inventory membership does not grant tool capability or invocation permission and never publishes another owner's context.
+
+- **harness-context-resolution-explicit** — Deployment composition defines enabled sources, ordering, named-entry collision handling, and combination, replacement, or exclusion of instruction and rule contributions according to their content kind. Given the same configuration and source observations, resolution is deterministic. Storage backend, transport, and discovery timing do not establish precedence; listing and consumption use the same rules.
+
+- **harness-context-overrides-do-not-grant-authority** — Context overrides select content; they cannot weaken `PermissionRules`, grant execution capabilities, bypass source admission, or widen a child's allowed tools. Instruction rules remain distinct from the governance `PermissionRule` model.
+
+
+### An execution fork preserves inherited context authority
+
+**Actors:** Principal, Operator
+
+**Steps**
+
+1. A parent uses an explicitly selected context source and delegates to an isolated child with different execution files.
+2. The child inherits the admitted source within its specialist and capability restrictions. Conflicting context files in the child worktree do not replace that source.
+3. When the child context is reconstructed, current policy and authorization apply to the inherited source. Unavailable or revoked authority does not select the child worktree as fallback.
+
+**Invariants touched**
+
+- **harness-context-inheritance-preserves-source** — A delegated child inherits its parent's admitted source authority subject to the child's restrictions. Forking execution files does not retarget an inherited source. Reconstruction reauthorizes that source under current policy; missing authority is not replaced with the child's execution files or another namespace.
+
+- **harness-context-overrides-do-not-grant-authority** — Context overrides select content; they cannot weaken `PermissionRules`, grant execution capabilities, bypass source admission, or widen a child's allowed tools. Instruction rules remain distinct from the governance `PermissionRule` model.
+
+- **harness-context-inventory-session-effective** — A session's human-facing command, skill, and agent-definition inventories describe the same admitted and resolved definitions used by that session's model. The same observation has the same names and winners, including owner-specific contributions and applicable child restrictions. Inventory membership does not grant tool capability or invocation permission and never publishes another owner's context.
 
 
 ### Shared harness context keeps session read ledgers isolated
