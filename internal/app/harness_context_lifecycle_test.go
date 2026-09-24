@@ -3,14 +3,56 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
+
+type failingHarnessPlacement struct{}
+
+func (failingHarnessPlacement) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
+	return server.PlacementBinding{}, errors.New("late placement validation failure")
+}
+
+func TestHarnessBuildLateFailureOwnsEachCleanupOnce(t *testing.T) {
+	kinds := harnessEmptyKinds()
+	kinds.Commands = permconfig.HarnessContextKind{Sources: []string{"command"}, Mode: "combine"}
+	kinds.Rules = permconfig.HarnessContextKind{Sources: []string{"rules"}, Mode: "combine"}
+	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"command", "rules"}, Kinds: kinds})
+	var commandClosed, rulesClosed atomic.Int32
+	cfg.HarnessCommandSources = []HarnessSourceRegistration[server.CommandSourceBinding]{{ID: "command", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+		return &hcCommands{values: map[string]string{"x": "body"}}, func() error { commandClosed.Add(1); return nil }, nil
+	}}}
+	cfg.HarnessRulesSources = []HarnessSourceRegistration[prompt.RulesSource]{{ID: "rules", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+		return frozenHarnessRules{rules: []prompt.Rule{{Name: "rule", Body: "body"}}}, func() error { rulesClosed.Add(1); return nil }, nil
+	}}}
+	cfg.PlacementProvider = failingHarnessPlacement{}
+	cfg.PlacementScope = "late-failure"
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err == nil || built != nil || !strings.Contains(err.Error(), "validate default placement") {
+		t.Fatalf("late Build failure=%v, built=%v", err, built)
+	}
+	if commandClosed.Load() != 1 || rulesClosed.Load() != 1 {
+		t.Fatalf("late Build cleanup command=%d rules=%d", commandClosed.Load(), rulesClosed.Load())
+	}
+	cfg.PlacementProvider = nil
+	cfg.PlacementScope = ""
+	built, err = buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built.Close()
+	built.Close()
+	if commandClosed.Load() != 2 || rulesClosed.Load() != 2 {
+		t.Fatalf("successful repeated Close cleanup command=%d rules=%d", commandClosed.Load(), rulesClosed.Load())
+	}
+}
 
 func TestHarnessCommandShutdownWaitsForBorrowers(t *testing.T) {
 	var closed atomic.Int32

@@ -391,6 +391,9 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 			continue
 		}
 		if reg.Scope == HarnessSourceScopePrincipal && cfg.harnessScope == nil {
+			if rulesPolicy.mode == harnessModeReplace {
+				break
+			}
 			continue
 		}
 		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg))
@@ -439,6 +442,9 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 			continue
 		}
 		if reg.Scope == HarnessSourceScopePrincipal && cfg.harnessScope == nil {
+			if skillsPolicy.mode == harnessModeReplace {
+				break
+			}
 			continue
 		}
 		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg))
@@ -515,6 +521,9 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 			continue
 		}
 		if reg.Scope == HarnessSourceScopePrincipal && cfg.harnessScope == nil {
+			if agentPolicy.mode == harnessModeReplace {
+				break
+			}
 			continue
 		}
 		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg))
@@ -789,6 +798,94 @@ func (b *lazyProcessCommandBinding) Close() {
 	}
 }
 
+type lazyCommandBinding struct {
+	mu      sync.Mutex
+	bind    func(context.Context) (server.CommandSourceBinding, func() error, error)
+	binding server.CommandSourceBinding
+	cleanup func() error
+	ready   chan struct{}
+	closed  bool
+}
+
+func (b *lazyCommandBinding) get(ctx context.Context) (server.CommandSourceBinding, error) {
+	for {
+		b.mu.Lock()
+		if b.closed {
+			b.mu.Unlock()
+			return nil, fmt.Errorf("command source binding is closed")
+		}
+		if b.binding != nil {
+			binding := b.binding
+			b.mu.Unlock()
+			return binding, nil
+		}
+		if b.ready != nil {
+			ready := b.ready
+			b.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ready:
+				continue
+			}
+		}
+		ready := make(chan struct{})
+		b.ready = ready
+		b.mu.Unlock()
+
+		binding, cleanup, err := b.bind(ctx)
+		if err == nil && binding == nil {
+			err = fmt.Errorf("source returned nil binding")
+		}
+		b.mu.Lock()
+		b.ready = nil
+		closed := b.closed
+		if err == nil && !closed {
+			b.binding, b.cleanup = binding, cleanup
+		}
+		close(ready)
+		b.mu.Unlock()
+		if err != nil || closed {
+			if cleanup != nil {
+				_ = cleanup()
+			}
+			if err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("command source binding is closed")
+		}
+		return binding, nil
+	}
+}
+
+func (b *lazyCommandBinding) List(ctx context.Context) ([]prompt.Command, error) {
+	binding, err := b.get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return binding.List(ctx)
+}
+
+func (b *lazyCommandBinding) Expand(ctx context.Context, input string) (string, bool, error) {
+	binding, err := b.get(ctx)
+	if err != nil {
+		return input, false, err
+	}
+	return binding.Expand(ctx, input)
+}
+
+func (b *lazyCommandBinding) Close() error {
+	b.mu.Lock()
+	b.closed = true
+	cleanup := b.cleanup
+	b.cleanup, b.binding = nil, nil
+	b.mu.Unlock()
+	if cleanup != nil {
+		return cleanup()
+	}
+	return nil
+}
+
 type harnessCommandResolver struct {
 	mu           sync.Mutex
 	sourceConfig *Config
@@ -848,13 +945,15 @@ func initializeHarnessCommandResolver(ctx context.Context, policy harnessKindPol
 		source := boundCommandSource{id: id, binding: binding}
 		r.process[id] = source
 		if policy.mode == harnessModeReplace {
-			nonempty, listErr := commandSourceHasEntries(ctx, source, policy)
+			commands, listErr := source.binding.List(ctx)
 			if listErr != nil {
 				r.closeProcess()
-				return nil, listErr
+				return nil, fmt.Errorf("list command source %q: %w", id, listErr)
 			}
-			if nonempty {
-				break
+			for _, command := range commands {
+				if prompt.ValidCommandName(command.Name) && !policy.excludes(id, command.Name) {
+					return r, nil
+				}
 			}
 		}
 	}
@@ -946,19 +1045,6 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 	}
 }
 
-func commandSourceHasEntries(ctx context.Context, source boundCommandSource, policy harnessKindPolicy) (bool, error) {
-	commands, err := source.binding.List(ctx)
-	if err != nil {
-		return false, fmt.Errorf("list command source %q: %w", source.id, err)
-	}
-	for _, command := range commands {
-		if prompt.ValidCommandName(command.Name) && !policy.excludes(source.id, command.Name) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (r *harnessCommandResolver) buildEntry(ctx context.Context, principal *session.Principal, profile string) (*commandBindingEntry, error) {
 	sources := make([]boundCommandSource, 0, len(r.policy.sources))
 	cleanups := make([]func() error, 0)
@@ -969,8 +1055,10 @@ func (r *harnessCommandResolver) buildEntry(ctx context.Context, principal *sess
 	if scopeCleanup != nil {
 		cleanups = append(cleanups, scopeCleanup)
 	}
+	winnerSeen := false
 	for _, sourceID := range r.policy.sources {
 		var source boundCommandSource
+		var lazy *lazyCommandBinding
 		if sourceID == "skills" && scopeConfig != nil {
 			metas, err := scopeConfig.harnessSkills.ListSkills(ctx)
 			if err != nil {
@@ -980,37 +1068,45 @@ func (r *harnessCommandResolver) buildEntry(ctx context.Context, principal *sess
 			source = boundCommandSource{id: sourceID, binding: prompt.NewSourceExpander(skills.NewSkillCommandSource(metas, scopeConfig.harnessSkills))}
 		} else if process, ok := r.process[sourceID]; ok {
 			source = process
-		} else if process := r.processLazy[sourceID]; process != nil {
-			binding, err := process.Bind(ctx)
-			if err != nil {
-				closeHarnessCleanups(cleanups)
-				return nil, err
-			}
-			source = boundCommandSource{id: sourceID, binding: binding}
 		} else {
-			reg := r.regs[sourceID]
-			binding, cleanup, err := reg.Bind(ctx, HarnessSourceScope{Principal: principal.Clone(), Profile: profile})
-			if cleanup != nil {
-				cleanups = append(cleanups, cleanup)
-			}
-			if err != nil || binding == nil {
-				closeHarnessCleanups(cleanups)
-				if err == nil {
-					err = fmt.Errorf("source returned nil binding")
+			lazy = &lazyCommandBinding{}
+			if process := r.processLazy[sourceID]; process != nil {
+				lazy.bind = func(bindCtx context.Context) (server.CommandSourceBinding, func() error, error) {
+					binding, err := process.Bind(bindCtx)
+					return binding, nil, err
 				}
-				return nil, fmt.Errorf("bind command source %q: %w", sourceID, err)
+			} else {
+				reg := r.regs[sourceID]
+				scope := HarnessSourceScope{Principal: principal.Clone(), Profile: profile}
+				lazy.bind = func(bindCtx context.Context) (server.CommandSourceBinding, func() error, error) {
+					binding, cleanup, err := reg.Bind(bindCtx, scope)
+					if err != nil {
+						return nil, cleanup, fmt.Errorf("bind command source %q: %w", sourceID, err)
+					}
+					return binding, cleanup, nil
+				}
 			}
-			source = boundCommandSource{id: sourceID, binding: binding}
+			cleanups = append(cleanups, lazy.Close)
+			source = boundCommandSource{id: sourceID, binding: lazy}
 		}
 		sources = append(sources, source)
-		if r.policy.mode == harnessModeReplace {
-			nonempty, err := commandSourceHasEntries(ctx, source, r.policy)
+		if r.policy.mode == harnessModeCombine && lazy != nil {
+			if _, err := lazy.get(ctx); err != nil {
+				closeHarnessCleanups(cleanups)
+				return nil, fmt.Errorf("bind command source %q: %w", sourceID, err)
+			}
+		}
+		if r.policy.mode == harnessModeReplace && !winnerSeen {
+			commands, err := source.binding.List(ctx)
 			if err != nil {
 				closeHarnessCleanups(cleanups)
-				return nil, err
+				return nil, fmt.Errorf("list command source %q: %w", sourceID, err)
 			}
-			if nonempty {
-				break
+			for _, command := range commands {
+				if prompt.ValidCommandName(command.Name) && !r.policy.excludes(sourceID, command.Name) {
+					winnerSeen = true
+					break
+				}
 			}
 		}
 	}
@@ -1230,7 +1326,13 @@ func resolveProcessHarnessInstructions(ctx context.Context, cfg *Config) error {
 		sources = append(sources, assembler)
 	}
 	cfg.harnessInstructions = policyInstructionAssembler{mode: policy.mode, sources: sources}
-	cfg.harnessContextClose = func() { closeHarnessCleanups(cleanups) }
+	previousClose := cfg.harnessContextClose
+	cfg.harnessContextClose = func() {
+		closeHarnessCleanups(cleanups)
+		if previousClose != nil {
+			previousClose()
+		}
+	}
 	return nil
 }
 

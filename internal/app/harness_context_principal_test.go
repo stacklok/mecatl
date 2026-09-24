@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
-	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -63,10 +62,14 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 	var requests []port.LLMRequest
 	cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file}, UseMock: true, OwnershipEnforced: true, AllowAllTools: true,
 		MockProvider: mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
+			mockllm.ToolCallTurn(session.NewToolCall("agent-alice", "Subagent", []byte(`{"agent":"owner-agent-alice","prompt":"report owner"}`))),
+			mockllm.TextTurn("alice specialist done"),
 			mockllm.ToolCallTurn(
 				session.NewToolCall("skill-body-alice", "Skill", []byte(`{"name":"owner-skill"}`)),
 				session.NewToolCall("skill-asset-alice", "Skill", []byte(`{"name":"owner-skill","asset":"owner.txt"}`)),
 			), mockllm.TextTurn("done"),
+			mockllm.ToolCallTurn(session.NewToolCall("agent-bob", "Subagent", []byte(`{"agent":"owner-agent-bob","prompt":"report owner"}`))),
+			mockllm.TextTurn("bob specialist done"),
 			mockllm.ToolCallTurn(
 				session.NewToolCall("skill-body-bob", "Skill", []byte(`{"name":"owner-skill"}`)),
 				session.NewToolCall("skill-asset-bob", "Skill", []byte(`{"name":"owner-skill","asset":"owner.txt"}`)),
@@ -81,7 +84,7 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 		}}},
 		HarnessRulesSources: []HarnessSourceRegistration[prompt.RulesSource]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(_ context.Context, s HarnessSourceScope) (prompt.RulesSource, func() error, error) {
 			check(s, 2)
-			return sourceconformance.NewRuleFixtureSource(), nil, nil
+			return frozenHarnessRules{rules: []prompt.Rule{{Name: "owner-rule", Body: "OWNER-RULE-" + s.Principal.Subject}}}, nil, nil
 		}}},
 		HarnessSkillSources: []HarnessSourceRegistration[tool.SkillSource]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(_ context.Context, s HarnessSourceScope) (tool.SkillSource, func() error, error) {
 			check(s, 3)
@@ -89,7 +92,8 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 		}}},
 		HarnessAgentDefSources: []HarnessSourceRegistration[tool.AgentDefSource]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(_ context.Context, s HarnessSourceScope) (tool.AgentDefSource, func() error, error) {
 			check(s, 4)
-			return &resolvedAgentSource{defs: []tool.AgentDef{sourceconformance.AgentFixture[0]}}, nil, nil
+			owner := s.Principal.Subject
+			return &resolvedAgentSource{defs: []tool.AgentDef{{Name: "owner-agent-" + owner, Description: "OWNER-AGENT-DESCRIPTION-" + owner, Body: "OWNER-AGENT-ROLE-" + owner}}}, nil, nil
 		}}},
 	}
 	built, err := buildIsolated(t, t.Context(), cfg)
@@ -127,14 +131,17 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 			t.Errorf("source %d bound %d times", i, binds[i].Load())
 		}
 	}
-	if len(requests) != 2 {
-		t.Fatalf("requests=%d", len(requests))
+	if len(requests) != 4 {
+		t.Fatalf("requests=%d tool-results=%q", len(requests), aliceToolText.String())
+	}
+	if !strings.Contains(requests[1].System.Render(), "OWNER-AGENT-ROLE-alice") || strings.Contains(requests[1].System.Render(), "OWNER-AGENT-ROLE-bob") {
+		t.Fatalf("alice named-agent request had wrong role: %q", requests[1].System.Render())
 	}
 	var text strings.Builder
 	for _, m := range requests[0].Messages {
 		text.WriteString(m.Text)
 	}
-	for _, marker := range []string{"TENANT-INSTRUCTIONS", "TENANT-COMMAND", sourceconformance.RuleFixture[0].Body} {
+	for _, marker := range []string{"TENANT-INSTRUCTIONS-alice", "TENANT-COMMAND-alice", "OWNER-RULE-alice"} {
 		if !strings.Contains(text.String(), marker) {
 			t.Errorf("missing %q in actual engine request", marker)
 		}
@@ -162,17 +169,20 @@ func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 			t.Errorf("source %d reused another owner's binding", i)
 		}
 	}
-	if len(requests) != 4 {
+	if len(requests) != 8 {
 		t.Fatalf("requests=%d", len(requests))
 	}
+	if !strings.Contains(requests[5].System.Render(), "OWNER-AGENT-ROLE-bob") || strings.Contains(requests[5].System.Render(), "OWNER-AGENT-ROLE-alice") {
+		t.Fatalf("bob named-agent request had wrong role: %q", requests[5].System.Render())
+	}
 	var otherText strings.Builder
-	for _, message := range requests[2].Messages {
+	for _, message := range requests[4].Messages {
 		otherText.WriteString(message.Text)
 	}
-	if strings.Contains(otherText.String(), "TENANT-INSTRUCTIONS-alice") || strings.Contains(otherText.String(), "TENANT-COMMAND-alice") {
+	if strings.Contains(otherText.String(), "TENANT-INSTRUCTIONS-alice") || strings.Contains(otherText.String(), "TENANT-COMMAND-alice") || strings.Contains(otherText.String(), "OWNER-RULE-alice") {
 		t.Fatal("principal source leaked across owners")
 	}
-	if !strings.Contains(otherText.String(), "TENANT-INSTRUCTIONS-bob") || !strings.Contains(otherText.String(), "TENANT-COMMAND-bob") {
+	if !strings.Contains(otherText.String(), "TENANT-INSTRUCTIONS-bob") || !strings.Contains(otherText.String(), "TENANT-COMMAND-bob") || !strings.Contains(otherText.String(), "OWNER-RULE-bob") {
 		t.Fatal("second owner did not receive its sources")
 	}
 	for _, marker := range []string{"OWNER-SKILL-BODY-bob", "OWNER-SKILL-ASSET-bob"} {

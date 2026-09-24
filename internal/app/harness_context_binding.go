@@ -10,9 +10,10 @@ import (
 )
 
 // Process binders run once for the Build. Later session compositions borrow the
-// same source without acquiring ownership of its cleanup.
-func cacheProcessHarness[T any](registrations []HarnessSourceRegistration[T], snapshot func(context.Context, T) (T, error)) []HarnessSourceRegistration[T] {
+// same source while Build retains sole ownership of its cleanup.
+func cacheProcessHarness[T any](registrations []HarnessSourceRegistration[T], snapshot func(context.Context, T) (T, error)) ([]HarnessSourceRegistration[T], func() error) {
 	out := append([]HarnessSourceRegistration[T](nil), registrations...)
+	var closers []func() error
 	for i, registration := range out {
 		if registration.Scope != HarnessSourceScopeProcess {
 			continue
@@ -22,33 +23,67 @@ func cacheProcessHarness[T any](registrations []HarnessSourceRegistration[T], sn
 		var source T
 		var cleanup func() error
 		var bindErr error
+		closed := false
 		out[i].Bind = func(ctx context.Context, scope HarnessSourceScope) (T, func() error, error) {
+			mu.Lock()
+			if closed {
+				mu.Unlock()
+				var zero T
+				return zero, nil, fmt.Errorf("process harness source %q is closed", registration.ID)
+			}
+			mu.Unlock()
 			once.Do(func() {
-				source, cleanup, bindErr = registration.Bind(ctx, scope)
-				if bindErr == nil && snapshot != nil {
-					source, bindErr = snapshot(ctx, source)
+				bound, boundCleanup, err := registration.Bind(ctx, scope)
+				if err == nil && snapshot != nil {
+					bound, err = snapshot(ctx, bound)
+				}
+				mu.Lock()
+				source, cleanup, bindErr = bound, boundCleanup, err
+				closeNow := closed || err != nil
+				if closeNow {
+					cleanup = nil
+				}
+				mu.Unlock()
+				if closeNow && boundCleanup != nil {
+					_ = boundCleanup()
 				}
 			})
 			mu.Lock()
 			defer mu.Unlock()
+			return source, nil, bindErr
+		}
+		closers = append(closers, func() error {
+			mu.Lock()
+			closed = true
 			owned := cleanup
 			cleanup = nil
-			return source, owned, bindErr
-		}
+			mu.Unlock()
+			if owned != nil {
+				return owned()
+			}
+			return nil
+		})
 	}
-	return out
+	return out, func() error {
+		closeHarnessCleanups(closers)
+		return nil
+	}
 }
 
 func prepareHarnessProcessBindings(cfg *Config) {
-	cfg.HarnessInstructionSources = cacheProcessHarness(cfg.HarnessInstructionSources, nil)
-	cfg.HarnessRulesSources = cacheProcessHarness(cfg.HarnessRulesSources, func(ctx context.Context, source prompt.RulesSource) (prompt.RulesSource, error) {
+	var closers []func() error
+	var closeProcess func() error
+	cfg.HarnessInstructionSources, closeProcess = cacheProcessHarness(cfg.HarnessInstructionSources, nil)
+	closers = append(closers, closeProcess)
+	cfg.HarnessRulesSources, closeProcess = cacheProcessHarness(cfg.HarnessRulesSources, func(ctx context.Context, source prompt.RulesSource) (prompt.RulesSource, error) {
 		if source == nil {
 			return nil, fmt.Errorf("nil rules source")
 		}
 		rules, err := source.ListRules(ctx)
 		return frozenHarnessRules{rules: rules, err: err}, nil
 	})
-	cfg.HarnessSkillSources = cacheProcessHarness(cfg.HarnessSkillSources, func(ctx context.Context, source tool.SkillSource) (tool.SkillSource, error) {
+	closers = append(closers, closeProcess)
+	cfg.HarnessSkillSources, closeProcess = cacheProcessHarness(cfg.HarnessSkillSources, func(ctx context.Context, source tool.SkillSource) (tool.SkillSource, error) {
 		if source == nil {
 			return nil, fmt.Errorf("nil skill source")
 		}
@@ -62,13 +97,22 @@ func prepareHarnessProcessBindings(cfg *Config) {
 		}
 		return &resolvedSkillSource{metas: metas, winners: winners}, nil
 	})
-	cfg.HarnessAgentDefSources = cacheProcessHarness(cfg.HarnessAgentDefSources, func(ctx context.Context, source tool.AgentDefSource) (tool.AgentDefSource, error) {
+	closers = append(closers, closeProcess)
+	cfg.HarnessAgentDefSources, closeProcess = cacheProcessHarness(cfg.HarnessAgentDefSources, func(ctx context.Context, source tool.AgentDefSource) (tool.AgentDefSource, error) {
 		if source == nil {
 			return nil, fmt.Errorf("nil agent source")
 		}
 		defs, err := source.ListAgentDefs(ctx)
 		return &resolvedAgentSource{defs: defs}, err
 	})
+	closers = append(closers, closeProcess)
+	previousClose := cfg.harnessContextClose
+	cfg.harnessContextClose = func() {
+		closeHarnessCleanups(closers)
+		if previousClose != nil {
+			previousClose()
+		}
+	}
 }
 
 func harnessBindingScope(cfg Config) HarnessSourceScope {

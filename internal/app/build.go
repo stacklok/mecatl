@@ -2223,6 +2223,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, ownsHarnessContext := commandLister.(*harnessCommandResolver); ownsHarnessContext {
+		cfg.harnessContextClose = nil
+	}
 	commandResolverTransferred := false
 	defer func() {
 		if !commandResolverTransferred {

@@ -4,44 +4,55 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-type parkedHarnessAssembler struct {
+type parkedHarnessCommands struct {
 	started chan struct{}
 	resume  chan struct{}
 	once    *sync.Once
 }
 
-func (a parkedHarnessAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
-	a.once.Do(func() { close(a.started) })
+func (c parkedHarnessCommands) List(ctx context.Context) ([]prompt.Command, error) {
+	c.once.Do(func() { close(c.started) })
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
-	case <-a.resume:
-		return hcAssembler("PARKED-GENERATION").Assemble(ctx)
+	case <-c.resume:
+		return []prompt.Command{{Name: "go"}}, nil
 	}
+}
+
+func (parkedHarnessCommands) Expand(_ context.Context, _ string) (string, bool, error) {
+	return "EXPANDED-OLD-GENERATION", true, nil
 }
 
 func TestHarnessRetiredServiceEngineDrainsParkedOperation(t *testing.T) {
 	kinds := harnessEmptyKinds()
 	kinds.Instructions = permconfig.HarnessContextKind{Sources: []string{"tenant"}, Mode: "combine"}
+	kinds.Commands = permconfig.HarnessContextKind{Sources: []string{"tenant"}, Mode: "combine"}
 	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"tenant"}, Kinds: kinds})
 	started, resume := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	var cleaned atomic.Int32
-	cfg.MockProvider = mockllm.New(mockllm.TextTurn("done"))
+	var requests []port.LLMRequest
+	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) { requests = append(requests, request) })}, mockllm.TextTurn("done"))
 	cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
-		return parkedHarnessAssembler{started: started, resume: resume, once: &once}, func() error { cleaned.Add(1); return nil }, nil
+		return hcAssembler("INSTRUCTIONS-OLD-GENERATION"), nil, nil
+	}}}
+	cfg.HarnessCommandSources = []HarnessSourceRegistration[server.CommandSourceBinding]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+		return parkedHarnessCommands{started: started, resume: resume, once: &once}, func() error { cleaned.Add(1); return nil }, nil
 	}}}
 	built, err := buildIsolated(t, t.Context(), cfg)
 	if err != nil {
@@ -52,22 +63,26 @@ func TestHarnessRetiredServiceEngineDrainsParkedOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := built.Service.StartRun(t.Context(), sess.ID, "work")
+	run, err := built.Service.StartRun(t.Context(), sess.ID, "/go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
 	built.Service.CloseSession(sess.ID)
 	close(resume)
-	var result *session.ResultPayload
-	for event := range run.Events() {
-		if event.Type == session.EvResult {
-			result = event.Result
-		}
+	for range run.Events() {
 	}
 	built.Service.FinishRun(sess.ID, run)
-	if result == nil || result.Error != "" {
-		t.Fatalf("parked operation did not drain through retirement: %+v", result)
+	if len(requests) != 1 {
+		t.Fatalf("model requests=%d", len(requests))
+	}
+	var actual strings.Builder
+	actual.WriteString(requests[0].System.Render())
+	for _, message := range requests[0].Messages {
+		actual.WriteString(message.Text)
+	}
+	if !strings.Contains(actual.String(), "EXPANDED-OLD-GENERATION") {
+		t.Fatalf("old leased engine lost the command expansion after its parked list: %q", actual.String())
 	}
 	if cleaned.Load() != 1 {
 		t.Fatalf("retired generation cleanup calls = %d, want 1", cleaned.Load())

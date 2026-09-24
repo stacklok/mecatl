@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
 	"github.com/stacklok/mecatl/engine/prompt"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -107,6 +108,179 @@ func TestHarnessCommandExpansionContinuesAfterConfiguredMiss(t *testing.T) {
 	out, ok, err := binding.Expand(t.Context(), "/review")
 	if err != nil || !ok || out != "LOCAL-WINNER" {
 		t.Fatalf("configured miss chain = %q,%v,%v", out, ok, err)
+	}
+}
+
+func TestHarnessReplaceDefersLowerProcessSnapshotBehindPrincipal(t *testing.T) {
+	kinds := harnessEmptyKinds()
+	replace := permconfig.HarnessContextKind{Sources: []string{"principal", "process"}, Mode: "replace"}
+	kinds.Rules, kinds.Skills, kinds.AgentDefs = replace, replace, replace
+	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"principal", "process"}, Kinds: kinds})
+	var principalEmpty atomic.Bool
+	var processBinds [3]atomic.Int32
+	cfg.HarnessRulesSources = []HarnessSourceRegistration[prompt.RulesSource]{
+		{ID: "principal", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+			if principalEmpty.Load() {
+				return frozenHarnessRules{}, nil, nil
+			}
+			return frozenHarnessRules{rules: []prompt.Rule{{Name: "winner", Body: "principal"}}}, nil, nil
+		}},
+		{ID: "process", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+			processBinds[0].Add(1)
+			return frozenHarnessRules{rules: []prompt.Rule{{Name: "winner", Body: "process"}}}, nil, nil
+		}},
+	}
+	cfg.HarnessSkillSources = []HarnessSourceRegistration[tool.SkillSource]{
+		{ID: "principal", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (tool.SkillSource, func() error, error) {
+			return markedHarnessSkills{SkillSource: sourceconformance.NewFixtureSource(), marker: "principal", absent: principalEmpty.Load()}, nil, nil
+		}},
+		{ID: "process", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (tool.SkillSource, func() error, error) {
+			processBinds[1].Add(1)
+			return markedHarnessSkills{SkillSource: sourceconformance.NewFixtureSource(), marker: "process"}, nil, nil
+		}},
+	}
+	cfg.HarnessAgentDefSources = []HarnessSourceRegistration[tool.AgentDefSource]{
+		{ID: "principal", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (tool.AgentDefSource, func() error, error) {
+			if principalEmpty.Load() {
+				return &resolvedAgentSource{}, nil, nil
+			}
+			return &resolvedAgentSource{defs: []tool.AgentDef{{Name: "winner", Body: "principal"}}}, nil, nil
+		}},
+		{ID: "process", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (tool.AgentDefSource, func() error, error) {
+			processBinds[2].Add(1)
+			return &resolvedAgentSource{defs: []tool.AgentDef{{Name: "winner", Body: "process"}}}, nil, nil
+		}},
+	}
+	processBindCount := func() int32 {
+		var total int32
+		for i := range processBinds {
+			total += processBinds[i].Load()
+		}
+		return total
+	}
+	cfg.permResolver = buildPermResolver(cfg)
+	prepareHarnessProcessBindings(&cfg)
+	if err := resolveProcessHarnessSnapshots(t.Context(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if processBindCount() != 0 {
+		t.Fatal("lower process source was consulted before principal selection")
+	}
+
+	bind := func(subject string) Config {
+		sessionCfg := cfg
+		sessionCfg.harnessScope = &HarnessSourceScope{Principal: &session.Principal{Issuer: "issuer", Subject: subject}}
+		sessionCfg.harnessContextClose = nil
+		if err := resolveProcessHarnessSnapshots(t.Context(), &sessionCfg); err != nil {
+			t.Fatal(err)
+		}
+		return sessionCfg
+	}
+	upper := bind("alice")
+	rules, err := upper.harnessRules.ListRules(t.Context())
+	if err != nil || len(rules) != 1 || rules[0].Body != "principal" || processBindCount() != 0 {
+		t.Fatalf("principal winner=%v, binds=%d (%d/%d/%d), err=%v", rules, processBindCount(), processBinds[0].Load(), processBinds[1].Load(), processBinds[2].Load(), err)
+	}
+	principalEmpty.Store(true)
+	first := bind("bob")
+	second := bind("carol")
+	for _, selected := range []Config{first, second} {
+		rules, err = selected.harnessRules.ListRules(t.Context())
+		if err != nil || len(rules) != 1 || rules[0].Body != "process" {
+			t.Fatalf("process fallback=%v, err=%v", rules, err)
+		}
+		metas, err := selected.harnessSkills.ListSkills(t.Context())
+		if err != nil || len(metas) == 0 || metas[0].Description != "process" {
+			t.Fatalf("skill fallback=%v, err=%v", metas, err)
+		}
+		defs, err := selected.harnessAgentDefs.ListAgentDefs(t.Context())
+		if err != nil || len(defs) != 1 || defs[0].Body != "process" {
+			t.Fatalf("agent fallback=%v, err=%v", defs, err)
+		}
+	}
+	if processBindCount() != 3 {
+		t.Fatalf("process snapshot binds=%d, want one Build-lifetime bind per kind", processBindCount())
+	}
+}
+
+func TestHarnessReplaceSelectedLowerProcessFailureIsNotAMiss(t *testing.T) {
+	kinds := harnessEmptyKinds()
+	kinds.Rules = permconfig.HarnessContextKind{Sources: []string{"principal", "process"}, Mode: "replace"}
+	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"principal", "process"}, Kinds: kinds})
+	cfg.HarnessRulesSources = []HarnessSourceRegistration[prompt.RulesSource]{
+		{ID: "principal", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+			return frozenHarnessRules{}, nil, nil
+		}},
+		{ID: "process", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+			return nil, nil, errors.New("selected lower failed")
+		}},
+	}
+	cfg.permResolver = buildPermResolver(cfg)
+	prepareHarnessProcessBindings(&cfg)
+	if err := resolveProcessHarnessSnapshots(t.Context(), &cfg); err != nil {
+		t.Fatalf("startup consulted lower process source: %v", err)
+	}
+	cfg.harnessScope = &HarnessSourceScope{Principal: &session.Principal{Issuer: "issuer", Subject: "alice"}}
+	if err := resolveProcessHarnessSnapshots(t.Context(), &cfg); err == nil || !strings.Contains(err.Error(), "selected lower failed") {
+		t.Fatalf("selected lower failure was converted to a miss: %v", err)
+	}
+}
+
+func TestHarnessReplaceLiveCommandsBindLowerOnlyWhenNeeded(t *testing.T) {
+	upperByOwner := map[string]*hcCommands{}
+	var lowerBinds atomic.Int32
+	regs := []HarnessSourceRegistration[server.CommandSourceBinding]{
+		{ID: "principal", Scope: HarnessSourceScopePrincipal, Bind: func(_ context.Context, scope HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+			source := &hcCommands{values: map[string]string{"review": "upper-" + scope.Principal.Subject}}
+			upperByOwner[scope.Principal.Subject] = source
+			return source, nil, nil
+		}},
+		{ID: "process", Scope: HarnessSourceScopeProcess, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+			lowerBinds.Add(1)
+			return &hcCommands{values: map[string]string{"review": "lower"}}, nil, nil
+		}},
+	}
+	resolver, err := newHarnessCommandResolver(t.Context(), harnessKindPolicy{sources: []HarnessSourceID{"principal", "process"}, mode: harnessModeReplace, exclude: map[string]map[HarnessSourceID]struct{}{}}, regs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolver.Close()
+	alice := &session.Principal{Issuer: "issuer", Subject: "alice"}
+	binding, release, err := resolver.Borrow(t.Context(), "alice-session", alice, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if lowerBinds.Load() != 0 {
+		t.Fatal("lower source bound while current upper source was nonempty")
+	}
+	upperByOwner["alice"].mu.Lock()
+	upperByOwner["alice"].values = map[string]string{}
+	upperByOwner["alice"].mu.Unlock()
+	commands, err := binding.List(t.Context())
+	if err != nil || len(commands) != 1 || lowerBinds.Load() != 1 {
+		t.Fatalf("lower live list=%v, binds=%d, err=%v", commands, lowerBinds.Load(), err)
+	}
+	if out, ok, err := binding.Expand(t.Context(), "/review"); err != nil || !ok || out != "lower" {
+		t.Fatalf("lower live expand=%q,%v,%v", out, ok, err)
+	}
+	upperByOwner["alice"].mu.Lock()
+	upperByOwner["alice"].values = map[string]string{"review": "upper-alice-returned"}
+	upperByOwner["alice"].mu.Unlock()
+	if out, ok, err := binding.Expand(t.Context(), "/review"); err != nil || !ok || out != "upper-alice-returned" {
+		t.Fatalf("restored upper expand=%q,%v,%v", out, ok, err)
+	}
+	bob := &session.Principal{Issuer: "issuer", Subject: "bob"}
+	bobBinding, bobRelease, err := resolver.Borrow(t.Context(), "bob-session", bob, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bobRelease()
+	if out, ok, err := bobBinding.Expand(t.Context(), "/review"); err != nil || !ok || out != "upper-bob" {
+		t.Fatalf("owner-isolated upper=%q,%v,%v", out, ok, err)
+	}
+	if lowerBinds.Load() != 1 {
+		t.Fatalf("process lower rebound across owners: %d", lowerBinds.Load())
 	}
 }
 
@@ -322,16 +496,38 @@ func TestHarnessPreserveAllowedRetainsTrustedMixedOrigins(t *testing.T) {
 	}}}
 	cfg = harnessResolveSnapshots(t, cfg)
 	rules, err := cfg.harnessRules.ListRules(t.Context())
-	if err != nil || len(rules) != 2 || rules[0].Origin == rules[1].Origin {
+	if err != nil || len(rules) != 2 {
 		t.Fatalf("preserved rules = %+v, %v", rules, err)
 	}
+	wantRules := map[string]prompt.RuleOrigin{"user": prompt.RuleOriginUser, "project": prompt.RuleOriginProject}
+	for _, rule := range rules {
+		if rule.Origin != wantRules[rule.Name] {
+			t.Fatalf("rule %q origin=%q want %q", rule.Name, rule.Origin, wantRules[rule.Name])
+		}
+	}
 	metas, err := cfg.harnessSkills.ListSkills(t.Context())
-	if err != nil || len(metas) < 3 || metas[0].Origin == metas[1].Origin || metas[1].Origin == metas[2].Origin {
+	if err != nil || len(metas) != len(sourceconformance.Fixture) {
 		t.Fatalf("preserved skill catalog = %+v, %v", metas, err)
 	}
+	skillOrigins := []tool.SkillOrigin{tool.SkillOriginUser, tool.SkillOriginProject, tool.SkillOriginExplicit}
+	wantSkills := make(map[string]tool.SkillOrigin, len(sourceconformance.Fixture))
+	for i, fixture := range sourceconformance.Fixture {
+		wantSkills[fixture.Name] = skillOrigins[i%len(skillOrigins)]
+	}
+	for _, meta := range metas {
+		if meta.Origin != wantSkills[meta.Name] {
+			t.Fatalf("skill %q origin=%q want %q", meta.Name, meta.Origin, wantSkills[meta.Name])
+		}
+	}
 	defs, err := cfg.harnessAgentDefs.ListAgentDefs(t.Context())
-	if err != nil || len(defs) != 3 || defs[0].Origin == defs[1].Origin || defs[1].Origin == defs[2].Origin {
+	if err != nil || len(defs) != 3 {
 		t.Fatalf("preserved agent catalog = %+v, %v", defs, err)
+	}
+	wantAgents := map[string]tool.AgentOrigin{"user": tool.AgentOriginUser, "project": tool.AgentOriginProject, "explicit": tool.AgentOriginExplicit}
+	for _, def := range defs {
+		if def.Origin != wantAgents[def.Name] {
+			t.Fatalf("agent %q origin=%q want %q", def.Name, def.Origin, wantAgents[def.Name])
+		}
 	}
 
 	bad := cfg
@@ -340,7 +536,21 @@ func TestHarnessPreserveAllowedRetainsTrustedMixedOrigins(t *testing.T) {
 	}}}
 	bad.harnessAgentDefs = nil
 	if err := resolveProcessHarnessSnapshots(t.Context(), &bad); err == nil || !strings.Contains(err.Error(), "disallowed provenance") {
-		t.Fatalf("disallowed payload origin was promoted: %v", err)
+		t.Fatalf("disallowed agent payload origin was promoted: %v", err)
+	}
+	badRule := cfg
+	badRule.HarnessRulesSources = []HarnessSourceRegistration[prompt.RulesSource]{{ID: "mixed", Provenance: HarnessProvenancePolicy{PreserveAllowed: []string{"user"}}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+		return frozenHarnessRules{rules: []prompt.Rule{{Name: "forged", Origin: prompt.RuleOriginDriver}}}, nil, nil
+	}}}
+	if err := resolveProcessHarnessSnapshots(t.Context(), &badRule); err == nil || !strings.Contains(err.Error(), "disallowed provenance") {
+		t.Fatalf("disallowed rule payload origin was promoted: %v", err)
+	}
+	badSkill := cfg
+	badSkill.HarnessSkillSources = []HarnessSourceRegistration[tool.SkillSource]{{ID: "mixed", Provenance: HarnessProvenancePolicy{PreserveAllowed: []string{"user"}}, Bind: func(context.Context, HarnessSourceScope) (tool.SkillSource, func() error, error) {
+		return mixedOriginSkills{SkillSource: sourceconformance.NewFixtureSource()}, nil, nil
+	}}}
+	if err := resolveProcessHarnessSnapshots(t.Context(), &badSkill); err == nil || !strings.Contains(err.Error(), "disallowed provenance") {
+		t.Fatalf("disallowed skill payload origin was promoted: %v", err)
 	}
 }
 
@@ -361,6 +571,33 @@ func TestADR_0357_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testi
 		return sourceconformance.NewAgentFixtureSource(), nil, nil
 	}}}
 	cfg = harnessResolveSnapshots(t, cfg)
+	rules, err := cfg.harnessRules.ListRules(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range rules {
+		if rule.Origin != prompt.RuleOriginDriver {
+			t.Fatalf("fixed driver rule %q retained payload origin %q", rule.Name, rule.Origin)
+		}
+	}
+	metas, err := cfg.harnessSkills.ListSkills(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, meta := range metas {
+		if meta.Origin != tool.SkillOriginDriver {
+			t.Fatalf("fixed driver skill %q retained payload origin %q", meta.Name, meta.Origin)
+		}
+	}
+	defs, err := cfg.harnessAgentDefs.ListAgentDefs(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, def := range defs {
+		if def.Origin != tool.AgentOriginDriver {
+			t.Fatalf("fixed driver agent %q retained payload origin %q", def.Name, def.Origin)
+		}
+	}
 	t.Run("rules conformance", func(t *testing.T) {
 		sourceconformance.RunRulesSource(t, func(*testing.T) prompt.RulesSource { return cfg.harnessRules })
 	})
