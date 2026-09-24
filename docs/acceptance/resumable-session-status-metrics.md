@@ -4,12 +4,12 @@
 **Work classification:** Architectural — adds a durable session-snapshot field and an additive public protobuf projection whose ownership and compatibility rules must remain stable across every store and client.
 **Decision record:** [ADR 0356](../adr/0356-durable-context-occupancy.md)
 **Phase:** session continuation
-**Status:** proposed, 2026-09-23. Contract for [#1822](https://github.com/stacklok/mecatl/issues/1822).
+**Status:** in-progress, 2026-09-24. Implementation began from the merged Plan / Interface contract.
 **Delivery:** Split. The persisted session aggregate and public `Session` protobuf projection require separate interface review before implementation.
 **Expected tasks:** deferred to orchestration.
 **Issue:** [stacklok/mecatl#1822](https://github.com/stacklok/mecatl/issues/1822).
-**Plan PR:** absent — not opened.
-**Approved baseline:** absent until approved.
+**Plan PR:** [#1839](https://github.com/stacklok/mecatl/pull/1839).
+**Approved baseline:** `19843a91f0f45dc1dd2cfdbb5595dd5d42270396`.
 
 Any persisted session—main chat, subagent, Parallel branch, team member, or scheduled run—must retain its latest known context occupancy when it has completed an agent-loop turn. A resumed or selected prior main chat uses that authoritative snapshot to restore its status line; inspectors and future session surfaces can use the same historical datum without reconstructing it from a transcript or activity replay. A missing occupancy value from a legacy or pre-turn snapshot remains unknown; it is never guessed from lifetime totals.
 
