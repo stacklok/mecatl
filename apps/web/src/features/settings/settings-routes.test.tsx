@@ -170,6 +170,21 @@ describe("settings routes", () => {
     expect(detail).toContain('href="/workspace/settings/memory"');
   });
 
+  it("round trips provider IDs containing slashes", async () => {
+    const providerId = "team/openai";
+    const url = `/workspace/provider?providerId=${encodeURIComponent(providerId)}`;
+    const direct = await load(url);
+    expect(direct.state.location.pathname).toBe("/workspace/provider");
+    expect(direct.state.location.search).toMatchObject({ providerId });
+    expect(direct.state.matches.at(-1)?.routeId).toBe("/workspace/provider");
+
+    const reloaded = await load(direct.state.location.href);
+    expect(reloaded.state.location.search).toMatchObject({ providerId });
+
+    const absent = await load("/workspace/provider");
+    expect(redirectLocation(absent)).toBe("/workspace/settings/providers");
+  });
+
   it("returns to the requested settings detail after interactive login", async () => {
     const location = (await load("/workspace/memory?item=team%2Fvoice")).state.location;
     const url = authLoginUrl(location.href);

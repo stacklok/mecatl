@@ -21,7 +21,10 @@ export function AgentSettings() {
   const agentAvatar = useAgentAvatar();
 
   return (
-    <IdentityCard description="Shown on the agent's replies." title="Agent">
+    <IdentityCard
+      description="Personal display name and picture stored in this browser. Agent behavior comes from the deployment."
+      title="Agent"
+    >
       <IdentityField description="What the agent calls itself." label="Agent name">
         <Input
           aria-label="Agent name"

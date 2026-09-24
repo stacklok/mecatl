@@ -4,14 +4,17 @@ import type {
   GetRuntimeResponse,
   GetRuntimeSettingsResponse,
 } from "@mecatl-studio/contracts/generated";
-import { getRuntimeOptions, getRuntimeSettingsOptions } from "@mecatl-studio/contracts/query";
+import {
+  getRuntimeOptions,
+  getRuntimeSettingsOptions,
+  getStorageHealthOptions,
+} from "@mecatl-studio/contracts/query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   BrainCircuit,
   Cloud,
   ExternalLink,
-  Image,
   Keyboard,
   Laptop,
   LifeBuoy,
@@ -31,6 +34,7 @@ import { IdentitySettings } from "./identity-settings";
 import { InterfaceSettings } from "./interface-settings";
 import { managementNotes } from "./management-notes";
 import { MemorySettings } from "./memory-settings";
+import { connectionMessage, useBrowserOnline } from "./settings-connection";
 import type { SettingsSection } from "./settings-sections";
 import { StorageSettings } from "./storage-settings";
 
@@ -79,8 +83,21 @@ export function SettingsWorkspace({
   const runtime = useQuery(getRuntimeOptions());
   const settings = useQuery(getRuntimeSettingsOptions());
   const modelPreferences = useDisabledModels();
-  const loading = runtime.isPending || settings.isPending;
-  const error = runtime.error ?? settings.error;
+  const browserOnline = useBrowserOnline();
+  const runtimeState = !browserOnline
+    ? "Offline. Connect to the agent to read current deployment settings."
+    : runtime.isError
+      ? "Current runtime settings could not be loaded. Check the connection and try again."
+      : runtime.isPending
+        ? "Loading current runtime settings…"
+        : connectionMessage(runtime.data.connection);
+  const inventoryState =
+    runtimeState ??
+    (settings.isError
+      ? "Current settings could not be loaded. Check the connection and try again."
+      : settings.isPending
+        ? "Loading settings…"
+        : null);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -141,67 +158,151 @@ export function SettingsWorkspace({
 
           <div className="min-w-0 flex-1 space-y-6">
             {section === "profile" && <IdentitySettings />}
-            {section === "agent" && <AgentSettings />}
+            {section === "agent" && (
+              <>
+                <AgentSettings />
+                <Section icon={Server} title="Agent behavior">
+                  <SourceNote source="authenticated BFF runtime" owner="deployment" />
+                  {runtimeState ? (
+                    <StateCard text={runtimeState} />
+                  ) : (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Steering during a run is{" "}
+                      {runtime.data?.capabilities.steer ? "available" : "not enabled"}. Agent
+                      behavior is managed by this deployment.
+                    </p>
+                  )}
+                </Section>
+              </>
+            )}
             {section === "appearance" && <InterfaceSettings />}
             {section === "providers" &&
-              (error ? (
-                <StateCard text={errorMessage(error)} />
-              ) : loading ? (
-                <StateCard text="Loading settings…" />
+              (inventoryState ? (
+                <StateCard text={inventoryState} />
               ) : (
                 settings.data && <ProviderInventory settings={settings.data} />
               ))}
             {section === "models" &&
-              (error ? (
-                <StateCard text={errorMessage(error)} />
-              ) : loading ? (
-                <StateCard text="Loading settings…" />
+              (inventoryState ? (
+                <StateCard text={inventoryState} />
               ) : (
                 settings.data && (
                   <ModelInventory modelPreferences={modelPreferences} settings={settings.data} />
                 )
               ))}
             {section === "about" &&
-              (error ? (
-                <StateCard text={errorMessage(error)} />
-              ) : loading ? (
-                <StateCard text="Loading settings…" />
+              (inventoryState ? (
+                <StateCard text={inventoryState} />
               ) : (
                 runtime.data &&
                 settings.data && <AboutAgent runtime={runtime.data} settings={settings.data} />
               ))}
-            {section === "memory" && <MemorySettings />}
-            {section === "learning" && <LearningReview />}
-            {section === "storage" && <StorageSettings />}
+            {section === "memory" &&
+              (runtimeState ? (
+                <StateCard text={runtimeState} />
+              ) : (
+                <>
+                  <Section icon={BrainCircuit} title="Memory">
+                    <SourceNote
+                      source="authenticated user-memory BFF reads"
+                      owner="personal facts"
+                    />
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Memory store configuration is managed by this deployment. Approved
+                      consolidation plans can be generated and applied below.
+                    </p>
+                  </Section>
+                  <MemorySettings />
+                </>
+              ))}
+            {section === "learning" &&
+              (runtimeState ? (
+                <StateCard text={runtimeState} />
+              ) : (
+                <>
+                  <Section icon={BrainCircuit} title="Learning settings">
+                    <SourceNote
+                      source="authenticated learning-proposal and reflection BFF reads"
+                      owner="personal decisions"
+                    />
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      You can review proposals below. Learning configuration is managed by this
+                      deployment and is read-only here.
+                    </p>
+                  </Section>
+                  <LearningReview />
+                </>
+              ))}
+            {section === "storage" &&
+              (runtimeState ? (
+                <StateCard text={runtimeState} />
+              ) : (
+                <>
+                  <SourceNote source="authenticated BFF storage health" owner="deployment" />
+                  <StorageSettings />
+                </>
+              ))}
             {section === "permissions" && (
               <Section icon={Server} title="Permissions">
-                <p className="text-sm text-muted-foreground">
-                  Permission posture is managed by this deployment. Studio can show its runtime
-                  status, but cannot change it here.
+                <SourceNote source="authenticated BFF runtime capability" owner="deployment" />
+                {runtimeState ? (
+                  <StateCard text={runtimeState} />
+                ) : (
+                  <dl className="mt-4">
+                    <Fact label="Permission posture">
+                      {runtime.data?.capabilities.posture || "Not reported"}
+                    </Fact>
+                  </dl>
+                )}
+                <p className="mt-3 text-sm text-muted-foreground">
+                  Permission posture is managed by this deployment.
                 </p>
               </Section>
             )}
             {section === "mcp-tools" && (
               <Section icon={Server} title="MCP tools">
-                <p className="text-sm text-muted-foreground">
-                  MCP availability comes from the connected runtime. Tool setup is managed by this
-                  deployment.
+                <SourceNote source="authenticated BFF runtime capability" owner="deployment" />
+                {runtimeState ? (
+                  <StateCard text={runtimeState} />
+                ) : (
+                  <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <Fact label="MCP support">
+                      {runtime.data?.capabilities.mcp ? "Available" : "Not enabled"}
+                    </Fact>
+                    <Fact label="Connector status">
+                      {runtime.data?.capabilities.mcpConnectorStatus ? "Available" : "Not enabled"}
+                    </Fact>
+                  </dl>
+                )}
+                <p className="mt-3 text-sm text-muted-foreground">
+                  MCP setup is managed by this deployment. Studio does not yet show the tool
+                  inventory.
                 </p>
               </Section>
             )}
-            {section === "diagnostics" && (
-              <Section icon={Server} title="Diagnostics">
-                <p className="text-sm text-muted-foreground">
-                  Runtime and storage diagnostics are read-only deployment facts.
-                </p>
-              </Section>
-            )}
+            {section === "diagnostics" &&
+              (inventoryState ? (
+                <StateCard text={inventoryState} />
+              ) : (
+                runtime.data &&
+                settings.data && (
+                  <DiagnosticsSettings runtime={runtime.data} settings={settings.data} />
+                )
+              ))}
             {section === "labs" && (
               <Section icon={Server} title="Labs">
-                <p className="text-sm text-muted-foreground">
-                  Experimental features are made available by this deployment. There are no Labs
-                  controls in Studio yet.
-                </p>
+                <SourceNote
+                  source="Studio availability and authenticated BFF runtime"
+                  owner="deployment"
+                />
+                {runtimeState ? (
+                  <StateCard text={runtimeState} />
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No Labs features are available in Studio yet. This runtime is{" "}
+                    {runtime.data?.mock ? "a local mock" : "a connected agent"}.
+                  </p>
+                )}
               </Section>
             )}
           </div>
@@ -212,11 +313,9 @@ export function SettingsWorkspace({
 }
 
 function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse }) {
-  const modelsFor = (providerId: string) =>
-    settings.models.filter((model) => model.providerId === providerId).length;
-
   return (
     <Section icon={Server} title="Providers">
+      <SourceNote source="authenticated BFF model inventory" owner="deployment" />
       <ul className="space-y-1 text-sm text-muted-foreground">
         {managementNotes(settings.management).map((note) => (
           <li key={note}>{note}</li>
@@ -224,13 +323,14 @@ function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse 
         <li>Credentials are never shown here.</li>
       </ul>
       {!settings.modelsSupported ? (
-        <StateCard text="Model providers aren’t available in this workspace." />
+        <StateCard
+          text={settings.modelsReason || "Model providers are not available on this deployment."}
+        />
       ) : settings.providers.length === 0 ? (
-        <StateCard text="No providers are ready yet." />
+        <StateCard text="No providers are reported by this deployment yet." />
       ) : (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {settings.providers.map((provider) => {
-            const modelCount = modelsFor(provider.id) || provider.modelCount;
             return (
               <article className="rounded-xl border bg-background p-4" key={provider.id}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -238,8 +338,15 @@ function ProviderInventory({ settings }: { settings: GetRuntimeSettingsResponse 
                   <ProviderState state={provider.state} />
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {modelCount} model{modelCount === 1 ? "" : "s"} available
+                  {provider.modelCount} model{provider.modelCount === 1 ? "" : "s"} reported
                 </p>
+                <Link
+                  className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-brand"
+                  search={{ providerId: provider.id }}
+                  to="/workspace/provider"
+                >
+                  View provider details
+                </Link>
               </article>
             );
           })}
@@ -268,8 +375,19 @@ function ModelInventory({
 
   return (
     <Section icon={BrainCircuit} title="Models">
-      {settings.models.length > 0 && (
-        <div className="relative max-w-sm">
+      <SourceNote source="authenticated BFF model inventory" owner="deployment" />
+      <p className="mt-2 text-sm text-muted-foreground">
+        Visible is a personal preference stored in this browser. Default model and routing are
+        managed by the deployment.
+      </p>
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Fact label="Default model">Managed by deployment; not reported to Studio.</Fact>
+        <Fact label="Routing">
+          {settings.management.routingConfigurationReason || "Managed by deployment."}
+        </Fact>
+      </dl>
+      {settings.modelsSupported && settings.models.length > 0 && (
+        <div className="relative mt-4 max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
           <Input
             aria-label="Filter models"
@@ -280,7 +398,11 @@ function ModelInventory({
           />
         </div>
       )}
-      {settings.models.length === 0 ? (
+      {!settings.modelsSupported ? (
+        <StateCard
+          text={settings.modelsReason || "Model selection is not available on this deployment."}
+        />
+      ) : settings.models.length === 0 ? (
         <StateCard text="No models are available yet." />
       ) : models.length === 0 ? (
         <StateCard text="No models match your search." />
@@ -328,18 +450,18 @@ function ModelCard({
           />
         </label>
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">{humanize(model.providerId)}</p>
-      {(model.reasoning || model.image) && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {model.reasoning && <Badge variant="info">Reasoning</Badge>}
-          {model.image && (
-            <Badge variant="outline">
-              <Image aria-hidden="true" />
-              Images
-            </Badge>
-          )}
-        </div>
-      )}
+      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+        <dt className="text-muted-foreground">ID</dt>
+        <dd className="min-w-0 break-all font-mono">{model.id}</dd>
+        <dt className="text-muted-foreground">Provider</dt>
+        <dd className="min-w-0 break-all">{model.providerId}</dd>
+        <dt className="text-muted-foreground">Context limit</dt>
+        <dd>{formatContextLimit(model.contextLimit)}</dd>
+        <dt className="text-muted-foreground">Images</dt>
+        <dd>{model.image ? "Yes" : "No"}</dd>
+        <dt className="text-muted-foreground">Reasoning</dt>
+        <dd>{model.reasoning ? "Yes" : "No"}</dd>
+      </dl>
     </article>
   );
 }
@@ -387,6 +509,44 @@ function AboutAgent({
   );
 }
 
+function DiagnosticsSettings({
+  runtime,
+  settings,
+}: {
+  runtime: GetRuntimeResponse;
+  settings: GetRuntimeSettingsResponse;
+}) {
+  const storage = useQuery(getStorageHealthOptions());
+  return (
+    <Section icon={Server} title="Diagnostics">
+      <SourceNote
+        source="authenticated BFF runtime, settings inventory, and storage health"
+        owner="deployment"
+      />
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Fact label="Runtime connection">{runtime.connection}</Fact>
+        <Fact label="Runtime source">{runtime.source}</Fact>
+        <Fact label="Daemon implementation">{settings.serverImplementation || "Not reported"}</Fact>
+        <Fact label="Daemon build">{settings.buildId || "Not reported"}</Fact>
+      </dl>
+      {storage.isPending ? (
+        <StateCard text="Loading storage diagnostics…" />
+      ) : storage.isError ? (
+        <StateCard text="Storage diagnostics could not be loaded." />
+      ) : !storage.data.supported ? (
+        <StateCard text="Storage diagnostics are not supported by this deployment." />
+      ) : (
+        <p className="mt-4 text-sm text-muted-foreground">
+          Storage health: {storage.data.available ? "Available" : "Unavailable"}.
+        </p>
+      )}
+      <p className="mt-3 text-sm text-muted-foreground">
+        Logs and usage are managed by this deployment and are not available here.
+      </p>
+    </Section>
+  );
+}
+
 function Section({
   children,
   icon: Icon,
@@ -415,6 +575,14 @@ function Fact({ children, label }: { children: ReactNode; label: string }) {
       <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
       <dd className="mt-2 break-all text-sm">{children}</dd>
     </div>
+  );
+}
+
+function SourceNote({ source, owner }: { source: string; owner: string }) {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Source: {source}. Owner: {owner}.
+    </p>
   );
 }
 
@@ -448,7 +616,7 @@ function humanize(value: string): string {
     .join(" ");
 }
 
-function errorMessage(error: unknown) {
-  if (typeof error === "object" && error !== null && "detail" in error) return String(error.detail);
-  return error instanceof Error ? error.message : "Settings could not be loaded.";
+function formatContextLimit(value: string): string {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number.toLocaleString() : value;
 }

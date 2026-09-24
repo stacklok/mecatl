@@ -31,6 +31,9 @@ export function StorageSettings() {
           Refresh
         </Button>
       </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Storage cleanup is managed by this deployment.
+      </p>
       <div className="mt-4">
         <StorageHealthSummary health={query.data} />
       </div>

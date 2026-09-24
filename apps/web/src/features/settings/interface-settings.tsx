@@ -78,7 +78,7 @@ export function InterfaceSettings() {
         <div>
           <h2 className="text-lg font-semibold">Interface</h2>
           <p className="text-sm text-muted-foreground">
-            Browser-local presentation and chat preferences.
+            Source: browser appearance and chat preferences. Owner: personal.
           </p>
         </div>
       </div>
