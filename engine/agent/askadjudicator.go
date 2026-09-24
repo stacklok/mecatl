@@ -206,7 +206,7 @@ func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) Child
 		engine:   engine,
 		policy:   defaultAskReviewPolicy,
 		idPrefix: "ask-reviewer",
-		identity: session.ProviderModelID{ModelID: engine.deps.Model},
+		identity: engine.deps.ProviderModel,
 	}
 	for _, o := range opts {
 		o(a)
@@ -233,7 +233,7 @@ func (a *engineAskReviewer) Review(ctx context.Context, req ChildAskReviewReques
 	// Zero-capability posture: the reviewer is non-interactive and its own asks
 	// (it is tool-less, so none should exist) auto-deny — no nesting, no surfacing.
 	final, stop := drainChild(run, childPosture{role: "ask-reviewer"})
-	usage := auxiliaryUsage(session.UsageKindAskReviewer, a.identity, sess.UsageFor(session.UsageKindMain))
+	usage := utilityEngineUsage(session.UsageKindAskReviewer, a.identity, sess)
 	if stop == session.StopError || stop == session.StopCancelled {
 		return ChildAskReview{}, usage, fmt.Errorf("ask reviewer run did not complete (stop %q)", stop)
 	}

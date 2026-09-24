@@ -94,7 +94,7 @@ func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge {
 		limits:    defaultChildLimits,
 		childMode: session.ModeDefault,
 		idPrefix:  "fork-judge",
-		identity:  session.ProviderModelID{ModelID: engine.deps.Model},
+		identity:  engine.deps.ProviderModel,
 	}
 	for _, o := range opts {
 		o(j)
@@ -135,7 +135,7 @@ func (j *engineJudge) Judge(ctx context.Context, candidates []BranchSummary, cri
 	// The judge child is tool-less and non-interactive; the zero childPosture (headless
 	// auto-deny) is correct — it can never raise a Shell ask.
 	final, stop := drainChild(run, childPosture{role: "judge"})
-	usage := auxiliaryUsage(session.UsageKindParallelJudge, j.identity, sess.UsageFor(session.UsageKindMain))
+	usage := utilityEngineUsage(session.UsageKindParallelJudge, j.identity, sess)
 	if stop == session.StopError || stop == session.StopCancelled {
 		return 0, "judge run did not complete; selected the first successful branch", usage, nil
 	}
