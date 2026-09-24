@@ -6,14 +6,14 @@ import type { SubagentActivity } from "./delegation-fleet";
 import { createDelegationFleet } from "./delegation-fleet";
 import { placeDelegationCards } from "./delegation-placement";
 
-function child(key: string, parentCallId: string): SubagentActivity {
+function child(key: string, parentCallId: string, runId = "run-a"): SubagentActivity {
   return {
     childId: key,
     family: "subagent",
     historyIncomplete: false,
     key,
     parentCallId,
-    runId: "run-a",
+    runId,
     sessionId: "session-a",
     startObserved: true,
     state: "running",
@@ -22,6 +22,46 @@ function child(key: string, parentCallId: string): SubagentActivity {
 }
 
 describe("delegation card placement", () => {
+  it("keeps reused parent calls with their observed assistant turns and leaves ambiguity visible", () => {
+    const first = child("child-a", "call-shared", "run-a");
+    const second = child("child-b", "call-shared", "run-b");
+    const ambiguous = child("child-c", "call-shared", "run-c");
+    const fleet = {
+      ...createDelegationFleet("session-a"),
+      subagents: [first, second, ambiguous],
+    };
+    const messages: ChatMessage[] = [
+      {
+        content: "First turn",
+        id: "assistant-a",
+        role: "assistant",
+        tools: [{ args: "{}", id: "call-shared", name: "Subagent" }],
+      },
+      { content: "Another task", id: "user-b", role: "user" },
+      {
+        content: "Second turn",
+        id: "assistant-b",
+        role: "assistant",
+        tools: [{ args: "{}", id: "call-shared", name: "Subagent" }],
+      },
+    ];
+    const placed = placeDelegationCards(messages, fleet, {
+      [second.key]: { assistantId: "stale-assistant" },
+      [JSON.stringify(["session-a", "run-a", "subagent", "call-shared"])]: {
+        assistantId: "assistant-a",
+      },
+      [JSON.stringify(["session-a", "run-b", "subagent", "call-shared"])]: {
+        assistantId: "assistant-b",
+      },
+      [JSON.stringify(["session-a", "run-c", "subagent", "call-shared"])]: {
+        assistantId: "stale-assistant",
+      },
+    });
+    expect(placed.byMessageId["assistant-a"]?.map((entry) => entry.key)).toEqual([first.key]);
+    expect(placed.byMessageId["assistant-b"]?.map((entry) => entry.key)).toEqual([second.key]);
+    expect(placed.unanchored.map((entry) => entry.key)).toEqual([ambiguous.key]);
+  });
+
   it("keeps parent-call anchors and leaves a missing call unanchored after a wider transcript refresh", () => {
     const withCall = child("child-with-call", "call-a");
     const withoutCall = child("child-without-call", "call-missing");

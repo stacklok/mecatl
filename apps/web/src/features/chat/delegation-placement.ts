@@ -23,15 +23,19 @@ export function placeDelegationCards(
     ...fleet.teams,
   ];
   for (const activity of activities) {
-    const anchor =
-      anchors[activity.key] ??
+    const observedAnchors = [
+      anchors[activity.key],
       anchors[
         JSON.stringify([activity.sessionId, activity.runId, activity.family, activity.parentCallId])
-      ];
-    const message =
-      assistants.find((candidate) =>
-        candidate.tools?.some((tool) => tool.id === activity.parentCallId),
-      ) ?? assistants.find((candidate) => candidate.id === anchor?.assistantId);
+      ],
+    ];
+    const observed = observedAnchors
+      .map((anchor) => assistants.find((candidate) => candidate.id === anchor?.assistantId))
+      .find((candidate) => candidate !== undefined);
+    const toolMatches = assistants.filter((candidate) =>
+      candidate.tools?.some((tool) => tool.id === activity.parentCallId),
+    );
+    const message = observed ?? (toolMatches.length === 1 ? toolMatches[0] : undefined);
     if (!message) {
       unanchored.push(activity);
       continue;
