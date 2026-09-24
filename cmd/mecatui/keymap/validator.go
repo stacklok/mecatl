@@ -22,6 +22,7 @@ const (
 	actionCancel             = "Cancel"
 	actionClearPrompt        = "ClearPrompt"
 	actionEditBack           = "EditBack"
+	actionHistoryNext        = "HistoryNext"
 	actionPaste              = "Paste"
 	actionSelectAll          = "SelectAll"
 	actionCopySelection      = "CopySelection"
@@ -71,7 +72,7 @@ var validActions = map[string]struct{}{
 	actionFindings: {}, actionJumpTop: {}, actionJumpEnd: {}, actionAgents: {},
 	actionToolcalls: {}, actionExpandConversation: {}, actionNextTab: {},
 	actionCancelChild: {}, actionHelp: {}, actionEffort: {}, actionSetGlobalDefault: {},
-	actionRawArgs: {},
+	actionRawArgs: {}, actionHistoryNext: {},
 }
 
 // scope membership per action.
@@ -83,6 +84,17 @@ var (
 		actionScrollD: {}, actionScrollTop: {}, actionScrollBottom: {}, actionModeSwitch: {},
 		actionMCPPanel: {}, actionResources: {}, actionPrompts: {}, actionAgents: {},
 		actionToolcalls: {}, actionExpandConversation: {}, actionHelp: {}, actionEffort: {},
+		actionHistoryNext: {},
+	}
+	defaultGlobal = map[string][]string{
+		actionSubmit: {"enter"}, actionNewline: {"shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"},
+		actionCancel: {"esc"}, actionClearPrompt: {"ctrl+u"}, actionEditBack: {"up"}, actionHistoryNext: {"down"},
+		actionPaste: {"ctrl+v"}, actionSelectAll: {"ctrl+g"}, actionCopySelection: {"ctrl+y"},
+		actionQuit: {"ctrl+c"}, actionQuitD: {"ctrl+d"}, actionSuspend: {"ctrl+z"},
+		actionScrollU: {"pgup"}, actionScrollD: {"pgdown"}, actionScrollTop: {"home"}, actionScrollBottom: {"end"},
+		actionModeSwitch: {"shift+tab"}, actionMCPPanel: {"ctrl+o"}, actionResources: {"ctrl+r"},
+		actionPrompts: {"f8"}, actionAgents: {"f6"}, actionEffort: {"f7"},
+		actionToolcalls: {"ctrl+t"}, actionExpandConversation: {"f9"}, actionHelp: {"?"},
 	}
 	overlayInternal = map[string]struct{}{
 		actionUp: {}, actionDown: {}, actionChoose: {}, actionClose: {}, actionRefresh: {},
@@ -90,6 +102,25 @@ var (
 		actionNextTab: {}, actionCancelChild: {}, actionRawArgs: {},
 	}
 )
+
+// ActionNames returns the complete sorted public action-name catalog.
+func ActionNames() []string {
+	names := make([]string, 0, len(validActions))
+	for name := range validActions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// GlobalDefaults returns a copy of the effective global default chord catalog.
+func GlobalDefaults() map[string][]string {
+	defaults := make(map[string][]string, len(defaultGlobal))
+	for action, chords := range defaultGlobal {
+		defaults[action] = append([]string(nil), chords...)
+	}
+	return defaults
+}
 
 // Parse normalises the input map, rejecting unknown action names and empty chords.
 func Parse(in map[string][]string) (Resolved, error) {
@@ -146,6 +177,11 @@ func Validate(res Resolved) error {
 		return err
 	}
 	if err := validateConversationDefaultGlobalCollisions(res); err != nil {
+		return err
+	}
+	// Every explicit global override must remain disjoint from every other
+	// global action after defaults and overrides are composed.
+	if err := rejectEffectiveGlobalCollisions(res); err != nil {
 		return err
 	}
 	// 3b) RawArgs and Refresh share default chord r in disjoint surfaces; an
@@ -215,28 +251,39 @@ func validateGlobalBarePrintableRunes(res Resolved) error {
 }
 
 func validateConversationDefaultGlobalCollisions(res Resolved) error {
-	defaults := map[string][]string{
-		actionSubmit: {"enter"}, actionNewline: {"shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"},
-		actionCancel: {"esc"}, actionClearPrompt: {"ctrl+u"}, actionEditBack: {"up"},
-		actionPaste: {"ctrl+v"}, actionSelectAll: {"ctrl+g"}, actionCopySelection: {"ctrl+y"},
-		actionQuit: {"ctrl+c"}, actionQuitD: {"ctrl+d"}, actionSuspend: {"ctrl+z"},
-		actionScrollU: {"pgup"}, actionScrollD: {"pgdown"}, actionScrollTop: {"home"}, actionScrollBottom: {"end"},
-		actionModeSwitch: {"shift+tab"}, actionMCPPanel: {"ctrl+o"}, actionResources: {"ctrl+r"},
-		actionPrompts: {"f8"}, actionAgents: {"f6"}, actionEffort: {"f7"},
-		actionToolcalls: {"ctrl+t"}, actionExpandConversation: {"f9"}, actionHelp: {"?"},
-	}
 	for _, action := range []string{actionToolcalls, actionExpandConversation} {
 		chords := res.ByAction[action]
 		if len(chords) == 0 {
-			chords = defaults[action]
+			chords = defaultGlobal[action]
 		}
-		for other, fallback := range defaults {
+		for other, fallback := range defaultGlobal {
 			if other == action {
 				continue
 			}
 			effective := res.ByAction[other]
 			if len(effective) == 0 {
 				effective = fallback
+			}
+			if err := rejectPairOverlap(chords, effective, action, other); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func rejectEffectiveGlobalCollisions(res Resolved) error {
+	for action, chords := range res.ByAction {
+		if _, global := globalOpen[action]; !global {
+			continue
+		}
+		for other := range globalOpen {
+			if other == action {
+				continue
+			}
+			effective := res.ByAction[other]
+			if len(effective) == 0 {
+				effective = defaultGlobal[other]
 			}
 			if err := rejectPairOverlap(chords, effective, action, other); err != nil {
 				return err

@@ -41,6 +41,34 @@ func TestValidateEditBackGlobalCollision(t *testing.T) {
 	}
 }
 
+func TestValidateExplicitGlobalAgainstEffectiveDefaults(t *testing.T) {
+	for action, want := range map[string][2]string{
+		"ScrollU": {"up", "EditBack"},
+		"ScrollD": {"down", "HistoryNext"},
+	} {
+		chord, other := want[0], want[1]
+		res, err := Parse(map[string][]string{action: {chord}})
+		if err != nil {
+			t.Fatalf("parse %s: %v", action, err)
+		}
+		err = Validate(res)
+		if err == nil || !strings.Contains(err.Error(), action) || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), chord) {
+			t.Errorf("Validate(%s=%s) = %v, want named collision with %s", action, chord, err, other)
+		}
+	}
+}
+
+func TestGlobalDefaultCatalogCoversGlobalScope(t *testing.T) {
+	if len(defaultGlobal) != len(globalOpen) {
+		t.Fatalf("global defaults/actions = %d/%d", len(defaultGlobal), len(globalOpen))
+	}
+	for action := range globalOpen {
+		if len(defaultGlobal[action]) == 0 {
+			t.Errorf("global action %q has no effective default", action)
+		}
+	}
+}
+
 func TestValidateBareRuneOnGlobal(t *testing.T) {
 	res, err := Parse(map[string][]string{"Agents": {"a"}})
 	if err != nil {

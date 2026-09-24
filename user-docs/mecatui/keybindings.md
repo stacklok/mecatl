@@ -21,7 +21,8 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 |-|-|
 |`enter`|Send a prompt; while work is running, steer when the server supports it or queue a follow-up otherwise.|
 |`shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter`|Insert a newline. Your terminal decides which of these chords it can send; see [Newline chords and your terminal](#newline-chords-and-your-terminal).|
-|`↑`|With empty input, bring queued follow-ups back for editing.|
+|`↑`|At the first visible row of the prompt, recall the previous submitted text. An editable queued follow-up or pending steer takes precedence. See [Browse submitted prompts](#browse-submitted-prompts).|
+|`↓`|At the last visible row, move toward newer submitted text. After the newest entry, restore the draft that was present before history browsing.|
 |`ctrl+u`|Clear the unsent draft, including staged attachments and large-paste placeholders (`ClearPrompt`; remappable).|
 |physical `esc` twice within 500ms|Clear an idle draft in terminals with enhanced key events. See [Clear a draft with Escape](#clear-a-draft-with-escape).|
 |`esc`|Clear an active selection first. While work is running, cancel directly and preserve the draft, queued follow-ups, and steer. While idle with a paused queue, clear that queue but preserve the draft.|
@@ -44,6 +45,20 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 
 Suspending does not stop an embedded server or active run. Cancel the run first
 if it should stop.
+
+### Browse submitted prompts
+
+`mecatui` keeps the 100 most recent submitted text messages for the current
+client attachment. History does not carry across a restart or when you open a
+stored session. A model, effort, or worktree switch that carries the active
+conversation also carries this history. History recall contains text only and
+never reattaches media. While the current draft contains staged media or a
+staged large paste, the arrow keys retain their prompt-editing behavior.
+
+Editing recalled text exits history browsing and keeps the edited text as your
+current draft. Interior rows of a multiline or wrapped prompt continue to use
+`↑` and `↓` for cursor movement. The `EditBack` and `HistoryNext` actions are
+remappable.
 
 ### Clear a draft with Escape
 
