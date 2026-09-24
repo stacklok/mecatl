@@ -30,6 +30,7 @@ const inventoryState = vi.hoisted(() => ({
   failSchedules: false,
   failSessionsUnauthorized: false,
   queryArguments: [] as unknown[],
+  scheduleGate: undefined as Promise<void> | undefined,
   schedulePending: false,
   schedules: [] as Array<{ modelId: string; name: string; owner: string; status: string }>,
   sessions: [] as Array<{ id: string; modelId: string; state: string; title: string }>,
@@ -69,6 +70,7 @@ vi.mock("@mecatl-studio/contracts/query", () => {
     listSchedulesOptions: () => ({
       queryFn: async () => {
         inventoryState.inventoryCalls.push("schedules");
+        await inventoryState.scheduleGate;
         if (inventoryState.failSchedules) throw new Error("schedule inventory failed");
         if (inventoryState.schedulePending) await new Promise(() => {});
         return { items: inventoryState.schedules, supported: true };
@@ -181,6 +183,7 @@ afterEach(async () => {
   inventoryState.failSchedules = false;
   inventoryState.failSessionsUnauthorized = false;
   inventoryState.queryArguments = [];
+  inventoryState.scheduleGate = undefined;
   inventoryState.schedulePending = false;
   inventoryState.schedules = [];
   inventoryState.sessions = [];
@@ -296,6 +299,9 @@ describe("GlobalSearch", () => {
     expect(trigger).not.toBeNull();
     await act(async () => keydown(document, "k", { ctrlKey: true }));
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.textContent).toContain(
+      "Workspace items are unavailable until your account is known.",
+    );
     await searchFor("Private Alpha");
     expect(document.querySelector('[role="option"]')).toBeNull();
     await searchFor("shortcuts");
@@ -434,6 +440,10 @@ describe("GlobalSearch", () => {
     );
     inventoryState.failAuth = true;
     await act(async () => trigger?.click());
+    expect(document.body.textContent).toContain(
+      "Studio could not check your session, so workspace items are unavailable.",
+    );
+    expect(document.body.textContent).not.toContain("until your account is known");
     expect(document.body.textContent).not.toContain("Private Alpha");
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     await searchFor("Private Alpha");
@@ -613,6 +623,55 @@ describe("GlobalSearch", () => {
       "Some inventories could not be searched",
     );
     expect(inventoryState.inventoryCalls.filter((key) => key === "schedules")).toHaveLength(2);
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    await searchFor("Retired schedule");
+    expect(document.querySelector('[role="option"]')).toBeNull();
+  });
+
+  it("withholds cached inventory while reopening refreshes it, then retains successful peers", async () => {
+    inventoryState.sessions = [
+      { id: "session-a", modelId: "model", state: "idle", title: "Private Alpha" },
+    ];
+    inventoryState.schedules = [
+      { modelId: "model", name: "Retired schedule", owner: "agent", status: "enabled" },
+    ];
+    const client = await mount();
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Search"]');
+    await act(async () => trigger?.click());
+    await searchFor("Retired schedule");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Retired schedule");
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close search"]')?.click(),
+    );
+
+    let releaseSchedule: (() => void) | undefined;
+    inventoryState.scheduleGate = new Promise<void>((resolve) => {
+      releaseSchedule = resolve;
+    });
+    inventoryState.failSchedules = true;
+    await act(async () => trigger?.click());
+    const input = await searchFor("Retired schedule");
+    expect(document.querySelector('[role="option"]')).toBeNull();
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      "Loading searchable inventories",
+    );
+    await act(async () => keydown(input as HTMLInputElement, "Enter"));
+    expect(navigation).not.toHaveBeenCalled();
+    await searchFor("Private Alpha");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
+    await searchFor("shortcuts");
+    expect(document.querySelector('[role="option"]')?.textContent).toContain("Keyboard shortcuts");
+
+    await act(async () => {
+      releaseSchedule?.();
+      await vi.waitFor(() =>
+        expect(client.getQueryState(["schedules", "account:account-a"])?.status).toBe("error"),
+      );
+    });
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      "Some inventories could not be searched",
+    );
     await searchFor("Private Alpha");
     expect(document.querySelector('[role="option"]')?.textContent).toContain("Private Alpha");
     await searchFor("Retired schedule");

@@ -185,37 +185,53 @@ function SearchPalette({
     inventoryAuthorized && inventories.some((inventory) => isUnauthorized(inventory.error));
   const paletteOpen = open && !accessExpired;
 
+  // React Query retains same-account data across closes. An inventory is
+  // searchable only after this open's request has finished successfully.
   const index = useMemo(
     () =>
       canSearchInventory
         ? buildGlobalSearchIndex({
             configuredSkills:
-              !configuredSkills.isError && configuredSkills.data?.supported
+              !configuredSkills.isError &&
+              !configuredSkills.isFetching &&
+              configuredSkills.data?.supported
                 ? configuredSkills.data.items
                 : [],
             learnedSkills:
-              !learnedSkills.isError && learnedSkills.data?.supported
+              !learnedSkills.isError && !learnedSkills.isFetching && learnedSkills.data?.supported
                 ? learnedSkills.data.items
                 : [],
-            memory: !memory.isError && memory.data?.supported ? memory.data.items : [],
-            schedules: !schedules.isError && schedules.data?.supported ? schedules.data.items : [],
-            sessions: (sessions.isError ? [] : (sessions.data?.items ?? [])).filter(
-              (session) => !threadSessionIds.has(session.id),
-            ),
+            memory:
+              !memory.isError && !memory.isFetching && memory.data?.supported
+                ? memory.data.items
+                : [],
+            schedules:
+              !schedules.isError && !schedules.isFetching && schedules.data?.supported
+                ? schedules.data.items
+                : [],
+            sessions: (sessions.isError || sessions.isFetching
+              ? []
+              : (sessions.data?.items ?? [])
+            ).filter((session) => !threadSessionIds.has(session.id)),
           })
         : globalSearchPages,
     [
       canSearchInventory,
       configuredSkills.data,
       configuredSkills.isError,
+      configuredSkills.isFetching,
       learnedSkills.data,
       learnedSkills.isError,
+      learnedSkills.isFetching,
       memory.data,
       memory.isError,
+      memory.isFetching,
       schedules.data,
       schedules.isError,
+      schedules.isFetching,
       sessions.data,
       sessions.isError,
+      sessions.isFetching,
       threadSessionIds,
     ],
   );
@@ -225,7 +241,9 @@ function SearchPalette({
   // Inventories load while the user types, so the stored index can outrun the list.
   const highlighted = clampActiveIndex(activeIndex, flatResults.length);
   const activeResult = flatResults[highlighted];
-  const loading = canSearchInventory && inventories.some((inventory) => inventory.isPending);
+  const loading =
+    canSearchInventory &&
+    inventories.some((inventory) => inventory.isPending || inventory.isFetching);
   const partialError = canSearchInventory && inventories.some((inventory) => inventory.isError);
   const mac = navigator.platform.includes("Mac");
 
@@ -518,7 +536,10 @@ function SearchPalette({
 
           <div className="min-h-0 flex-1 overflow-y-auto p-2 max-[499px]:max-h-none">
             {!query.trim() ? (
-              <SearchPrompt inventoryAuthorized={canSearchInventory} />
+              <SearchPrompt
+                inventoryAuthorized={canSearchInventory}
+                sessionCheckFailed={staticHelpOnly}
+              />
             ) : flatResults.length === 0 && !loading ? (
               <p className="px-4 py-12 text-center text-sm text-muted-foreground">
                 No results for “{query.trim()}”
@@ -582,7 +603,13 @@ function SearchPalette({
   );
 }
 
-function SearchPrompt({ inventoryAuthorized }: { inventoryAuthorized: boolean }) {
+function SearchPrompt({
+  inventoryAuthorized,
+  sessionCheckFailed,
+}: {
+  inventoryAuthorized: boolean;
+  sessionCheckFailed: boolean;
+}) {
   return (
     <div className="px-4 py-10 text-center">
       <p className="text-sm font-medium">
@@ -591,7 +618,9 @@ function SearchPrompt({ inventoryAuthorized }: { inventoryAuthorized: boolean })
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
         {inventoryAuthorized
           ? "Search titles, names, descriptions, owners, models, and statuses."
-          : "Workspace items are unavailable until your account is known."}
+          : sessionCheckFailed
+            ? "Studio could not check your session, so workspace items are unavailable."
+            : "Workspace items are unavailable until your account is known."}
       </p>
     </div>
   );
