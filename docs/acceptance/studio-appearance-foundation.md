@@ -19,6 +19,8 @@ Studio presents one local appearance vocabulary across its shell and feature pag
 - [x] Baseline contrast. — Decision: retain the frozen palette's hues and make the exact corrections below to meet 4.5:1 for normal text and 3:1 for interactive icons, focus indicators, and required control boundaries. Record the changed values and before/after images in #1779.
 - [x] Shared-control scope. — Decision: normalize controls already used in Studio and extract the appearance choice control for reuse. Search-specific command controls belong to #1844; settings-specific tables, tabs, and selectors belong to #1846.
 - [x] Palette-picker ownership. — Decision: #1843 adds a usable palette picker to the existing Appearance section; #1846 reuses that control during its settings redesign.
+- [x] Merriweather asset weights. — Decision: ship weight 300 for shared page titles and omit unused 400 and 700 assets, as authorized after the [implementation PR review](https://github.com/stacklok/mecatl/pull/1873#issuecomment-5815454298).
+- [x] Default swatch source. — Decision: keep its rendered Stacklok green at hsl(161 94% 21%) through a stable root `--default-palette-accent` token shared by the Default swatch and default light color roles. Named-palette selection does not recolor the Default swatch.
 
 ## Interface contract
 
@@ -32,7 +34,7 @@ Studio presents one local appearance vocabulary across its shell and feature pag
 
 ### Token contract for #1844 and #1846
 
-The existing [base token set](../../apps/web/src/styles.css) remains the source for light and dark surfaces: `--background`/`--foreground`, `--card`, `--popover`, `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, and their foreground partners. Status colors `--success`, `--warning`, and `--info` retain their semantic meaning in every palette. Add the light/dark roles below. `--control-border` marks the boundary of an input or outline action; `--border` continues to serve separators and cards. `--brand` is a decorative fill, `--btn-primary` is an action fill paired with white text, `--brand-ink` and `--brand-label` color text or icons on content surfaces, and shell controls use the nav roles. Register color roles through Tailwind's `@theme inline` mapping; components consume semantic roles rather than literal palette colors.
+The existing [base token set](../../apps/web/src/styles.css) remains the source for light and dark surfaces: `--background`/`--foreground`, `--card`, `--popover`, `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, and their foreground partners. Status colors `--success`, `--warning`, and `--info` retain their semantic meaning in every palette. Add the light/dark roles below. `--control-border` marks the boundary of an input or outline action; `--border` continues to serve separators and cards. `--brand` is a decorative fill, `--btn-primary` is an action fill paired with white text, `--brand-ink` and `--brand-label` color text or icons on content surfaces, and shell controls use the nav roles. Root `--default-palette-accent` is hsl(161 94% 21%); the Default swatch and default light `--brand`, `--brand-label`, `--brand-ink`, and `--btn-primary` reference it. Named palettes override their own roles, not this stable swatch source. Register color roles through Tailwind's `@theme inline` mapping; components consume semantic roles rather than literal palette colors.
 
 | Added base role | Light | Dark |
 |---|---|---|
@@ -51,7 +53,7 @@ The contrast correction also changes three existing base roles: `--ring` is #6b6
 
 | `PaletteDef.id` / label | Description | Swatch |
 |---|---|---|
-| `default` / Default | Stacklok green. | hsl(161 94% 21%) |
+| `default` / Default | Stacklok green. | `var(--default-palette-accent)` (hsl(161 94% 21%)) |
 | `aztec` / Aztec | Jade, turquoise and gold on obsidian. | #0f7f6c |
 | `mono` / Mono | Neutral greys with a blue accent. | #2563eb |
 | `solar` / Solar | Warm and light-leaning. | #9a7300 |
@@ -89,7 +91,7 @@ Every named palette supplies both `[data-palette="<id>"]` and `.dark[data-palett
 
 These final values clear the declared floors against every gradient stop with a small margin. The Solar light start darkens enough for its existing search text and nav icon to remain legible on the whole band. The implementation records the correction table and rendered before/after evidence in #1779.
 
-Typography uses self-hosted `@fontsource-variable/inter` for body and controls and `@fontsource/merriweather` at weights 300, 400, and 700 for display text, with local fallback stacks and `font-display: swap`. Map Tailwind `--font-sans` to `"Inter Variable"` and `--font-serif` to `"Merriweather"`; `pageTitleClass(...extra: Parameters<typeof cn>): string` in `apps/web/src/lib/typography.ts` supplies the single Merriweather 300 page-title treatment. The existing `--ui-scale` multiplies the root size: 16px at widths of at least 500px and 18px below 500px. Existing Tailwind 4px spacing steps and the `--radius` scale remain the shared control spacing and border grammar: 1px semantic borders, pill buttons, rounded inputs, and 12px cards. Button small/default/large heights are 32/36/44px at the 16px root and scale with `rem` on mobile. At widths below 500px, 16px Lucide glyphs render at 20px and 14px glyphs at 18px; deliberately larger icons retain their size.
+Typography uses self-hosted `@fontsource-variable/inter` for body and controls and `@fontsource/merriweather` at weight 300 for shared page titles, with local fallback stacks and `font-display: swap`. Do not bundle unused Merriweather 400 or 700 assets. Map Tailwind `--font-sans` to `"Inter Variable"` and `--font-serif` to `"Merriweather"`; `pageTitleClass(...extra: Parameters<typeof cn>): string` in `apps/web/src/lib/typography.ts` supplies the single Merriweather 300 page-title treatment. The existing `--ui-scale` multiplies the root size: 16px at widths of at least 500px and 18px below 500px. Existing Tailwind 4px spacing steps and the `--radius` scale remain the shared control spacing and border grammar: 1px semantic borders, pill buttons, rounded inputs, and 12px cards. Button small/default/large heights are 32/36/44px at the 16px root and scale with `rem` on mobile. At widths below 500px, 16px Lucide glyphs render at 20px and 14px glyphs at 18px; deliberately larger icons retain their size.
 
 ### Local control contract
 
@@ -107,9 +109,9 @@ Typography uses self-hosted `@fontsource-variable/inter` for body and controls a
 The shell, form, dialog, and list use the semantic roles in [Studio styles](../../apps/web/src/styles.css) and retain the browser/BFF boundary of [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md).
 
 **Acceptance:**
-- AC1.1: Default, Aztec, Mono, and Solar render in both light and dark. Every named palette has a complete light/dark override pair for the 16 listed roles; it changes accents and shell colors without changing surface/status semantics or Shiki's light/dark code-highlight roles.
+- AC1.1: Default, Aztec, Mono, and Solar render in both light and dark. Every named palette has a complete light/dark override pair for the 16 listed roles; it changes accents and shell colors without changing surface/status semantics or Shiki's light/dark code-highlight roles. The Default swatch resolves from the stable root accent token regardless of the selected palette.
   - verify: vitest:apps/web/src/lib/palettes.test.ts#a2VlcHMgZWFjaCBwYWxldHRlJ3MgbGlnaHQgYW5kIGRhcmsgdG9rZW4gc2V0cyBwYWlyZWQ — `keeps each palette's light and dark token sets paired`; inspect computed styles for all eight combinations.
-- AC1.2: Inter and Merriweather load as same-origin font assets under the shipped CSP; no request goes to Google Fonts. Body and controls use Inter, and shared page titles use Merriweather 300.
+- AC1.2: Inter and Merriweather load as same-origin font assets under the shipped CSP; no request goes to Google Fonts. Body and controls use Inter, shared page titles use Merriweather 300, and the production bundle contains no Merriweather 400 or 700 assets.
   - verify: vitest:apps/web/src/lib/fonts.test.ts#bG9hZHMgSW50ZXIgYW5kIE1lcnJpd2VhdGhlciBmcm9tIHNhbWUtb3JpZ2luIGFzc2V0cw — `loads Inter and Merriweather from same-origin assets`; inspect the built CSS and network log because font loading depends on the bundle.
 - AC1.3: Text, interactive icons, focus indicators, and control boundaries meet the declared contrast floors across the shell gradient, in all palette/theme combinations. Only failing baseline values receive corrections, recorded in #1779.
   - verify: inspection — computed-color contrast report plus maintainer-reviewed desktop/mobile screenshots in #1779; a visual judgment needs those rendered surfaces.
