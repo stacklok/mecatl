@@ -40,12 +40,9 @@ func (p pdfReferenceProvider) Stream(ctx context.Context, req port.LLMRequest) (
 			if part.Kind != session.MediaPDF {
 				continue
 			}
-			if p.artifacts == nil || !p.Capabilities().PDF || len(part.Data) != 0 || part.ArtifactID == "" {
-				return nil, errPDFRequestUnavailable
-			}
-			id, ok := port.SessionIDFromContext(ctx)
-			if !ok || id == "" {
-				return nil, errPDFRequestUnavailable
+			hydrated, err := p.hydratePDFPart(ctx, part)
+			if err != nil {
+				return nil, err
 			}
 			if !copied {
 				req.Messages = slices.Clone(req.Messages)
@@ -55,24 +52,35 @@ func (p pdfReferenceProvider) Stream(ctx context.Context, req port.LLMRequest) (
 				req.Messages[i].Parts = slices.Clone(message.Parts)
 				clonedParts[i] = true
 			}
-			meta, reader, err := p.artifacts.Open(ctx, id, part.ArtifactID)
-			if err != nil {
-				return nil, errPDFRequestUnavailable
-			}
-			data, readErr := io.ReadAll(io.LimitReader(reader, pdfartifact.MaxPDFBytes+1))
-			closeErr := reader.Close()
-			if readErr != nil || closeErr != nil || len(data) == 0 || len(data) > pdfartifact.MaxPDFBytes || int64(len(data)) != meta.Size || part.Name != meta.Name || part.Size != meta.Size || part.SHA256 != meta.SHA256 {
-				return nil, errPDFRequestUnavailable
-			}
-			digest := sha256.Sum256(data)
-			if hex.EncodeToString(digest[:]) != meta.SHA256 {
-				return nil, errPDFRequestUnavailable
-			}
-			part.Data = data
-			req.Messages[i].Parts[j] = part
+			req.Messages[i].Parts[j] = hydrated
 		}
 	}
 	return p.inner.Stream(ctx, req)
+}
+
+func (p pdfReferenceProvider) hydratePDFPart(ctx context.Context, part session.Content) (session.Content, error) {
+	if p.artifacts == nil || !p.Capabilities().PDF || len(part.Data) != 0 || part.ArtifactID == "" {
+		return session.Content{}, errPDFRequestUnavailable
+	}
+	id, ok := port.SessionIDFromContext(ctx)
+	if !ok || id == "" {
+		return session.Content{}, errPDFRequestUnavailable
+	}
+	meta, reader, err := p.artifacts.Open(ctx, id, part.ArtifactID)
+	if err != nil {
+		return session.Content{}, errPDFRequestUnavailable
+	}
+	data, readErr := io.ReadAll(io.LimitReader(reader, pdfartifact.MaxPDFBytes+1))
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || len(data) == 0 || len(data) > pdfartifact.MaxPDFBytes || int64(len(data)) != meta.Size || part.Name != meta.Name || part.Size != meta.Size || part.SHA256 != meta.SHA256 {
+		return session.Content{}, errPDFRequestUnavailable
+	}
+	digest := sha256.Sum256(data)
+	if hex.EncodeToString(digest[:]) != meta.SHA256 {
+		return session.Content{}, errPDFRequestUnavailable
+	}
+	part.Data = data
+	return part, nil
 }
 
 // pdfPromptCommitStore decorates the engine's guarded store. It only needs the

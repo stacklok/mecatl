@@ -249,6 +249,41 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 			_ = builtEngine.close()
 		}
 	}
+	var forkObjectsPending, forkPublished bool
+	if copyHistory {
+		references, hasPDFPrompt := successorPDFReferences(created.Conversation.Messages)
+		if hasPDFPrompt && (s.cfg.PDFArtifacts == nil || !s.sessionCapabilitiesFor(created).PDF) {
+			cleanupEngine()
+			return "", fmt.Errorf("%w: selected model does not accept inherited PDF input", ErrInvalidArgument)
+		}
+		if len(references) != 0 {
+			if s.cfg.PDFArtifacts == nil {
+				cleanupEngine()
+				return "", ErrPDFArtifactsUnavailable
+			}
+			forkObjectsPending = true
+			defer func() {
+				if forkPublished {
+					return
+				}
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
+				defer cancel()
+				if discardErr := s.cfg.PDFArtifacts.DiscardUnpublished(cleanupCtx, created.ID); discardErr != nil {
+					s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "discard unpublished PDF fork failed",
+						"session", string(created.ID))
+				}
+			}()
+			rewritten, copyErr := s.cfg.PDFArtifacts.CopyFork(mutationCtx, source.ID, created.ID, created.Conversation.Messages)
+			if copyErr != nil {
+				cleanupEngine()
+				return "", copyErr
+			}
+			if err := created.SeedHistory(rewritten); err != nil {
+				cleanupEngine()
+				return "", fmt.Errorf("server: seed copied fork history: %w", err)
+			}
+		}
+	}
 	// The lease context covers provider binding and engine construction. Recheck
 	// ownership immediately before the only publication point.
 	//
@@ -268,6 +303,16 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		s.logDiscoveryError(ctx, "persist successor placement", err)
 		return "", fmt.Errorf("%w: placement storage failed", ErrInternal)
 	}
+	forkPublished = true
+	if forkObjectsPending {
+		references, _ := successorPDFReferences(created.Conversation.Messages)
+		// The snapshot is authoritative if a marker update fails. Reconciliation
+		// repairs ready records and clears prepublication cleanup intent.
+		if err := s.cfg.PDFArtifacts.CommitPrompt(mutationCtx, created.ID, references); err != nil {
+			s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "commit PDF fork references failed",
+				"session", string(created.ID))
+		}
+	}
 	if broker != nil {
 		commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
 		commitErr := s.commitBrokerAttachment(commitCtx, created.ID, broker)
@@ -279,6 +324,34 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		brokerCommitted = true
 	}
 	return created.ID, nil
+}
+
+func successorPDFReferences(history []session.Message) ([]string, bool) {
+	seen := make(map[string]struct{})
+	var ids []string
+	var hasPrompt bool
+	add := func(id string) {
+		if _, exists := seen[id]; !exists {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	for _, message := range history {
+		for _, part := range message.Parts {
+			if part.Kind == session.MediaPDF && part.BlockKind == "" {
+				hasPrompt = true
+				add(part.ArtifactID)
+			}
+		}
+		if message.ToolResult != nil {
+			for _, part := range message.ToolResult.Parts {
+				if part.BlockKind == session.BlockPDFArtifact {
+					add(part.ArtifactID)
+				}
+			}
+		}
+	}
+	return ids, hasPrompt
 }
 
 func successorProviderSelector(source *session.Session, req ForkSuccessorRequest) (ProviderSelector, error) {

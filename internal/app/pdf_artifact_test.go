@@ -61,13 +61,13 @@ func (f *pdfLifecycleFixture) CommitPrompt(_ context.Context, _ session.SessionI
 	f.committed = append(f.committed, ids...)
 	return nil
 }
-func (f *pdfLifecycleFixture) CopyFork(context.Context, session.SessionID, session.SessionID, []session.Message) ([]session.Message, error) {
+func (*pdfLifecycleFixture) CopyFork(context.Context, session.SessionID, session.SessionID, []session.Message) ([]session.Message, error) {
 	return nil, nil
 }
-func (f *pdfLifecycleFixture) DiscardUnpublished(context.Context, session.SessionID) error {
+func (*pdfLifecycleFixture) DiscardUnpublished(context.Context, session.SessionID) error {
 	return nil
 }
-func (f *pdfLifecycleFixture) Reconcile(context.Context) error { return nil }
+func (*pdfLifecycleFixture) Reconcile(context.Context) error { return nil }
 
 func TestPDFReferenceProviderCopiesOnlyModelRequest(t *testing.T) {
 	data := []byte("%PDF-1.7\n%%EOF")

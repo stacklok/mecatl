@@ -19,7 +19,7 @@ import (
 
 type memoryObjects struct{ data map[string][]byte }
 
-func (m *memoryObjects) Put(ctx context.Context, key string, source io.Reader) error {
+func (m *memoryObjects) Put(_ context.Context, key string, source io.Reader) error {
 	data, err := io.ReadAll(source)
 	if err != nil {
 		return err

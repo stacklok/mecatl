@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/alicebob/miniredis/v2"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -169,10 +169,7 @@ func TestSDKPDFArtifacts_Scenario1_RejectInvalidOrUnauthorized(t *testing.T) {
 		{name: "too-large.pdf", reader: io.MultiReader(strings.NewReader("%PDF-"), strings.NewReader(strings.Repeat("x", pdfartifact.MaxPDFBytes+1)))},
 		{name: "broken-stream.pdf", reader: io.MultiReader(strings.NewReader("%PDF-"), pdfFaultReader{})},
 	} {
-		name := tc.name
-		if strings.HasPrefix(name, "unsafe name/") {
-			name = strings.TrimPrefix(name, "unsafe name/")
-		}
+		name := strings.TrimPrefix(tc.name, "unsafe name/")
 		if _, err := svc.UploadPdf(context.Background(), owner.ID, name, tc.reader); !errors.Is(err, server.ErrInvalidArgument) {
 			t.Errorf("%s upload error = %v, want invalid argument", tc.name, err)
 		}

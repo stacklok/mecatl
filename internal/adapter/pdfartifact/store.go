@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -23,6 +24,7 @@ import (
 )
 
 const (
+	// MaxPDFBytes is the maximum accepted size of one private PDF artifact.
 	MaxPDFBytes       = 20 << 20
 	stagedLifetime    = 24 * time.Hour
 	cleanupGrace      = 5 * time.Minute
@@ -30,9 +32,12 @@ const (
 )
 
 var (
-	ErrNotFound   = fmt.Errorf("%w: PDF artifact not found", server.ErrNotFound)
+	// ErrNotFound means the artifact is unavailable to this session.
+	ErrNotFound = fmt.Errorf("%w: PDF artifact not found", server.ErrNotFound)
+	// ErrInvalidPDF means the supplied PDF or its metadata is invalid.
 	ErrInvalidPDF = fmt.Errorf("%w: invalid PDF artifact", server.ErrInvalidArgument)
-	ErrStorage    = fmt.Errorf("%w: PDF artifact storage unavailable", server.ErrInternal)
+	// ErrStorage means private artifact storage is unavailable.
+	ErrStorage = fmt.Errorf("%w: PDF artifact storage unavailable", server.ErrInternal)
 )
 
 // ObjectStore writes and reads private immutable objects. Implementations must
@@ -57,6 +62,7 @@ type Store struct {
 
 var _ server.PDFArtifactLifecycle = (*Store)(nil)
 
+// New binds Redis metadata and private objects into one artifact lifecycle.
 func New(metadata *redisstore.Store, objects ObjectStore) *Store {
 	return &Store{metadata: metadata, objects: objects, now: time.Now}
 }
@@ -91,6 +97,7 @@ func safeName(name string) bool {
 	return true
 }
 
+// Stage validates and writes one PDF after reserving durable staging metadata.
 func (st *Store) Stage(ctx context.Context, id session.SessionID, name string, source io.Reader) (server.PDFArtifact, error) {
 	if st == nil || st.metadata == nil || st.objects == nil {
 		return server.PDFArtifact{}, ErrStorage
@@ -221,6 +228,7 @@ func (v *validatingReader) finish() error {
 	return nil
 }
 
+// Resolve finds a usable PDF reference owned by the given live session.
 func (st *Store) Resolve(ctx context.Context, id session.SessionID, artifactID string) (server.PDFArtifact, error) {
 	if st == nil || st.metadata == nil {
 		return server.PDFArtifact{}, ErrStorage
@@ -261,6 +269,7 @@ func validID(id string) bool {
 	return true
 }
 
+// Open resolves a session-owned PDF and opens its private object reader.
 func (st *Store) Open(ctx context.Context, id session.SessionID, artifactID string) (server.PDFArtifact, io.ReadCloser, error) {
 	meta, err := st.Resolve(ctx, id, artifactID)
 	if err != nil {
@@ -273,6 +282,7 @@ func (st *Store) Open(ctx context.Context, id session.SessionID, artifactID stri
 	return meta, reader, nil
 }
 
+// CommitPrompt marks snapshot-referenced PDFs durable after a successful save.
 func (st *Store) CommitPrompt(ctx context.Context, id session.SessionID, artifactIDs []string) error {
 	for _, artifactID := range artifactIDs {
 		if _, err := st.Resolve(ctx, id, artifactID); err != nil {
@@ -282,13 +292,150 @@ func (st *Store) CommitPrompt(ctx context.Context, id session.SessionID, artifac
 	if err := st.metadata.CommitPDFRecords(ctx, id, artifactIDs); err != nil {
 		return ErrStorage
 	}
+	if err := st.metadata.FinishPDFFork(ctx, id); err != nil {
+		return ErrStorage
+	}
 	return nil
 }
 
-// CopyFork is completed with the engine's PDF content fields by the fork
-// integration task. Returning an error prevents publishing a broken successor.
-func (st *Store) CopyFork(context.Context, session.SessionID, session.SessionID, []session.Message) ([]session.Message, error) {
-	return nil, ErrStorage
+// CopyFork stages each distinct referenced PDF before copying its bytes into
+// the unpublished successor's private namespace, then rewrites nested parts.
+func (st *Store) CopyFork(ctx context.Context, source, target session.SessionID, history []session.Message) ([]session.Message, error) {
+	if st == nil || st.metadata == nil || st.objects == nil || source == "" || target == "" || source == target {
+		return nil, ErrStorage
+	}
+	// The whole copy must finish before the 35-minute Redis active-write keys
+	// expire, even if history contains many references.
+	ctx, cancel := context.WithTimeout(ctx, maxUploadDuration)
+	defer cancel()
+	ids := pdfHistoryIDs(history)
+	if len(ids) == 0 {
+		return session.CloneMessages(history), nil
+	}
+	copied := make(map[string]server.PDFArtifact, len(ids))
+	for _, id := range ids {
+		meta, err := st.Resolve(ctx, source, id)
+		if err != nil {
+			return nil, err
+		}
+		newArtifactID, err := newID()
+		if err != nil {
+			return nil, err
+		}
+		record := redisstore.PDFRecord{
+			ID: newArtifactID, Name: meta.Name, Size: meta.Size, SHA256: meta.SHA256,
+			State: redisstore.PDFStaging, CreatedAt: st.now().UTC(),
+		}
+		if err := st.metadata.ReserveForkPDF(ctx, source, target, record); err != nil {
+			return nil, ErrStorage
+		}
+		if err := st.copyForkObject(ctx, source, target, meta, newArtifactID); err != nil {
+			return nil, err
+		}
+		record.State = redisstore.PDFReady
+		if err := st.metadata.PublishForkPDF(ctx, source, target, record); err != nil {
+			return nil, ErrStorage
+		}
+		copied[id] = server.PDFArtifact{ID: newArtifactID, Name: meta.Name, Size: meta.Size, SHA256: meta.SHA256}
+	}
+	return rewriteForkPDFParts(history, copied)
+}
+
+func pdfHistoryIDs(history []session.Message) []string {
+	seen := make(map[string]struct{})
+	var ids []string
+	add := func(id string) {
+		if _, exists := seen[id]; !exists {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	for _, message := range history {
+		for _, part := range message.Parts {
+			if part.Kind == session.MediaPDF && part.BlockKind == "" {
+				add(part.ArtifactID)
+			}
+		}
+		if message.ToolResult != nil {
+			for _, part := range message.ToolResult.Parts {
+				if part.BlockKind == session.BlockPDFArtifact {
+					add(part.ArtifactID)
+				}
+			}
+		}
+	}
+	return ids
+}
+
+type forkCopyReader struct {
+	io.Reader
+	size int64
+}
+
+func (r *forkCopyReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.size += int64(n)
+	return n, err
+}
+
+func (st *Store) copyForkObject(ctx context.Context, source, target session.SessionID, meta server.PDFArtifact, newID string) error {
+	reader, err := st.objects.Open(ctx, objectKey(source, meta.ID))
+	if err != nil {
+		return ErrStorage
+	}
+	defer func() { _ = reader.Close() }()
+	digest := sha256.New()
+	copyReader := &forkCopyReader{Reader: io.TeeReader(io.LimitReader(reader, meta.Size+1), digest)}
+	if err := st.objects.Put(ctx, objectKey(target, newID), copyReader); err != nil {
+		return ErrStorage
+	}
+	if copyReader.size != meta.Size || hex.EncodeToString(digest.Sum(nil)) != meta.SHA256 {
+		return ErrStorage
+	}
+	return nil
+}
+
+func rewriteForkPDFParts(history []session.Message, copied map[string]server.PDFArtifact) ([]session.Message, error) {
+	out := session.CloneMessages(history)
+	for i, message := range out {
+		if len(message.Parts) != 0 {
+			out[i].Parts = slices.Clone(message.Parts)
+			for j, part := range out[i].Parts {
+				if part.Kind != session.MediaPDF || part.BlockKind != "" {
+					continue
+				}
+				meta, ok := copied[part.ArtifactID]
+				if !ok {
+					return nil, ErrStorage
+				}
+				updated, err := session.NewPDFContent(meta.ID, meta.Name, meta.Size, meta.SHA256)
+				if err != nil {
+					return nil, ErrStorage
+				}
+				out[i].Parts[j] = updated
+			}
+		}
+		if message.ToolResult != nil {
+			result := *message.ToolResult
+			result.Parts = slices.Clone(result.Parts)
+			for j, part := range result.Parts {
+				if part.BlockKind != session.BlockPDFArtifact {
+					continue
+				}
+				meta, ok := copied[part.ArtifactID]
+				if !ok {
+					return nil, ErrStorage
+				}
+				updated, err := session.NewPDFArtifactBlock(meta.ID, meta.Name, meta.Size, meta.SHA256)
+				if err != nil {
+					return nil, ErrStorage
+				}
+				result.Parts[j] = updated
+			}
+			out[i].ToolResult = &result
+		}
+	}
+	return out, nil
 }
 
 // DiscardUnpublished safely removes a failed successor's private objects only
@@ -335,12 +482,22 @@ func (st *Store) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return ErrStorage
 	}
+	if err := st.reconcileDeletions(ctx, ids); err != nil {
+		return err
+	}
+	return st.reconcileRecords(ctx, now)
+}
+
+func (st *Store) reconcileDeletions(ctx context.Context, ids []session.SessionID) error {
 	for _, id := range ids {
 		exists, err := st.metadata.PDFSessionExists(ctx, id)
 		if err != nil {
 			return ErrStorage
 		}
 		if exists {
+			if err := st.metadata.FinishPDFFork(ctx, id); err != nil {
+				return ErrStorage
+			}
 			continue
 		}
 		recentWrite, err := st.metadata.PDFHasActiveStage(ctx, id)
@@ -350,8 +507,21 @@ func (st *Store) Reconcile(ctx context.Context) error {
 		if recentWrite {
 			continue
 		}
+		forkSource, pendingFork, err := st.metadata.PDFPendingForkSource(ctx, id)
+		if err != nil {
+			return ErrStorage
+		}
 		if st.LeaseActive == nil {
 			continue
+		}
+		if pendingFork {
+			active, err := st.LeaseActive(ctx, forkSource)
+			if err != nil {
+				return ErrStorage
+			}
+			if active {
+				continue
+			}
 		}
 		active, err := st.LeaseActive(ctx, id)
 		if err != nil {
@@ -367,51 +537,59 @@ func (st *Store) Reconcile(ctx context.Context) error {
 			return ErrStorage
 		}
 	}
+	return nil
+}
+
+func (st *Store) reconcileRecords(ctx context.Context, now time.Time) error {
 	for entry, err := range st.metadata.PDFRecords(ctx) {
 		if err != nil {
 			return ErrStorage
 		}
-		if !validID(entry.Record.ID) {
-			return ErrStorage
+		if err := st.reconcileRecord(ctx, now, entry.SessionID, entry.Record); err != nil {
+			return err
 		}
-		if now.Sub(entry.Record.CreatedAt) < stagedLifetime+cleanupGrace {
-			continue
+	}
+	return nil
+}
+
+func (st *Store) reconcileRecord(ctx context.Context, now time.Time, id session.SessionID, record redisstore.PDFRecord) error {
+	if !validID(record.ID) {
+		return ErrStorage
+	}
+	if now.Sub(record.CreatedAt) < stagedLifetime+cleanupGrace || record.State == redisstore.PDFCommitted {
+		return nil
+	}
+	exists, err := st.metadata.PDFSessionExists(ctx, id)
+	if err != nil {
+		return ErrStorage
+	}
+	if !exists || st.LeaseActive == nil {
+		// Absent sessions are handled by the deletion outbox. A live session
+		// without a lease check is retained conservatively.
+		return nil
+	}
+	active, err := st.LeaseActive(ctx, id)
+	if err != nil {
+		return ErrStorage
+	}
+	if active {
+		return nil
+	}
+	referenced, err := st.metadata.PDFReferencedInSnapshot(ctx, id, record.ID)
+	if err != nil {
+		return ErrStorage
+	}
+	if referenced {
+		if record.State == redisstore.PDFReady {
+			_ = st.metadata.CommitPDFRecords(ctx, id, []string{record.ID})
 		}
-		if entry.Record.State == redisstore.PDFCommitted {
-			continue
-		}
-		exists, err := st.metadata.PDFSessionExists(ctx, entry.SessionID)
-		if err != nil {
-			return ErrStorage
-		}
-		if exists && st.LeaseActive == nil {
-			continue
-		}
-		if exists {
-			active, err := st.LeaseActive(ctx, entry.SessionID)
-			if err != nil {
-				return ErrStorage
-			}
-			if active {
-				continue
-			}
-			referenced, err := st.metadata.PDFReferencedInSnapshot(ctx, entry.SessionID, entry.Record.ID)
-			if err != nil {
-				return ErrStorage
-			}
-			if referenced {
-				if entry.Record.State == redisstore.PDFReady {
-					_ = st.metadata.CommitPDFRecords(ctx, entry.SessionID, []string{entry.Record.ID})
-				}
-				continue
-			}
-		}
-		if err := st.objects.Delete(ctx, objectKey(entry.SessionID, entry.Record.ID)); err != nil {
-			return ErrStorage
-		}
-		if err := st.metadata.DeletePDFRecord(ctx, entry.SessionID, entry.Record.ID); err != nil {
-			return ErrStorage
-		}
+		return nil
+	}
+	if err := st.objects.Delete(ctx, objectKey(id, record.ID)); err != nil {
+		return ErrStorage
+	}
+	if err := st.metadata.DeletePDFRecord(ctx, id, record.ID); err != nil {
+		return ErrStorage
 	}
 	return nil
 }
