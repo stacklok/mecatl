@@ -80,7 +80,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Input } from "../../components/ui/input";
-import { protectedRequestsPaused, reportSseAuthFailure } from "../../lib/api-client";
+import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { notifyRunCompletion } from "../../lib/browser-notifications";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
@@ -631,10 +631,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           images: images.map(({ data, mimeType, name }) => ({ data, mimeType, name })),
           prompt,
         },
-        onSseError: (caught) => {
-          streamFailure.error = caught;
-          reportSseAuthFailure(caught);
-        },
+        onSseError: captureSseFailure(streamFailure),
         path: { sessionId: activeSessionId },
         signal: controller.signal,
         sseMaxRetryAttempts: 1,
@@ -773,10 +770,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     try {
       const streamFailure: StreamFailure = {};
       const response = await retrySession({
-        onSseError: (caught) => {
-          streamFailure.error = caught;
-          reportSseAuthFailure(caught);
-        },
+        onSseError: captureSseFailure(streamFailure),
         path: { sessionId: retrySessionId },
         signal: controller.signal,
         sseMaxRetryAttempts: 1,
@@ -815,10 +809,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   /** Opens (or, with `resumeFrom`, reopens) the activity stream of the run owner's session. */
   async function watchActivity(owner: RunOwner, streamFailure: StreamFailure, resumeFrom?: string) {
     const response = await watchSessionActivity({
-      onSseError: (caught) => {
-        streamFailure.error = caught;
-        reportSseAuthFailure(caught);
-      },
+      onSseError: captureSseFailure(streamFailure),
       path: { sessionId: owner.sessionId ?? "" },
       query: resumeFrom ? { resumeFrom } : undefined,
       signal: owner.controller.signal,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { threadKeyForMessage } from "../src/features/chat/thread-map";
 import { expect, type OfflineBff, test } from "./fixtures";
 
 type OfflineState = {
@@ -315,6 +316,77 @@ test("expired session requires explicit retry for a write", async ({ offlineBff,
   expect(state.runWrites).toBe(1);
   await page.getByRole("button", { name: "Send message" }).click();
   await expect.poll(() => state.runWrites).toBe(2);
+});
+
+test("side-thread SSE expiry preserves its draft until an explicit retry", async ({
+  offlineBff,
+  page,
+}) => {
+  const state = setup(offlineBff);
+  const rootMessage = { content: "Root message", role: "user" };
+  const messageKey = threadKeyForMessage(rootMessage);
+  await page.addInitScript(
+    ({ key }) =>
+      localStorage.setItem(
+        "studio.chat.threads.s1",
+        JSON.stringify({ [key]: { sessionId: "s2" } }),
+      ),
+    { key: messageKey },
+  );
+  offlineBff.json("GET", "/api/v1/sessions/s1/transcript", {
+    complete: true,
+    messages: [{ images: [], role: "user", text: rootMessage.content, toolCalls: [] }],
+    sessionId: "s1",
+  });
+  offlineBff.json("GET", "/api/v1/sessions/s2", {
+    capabilities: { image: false, manualCompaction: false, modelSelection: false },
+    id: "s2",
+    mode: "default",
+    state: "idle",
+    usage: {
+      cacheReadTokens: "0",
+      cacheWriteTokens: "0",
+      inputTokens: "0",
+      outputTokens: "0",
+      reasoningTokens: "0",
+    },
+  });
+  offlineBff.json("GET", "/api/v1/sessions/s2/transcript", {
+    complete: true,
+    messages: [],
+    sessionId: "s2",
+  });
+  let sideWrites = 0;
+  offlineBff.on("POST", "/api/v1/sessions/s2/runs", () => {
+    sideWrites += 1;
+    if (sideWrites === 1) {
+      state.signedIn = false;
+      return {
+        body: JSON.stringify({ code: "session_expired", status: 401 }),
+        contentType: "application/problem+json",
+        status: 401,
+      };
+    }
+    return {
+      body: `data: ${JSON.stringify({ type: "run.started", runId: "r2", sessionId: "s2" })}\n\n`,
+      contentType: "text/event-stream",
+    };
+  });
+
+  await page.goto(draftRoute);
+  await page.getByRole("button", { name: "Open side thread" }).click();
+  const draft = page.getByRole("textbox", { name: "Reply in thread" });
+  await draft.fill("Keep this thread reply");
+  await page.getByRole("button", { name: "Send reply" }).click();
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible();
+  await expect(draft).toHaveValue("Keep this thread reply");
+  const popupEvent = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await popupEvent;
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0);
+  expect(sideWrites).toBe(1);
+  await page.getByRole("button", { name: "Send reply" }).click();
+  await expect.poll(() => sideWrites).toBe(2);
 });
 
 test("different account clears the mounted draft before showing its data", async ({

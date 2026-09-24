@@ -3,7 +3,13 @@
 import { client } from "@mecatl-studio/contracts/client";
 import { createSession } from "@mecatl-studio/contracts/generated";
 import { describe, expect, it, vi } from "vitest";
-import { installRecoveryInterceptor, readCsrfToken, setRequestRecoveryState } from "./api-client";
+import {
+  captureSseFailure,
+  installRecoveryInterceptor,
+  onAuthenticationRequired,
+  readCsrfToken,
+  setRequestRecoveryState,
+} from "./api-client";
 
 describe("CSRF token cookie reader", () => {
   it("extracts studio_csrf from a cookie string and ignores other cookies", () => {
@@ -44,5 +50,27 @@ describe("protected request boundary", () => {
       throwOnError: true,
     });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SSE authentication recovery", () => {
+  it("records stream failures and reports only a 401 to the auth gate", () => {
+    const authRequired = vi.fn();
+    const unsubscribe = onAuthenticationRequired(authRequired);
+    try {
+      const failure: { error?: unknown } = {};
+      const capture = captureSseFailure(failure);
+      const unavailable = new Error("SSE failed: 503");
+      capture(unavailable);
+      expect(failure.error).toBe(unavailable);
+      expect(authRequired).not.toHaveBeenCalled();
+
+      const expired = new Error("SSE failed: 401");
+      capture(expired);
+      expect(failure.error).toBe(expired);
+      expect(authRequired).toHaveBeenCalledOnce();
+    } finally {
+      unsubscribe();
+    }
   });
 });

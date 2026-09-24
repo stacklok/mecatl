@@ -153,16 +153,18 @@ resource when it is not the gRPC authority.
 The web application keeps the prototype's shell (top navigation, workspace layout, connection
 banner, auth gate) with an empty workspace route, following the "routes thin, behavior in
 feature modules" convention recorded in [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md).
+The [public status and popup sign-in plan](studio-public-status-popup-auth.md) updates the auth
+frame and banner projection while retaining the BFF origin boundary.
 
 **Acceptance:**
 - AC4.1: in the built image the BFF serves `apps/web/dist` at `/`; any non-`/api` path without a file extension and without a matching asset returns `index.html` (SPA fallback); any unknown `/api` path returns `404` problem details.
   - verify: vitest:apps/server/src/http/static.test.ts#dW5rbm93biBub24tQVBJIHBhdGhzIHNlcnZlIHRoZSBTUEEgaW5kZXggYW5kIHVua25vd24gQVBJIHBhdGhzIHJldHVybiA0MDQgcHJvYmxlbSBkZXRhaWxz — `apps/server/src/http/static.test.ts :: "unknown non-API paths serve the SPA index and unknown API paths return 404 problem details"`
 - AC4.2: `index.html` is served with `Cache-Control: no-store`; hashed assets under `/assets/` are `Cache-Control: public, max-age=31536000, immutable`; a non-`/api` path with a file extension and no matching asset is `404`, not `index.html`.
   - verify: vitest:apps/server/src/http/static.test.ts#aW5kZXguaHRtbCBpcyBuby1zdG9yZSwgaGFzaGVkIGFzc2V0cyBhcmUgaW1tdXRhYmxlLCBhbmQgZXh0ZW5zaW9uIHBhdGhzIHdpdGhvdXQgYW4gYXNzZXQgYXJlIDQwNA — `apps/server/src/http/static.test.ts :: "index.html is no-store, hashed assets are immutable, and extension paths without an asset are 404"`
-- AC4.3: the auth gate renders the sign-in screen only when `/api/v1/auth/session` reports interactive login is required and no session exists; a static-token or no-auth runtime goes straight to the workspace.
-  - verify: vitest:apps/web/src/features/auth/auth-gate.test.ts#dGhlIGF1dGggZ2F0ZSBzaG93cyBzaWduLWluIG9ubHkgd2hlbiB0aGUgcnVudGltZSByZXF1aXJlcyBpbnRlcmFjdGl2ZSBsb2dpbg — `apps/web/src/features/auth/auth-gate.test.ts :: "the auth gate shows sign-in only when the runtime requires interactive login"`
-- AC4.4: the connection-status banner's state is derived from the `/api/v1/runtime` response: `200` with status `connected` hides it, `200` with `reconnecting` shows the reconnecting message, and `503` or a fetch failure shows the unavailable message.
-  - verify: vitest:apps/web/src/components/shell/connection-status-banner.test.ts#dGhlIGNvbm5lY3Rpb24gYmFubmVyIHN0YXRlIG1hcHMgY29ubmVjdGVkLCByZWNvbm5lY3RpbmcsIGFuZCB1bmF2YWlsYWJsZQ — `apps/web/src/components/shell/connection-status-banner.test.ts :: "the connection banner state maps connected, reconnecting, and unavailable"`
+- AC4.3: an anonymous OIDC session offers sign-in with the public shell visible; an authenticated OIDC session with an account key, a static-token session, or a no-auth session mounts the workspace. A failed session check offers retry without claiming sign-out.
+  - verify: vitest:apps/web/src/features/auth/auth-recovery.test.tsx#dGhlIGF1dGggZ2F0ZSBvZmZlcnMgc2lnbi1pbiBvbmx5IGZvciBhbm9ueW1vdXMgT0lEQyBzZXNzaW9ucw — `apps/web/src/features/auth/auth-recovery.test.tsx :: "the auth gate offers sign-in only for anonymous OIDC sessions"`
+- AC4.4: the connection-status banner uses the coarse public-status projection; a failed status fetch or daemon outage takes priority over sign-in, and a pending check is neutral. Detailed `/api/v1/runtime` remains authenticated.
+  - verify: vitest:apps/web/src/components/shell/connection-status-banner.test.tsx#cHVibGljIHN0YXR1cyBiYW5uZXJzIHByaW9yaXRpemUgb3V0YWdlcyBiZWZvcmUgc2lnbi1pbg — `apps/web/src/components/shell/connection-status-banner.test.tsx :: "public status banners prioritize outages before sign-in"`
 - AC4.5: the shell renders the top navigation and an empty workspace route without any feature module present.
   - verify: inspection — rendered shell components; no feature behavior exists to assert until the chat plan.
 - AC4.6: `GET /api/v1/auth/session` reports an opaque account key that is stable for one subject, differs between subjects, and does not contain the subject; the browser clears every `studio.`-prefixed key (but not the device theme) on sign-out, and on sign-in of an account other than the one it last recorded.

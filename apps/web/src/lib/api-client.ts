@@ -38,6 +38,14 @@ export function reportSseAuthFailure(error: unknown): void {
   for (const listener of authFailureListeners) listener();
 }
 
+/** Preserve the transport error and notify the auth gate on an expired SSE session. */
+export function captureSseFailure(failure: { error?: unknown }): (error: unknown) => void {
+  return (error) => {
+    failure.error = error;
+    reportSseAuthFailure(error);
+  };
+}
+
 /** Applies the pause to generated mutations as well as direct SDK client calls. */
 export function installRecoveryInterceptor(): void {
   if (recoveryInterceptorInstalled) return;

@@ -19,6 +19,29 @@ const ready: RecoveryState = {
 };
 
 describe("Studio auth recovery", () => {
+  it("the auth gate offers sign-in only for anonymous OIDC sessions", () => {
+    const checking: RecoveryState = {
+      identityEpoch: 0,
+      phase: "checking",
+      workspaceMounted: false,
+    };
+    expect(nextRecoveryState(checking, { kind: "anonymous" }).state).toMatchObject({
+      phase: "sign-in",
+      workspaceMounted: false,
+    });
+    expect(nextRecoveryState(checking, { kind: "disabled" }).state).toMatchObject({
+      phase: "ready",
+      workspaceMounted: true,
+    });
+    expect(
+      nextRecoveryState(checking, { kind: "authenticated", account: "opaque-a" }).state,
+    ).toMatchObject({ phase: "ready", workspaceMounted: true });
+    expect(nextRecoveryState(checking, { kind: "session-check-failed" }).state).toMatchObject({
+      phase: "verification-unavailable",
+      workspaceMounted: false,
+    });
+  });
+
   it("popup messages require origin source and active attempt", () => {
     const popup = {} as Window;
     const other = {} as Window;

@@ -46,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "../../components/ui/dropdown-menu";
 import { Textarea } from "../../components/ui/textarea";
+import { captureSseFailure, protectedRequestsPaused } from "../../lib/api-client";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import {
@@ -55,6 +56,7 @@ import {
   useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
+import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
 import {
@@ -100,6 +102,7 @@ export function SideThreadPanel({
   parentSessionId: string;
   sessionId: string;
 }) {
+  const recovery = useAuthRecovery();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const width = usePanelWidth("contentPreview");
@@ -182,10 +185,13 @@ export function SideThreadPanel({
 
   async function submit() {
     const next = prompt.trim();
-    if (!next || busy) return;
+    if (!next || busy || recovery.phase !== "ready") return;
     voice.stop();
-    setPrompt("");
-    await run.sendPrompt(next);
+    // Keep the draft until the stream proves the write was accepted.
+    const accepted = await new Promise<boolean>((resolve) => {
+      void run.sendPrompt(next, resolve);
+    });
+    if (accepted) setPrompt("");
   }
 
   return (
@@ -361,7 +367,7 @@ export function SideThreadPanel({
               <Button
                 aria-label={busy ? "Mecatl is working" : "Send reply"}
                 className="size-8 shrink-0 rounded-full"
-                disabled={busy || !prompt.trim()}
+                disabled={busy || recovery.phase !== "ready" || !prompt.trim()}
                 size="icon"
                 type="submit"
               >
@@ -442,7 +448,7 @@ function useSideThreadRun(sessionId: string) {
   // mirroring the parent chat's own reattach effect.
   // biome-ignore lint/correctness/useExhaustiveDependencies: consume/refresh are stable for this lifetime
   useEffect(() => {
-    if (!sessionId || !watchable || runAbort.current) return;
+    if (!sessionId || !watchable || runAbort.current || protectedRequestsPaused()) return;
     const controller = new AbortController();
     runAbort.current = controller;
     setIsRunning(true);
@@ -498,9 +504,7 @@ function useSideThreadRun(sessionId: string) {
     resumeFrom?: string,
   ) {
     const response = await watchSessionActivity({
-      onSseError: (caught) => {
-        streamFailure.error = caught;
-      },
+      onSseError: captureSseFailure(streamFailure),
       path: { sessionId },
       query: resumeFrom ? { resumeFrom } : undefined,
       signal: controller.signal,
@@ -524,6 +528,7 @@ function useSideThreadRun(sessionId: string) {
     prompt: string,
     replay: boolean,
     seedMessages: ChatMessage[] = [],
+    onAccepted?: () => void,
   ): Promise<RunStreamEnd> {
     let state = initialRunDeliveryState(assistantId, prompt, replay ? [] : seedMessages);
     let reattaches = 0;
@@ -532,6 +537,8 @@ function useSideThreadRun(sessionId: string) {
     while (stream) {
       let resumeFrom: string | undefined;
       for await (const delivery of stream) {
+        onAccepted?.();
+        onAccepted = undefined;
         if (delivery.type === "run.truncated") {
           const decision = decideTruncation(delivery, reattaches);
           setNotice(decision.notice);
@@ -564,8 +571,12 @@ function useSideThreadRun(sessionId: string) {
     return runStreamEnd(state, unfollowed, prompt);
   }
 
-  async function sendPrompt(prompt: string) {
-    if (!sessionId || isRunning) return;
+  async function sendPrompt(prompt: string, onAccepted?: (accepted: boolean) => void) {
+    if (!sessionId || isRunning || protectedRequestsPaused()) {
+      onAccepted?.(false);
+      return;
+    }
+    let accepted = false;
     setError(undefined);
     setNotice(undefined);
     setIsRunning(true);
@@ -583,9 +594,7 @@ function useSideThreadRun(sessionId: string) {
       const streamFailure: StreamFailure = {};
       const response = await startRun({
         body: { prompt },
-        onSseError: (caught) => {
-          streamFailure.error = caught;
-        },
+        onSseError: captureSseFailure(streamFailure),
         path: { sessionId },
         signal: controller.signal,
         sseMaxRetryAttempts: 1,
@@ -598,6 +607,10 @@ function useSideThreadRun(sessionId: string) {
         prompt,
         false,
         seeded,
+        () => {
+          accepted = true;
+          onAccepted?.(true);
+        },
       );
       if (streamFailure.error && !controller.signal.aborted) throw streamFailure.error;
       // An unfollowed stream says nothing about the run, so it reports no failure.
@@ -605,6 +618,7 @@ function useSideThreadRun(sessionId: string) {
     } catch (caught) {
       if (!controller.signal.aborted) setError(errorMessage(caught));
     } finally {
+      if (!accepted) onAccepted?.(false);
       if (runAbort.current === controller) {
         runAbort.current = undefined;
         setRunId(undefined);
