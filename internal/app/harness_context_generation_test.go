@@ -47,6 +47,8 @@ func TestHarnessRetiredServiceEngineDrainsParkedOperation(t *testing.T) {
 	var once sync.Once
 	var cleaned atomic.Int32
 	var requests []port.LLMRequest
+	resolver := &harnessCommandResolver{}
+	cfg.harnessResolver = resolver
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) { requests = append(requests, request) })}, mockllm.TextTurn("done"))
 	cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: "tenant", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 		return hcAssembler("INSTRUCTIONS-OLD-GENERATION"), nil, nil
@@ -68,11 +70,15 @@ func TestHarnessRetiredServiceEngineDrainsParkedOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
-	built.Service.CloseSession(sess.ID)
+	resolver.Retire(sess.ID)
+	if _, _, err := resolver.Borrow(t.Context(), sess.ID, nil, ""); err == nil {
+		t.Fatal("ordinary borrow reopened retired generation")
+	}
 	close(resume)
 	for range run.Events() {
 	}
 	built.Service.FinishRun(sess.ID, run)
+	built.Service.CloseSession(sess.ID)
 	if len(requests) != 1 {
 		t.Fatalf("model requests=%d", len(requests))
 	}
@@ -83,6 +89,9 @@ func TestHarnessRetiredServiceEngineDrainsParkedOperation(t *testing.T) {
 	}
 	if !strings.Contains(actual.String(), "EXPANDED-OLD-GENERATION") {
 		t.Fatalf("old leased engine lost the command expansion after its parked list: %q", actual.String())
+	}
+	if !strings.Contains(actual.String(), "INSTRUCTIONS-OLD-GENERATION") {
+		t.Fatalf("retired engine could not borrow its instruction source generation: %q", actual.String())
 	}
 	if cleaned.Load() != 1 {
 		t.Fatalf("retired generation cleanup calls = %d, want 1", cleaned.Load())

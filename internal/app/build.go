@@ -1630,7 +1630,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if section, err := validateHarnessPolicy(cfg); err != nil {
 		return nil, err
 	} else if section != nil {
-		cfg.harnessResolver = &harnessCommandResolver{}
+		if cfg.harnessResolver == nil {
+			cfg.harnessResolver = &harnessCommandResolver{}
+		}
 		prepareHarnessProcessBindings(&cfg)
 	}
 	if err := validateDriverConfig(cfg); err != nil {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -18,39 +19,70 @@ func cacheProcessHarness[T any](registrations []HarnessSourceRegistration[T], sn
 		if registration.Scope != HarnessSourceScopeProcess {
 			continue
 		}
-		var once sync.Once
 		var mu sync.Mutex
 		var source T
 		var cleanup func() error
-		var bindErr error
+		var pending chan struct{}
+		ready := false
 		closed := false
 		out[i].Bind = func(ctx context.Context, scope HarnessSourceScope) (T, func() error, error) {
-			mu.Lock()
-			if closed {
+			for {
+				mu.Lock()
+				if closed {
+					mu.Unlock()
+					var zero T
+					return zero, nil, fmt.Errorf("process harness source %q is closed", registration.ID)
+				}
+				if ready {
+					cached := source
+					mu.Unlock()
+					return cached, nil, nil
+				}
+				if pending != nil {
+					done := pending
+					mu.Unlock()
+					select {
+					case <-ctx.Done():
+						var zero T
+						return zero, nil, ctx.Err()
+					case <-done:
+						continue
+					}
+				}
+				attempt := make(chan struct{})
+				pending = attempt
 				mu.Unlock()
-				var zero T
-				return zero, nil, fmt.Errorf("process harness source %q is closed", registration.ID)
-			}
-			mu.Unlock()
-			once.Do(func() {
+
 				bound, boundCleanup, err := registration.Bind(ctx, scope)
 				if err == nil && snapshot != nil {
 					bound, err = snapshot(ctx, bound)
 				}
-				mu.Lock()
-				source, cleanup, bindErr = bound, boundCleanup, err
-				closeNow := closed || err != nil
-				if closeNow {
-					cleanup = nil
+				if err == nil {
+					err = ctx.Err()
 				}
+
+				mu.Lock()
+				pending = nil
+				closedNow := closed
+				if err == nil && !closedNow {
+					source, cleanup, ready = bound, boundCleanup, true
+				}
+				close(attempt)
 				mu.Unlock()
-				if closeNow && boundCleanup != nil {
+
+				if (err != nil || closedNow) && boundCleanup != nil {
 					_ = boundCleanup()
 				}
-			})
-			mu.Lock()
-			defer mu.Unlock()
-			return source, nil, bindErr
+				if closedNow {
+					var zero T
+					return zero, nil, fmt.Errorf("process harness source %q is closed", registration.ID)
+				}
+				if err != nil {
+					var zero T
+					return zero, nil, err
+				}
+				return bound, nil, nil
+			}
 		}
 		closers = append(closers, func() error {
 			mu.Lock()
@@ -80,6 +112,9 @@ func prepareHarnessProcessBindings(cfg *Config) {
 			return nil, fmt.Errorf("nil rules source")
 		}
 		rules, err := source.ListRules(ctx)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return frozenHarnessRules{rules: rules, err: err}, nil
 	})
 	closers = append(closers, closeProcess)

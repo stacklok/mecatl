@@ -12,7 +12,9 @@ import (
 
 	"github.com/goccy/go-yaml"
 
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/sourceconformance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -200,6 +202,83 @@ func TestHarnessReplaceDefersLowerProcessSnapshotBehindPrincipal(t *testing.T) {
 	}
 	if processBindCount() != 3 {
 		t.Fatalf("process snapshot binds=%d, want one Build-lifetime bind per kind", processBindCount())
+	}
+}
+
+func TestHarnessProcessFallbackCancellationDoesNotPoisonOtherOwners(t *testing.T) {
+	kinds := harnessEmptyKinds()
+	kinds.Rules = permconfig.HarnessContextKind{Sources: []string{"principal", "process"}, Mode: "replace"}
+	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"principal", "process"}, Kinds: kinds})
+	cfg.OwnershipEnforced = true
+	started := make(chan struct{})
+	var binds, cleanups atomic.Int32
+	var requests []port.LLMRequest
+	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) {
+		requests = append(requests, request)
+	})}, mockllm.TextTurn("done"))
+	cfg.HarnessRulesSources = []HarnessSourceRegistration[prompt.RulesSource]{
+		{ID: "principal", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+			return frozenHarnessRules{}, nil, nil
+		}},
+		{ID: "process", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
+			n := binds.Add(1)
+			return harnessRulesFunc(func(ctx context.Context) ([]prompt.Rule, error) {
+				if n == 1 {
+					close(started)
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+				return []prompt.Rule{{Name: "process-low", Body: "PROCESS-LOW-HEALTHY"}}, nil
+			}), func() error { cleanups.Add(1); return nil }, nil
+		}},
+	}
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	aliceCtx, cancelAlice := context.WithCancel(session.WithPrincipal(context.Background(), &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}))
+	aliceDone := make(chan error, 1)
+	go func() {
+		_, createErr := built.Service.CreateSession(aliceCtx, session.ModeDefault, session.Limits{})
+		aliceDone <- createErr
+	}()
+	<-started
+	cancelAlice()
+	if err := <-aliceDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("alice cancellation = %v", err)
+	}
+
+	bobCtx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "issuer", Subject: "bob", GrantType: session.GrantTypeUser})
+	bob, err := built.Service.CreateSession(bobCtx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatalf("bob retry: %v", err)
+	}
+	run, err := built.Service.StartRun(bobCtx, bob.ID, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range run.Events() {
+	}
+	built.Service.FinishRun(bob.ID, run)
+	if len(requests) != 1 {
+		t.Fatalf("model requests=%d", len(requests))
+	}
+	var modelInput strings.Builder
+	modelInput.WriteString(requests[0].System.Render())
+	for _, message := range requests[0].Messages {
+		modelInput.WriteString(message.Text)
+	}
+	if !strings.Contains(modelInput.String(), "PROCESS-LOW-HEALTHY") {
+		t.Fatalf("bob request omitted healthy process fallback: %q", modelInput.String())
+	}
+	if binds.Load() != 2 || cleanups.Load() != 1 {
+		t.Fatalf("before Build close binds=%d cleanups=%d", binds.Load(), cleanups.Load())
+	}
+	built.Close()
+	if cleanups.Load() != 2 {
+		t.Fatalf("after Build close cleanups=%d", cleanups.Load())
 	}
 }
 
