@@ -242706,6 +242706,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790253609895,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b0a96d2fd35e33db2a206d0bef8b3fdaa9e9dd05",
+          "message": "feat(studio): implement workspace shell (#1869)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-24T16:46:18+02:00",
+          "tree_id": "d8cfd6fd29dc63f080dfec1074a233b6318feec4",
+          "url": "https://github.com/stacklok/mecatl/commit/b0a96d2fd35e33db2a206d0bef8b3fdaa9e9dd05"
+        },
+        "date": 1790261853672,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -352600,6 +352634,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790261850408,
+  "lastUpdate": 1790261854457,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
