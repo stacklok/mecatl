@@ -830,6 +830,9 @@ func buildPromptContent(blocks []contentBlock) (text string, parts []session.Con
 				return "", nil, cerr
 			}
 			parts = append(parts, c)
+		case "pdf":
+			return "", nil, newMethodErr(codeInvalidParams,
+				fmt.Sprintf("acp: session/prompt: prompt[%d] PDF artifacts are unsupported", i))
 		default:
 			return "", nil, newMethodErr(codeInvalidParams,
 				fmt.Sprintf("acp: session/prompt: prompt[%d] has unsupported content type %q", i, b.Type))

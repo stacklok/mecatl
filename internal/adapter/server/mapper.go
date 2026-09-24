@@ -101,10 +101,10 @@ func contentToProto(parts []session.Content) []*mecatlv1.Content {
 			MimeType:   p.MIMEType,
 			Data:       p.Data,
 			Url:        valid(p.URL),
-			ArtifactId: p.ArtifactID,
+			ArtifactId: valid(p.ArtifactID),
 			Name:       valid(p.Name),
 			Size:       p.Size,
-			Sha256:     p.SHA256,
+			Sha256:     valid(p.SHA256),
 		})
 	}
 	return out
@@ -708,8 +708,8 @@ func blocksToProto(parts []session.Content) []*mecatlv1.ContentBlock {
 			Audience:     aud,
 			Priority:     p.Priority,
 			LastModified: valid(p.LastModified),
-			ArtifactId:   p.ArtifactID,
-			Sha256:       p.SHA256,
+			ArtifactId:   valid(p.ArtifactID),
+			Sha256:       valid(p.SHA256),
 		})
 	}
 	return out

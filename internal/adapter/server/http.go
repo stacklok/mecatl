@@ -81,6 +81,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry", h.retryWorkspaceEnrollment},
 		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel", h.cancelWorkspaceEnrollment},
 		{"POST /v1/sessions/{id}/prompt", h.prompt},
+		{"POST /v1/sessions/{id}/pdfs", h.uploadPDF},
 		{"POST /v1/sessions/{id}/retry", h.retry},
 		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
@@ -429,10 +430,14 @@ type promptBody struct {
 // standard base64 (Go's encoding/json decodes a JSON string into []byte as
 // base64 automatically); exactly one of data/url is set.
 type promptContentBody struct {
-	Kind     string `json:"kind"`
-	MimeType string `json:"mime_type,omitempty"`
-	Data     []byte `json:"data,omitempty"`
-	URL      string `json:"url,omitempty"`
+	Kind       string `json:"kind"`
+	MimeType   string `json:"mime_type,omitempty"`
+	Data       []byte `json:"data,omitempty"`
+	URL        string `json:"url,omitempty"`
+	ArtifactID string `json:"artifact_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Size       int64  `json:"size,omitempty"`
+	SHA256     string `json:"sha256,omitempty"`
 }
 
 // toContentParts maps the HTTP prompt parts into the domain []session.Content.
@@ -444,10 +449,19 @@ func toContentParts(parts []promptContentBody) ([]session.Content, error) {
 	if len(parts) == 0 {
 		return nil, nil
 	}
+	if len(parts) > session.MaxPromptMediaParts {
+		return nil, fmt.Errorf("prompt has too many media parts")
+	}
 	out := make([]session.Content, 0, len(parts))
 	for i, p := range parts {
 		var kind session.MediaKind
 		switch p.Kind {
+		case string(session.MediaPDF):
+			if p.MimeType != "application/pdf" || len(p.Data) != 0 || p.URL != "" || p.Name != "" || p.Size != 0 || p.SHA256 != "" || !validPDFArtifactID(p.ArtifactID) {
+				return nil, fmt.Errorf("parts[%d]: invalid PDF artifact reference", i)
+			}
+			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: "application/pdf", ArtifactID: p.ArtifactID})
+			continue
 		case string(session.MediaImage):
 			kind = session.MediaImage
 		case string(session.MediaAudio):

@@ -73,6 +73,7 @@
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
     ifacemethod func (StreamProgressError).StreamProgress() session.StreamProgress
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
+    ifacemethod func (ToolResultProcessor).ProcessToolResult(context.Context, session.SessionID, session.ToolResult) (session.ToolResult, error)
     ifacemethod func (error).Error() string
     method func (*SessionLoadFailureError).Class() SessionLoadFailureClass
     method func (*SessionLoadFailureError).Error() string
@@ -215,6 +216,7 @@ type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*se
 type StoredSession struct{ID session.SessionID; ModifiedAt time.Time}
 type StreamProgressError interface{StreamProgress() session.StreamProgress; error}
 type ToolCallRecorder interface{ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}
+type ToolResultProcessor interface{ProcessToolResult(context.Context, session.SessionID, session.ToolResult) (session.ToolResult, error)}
 type TriggerKind int
 type TriggerSpec struct{Cron string; OneShot time.Time}
 var ErrCursorExpired error

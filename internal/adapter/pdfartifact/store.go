@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"strings"
@@ -29,9 +30,9 @@ const (
 )
 
 var (
-	ErrNotFound   = errors.New("pdf artifact not found")
-	ErrInvalidPDF = errors.New("invalid PDF artifact")
-	ErrStorage    = errors.New("PDF artifact storage unavailable")
+	ErrNotFound   = fmt.Errorf("%w: PDF artifact not found", server.ErrNotFound)
+	ErrInvalidPDF = fmt.Errorf("%w: invalid PDF artifact", server.ErrInvalidArgument)
+	ErrStorage    = fmt.Errorf("%w: PDF artifact storage unavailable", server.ErrInternal)
 )
 
 // ObjectStore writes and reads private immutable objects. Implementations must

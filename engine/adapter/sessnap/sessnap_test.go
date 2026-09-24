@@ -266,6 +266,33 @@ func TestRoundTripWithParts(t *testing.T) {
 	}
 }
 
+func TestPDFPromptReferenceSurvivesSnapshot(t *testing.T) {
+	const digest = "acffdf49b58d86b2a91341e976081848a03823302662a85d8ec0b27d89e8db75"
+	part, err := session.NewPDFContent("artifact", "report.pdf", 14, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := runningSession(t)
+	if err := s.RecordUserPromptWithParts("read", []session.Content{part}, nil); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := sessnap.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := sessnap.Unmarshal(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := restored.Conversation.Messages[len(restored.Conversation.Messages)-1].Parts
+	if len(got) != 1 || !reflect.DeepEqual(got[0], part) {
+		t.Fatalf("restored PDF reference = %+v, want %+v", got, part)
+	}
+	if strings.Contains(string(encoded), `"data":`) || strings.Contains(string(encoded), "%PDF-") {
+		t.Fatalf("snapshot includes PDF bytes: %s", encoded)
+	}
+}
+
 // TestSnapshotRoundTripsPhase asserts the OpenAI Responses phase marker on an
 // assistant message survives Marshal -> Unmarshal (issue #46). The DTO field is
 // omitempty, so an empty phase is wire-omitted and an old snapshot still decodes.

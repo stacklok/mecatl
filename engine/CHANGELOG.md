@@ -30,6 +30,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
   Added (minor).
 
+- **Effective tool-result processing seam** — adds `port.ToolResultProcessor`
+  and `agent.Deps.ToolResultProcessor` so hosts can rewrite a post-hook tool
+  result before audit, event emission, and session recording. A processing
+  failure becomes a bounded tool error with the original call ID. Added (minor).
+
 - **Session-owned PDF content references** — adds `session.MediaPDF`,
   `session.BlockPDFArtifact`, validated PDF content and artifact-block constructors,
   reference metadata on `session.Content`, and `port.ProviderCapabilities.PDF`.

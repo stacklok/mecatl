@@ -41,7 +41,7 @@ func TestSDKPDFArtifacts_Scenario1_SystemPromptAffordance(t *testing.T) {
 			meta := newLiveMetaStore()
 			meta.Swap(map[string][]modelEntry{providerOpenAI: {{ID: model, InputModalities: tc.modalities}}})
 			reg.meta = meta
-			factory := sessionEngineFactory(Config{Model: model}, reg, provider, memstore.New(),
+			factory := sessionEngineFactory(Config{Model: model, pdfArtifacts: &pdfLifecycleFixture{}}, reg, provider, memstore.New(),
 				permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
 				prompt.RootAssembler{}, catalogAssets{}, nil)
 			res, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)

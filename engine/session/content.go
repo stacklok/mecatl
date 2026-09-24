@@ -239,36 +239,55 @@ func NewPDFArtifactBlock(id, name string, size int64, sha256 string) (Content, e
 }
 
 func validatePDFMetadata(id, name string, size int64, sha256 string) error {
-	if len(id) == 0 || len(id) > 128 {
-		return fmt.Errorf("%w: PDF artifact ID length is invalid", ErrInvalidContent)
+	if !validPDFID(id) {
+		return fmt.Errorf("%w: PDF artifact ID is invalid", ErrInvalidContent)
 	}
-	for _, r := range id {
-		allowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
-		if !allowed {
-			return fmt.Errorf("%w: PDF artifact ID is invalid", ErrInvalidContent)
-		}
-	}
-	if !utf8.ValidString(name) || name == "." || name == ".." || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 255 {
+	if !validPDFName(name) {
 		return fmt.Errorf("%w: PDF name is invalid", ErrInvalidContent)
-	}
-	for _, r := range name {
-		if r == '/' || r == '\\' || unicode.IsControl(r) {
-			return fmt.Errorf("%w: PDF name is invalid", ErrInvalidContent)
-		}
 	}
 	if size <= 0 || size > MaxPDFBytes {
 		return fmt.Errorf("%w: PDF size is invalid", ErrInvalidContent)
 	}
-	if len(sha256) != 64 {
+	if !validPDFSHA256(sha256) {
 		return fmt.Errorf("%w: PDF SHA-256 is invalid", ErrInvalidContent)
 	}
-	for _, ch := range sha256 {
-		allowed := (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')
-		if !allowed {
-			return fmt.Errorf("%w: PDF SHA-256 is invalid", ErrInvalidContent)
+	return nil
+}
+
+func validPDFID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return false
 		}
 	}
-	return nil
+	return true
+}
+
+func validPDFName(name string) bool {
+	if !utf8.ValidString(name) || name == "." || name == ".." || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 255 {
+		return false
+	}
+	for _, r := range name {
+		if r == '/' || r == '\\' || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func validPDFSHA256(sha256 string) bool {
+	if len(sha256) != 64 {
+		return false
+	}
+	for _, ch := range sha256 {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateMediaParts enforces the per-prompt media caps (CWE-770) on an already

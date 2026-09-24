@@ -17,13 +17,13 @@ func TestPDFArtifactServiceScaffoldFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.UploadPdf(context.Background(), sess.ID, "x.pdf", strings.NewReader("%PDF-1.4")); !errors.Is(err, server.ErrPDFArtifactsUnavailable) {
+	if _, err := svc.UploadPdf(context.Background(), sess.ID, "x.pdf", strings.NewReader("%PDF-1.4")); !errors.Is(err, server.ErrPDFArtifactsUnavailable) {
 		t.Fatalf("upload without storage = %v, want unsupported-feature error", err)
 	}
 	if err := svc.DownloadPdf(context.Background(), sess.ID, "opaque-id"); !errors.Is(err, server.ErrPDFArtifactsUnavailable) {
 		t.Fatalf("download without storage = %v, want unsupported-feature error", err)
 	}
-	if err := svc.UploadPdf(context.Background(), "unknown", "x.pdf", strings.NewReader("%PDF-1.4")); !errors.Is(err, server.ErrNotFound) {
+	if _, err := svc.UploadPdf(context.Background(), "unknown", "x.pdf", strings.NewReader("%PDF-1.4")); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("upload to unknown session = %v, want not-found", err)
 	}
 	if err := svc.DownloadPdf(context.Background(), "unknown", "opaque-id"); !errors.Is(err, server.ErrNotFound) {
