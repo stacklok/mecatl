@@ -64,6 +64,18 @@ func TestMecatuiTypedScrollbackModel_Scenario3_ScrollbackBoundaryIsLogicalOnly(t
 	t.Fatal("renderConversationFrame not found")
 }
 
+func TestMecatuiTypedScrollbackModel_Scenario3_OrdinaryCardsUseSealedSnapshotAdapters(t *testing.T) {
+	files := parseUIProductionFiles(t)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Name.Name == "blockFromSnapshot" {
+				t.Fatal("generic scrollback snapshot conversion still exists")
+			}
+		}
+	}
+}
+
 var osReadDir = os.ReadDir
 
 func parseUIProductionFiles(t *testing.T) []*ast.File {

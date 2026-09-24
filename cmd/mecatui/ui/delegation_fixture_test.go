@@ -10,11 +10,38 @@ import (
 func (c *conversation) testBlocks() []block {
 	blocks := make([]block, 0, c.scrollback.Len())
 	for i := 0; i < c.scrollback.Len(); i++ {
-		if b, ok := blockFromSnapshot(c.scrollback.SnapshotAt(i)); ok {
+		if b, ok := testBlockFromSnapshot(c.scrollback.SnapshotAt(i)); ok {
 			blocks = append(blocks, b)
 		}
 	}
 	return blocks
+}
+
+func testBlockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
+	b := block{id: uint64(s.ID), rev: rendererRevision(s.Revision)}
+	switch p := s.Payload.(type) {
+	case scrollback.UserCardSnapshot:
+		b.kind, b.raw, b.media = blockUser, p.Text, p.Media
+	case scrollback.AssistantCardSnapshot:
+		b.kind, b.raw, b.reasoning, b.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
+	case scrollback.ToolCardSnapshot:
+		b = toolBlockFromSnapshot(s, p)
+	case scrollback.NoticeCardSnapshot:
+		b.kind, b.raw, b.recover = blockNotice, p.Text, p.Recover
+	case scrollback.TurnStatCardSnapshot:
+		b.kind, b.raw = blockTurnStat, p.Text
+	case scrollback.ErrorCardSnapshot:
+		b.kind, b.raw, b.permanent = blockError, p.Text, p.Permanent
+	case scrollback.HookCardSnapshot:
+		b.kind, b.raw, b.hookPhase, b.hookTool, b.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
+	case scrollback.DeliveryCardSnapshot:
+		b.kind, b.raw, b.toolName, b.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
+	case scrollback.SubagentCardSnapshot, scrollback.TeamCardSnapshot:
+		return delegationBlockFromSnapshot(s)
+	default:
+		return block{}, false
+	}
+	return b, true
 }
 
 func (c *conversation) testChangedFiles() []string {

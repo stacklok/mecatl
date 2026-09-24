@@ -404,32 +404,19 @@ func rendererRevision(revision uint64) int {
 	return int(revision)
 }
 
-func blockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
-	b := block{id: uint64(s.ID), rev: rendererRevision(s.Revision)}
-	switch p := s.Payload.(type) {
-	case scrollback.UserCardSnapshot:
-		b.kind, b.raw, b.media = blockUser, p.Text, p.Media
-	case scrollback.AssistantCardSnapshot:
-		b.kind, b.raw, b.reasoning, b.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
-	case scrollback.ToolCardSnapshot:
-		b.kind, b.toolID, b.toolName, b.toolArgs, b.resolved, b.resultBody, b.resultError = blockTool, p.Call.ID, p.Call.Name, p.Call.Arguments, p.Resolved, p.Result.Body, p.Result.IsError
-		b.resultBlocks = contentBlocks(p.Result.Artifacts)
-	case scrollback.NoticeCardSnapshot:
-		b.kind, b.raw, b.recover = blockNotice, p.Text, p.Recover
-	case scrollback.TurnStatCardSnapshot:
-		b.kind, b.raw = blockTurnStat, p.Text
-	case scrollback.ErrorCardSnapshot:
-		b.kind, b.raw, b.permanent = blockError, p.Text, p.Permanent
-	case scrollback.HookCardSnapshot:
-		b.kind, b.raw, b.hookPhase, b.hookTool, b.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
-	case scrollback.DeliveryCardSnapshot:
-		b.kind, b.raw, b.toolName, b.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
-	case scrollback.SubagentCardSnapshot, scrollback.TeamCardSnapshot:
-		return delegationBlockFromSnapshot(s)
-	default:
-		return block{}, false
+func toolBlockFromSnapshot(s scrollback.BlockSnapshot, p scrollback.ToolCardSnapshot) block {
+	return block{
+		id:           uint64(s.ID),
+		rev:          rendererRevision(s.Revision),
+		kind:         blockTool,
+		toolID:       p.Call.ID,
+		toolName:     p.Call.Name,
+		toolArgs:     p.Call.Arguments,
+		resolved:     p.Resolved,
+		resultBody:   p.Result.Body,
+		resultError:  p.Result.IsError,
+		resultBlocks: contentBlocks(p.Result.Artifacts),
 	}
-	return b, true
 }
 
 func artifacts(blocks []client.ContentBlock) []scrollback.Artifact {

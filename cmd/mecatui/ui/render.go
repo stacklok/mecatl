@@ -641,11 +641,7 @@ func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]rend
 			continue
 		}
 		r.snapshotLoads++
-		b, ok := blockFromSnapshot(c.SnapshotAt(i))
-		if !ok {
-			continue
-		}
-		pass.text = r.renderBlock(i, &b, expand)
+		pass.text = r.renderSnapshot(i, c.SnapshotAt(i), expand)
 		entry, _ := r.blocks.renderedBlock(i, key)
 		pass.rows = entry.rows
 		passes[i] = pass
@@ -654,6 +650,40 @@ func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]rend
 		}
 	}
 	return passes, firstChanged
+}
+
+// renderSnapshot dispatches each sealed scrollback payload deliberately. The
+// renderer owns this adaptation: scrollback itself remains a logical model with
+// no dependency on presentation, markdown, or client event types.
+func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bool) string {
+	base := block{id: uint64(s.ID), rev: rendererRevision(s.Revision)}
+	switch p := s.Payload.(type) {
+	case scrollback.UserCardSnapshot:
+		base.kind, base.raw, base.media = blockUser, p.Text, p.Media
+	case scrollback.AssistantCardSnapshot:
+		base.kind, base.raw, base.reasoning, base.reasoningStreaming = blockAssistant, p.Text, p.Reasoning, p.ReasoningStreaming
+	case scrollback.ToolCardSnapshot:
+		base = toolBlockFromSnapshot(s, p)
+	case scrollback.NoticeCardSnapshot:
+		base.kind, base.raw, base.recover = blockNotice, p.Text, p.Recover
+	case scrollback.TurnStatCardSnapshot:
+		base.kind, base.raw = blockTurnStat, p.Text
+	case scrollback.ErrorCardSnapshot:
+		base.kind, base.raw, base.permanent = blockError, p.Text, p.Permanent
+	case scrollback.HookCardSnapshot:
+		base.kind, base.raw, base.hookPhase, base.hookTool, base.hookDecision = blockHook, p.Text, p.Phase, p.Tool, p.Decision
+	case scrollback.DeliveryCardSnapshot:
+		base.kind, base.raw, base.toolName, base.deliveryFireID = blockDelivery, p.Text, p.ScheduleName, p.FireID
+	case scrollback.SubagentCardSnapshot, scrollback.TeamCardSnapshot:
+		var ok bool
+		base, ok = delegationBlockFromSnapshot(s)
+		if !ok {
+			return ""
+		}
+	default:
+		return ""
+	}
+	return r.renderBlock(idx, &base, expand)
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
