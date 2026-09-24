@@ -40,6 +40,7 @@ import { registerChatRoutes } from "./routes/chat.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
+import { registerStatusRoutes } from "./routes/status.js";
 import { registerStorageRoutes } from "./routes/storage.js";
 import { readInstalledSdkVersion } from "./sdk-version.js";
 
@@ -132,10 +133,12 @@ export function createApp(dependencies: AppDependencies = {}) {
 
   registerAuthRoutes(app, authentication, runtime);
 
-  // AC3.8: with interactive login active, everything under /api/v1 except the
-  // auth routes themselves needs a live session; /api/health never does.
+  // With interactive login active, only public status and auth routes bypass
+  // the session gate under /api/v1; /api/health never enters it.
   app.use("/api/v1/*", async (context, next) => {
-    if (context.req.path.startsWith("/api/v1/auth/")) return next();
+    if (context.req.path === "/api/v1/status" || context.req.path.startsWith("/api/v1/auth/")) {
+      return next();
+    }
     if (authentication === undefined) return next();
     const resolution = await authentication.credential(context);
     if (resolution.status === "anonymous") {
@@ -164,10 +167,14 @@ export function createApp(dependencies: AppDependencies = {}) {
   // Capabilities come from the negotiated snapshot, so answering earlier would
   // report a supported feature as `supported: false` — a successful, cacheable
   // lie. The wait runs inside the request's credential context. /runtime keeps
-  // its own non-blocking 503, and the auth routes never depend on it.
+  // its own non-blocking 503; public status and auth routes never depend on it.
   app.use("/api/v1/*", async (context, next) => {
     if (runtime === undefined) return next();
-    if (context.req.path === "/api/v1/runtime" || context.req.path.startsWith("/api/v1/auth/")) {
+    if (
+      context.req.path === "/api/v1/status" ||
+      context.req.path === "/api/v1/runtime" ||
+      context.req.path.startsWith("/api/v1/auth/")
+    ) {
       return next();
     }
     if (await negotiated(runtime, readinessTimeoutMs)) return next();
@@ -177,6 +184,8 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.openapi(healthRoute, (context) =>
     context.json({ service: "mecatl-studio" as const, status: "ok" as const }, 200),
   );
+
+  registerStatusRoutes(app, authentication, runtime);
 
   app.openapi(runtimeRoute, (context) => {
     if (runtime === undefined) return runtimeUnavailable(context, "The BFF has no Mecatl runtime.");

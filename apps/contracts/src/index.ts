@@ -8,4 +8,5 @@ export * from "./schemas/problem-details.ts";
 export * from "./schemas/runtime.ts";
 export * from "./schemas/schedules.ts";
 export * from "./schemas/settings.ts";
+export * from "./schemas/status.ts";
 export * from "./schemas/storage.ts";

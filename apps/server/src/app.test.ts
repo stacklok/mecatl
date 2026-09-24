@@ -2,13 +2,92 @@
 
 import { createRoute, z } from "@hono/zod-openapi";
 import { MecatlError } from "@stacklok-oss/mecatl-sdk";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
+import type { AuthenticationService } from "./auth/service.js";
 import { RuntimeNotReadyError } from "./mecatl/runtime.js";
 import { fakeRuntime, sampleSnapshot } from "./testing/fakes.js";
 import { installedSdkPackageVersion } from "./testing/sdk-package.js";
 
 describe("Studio BFF", () => {
+  it("detailed runtime and feature routes reject anonymous requests", async () => {
+    const credential = vi.fn<AuthenticationService["credential"]>(async (context) =>
+      context.req.header("cookie") === "studio_access=valid"
+        ? {
+            credential: {
+              accessToken: "test-access-token",
+              expiresAt: Date.now() + 60_000,
+              subject: "test-subject",
+              tokenType: "Bearer",
+            },
+            status: "authenticated",
+          }
+        : { status: "anonymous" },
+    );
+    const authentication: AuthenticationService = {
+      clear: () => undefined,
+      completeLogin: async () => {
+        throw new Error("unused");
+      },
+      credential,
+      logout: async () => undefined,
+      noteLoginComplete: () => undefined,
+      noteLoginFailure: () => undefined,
+      save: async () => undefined,
+      signInRequired: async (context: Parameters<AuthenticationService["credential"]>[0]) =>
+        context.req.header("cookie") !== "studio_access=valid",
+      startLogin: async () => "https://issuer.example.com/authorize",
+    };
+    const storageHealth = {
+      activeJob: false,
+      available: true,
+      childCount: "0",
+      corruptCount: "0",
+      currentBytes: "0",
+      lastFailure: false,
+      mainCount: "0",
+      reclaimableBytes: null,
+      scheduledCount: "0",
+      sessionCount: "0",
+      supported: true,
+      unknownCount: "0",
+    };
+    const getHealth = vi.fn(async () => storageHealth);
+    const app = createApp({
+      authentication,
+      runtime: fakeRuntime({ authMode: "oidc" }),
+      storage: { getHealth, supported: true },
+    });
+
+    expect((await app.request("/api/v1/status")).status).toBe(200);
+    expect(credential).not.toHaveBeenCalled();
+    for (const path of [
+      "/api/v1/runtime",
+      "/api/v1/sessions",
+      "/api/v1/schedules",
+      "/api/v1/skills",
+      "/api/v1/learning-proposals",
+      "/api/v1/settings/runtime",
+      "/api/v1/storage/health",
+      "/api/v1/status/extra",
+    ]) {
+      const response = await app.request(path);
+      expect(response.status, path).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ code: "unauthenticated" });
+    }
+    expect(getHealth).not.toHaveBeenCalled();
+
+    const headers = { Cookie: "studio_access=valid" };
+    const runtime = await app.request("/api/v1/runtime", { headers });
+    expect(runtime.status).toBe(200);
+    await expect(runtime.json()).resolves.toEqual(sampleSnapshot());
+
+    const health = await app.request("/api/v1/storage/health", { headers });
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toEqual(storageHealth);
+    expect(getHealth).toHaveBeenCalledTimes(1);
+  });
+
   it("GET /api/health returns 200 and GET /api/v1/runtime returns the negotiated snapshot", async () => {
     const app = createApp({ runtime: fakeRuntime() });
 
