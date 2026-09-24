@@ -201,7 +201,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0332 — Mecatui local provider enrollment preserves existing credential custody](./0332-mecatui-local-provider-enrollment.md) *(proposed; outcome-typed ordered commits)*
 
 - [0333 — Unified provider configuration and Mecatui provider commands](./0333-unified-provider-configuration-and-mecatui-provider-commands.md) *(proposed; supersedes the `llm.endpoints` facade and unifies the local provider CLI)*
-- [0359 — Separate root-conversation correlation from active-session identity](./0359-root-session-provider-correlation.md) *(proposed; preserves the active affinity header and adds an outbound-only root header)*
+- [0360 — Separate root-conversation correlation from active-session identity](./0360-root-session-provider-correlation.md) *(proposed; preserves the active affinity header and adds an outbound-only root header)*
 
 ### MCP
 - [0056 — MCP client reconnect](./0056-mcp-client-reconnect.md)

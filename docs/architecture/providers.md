@@ -97,7 +97,7 @@ identity globally, so concurrent sessions cannot cross-stamp. The active field r
 only client/server affinity hint; the root field is outbound-only. Neither field grants
 authentication, authorization, tracing, idempotency, provider state, safety/user identity,
 or cache identity. See [ADR 0216](../adr/0216-provider-session-correlation-header.md) and
-[ADR 0359](../adr/0359-root-session-provider-correlation.md).
+[ADR 0360](../adr/0360-root-session-provider-correlation.md).
 
 **The provider-neutral seam**: the loop only ever sees `port.Chunk`; no OpenAI
 type crosses the boundary. The fake `mockllm.Provider` (`engine/adapter/mockllm`,

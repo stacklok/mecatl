@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — adds a durable outbound HTTP correlation contract and an exported engine context API across delegation, model routing, independently versioned providers, and the Jev adapter while preserving the existing affinity contract.
-**Decision record:** [ADR 0359](../adr/0359-root-session-provider-correlation.md)
+**Decision record:** [ADR 0360](../adr/0360-root-session-provider-correlation.md)
 **Phase:** delegated model-request correlation
 **Status:** proposed, 2026-09-24. Exact interface contract ready for human Plan / Interface review; it remains proposed until this plan PR merges.
 **Delivery:** Split docs → implementation. On 2026-09-24 the directing human asked for the design and implementation branches to be pushed and stacked, and confirmed "yes, keep on going", so the implementation proceeds as a stacked PR on this proposed-docs commit before the plan merges. This does not mark the plan approved, authorize any merge, relax contract-drift stops, or remove either human merge gate.
@@ -14,14 +14,14 @@
 Add an outbound-only `X-Mecatl-Root-Session-ID` alongside the existing active-session
 `X-Mecatl-Session-ID`. Provider calls made by a main run and its nested engines, plus both
 delegated-model router backends, can then be grouped by the root value without collapsing durable
-child sessions or changing client-to-server affinity. The behavior follows [ADR 0359](../adr/0359-root-session-provider-correlation.md)
+child sessions or changing client-to-server affinity. The behavior follows [ADR 0360](../adr/0360-root-session-provider-correlation.md)
 and preserves the existing active-session contract in
 [ADR 0216](../adr/0216-provider-session-correlation-header.md) and
 [ADR 0294](../adr/0294-session-correlation-and-affinity.md).
 
 ## Human decisions
 
-None — the operator accepted the separately named root header after confirming that the existing active-session header is also an ingress-affinity contract; the remaining propagation and compatibility behavior is fixed by ADR 0359.
+None — the operator accepted the separately named root header after confirming that the existing active-session header is also an ingress-affinity contract; the remaining propagation and compatibility behavior is fixed by ADR 0360.
 
 ## Interface contract
 
@@ -52,7 +52,7 @@ it when `RunTeam` starts; source-less direct teams have no external conversation
 - AC1.3: A direct team created for a source session retains that source through its process-local declaration and uses it as every member's root when `RunTeam` starts, while a source-less default-placement team roots each member in its own session and never fabricates a main conversation ID.
   - verify: `TestRootSessionProviderCorrelation_Scenario1_DirectTeamRooting`
 - AC1.4: Official gRPC and HTTP run entry ignores a forged `X-Mecatl-Root-Session-ID` and overwrites any pre-populated root context with the authoritative requested session before provider or Jev work; nested internal engines still preserve that authoritative root.
-  - verify: `TestRootSessionProviderCorrelation_Scenario1_IngressCannotChooseRoot`, `TestRootSessionProviderCorrelation_Scenario1_IngressCannotChooseRootGRPC`, `TestADR_0359_RootHeaderIsCorrelationOnly`
+  - verify: `TestRootSessionProviderCorrelation_Scenario1_IngressCannotChooseRoot`, `TestRootSessionProviderCorrelation_Scenario1_IngressCannotChooseRootGRPC`, `TestADR_0360_RootHeaderIsCorrelationOnly`
 
 ### Scenario 2 — Providers emit active and root correlation independently
 

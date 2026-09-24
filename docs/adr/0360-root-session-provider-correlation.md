@@ -1,4 +1,4 @@
-# ADR 0359 — Separate root-conversation correlation from active-session identity
+# ADR 0360 — Separate root-conversation correlation from active-session identity
 
 - Status: Proposed
 - Date: 2026-09-24
