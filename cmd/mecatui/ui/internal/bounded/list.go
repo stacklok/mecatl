@@ -47,6 +47,12 @@ type listLayout struct {
 	starts, ends []int
 }
 
+type indicatorCandidate struct {
+	start, height int
+	above, below  int
+	singletons    int
+}
+
 // SetGeometry configures the list viewport dimensions, gutter-cell count, and fitting
 // policy. Every list has one selection cell and zero to two status cells; a trailing
 // padding cell separates that gutter from content.
@@ -246,7 +252,19 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 		l.viewport.height, l.viewport.offset, l.reveal = capacity, 0, false
 		return ListView{}
 	}
-	existingOffset := l.viewport.offset
+	previousOffset := l.viewport.offset
+	selectedHeight := l.normalizeIndicatorCursor(layout)
+	best, found := l.bestIndicatorCandidate(layout, capacity, previousOffset, reveal, selectedHeight)
+	if !found {
+		best = l.indicatorFallback(layout, capacity, previousOffset, reveal)
+	}
+
+	l.viewport.height, l.viewport.offset = best.height, best.start
+	l.reveal = false
+	return l.indicatorView(layout, best)
+}
+
+func (l *List) normalizeIndicatorCursor(layout listLayout) int {
 	l.cursor = clampBounded(l.cursor, len(l.items))
 	if l.cursorID == "" || l.itemIndex(l.cursorID) < 0 {
 		l.cursorID = l.items[l.cursor].ID
@@ -255,80 +273,103 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 	}
 	selectedHeight := layout.ends[l.cursor] - layout.starts[l.cursor]
 	l.cursorLine = min(max(0, l.cursorLine), max(0, selectedHeight-1))
+	return selectedHeight
+}
 
-	type candidate struct {
-		start, height int
-		above, below  int
-		singletons    int
-	}
-	var best *candidate
+func (l *List) bestIndicatorCandidate(layout listLayout, capacity, previousOffset int, reveal bool, selectedHeight int) (indicatorCandidate, bool) {
+	var best indicatorCandidate
+	found := false
 	for mask := 0; mask < 4; mask++ {
-		chrome := 0
-		if mask&1 != 0 {
-			chrome++
-		}
-		if mask&2 != 0 {
-			chrome++
-		}
+		chrome := indicatorChrome(mask)
 		if chrome >= capacity {
 			continue
 		}
 		height := capacity - chrome
-		first, last := existingOffset, existingOffset+1
-		if reveal {
-			first, last = 0, max(1, len(layout.rows)-height+1)
-		}
+		first, last := indicatorCandidateRange(len(layout.rows), height, previousOffset, reveal)
 		for start := first; start < last; start++ {
-			if start < 0 || start >= len(layout.rows) || (len(layout.rows) >= height && start+height > len(layout.rows)) {
+			if !indicatorCandidateFits(len(layout.rows), start, height) {
 				continue
 			}
 			end := min(len(layout.rows), start+height)
 			above, below := hiddenCompleteItems(layout, start, end)
-			if (mask&1 != 0) != (above > 1) || (mask&2 != 0) != (below > 1) {
+			if !indicatorMaskMatches(mask, above, below) || !l.indicatorReveals(layout, start, end, height, selectedHeight, reveal) {
 				continue
 			}
-			if reveal {
-				selectedStart, selectedEnd := layout.starts[l.cursor], layout.ends[l.cursor]
-				if selectedHeight <= height {
-					if selectedStart < start || selectedEnd > end {
-						continue
-					}
-				} else {
-					cursorLine := selectedStart + l.cursorLine
-					if cursorLine < start || cursorLine >= end {
-						continue
-					}
-				}
-			}
-			c := candidate{start: start, height: height, above: above, below: below}
-			if above == 1 {
-				c.singletons++
-			}
-			if below == 1 {
-				c.singletons++
-			}
-			if best == nil || (reveal && (c.singletons < best.singletons ||
-				(c.singletons == best.singletons && (abs(c.start-existingOffset) < abs(best.start-existingOffset) ||
-					(abs(c.start-existingOffset) == abs(best.start-existingOffset) && c.start < best.start))))) {
-				best = &c
+			candidate := indicatorCandidate{start: start, height: height, above: above, below: below}
+			candidate.singletons = singletonIndicators(above, below)
+			if !found || betterIndicatorCandidate(candidate, best, previousOffset, reveal) {
+				best, found = candidate, true
 			}
 		}
 	}
-	if best == nil {
-		l.viewport.height = capacity
-		if reveal {
-			l.viewport.offset = existingOffset
-			l.revealCursor(layout)
-		} else {
-			l.viewport.height = min(max(1, l.viewport.height), len(layout.rows)-existingOffset)
-			l.viewport.offset = existingOffset
-		}
-		w := l.viewport.window(len(layout.rows))
-		above, below := hiddenCompleteItems(layout, w.start, w.end)
-		best = &candidate{start: w.start, height: l.viewport.height, above: above, below: below}
-	}
+	return best, found
+}
 
-	l.viewport.height, l.viewport.offset = best.height, best.start
+func indicatorChrome(mask int) int {
+	return mask&1 + (mask&2)/2
+}
+
+func indicatorCandidateRange(rows, height, offset int, reveal bool) (int, int) {
+	if reveal {
+		return 0, max(1, rows-height+1)
+	}
+	return offset, offset + 1
+}
+
+func indicatorCandidateFits(rows, start, height int) bool {
+	return start >= 0 && start < rows && (rows < height || start+height <= rows)
+}
+
+func indicatorMaskMatches(mask, above, below int) bool {
+	return (mask&1 != 0) == (above > 1) && (mask&2 != 0) == (below > 1)
+}
+
+func (l *List) indicatorReveals(layout listLayout, start, end, height, selectedHeight int, reveal bool) bool {
+	if !reveal {
+		return true
+	}
+	selectedStart, selectedEnd := layout.starts[l.cursor], layout.ends[l.cursor]
+	if selectedHeight <= height {
+		return selectedStart >= start && selectedEnd <= end
+	}
+	cursorLine := selectedStart + l.cursorLine
+	return cursorLine >= start && cursorLine < end
+}
+
+func singletonIndicators(above, below int) int {
+	count := 0
+	if above == 1 {
+		count++
+	}
+	if below == 1 {
+		count++
+	}
+	return count
+}
+
+func betterIndicatorCandidate(candidate, best indicatorCandidate, previousOffset int, reveal bool) bool {
+	if !reveal || candidate.singletons != best.singletons {
+		return reveal && candidate.singletons < best.singletons
+	}
+	candidateDistance, bestDistance := abs(candidate.start-previousOffset), abs(best.start-previousOffset)
+	return candidateDistance < bestDistance || candidateDistance == bestDistance && candidate.start < best.start
+}
+
+func (l *List) indicatorFallback(layout listLayout, capacity, previousOffset int, reveal bool) indicatorCandidate {
+	l.viewport.height = capacity
+	if reveal {
+		l.viewport.offset = previousOffset
+		l.revealCursor(layout)
+	} else {
+		l.viewport.height = min(max(1, l.viewport.height), len(layout.rows)-previousOffset)
+		l.viewport.offset = previousOffset
+	}
+	w := l.viewport.window(len(layout.rows))
+	above, below := hiddenCompleteItems(layout, w.start, w.end)
+	return indicatorCandidate{start: w.start, height: l.viewport.height, above: above, below: below}
+}
+
+func (l *List) indicatorView(layout listLayout, candidate indicatorCandidate) ListView {
 	w := l.viewport.window(len(layout.rows))
 	rows := append([]ListRow(nil), layout.rows[w.start:w.end]...)
 	marked := false
@@ -339,13 +380,12 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 			marked = true
 		}
 	}
-	l.reveal = false
 	view := ListView{Rows: rows}
-	if best.above > 1 {
-		view.Above = best.above
+	if candidate.above > 1 {
+		view.Above = candidate.above
 	}
-	if best.below > 1 {
-		view.Below = best.below
+	if candidate.below > 1 {
+		view.Below = candidate.below
 	}
 	return view
 }
