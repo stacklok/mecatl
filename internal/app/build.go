@@ -2058,7 +2058,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	if pdfStore != nil {
 		cfg.pdfArtifacts = pdfStore
-		cfg.pdfResultProcessor = pdfartifact.FailClosedResultProcessor{}
+		cfg.pdfResultProcessor = pdfartifact.ResultProcessor{Artifacts: pdfStore}
 	}
 	if cfg.pdfArtifacts != nil && cfg.pdfResultProcessor == nil {
 		storeClose()
@@ -3392,6 +3392,7 @@ func sessionEngineFactoryWithTools(
 		}
 		var mgr *mcp.Manager
 		if len(specs) > 0 {
+			specs = withPDFArtifactResults(specs, cfg.pdfArtifacts != nil)
 			m, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
 			if err != nil {
 				// Best-effort HERE, by design: every server failed and the session still

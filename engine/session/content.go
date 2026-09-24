@@ -381,7 +381,8 @@ func NewStructuredContentBlock(structuredJSON string) Content {
 
 // ValidateToolResultParts enforces the per-result byte caps (CWE-770) on an
 // already-constructed slice of tool-result blocks: each text block at most
-// MaxToolResultTextBytes, each blob block at most MaxMediaBytes, and the SUM of
+// MaxToolResultTextBytes, each blob block at most MaxMediaBytes except a PDF
+// embedded resource (MaxPDFBytes), and the SUM of
 // inline text+blob bytes at most MaxToolResultBytes. URL-sourced resource links
 // contribute no bytes. It is called at the wire→domain choke point after the
 // blocks are built via the constructors. A nil/empty slice passes. It is
@@ -399,8 +400,12 @@ func ValidateToolResultParts(parts []Content) error {
 			total += n
 		case BlockEmbeddedResource:
 			n := len(p.Data)
-			if n > MaxMediaBytes {
-				return fmt.Errorf("%w: block[%d] blob %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
+			limit := MaxMediaBytes
+			if strings.EqualFold(p.MIMEType, "application/pdf") && n > 0 {
+				limit = MaxPDFBytes
+			}
+			if n > limit {
+				return fmt.Errorf("%w: block[%d] blob %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, limit)
 			}
 			total += n + len(p.Text)
 		case BlockImage, BlockAudio:

@@ -485,6 +485,14 @@ func cloneMCPConfigs(in []mcp.ServerConfig) []mcp.ServerConfig {
 	return out
 }
 
+func withPDFArtifactResults(in []mcp.ServerConfig, enabled bool) []mcp.ServerConfig {
+	out := cloneMCPConfigs(in)
+	for i := range out {
+		out[i].PDFArtifactResults = enabled
+	}
+	return out
+}
+
 func equalMCPConfigs(a, b []mcp.ServerConfig) bool {
 	return reflect.DeepEqual(comparableMCPConfigs(a), comparableMCPConfigs(b))
 }
@@ -580,6 +588,7 @@ func buildMCPReconcileCandidate(diagCfg Config) mcpCandidateBuilder {
 		for i := range bounded {
 			bounded[i].ListChanged = changed
 			bounded[i].CandidateBudget = budget
+			bounded[i].PDFArtifactResults = diagCfg.pdfArtifacts != nil
 		}
 		mgr, err := mcp.NewCompleteManager(ctx, bounded, diagCfg.diag())
 		if err != nil {

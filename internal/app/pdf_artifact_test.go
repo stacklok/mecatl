@@ -122,3 +122,16 @@ func TestPDFPromptCommitStoreMarksSuccessfulSnapshot(t *testing.T) {
 		t.Fatalf("unchanged snapshot repeated PDF marker call: %v", fixture.committed)
 	}
 }
+
+func TestPDFArtifactBuildRejectsMissingResultProcessor(t *testing.T) {
+	built, err := buildIsolated(t, t.Context(), Config{
+		Workspace: t.TempDir(), Model: "mock", UseMock: true, NoSoul: true,
+		pdfArtifacts: &pdfLifecycleFixture{},
+	})
+	if built != nil {
+		built.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "tool-result processor") {
+		t.Fatalf("Build without PDF result processor = %v, want composition error", err)
+	}
+}

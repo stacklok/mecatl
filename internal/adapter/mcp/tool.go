@@ -175,6 +175,9 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 	}
 
 	modelStr, blocks := mapContent(res.Content)
+	if hasOversizedPDFBlob(blocks) {
+		return session.NewToolError(in.ID, "PDF tool result exceeds the 20 MiB limit"), nil
+	}
 
 	// Structured content: the spec's SHOULD is that a tool returning
 	// StructuredContent also serializes it as a TextContent block. The harness
@@ -225,6 +228,7 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 	// Content stays bounded by toolkit.MaxOutputBytes while the clamp reason
 	// survives.
 	parts := blocks
+	parts, content = boundPDFBlobs(parts, content, t.server.cfg.PDFArtifactResults)
 	if err := session.ValidateToolResultParts(parts); err != nil {
 		var note string
 		parts, note = clampToolResultParts(parts, err)
@@ -238,6 +242,32 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 		return session.NewToolError(in.ID, content), nil
 	}
 	return session.NewToolResultWithParts(in.ID, content, parts), nil
+}
+
+func hasOversizedPDFBlob(parts []session.Content) bool {
+	for _, block := range parts {
+		if block.BlockKind == session.BlockEmbeddedResource && len(block.Data) > session.MaxPDFBytes && strings.EqualFold(block.MIMEType, "application/pdf") {
+			return true
+		}
+	}
+	return false
+}
+
+// boundPDFBlobs preserves the old inline-resource limit when there is no
+// artifact result processor to replace a larger PDF before recording.
+func boundPDFBlobs(parts []session.Content, content string, enabled bool) ([]session.Content, string) {
+	if enabled {
+		return parts, content
+	}
+	kept := make([]session.Content, 0, len(parts))
+	for _, block := range parts {
+		if block.BlockKind == session.BlockEmbeddedResource && len(block.Data) > session.MaxMediaBytes && strings.EqualFold(block.MIMEType, "application/pdf") {
+			content = appendWithinCap(content, "[tool result: PDF embedded resource exceeds the inline byte cap]")
+			continue
+		}
+		kept = append(kept, block)
+	}
+	return kept, content
 }
 
 // argsFor decodes the model's raw JSON args into the any value the SDK marshals
