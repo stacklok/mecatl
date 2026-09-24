@@ -1,6 +1,6 @@
 # ADR 0359 - Harness context source authority is independent of execution
 
-- Status: Proposed amendment to the decision approved in #1814; implementation has not landed
+- Status: Proposed amendment to the decision approved in #1814; directing-user choices resolved, exact interfaces await approval by merge; implementation has not landed
 - Date: 2026-09-24
 - Scope: project instructions, commands, rules, skills, agent definitions, source admission, and deployment composition
 - Supersedes: none
@@ -196,13 +196,71 @@ source anchor. Reconstructed child inventories require the actual attenuated chi
 binding, not a broader parent or global snapshot. Source reads never create
 execution read evidence, even when storage is shared.
 
-The proposed minimum resume rule uses persisted parent ID and incarnation to
-require the original parent on child resume. This would narrow the existing
-same-owner cross-parent resume behavior and therefore remains an explicit open
-human decision in the plan. The alternative requires a reviewed original-anchor
-reconstruction path; neither implicit retargeting nor new durable context identity
-is an implementation fallback. No child transcript is deleted to resolve missing
-authority.
+In-place resume preserves the child identity and original parent lifetime and
+requires current source authorization and containment of the saved capability set.
+The directing user selected durable recovery for default, named-specialist, and
+fork-created children. A minimal private creation recipe records semantic engine
+selection and whether creation used eligible managed authority; existing labels carry
+profile, explicit-versus-floating model selection, limits, and capabilities. Reconstruction
+uses current authorized configuration rather than compactable messages or inherited
+identity labels. Only eligible operator-managed definitions add authority ceilings;
+ordinary definitions constrain the engine catalog without converting it into a grant
+set. A managed definition cannot be replaced by a same-name lower-tier definition on
+resume. Check saved authority before applying this call's requested read-only/writable
+view, then use the fully attenuated specialist engine without a generic-engine swap.
+Current content can change but saved rights cannot expand. Missing/revoked definitions
+or narrower eligible authority refuse without fallback. Floating model defaults remain
+floating across restart, while saved explicit selections retain precedence. Forked
+history is not a reason to refuse reconstruction.
+
+The same amendment provides explicit new-child history transfer. The receiving
+parent independently authorizes new delegation; source capabilities neither grant
+nor veto it. This permits a read-only investigation to inform explicitly authorized
+read-write implementation without pretending to resume the original child. Source
+context grants, approvals, read evidence, usage, and recipe are not imported as
+current authority. An eligible owned transcript does not need its old parent,
+backend, context grant, or capability record merely to serve as historical data.
+The recovery rationale of [ADR 0200](./0200-resume-a-failed-subagent.md) is preserved
+without retargeting the saved child or triggering automatic fallback.
+
+Capture and durable child start/resume share exclusive session access with a real
+commit/takeover fence. Context checks, refcounted liveness, and same-owner lease
+acquisition do not fence a write already admitted before expiry. The local store
+pairs its lease domain with stable OS exclusion retained through all admitted IO;
+expiry cannot transfer ownership beneath it. Expiring remote pairs require atomic
+current-epoch validation in the same backend transaction as every mutation, including
+metadata/events and deletion. Unfenced drivers or split backends without that guarantee
+remain unsupported. The plan owns exact availability, interfaces, and proof obligations.
+
+Work cancellation and persistence ownership are distinct. A cancelled child retains
+its valid exclusive hold through bounded terminal persistence so it remains resumable;
+real lease loss instead forbids detached writes. Shutdown stops work/admission first,
+drains still-authorized persistence, then closes ownership. Guarded source reload
+and incarnation comparison prevent capture from adopting a replacement. Stable local
+lock identities and backend fence records retain their safety role across cleanup
+and restart; the implementation records their lifecycle in ADR 0027.
+
+Initial transfer content is bounded text/structured text with Parts precedence and
+inert resource links. Media and oversized seeds are explicit errors, not silent loss,
+asset fetches, or an unbounded fallback. Bounded preflight precedes copying/encoding;
+canonical framing keeps roles, instructions, and tool records historical. Copy-local
+pairing projection retains completed pairs and assistant text when another call in
+the final batch is unanswered, without repairing the source.
+
+New delegation consumes the normal receiving-parent hop and starts fresh destination
+usage. Imported input and new output count against destination limits; old usage
+remains on the source. Parent own limits and per-call admission remain ordinary.
+Subagent usage reporting does not imply folding all child spend into the parent main
+session's budget; this amendment adds no descendant aggregate/reservation accounting.
+Existing Team/Parallel aggregate rules remain local to their existing paths.
+Same-ID resume preserves cumulative usage and consumes no extra hop, following
+[ADR 0234](./0234-authority-evaluator-port.md).
+
+Legacy missing lineage never licenses retroactive parent adoption or transcript
+deletion. Missing recipes prevent cold in-place reconstruction, but authorized
+terminal Subagent history remains transferable; unknown producer kinds and active
+or idle records remain ineligible. This is not universal legacy recovery.
+Original-source cross-parent reconstruction remains outside this amendment.
 
 ## Restart and reconfiguration
 
@@ -221,8 +279,15 @@ Existing sessions and scheduled fires create fresh bindings from the current com
 authorization after restart, so an operator configuration change can change the context seen by a
 resumed conversation. Per-call code does not accidentally rebuild snapshot sources.
 
-This decision adds no durable `HarnessContextRef`, source selector, event, or snapshot field. Existing
-sessions and schedules require no migration and are not rejected because they predate this contract.
+This amendment authorizes one additive private Subagent creation recipe in snapshots
+and event-source creation metadata, reusing existing profile/provider and authority
+fields. No durable `HarnessContextRef`, frozen external snapshot, or public source
+selector is added. Recipe absence is preserved, never reconstructed from historical
+text; new children stamp their own selections. History-transfer provenance uses
+existing tool calls/results and the seeded conversation, while the new child's normal
+relationship names only its receiving parent. No destructive migration is required.
+Missing lineage/recipe/authority can prevent in-place continuation without preventing
+authorized inspection or eligible history transfer.
 Stored execution placement never supplies a fallback context binding. Rebinding owner-authorizes the
 session or schedule under current policy; it cannot preserve a revoked source grant. The existing
 local/system-principal behavior remains valid when an unauthenticated local deployment has no external
@@ -244,7 +309,10 @@ the exact execution backend, and source reads retain their own admission and fre
 The model defines domain responsibilities; the acceptance plan owns exact
 interfaces, approval status, and backend proof obligations. Its dependency stack
 is the shared amendment, #1875, then sibling MicroVM #580, Redis #1811, and native
-Kubernetes #1614 integrations. Native plan #1579 must replace backend-selected
+Kubernetes #1614 integrations. #1875 delivers same-parent resume enforcement and
+explicit new-child history transfer together, including model-visible recovery
+instructions; it does not defer the replacement for cross-parent recovery.
+Native plan #1579 must replace backend-selected
 context restrictions with explicit source policy. A first native slice can leave
 PVC context unselected while admitting independent deployment/API sources.
 

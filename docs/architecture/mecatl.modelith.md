@@ -140,6 +140,10 @@ The deployment-configured composition of admitted sources for model-facing instr
 
 - **harness-context-inheritance-preserves-source** — A delegated child inherits its parent's admitted source authority subject to the child's restrictions. Forking execution files does not retarget an inherited source. Reconstruction reauthorizes that source under current policy; missing authority is not replaced with the child's execution files or another namespace.
 
+- **harness-context-resume-preserves-parent-lifetime** — In-place child resume preserves child identity and requires its original parent identity and lifetime, current source authorization, containment of saved capabilities, and preservation of child restrictions. Durable semantic selection metadata enables reconstruction from current authorized definitions without compactable parent messages or frozen prompts. Current configuration cannot widen saved rights. Only eligible managed definitions add authority ceilings; ordinary catalogs still restrict tools without becoming grant sets. Managed authority cannot survive replacement by a same-name lower-tier definition. Requested execution mode attenuates the selected engine after saved-authority checks, without changing saved rights. Missing required authority refuses continuation without deleting history. An execution fork alone does not authorize retargeting.
+
+- **harness-context-history-transfer-is-new-delegation** — Explicit transfer of authorized, non-running child history creates a new child under the receiving parent's current `HarnessContext` and execution policy. The receiving parent independently authorizes new work; source capabilities neither grant nor veto it. Copied history is bounded untrusted data, not approvals, tool execution, or read evidence. Unsupported content is refused rather than silently discarded or fetched. The source and its parent remain unchanged. Transfer consumes a normal receiving delegation hop and accounts new work on the destination separately from the source's retained usage; it is never an automatic fallback from failed resume.
+
 - **harness-context-does-not-share-read-evidence** — Harness-source reads never consult or update the execution `ReadLedger`, including when source and execution share backing files. `Sessions` sharing a harness context retain independent read evidence.
 
 
@@ -794,6 +798,47 @@ erDiagram
 - **harness-context-overrides-do-not-grant-authority** — Context overrides select content; they cannot weaken `PermissionRules`, grant execution capabilities, bypass source admission, or widen a child's allowed tools. Instruction rules remain distinct from the governance `PermissionRule` model.
 
 - **harness-context-inventory-session-effective** — A session's human-facing command, skill, and agent-definition inventories describe the same admitted and resolved definitions used by that session's model. The same observation has the same names and winners, including owner-specific contributions and applicable child restrictions. Inventory membership does not grant tool capability or invocation permission and never publishes another owner's context.
+
+
+### In-place resume requires the original parent lifetime
+
+**Actors:** Principal, Operator
+
+**Steps**
+
+1. Default, specialist, and fork-created children with durable semantic selection metadata resume under their original parent after restart, even when parent messages were compacted. Current authorized definitions supply content; saved capabilities and cumulative usage remain unchanged.
+2. A missing/revoked definition, narrower eligible managed authority, or managed-to-lower-tier replacement refuses continuation. Ordinary named definitions still restrict the catalog without treating it as a capability ceiling. Saved explicit model selections remain explicit; floating defaults resolve current configuration.
+3. A saved writable specialist can resume read-only or writable under current authorization: containment precedes mode attenuation, the actual specialist engine honors the requested mode, and saved rights/usage remain unchanged. Ordinary cancellation retains ownership through bounded terminal persistence; lease loss cannot authorize that save.
+4. The saved transcript remains inspectable under its authorization. Refusal never automatically starts a history transfer.
+
+**Invariants touched**
+
+- **harness-context-resume-preserves-parent-lifetime** — In-place child resume preserves child identity and requires its original parent identity and lifetime, current source authorization, containment of saved capabilities, and preservation of child restrictions. Durable semantic selection metadata enables reconstruction from current authorized definitions without compactable parent messages or frozen prompts. Current configuration cannot widen saved rights. Only eligible managed definitions add authority ceilings; ordinary catalogs still restrict tools without becoming grant sets. Managed authority cannot survive replacement by a same-name lower-tier definition. Requested execution mode attenuates the selected engine after saved-authority checks, without changing saved rights. Missing required authority refuses continuation without deleting history. An execution fork alone does not authorize retargeting.
+
+- **harness-context-inheritance-preserves-source** — A delegated child inherits its parent's admitted source authority subject to the child's restrictions. Forking execution files does not retarget an inherited source. Reconstruction reauthorizes that source under current policy; missing authority is not replaced with the child's execution files or another namespace.
+
+
+### Authorized history starts a new child in receiving context
+
+**Actors:** Principal, Operator
+
+**Steps**
+
+1. A principal explicitly requests new delegated work with a saved terminal child's history under a different parent and repository. The original parent or source backend need not be available.
+2. Exclusive access shared with start/resume and storage writers protects an owner/incarnation-checked snapshot. Local ownership cannot transfer beneath admitted IO; remote mutation commits atomically reject stale epochs after takeover. Context checks alone do not establish this fence.
+3. Bounded text projection preserves completed call/result pairs and fences historical data; unsupported media and oversize histories fail. The source and parent remain unchanged.
+4. The new child receives a distinct identity, receiving-parent relationship, current admitted definitions, and receiving execution placement. Independently authorized read-write work may use read-only research history; the source's old capability ceiling is neither a grant nor a veto.
+5. New work consumes a receiving delegation hop and counts imported input and new output against destination limits without copying or erasing source usage. Current reads and permission checks are required; old isolated files are not claimed to survive.
+
+**Invariants touched**
+
+- **harness-context-history-transfer-is-new-delegation** — Explicit transfer of authorized, non-running child history creates a new child under the receiving parent's current `HarnessContext` and execution policy. The receiving parent independently authorizes new work; source capabilities neither grant nor veto it. Copied history is bounded untrusted data, not approvals, tool execution, or read evidence. Unsupported content is refused rather than silently discarded or fetched. The source and its parent remain unchanged. Transfer consumes a normal receiving delegation hop and accounts new work on the destination separately from the source's retained usage; it is never an automatic fallback from failed resume.
+
+- **harness-context-inventory-session-effective** — A session's human-facing command, skill, and agent-definition inventories describe the same admitted and resolved definitions used by that session's model. The same observation has the same names and winners, including owner-specific contributions and applicable child restrictions. Inventory membership does not grant tool capability or invocation permission and never publishes another owner's context.
+
+- **harness-context-overrides-do-not-grant-authority** — Context overrides select content; they cannot weaken `PermissionRules`, grant execution capabilities, bypass source admission, or widen a child's allowed tools. Instruction rules remain distinct from the governance `PermissionRule` model.
+
+- **harness-context-does-not-share-read-evidence** — Harness-source reads never consult or update the execution `ReadLedger`, including when source and execution share backing files. `Sessions` sharing a harness context retain independent read evidence.
 
 
 ### Shared harness context keeps session read ledgers isolated

@@ -169,8 +169,10 @@ PR after verification. There is no cleanup or status-only PR.
 - [Mecatui functional conversation-card rendering](mecatui-functional-conversation-card-rendering.md) — follows the landed card-layout correction with deterministic, stateless prepared conversation-card rendering and caller-owned cache keys, while preserving main-scrollback frame, anchor, selection, and cache invariants. Status: proposed.
 - [Mecatui typed scrollback model](mecatui-typed-scrollback-model.md) — replaces the main scrollback's broad mutable block union with a sealed, typed client-local state model whose transitions own stable identity and revisioning while the root UI retains event projection, rendering, cache, frame, and viewport ownership. Status: proposed.
 - [Harness context source authority](harness-context.md) - independent instruction and
-  customization sources, exact session-bound source acquisition, and session-effective
-  inventories. Status: draft amendment to the contract approved in #1814.
+  customization sources, exact session-bound source acquisition, session-effective
+  inventories, durable same-parent resume, and explicit new-child history transfer.
+  Status: proposed amendment to the contract approved in #1814; PR #1878 remains
+  draft for independent review of the resolved choices and exact interfaces.
 - [Headless mecatui credential storage](headless-client-credential-storage.md) —
   Linux-first, read-only Secret Service detection for a root-pinned keyring or
   owner-only plaintext local credential backend; selection and upgrade-only

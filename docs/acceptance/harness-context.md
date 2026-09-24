@@ -4,7 +4,7 @@
 **Work classification:** Architectural — separates harness source authority from execution across composition, trust, and public engine interfaces.
 **Decision record:** [ADR 0359](../adr/0359-harness-context-source-authority.md)
 **Phase:** shared source binding and session-effective inventories
-**Status:** draft, 2026-09-24. Amendment to the contract approved in #1814; implementation remains in #1875. Exact binding and inventory interfaces are under review.
+**Status:** proposed, 2026-09-24. Amendment to the contract approved in #1814; implementation remains in #1875. The directing user resolved the recovery, authority, and bounded-content choices and authorized the necessary durable contracts. Exact proposed interfaces below still require amendment approval by merge.
 **Delivery:** Split. Merge this Plan / Interface amendment before bringing #1875 into conformance; backend integrations follow the shared implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** Relates to [#1811](https://github.com/stacklok/mecatl/issues/1811), [#580](https://github.com/stacklok/mecatl/pull/580), and [#1579](https://github.com/stacklok/mecatl/pull/1579) / [#1614](https://github.com/stacklok/mecatl/pull/1614). This contract closes none of them.
@@ -35,7 +35,10 @@ those interfaces rather than introduce backend-specific source selection or reso
 - [x] Session-bound execution-file sources — Decision: explicitly selected execution-file sources acquire the exact authorized session backend during creation, discovery, and reload. Same-owner/profile sessions remain distinguishable; independent sources do not require execution attachment.
 - [x] Session-effective inventories — Decision: human skill and agent inventories use the session's admitted resolved context, including winning definitions and applicable restrictions. Private definitions are not merged into process-wide snapshots; inventory membership grants no invocation authority.
 - [x] Child inheritance — Decision: an isolated execution fork preserves inherited bound source authority within the child's restrictions. Reconstruction reauthorizes the inherited source instead of selecting child execution files as fallback.
-- [ ] Cross-parent child resume: approve the proposed original-parent ID/incarnation restriction below, or require an explicit original-anchor reconstruction design that preserves cross-parent resume. Existing ownership-only resume permits a same-owner different parent; changing that behavior requires a separate affirmative decision. The implementation must not choose between these alternatives.
+- [x] Resume and explicit history transfer - Decision: the directing user approved same-parent in-place resume plus explicit cross-parent history transfer as a new child in this amendment. Resume preserves the child ID and requires the original parent ID/incarnation, current authorization, carried-authority containment, and an attenuated binding. History transfer leaves the saved child unchanged and delegates new work under the receiving parent's current context with explicit authority bounds. It is never an automatic fallback. Ship both operations together in #1875; original-source cross-parent reconstruction is out of scope pending demonstrated need. The directing user's subsequent authorization settles the following choices.
+- [x] Cold same-parent recovery - Decision: support new default, named-specialist, and fork-created children after restart with a trusted durable selection recipe, existing profile/provider labels, current authorized configuration, and persisted capability bounds. Compacted parent messages and inherited `DefinitionIdentity` labels are not reconstruction authority. Missing/revoked definitions or narrower current parent/eligible managed authority refuse resume without default fallback; eligible saved history remains available for explicit new delegation. Legacy absence is not fabricated. The additive private recipe below is authorized; it is not a durable context reference or frozen prompt snapshot.
+- [x] History-transfer authority - Decision: derive new-child authority solely from the receiving parent's current authorized delegation, current specialist, and explicit tightenings. Saved capabilities neither grant nor veto new work. An authorized read-write receiver can explicitly import read-only research history into read-write work. Missing historical authority alone does not prohibit authorized data transfer. Same-ID resume still preserves and checks its saved capability set.
+- [x] Transfer content and aggregate bound - Decision: initially support bounded text/structured-text projection with Parts precedence and inert resource links; explicitly reject media and oversize content. The final UTF-8 encoded/fenced seed including notices is limited to 256 KiB, with bounded preflight/projection and separate runtime context admission. No silent truncation, summarization, fetch, or new configuration framework is introduced.
 - [x] In-place decision amendment — Decision: the directing operator authorized amending this plan and its existing ADR because implementation has not landed. Renumber the HarnessContext ADR to 0359 to resolve the 0357 collision; preserve the unrelated model-stream decision.
 - [x] Composition configuration and resolution schema — Decision: trusted composition registers source IDs, and operator-only configuration names enabled IDs plus a highest-precedence-first source order for each content kind. Instructions combine in that order or select the first nonempty source in `replace` mode. Commands, rules, skills, and agent definitions resolve exact-name collisions by order, with exact operator-declared exclusions and named lower-source overrides. Resolution performs no recursive merge and assigns no transport-derived precedence.
 - [x] Public API transition — Decision: make the workspace-free `engine/prompt` API break directly, with source-bound filesystem adapters. The implementation PR updates API snapshots and `engine/CHANGELOG.md`; it does not retain workspace-taking compatibility overloads or adapters.
@@ -75,7 +78,7 @@ not authorize runtime changes or backend-specific alternatives before approval.
   `DiscoverInstructions(context.Context, tool.Workspace)` as the explicit lower-level helper. Keep
   `CommandSource`, `SourceExpander`, `RulesSource`, `SkillSource`, and `AgentDefSource` unchanged.
   Server discovery borrows a session-effective binding. Do not add an `engine/port`
-  provider, `session.HarnessContextRef`, or exported engine five-source container.
+  harness-source provider, `session.HarnessContextRef`, or exported engine five-source container.
   The app registration descriptor remains kind-specific:
 
   ```go
@@ -175,9 +178,193 @@ not authorize runtime changes or backend-specific alternatives before approval.
   manifests otherwise retain each existing assembler kind and admission tier. Project ingestion is
   decided before registration binding and resolution, so exclusions and overrides can select only
   already-admitted contributions. No selected body supplies its own provenance policy.
-- **Tool schemas:** None — model-facing tool arguments and results remain unchanged. `Skill` retains
-  logical bundles and named assets. Execution Read/Write/Shell use their existing `Environment`
-  capabilities; harness reads do not create read-ledger evidence.
+  **Durable Subagent selection API:** add these value types and aggregate methods
+  in `engine/session`; the session owns an optional private recipe, not an exported
+  mutable pointer:
+
+  ```go
+  type SubagentSelection string
+  const (
+      SubagentSelectionDefault SubagentSelection = "default"
+      SubagentSelectionNamed   SubagentSelection = "named"
+  )
+  type SubagentRecipe struct {
+      Version          uint32            `json:"version"`
+      Selection        SubagentSelection `json:"selection"`
+      AgentName        string            `json:"agent_name,omitempty"`
+      ManagedAuthority bool              `json:"managed_authority"`
+  }
+  func (s *Session) BindSubagentRecipe(SubagentRecipe) error
+  func (s *Session) SubagentRecipe() (SubagentRecipe, bool)
+  ```
+
+  Version is exactly 1. `named` requires the validated exact logical agent name;
+  `default` requires empty `AgentName` and false `ManagedAuthority`. Composition
+  stamps `ManagedAuthority` from the selected definition's eligible managed tier
+  (`AgentOriginExplicit` / `AgentMeta.Managed`), never from its name or body. It can
+  be true only for `named`; the version-1 JSON record requires this boolean even
+  when false, so absent classification is not silently adopted. Inherited
+  `Authority.DefinitionIdentity` is insufficient evidence: a nonmanaged child can
+  inherit its parent's explicit-definition label. Unknown versions/selections,
+  noncanonical names, invalid managed classification, and recipes on non-Subagent
+  sessions fail validation.
+  `BindSubagentRecipe` is write-once while idle before first run/publication;
+  restoring an identical value is idempotent, changing it is an error. The getter
+  returns a value copy and false for legacy absence. Restoration validates through
+  the same method. The constructor/restore path also requires bound authority and
+  valid existing session profile/provider labels for a recipe-bearing child.
+
+  `default` selects the normal explorer factory; `named` selects the current exact
+  named definition from the original parent's admitted registry. The current Subagent
+  `fork: true` path seeds parent history but uses normal no-agent engine selection;
+  it records `default`, preserving explicit versus floating provider/model selectors
+  in the existing labels.
+  No history flag or third engine identity is needed. Composition stamps the
+  actual selected path after argument validation and engine selection, including
+  model-routed/writable variants, before `BindChildContext`, persistence, or execution.
+  `history_from` stamps a fresh recipe from its receiving selection, never copies one.
+
+  Reuse `Session.Profile` for the effective profile and `ProviderID`, `ModelID`, and
+  `ReasoningEffort` for their existing selection semantics, not unconditional resolved
+  model identity. To carry the selected factory's labels into
+  the core creation path, add `agent.SubagentSessionLabels` and
+  `agent.Deps.SubagentSessionLabels`:
+
+  ```go
+  type SubagentSessionLabels struct {
+      Profile         string
+      ProviderID      string
+      ModelID         string
+      ReasoningEffort string
+  }
+  ```
+
+  Every built-in default/named/model-routed/writable factory supplies these labels
+  for its actual selection path. The creator copies them into existing write-once
+  fields before recipe binding/publication. Preserve explicitly selected selectors,
+  including an accepted router selection, but keep floating defaults empty even when
+  the factory knows the resolved model. A named definition's configured default is
+  not thereby converted into a per-child explicit override. On cold resume, saved
+  explicit selectors win over changed definition/deployment defaults subject to current
+  authorization; empty selectors resolve those current authorized defaults. Empty
+  reasoning effort remains unset/current default; explicit effort follows existing
+  normalization and provider rules. Rebuild model-dependent dependencies through
+  factories; neither standalone nor built-in paths may accidentally pin a floating
+  default or erase an explicit selector. Historical content supplies no selector.
+  `Authority.CapabilitySet` remains the durable execution ceiling and `Limits` the
+  existing budget record. Do not duplicate them in the recipe or parse the inherited
+  `Authority.DefinitionIdentity` label to infer selection. No prompts, skills/bodies,
+  source roots, context references, or credentials enter this recipe.
+
+  Cold recovery also adds `agent.SubagentResumeEngineFactory`:
+
+  ```go
+  type SubagentResumeEngineFactory func(
+      ctx context.Context, parent, savedChild *session.Session, writable bool,
+  ) (*Engine, func(), error)
+  ```
+
+  `agent.Deps.RestoreSubagentEngine` and
+  `WithSubagentResumeEngineFactory(SubagentResumeEngineFactory)` inject it. Parent
+  and saved-child arguments are authoritative read-only metadata under the access
+  hold. The callback is bound to that parent's current HarnessContext binding;
+  it rebuilds the recipe's engine from current composition without borrowing another
+  context generation. `writable` is this call's validated Subagent execution mode
+  (`mode: read-write`), not saved `DirectWrite` and not `Session.PermissionMode`.
+  Validate parent and eligible managed-definition containment of the full saved set
+  before this call's read-only view is applied. A saved writable child can therefore
+  resume read-only without failing merely because that view omits direct-write tools.
+  The factory then applies the requested mode to the selected named/default engine's
+  catalog, runner, workspace access, and effective inventory. Its returned engine is
+  authoritative: no later generic-writable-engine swap is permitted. Stored capabilities
+  and cumulative usage remain unchanged. The idempotent cleanup owns only newly built
+  engine resources; failures clean partial resources.
+  Nil refuses durable resume rather than selecting the default engine. Normal
+  `BindChildContext` then associates this actual selected engine with the resumed
+  child and owns its source/inventory lease. No recipe is accepted from tool arguments.
+
+  **Exclusive session access API:** add the following in `engine/port`, separate
+  from refcounted `SessionLiveness` and from the backend `SessionLease`:
+
+  ```go
+  type SessionAccess interface {
+      Acquire(context.Context, session.SessionID) (SessionAccessHold, error)
+  }
+  type SessionAccessHold interface {
+      Context() context.Context
+      Check(context.Context) error
+      Close() error
+  }
+  ```
+
+  Add sentinels `ErrSessionAccessBusy`, `ErrSessionAccessUnsupported`, and
+  `ErrSessionAccessLost`. Acquire is exclusive, non-reentrant, and fail-fast on
+  contention; cancellation/deadline errors are preserved. It accepts only the trusted
+  target session ID, not a public storage/owner selector. A hold is scoped to one
+  store authority and ID, including IDs not yet published. Acquire observes its caller
+  context until acquisition completes. `Context()` then supplies hold-owned persistence
+  ownership with unforgeable in-process identity; caller work cancellation alone does
+  not cancel that context or its renewal. Work/capture contexts must observe both
+  their caller cancellation and hold loss. `Check(ctx)` respects the supplied operation
+  context: cancellation/deadline returns that error without invalidating an otherwise
+  valid hold. It separately verifies exact current ownership and backend fencing;
+  lease loss or invalidation cancels ownership and forbids writes. Close cancels the
+  hold context and stops new IO, retaining backend exclusion through the drain below.
+  Renewal/verification cannot accept a replacement token or resurrect lost authority.
+
+  Ordinary run cancellation stops work but retains the exclusive hold/renewal through
+  the existing bounded terminal-save and cleanup window. That cleanup derives a fresh
+  bounded context from `hold.Context()`, not an uncancelled copy of lost authority.
+  A capture cancelled before completion is discarded instead of persisted. `Close`
+  first stops new ownership-authorized IO, joins admitted persistence and renewers,
+  then releases only its own lease borrow and exclusion. It is idempotent, reports
+  cleanup errors, and never closes a session, engine, or workspace. Do not release
+  exclusion beneath admitted IO still able to commit, even if its caller timed out.
+  No hold survives restart.
+
+  `agent.Deps.SessionAccess` and `server.Config.SessionAccess` receive the same
+  `port.SessionAccess`; add `WithSubagentSessionAccess(port.SessionAccess)` for
+  standalone Subagent tool construction. `internal/app.Config.SessionAccess` permits
+  a trusted injected coordinator for a supplied store; otherwise Build constructs it
+  from that store's established local/shared placement and lease configuration.
+  All child factories receive it, not a new per-tool mutex. Nil means history transfer
+  and durable Subagent resume/start are unsupported in standalone embeddings; ordinary
+  nonpersisted new-child embedding remains available. Built-in Build always supplies
+  a supported coordinator for its default memory and local-directory stores.
+
+- **Tool schemas:** Add optional `history_from` to `Subagent`, a string saved Subagent
+  session ID (the existing `agentId` result value). Omission means no history transfer;
+  a supplied empty/whitespace-only value is invalid. Require the existing nonempty
+  `prompt` as the new task. `history_from` is mutually exclusive with a nonempty
+  `resume` and with `fork: true`; reject conflicts before loading history or allocating
+  resources. `fork: false` remains the ordinary default. No source, root, environment,
+  or placement selector is added.
+
+  ```json
+  {"history_from": "<SAVED_CHILD_ID>", "prompt": "<NEW_TASK>", "mode": "read-only"}
+  ```
+
+  History transfer uses ordinary new-delegation `agent`, `model`, `authority`, limits,
+  and output options under ordinary receiving-parent delegation authority. Agent lookup is in the
+  receiving parent's current admitted registry; omission selects the normal default,
+  never the historical specialist label. Preserve existing mode combinations:
+  `read-write` rejects `background: true` and `agent` plus `model` together; otherwise
+  current deployment/factory availability still governs. Ordinary `resume` continues
+  to reject `agent` and `model` overrides and consumes no extra delegation hop.
+  A refusal returns an error ToolResult, not a silently fresh child. Missing/foreign
+  history IDs have indistinguishable errors; owner-visible eligibility errors can
+  explain inspection or explicit history transfer without promising either will pass.
+
+  Update Subagent schema descriptions, injected delegation instructions, recovery
+  hints, and no-FS variants together. The parent model must see the distinction between
+  same-ID resume, `fork` of its own conversation, and new-ID `history_from`. The child
+  receives a harness-authored notice identifying the new child and receiving parent,
+  current context, and destination mode (receiving workspace or fresh isolated fork),
+  with a requirement to re-read files. Historical labels/paths remain fenced data;
+  the notice does not expose a new source selector or claim that old files survived.
+  Factory-level model-request tests prove both parent and child instructions arrive.
+  `Skill` retains logical bundles and named assets. Execution Read/Write/Shell use
+  their existing `Environment` capabilities; harness reads create no read-ledger evidence.
 - **CLI / config:** Add this strict operator-tier-only schema to user-global `settings.yaml` and
   explicitly supplied operator settings files:
 
@@ -290,7 +477,33 @@ not authorize runtime changes or backend-specific alternatives before approval.
   tools; displaying a definition never enables an action or bypasses tool checks.
   Existing learned-skill administration retains its separate authorization gates.
   No extra deployment/global inventory endpoint or new configuration switch is added.
-- **Events / persistence:** Add no event or snapshot field. Commands remain live per List/Expand;
+- **Events / persistence:** Add one optional private creation record:
+  `sessnap.Snapshot.SubagentRecipe *session.SubagentRecipe` with JSON key
+  `subagent_recipe,omitempty`; its object uses `version`, `selection`, and
+  `agent_name,omitempty`, and required `managed_authority`. Add the same optional field to
+  `eventsource.SessionMeta`. Extend snapshot encoding/restoration and event-source
+  creation-metadata persistence atomically across all stores and conformance suites.
+  The private driver snapshot envelope already carries opaque sessnap JSON, so no
+  public session RPC field, new event kind, or driver-envelope protobuf field is
+  needed. Event-sourced hosts must retain this creation record independently of
+  compactable conversation events; omission restores legacy absence, never a guess.
+  Unknown/malformed recipe data fails snapshot validation, not a default-engine fallback.
+
+  Same-session save/load, compaction, and same-ID resume retain the recipe. Main
+  Clear/Fork/carryover successors do not copy it; normal new sessions of other kinds
+  have none. New Subagent children, including fork/history-transfer children, stamp
+  their own selected recipe. It is excluded from public metadata inventories, model
+  prompts, diagnostics/audit body projections, and client-editable input. Selection
+  labels are private reconstruction metadata, not new authorization claims. Legacy
+  children without a recipe remain inspectable and eligible for authorized history
+  transfer; cold in-place resume refuses with that explicit recovery option, not an
+  automatic migration from parent transcripts or inherited identity labels. A live
+  binding may resume only if trusted in-memory creation metadata already supplies the
+  same validated recipe; it must not fabricate it from model history.
+
+  This is the authorized amendment to the prior no-new-persistence-field clause.
+  No durable `HarnessContextRef`, frozen external snapshot, or durable guard is added.
+  Commands remain live per List/Expand;
   instructions observe their configured sources once per run; rules, skills, and agent definitions
   preserve their snapshot semantics. Policy and process-scoped snapshot sources resolve once in
   `app.Build`. A principal-scoped snapshot source resolves once when that session context binding is
@@ -493,18 +706,289 @@ not authorize runtime changes or backend-specific alternatives before approval.
   a child source lease is held; providers must retain the actual readable backend,
   not just an in-memory counter. New borrows after retirement remain prohibited.
 
-  **Proposed resume rule, pending the Human decision above:** a persisted delegated
-  child resumes only under the original `Relationship.ParentSessionID` and
-  `ParentIncarnation`. Validate both before any new source binding, workspace fork,
-  or mutation. A same-owner unrelated parent is not sufficient. Matching-parent
-  resume uses that parent's current-policy/current-authorization context and the
-  supported child attenuation path; the child's fresh execution fork is not a
-  source anchor. Missing parent authority or insufficient persisted restrictions
-  fail closed without deleting the child transcript. This uses existing lineage
-  rather than persisting a `HarnessContextRef` or inferring from execution files.
-  Unparented Team sessions use their own explicitly composed source authority;
-  a missing relationship is never invented. Cross-parent original-anchor lookup
-  is not implicitly authorized by this proposal.
+  **In-place resume:** a persisted `SessionKindSubagent` resumes with the same child
+  ID only under its original `Relationship.ParentSessionID` and nonempty, matching
+  `ParentIncarnation`. Owner-authorization, lineage, and persisted-authority checks
+  precede new binding, recovery, rehoming, workspace allocation, or publication.
+  The current parent must contain the saved child's complete bound capability set;
+  retain that set, including its remaining depth, rather than deriving another hop.
+  Requested direct-write mode additionally requires its saved direct-write grant and
+  current policy permission. Current source authorization and reconstructable child
+  attenuation are required before running; the old child execution ref is not a
+  harness source anchor. Exact source-reference mismatch on binding reuse fails
+  closed, not as an implicit reload. Resume keeps cumulative usage and applies existing
+  tighten-only limits. Its normal terminal-history repair and file-survival rules
+  remain separate from the current call's destination mode.
+
+  Cold recovery uses the child's trusted durable recipe and existing labels, never
+  the original parent's compactable messages or the inherited `DefinitionIdentity`.
+  Rebuild default/named selections through current factories against the
+  original parent's current authorized binding. Reapply the stored effective profile
+  and saved capability set; derive provider/model dependencies through the normal
+  factory using existing stored selectors. Resume still rejects new `agent`/`model`
+  arguments. Normalize provider-private replay state under existing provider-change
+  rules if current resolution changes provider. Fork-created children use their
+  recorded default selection; copied history is not a reason for refusal.
+
+  Current named definitions may legitimately change prompt, skills, and configuration:
+  use the current admitted definition, not persisted bodies. The current parent must
+  contain the full saved capability set. Apply definition-capability containment only
+  for a currently eligible explicit/operator-managed authority definition; project,
+  user, and driver definitions scope the engine but establish no authority ceiling.
+  Never synthesize a ceiling from an ordinary specialist's smaller catalog: unchanged
+  nonmanaged definitions can resume with a broader parent-derived saved capability set
+  while their current catalog still limits which tools exist.
+
+  A recipe with `ManagedAuthority: true` requires a currently eligible managed
+  definition of that exact name. A same-name lower-tier replacement refuses before
+  recovery; name equality or an inherited `explicit:` label does not preserve managed
+  provenance. If an originally nonmanaged name is now managed, its eligible current
+  ceiling must also contain the saved set. In every case current prompt/profile,
+  preloaded skills, disallowed tools, and catalog restrictions are independently
+  enforced; ordinary nonmanaged-to-nonmanaged content changes follow current policy.
+
+  Check containment against current authorized configuration before requested-mode
+  view attenuation. Where the existing managed ceiling has posture variants, use the
+  variant for the saved set's carried direct-write posture for this check, not this
+  call's read-only presentation. Then enforce this call's mode; a read-write request
+  still needs the saved direct-write grant and current permission. Keep saved rights
+  unchanged: current expansion cannot broaden them. A narrowed eligible managed
+  ceiling, missing/revoked definition, unsupported saved profile/selector, or revoked
+  source refuses with actionable explicit history transfer where eligible. No default
+  fallback or later generic writable engine substitution is allowed. Inventories and
+  consumption use that same requested-mode specialist engine.
+
+  Missing original parent/incarnation or revoked source authority fails closed
+  without deleting transcripts. Missing legacy recipe prevents cold in-place resume,
+  but not otherwise authorized data transfer. Legacy children lacking the
+  original parent incarnation are never retroactively adopted for in-place resume.
+  They remain inspectable under existing authorization and can supply history if
+  the separate eligibility checks below pass. Unparented Team sessions use their own
+  explicitly composed context; no relationship is invented. Original-source
+  cross-parent reconstruction is outside this amendment.
+
+  **Explicit history transfer:** `history_from` reads an owned saved Subagent and
+  creates a new Subagent under the receiving parent's current binding and execution
+  policy. The source and receiving parents can be different sessions or repositories
+  of the same owner. The operation never requires the source parent to exist, its
+  execution backend to be available, or its former context grants to remain valid.
+  Reading the saved transcript still requires current transcript ownership/access
+  authorization, and all receiving-parent grants must be valid. A revoked context
+  grant is not a revocation of transcript access; a revoked transcript grant refuses
+  transfer. Do not read fresh data from the old source to enrich the history.
+
+  Eligible sources have trusted stored `SessionKindSubagent` metadata, validated
+  ownership, and a terminal state of completed, cancelled, or failed. Reject
+  unknown/main/scheduled/Parallel/Team/debug kinds and idle or active states; an ID
+  prefix or historical text proves none of them. Absence of a saved recipe or bound
+  capability set does not by itself disqualify a trusted owned Subagent transcript:
+  neither grants nor vetoes new delegation rights. Malformed stored records still fail
+  their ordinary validation; no new capability grant is synthesized during loading.
+  A missing legacy parent incarnation alone does not disqualify transfer. This does
+  not make unknown-kind or idle legacy sessions eligible, so it is not a claim that
+  every old recovery workflow is replaced. Preserve ownerless local/system behavior
+  only through its existing trusted ownership convention, never as a missing-owner
+  bypass in authenticated deployments.
+
+  **Capture/start coordination:** use the `SessionAccess` contract above for the
+  complete durable Subagent lifecycle, not just for history reads. A new start acquires
+  the reserved child ID before first Create; a resume acquires before authoritative
+  load/recovery. Retain its hold through final snapshot/event writes, background
+  execution, cancellation drain, and child cleanup. The context supplied by the hold
+  is used for that lifecycle's storage operations; detached terminal-save cleanup
+  retains the exact hold identity but never resurrects a lost/closed hold. Captures,
+  retention/delete, session-ID replacement, and other snapshot writers use the same
+  coordinator. Non-Subagent producers sharing these IDs/store must not bypass it.
+  An active source therefore refuses capture even when its last stored snapshot is
+  terminal. The coordinator replaces Subagent's per-instance in-flight exclusion
+  for durable paths; `SessionLiveness` remains retention/liveness accounting, not
+  another exclusive gate.
+
+  Build owns one local non-reentrant gate table for its store and injects it into all
+  engines and service mutation paths. Acquisition order is local gate, backend-wide
+  exclusion/fence, then lease-domain borrow/grant. One exact lease owner/token per
+  Build/session is shared with service/liveness management; do not independently
+  reacquire and release a refcounted user's lease. Each Build has a distinct lease-owner
+  nonce. In-memory stores are private to their owning Build by default; Builds sharing
+  an in-memory instance receive the same injected coordinator so its gate spans the
+  entire mutation/capture critical section. No process-global registry is introduced.
+
+  **Local commit/takeover fence:** the automatic `StoreDir` coordinator pairs the
+  existing flock lease domain with a stable cross-process per-session OS access lock,
+  distinct from the lease adapter's short transition lock and generation liveness lock.
+  Hold this access lock for the entire SessionAccess lifetime, including every admitted
+  snapshot/creation-metadata/event write and IO drain. Every writer, lease takeover
+  (including TTL expiry), delete, and ID reuse in that domain must first take this
+  same lock. A new generation cannot take over while an old holder still has admitted
+  IO capable of committing. Use stable lock-file identity: normal release, GC, and
+  session deletion never unlink or replace its inode; offline removal requires the
+  whole store domain to be quiescent. Process exit releases the OS hold, not a new
+  process interpreting TTL expiry while the old process remains alive. The existing
+  TTL flock lease alone is NOT this guarantee. The paired local implementation is
+  required in #1875, uses the existing configured/automatic lease directory, and
+  keeps ordinary StoreDir deployments usable without a new flag.
+
+  **Expiring remote leases:** qualify a coordinator/store pair only when the backend
+  atomically validates the current session owner/epoch/token and lease validity in
+  the SAME transaction/script as each mutation commit, including snapshot Create/Save,
+  creation metadata, event append, deletion, and replacement. Takeover advances the
+  authoritative epoch atomically in that same fencing domain. A stale write admitted
+  earlier must be rejected at commit after takeover, even if its context check passed.
+  A token query followed by an unfenced write is insufficient. Capture/reload returns
+  one atomic snapshot under the current fence and validates owner/incarnation; separate
+  field reads or independently fenced metadata that can form a mixed revision do not
+  qualify. Split store/event/lease backends must provide the same atomic guarantee;
+  mere connectivity to a lease service is not evidence of it.
+
+  Paired adapters can carry fence identity privately in the hold context and enforce
+  it at their storage boundary; add no public token, tool argument, recipe field, or
+  generic engine fencing framework. A shared pair lacking atomic commit fencing or
+  nontransferable exclusion through in-flight IO reports `ErrSessionAccessUnsupported`
+  for durable child start/resume/capture. Existing private drivers without a fenced
+  mutation protocol do not qualify merely by implementing `SessionLease`; an integration
+  must supply and prove that protocol before advertising support. There is no legacy
+  unsupported-lease fallback on this path. Fresh nonpersisted embedding is separate.
+
+  Local exact-hold context checks and the existing mutation-capability drain plumbing
+  still enforce admission, but are not substitutes for the backend commit fence.
+  The selected pair enforces Create/Save/Delete and creation/event writes; an ID-only
+  enabled bit cannot authorize them. Close never releases exclusion under admitted
+  IO still able to commit. Old writes can neither overwrite nor recreate successor
+  state. Pair qualification includes a real paused-write/takeover proof in addition
+  to API conformance; raw uncoordinated or older mutation paths cannot share the domain.
+
+  For transfer, a preliminary authorized Load establishes source owner/incarnation;
+  it does not authorize capture. Then Acquire fail-fast, reload under the hold context,
+  reauthorize owner/kind/state, and compare incarnation and owner to the preliminary
+  observation. Replacement refuses the attempt; foreign and absent remain concealed.
+  Check the hold before and after bounded projection. Only a successful final Check
+  establishes an immutable authorized capture; Close releases its guards/lease borrow
+  before destination allocation/run. Cleanup failure refuses publication and is
+  diagnosed without leaking source content. Caller cancellation before destination
+  publication also discards the capture. Lease loss before capture completion cancels
+  and discards it; later source activity cannot alter a completed immutable capture.
+  No `IsLive`-then-`Load` test substitutes for exclusion, and Acquire's same-owner lease
+  success cannot substitute for the local gate. No source Recover/Rehome/Save/close or
+  original backend acquisition occurs.
+
+  Built.Close first stops new admission and cancels work/captures, then drains
+  still-authorized bounded terminal persistence while retaining ownership/renewals.
+  Only afterward does it Close holds and release their backend exclusion. Actual
+  lease loss/invalidation instead cancels ownership immediately and forbids detached
+  terminal writes; `WithoutCancel` cannot restore authority. An injected shared
+  coordinator remains caller-owned: shutdown drains only this Build's holds.
+  In-memory coordinator state starts empty after restart. The implementation updates
+  ADR 0027 Lists 1/2 for local gate tables, stable OS-lock handles/files, lease borrows,
+  backend epoch records, and renewers: Build/per-hold ownership, join-before-release
+  cleanup, stable local lock-file names retained across restart, and existing durable
+  backend epochs retained for fencing. Do not remove a stable lock inode during
+  session GC. Two receiving parents can create distinct children from completed
+  immutable captures; ordinary new-delegation duplicate handling is unchanged.
+
+  Derive ordinary receiving-parent delegation authority with any current eligible
+  managed-definition ceiling and explicit tightenings, then consume exactly one delegation hop. An
+  explicit `remaining_delegation_depth` is PRE-HOP. Receiver depth 3 with explicit
+  depth 1 yields a child at depth 0, regardless of the source child's stored depth.
+  Invalid receiving requests fail before resource allocation. There is no intersection
+  with source capabilities: saved history grants no rights and imposes no execution
+  veto. Read-only research can seed explicitly requested read-write implementation
+  when receiving authority, current definition, profile, and permission policy allow it.
+  Missing old bound authority is not a new grant; the receiver must independently
+  authorize all new work. Same-ID resume still retains its saved set and uses containment
+  checks without another hop.
+
+  Source labels, permissions, approvals, credentials, and context access are not
+  transferred. The new bound authority has normal delegation provenance and current
+  definition identity. The selected engine, tools, and inventory apply that authority
+  and current receiving specialist restrictions before child binding. An incompatible
+  requested mode is refused, not silently changed.
+
+  The new child has its own ID/incarnation and ordinary relationship to the receiving
+  parent/current call. Its history-only seed carries no usage totals, counters, limits,
+  pending approvals, read ledger, environment binding, or context snapshot from the
+  saved session. New work receives the receiving engine/operator limits plus ordinary
+  per-call tightenings. Old spend remains recorded on the source and is neither
+  erased nor charged twice. The destination session starts with fresh usage; actual
+  provider input (including imported history) and new output count against its limits.
+  The receiving parent's own ordinary limits and per-call admission still apply.
+  Ordinary Subagent child usage is reported at `subagent.end`; it is not globally
+  folded into the parent main session's `MaxRunTokens`. This amendment introduces no
+  descendant aggregate budget, reservation, or cross-child charging promise. Existing
+  Team/Parallel aggregate rules remain where those paths already enforce them.
+  This is new delegation with a new-work budget, not a reset or extension of the saved
+  child's exhausted budget. Rights ceilings are distinct from cumulative spending.
+
+  Validate the original call/result structure before fencing. Interior unmatched or
+  duplicate results/calls are errors; only unanswered calls in the final assistant
+  batch may be omitted from a copy-local projection. Retain completed pairs and their
+  associated assistant text. In a final batch containing completed call A and unanswered
+  call B, preserve A, its result, and assistant text, omit only B, and add an honest
+  omission notice. Never fabricate successful results or repair/persist the source.
+  `session.ForkSnapshot` currently drops the entire trailing assistant batch, so it
+  is not a mandatory helper for this projection. Reuse existing copy/validation helpers
+  where they satisfy this contract, including `session.StripProviderState` even for
+  same-provider transfer. The projected transcript must pass pairing validation.
+
+  **Bounded text projection:** support message text and structured call/result
+  records only. For a tool result, nonempty `ToolResult.Parts` wins over legacy
+  `Content`; preserve part order without appending or falling back to Content.
+  Supported `session.Content` kinds are `BlockText`, `BlockStructuredContent`
+  (validated JSON text), text-only `BlockEmbeddedResource`, and `BlockResourceLink`.
+  Resource-link URI/name/title/description/MIME/size and advisory annotations are
+  inert textual data, never typed provider-fetchable blocks or authorization.
+  Reject `Message.Parts` media, `BlockImage`, `BlockAudio`, binary embedded resources,
+  empty/unknown block kinds (including any future video kind), invalid UTF-8/JSON,
+  and unsupported content with a tool error. No silent content drop or asset fetch.
+
+  The data representation is a JSON array of records in original order, each with
+  `role`, `text`, optional `tool_calls` (`id`, `name`, `args` as a JSON value), and
+  optional `tool_result` (`call_id`, `is_error`, `parts`). Each result part records
+  its supported `kind` and text/JSON/inert link metadata; legacy Content becomes
+  one text part only when Parts is empty. JSON is encoded, never interpolated.
+  Strip provider-private state before projecting and neutralize framing in string
+  values with the canonical governance helper before JSON encoding; wrap the
+  encoded array with `FenceUntrusted`. Seed it as one user data message via
+  `SeedHistory`, with a harness-authored transfer/provenance/omission notice outside
+  the historical fence. Roles inside the JSON are labels, not new live messages.
+  The new task is supplied separately. No assembled system prompt or live context
+  object is copied. Both the projected logical transcript and seeded conversation
+  pass pairing validation.
+
+  **Fixed bounds:** final UTF-8 encoded/fenced seed including its notices/framing
+  is at most 256 KiB (262144 bytes), checked before destination publication/provider
+  use. Before cloning messages, parsing JSON, stripping provider state, or constructing
+  the encoded seed, preflight the selected data fields: at most 4096 total message,
+  tool-call, and result-part records and at most 1 MiB of raw included string/JSON
+  bytes (including IDs, names, and link metadata). Check field lengths and record
+  counts before scanning or copying a giant first field. Excluded provider-private
+  replay blobs are not copied/scanned into the projection. Count output incrementally
+  with a bounded writer; never allocate an unbounded intermediate JSON/fenced body.
+  These bounds govern transfer processing after the ordinary store load; they do
+  not claim a new cap on `SessionStore.Load` or replace adapter snapshot/transport
+  admission. No extra whole-history clone or unbounded model-context allocation is
+  allowed before preflight. Per-result validation and runtime model-context admission remain separate and
+  include the new task. Exceeding any limit refuses the transfer, not a truncate,
+  summarize, raw-history fallback, or new configuration option. Historical tools and
+  approvals never execute; new operations require current permissions and fresh
+  read-before-edit evidence.
+
+  `mode: read-write` runs serially in the receiving workspace under the direct-write
+  barrier; isolated mode uses a new receiving-side fork where supported. No-FS and
+  no-fork deployments retain their ordinary capability constraints. Neither mode
+  attaches or copies the saved child's files. Tell the child to re-read current files;
+  never claim that old isolated work survived or that changing mode recovers it.
+  Neither the source child nor its parent is mutated, recovered, reattached, closed,
+  or re-persisted, including on copy, creation, cancellation, or publication failure.
+  Only destination-attempt resources are cleaned up. Register its actual attenuated
+  inventory through `BindChildContext` and the exact-generation lifetime fence above.
+
+  Add no history-transfer persistence field, source selector, or durable context
+  reference beyond the separate private Subagent creation recipe specified above. The normal
+  parent tool call records `history_from`, the normal result identifies the new child,
+  and its seeded conversation records a harness-authored source-history notice with
+  the source child ID (never its internal incarnation). These are provenance, never
+  authority or a lineage override; store them through existing conversation/event
+  paths. The saved child's original relationship and transcript remain unchanged.
 
   Clear/Fork main-session successors and each scheduled fire are new context
   consumers: when current policy explicitly selects their execution files, bind
@@ -514,7 +998,10 @@ not authorize runtime changes or backend-specific alternatives before approval.
 - **Compatibility / migration:** The workspace-free signatures are an intentional exported-engine
   break. The shared implementation PR updates `engine/api/*.txt` with `task api:update` and records
   the break in `engine/CHANGELOG.md` under `engine/COMPATIBILITY.md`; callers update atomically, with
-  no compatibility-adapter window. Existing persisted sessions and schedules require no destructive
+  no compatibility-adapter window. The recipe methods, resume factory, and exclusive
+  access ports also require API snapshots and classified changelog entries, including
+  the strengthened SessionStore reconstruction contract and standalone nil-seam behavior.
+  Existing persisted sessions and schedules require no destructive
   migration. Root discovery remains root-only: nonempty AGENTS.md wins; absent or whitespace-only
   AGENTS.md falls through to CLAUDE.md; both absent/empty means no project fragment; other read errors
   follow existing assembly policy. Preserve trimming, framing, provenance manifests, freshness,
@@ -529,12 +1016,14 @@ not authorize runtime changes or backend-specific alternatives before approval.
   protobufs, SDK types, and API/reference output from sources; do not edit generated
   files by hand. Any Studio integration uses the published SDK, never a local-path
   replacement. Record the wire/client break in the owning release artifacts.
-  Original-parent resume rejection is an additional proposed behavioral break,
-  pending the explicit decision above; preserve stored sessions and transcripts.
+  Original-parent resume enforcement is a behavioral break from the tested same-owner
+  cross-parent workflow. Ship `history_from` in the same shared implementation, with
+  explicit new-child instructions and updated recovery hints; do not remove that
+  workflow first and defer its replacement. Preserve saved sessions and inspectability.
   Rename the implementation's `TestADR_0357_HarnessContext_*` proofs to
   `TestADR_0359_HarnessContext_*`; leave model-stream ADR 0357 proofs unchanged.
 
-## In scope - 8 scenarios, in implementation order
+## In scope - 9 scenarios, in implementation order
 
 ### Scenario 1 - Source selection and execution vary independently
 
@@ -668,28 +1157,63 @@ the session-affinity pattern for skill and agent inventories.
 
 [Delegation](../architecture/subagents-and-teams.md) and the
 [durable relationship model](../../engine/session/kind.go) distinguish the child
-execution namespace from its parent. The cross-parent resume assertion below is
-part of the proposed rule awaiting the explicit Human decision, not an already
-approved restriction.
+execution namespace from its parent. In-place resume preserves that lineage;
+Scenario 9 supplies explicit new-child history transfer when continuing under a
+different parent or when the saved child's effective binding cannot be restored.
 
 **Acceptance:**
 - AC8.1: Isolated Subagent, direct-write Subagent, Parallel branch, and parented Team member execution preserve the parent's admitted bound source while enforcing each child's restrictions. Change the underlying skill/agent/rule source after parent binding but before child creation: the child retains the parent's external snapshot and consumes those same winning bodies without rebinding. Live commands/per-Run instructions still observe the inherited source. Conflicting child-worktree files do not replace it.
   - verify: `TestADR_0359_HarnessContext_Scenario8_ChildSourceInheritance`
 - AC8.2: A child independently holds the inherited generation and exposes its exact attenuated inventory until its context use ends. After parent context and execution-owner teardown, a fresh child command read succeeds against a reference backend that becomes unusable on final close. Final release closes it exactly once; failed child publication releases its attempt. Delayed parent teardown and stale child close/release callbacks cannot retire or close a newly activated parent generation or unregister a replacement child binding; the replacements remain usable with their exact inventories.
   - verify: `TestADR_0359_HarnessContext_Scenario8_ChildSourceLifetime`
-- AC8.3: Under the proposed original-parent rule, matching-parent resume after restart uses current policy/authorization for the inherited source and preserves attenuation. A same-owner different parent, replaced parent incarnation, missing lineage authority, or revoked source fails before source acquisition, workspace forking, or mutation; the saved transcript remains intact.
+- AC8.3: Default, named-specialist, and fork-created children with recipes resume after restart despite compacted parent messages. Cold-resume a saved writable named specialist in both requested modes: check saved capability containment before mode attenuation, retain capabilities/usage, and prove RO versus RW engine/catalog/runner/inventory behavior without a generic-engine swap. Current prompt/skill changes apply. Missing/revoked definitions, narrower eligible managed authority, unsupported stored profiles, parent/incarnation mismatch, and revoked source refuse without fallback; legacy absence remains inspectable with explicit history transfer where eligible.
   - verify: `TestADR_0359_HarnessContext_Scenario8_ResumeSourceAnchor`
 - AC8.4: Reconstructing unavailable inherited context does not select the child's files, a global catalog, or an unrelated source. An independent-source/no-FS child control retains admitted context without execution tools or unrelated attachment.
   - verify: `TestADR_0359_HarnessContext_Scenario8_NoInheritedAuthorityFallback`
 
+### Scenario 9 - Explicit history transfer creates a receiving-parent child
+
+The recovery requirement from [ADR 0200](../adr/0200-resume-a-failed-subagent.md)
+keeps valuable saved work available without retargeting its original child.
+[Derived authority](../adr/0234-authority-evaluator-port.md) and
+[incarnation-bound lineage](../adr/0258-cryptographic-session-incarnations.md)
+constrain the two distinct operations. Use the real Subagent factory and server
+binding paths, not an independent transcript-copy implementation in the tests.
+
+**Acceptance:**
+- AC9.1: Replace the existing same-owner cross-parent resume journey with an explicit `history_from` call: cross-parent `resume` fails without mutation, then a separately requested transfer creates a new ID/incarnation and receiving-parent relationship with the saved history and new prompt. The source ID, owner, relationship, authority, usage, transcript, and persisted revision remain unchanged. Both operations ship together in #1875.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_CrossParentRecovery`
+- AC9.2: Tool schema and execution reject blank history IDs, missing prompts, history/resume and history/fork conflicts, unsupported deployment paths, read-write/background, and read-write/agent/model combinations before allocation. Current normal agent/model selection remains available for new transfers; resume rejects their overrides. Production factory model requests expose the distinct operations, conditional recovery hints, and the child's receiving-context/destination notice, including no-FS variants.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_ToolAffordance`
+- AC9.3: Owned completed, cancelled, and failed trusted Subagent records can seed new children without a saved capability set or resume recipe. Foreign and missing IDs are indistinguishable; unknown/wrong kinds, idle states, active sources, and malformed records fail before destination allocation/disclosure. Missing old parent incarnation or deleted parent prevents in-place resume, not otherwise eligible data transfer. Unavailable/revoked original context triggers zero source-backend acquisitions; revoked transcript access or receiving authorization refuses transfer. Missing historical authority is neither a grant nor a veto.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_HistoryEligibility`
+- AC9.4: Same-owner parents in different repositories have conflicting same-name agents/skills/instructions. Transfer uses only the receiving binding and current explicit agent selection; omission selects normal new delegation, not the saved specialist label. Inventories and consumed definitions match the actual new engine. Source recipe, profile, limits, and grants are not copied; the destination stamps its own recipe and labels. A current receiving specialist can differ from the source's same-name definition without restoring source rights.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_ReceivingSpecialistContext`
+- AC9.5: Read-only investigation history can seed explicitly requested read-write work under an independently authorized receiver. Negative controls with receiving direct-write denied, narrower specialist, no-FS, or invalid tightenings fail even when the source held broader grants. Empty/missing source capabilities do not change the result. Transfer consumes one receiving hop: receiver depth 3 / explicit pre-hop depth 1 produces final depth 0 regardless of source depth. Exhausted receiving depth fails. Same-ID resume still requires parent containment of saved authority and consumes no extra hop.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_AuthorityIntersection`
+- AC9.6: A source that exhausted its cumulative budget remains exhausted and unchanged. The destination starts fresh usage and current operator/per-call limits; imported-history input and new output count against destination limits without copying or double-charging old usage. Receiving-parent own limits and per-call admission remain ordinary; reporting at `subagent.end` does not newly fold child usage into parent main `MaxRunTokens`. Assert no new descendant aggregate/reservation accounting, preserve existing Team/Parallel rules where applicable, and never describe new-child accounting as resetting the resumed source's budget.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_NewWorkAccounting`
+- AC9.7: For isolated-to-isolated, isolated-to-direct-write, direct-write-to-isolated, and direct-write-to-direct-write transfers, destination placement always follows receiving policy and the requested authorized mode. Direct-write requires current receiving authorization, independent of saved source capabilities. No original files/backend are attached or copied, no old isolated-file survival is claimed, direct-write obeys mutate-serial dispatch, and fresh reads are required before edits. A no-FS control imports history without gaining filesystem tools.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_DestinationAndReadEvidence`
+- AC9.8: Strip provider-private replay/reasoning for same- and cross-provider copies. A mixed final batch retains completed A/result and assistant text, omits unanswered B with notice, and leaves the source unchanged; interior pairing corruption fails. Parts beats Content without fallback/duplication; supported structured/text resources survive as valid fenced JSON, links stay inert, and media/binary/unknown kinds fail. Canonical framing blocks role/marker injection; historical calls/approvals never execute. Individually valid messages that collectively exceed the 256 KiB encoded/fenced seed limit fail, including notice/escaping overhead; exact-boundary succeeds subject to model admission. Preflight rejects a giant first field or excessive records before cloning/parsing; no unbounded intermediate, old asset fetch, silent truncation, or internal-incarnation exposure occurs.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_HistoryIsData`
+- AC9.9: Real composition shares SessionAccess across child engines and mutations. Two Builds over StoreDir use paired stable OS exclusion plus the lease domain; shared memory uses one coordinator. Pause an old write after admission/before commit, expire its lease, and attempt takeover/delete/ID reuse: locally the successor cannot take over until old IO completes and exclusion releases; on a qualified remote pair, takeover causes old atomic commits to fail. Stale writes cannot overwrite or recreate successor state; test snapshot, creation metadata, event, and deletion boundaries, stable-inode retention, and an unfenced-driver Unsupported control. Active source with a terminal snapshot, same-owner lease success without exclusion, and guarded owner/incarnation replacement refuse capture. Caller timeout/cancel stops work but permits bounded cancelled-state persistence under the retained hold, followed by cold resume; a cancelled Check context alone leaves ownership valid. Contrast actual lease loss: detached cleanup cannot save, even via WithoutCancel. Shutdown drains authorized persistence before Close. Captures discard on cancellation, release guards before destination run, and never mutate/reattach/close source resources; failure cleanup affects only owned resources.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_AtomicCopyAndIsolation`
+- AC9.10: Recipe stamping precedes publication for default/named/fork/history-transfer children. Round-trip version/selection/name/managed-authority classification and existing profile/selection labels through sessnap, event-source metadata, stores, and restart. Reject missing/invalid classification, bad versions/combinations/names, non-Subagent recipes, and mutation; getters do not alias. Compaction retains recipes; main successors do not copy them; legacy absence remains absent/inspectable and public/model projections omit recipes. An unchanged nonmanaged named definition resumes even with a broader saved parent-derived set than its catalog; current catalog restrictions still apply. Managed-to-lower-tier same-name replacement refuses, and eligible managed ceiling changes cannot expand saved rights. A saved explicit model/router selection wins over changed defaults, while empty selectors use new authorized definition/deployment defaults; merely resolving a model at creation does not pin it.
+  - verify: `TestADR_0359_HarnessContext_Scenario9_DurableResumeRecipe`
+
 ## Dependency stack
 
 1. **This amendment PR:** review the shared binding and inventory interfaces,
-   domain scenarios, and the explicit unresolved resume decision. Merge is the
-   amendment's approval event; it does not approve implementation.
+   domain scenarios, and same-parent resume plus explicit new-child history transfer.
+   The directing user's resolved decisions and the exact recipe/access interfaces
+   are recorded above. Merge remains the amendment's approval event and does not
+   approve implementation.
 2. **Shared implementation #1875:** rebase on the approved amendment, implement
    source-bound APIs and the shared policy/binding/inventory paths, and retain all
-   existing reference proofs while adding Scenarios 6-8. Update generated contracts,
+   existing reference proofs while adding Scenarios 6-9. Deliver resume enforcement
+   and `history_from` together, including durable recipes, shared session access,
+   real factory instructions, and recovery hints. Update generated contracts,
    API snapshots, client migrations, and owning user guides. Renumber only
    HarnessContext ADR/test references. No backend-specific qualification is claimed.
 3. **Sibling backend integrations:** MicroVM #580, Redis #1811's implementation PR,
@@ -723,6 +1247,7 @@ resolution algorithms, public source selectors, or a durable context identity.
 | Concrete MicroVM integration and live journey | PR #580 | Dependent on the shared contract. |
 | Concrete Redis correction | Issue #1811 | Separate sibling implementation. |
 | Concrete native Kubernetes integration | Plan #1579 and implementation #1614 | Explicit source-policy migration and backend qualification after the shared layer. |
+| Original-source cross-parent resume reconstruction | Future demonstrated need | Cross-parent recovery uses an explicitly requested new child with receiving context; no original-anchor lookup is added. Durable same-parent reconstruction is in scope. |
 | New deployment-wide inventory API | None | Session-effective inventories replace the ambiguous global views; no independent admin requirement is established. |
 | Generic registry or one new transport per source noun | Future demonstrated need | Existing ports and APIs already support independent sources. |
 | Ancestor-directory traversal within a file source or changed caps | Separate decision | Preserve root-only discovery within each file source; composing multiple configured sources is in scope. |
@@ -730,10 +1255,13 @@ resolution algorithms, public source selectors, or a durable context identity.
 
 ## Definition of done
 
-This amendment remains draft while the cross-parent resume decision is unresolved.
-Run the acceptance-plan checker and its fixtures, `task docs:model`, and `task docs`;
-render model Markdown from YAML. The review PR reports the open decision and the
-exact proposed interfaces. No implementation dispatch starts from a draft contract.
+This amendment is proposed with the directing user's choices recorded; PR #1878
+remains draft for independent review until the parent declares readiness. Neither
+that policy authorization nor this status is approval by merge. Review the exact
+recipe, session-access, and bounded projection contracts together with both recovery
+operations. Run the acceptance-plan checker and its fixtures, `task docs:model`,
+and `task docs`; render model Markdown from YAML. No implementation dispatch starts
+before amendment approval.
 
 After human contract merge, #1875 must pass `task test`, `task lint`,
 `task test:race`, `task api:check`, `task generate` freshness, `task docs`,
