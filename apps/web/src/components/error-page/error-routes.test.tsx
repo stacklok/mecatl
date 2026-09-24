@@ -1,8 +1,7 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: Apache-2.0
 
-import type { GetRuntimeResponse } from "@mecatl-studio/contracts/generated";
-import { getAuthSessionOptions, getRuntimeOptions } from "@mecatl-studio/contracts/query";
+import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -15,6 +14,7 @@ import {
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AuthRecoveryContext } from "../../features/auth/auth-recovery-context";
 import { routeTree } from "../../routeTree.gen";
 import { RootErrorBoundary, studioRouterOptions } from "./error-routes";
 
@@ -52,9 +52,6 @@ async function mountProductionRoute(path: string) {
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   client.setQueryData(getAuthSessionOptions().queryKey, { mode: "none", status: "disabled" });
-  client.setQueryData<Pick<GetRuntimeResponse, "connection">>(getRuntimeOptions().queryKey, {
-    connection: "online",
-  });
   const router = createRouter({
     ...studioRouterOptions,
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -62,7 +59,23 @@ async function mountProductionRoute(path: string) {
   });
   await mount(
     <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
+      <AuthRecoveryContext.Provider
+        value={{
+          banner: {
+            authenticated: true,
+            publicStatus: { connection: "reachable", signInRequired: false },
+            publicStatusFailed: false,
+            sessionCheckFailed: false,
+          },
+          loginUrl: "/api/v1/auth/login?return_to=%2Fworkspace%2Fchat",
+          phase: "ready",
+          popupIssue: null,
+          retrySession: () => {},
+          startPopupLogin: () => {},
+        }}
+      >
+        <RouterProvider router={router} />
+      </AuthRecoveryContext.Provider>
     </QueryClientProvider>,
   );
   return router;

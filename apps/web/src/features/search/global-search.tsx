@@ -84,7 +84,7 @@ function searchScope(session: GetAuthSessionResponse | undefined): string | unde
   if (session?.status === "authenticated") {
     return session.account ? `account:${session.account}` : "static-help:account-unavailable";
   }
-  if (session?.status === "disabled" && session.mode !== "oidc") {
+  if (session?.status === "disabled") {
     return `shared:${session.mode}`;
   }
   return undefined;

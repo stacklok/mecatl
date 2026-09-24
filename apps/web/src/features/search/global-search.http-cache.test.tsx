@@ -2,6 +2,7 @@
 // @vitest-environment happy-dom
 
 import { client } from "@mecatl-studio/contracts/client";
+import type { GetAuthSessionResponse } from "@mecatl-studio/contracts/generated";
 import { getAuthSessionOptions } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
@@ -64,11 +65,12 @@ it("bypasses the browser HTTP cache for each authorized search inventory request
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
-  queryClient.setQueryData(getAuthSessionOptions().queryKey, {
+  const authenticatedSession: GetAuthSessionResponse = {
     account: "account-a",
     mode: "oidc",
     status: "authenticated",
-  });
+  };
+  queryClient.setQueryData(getAuthSessionOptions().queryKey, authenticatedSession);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);

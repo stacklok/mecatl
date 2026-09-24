@@ -8,6 +8,7 @@ import {
   statusBannerMessages,
   statusBannerState,
 } from "../../components/shell/connection-status-banner-state";
+import { GlobalStatusSlot } from "../../components/shell/global-status-slot";
 import { Button } from "../../components/ui/button";
 import { accountStorageKey } from "../../lib/account-storage";
 import { onAuthenticationRequired, setRequestRecoveryState } from "../../lib/api-client";
@@ -238,34 +239,40 @@ function PublicShell() {
   const state = statusBannerState(banner);
   const unavailable = state === "bff-unavailable" || state === "daemon-unavailable";
   return (
-    <div className="flex min-h-dvh flex-col bg-[radial-gradient(120%_140%_at_20%_30%,var(--shell-gradient-start)_0%,var(--shell-gradient-mid)_50%,var(--shell-gradient-end)_100%)]">
-      <main className="flex flex-1 items-center justify-center p-6">
-        <section className="w-full max-w-md rounded-2xl border bg-card p-6 text-card-foreground shadow-xl">
-          <h1 className="text-xl font-semibold">Mecatl Studio</h1>
-          <p aria-live="polite" className="mt-2 text-sm text-muted-foreground">
-            {unavailable
-              ? statusBannerMessages[state]
-              : phase === "verification-unavailable"
-                ? "We couldn't verify your sign-in. Your workspace will appear after a successful check."
-                : state === "sign-in"
-                  ? "Sign in to open this workspace."
-                  : "Checking your sign-in and the Mecatl connection…"}
-          </p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            {state === "sign-in" && (
-              <Button onClick={startPopupLogin} variant="action">
-                <LogIn aria-hidden="true" /> Sign in to Mecatl
-              </Button>
-            )}
-            {(unavailable || phase === "verification-unavailable") && (
-              <Button onClick={retrySession} variant="outline">
-                <RefreshCw aria-hidden="true" /> Try again
-              </Button>
-            )}
-            {state === "sign-in" && popupIssue && <PopupFallback />}
-          </div>
-        </section>
-      </main>
+    <div className="flex min-h-dvh min-w-0 flex-col bg-[var(--shell-gradient-mid)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+      <GlobalStatusSlot />
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col bg-[radial-gradient(120%_140%_at_20%_30%,var(--shell-gradient-start)_0%,var(--shell-gradient-mid)_50%,var(--shell-gradient-end)_100%)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
+        data-shell-gradient=""
+      >
+        <main className="flex min-h-0 min-w-0 flex-1 items-center justify-center p-6">
+          <section className="w-full max-w-md rounded-2xl border bg-card p-6 text-card-foreground shadow-xl">
+            <h1 className="text-xl font-semibold">Mecatl Studio</h1>
+            <p aria-live="polite" className="mt-2 text-sm text-muted-foreground">
+              {unavailable
+                ? statusBannerMessages[state]
+                : phase === "verification-unavailable"
+                  ? "We couldn't verify your sign-in. Your workspace will appear after a successful check."
+                  : state === "sign-in"
+                    ? "Sign in to open this workspace."
+                    : "Checking your sign-in and the Mecatl connection…"}
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {state === "sign-in" && (
+                <Button onClick={startPopupLogin} variant="action">
+                  <LogIn aria-hidden="true" /> Sign in to Mecatl
+                </Button>
+              )}
+              {(unavailable || phase === "verification-unavailable") && (
+                <Button onClick={retrySession} variant="outline">
+                  <RefreshCw aria-hidden="true" /> Try again
+                </Button>
+              )}
+              {state === "sign-in" && popupIssue && <PopupFallback />}
+            </div>
+          </section>
+        </main>
+      </div>
     </div>
   );
 }

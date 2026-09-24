@@ -3,14 +3,10 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { AuthRecoveryContext } from "../../features/auth/auth-recovery-context";
+import type { StatusBannerInput } from "./connection-status-banner-state";
 import { WorkspaceShell } from "./workspace-shell";
 
-const runtime = vi.hoisted(() => ({ connection: "online" }));
-
-vi.mock("@mecatl-studio/contracts/query", () => ({ getRuntimeOptions: () => ({}) }));
-vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: { connection: runtime.connection }, isError: false, isPending: false }),
-}));
 vi.mock("@tanstack/react-router", () => ({ Outlet: () => <div>Route content</div> }));
 vi.mock("../../features/shortcuts/shortcut-provider", () => ({
   ShortcutProvider: ({ children }: { children: ReactNode }) => children,
@@ -19,6 +15,30 @@ vi.mock("../ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("./top-nav", () => ({ TopNav: () => <header data-shell-nav="">Navigation</header> }));
+
+const baseBanner: StatusBannerInput = {
+  authenticated: false,
+  publicStatus: { connection: "reachable", signInRequired: true },
+  publicStatusFailed: false,
+  sessionCheckFailed: false,
+};
+
+function renderShell(banner: StatusBannerInput = baseBanner) {
+  return renderToStaticMarkup(
+    <AuthRecoveryContext.Provider
+      value={{
+        banner,
+        loginUrl: "/api/v1/auth/login?return_to=%2Fworkspace%2Fchat",
+        phase: "sign-in",
+        popupIssue: null,
+        retrySession: () => {},
+        startPopupLogin: () => {},
+      }}
+    >
+      <WorkspaceShell />
+    </AuthRecoveryContext.Provider>,
+  );
+}
 
 function between(markup: string, start: string, end: string) {
   const from = markup.indexOf(start);
@@ -29,35 +49,40 @@ function between(markup: string, start: string, end: string) {
 }
 
 describe("WorkspaceShell", () => {
-  it("keeps recovery and transient notice bands in separate document-flow slots", () => {
-    runtime.connection = "offline";
-    let markup = renderToStaticMarkup(<WorkspaceShell />);
+  it("shows each public recovery cause only in the global status slot", () => {
+    let markup = renderShell({
+      ...baseBanner,
+      publicStatus: { connection: "unavailable", signInRequired: true },
+    });
     expect(between(markup, "data-shell-global-status", "data-shell-gradient")).toContain(
-      "Mecatl is unavailable right now.",
+      "The Mecatl instance is unavailable right now.",
     );
     expect(between(markup, "data-shell-transient-status", "data-shell-nav")).not.toContain(
-      "Mecatl is unavailable right now.",
+      "The Mecatl instance is unavailable right now.",
     );
-    expect(markup.match(/Mecatl is unavailable right now\./g)).toHaveLength(1);
+    expect(markup.match(/The Mecatl instance is unavailable right now\./g)).toHaveLength(1);
 
-    runtime.connection = "reconnecting";
-    markup = renderToStaticMarkup(<WorkspaceShell />);
-    expect(between(markup, "data-shell-global-status", "data-shell-gradient")).not.toContain(
-      "Reconnecting to the Mecatl instance…",
+    markup = renderShell();
+    expect(between(markup, "data-shell-global-status", "data-shell-gradient")).toContain(
+      "Sign in to use this Mecatl workspace.",
     );
-    expect(between(markup, "data-shell-transient-status", "data-shell-nav")).toContain(
-      "Reconnecting to the Mecatl instance…",
+    expect(between(markup, "data-shell-transient-status", "data-shell-nav")).not.toContain(
+      "Sign in to use this Mecatl workspace.",
     );
 
-    runtime.connection = "online";
-    markup = renderToStaticMarkup(<WorkspaceShell />);
-    expect(markup).not.toContain("Mecatl is unavailable right now.");
-    expect(markup).not.toContain("Reconnecting to the Mecatl instance…");
+    markup = renderShell({
+      ...baseBanner,
+      publicStatus: { connection: "checking", signInRequired: true },
+    });
+    expect(markup).not.toContain("The Mecatl instance is unavailable right now.");
+    expect(markup).not.toContain("Sign in to use this Mecatl workspace.");
   });
 
   it("keeps the route outlet below both flexible banner slots and inside the safe-area frame", () => {
-    runtime.connection = "offline";
-    const markup = renderToStaticMarkup(<WorkspaceShell />);
+    const markup = renderShell({
+      ...baseBanner,
+      publicStatus: { connection: "unavailable", signInRequired: true },
+    });
     const route = markup.indexOf("Route content");
     expect(route).toBeGreaterThan(markup.indexOf("data-shell-nav"));
     expect(markup).toContain("env(safe-area-inset-top)");
