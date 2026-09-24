@@ -286,8 +286,11 @@ type logicalSession struct {
 	expiresAt            time.Time
 	attachments          int
 	recoveredSource      *recoveredCredentialSource
-	recoveryValid        func(context.Context) error
-	recoveryDeadline     time.Time
+	// recoveredCalls is the execution replay ledger for a recovered session,
+	// which has no OAuth grant of its own (no refresh token by design).
+	recoveredCalls   *oauthGrant
+	recoveryValid    func(context.Context) error
+	recoveryDeadline time.Time
 }
 
 // Caller is the private execution seam used by the in-process transport. The
@@ -555,6 +558,7 @@ func (r *Runtime) newRecoveredProvisional(id session.SessionID, deadline time.Ti
 		expiresAt:            deadline,
 		attachments:          1,
 		recoveredSource:      source,
+		recoveredCalls:       &oauthGrant{executed: make(map[session.ToolCallID][32]byte)},
 		recoveryValid:        source.validateCurrent,
 		recoveryDeadline:     deadline,
 	}

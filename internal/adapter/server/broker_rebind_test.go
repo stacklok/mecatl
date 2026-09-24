@@ -553,6 +553,11 @@ func (c *rebindSwitchConn) NewStream(ctx context.Context, desc *grpc.StreamDesc,
 
 func serveRebindBroker(t *testing.T, service brokercontract.Service) (grpc.ClientConnInterface, func()) {
 	t.Helper()
+	return serveRebindBrokerWithOptions(t, service)
+}
+
+func serveRebindBrokerWithOptions(t *testing.T, service brokercontract.Service, options ...grpc.ServerOption) (grpc.ClientConnInterface, func()) {
+	t.Helper()
 	listener := bufconn.Listen(1 << 20)
 	cfg := mcpbrokergrpc.DefaultConfig()
 	cfg.MaxHandles = 64
@@ -560,7 +565,7 @@ func serveRebindBroker(t *testing.T, service brokercontract.Service) (grpc.Clien
 	if err != nil {
 		t.Fatal(err)
 	}
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(options...)
 	mcpbrokergrpc.RegisterServer(grpcServer, brokerServer)
 	go func() { _ = grpcServer.Serve(listener) }()
 	conn, err := grpc.NewClient("passthrough:///broker",

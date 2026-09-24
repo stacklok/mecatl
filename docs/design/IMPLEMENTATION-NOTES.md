@@ -5937,7 +5937,11 @@ authority (an access-only bearer of at most two minutes, reissued by the logical
 until custody expires), then adopt or complete with the fresh binding, Save, and Commit.
 Any other attach failure never enters recovery. Authenticated discovery runs outside the
 attachment lock with single-flight per handle and an exact-compare before publishing.
-Invalidation ordering is shipped; the composed two-broker Scenario 2/3 proof is not yet.
+Invalidation ordering is shipped. A composed offline proof
+(`internal/adapter/server/continuity_composed_e2e_test.go`) runs two independent broker
+processes over one encrypted miniredis through the real broker gRPC adapter, real ToolHive
+browser enrollment and middleware, and recovered tool execution; the remaining named
+Scenario 2/3 cases are component-level and the gRPC peer is not JWT-verified there.
 No caller may infer recovery from custody alone. A missing or unreadable host workload
 identity fails closed without destroying custody (it is unknown, not rotated).
 Invalidation captures the stored custody guard and exact B2 binding, clears and saves host

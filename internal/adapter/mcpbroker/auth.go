@@ -1006,6 +1006,11 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 	hash := callHash(call)
 	logical.mu.Lock()
 	grant := logical.brokerCredential
+	var source oauth2.TokenSource = &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx}
+	if grant == nil && logical.recoveredSource != nil && logical.recoveredCalls != nil && !logical.provisional {
+		// A published recovered session executes with its B2 bearer source.
+		grant, source = logical.recoveredCalls, logical.recoveredSource
+	}
 	if grant == nil {
 		logical.mu.Unlock()
 		return session.ToolResult{}, contract.ErrAuthorizationNotFound
@@ -1015,7 +1020,7 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 		return session.ToolResult{}, err
 	}
 	logical.mu.Unlock()
-	result, err := t.invoke(ctx, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx})
+	result, err := t.invoke(ctx, call, source)
 	result.CallID = call.ID
 	return result, err
 }
