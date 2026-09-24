@@ -80,11 +80,6 @@ type renderedFrame struct {
 	appendixID uint64
 }
 
-type frameBlockEntry struct {
-	key  blockRenderKey
-	rows []renderedRow
-}
-
 func (f renderedFrame) hasRegion(blockID uint64, region regionKind) bool {
 	return f.firstRegionRow(blockID, region) >= 0
 }
@@ -161,13 +156,13 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
 func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bool) renderedFrame {
-	renderedBlocks, metadata, prepared, firstChanged := r.walkConversation(c, expand)
-	n := len(renderedBlocks)
+	passes, firstChanged := r.renderPasses(c, expand)
+	n := len(passes)
 	prefixN := min(firstChanged, n)
 	key := joinPrefixState{width: r.width, expand: expand}
 	prefixLines, prefixProvenance, ok := r.blocks.prefix(key, prefixN)
 	if !ok {
-		prefixLines, prefixProvenance = r.rebuildFramePrefix(c, metadata, prepared, renderedBlocks, prefixN, expand)
+		prefixLines, prefixProvenance = r.rebuildFramePrefix(passes, prefixN)
 		r.blocks.replacePrefix(prefixLines, prefixProvenance, prefixN, key)
 	}
 
@@ -183,7 +178,7 @@ func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bo
 	frame.lines = append(frame.lines, prefixLines...)
 	frame.provenance = append(frame.provenance, prefixProvenance...)
 	for i := prefixN; i < n; i++ {
-		r.appendFrameSegment(&frame, c, metadata, prepared, renderedBlocks, i, expand)
+		r.appendFrameSegment(&frame, passes, i)
 	}
 	frame.lines = append(frame.lines, "")
 	frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome})
@@ -191,52 +186,29 @@ func (r *renderer) renderConversationFrame(c *scrollback.Conversation, expand bo
 	return frame
 }
 
-func (r *renderer) rebuildFramePrefix(c *scrollback.Conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
+func (r *renderer) rebuildFramePrefix(passes []renderPass, prefixN int) ([]string, []renderedRow) {
 	lines := make([]string, 0, prefixN*2)
 	provenance := make([]renderedRow, 0, prefixN*2)
 	for i := 0; i < prefixN; i++ {
 		frame := renderedFrame{lines: lines, provenance: provenance}
-		r.appendFrameSegment(&frame, c, metadata, prepared, renderedBlocks, i, expand)
+		r.appendFrameSegment(&frame, passes, i)
 		lines, provenance = frame.lines, frame.provenance
 	}
 	return lines, provenance
 }
 
-func (r *renderer) appendFrameSegment(frame *renderedFrame, c *scrollback.Conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, index int, expand bool) {
+func (r *renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, index int) {
 	if index > 0 {
-		for n := 0; n < blockBlankLinesAfterMetadata(metadata, index); n++ {
+		for n := 0; n < blockBlankLinesAfterPasses(passes, index); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
 	}
-	rendered := renderedBlocks[index]
-	rows := r.blockFrameRowsTyped(c, index, metadata[index], prepared[index], rendered, expand)
-	for row, line := range strings.Split(rendered, "\n") {
+	pass := passes[index]
+	for row, line := range strings.Split(pass.text, "\n") {
 		frame.lines = append(frame.lines, line)
-		frame.provenance = append(frame.provenance, rows[row])
+		frame.provenance = append(frame.provenance, pass.rows[row])
 	}
-}
-
-func (r *renderer) blockFrameRowsTyped(c *scrollback.Conversation, index int, meta scrollback.BlockMetadata, prepared *block, rendered string, expand bool) []renderedRow {
-	key := blockRenderKey{revision: rendererRevision(meta.Revision), context: r.renderContext(expand)}
-	if rows, ok := r.blocks.frameRowsFor(index, key); ok {
-		return rows
-	}
-	if entry, ok := r.blocks.renderedBlock(index, key); ok && len(entry.rows) > 0 {
-		return entry.rows
-	}
-	if prepared == nil {
-		var ok bool
-		r.snapshotLoads++
-		b, ok := blockFromSnapshot(c.SnapshotAt(index))
-		if !ok {
-			return nil
-		}
-		prepared = &b
-	}
-	rows := r.provenanceRows(prepared, rendered, expand)
-	r.blocks.storeFrameRows(index, frameBlockEntry{key: key, rows: rows})
-	return rows
 }
 
 func blockKindFromMetadata(kind scrollback.Kind) blockKind {
@@ -260,9 +232,9 @@ func blockKindFromMetadata(kind scrollback.Kind) blockKind {
 	}
 }
 
-func blockBlankLinesAfterMetadata(metadata []scrollback.BlockMetadata, i int) int {
-	previous := blockKindFromMetadata(metadata[i-1].Kind)
-	current := blockKindFromMetadata(metadata[i].Kind)
+func blockBlankLinesAfterPasses(passes []renderPass, i int) int {
+	previous := passes[i-1].kind
+	current := passes[i].kind
 	switch previous {
 	case blockTool:
 		return interBlockBlankLinesNone

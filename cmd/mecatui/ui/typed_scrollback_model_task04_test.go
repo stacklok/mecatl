@@ -112,3 +112,26 @@ func findStruct(t *testing.T, files []*ast.File, name string) *ast.StructType {
 	t.Fatalf("struct %s not found", name)
 	return nil
 }
+
+func TestRenderPassCarriesCachedFrameMetadata(t *testing.T) {
+	var c conversation
+	c.addNotice("settled")
+	r := newCacheRenderer()
+	r.renderConversationFrame(&c.scrollback, false)
+	loads, prepares, renders := r.snapshotLoads, r.cardPrepares, r.blockRenders
+
+	passes, _ := r.renderPasses(&c.scrollback, false)
+	pass := passes[0]
+	if pass.id == 0 || pass.revision != 0 || pass.kind != blockNotice || pass.text == "" || len(pass.rows) == 0 {
+		t.Fatalf("render pass omitted cache/frame metadata: %#v", pass)
+	}
+	if got := r.snapshotLoads - loads; got != 0 {
+		t.Fatalf("settled cache hit loaded %d snapshots", got)
+	}
+	if got := r.cardPrepares - prepares; got != 0 {
+		t.Fatalf("settled cache hit prepared %d cards", got)
+	}
+	if got := r.blockRenders - renders; got != 0 {
+		t.Fatalf("settled cache hit rendered %d cards", got)
+	}
+}

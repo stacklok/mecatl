@@ -171,11 +171,9 @@ type renderer struct {
 	inputView  string
 	inputValid bool
 
-	// Render-pass scratch is renderer-owned allocation reuse. Metadata carries no
-	// payload; prepared holds detached payloads only for this pass's cache misses.
-	renderedBlocksScratch []string
-	metadataScratch       []scrollback.BlockMetadata
-	preparedScratch       []*block
+	// Render-pass scratch is renderer-owned allocation reuse. It carries no logical
+	// payload beyond the cache-miss preparation that produced each rendered entry.
+	renderPassScratch []renderPass
 
 	// vpViewCache/vpViewValid memoize the rendered VIEWPORT OUTPUT — the OUTERMOST
 	// render layer, above blockRenderCache. View() calls vp.View() which runs
@@ -617,32 +615,29 @@ func stripVS16(s string) string {
 // prefix lines being newline-free — they are split single lines, but
 // SetContentLines is free to re-split them and the fresh array still absorbs the
 // result.
-// walkConversation reads cheap typed metadata first. A detached payload snapshot
-// is materialized only for a whole-card cache miss; settled cards never clone or
+// renderPasses reads cheap typed metadata first. A detached payload snapshot is
+// materialized only for a whole-card cache miss; settled cards never clone or
 // prepare their payload merely to prove their cached output is still valid.
-func (r *renderer) walkConversation(c *scrollback.Conversation, expand bool) ([]string, []scrollback.BlockMetadata, []*block, int) {
+func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]renderPass, int) {
 	n := c.Len()
 	firstChanged := n
-	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
-	if cap(r.metadataScratch) < n {
-		r.metadataScratch = make([]scrollback.BlockMetadata, n)
+	if cap(r.renderPassScratch) < n {
+		r.renderPassScratch = make([]renderPass, n)
 	} else {
-		r.metadataScratch = r.metadataScratch[:n]
+		r.renderPassScratch = r.renderPassScratch[:n]
 	}
-	if cap(r.preparedScratch) < n {
-		r.preparedScratch = make([]*block, n)
-	} else {
-		r.preparedScratch = r.preparedScratch[:n]
-		clear(r.preparedScratch)
-	}
-	metadata := r.metadataScratch
-	prepared := r.preparedScratch
+	passes := r.renderPassScratch
 	for i := 0; i < n; i++ {
 		meta := c.MetadataAt(i)
-		metadata[i] = meta
-		key := blockRenderKey{revision: rendererRevision(meta.Revision), context: r.renderContext(expand)}
+		pass := renderPass{
+			id:       uint64(meta.ID),
+			revision: rendererRevision(meta.Revision),
+			kind:     blockKindFromMetadata(meta.Kind),
+		}
+		key := blockRenderKey{revision: pass.revision, context: r.renderContext(expand)}
 		if entry, ok := r.blocks.renderedBlock(i, key); ok {
-			r.renderedBlocksScratch = append(r.renderedBlocksScratch, entry.out)
+			pass.text, pass.rows = entry.out, entry.rows
+			passes[i] = pass
 			continue
 		}
 		r.snapshotLoads++
@@ -650,13 +645,15 @@ func (r *renderer) walkConversation(c *scrollback.Conversation, expand bool) ([]
 		if !ok {
 			continue
 		}
-		prepared[i] = &b
-		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &b, expand))
+		pass.text = r.renderBlock(i, &b, expand)
+		entry, _ := r.blocks.renderedBlock(i, key)
+		pass.rows = entry.rows
+		passes[i] = pass
 		if i < firstChanged {
 			firstChanged = i
 		}
 	}
-	return r.renderedBlocksScratch, metadata, prepared, firstChanged
+	return passes, firstChanged
 }
 
 func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
@@ -744,6 +741,9 @@ func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
 	// that cell for its frameless fallback, so it cannot also carry the usual indent.
 	if b.kind != blockTool || r.width > r.indent {
 		out = r.indentLines(out)
+	}
+	if len(rows) == 0 {
+		rows = r.provenanceRows(b, out, expand)
 	}
 	r.blocks.storeRendered(idx, blockEntry{key: key, out: out, rows: rows})
 	r.blockRenders++

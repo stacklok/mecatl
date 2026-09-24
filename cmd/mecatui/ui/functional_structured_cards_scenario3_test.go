@@ -68,9 +68,9 @@ func TestMecatuiFunctionalConversationCards_Scenario3_FrameProvenanceMatchesPrep
 		if len(strings.Split(entry.out, "\n")) != len(entry.rows) {
 			t.Fatalf("block %d cached lines/rows are not lockstep", i)
 		}
-		if _, ok := r.blocks.frameRows[i]; ok {
-			t.Fatalf("functional block %d grew a second frame-row cache", i)
-		}
+	}
+	if _, ok := reflect.TypeOf(blockRenderCache{}).FieldByName("frameRows"); ok {
+		t.Fatal("renderer retained a second frame-provenance cache")
 	}
 	for _, typ := range []reflect.Type{reflect.TypeOf(renderedRow{}), reflect.TypeOf(renderedFrame{})} {
 		for i := 0; i < typ.NumField(); i++ {
