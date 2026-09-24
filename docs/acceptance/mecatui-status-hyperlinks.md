@@ -4,7 +4,7 @@
 **Work classification:** Bounded — emits terminal-standard hyperlink controls for an existing, validated local status-line markup feature without changing durable trust, persistence, server, or public API boundaries.
 **Decision record:** None — this is a focused presentation behavior: existing StatusML link destinations remain the only source of hyperlink targets and existing validation remains the trust boundary.
 **Phase:** capability — local TUI presentation extension
-**Status:** in-progress, 2026-09-23. Implementation started after the merged Plan / Interface PR approved the native OSC 8 scope.
+**Status:** landed, 2026-09-23. Implementation candidate completed the approved native OSC 8 scope; this transition becomes authoritative only when its implementation PR merges.
 **Delivery:** Split. This user-visible output and safety-boundary contract merits review before implementation; the Plan / Interface PR is the approval gate.
 **Expected tasks:** 1
 **Plan PR:** [#1830](https://github.com/stacklok/mecatl/pull/1830)
