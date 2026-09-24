@@ -296,3 +296,74 @@ func TestViewportViewProjectsCallerProvidedLinesWithoutStoringContent(t *testing
 		t.Fatalf("stateful projection = %#v, want current caller line at retained offset", second)
 	}
 }
+
+func TestListViewWithIndicatorsBoundsFittingSelectionWhenBidirectionalChromeCannotFit(t *testing.T) {
+	items := []ListItem{
+		{ID: "before-0", Text: "before-0"},
+		{ID: "before-1", Text: "before-1"},
+		{ID: "selected", Text: "selected-0\nselected-1"},
+		{ID: "after-0", Text: "after-0"},
+		{ID: "after-1", Text: "after-1"},
+	}
+	for _, capacity := range []int{2, 3} {
+		t.Run("capacity="+strconv.Itoa(capacity), func(t *testing.T) {
+			list := new(List)
+			list.SetGeometry(20, capacity, 1, Clip)
+			list.SetItems(items)
+			list.SetCursor(2)
+
+			view := list.ViewWithIndicators(capacity, true)
+			selected := 0
+			for _, row := range view.Rows {
+				if row.ID == "selected" {
+					selected++
+				}
+			}
+			chrome := indicatorChromeForCounts(view.Above, view.Below)
+			if selected != 2 || len(view.Rows)+chrome > capacity {
+				t.Fatalf("capacity=%d projection selected=%d rows=%d chrome=%d view=%#v", capacity, selected, len(view.Rows), chrome, view)
+			}
+			if view.Above != 0 || view.Below != 0 {
+				t.Fatalf("capacity=%d reported chrome that does not fit: %#v", capacity, view)
+			}
+		})
+	}
+}
+
+func TestListViewWithIndicatorsDoesNotCountPartialNonSelectedItems(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(20, 4, 1, Clip)
+	list.SetItems([]ListItem{
+		{ID: "before", Text: "before-0\nbefore-1\nbefore-2"},
+		{ID: "selected", Text: "selected"},
+		{ID: "after", Text: "after-0\nafter-1\nafter-2"},
+	})
+	list.SetCursor(1)
+	list.viewport.offset = 1
+
+	view := list.ViewWithIndicators(4, true)
+	if len(view.Rows) != 4 || view.Rows[0].ID != "before" || view.Rows[0].ItemLine != 1 || view.Rows[3].ID != "after" || view.Rows[3].ItemLine != 0 || view.Above != 0 || view.Below != 0 {
+		t.Fatalf("partial non-selected boundaries became overflow: %#v", view)
+	}
+}
+
+func TestListViewWithIndicatorsNormalizesPhysicalOffsetAfterGeometryChange(t *testing.T) {
+	list := new(List)
+	list.SetGeometry(8, 2, 1, Wrap)
+	list.SetItems([]ListItem{
+		{ID: "a", Text: "abcdefghi"},
+		{ID: "b", Text: "jklmnopqr"},
+		{ID: "c", Text: "stuvwxyz0"},
+		{ID: "d", Text: "123456789"},
+	})
+	list.Scroll(End)
+	if list.Offset() == 0 {
+		t.Fatal("setup did not reach a physical scroll offset")
+	}
+
+	list.SetGeometry(20, 2, 1, Wrap)
+	view := list.ViewWithIndicators(2, false)
+	if list.Offset() != 3 || len(view.Rows) == 0 || view.Rows[0].ID != "d" {
+		t.Fatalf("geometry resize retained stale physical offset: offset=%d view=%#v", list.Offset(), view)
+	}
+}

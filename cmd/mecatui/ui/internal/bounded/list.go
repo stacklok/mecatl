@@ -252,6 +252,10 @@ func (l *List) ViewWithIndicators(capacity int, reveal bool) ListView {
 		l.viewport.height, l.viewport.offset, l.reveal = capacity, 0, false
 		return ListView{}
 	}
+	// Geometry and wrapping can change the physical row count between renders.
+	// Preserve independent physical scrolling while constraining a stale offset to a
+	// real row before choosing a non-revealing logical projection.
+	l.viewport.offset = clampBounded(l.viewport.offset, len(layout.rows))
 	previousOffset := l.viewport.offset
 	selectedHeight := l.normalizeIndicatorCursor(layout)
 	best, found := l.bestIndicatorCandidate(layout, capacity, previousOffset, reveal, selectedHeight)
@@ -292,7 +296,7 @@ func (l *List) bestIndicatorCandidate(layout listLayout, capacity, previousOffse
 			}
 			end := min(len(layout.rows), start+height)
 			above, below := hiddenCompleteItems(layout, start, end)
-			if !indicatorMaskMatches(mask, above, below) || !l.indicatorReveals(layout, start, end, height, selectedHeight, reveal) {
+			if !indicatorMaskMatches(mask, above, below) || !l.indicatorReveals(layout, start, end, capacity, selectedHeight, reveal) {
 				continue
 			}
 			candidate := indicatorCandidate{start: start, height: height, above: above, below: below}
@@ -324,12 +328,12 @@ func indicatorMaskMatches(mask, above, below int) bool {
 	return (mask&1 != 0) == (above > 1) && (mask&2 != 0) == (below > 1)
 }
 
-func (l *List) indicatorReveals(layout listLayout, start, end, height, selectedHeight int, reveal bool) bool {
+func (l *List) indicatorReveals(layout listLayout, start, end, capacity, selectedHeight int, reveal bool) bool {
 	if !reveal {
 		return true
 	}
 	selectedStart, selectedEnd := layout.starts[l.cursor], layout.ends[l.cursor]
-	if selectedHeight <= height {
+	if selectedHeight <= capacity {
 		return selectedStart >= start && selectedEnd <= end
 	}
 	cursorLine := selectedStart + l.cursorLine
@@ -356,17 +360,32 @@ func betterIndicatorCandidate(candidate, best indicatorCandidate, previousOffset
 }
 
 func (l *List) indicatorFallback(layout listLayout, capacity, previousOffset int, reveal bool) indicatorCandidate {
-	l.viewport.height = capacity
+	l.viewport.height, l.viewport.offset = capacity, previousOffset
 	if reveal {
-		l.viewport.offset = previousOffset
 		l.revealCursor(layout)
 	} else {
-		l.viewport.height = min(max(1, l.viewport.height), len(layout.rows)-previousOffset)
-		l.viewport.offset = previousOffset
+		l.viewport.offset = clampScroll(l.viewport.offset, len(layout.rows), l.viewport.height)
 	}
 	w := l.viewport.window(len(layout.rows))
 	above, below := hiddenCompleteItems(layout, w.start, w.end)
+	// A fitting selected item can leave no room for the chrome implied by logical
+	// overflow. Keep that item visible rather than returning a body the renderer
+	// will expand past its capacity. One-row renderers put overflow in their header.
+	if capacity > 1 && w.end-w.start+indicatorChromeForCounts(above, below) > capacity {
+		above, below = 0, 0
+	}
 	return indicatorCandidate{start: w.start, height: l.viewport.height, above: above, below: below}
+}
+
+func indicatorChromeForCounts(above, below int) int {
+	chrome := 0
+	if above > 1 {
+		chrome++
+	}
+	if below > 1 {
+		chrome++
+	}
+	return chrome
 }
 
 func (l *List) indicatorView(layout listLayout, candidate indicatorCandidate) ListView {
