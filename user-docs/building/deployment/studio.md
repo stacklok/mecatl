@@ -73,6 +73,19 @@ connected deployment does not enable:
 A global search palette and a keyboard-shortcuts reference page complete the
 set.
 
+## Install Studio in your browser
+
+Open your Studio URL over HTTPS in a browser that offers app installation, then
+choose the browser's **Install app** command. On a local workstation, the
+loopback URL in the Compose setup also qualifies. Launch the installed Studio
+from your app list; it opens Chats at `/workspace/chat`.
+
+The installed window loads Studio from its origin and needs a connection to the
+BFF and Mecatl deployment for agent actions. A loaded window reports an
+unavailable connection if that link drops. A fully offline launch follows the
+browser's default failure page because Studio does not provide an offline
+starting page.
+
 ## Try it locally with Compose
 
 The repository's `apps/docker-compose.yml` starts a `mecated` container and
@@ -174,6 +187,15 @@ covers the spawn and mock runtime modes and the `task studio:*` commands.
   the approvals Studio surfaces in a chat.
 
 ## Troubleshooting
+
+<details>
+<summary>Studio shows "Page not found" or "Something went wrong"</summary>
+
+Use **Go to Chats** to return to the workspace. If a page reports an unexpected
+error, choose **Try again** first. If Studio cannot render its main interface,
+choose **Reload Studio**. Check the Studio URL if the page remains missing.
+
+</details>
 
 <details>
 <summary>Studio exits with "authentication setup failed (auth_discovery_failed)"</summary>

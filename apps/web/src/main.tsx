@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { RootErrorBoundary, studioRouterOptions } from "./components/error-page/error-routes";
 import { AuthGate } from "./features/auth/auth-gate";
 import { installCsrfInterceptor } from "./lib/api-client";
 import { initializeProfilePreferences } from "./lib/profile-preferences";
@@ -26,7 +27,7 @@ const queryClient = new QueryClient({
 });
 
 const router = createRouter({
-  defaultPreload: "intent",
+  ...studioRouterOptions,
   routeTree,
 });
 
@@ -44,10 +45,12 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <AuthGate>
-        <RouterProvider router={router} />
-      </AuthGate>
-    </QueryClientProvider>
+    <RootErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthGate>
+          <RouterProvider router={router} />
+        </AuthGate>
+      </QueryClientProvider>
+    </RootErrorBoundary>
   </StrictMode>,
 );

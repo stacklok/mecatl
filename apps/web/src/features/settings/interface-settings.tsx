@@ -200,7 +200,7 @@ function NotificationPreference() {
           onClick={() =>
             sendBrowserNotification("Mecatl notifications are ready", {
               body: "You’ll be notified when an off-screen run finishes.",
-              icon: "/favicon.ico",
+              icon: "/stacklok-favicon.png",
               tag: "mecatl-notification-test",
             })
           }
