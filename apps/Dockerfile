@@ -62,6 +62,7 @@
 # Stage 1: build (Node 24 — matches apps/package.json `engines` and .node-version)
 # ---------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM node:24-slim AS build
+ARG STUDIO_BUILD_ID=""
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=1
 RUN corepack enable
@@ -76,7 +77,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 # contracts (openapi.json + generated client) → server (esbuild → server/dist) → web (Vite → web/dist)
-RUN pnpm build
+RUN STUDIO_BUILD_ID="${STUDIO_BUILD_ID}" pnpm build
 # Prune to the server's production dependency closure. pnpm ≥ 12.2 derives a
 # dedicated deploy lockfile from the shared one, so the `workspace:*` dependency
 # on @mecatl-studio/contracts becomes a `file:` copy inside /out/server/node_modules

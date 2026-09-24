@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
 import { RuntimeNotReadyError } from "./mecatl/runtime.js";
 import { fakeRuntime, sampleSnapshot } from "./testing/fakes.js";
+import { installedSdkPackageVersion } from "./testing/sdk-package.js";
 
 describe("Studio BFF", () => {
   it("GET /api/health returns 200 and GET /api/v1/runtime returns the negotiated snapshot", async () => {
@@ -17,7 +18,10 @@ describe("Studio BFF", () => {
 
     const runtime = await app.request("/api/v1/runtime");
     expect(runtime.status).toBe(200);
-    await expect(runtime.json()).resolves.toEqual(sampleSnapshot());
+    await expect(runtime.json()).resolves.toEqual({
+      ...sampleSnapshot(),
+      sdkVersion: installedSdkPackageVersion(),
+    });
 
     // Health needs no runtime at all.
     const bare = await createApp().request("/api/health");

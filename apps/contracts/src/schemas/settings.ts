@@ -20,6 +20,15 @@ export const providerInventoryItemSchema = z.object({
   state: z.string(),
 });
 
+export const providerSettingsResponseSchema = z.object({
+  // OpenAPI 3.1 type unions keep null in the generated client; nullable:true does not.
+  displayEndpoint: z
+    .custom<string | null>((value) => typeof value === "string" || value === null)
+    .meta({ type: ["string", "null"] }),
+  models: z.array(modelInventoryItemSchema),
+  provider: providerInventoryItemSchema,
+});
+
 export const runtimeSettingsResponseSchema = z.object({
   buildId: z.string(),
   management: z.object({
@@ -37,3 +46,4 @@ export const runtimeSettingsResponseSchema = z.object({
 });
 
 export type RuntimeSettingsResponse = z.infer<typeof runtimeSettingsResponseSchema>;
+export type ProviderSettingsResponse = z.infer<typeof providerSettingsResponseSchema>;

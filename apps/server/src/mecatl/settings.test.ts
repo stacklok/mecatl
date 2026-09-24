@@ -16,6 +16,83 @@ function sdkModel(id: string, providerId: string) {
 }
 
 describe("Mecatl runtime settings", () => {
+  it("serves a safe detail for a known provider", async () => {
+    const list = vi.fn().mockResolvedValue({
+      models: [
+        { ...sdkModel("other", "other"), credential: "secret" },
+        { ...sdkModel("slash", "team/provider"), apiKey: "secret" },
+      ],
+      providerStatus: [
+        {
+          availableNotDefault: true,
+          defaultModelAutoSelected: false,
+          hint: "Available",
+          modelCount: 1,
+          providerId: "team/provider",
+          state: "available",
+          credentials: "secret",
+        },
+      ],
+    });
+    const info = vi.fn().mockResolvedValue({
+      buildId: "daemon-v1",
+      llmProviderDisplayEndpoint: "https://gateway.example.com/a%2Fb",
+      rawEndpoint: "https://user:secret@gateway.example.com/?token=secret",
+      serverImplementation: "mecated",
+    });
+    const service = createMecatlSettingsService(
+      { models: { list }, server: { info } } as unknown as Client,
+      { modelSelection: true, serverInfo: true },
+    );
+
+    await expect(service.getProvider("team/provider")).resolves.toEqual({
+      displayEndpoint: "https://gateway.example.com/a%2Fb",
+      models: [
+        {
+          contextLimit: "200000",
+          displayName: "slash",
+          id: "slash",
+          image: false,
+          providerId: "team/provider",
+          reasoning: true,
+        },
+      ],
+      provider: {
+        availableNotDefault: true,
+        defaultModelAutoSelected: false,
+        hint: "Available",
+        id: "team/provider",
+        modelCount: 1,
+        state: "available",
+      },
+    });
+    expect(info).toHaveBeenCalledExactlyOnceWith({ providerId: "team/provider" });
+
+    await expect(service.getProvider("other")).resolves.toMatchObject({
+      displayEndpoint: "https://gateway.example.com/a%2Fb",
+    });
+    await expect(service.getProvider("missing")).resolves.toBeNull();
+    expect(info).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns null endpoint when server info is unsupported or empty", async () => {
+    const list = vi.fn().mockResolvedValue({
+      models: [sdkModel("known", "known")],
+      providerStatus: [],
+    });
+    const info = vi.fn().mockResolvedValue({ llmProviderDisplayEndpoint: "" });
+    let serverInfo = false;
+    const service = createMecatlSettingsService(
+      { models: { list }, server: { info } } as unknown as Client,
+      () => ({ modelSelection: true, serverInfo }),
+    );
+    await expect(service.getProvider("known")).resolves.toMatchObject({ displayEndpoint: null });
+    expect(info).not.toHaveBeenCalled();
+    serverInfo = true;
+    await expect(service.getProvider("known")).resolves.toMatchObject({ displayEndpoint: null });
+    expect(info).toHaveBeenCalledExactlyOnceWith({ providerId: "known" });
+  });
+
   it("synthesises provider rows for models whose provider reports no status", async () => {
     const list = vi.fn().mockResolvedValue({
       models: [sdkModel("b-1", "beta"), sdkModel("a-1", "alpha"), sdkModel("a-2", "alpha")],

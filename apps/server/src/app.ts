@@ -9,6 +9,7 @@ import {
 import { MecatlError } from "@stacklok-oss/mecatl-sdk";
 import { HTTPException } from "hono/http-exception";
 import type { AuthenticationService } from "./auth/service.js";
+import { studioBuildId } from "./build-info.js";
 import type { ActivityLimits } from "./config.js";
 import { requestBodyLimit } from "./http/body-limit.js";
 import type { AppEnv } from "./http/env.js";
@@ -40,6 +41,9 @@ import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerScheduleRoutes } from "./routes/schedules.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStorageRoutes } from "./routes/storage.js";
+import { readInstalledSdkVersion } from "./sdk-version.js";
+
+const sdkVersion = readInstalledSdkVersion();
 
 export const openApiInfo = {
   info: { title: "Mecatl Studio API", version: "1.0.0" },
@@ -177,7 +181,14 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.openapi(runtimeRoute, (context) => {
     if (runtime === undefined) return runtimeUnavailable(context, "The BFF has no Mecatl runtime.");
     try {
-      return context.json(runtime.snapshot(), 200);
+      return context.json(
+        {
+          ...runtime.snapshot(),
+          ...(sdkVersion === undefined ? {} : { sdkVersion }),
+          ...(studioBuildId === undefined ? {} : { studioBuildId }),
+        },
+        200,
+      );
     } catch (error) {
       if (error instanceof RuntimeNotReadyError) {
         void runtime.ready().catch(() => undefined);

@@ -10,6 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { serverBuildDefinitions } from "./build-options.js";
 
 const packageJsonUrl = new URL("../package.json", import.meta.url);
 const manifest = JSON.parse(await readFile(packageJsonUrl, "utf8")) as {
@@ -21,6 +22,7 @@ const external = Object.keys(manifest.dependencies ?? {}).filter(
 
 await build({
   bundle: true,
+  define: serverBuildDefinitions(process.env),
   entryPoints: [fileURLToPath(new URL("../src/index.ts", import.meta.url))],
   external,
   format: "esm",

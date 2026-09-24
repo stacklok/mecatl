@@ -275,7 +275,9 @@ export type GetRuntimeResponses = {
         deployment?: string;
         features: Array<string>;
         mock: boolean;
+        sdkVersion?: string;
         source: 'external' | 'local';
+        studioBuildId?: string;
     };
 };
 
@@ -2923,6 +2925,102 @@ export type GetRuntimeSettingsResponses = {
 };
 
 export type GetRuntimeSettingsResponse = GetRuntimeSettingsResponses[keyof GetRuntimeSettingsResponses];
+
+export type GetProviderSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        providerId: string;
+    };
+    url: '/api/v1/settings/provider';
+};
+
+export type GetProviderSettingsErrors = {
+    /**
+     * The provider ID is missing, empty, or repeated.
+     */
+    400: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * Sign in before reading provider details in OIDC mode.
+     */
+    401: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The provider is absent from the caller-visible inventory.
+     */
+    404: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * Model selection is unavailable on this deployment.
+     */
+    501: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The runtime or provider information is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetProviderSettingsError = GetProviderSettingsErrors[keyof GetProviderSettingsErrors];
+
+export type GetProviderSettingsResponses = {
+    /**
+     * Caller-visible provider, models, and safe diagnostic endpoint.
+     */
+    200: {
+        displayEndpoint: string | null;
+        models: Array<{
+            contextLimit: string;
+            displayName: string;
+            id: string;
+            image: boolean;
+            providerId: string;
+            reasoning: boolean;
+        }>;
+        provider: {
+            availableNotDefault: boolean;
+            defaultModelAutoSelected: boolean;
+            hint: string;
+            id: string;
+            modelCount: number;
+            state: string;
+        };
+    };
+};
+
+export type GetProviderSettingsResponse = GetProviderSettingsResponses[keyof GetProviderSettingsResponses];
 
 export type GetStorageHealthData = {
     body?: never;
