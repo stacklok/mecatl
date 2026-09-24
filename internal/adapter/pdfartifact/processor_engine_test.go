@@ -3,6 +3,7 @@ package pdfartifact
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -109,7 +110,8 @@ func assertArtifactViews(t *testing.T, pdf []byte, views ...session.ToolResult) 
 func assertPDFErrorViews(t *testing.T, pdf []byte, views ...session.ToolResult) {
 	t.Helper()
 	for index, view := range views {
-		if view.CallID != "call-1" || !view.IsError || len(view.Parts) != 0 || len(view.Content) > 100 || strings.Contains(view.Content, string(pdf)) {
+		if view.CallID != "call-1" || !view.IsError || len(view.Parts) != 0 || len(view.Content) > 100 ||
+			strings.Contains(view.Content, string(pdf)) || strings.Contains(view.Content, base64.StdEncoding.EncodeToString(pdf)) {
 			t.Fatalf("view %d leaked failed PDF: %+v", index, view)
 		}
 	}
