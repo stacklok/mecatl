@@ -14,7 +14,7 @@ afterEach(() => {
 
 describe("chat workspace run ownership", () => {
   it("drains only the viewed session queue after settlement", () => {
-    const { result, rerender } = renderHook(({ id }) => useQueuedMessages(id), {
+    const { result, rerender, unmount } = renderHook(({ id }) => useQueuedMessages(id), {
       initialProps: { id: "chat/a" },
     });
     act(() => {
@@ -37,6 +37,9 @@ describe("chat workspace run ownership", () => {
       expect(takeNextQueuedMessage("chat/a")?.text).toBe("first");
     });
     expect(result.current.items.map((item) => item.text)).toEqual(["second"]);
+    unmount();
+    const reloaded = renderHook(() => useQueuedMessages("chat/a"));
+    expect(reloaded.result.current.items.map((item) => item.text)).toEqual(["second"]);
   });
 
   it("addresses steer cancel and retry to the exact run", () => {

@@ -430,7 +430,7 @@ describe("mounted chat workspace BFF boundary", () => {
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
       Promise.resolve(detailResponse("chat-a", "idle", { capabilities, model: currentModel })),
     ]);
-    await mountConnectedWorkspace(bff, "chat-a");
+    const { router } = await mountConnectedWorkspace(bff, "chat-a");
     const controls = screen.getByRole("region", { name: "Chat configuration and usage" });
 
     bff.nextReplies.set("/api/v1/sessions/chat-a/mode", [Promise.resolve(json({ mode: "plan" }))]);
@@ -478,6 +478,10 @@ describe("mounted chat workspace BFF boundary", () => {
       { method: "POST", pathname: "/api/v1/sessions/chat-a/fork" },
     ]);
     expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(0);
+    await waitFor(() => expect(router.state.location.search.sessionId).toBe("chat-b"));
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-b").length).toBeGreaterThan(0),
+    );
   });
 
   it("creates one session and drains one queued prompt only after its run settles", async () => {
