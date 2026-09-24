@@ -387,7 +387,10 @@ func renderPaletteSized(th theme.Theme, st paletteState, caps client.Capabilitie
 	if !st.list.Valid() {
 		return ""
 	}
-	view := st.list.ViewWithIndicators(bodyRows, st.list.RevealPending())
+	// The palette has no independent physical-scroll action. Keep the selected
+	// command visible on every rendered frame; wrapped commands still page through
+	// their physical segments when they exceed the body height.
+	view := st.list.ViewWithIndicators(bodyRows, true)
 	header := "commands"
 	if bodyRows == 1 {
 		// The single physical list row remains available to the bounded control.

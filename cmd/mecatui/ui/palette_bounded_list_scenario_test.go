@@ -145,6 +145,14 @@ func TestMecatuiSlashPaletteBoundedList_Scenario1_SelectionAnchors(t *testing.T)
 	if st.list.Cursor() != 1 {
 		t.Fatalf("Up cursor = %d, want one logical command", st.list.Cursor())
 	}
+	// The rendered palette must re-reveal the selected command even if an earlier
+	// measurement advanced its physical viewport.
+	st.list.SetCursor(2)
+	st.list.Scroll(bounded.PageUp)
+	visible := ansi.Strip(renderPaletteSized(testTheme(), st, client.Capabilities{}, "/", 24, 2))
+	if !strings.Contains(visible, "▶ /gamma") {
+		t.Fatalf("render lost selected final command:\n%s", visible)
+	}
 
 	m := newPaletteModel(t, sampleCommands())
 	m = typeRune(t, m, '/')
