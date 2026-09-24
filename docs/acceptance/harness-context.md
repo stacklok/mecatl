@@ -8,7 +8,7 @@
 **Delivery:** Split. Merge this Plan / Interface amendment before bringing #1875 into conformance; backend integrations follow the shared implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** Relates to [#1811](https://github.com/stacklok/mecatl/issues/1811), [#580](https://github.com/stacklok/mecatl/pull/580), and [#1579](https://github.com/stacklok/mecatl/pull/1579) / [#1614](https://github.com/stacklok/mecatl/pull/1614). This contract closes none of them.
-**Plan PR:** amendment to [#1814](https://github.com/stacklok/mecatl/pull/1814); this branch is the amendment candidate.
+**Plan PR:** [#1878](https://github.com/stacklok/mecatl/pull/1878), draft amendment to merged [#1814](https://github.com/stacklok/mecatl/pull/1814).
 **Approved baseline:** #1814 merged as `2329ae936fefd72df667e5b8c56d3ded5d53578a`. This amendment requires its own approval by merge.
 
 `HarnessContext` names the deployment-configured composition of admitted instruction and
