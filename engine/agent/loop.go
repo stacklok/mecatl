@@ -237,8 +237,9 @@ type Deps struct {
 	// Model is the provider model identifier sent on every request.
 	Model string
 	// ProviderModel is the exact immutable provider/model identity selected by
-	// composition for this engine's LLM. Auxiliary utility calls use it for returned
-	// accounting; the request itself remains provider-neutral.
+	// composition for this engine's primary LLM calls. Utility-result collection uses
+	// it to attribute this engine's main usage; nested auxiliary usage retains its
+	// producer's own attribution. The request itself remains provider-neutral.
 	ProviderModel session.ProviderModelID
 	// ContextWindow returns the model's context window in tokens, resolved LIVE at
 	// the point of use (the compaction check / Engine.ContextWindow) rather than
