@@ -4,7 +4,7 @@
 **Work classification:** Bounded — adds browser presentation of delegation facts already carried by Studio's run stream; the daemon protocol, published SDK, and browser/BFF authority boundary stay intact.
 **Decision record:** None — [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) owns the Studio boundary, and [ADR 0079](../adr/0079-delegation-observability-convergence.md) owns the existing bounded delegation projection. This plan makes product display choices within those decisions.
 **Phase:** Studio design alignment
-**Status:** proposed, 2026-09-24. Reconciled with the merged [#1847 Plan / Interface PR #1880](https://github.com/stacklok/mecatl/pull/1880) and [implementation PR #1886](https://github.com/stacklok/mecatl/pull/1886); awaiting #1849 Plan / Interface approval.
+**Status:** in-progress, 2026-09-24. This implementation is stacked on proposed Plan / Interface PR #1885, pending its human approval. Reconciled with the merged [#1847 Plan / Interface PR #1880](https://github.com/stacklok/mecatl/pull/1880) and [implementation PR #1886](https://github.com/stacklok/mecatl/pull/1886).
 **Delivery:** Split. The three event families, replay behavior, and panel content boundary warrant a separate Plan / Interface review.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1849](https://github.com/stacklok/mecatl/issues/1849).
