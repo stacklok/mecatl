@@ -2639,8 +2639,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			if lifecycleErr := materialization.Err(); lifecycleErr != nil {
 				return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
 			}
-			sess.RecordAuxiliaryUsage(r.Usage)
-			return server.ReflectionReceipt{ID: r.ID, Disposition: string(r.Disposition), Reason: r.Err, Queued: r.Queued, Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted}, explicitReflectionServiceError(err)
+			return server.ReflectionReceipt{
+				ID: r.ID, Disposition: string(r.Disposition), Reason: r.Err, Queued: r.Queued,
+				Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted,
+				Usage: r.Usage,
+			}, explicitReflectionServiceError(err)
 		},
 		PromoteProposal: func(ctx context.Context, part learning.ProposalPartition, id learning.ProposalID, version learning.ProposalVersion, approved bool) (learning.ProposalRecord, error) {
 			if cfg.OwnershipEnforced && session.PrincipalFromContext(ctx) == nil {

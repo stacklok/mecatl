@@ -12,6 +12,7 @@ import (
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -27,6 +28,7 @@ type ReflectionReceipt struct {
 	Staged      int
 	Promoted    int
 	Conflicted  int
+	Usage       session.AuxiliaryUsage
 }
 
 // ExplicitReflector submits one caller-owned completed session for reflection.
@@ -78,6 +80,15 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	if err != nil {
 		return nil, err
 	}
+	currentOwner := s.mutationLeaseHeld(id)
+	if currentOwner {
+		unlock := s.runEntryMu.lock(id)
+		defer unlock()
+		sess, err = s.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if sess.State != session.StateCompleted {
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
 	}
@@ -88,7 +99,24 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		}
 		ctx = memory.WithWorkspace(ctx, binding.Environment.Workspace().Root())
 	}
-	r, err := s.cfg.ReflectSession(ctx, sess)
+	accountingCtx := ctx
+	stopAccounting := func() {}
+	stillOwner := func() bool { return false }
+	if currentOwner {
+		accountingCtx, stopAccounting, stillOwner = s.mutationLeaseContext(ctx, id)
+	}
+	defer stopAccounting()
+	r, err := s.cfg.ReflectSession(accountingCtx, sess)
+	if len(r.Usage.Buckets) > 0 {
+		if stillOwner() {
+			sess.RecordAuxiliaryUsage(r.Usage)
+			if saveErr := s.saveSession(accountingCtx, sess); saveErr != nil {
+				s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "reflection usage dropped")
+			}
+		} else {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelDebug, "reflection usage dropped")
+		}
+	}
 	if err != nil {
 		return nil, explicitReflectionError(err)
 	}
