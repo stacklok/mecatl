@@ -243034,6 +243034,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790261853672,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f3a9bb234c0c6273b779723b05ddd28a59bee611",
+          "message": "feat(studio): implement settings routes and About (#1867)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T17:19:56+02:00",
+          "tree_id": "9422a6f4600c83e03ccaa4ba8e09d9dda73c1fad",
+          "url": "https://github.com/stacklok/mecatl/commit/f3a9bb234c0c6273b779723b05ddd28a59bee611"
+        },
+        "date": 1790263882386,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -353081,6 +353115,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790263877927,
+  "lastUpdate": 1790263883091,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
