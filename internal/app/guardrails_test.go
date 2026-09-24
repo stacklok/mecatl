@@ -499,7 +499,7 @@ func TestGuardrailsCheckerEngineQuarantined(t *testing.T) {
 	// The hooks must NOT be a modelhook.Runner (that would recurse): a plain hookexec
 	// allows every phase, so a checker tool phase fires no guardrail.
 	out, err := deps.Hooks.Run(context.Background(), governance.HookEvent{Phase: governance.PhasePreToolUse, Tool: "WebFetch"})
-	if err != nil || out.Block || len(out.Mutated) != 0 {
+	if err != nil || out.Outcome.Block || len(out.Outcome.Mutated) != 0 {
 		t.Fatalf("the checker engine's hooks must be inert (allow-all), got %+v err %v", out, err)
 	}
 	if deps.Catalog == nil || len(deps.Catalog.Tools()) != 0 {

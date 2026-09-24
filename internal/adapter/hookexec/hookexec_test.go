@@ -32,7 +32,7 @@ func TestExitZeroAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Block {
+	if out.Outcome.Block {
 		t.Fatalf("exit 0 should not block")
 	}
 }
@@ -46,11 +46,11 @@ func TestExitTwoBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("exit 2 should block")
 	}
-	if out.Message != "nope: dangerous" {
-		t.Fatalf("expected block message from stdout, got %q", out.Message)
+	if out.Outcome.Message != "nope: dangerous" {
+		t.Fatalf("expected block message from stdout, got %q", out.Outcome.Message)
 	}
 }
 
@@ -63,8 +63,8 @@ func TestExitTwoBlockMessageFromStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !out.Block || out.Message != "err reason" {
-		t.Fatalf("expected block with stderr message, got block=%v msg=%q", out.Block, out.Message)
+	if !out.Outcome.Block || out.Outcome.Message != "err reason" {
+		t.Fatalf("expected block with stderr message, got block=%v msg=%q", out.Outcome.Block, out.Outcome.Message)
 	}
 }
 
@@ -93,8 +93,8 @@ func TestStdinCarriesEventJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Block {
-		t.Fatalf("hook reported missing stdin fields: %s", out.Message)
+	if out.Outcome.Block {
+		t.Fatalf("hook reported missing stdin fields: %s", out.Outcome.Message)
 	}
 }
 
@@ -108,14 +108,14 @@ func TestExitZeroJSONEnvelopeCarriesMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Block {
+	if out.Outcome.Block {
 		t.Fatalf("exit 0 must not block")
 	}
-	if string(out.Mutated) != `{"command":"ls"}` {
-		t.Fatalf("Mutated = %q, want the rewritten args object", string(out.Mutated))
+	if string(out.Outcome.Mutated) != `{"command":"ls"}` {
+		t.Fatalf("Mutated = %q, want the rewritten args object", string(out.Outcome.Mutated))
 	}
-	if out.Message != "rewrote" {
-		t.Fatalf("Message = %q, want 'rewrote'", out.Message)
+	if out.Outcome.Message != "rewrote" {
+		t.Fatalf("Message = %q, want 'rewrote'", out.Outcome.Message)
 	}
 }
 
@@ -129,11 +129,11 @@ func TestExitZeroPlainStdoutIsMessageNotMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out.Mutated != nil {
-		t.Fatalf("plain stdout must not produce a mutation; got %q", string(out.Mutated))
+	if out.Outcome.Mutated != nil {
+		t.Fatalf("plain stdout must not produce a mutation; got %q", string(out.Outcome.Mutated))
 	}
-	if out.Message != "just a note" {
-		t.Fatalf("Message = %q, want 'just a note'", out.Message)
+	if out.Outcome.Message != "just a note" {
+		t.Fatalf("Message = %q, want 'just a note'", out.Outcome.Message)
 	}
 }
 
@@ -142,16 +142,16 @@ func TestNoHookForPhaseAllows(t *testing.T) {
 		governance.PhasePostToolUse: "exit 2", // different phase
 	})
 	out, err := r.Run(context.Background(), event())
-	if err != nil || out.Block {
-		t.Fatalf("unconfigured phase should allow; got block=%v err=%v", out.Block, err)
+	if err != nil || out.Outcome.Block {
+		t.Fatalf("unconfigured phase should allow; got block=%v err=%v", out.Outcome.Block, err)
 	}
 }
 
 func TestNilConfigAllows(t *testing.T) {
 	r := hookexec.New(nil)
 	out, err := r.Run(context.Background(), event())
-	if err != nil || out.Block {
-		t.Fatalf("nil config should allow everything; got block=%v err=%v", out.Block, err)
+	if err != nil || out.Outcome.Block {
+		t.Fatalf("nil config should allow everything; got block=%v err=%v", out.Outcome.Block, err)
 	}
 }
 

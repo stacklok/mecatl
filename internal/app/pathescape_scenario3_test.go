@@ -650,7 +650,7 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 			{Scope: governance.ScopeUser, Tool: "Write", Effect: governance.Deny},
 		}, nil)
 		p := newEscapePolicy(inner, PostureYolo)
-		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
+		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws).Decision
 		if d.Effect != governance.Deny {
 			t.Fatalf("effect = %v, want Deny — a configured Deny must win over the posture-relaxed escape Allow", d.Effect)
 		}
@@ -662,7 +662,7 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 			{Scope: governance.ScopeUser, Tool: "Write", Effect: governance.Ask},
 		}, nil)
 		p := newEscapePolicy(inner, PostureYolo)
-		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
+		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws).Decision
 		if d.Effect != governance.Ask {
 			t.Fatalf("effect = %v, want Ask — the relax must NEVER suppress a configured Ask", d.Effect)
 		}
@@ -679,7 +679,7 @@ func TestPathEscapePosture_Scenario3_ConfiguredDenyWinsOverEscapeAllow(t *testin
 		// Warm the per-root classifier (the Learn guard classifies against the
 		// roots the policy has already seen — in the loop, Learn only ever
 		// follows an Evaluate of the same call).
-		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws)
+		d := p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, call, ws).Decision
 		if d.Effect != governance.Ask || d.ConfiguredAsk {
 			t.Fatalf("escape at auto = %+v, want an unconfigured escape Ask", d)
 		}

@@ -19,14 +19,11 @@ import (
 // site a clean no-op. The hookexec adapter likewise treats an empty phase map as
 // "allow", so firing these phases with no configured command never blocks.
 
-// runOwnedHook installs a synchronous reporter only for this HookRunner request.
-// The callback is deactivated before return, so a hook cannot retain or replay it.
+// runOwnedHook records returned hook usage while this Engine owns the session.
 func (e *Engine) runOwnedHook(ctx context.Context, r *Run, sess *session.Session, ev governance.HookEvent) (governance.HookOutcome, error) {
-	ctx, deactivate := port.WithAuxiliaryUsageReporter(ctx, func(usage session.AuxiliaryUsage) {
-		r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, usage))
-	})
-	defer deactivate()
-	return e.deps.Hooks.Run(ctx, ev)
+	result, err := e.deps.Hooks.Run(ctx, ev)
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, result.AuxiliaryUsage))
+	return result.Outcome, err
 }
 
 // fireSessionStart fires the SessionStart phase once at the very start of a run,

@@ -77,11 +77,12 @@ func fireTeamGate(ctx context.Context, hooks port.HookRunner, phase governance.H
 		return false, ""
 	}
 	input, _ := json.Marshal(payload)
-	out, err := hooks.Run(ctx, governance.HookEvent{
+	result, err := hooks.Run(ctx, governance.HookEvent{
 		Phase: phase,
 		Tool:  toolName,
 		Input: input,
 	})
+	out := result.Outcome
 	if err != nil || !out.Block {
 		return false, ""
 	}

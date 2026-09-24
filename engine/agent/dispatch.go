@@ -762,12 +762,16 @@ func (e *Engine) surfaceAsk(ctx context.Context, r *Run, sess *session.Session, 
 // permissionDecision evaluates normal Shell authority and, only for the declared
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
-func (e *Engine) permissionDecision(ctx context.Context, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
-	ordinary := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+	ordinaryResult := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, ordinaryResult.AuxiliaryUsage))
+	ordinary := ordinaryResult.Decision
 	if !shellSystemScope(c) || ordinary.Effect == governance.Deny {
 		return ordinary
 	}
-	system := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	systemResult := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, systemResult.AuxiliaryUsage))
+	system := systemResult.Decision
 	if system.Effect == governance.Deny {
 		return system
 	}
@@ -781,7 +785,9 @@ func (e *Engine) authorizeMutatedSystemScope(ctx context.Context, r *Run, sess *
 	if shellSystemScope(original) || !shellSystemScope(effective) {
 		return governance.PermissionDecision{Effect: governance.Allow}, false
 	}
-	decision := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	result := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, session.ToolCall{Name: shellSystemTempToolName}, env.Workspace())
+	r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindGuardrail, result.AuxiliaryUsage))
+	decision := result.Decision
 	if decision.Effect == governance.Deny {
 		return decision, false
 	}
@@ -843,7 +849,7 @@ func systemScopeApprovalArgs(c session.ToolCall) []byte {
 // cancelled Ask becomes Deny) and a cancelled flag set only when ctx was
 // cancelled while awaiting.
 func (e *Engine) authorize(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall) (governance.PermissionDecision, bool) {
-	decision := e.permissionDecision(ctx, sess, env, c)
+	decision := e.permissionDecision(ctx, r, sess, env, c)
 	if decision.Effect != governance.Ask {
 		// Operator visibility for a policy DENY: the deny reason otherwise reaches
 		// only the client event (via denyResult), never the operator channel. Emit

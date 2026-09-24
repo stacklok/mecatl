@@ -123,14 +123,14 @@ func TestLoopRepairsInvalidUTF8ToolResult(t *testing.T) {
 // hookexec blockMessage) and the Mutated args JSON.
 type utf8HookRunner struct{ mutate bool }
 
-func (h utf8HookRunner) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h utf8HookRunner) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	if ev.Phase != governance.PhasePreToolUse {
-		return governance.HookOutcome{}, nil
+		return port.HookResult{}, nil
 	}
 	if h.mutate {
-		return governance.HookOutcome{Mutated: json.RawMessage(`{"path":"` + invalidUTF8 + `"}`)}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Mutated: json.RawMessage(`{"path":"` + invalidUTF8 + `"}`)}}, nil
 	}
-	return governance.HookOutcome{Block: true, Message: "denied " + invalidUTF8}, nil
+	return port.HookResult{Outcome: governance.HookOutcome{Block: true, Message: "denied " + invalidUTF8}}, nil
 }
 
 // TestPreToolUseHookOutputIsRepaired closes the one path that reaches recorded

@@ -187,25 +187,26 @@ type classifyingPolicy struct {
 // Evaluate implements port.PermissionPolicy. See Wrap for the full semantics. It
 // forwards sessionID to the inner policy unchanged so per-session learned rules
 // are honoured by the layer it decorates.
-func (p *classifyingPolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
-	base := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
+func (p *classifyingPolicy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
+	baseResult := p.inner.Evaluate(ctx, sessionID, mode, c, ws)
+	base := baseResult.Decision
 
 	// Monotonicity invariant, enforced unconditionally: an inner Deny is sacred
 	// and is NEVER consulted nor relaxed, regardless of how ClassifyOn is
 	// configured. The classifier may only tighten an Ask (→ Deny) or relax it
 	// (→ Allow); it can never downgrade a Deny.
 	if base.Effect == governance.Deny {
-		return base
+		return baseResult
 	}
 
 	// Only the configured effect is ever escalated to the model. Everything else
 	// passes through untouched.
 	if base.Effect != p.cfg.ClassifyOn {
-		return base
+		return baseResult
 	}
 	if p.cfg.SkipReadOnly {
 		if _, ro := readOnlyTools[c.Name]; ro {
-			return base
+			return baseResult
 		}
 	}
 
@@ -219,25 +220,25 @@ func (p *classifyingPolicy) Evaluate(ctx context.Context, sessionID session.Sess
 		// not change this — it never downgrades an inner Deny, and the only inner
 		// effect that reaches here is the classified one (Ask), which already
 		// requires a human.
-		return base
+		return baseResult
 	}
 
 	switch verdict {
 	case VerdictDangerous:
-		return governance.PermissionDecision{
+		return port.PermissionResult{Decision: governance.PermissionDecision{
 			Effect: governance.Deny,
 			Reason: fmt.Sprintf("layer-2 classifier judged %q dangerous; %s", c.Name, base.Reason),
-		}
+		}, AuxiliaryUsage: baseResult.AuxiliaryUsage}
 	case VerdictSafe:
-		return governance.PermissionDecision{
+		return port.PermissionResult{Decision: governance.PermissionDecision{
 			Effect: governance.Allow,
 			Reason: fmt.Sprintf("layer-2 classifier judged %q safe", c.Name),
-		}
+		}, AuxiliaryUsage: baseResult.AuxiliaryUsage}
 	case VerdictAmbiguous, VerdictUnknown:
 		// Keep the inner decision (Ask): a human decides.
-		return base
+		return baseResult
 	default:
-		return base
+		return baseResult
 	}
 }
 

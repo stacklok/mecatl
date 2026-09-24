@@ -12,6 +12,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -37,26 +38,26 @@ type hookApprovalStub struct {
 	stopAfterLearn bool
 }
 
-func (h *hookApprovalStub) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *hookApprovalStub) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	switch ev.Phase {
 	case governance.PhasePreToolUse:
 		if ev.Tool != h.tool || h.noPreBlock {
-			return governance.HookOutcome{}, nil
+			return port.HookResult{}, nil
 		}
 		h.preCalls.Add(1)
 		if h.stopAfterLearn && h.learned.Load() > 0 {
-			return governance.HookOutcome{}, nil // waiver in effect: no ask
+			return port.HookResult{}, nil // waiver in effect: no ask
 		}
-		return governance.HookOutcome{Block: true, AskApproval: true, Message: h.reason}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Block: true, AskApproval: true, Message: h.reason}}, nil
 	case governance.PhasePostToolUse:
 		if h.postBlock && ev.Tool == h.tool {
 			// Post must IGNORE AskApproval (PreToolUse-only scope): a Post block is the
 			// inert annotation path; AskApproval set here must never surface an ask.
-			return governance.HookOutcome{Block: true, AskApproval: true, Message: h.reason}, nil
+			return port.HookResult{Outcome: governance.HookOutcome{Block: true, AskApproval: true, Message: h.reason}}, nil
 		}
-		return governance.HookOutcome{}, nil
+		return port.HookResult{}, nil
 	default:
-		return governance.HookOutcome{}, nil
+		return port.HookResult{}, nil
 	}
 }
 

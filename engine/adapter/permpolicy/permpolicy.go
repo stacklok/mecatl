@@ -131,7 +131,7 @@ var acceptEditsRules = []governance.Rule{
 // a resolver is configured). Because resolution is deny-dominant across the
 // whole merged set, an extra allow can never override a static (or config)
 // deny/ask.
-func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
+func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) port.PermissionResult {
 	var extra []governance.Rule
 	if mode == session.ModeAccept {
 		extra = append(extra, acceptEditsRules...)
@@ -142,7 +142,7 @@ func (p *Policy) Evaluate(ctx context.Context, sessionID session.SessionID, mode
 	if p.resolver != nil {
 		extra = append(extra, p.resolver.Resolve(ctx, ws)...)
 	}
-	return p.eval.EvaluateWith(c.Name, c.Args, mode == session.ModePlan, extra)
+	return port.PermissionResult{Decision: p.eval.EvaluateWith(c.Name, c.Args, mode == session.ModePlan, extra)}
 }
 
 // Learn records a per-session allow rule for tool call c (the model's "allow

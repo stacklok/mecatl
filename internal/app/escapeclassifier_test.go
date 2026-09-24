@@ -250,7 +250,7 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 					call := session.NewToolCall("pseudo", toolName, args)
 					for _, posture := range []Posture{PostureStrict, PostureTrusted, PostureAuto, PostureYolo} {
 						policy := newEscapePolicy(permpolicy.NewPolicy(defaultRules(), nil), posture)
-						decision := policy.Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
+						decision := policy.Evaluate(t.Context(), "s1", session.ModeDefault, call, ws).Decision
 						if decision.Effect != governance.Deny || !strings.Contains(decision.Reason, "pseudo-filesystem") {
 							t.Errorf("%s %s(%q): %+v, want pseudo-fs policy deny", posture, toolName, path, decision)
 						}
@@ -261,7 +261,7 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 					// A configured ask returns before the policy's pseudo-fs check.
 					// Even when approved, the serving workspace must refuse it itself.
 					inner := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: "ListDir", Effect: governance.Ask}}, nil)
-					decision := newEscapePolicy(inner, PostureYolo).Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
+					decision := newEscapePolicy(inner, PostureYolo).Evaluate(t.Context(), "s1", session.ModeDefault, call, ws).Decision
 					if decision.Effect != governance.Ask || !decision.ConfiguredAsk {
 						t.Fatalf("configured ask for %q = %+v", path, decision)
 					}

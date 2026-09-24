@@ -71,17 +71,12 @@ func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	}
 }
 
-type replayingUsageHook struct {
-	usage    session.AuxiliaryUsage
-	reporter port.AuxiliaryUsageReporter
+type returnedUsageHook struct {
+	usage session.AuxiliaryUsage
 }
 
-func (h *replayingUsageHook) Run(ctx context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
-	h.reporter = port.AuxiliaryUsageReporterFromContext(ctx)
-	if h.reporter != nil {
-		h.reporter(h.usage)
-	}
-	return governance.HookOutcome{}, nil
+func (h returnedUsageHook) Run(context.Context, governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{AuxiliaryUsage: h.usage}, nil
 }
 
 type fixedUsageReviewer struct {
@@ -96,9 +91,8 @@ type concurrentUsageHook struct {
 	usage session.AuxiliaryUsage
 }
 
-func (h concurrentUsageHook) Run(ctx context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
-	port.AuxiliaryUsageReporterFromContext(ctx)(h.usage)
-	return governance.HookOutcome{}, nil
+func (h concurrentUsageHook) Run(context.Context, governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{AuxiliaryUsage: h.usage}, nil
 }
 
 func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.T) {
@@ -145,16 +139,11 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	if outcome := reviewEngine.parentCaps(reviewRun, parent, 0).adjudicate(shellAsk("git status"), true); !outcome.allowed {
 		t.Fatalf("review outcome = %+v, want allowed", outcome)
 	}
-	hook := &replayingUsageHook{usage: checkedUsage}
+	hook := returnedUsageHook{usage: checkedUsage}
 	hookEngine := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main", Hooks: hook})
 	if _, err := hookEngine.runOwnedHook(t.Context(), &Run{diag: port.NopDiagnostics{}}, parent, governance.HookEvent{Phase: governance.PhasePreToolUse}); err != nil {
 		t.Fatal(err)
 	}
-	if hook.reporter == nil {
-		t.Fatal("Engine did not install AuxiliaryUsageReporter during hook request")
-	}
-	// A retained callback is inert as soon as HookRunner.Run returns.
-	hook.reporter(checkedUsage)
 	wantReview := reviewerUsage.Add(session.Usage{InputTokens: 2})
 	if got := parent.UsageFor(session.UsageKindAskReviewer); got != wantReview {
 		t.Fatalf("ask reviewer usage = %+v, want remapped %+v", got, wantReview)

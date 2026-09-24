@@ -94,8 +94,8 @@ func (c *capturingDiag) snapshot() []diagRecord {
 // without depending on a specific rule shape.
 type denyPolicy struct{ reason string }
 
-func (p denyPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Deny, Reason: p.reason}
+func (p denyPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Deny, Reason: p.reason}}
 }
 func (denyPolicy) Learn(session.SessionID, session.ToolCall) {}
 

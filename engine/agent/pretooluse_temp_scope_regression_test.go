@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -17,11 +18,11 @@ import (
 // systemScopeMutationHook rewrites the caller's managed Shell arguments to system.
 type systemScopeMutationHook struct{}
 
-func (systemScopeMutationHook) Run(_ context.Context, event governance.HookEvent) (governance.HookOutcome, error) {
+func (systemScopeMutationHook) Run(_ context.Context, event governance.HookEvent) (port.HookResult, error) {
 	if event.Phase == governance.PhasePreToolUse {
-		return governance.HookOutcome{Mutated: json.RawMessage(`{"command":"go test ./...","temp_scope":"system"}`)}, nil
+		return port.HookResult{Outcome: governance.HookOutcome{Mutated: json.RawMessage(`{"command":"go test ./...","temp_scope":"system"}`)}}, nil
 	}
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 // TestADR_0281_PreToolUseManagedToSystemRequiresAuthorization pins the

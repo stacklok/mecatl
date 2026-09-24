@@ -42,7 +42,7 @@ func TestInspectToolsDefaultExplicitAllow(t *testing.T) {
 	prod := permpolicy.NewPolicy(mainRules(Config{}), nil)
 	for _, name := range inspectToolNames {
 		got := prod.Evaluate(context.Background(), "s1", session.ModeDefault,
-			session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Effect
+			session.NewToolCall("id", name, json.RawMessage(`{}`)), nil).Decision.Effect
 		if got != governance.Allow {
 			t.Errorf("inspect tool %q should default to Allow (mainRules production assembly), got %v", name, got)
 		}
@@ -59,7 +59,7 @@ func TestConfiguredAskOverridesInspectAllow(t *testing.T) {
 		governance.Rule{Scope: governance.ScopeUser, Tool: "InspectSubagent", Effect: governance.Ask})
 	policy := permpolicy.NewPolicy(rules, nil)
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("id", "InspectSubagent", json.RawMessage(`{}`)), nil)
+		session.NewToolCall("id", "InspectSubagent", json.RawMessage(`{}`)), nil).Decision
 	if got.Effect != governance.Ask {
 		t.Fatalf("a configured (ScopeUser) Ask on InspectSubagent must beat the built-in-floor Allow; got %v", got.Effect)
 	}
@@ -74,7 +74,7 @@ func TestConfiguredDenyOverridesInspectAllow(t *testing.T) {
 		governance.Rule{Scope: governance.ScopeSharedProject, Tool: "SubagentStatus", Effect: governance.Deny})
 	policy := permpolicy.NewPolicy(rules, nil)
 	got := policy.Evaluate(context.Background(), "s1", session.ModeDefault,
-		session.NewToolCall("id", "SubagentStatus", json.RawMessage(`{}`)), nil)
+		session.NewToolCall("id", "SubagentStatus", json.RawMessage(`{}`)), nil).Decision
 	if got.Effect != governance.Deny {
 		t.Fatalf("a configured Deny on SubagentStatus must win over the built-in-floor Allow; got %v", got.Effect)
 	}

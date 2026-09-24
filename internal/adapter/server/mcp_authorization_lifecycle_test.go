@@ -89,8 +89,8 @@ func (*lifecycleParkingTool) AbortAuthorization(context.Context, session.Externa
 
 type lifecycleAllowPolicy struct{}
 
-func (lifecycleAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) governance.PermissionDecision {
-	return governance.PermissionDecision{Effect: governance.Allow}
+func (lifecycleAllowPolicy) Evaluate(context.Context, session.SessionID, session.PermissionMode, session.ToolCall, tool.WorkspaceReader) port.PermissionResult {
+	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (lifecycleAllowPolicy) Learn(session.SessionID, session.ToolCall) {}
 

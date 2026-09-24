@@ -37,9 +37,9 @@ func (f *fakeChecker) Check(_ context.Context, req CheckRequest) (CheckResult, e
 // passInner is a transparent inner HookRunner: every phase allows.
 type passInner struct{ ran int }
 
-func (p *passInner) Run(_ context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
+func (p *passInner) Run(_ context.Context, _ governance.HookEvent) (port.HookResult, error) {
 	p.ran++
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 func boolp(b bool) *bool           { return &b }
@@ -67,26 +67,35 @@ type usageChecker struct {
 
 func (c usageChecker) Check(context.Context, CheckRequest) (CheckResult, error) { return c.result, nil }
 
-func TestRunnerForwardsAuxiliaryUsageSynchronously(t *testing.T) {
-	usage := session.Usage{InputTokens: 5, OutputTokens: 2}
-	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-		session.UsageKindGuardrail: {Total: usage, Models: map[string]session.Usage{"provider/checker": usage}},
-	}}
-	runner := New(&passInner{}, Options{
-		Rules:   []CompiledRule{ruleBlock("Shell", "pre")},
-		Checker: usageChecker{result: CheckResult{Verdict: safe(), Usage: aux}},
-	})
-	var reported session.AuxiliaryUsage
-	ctx, deactivate := port.WithAuxiliaryUsageReporter(t.Context(), func(got session.AuxiliaryUsage) {
-		reported = reported.Merge(got)
-	})
-	defer deactivate()
+type usageInner struct {
+	usage session.AuxiliaryUsage
+}
 
-	if _, err := runner.Run(ctx, preEvent("Shell", `{"command":"echo ok"}`)); err != nil {
+func (i usageInner) Run(context.Context, governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{AuxiliaryUsage: i.usage}, nil
+}
+
+func TestRunnerReturnsMergedAuxiliaryUsage(t *testing.T) {
+	checkerUsage := session.Usage{InputTokens: 5, OutputTokens: 2}
+	innerUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
+	checkerAux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindGuardrail: {Total: checkerUsage, Models: map[string]session.Usage{"provider/checker": checkerUsage}},
+	}}
+	innerAux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindGuardrail: {Total: innerUsage, Models: map[string]session.Usage{"provider/inner": innerUsage}},
+	}}
+	runner := New(usageInner{usage: innerAux}, Options{
+		Rules:   []CompiledRule{ruleBlock("Shell", "pre")},
+		Checker: usageChecker{result: CheckResult{Verdict: safe(), Usage: checkerAux}},
+	})
+
+	result, err := runner.Run(t.Context(), preEvent("Shell", `{"command":"echo ok"}`))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := reported.Buckets[session.UsageKindGuardrail].Total; got != usage {
-		t.Fatalf("reported guardrail usage = %+v, want %+v", got, usage)
+	want := checkerUsage.Add(innerUsage)
+	if got := result.AuxiliaryUsage.Buckets[session.UsageKindGuardrail].Total; got != want {
+		t.Fatalf("merged guardrail usage = %+v, want %+v", got, want)
 	}
 }
 
@@ -99,14 +108,14 @@ func TestEnforceBlockPreVetoes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("expected Pre block to veto via HookOutcome.Block, got %+v", out)
 	}
-	if !strings.Contains(out.Message, "blocked by guardrail") || !strings.Contains(out.Message, "env dump") {
-		t.Fatalf("block message not accurate: %q", out.Message)
+	if !strings.Contains(out.Outcome.Message, "blocked by guardrail") || !strings.Contains(out.Outcome.Message, "env dump") {
+		t.Fatalf("block message not accurate: %q", out.Outcome.Message)
 	}
-	if len(out.Mutated) != 0 {
-		t.Fatalf("Pre block must not mutate, got Mutated=%s", out.Mutated)
+	if len(out.Outcome.Mutated) != 0 {
+		t.Fatalf("Pre block must not mutate, got Mutated=%s", out.Outcome.Mutated)
 	}
 }
 
@@ -119,15 +128,15 @@ func TestEnforceBlockPostMutatesToError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if out.Block {
+	if out.Outcome.Block {
 		t.Fatalf("Post-Block is INERT — the runner must NOT set Block; it must rewrite via Mutated. got %+v", out)
 	}
-	if len(out.Mutated) == 0 {
+	if len(out.Outcome.Mutated) == 0 {
 		t.Fatalf("Post block must rewrite the result via Mutated (the #1 constraint), got none")
 	}
 	var p resultPayload
-	if err := json.Unmarshal(out.Mutated, &p); err != nil {
-		t.Fatalf("Mutated not the {content,is_error} shape: %v (%s)", err, out.Mutated)
+	if err := json.Unmarshal(out.Outcome.Mutated, &p); err != nil {
+		t.Fatalf("Mutated not the {content,is_error} shape: %v (%s)", err, out.Outcome.Mutated)
 	}
 	if !p.IsError {
 		t.Fatalf("rewritten result must be is_error:true, got %+v", p)
@@ -148,11 +157,11 @@ func TestEnforceSanitizePreRewritesArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if out.Block {
+	if out.Outcome.Block {
 		t.Fatalf("sanitize must not block when it has a rewrite, got Block")
 	}
-	if string(out.Mutated) != sanitized {
-		t.Fatalf("Pre sanitize must rewrite args to the sanitized payload; got %s", out.Mutated)
+	if string(out.Outcome.Mutated) != sanitized {
+		t.Fatalf("Pre sanitize must rewrite args to the sanitized payload; got %s", out.Outcome.Mutated)
 	}
 }
 
@@ -167,7 +176,7 @@ func TestEnforceSanitizePostRewritesResult(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	var p resultPayload
-	if err := json.Unmarshal(out.Mutated, &p); err != nil {
+	if err := json.Unmarshal(out.Outcome.Mutated, &p); err != nil {
 		t.Fatalf("Mutated not {content,is_error}: %v", err)
 	}
 	if p.IsError {
@@ -196,17 +205,17 @@ func TestAdvisoryDoesNotAlter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if out.Block || len(out.Mutated) != 0 {
+	if out.Outcome.Block || len(out.Outcome.Mutated) != 0 {
 		t.Fatalf("advisory must not alter the result, got %+v", out)
 	}
-	if out.Message == "" {
+	if out.Outcome.Message == "" {
 		t.Fatalf("advisory must carry a client-visible Message (the loop emits a HookAdvisory EvHook from it), got empty")
 	}
-	if !strings.Contains(out.Message, "guardrail advisory") {
-		t.Fatalf("advisory message should be the guardrail-advisory notice, got %q", out.Message)
+	if !strings.Contains(out.Outcome.Message, "guardrail advisory") {
+		t.Fatalf("advisory message should be the guardrail-advisory notice, got %q", out.Outcome.Message)
 	}
-	if !strings.Contains(out.Message, "suspicious but advisory") {
-		t.Fatalf("advisory message should carry the (clamped) reason, got %q", out.Message)
+	if !strings.Contains(out.Outcome.Message, "suspicious but advisory") {
+		t.Fatalf("advisory message should carry the (clamped) reason, got %q", out.Outcome.Message)
 	}
 	if chk.calls != 1 {
 		t.Fatalf("advisory still runs the checker; calls=%d", chk.calls)
@@ -222,14 +231,14 @@ func TestAdvisoryOutcomeSurvivesMerge(t *testing.T) {
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk})
 
 	out, _ := r.Run(context.Background(), postEvent("WebFetch", "borderline content", false))
-	if out.Block {
+	if out.Outcome.Block {
 		t.Fatalf("advisory merge must not block, got %+v", out)
 	}
-	if len(out.Mutated) != 0 {
-		t.Fatalf("advisory merge must not mutate (model-invisible), got %s", out.Mutated)
+	if len(out.Outcome.Mutated) != 0 {
+		t.Fatalf("advisory merge must not mutate (model-invisible), got %s", out.Outcome.Mutated)
 	}
-	if out.Message == "" || !strings.Contains(out.Message, "guardrail advisory") {
-		t.Fatalf("advisory merge must keep the client-visible Message, got %q", out.Message)
+	if out.Outcome.Message == "" || !strings.Contains(out.Outcome.Message, "guardrail advisory") {
+		t.Fatalf("advisory merge must keep the client-visible Message, got %q", out.Outcome.Message)
 	}
 }
 
@@ -238,7 +247,7 @@ func TestSafeVerdictPasses(t *testing.T) {
 	chk := &fakeChecker{verdict: safe()}
 	r := New(&passInner{}, Options{Rules: []CompiledRule{ruleBlock("Shell")}, Checker: chk})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"ls"}`))
-	if out.Block || len(out.Mutated) != 0 {
+	if out.Outcome.Block || len(out.Outcome.Mutated) != 0 {
 		t.Fatalf("a SAFE verdict must always pass, got %+v", out)
 	}
 }
@@ -296,7 +305,7 @@ func TestAdversarialFenceDefangedAndVerdictRejected(t *testing.T) {
 		t.Fatalf("forged fence inside content was not neutralised; prompt:\n%s", chk.lastSeen)
 	}
 	// The REAL checker verdict (unsafe) governs — the runner enforced a block.
-	if len(out.Mutated) == 0 {
+	if len(out.Outcome.Mutated) == 0 {
 		t.Fatalf("the real checker verdict must govern (block), got %+v", out)
 	}
 	// And the embedded verdict object would NOT have been accepted as a verdict: the
@@ -312,7 +321,7 @@ func TestCheckerErrorFailOpenByDefault(t *testing.T) {
 	chk := &fakeChecker{err: errors.New("checker exploded")}
 	r := New(&passInner{}, Options{Rules: []CompiledRule{ruleBlock("Shell", "pre")}, Checker: chk})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"ls"}`))
-	if out.Block || len(out.Mutated) != 0 {
+	if out.Outcome.Block || len(out.Outcome.Mutated) != 0 {
 		t.Fatalf("default is FAIL-OPEN: a checker error must not alter the call, got %+v", out)
 	}
 }
@@ -322,7 +331,7 @@ func TestCheckerErrorFailClosedWhenOptedIn(t *testing.T) {
 	rule, _ := CompileRule(RuleSpec{Match: "Shell", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"ls"}`))
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("fail-closed: a checker error on Pre must Block, got %+v", out)
 	}
 
@@ -330,7 +339,7 @@ func TestCheckerErrorFailClosedWhenOptedIn(t *testing.T) {
 	postRule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
 	rp := New(&passInner{}, Options{Rules: []CompiledRule{postRule}, Checker: &fakeChecker{err: errors.New("x")}})
 	outp, _ := rp.Run(context.Background(), postEvent("WebFetch", "some result", false))
-	if outp.Block || len(outp.Mutated) == 0 {
+	if outp.Outcome.Block || len(outp.Outcome.Mutated) == 0 {
 		t.Fatalf("fail-closed on Post must rewrite-to-error, not Block; got %+v", outp)
 	}
 }
@@ -343,7 +352,7 @@ func TestGlobalFailOnCheckerDown(t *testing.T) {
 	rule, _ := CompileRule(RuleSpec{Match: "Shell", Phases: []string{"pre"}, Mode: string(ModeBlock)})
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk, FailOnCheckerDown: true})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"ls"}`))
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("global onCheckerDown:fail must block on a checker error, even without per-rule failClosed; got %+v", out)
 	}
 }
@@ -357,7 +366,7 @@ func TestGlobalFailOverriddenByExplicitPerRuleWarn(t *testing.T) {
 	rule, _ := CompileRule(RuleSpec{Match: "Shell", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: false, FailClosedSet: true})
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk, FailOnCheckerDown: true, Diagnostics: diag})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"ls"}`))
-	if out.Block {
+	if out.Outcome.Block {
 		t.Fatalf("explicit per-rule failClosed:false must override global fail and WARN (not block); got %+v", out)
 	}
 	if diag.count("checker error; content NOT inspected (fail-open)") == 0 {
@@ -373,7 +382,7 @@ func TestGlobalWarnWithPerRuleFailClosed(t *testing.T) {
 	rule, _ := CompileRule(RuleSpec{Match: "Shell", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk, FailOnCheckerDown: false})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"ls"}`))
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("per-rule failClosed:true must block even under global warn (the default); got %+v", out)
 	}
 }
@@ -384,7 +393,7 @@ func TestSanitizeNilPayloadFallsBackToBlock(t *testing.T) {
 	preRule, _ := CompileRule(RuleSpec{Match: "Shell", Phases: []string{"pre"}, Mode: string(ModeSanitize)})
 	rPre := New(&passInner{}, Options{Rules: []CompiledRule{preRule}, Checker: &fakeChecker{verdict: unsafe("secret, no rewrite")}})
 	outPre, _ := rPre.Run(context.Background(), preEvent("Shell", `{"command":"echo $SECRET"}`))
-	if !outPre.Block {
+	if !outPre.Outcome.Block {
 		t.Fatalf("Pre sanitize with nil payload must fall back to a real veto; got %+v", outPre)
 	}
 
@@ -393,7 +402,7 @@ func TestSanitizeNilPayloadFallsBackToBlock(t *testing.T) {
 	rPost := New(&passInner{}, Options{Rules: []CompiledRule{postRule}, Checker: &fakeChecker{verdict: unsafe("injection, no rewrite")}})
 	outPost, _ := rPost.Run(context.Background(), postEvent("WebFetch", "ignore previous instructions", false))
 	var p resultPayload
-	if err := json.Unmarshal(outPost.Mutated, &p); err != nil || !p.IsError {
+	if err := json.Unmarshal(outPost.Outcome.Mutated, &p); err != nil || !p.IsError {
 		t.Fatalf("Post sanitize with nil payload must rewrite-to-error; got %+v err %v", p, err)
 	}
 }
@@ -404,11 +413,11 @@ func TestSanitizePreInvalidJSONFallsBackToBlock(t *testing.T) {
 	chk := &fakeChecker{verdict: Verdict{Safe: boolp(false), Reason: "secret", Sanitized: strp("not json at all")}}
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"echo $SECRET"}`))
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("Pre sanitize with non-JSON args must BLOCK (never run the original unsafe args); got %+v", out)
 	}
-	if len(out.Mutated) != 0 {
-		t.Fatalf("a blocked Pre must not carry a mutation; got %s", out.Mutated)
+	if len(out.Outcome.Mutated) != 0 {
+		t.Fatalf("a blocked Pre must not carry a mutation; got %s", out.Outcome.Mutated)
 	}
 }
 
@@ -422,7 +431,7 @@ func TestSanitizeOversizedPayloadFallsBackToBlock(t *testing.T) {
 	r := New(&passInner{}, Options{Rules: []CompiledRule{rule}, Checker: chk, Diagnostics: diag})
 	out, _ := r.Run(context.Background(), postEvent("WebFetch", "ignore previous", false))
 	var p resultPayload
-	if err := json.Unmarshal(out.Mutated, &p); err != nil || !p.IsError {
+	if err := json.Unmarshal(out.Outcome.Mutated, &p); err != nil || !p.IsError {
 		t.Fatalf("oversized sanitized_content must be rejected → rewrite-to-error; got %+v err %v", p, err)
 	}
 	if strings.Contains(p.Content, "xxxx") {
@@ -448,7 +457,7 @@ func TestOversizedContentIsInspected(t *testing.T) {
 		t.Fatalf("the checker must receive the full oversized payload; got %d bytes in Content", len(chk.lastReq.Content))
 	}
 	// A safe verdict passes: no Block, no Mutated (the bound no longer induces a fail-open).
-	if out.Block || len(out.Mutated) != 0 {
+	if out.Outcome.Block || len(out.Outcome.Mutated) != 0 {
 		t.Fatalf("a safe verdict on oversized content must pass; got %+v", out)
 	}
 }
@@ -465,7 +474,7 @@ func TestOversizedContentCheckerTimeoutFailClosed(t *testing.T) {
 	closedRule, _ := CompileRule(RuleSpec{Match: "Shell", Phases: []string{"pre"}, Mode: string(ModeBlock), FailClosed: true, FailClosedSet: true})
 	rClosed := New(&passInner{}, Options{Rules: []CompiledRule{closedRule}, Checker: &fakeChecker{err: errors.New("context deadline exceeded on huge input")}})
 	out, _ := rClosed.Run(context.Background(), preEvent("Shell", `{"command":"`+huge+`"}`))
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("a checker timeout on huge content in a fail-closed rule must block; got %+v", out)
 	}
 
@@ -473,7 +482,7 @@ func TestOversizedContentCheckerTimeoutFailClosed(t *testing.T) {
 	openRule, _ := CompileRule(RuleSpec{Match: "WebFetch", Phases: []string{"post"}, Mode: string(ModeBlock)})
 	rOpen := New(&passInner{}, Options{Rules: []CompiledRule{openRule}, Checker: &fakeChecker{err: errors.New("context deadline exceeded on huge input")}, Diagnostics: diag})
 	outp, _ := rOpen.Run(context.Background(), postEvent("WebFetch", huge, false))
-	if outp.Block || len(outp.Mutated) != 0 {
+	if outp.Outcome.Block || len(outp.Outcome.Mutated) != 0 {
 		t.Fatalf("fail-open on a checker timeout must pass (degraded), not alter; got %+v", outp)
 	}
 	if diag.count("checker error; content NOT inspected (fail-open)") == 0 {
@@ -539,7 +548,7 @@ func TestAdvisoryFindingCorrelatable(t *testing.T) {
 	ev.SessionID = "sess-123"
 	ev.CallID = "call-9"
 	out, _ := r.Run(context.Background(), ev)
-	if out.Block || len(out.Mutated) != 0 {
+	if out.Outcome.Block || len(out.Outcome.Mutated) != 0 {
 		t.Fatalf("advisory must not alter the result")
 	}
 	rec, ok := diag.find("advisory finding")
@@ -562,11 +571,11 @@ func TestMergeBlockDominantAndCheckerWinsMutation(t *testing.T) {
 	chk := &fakeChecker{verdict: unsafe("guardrail says no")}
 	r := New(inner, Options{Rules: []CompiledRule{ruleBlock("Shell", "pre")}, Checker: chk})
 	out, _ := r.Run(context.Background(), preEvent("Shell", `{"command":"x"}`))
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("either side blocking must block the merged outcome")
 	}
-	if !strings.Contains(out.Message, "inner says no") || !strings.Contains(out.Message, "guardrail") {
-		t.Fatalf("messages must concatenate inner-first; got %q", out.Message)
+	if !strings.Contains(out.Outcome.Message, "inner says no") || !strings.Contains(out.Outcome.Message, "guardrail") {
+		t.Fatalf("messages must concatenate inner-first; got %q", out.Outcome.Message)
 	}
 
 	// Mutation conflict: inner mutates, checker (sanitize) also mutates → checker wins.
@@ -575,8 +584,8 @@ func TestMergeBlockDominantAndCheckerWinsMutation(t *testing.T) {
 	chk2 := &fakeChecker{verdict: Verdict{Safe: boolp(false), Sanitized: strp(`{"command":"checker"}`)}}
 	r2 := New(innerMut, Options{Rules: []CompiledRule{sani}, Checker: chk2})
 	out2, _ := r2.Run(context.Background(), preEvent("Shell", `{"command":"orig"}`))
-	if string(out2.Mutated) != `{"command":"checker"}` {
-		t.Fatalf("on a mutation conflict the checker (security) wins; got %s", out2.Mutated)
+	if string(out2.Outcome.Mutated) != `{"command":"checker"}` {
+		t.Fatalf("on a mutation conflict the checker (security) wins; got %s", out2.Outcome.Mutated)
 	}
 }
 
@@ -635,7 +644,7 @@ func TestMinContentBytesDoesNotSkipPre(t *testing.T) {
 	if preChk.calls != 1 {
 		t.Fatalf("a short PRE args payload must STILL be inspected (exfil is short); calls=%d", preChk.calls)
 	}
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("the inspected short PRE payload must enforce the unsafe verdict; got %+v", out)
 	}
 
@@ -660,14 +669,14 @@ func TestNilCheckerPassThrough(t *testing.T) {
 
 type blockInner struct{ msg string }
 
-func (b *blockInner) Run(_ context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
-	return governance.HookOutcome{Block: true, Message: b.msg}, nil
+func (b *blockInner) Run(_ context.Context, _ governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{Outcome: governance.HookOutcome{Block: true, Message: b.msg}}, nil
 }
 
 type mutInner struct{ payload string }
 
-func (m *mutInner) Run(_ context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
-	return governance.HookOutcome{Mutated: json.RawMessage(m.payload)}, nil
+func (m *mutInner) Run(_ context.Context, _ governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{Outcome: governance.HookOutcome{Mutated: json.RawMessage(m.payload)}}, nil
 }
 
 // capDiag captures diagnostic lines (message + key/value fields) so the tests can

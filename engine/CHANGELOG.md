@@ -277,10 +277,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
   `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
   `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and
-  `agent.RunModelRouter` carry the same purpose-attributed result. Adds the
-  request-scoped `port.AuxiliaryUsageReporter` callback and
-  `modelhook.CheckResult` propagation used to record guardrail usage only while
-  the owning Engine is synchronously running the hook. Changed (breaking,
+  `agent.RunModelRouter` carry the same purpose-attributed result. Changes
+  `port.HookRunner.Run` to return `port.HookResult`, merging inner and checker
+  usage explicitly, and changes `port.PermissionPolicy.Evaluate` to return
+  `port.PermissionResult` so composition-owned escape checks use the same
+  explicit path. Removes the context-carried auxiliary reporter. Changed (breaking,
   pre-v1 minor).
 
 - **Direct auxiliary usage results** — `agent.Compactor.Compact`,

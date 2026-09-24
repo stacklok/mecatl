@@ -47,7 +47,7 @@ func evalEscapeAtAuto(t *testing.T, p port.PermissionPolicy, workspace string, c
 	if err != nil {
 		t.Fatalf("NewWorkspace: %v", err)
 	}
-	return p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, c, ws)
+	return p.Evaluate(context.Background(), session.SessionID("s1"), session.ModeDefault, c, ws).Decision
 }
 
 // TestPathEscapePosture_GuardrailRoutedEscape pins AC-W2-G2: auto + the
@@ -77,6 +77,23 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		d := evalEscapeAtAuto(t, p, f.workspace, call)
 		if d.Effect != governance.Allow {
 			t.Fatalf("routed safe escape = %v (%q), want Allow — a safe verdict falls back to the ordinary auto row", d.Effect, d.Reason)
+		}
+	})
+
+	t.Run("returns checker usage explicitly", func(t *testing.T) {
+		usage := session.Usage{InputTokens: 7, OutputTokens: 2}
+		p := buildRoutedEscapePolicy(t, cfg, mockllm.ChunksTurn(
+			mockllm.TextChunk(`{"safe":true,"reason":"ordinary file read"}`),
+			mockllm.UsageChunk(usage),
+			mockllm.DoneChunk(session.StopEndTurn),
+		))
+		ws, err := osfs.NewWorkspace(f.workspace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := p.Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
+		if got := result.AuxiliaryUsage.Buckets[session.UsageKindGuardrail].Total; got != usage {
+			t.Fatalf("returned guardrail usage = %+v, want %+v", got, usage)
 		}
 	})
 
@@ -171,9 +188,14 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		// order through the same UseMock provider.
 		f := setupEscapeFS(t)
 		args, _ := json.Marshal(map[string]string{"path": f.target})
+		guardrailUsage := session.Usage{InputTokens: 5, OutputTokens: 1}
 		turns := []mockllm.Turn{
 			mockllm.ToolCallTurn(session.NewToolCall("r1", "Read", json.RawMessage(args))),
-			mockllm.TextTurn(`{"safe":false,"reason":"sensitive out-of-root read"}`), // the checker's verdict
+			mockllm.ChunksTurn(
+				mockllm.TextChunk(`{"safe":false,"reason":"sensitive out-of-root read"}`),
+				mockllm.UsageChunk(guardrailUsage),
+				mockllm.DoneChunk(session.StopEndTurn),
+			),
 			mockllm.TextTurn("done"),
 		}
 		bcfg := escapeCfg(t, f, PostureAuto, turns...)
@@ -192,6 +214,13 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		result, _ := runOneTurn(t, built, sess.ID)
 		if result == nil || !result.IsError || !strings.Contains(result.Content, "guardrail") {
 			t.Fatalf("result = %+v — the Build-wired route must DENY the checker-blocked escape (a guardrail-named deny result)", result)
+		}
+		loaded, err := built.Service.GetSession(t.Context(), sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := loaded.UsageFor(session.UsageKindGuardrail); got != guardrailUsage {
+			t.Fatalf("recorded escape-check usage = %+v, want %+v", got, guardrailUsage)
 		}
 	})
 

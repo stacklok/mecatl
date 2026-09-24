@@ -4,7 +4,15 @@ import (
 	"context"
 
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/session"
 )
+
+// HookResult is the complete result of one hook request. AuxiliaryUsage is
+// returned explicitly so hook runners cannot retain a session mutation path.
+type HookResult struct {
+	Outcome        governance.HookOutcome
+	AuxiliaryUsage session.AuxiliaryUsage
+}
 
 // HookRunner executes a lifecycle hook for a HookEvent and returns its outcome.
 // The shell-exec adapter maps process exit code 0 to allow and exit code 2 to a
@@ -15,8 +23,8 @@ import (
 // as a permission ask rather than dead-ending the call (ADR 0062). A HookRunner is
 // free to never set it (the byte-identical pre-feature terminal-block behaviour).
 type HookRunner interface {
-	// Run executes the hook(s) registered for ev.Phase and returns the outcome.
-	Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error)
+	// Run executes the hook(s) registered for ev.Phase and returns the complete result.
+	Run(ctx context.Context, ev governance.HookEvent) (HookResult, error)
 }
 
 // HookApprovalLearner is an OPTIONAL capability a HookRunner may ALSO implement to

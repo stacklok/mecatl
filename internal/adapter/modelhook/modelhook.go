@@ -242,27 +242,30 @@ func (r *Runner) LearnHookApproval(_ context.Context, ev governance.HookEvent) {
 // and the block stands (fail-safe). The merge with inner is unchanged: block-dominant
 // (either blocks → blocked); AskApproval rides through mergeOutcomes so a checker
 // block that wants an ask keeps that bit on the merged outcome.
-func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
-	innerOut, innerErr := r.inner.Run(ctx, ev)
+func (r *Runner) Run(ctx context.Context, ev governance.HookEvent) (port.HookResult, error) {
+	innerResult, innerErr := r.inner.Run(ctx, ev)
 
 	phase, ok := phaseOf(ev.Phase)
 	if !ok || r.checker == nil {
-		// Not a tool phase, or the checker is off: inner's outcome is final.
-		return innerOut, innerErr
+		// Not a tool phase, or the checker is off: inner's result is final.
+		return innerResult, innerErr
 	}
 	rule, matched := resolve(r.rules, ev.Tool, phase)
 	if !matched {
-		return innerOut, innerErr
+		return innerResult, innerErr
 	}
 
-	checkOut := r.check(ctx, phase, rule, ev)
-	return mergeOutcomes(innerOut, checkOut), innerErr
+	checkOut, checkUsage := r.check(ctx, phase, rule, ev)
+	return port.HookResult{
+		Outcome:        mergeOutcomes(innerResult.Outcome, checkOut),
+		AuxiliaryUsage: innerResult.AuxiliaryUsage.Merge(checkUsage),
+	}, innerErr
 }
 
 // check runs the guardrail checker for one matched rule and maps its verdict to a
 // HookOutcome per the rule's mode. It applies the session waiver short-circuit, the
 // min-content skip, and the fail-open/closed policy on a checker error/timeout.
-func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent) governance.HookOutcome {
+func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev governance.HookEvent) (governance.HookOutcome, session.AuxiliaryUsage) {
 	// Session waiver (ADR 0062, "Allow & don't ask again"): a prior human AllowAlways
 	// verdict on a hook-originated ask armed a session-scoped waiver. A matching waiver
 	// authorizes a Pre-phase block WITHOUT surfacing AND without an LLM call — the call
@@ -275,7 +278,7 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 			r.diag.Log(ctx, port.LevelWarn,
 				"guardrails: session waiver in effect — a guardrail block was authorized by a prior 'Allow & don't ask again' verdict in this session",
 				findingFields(ev, phase, "marker", guardrailWaivedMarker)...)
-			return governance.HookOutcome{}
+			return governance.HookOutcome{}, session.AuxiliaryUsage{}
 		}
 	}
 	// Read-only Shell pre-filter (the local-shell cost guard): when the matched rule
@@ -287,7 +290,7 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 	// zero-cost.
 	if rule.skipReadOnlyShell && phase == PhasePre && ev.Tool == "Shell" {
 		if cmd, ok := shellCmdFromArgs(string(ev.Input)); ok && shellFullyReadOnly(cmd) {
-			return governance.HookOutcome{}
+			return governance.HookOutcome{}, session.AuxiliaryUsage{}
 		}
 	}
 	content := contentUnderReview(phase, ev)
@@ -297,25 +300,22 @@ func (r *Runner) check(ctx context.Context, phase Phase, rule CompiledRule, ev g
 	// args object (e.g. a curl to an attacker URL with an embedded key) is exactly the
 	// exfiltration the Pre check exists to catch. Always inspect outbound args.
 	if phase == PhasePost && len(content) < r.minContentBytes {
-		return governance.HookOutcome{}
+		return governance.HookOutcome{}, session.AuxiliaryUsage{}
 	}
 
 	prompt := buildCheckPrompt(phase, rule, ev.Tool, content)
 	result, err := r.checker.Check(ctx, CheckRequest{Phase: phase, Tool: ev.Tool, Content: content, Prompt: prompt})
-	if reporter := port.AuxiliaryUsageReporterFromContext(ctx); reporter != nil {
-		reporter(result.Usage)
-	}
 	if err != nil {
-		return r.onCheckerError(ctx, phase, rule, ev, err)
+		return r.onCheckerError(ctx, phase, rule, ev, err), result.Usage
 	}
 	verdict := result.Verdict
 
 	if verdict.Safe != nil && *verdict.Safe {
-		r.failures.reset()              // a completed verdict clears the consecutive-failure escalation
-		return governance.HookOutcome{} // a checker SAYING safe always passes
+		r.failures.reset()                            // a completed verdict clears the consecutive-failure escalation
+		return governance.HookOutcome{}, result.Usage // a checker SAYING safe always passes
 	}
 	r.failures.reset()
-	return r.enforce(ctx, phase, rule, ev, verdict)
+	return r.enforce(ctx, phase, rule, ev, verdict), result.Usage
 }
 
 // findingFields builds the correlatable diagnostic key/values shared by every

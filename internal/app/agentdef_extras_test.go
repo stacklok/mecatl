@@ -101,14 +101,14 @@ func TestDefHookRunnerBuildsScopedRunner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreToolUse run: %v", err)
 	}
-	if !out.Block {
+	if !out.Outcome.Block {
 		t.Fatalf("PreToolUse should block (exit 2), got allow")
 	}
 	post, err := r.Run(context.Background(), governance.HookEvent{Phase: governance.PhasePostToolUse})
 	if err != nil {
 		t.Fatalf("PostToolUse run: %v", err)
 	}
-	if post.Block {
+	if post.Outcome.Block {
 		t.Fatalf("PostToolUse should allow (no hook configured), got block")
 	}
 }

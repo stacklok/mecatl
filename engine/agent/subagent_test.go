@@ -27,11 +27,11 @@ type recordingHook struct {
 	phases []governance.HookPhase
 }
 
-func (h *recordingHook) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+func (h *recordingHook) Run(_ context.Context, ev governance.HookEvent) (port.HookResult, error) {
 	h.mu.Lock()
 	h.phases = append(h.phases, ev.Phase)
 	h.mu.Unlock()
-	return governance.HookOutcome{}, nil
+	return port.HookResult{}, nil
 }
 
 func (h *recordingHook) saw(p governance.HookPhase) bool {

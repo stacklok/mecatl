@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 )
 
@@ -50,14 +51,14 @@ func runOne(t *testing.T, rule modelhook.CompiledRule, phase governance.HookPhas
 	if err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
-	return chk.calls, out
+	return chk.calls, out.Outcome
 }
 
 // noopHooks is an inert inner HookRunner (allows every phase, mutates nothing).
 type noopHooks struct{}
 
-func (noopHooks) Run(context.Context, governance.HookEvent) (governance.HookOutcome, error) {
-	return governance.HookOutcome{}, nil
+func (noopHooks) Run(context.Context, governance.HookEvent) (port.HookResult, error) {
+	return port.HookResult{}, nil
 }
 
 // TestShellReadOnlySkipsChecker: a CONFIDENTLY read-only Pre Shell command skips the

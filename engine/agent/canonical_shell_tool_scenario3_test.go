@@ -10,6 +10,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -223,18 +224,18 @@ type effectiveCommandHook struct {
 	command string
 }
 
-func (h effectiveCommandHook) Run(_ context.Context, event governance.HookEvent) (governance.HookOutcome, error) {
+func (h effectiveCommandHook) Run(_ context.Context, event governance.HookEvent) (port.HookResult, error) {
 	if event.Phase != governance.PhasePreToolUse {
-		return governance.HookOutcome{}, nil
+		return port.HookResult{}, nil
 	}
 	var args shellArgs
 	if err := json.Unmarshal(event.Input, &args); err != nil {
-		return governance.HookOutcome{}, err
+		return port.HookResult{}, err
 	}
 	args.Command = h.command
 	mutated, err := json.Marshal(args)
 	if err != nil {
-		return governance.HookOutcome{}, err
+		return port.HookResult{}, err
 	}
-	return governance.HookOutcome{Mutated: mutated}, nil
+	return port.HookResult{Outcome: governance.HookOutcome{Mutated: mutated}}, nil
 }

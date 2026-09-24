@@ -456,7 +456,7 @@ func TestSelfKnowledgeBehaviouralClaimsMatchImplementation(t *testing.T) {
 
 		autoAllowed := map[string]bool{}
 		for name, call := range calls {
-			d := policy.Evaluate(context.Background(), session.SessionID("s1"), session.ModeAccept, call, nil)
+			d := policy.Evaluate(context.Background(), session.SessionID("s1"), session.ModeAccept, call, nil).Decision
 			autoAllowed[name] = d.Effect == governance.Allow
 		}
 
