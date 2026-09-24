@@ -8,7 +8,7 @@
 **Delivery:** Split. The model-facing schema, disclosure boundary, search semantics, and stale-continuation behavior benefit from contract review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** None assigned.
-**Plan PR:** added when opened
+**Plan PR:** [#1857](https://github.com/stacklok/mecatl/pull/1857)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 `DiscoverModels` will let an agent find an exact selectable `(provider_id, model_id)` without
