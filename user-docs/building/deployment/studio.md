@@ -141,6 +141,65 @@ tabs on the same origin. The default is the System theme with the Stacklok green
 palette. If browser storage is unavailable, your choices work until you reload
 the page. Inter and Merriweather fonts load from Studio's own origin.
 
+## Use a chat
+
+Open **Chats**, choose an available model, reasoning effort, and permission
+mode, then write a message and select **Send**. You can also set tool access
+before starting a chat. In an existing chat, change the permission mode in the
+chat controls; choosing another model creates a fork of that chat. Press Enter
+to send or Shift+Enter for a new line. Enter used to confirm an input method
+candidate leaves the message in the composer.
+
+Starter prompts fill the composer for you to review. A link with `?prompt=` also
+fills it without starting a run. If the link includes `send=1`, Studio shows the
+prompt and waits for you to select **Send prompt** or **Edit prompt**. Opening
+or reloading the link never sends it automatically.
+
+If the selected model supports images, use **Attach images** to add up to 16
+images to one message. Each image can be at most 10 MiB, with a combined limit
+of 20 MiB. Studio sends images only; other file types are not chat attachments.
+You can select the microphone button to dictate in a browser that supports
+speech recognition on a secure origin. Review or edit the recognized text before
+sending. If recognition is unavailable or microphone access fails, Studio
+explains the failure and keeps the typed draft available.
+
+### Follow and control a run
+
+The transcript streams messages with Markdown, code blocks, and tool activity.
+Saved inline images appear in the transcript; an external image URL appears as a
+link you can choose to open. You can scroll back to read earlier messages and
+use **Scroll to latest message** to resume following the stream. The status
+distinguishes sending, working, waiting for approval, and a recorded completed,
+stopped, cancelled, or failed result. If a stream closes without a recorded
+result, Studio reports an unknown outcome and checks saved history when you
+reconnect. A history gap does not claim that the run finished.
+
+While Mecatl is working, the composer can queue a text message for the next run
+or steer the active run. Your Interface preference chooses what Enter does;
+Shift+Enter selects the other action. You can edit or remove queued messages.
+Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
+action retries the failed run without sending the prompt again. Image messages
+can be sent after the current run ends.
+
+Folders and queued messages survive a reload for the same account. Studio clears
+account-scoped chat data when you sign out or switch accounts. Appearance
+preferences remain on the device.
+
+### Return to a chat
+
+Generated chat titles appear in both the chat list and header when Studio
+receives a newer title, even if generation finishes after the run. A later
+operator rename takes precedence over an older generated title. If you return to
+the same open chat after its tab was hidden for at least 20 seconds, Studio
+refreshes its state and briefly reports only what it can verify, such as a run
+still working or the chat waiting for approval. Reloading the page does not
+create a return notice.
+
+When a [scheduled task](/features/scheduled-tasks.md) delivers a start or
+completion note to this chat, the transcript shows the recorded note with its
+schedule and fire attribution. The note body appears as plain text. A task's
+fire history alone does not add a note to the chat.
+
 ## Try it locally with Compose
 
 The repository's `apps/docker-compose.yml` starts a `mecated` container and
