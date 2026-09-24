@@ -109,6 +109,8 @@ export interface PermissionAskEventPayload {
   readonly args: string;
   readonly askId: string;
   readonly guardrail?: GuardrailApprovalScope | undefined;
+  /** Exact tool-call ID when supplied by the server; presentation correlation only. */
+  readonly callId?: string;
   readonly reason: string;
   readonly tool: string;
 }
@@ -548,6 +550,7 @@ function payload(
       return {
         args: ask.args,
         askId: ask.askId,
+        ...(ask.callId ? { callId: ask.callId } : {}),
         guardrail:
           guardrail === undefined
             ? undefined

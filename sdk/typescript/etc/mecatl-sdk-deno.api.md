@@ -918,6 +918,7 @@ export interface PermissionAskEventPayload {
     readonly args: string;
     // (undocumented)
     readonly askId: string;
+    readonly callId?: string;
     // (undocumented)
     readonly guardrail?: GuardrailApprovalScope | undefined;
     // (undocumented)
@@ -1127,6 +1128,7 @@ export interface RunControls {
     cancel(requestOptions?: RequestOptions): Promise<void>;
     cancelSteer(options?: RunSteerOptions, requestOptions?: RequestOptions): Promise<RunSteerCancellationAcknowledgement>;
     resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
+    resolvePlanAsk(askId: string, verdict: PlanApprovalVerdict, requestOptions?: RequestOptions): Promise<void>;
     readonly runId: string;
     readonly sessionId: string;
     steer(prompt: PromptInput, options?: RunSteerOptions, requestOptions?: RequestOptions): Promise<RunSteerAcknowledgement>;
