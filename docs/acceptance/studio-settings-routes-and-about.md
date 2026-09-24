@@ -4,7 +4,7 @@
 **Work classification:** Bounded — extends Studio's existing settings and authenticated BFF product API with section routes and a safe provider detail; ADR 0351 already fixes the browser, BFF, SDK, and daemon boundaries.
 **Decision record:** None — the new presentation and read-only projections stay inside ADR 0351's existing ownership and trust decisions; they create no durable daemon or deployment architecture decision.
 **Phase:** Studio design alignment, settings and reference
-**Status:** proposed, 2026-09-24. Directing-user choices recorded; ready for Plan / Interface review.
+**Status:** in-progress, 2026-09-24. Directing-user choices recorded in the Plan / Interface PR; implementation is stacked for review.
 **Delivery:** Split. The new BFF response and route compatibility need a separate Plan / Interface review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1846](https://github.com/stacklok/mecatl/issues/1846).
