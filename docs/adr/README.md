@@ -225,8 +225,12 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
 - [0345 — Host-local direct MCP onboarding and credential custody](./0345-direct-mcp-onboarding.md) *(proposed)*
 - [0326 — Lazy ToolHive grants refresh declared metadata](./0326-lazy-toolhive-metadata-refresh.md)
-- [0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md) *(Decision 6 superseded by 0358)*
+- [0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md) *(proposed; Decision 6 superseded by 0358)*
 - [0358 — Durable workspace-enrollment broker authority provenance](./0358-durable-workspace-enrollment-broker-authority.md) *(proposed; supersedes ADR 0335 Decision 6 only)*
+- [0362 — Process-bound remote MCP broker attachments](./0362-process-bound-remote-mcp-broker.md) *(superseded by 0364)*
+- [0363 — Single-replica production topology for the MCP broker](./0363-single-replica-mcp-broker-topology.md)
+- [0364 — Bounded singleton MCP broker correctness](./0364-bounded-singleton-mcp-broker-correctness.md) *(supersedes 0362)*
+- [0365 — Broker replacement uses fresh outer authority over retained custody](./0365-broker-replacement-fresh-authority.md) *(proposed; complements 0364)*
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)

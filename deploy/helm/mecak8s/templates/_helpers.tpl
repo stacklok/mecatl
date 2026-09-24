@@ -1,6 +1,22 @@
 {{- define "mecak8s.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
+
+{{- define "mecak8s.brokerFullname" -}}
+{{- printf "%s-broker" (include "mecak8s.fullname" . | trunc 49 | trimSuffix "-") | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- define "mecak8s.brokerServerName" -}}
+{{- default (printf "%s.%s.svc" (include "mecak8s.brokerFullname" .) .Release.Namespace) .Values.broker.clientCA.serverName -}}
+{{- end -}}
+{{- define "mecak8s.brokerLabels" -}}
+app.kubernetes.io/name: mecabroker
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: broker
+{{- end -}}
+{{- define "mecak8s.brokerBootstrapRBACName" -}}
+{{- printf "%s-kubernetes-discovery-%s" (include "mecak8s.brokerFullname" . | trunc 28 | trimSuffix "-") (printf "%s/%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "mecak8s.fullname" -}}
 {{- if .Values.fullnameOverride }}{{ .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name (include "mecak8s.name" .) | trunc 63 | trimSuffix "-" }}{{ end }}
 {{- end }}
@@ -19,10 +35,10 @@ app.kubernetes.io/component: agent
 {{- end }}
 {{- define "mecak8s.validateImage" -}}
 {{- $_ := required "image.repository is required" .Values.image.repository -}}
-{{- if and .Values.image.digest .Values.image.tag -}}
-{{- fail "set at most one of image.digest or image.tag" -}}
+{{- if and .Values.image.digest .Values.image.tag -}}{{ fail "set at most one of image.digest or image.tag" }}{{- end -}}
+{{- if and .Values.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.image.digest)) -}}{{ fail "image.digest must be a lowercase sha256 digest" }}{{- end -}}
 {{- end -}}
-{{- end -}}
+
 {{- define "mecak8s.redisPort" -}}
 {{- $match := regexFind ":[0-9]+$" .Values.redis.endpoint -}}
 {{- if eq $match "" -}}
@@ -138,6 +154,109 @@ mounted
 {{- if and (hasKey $env "name") (eq $env.name "MECATL_DRIVER_AUTH_TOKEN") -}}{{ fail "extraEnv name \"MECATL_DRIVER_AUTH_TOKEN\" collides with the learning store token environment variable owned by the chart" }}{{- end -}}
 {{- end -}}
 {{- end -}}
+{{- define "mecak8s.validateBroker" -}}
+{{- $b := .Values.broker -}}
+{{- if and $b.image.digest $b.image.tag -}}{{ fail "set at most one of broker.image.digest or broker.image.tag" }}{{- end -}}
+{{- if and $b.image.digest (not (regexMatch "^sha256:[0-9a-f]{64}$" $b.image.digest)) -}}{{ fail "broker.image.digest must be a lowercase sha256 digest" }}{{- end -}}
+{{- $_ := required "broker.tls.secretName is required (including idle broker)" $b.tls.secretName -}}
+{{- $_ := required "broker.clientCA.secretName is required" $b.clientCA.secretName -}}
+{{- $_ := required "broker.clientCA.key is required" $b.clientCA.key -}}
+{{- if eq $b.clientCA.key "token" }}{{ fail "broker.clientCA.key must not collide with the projected token path" }}{{- end -}}
+{{- if eq $b.tls.certKey $b.tls.keyKey }}{{ fail "broker TLS certificate and key must use distinct Secret keys" }}{{- end -}}
+{{- $_ := required "broker.workloadJWT.audience is required" $b.workloadJWT.audience -}}
+{{- end -}}
+
+{{/* Managed credential Redis: one headless Service is both the StatefulSet governing Service and the broker's address/SNI. */}}
+{{- define "mecak8s.credentialRedisFullname" -}}
+{{- printf "%s-credential-redis" (include "mecak8s.fullname" . | trunc 45 | trimSuffix "-") | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- define "mecak8s.credentialRedisLabels" -}}
+app.kubernetes.io/name: mecabroker-credential-redis
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: credential-redis
+{{- end -}}
+{{- define "mecak8s.brokerOAuthCount" -}}
+{{- $n := 0 -}}{{- range .Values.mcp.servers }}{{- if eq .auth.mode "oauth" }}{{- $n = add1 $n }}{{- end }}{{- end -}}{{ $n }}
+{{- end -}}
+{{- define "mecak8s.credentialRedisAddress" -}}
+{{- $cs := .Values.broker.credentialStore -}}
+{{- if $cs.managedRedis.enabled -}}{{ printf "%s.%s.svc:6379" (include "mecak8s.credentialRedisFullname" .) .Release.Namespace }}{{- else -}}{{ $cs.redis.address }}{{- end -}}
+{{- end -}}
+
+{{/* Validate broker credential custody: required with OAuth, forbidden without, external XOR managed. */}}
+{{- define "mecak8s.validateBrokerCredentialStore" -}}
+{{- $cs := .Values.broker.credentialStore -}}
+{{- $oauth := gt (int (include "mecak8s.brokerOAuthCount" .)) 0 -}}
+{{- $activated := or $cs.managedRedis.enabled (ne $cs.redis.address "") (ne $cs.redis.credentialsSecret "") (ne $cs.redis.caSecret "") (ne $cs.encryption.secretName "") (ne $cs.encryption.activeID "") (gt (len $cs.encryption.keys) 0) (ne $cs.managedRedis.tlsSecret "") (ne $cs.managedRedis.aclSecret "") -}}
+{{- if and (not $oauth) $activated }}{{ fail "broker.credentialStore requires at least one OAuth MCP server" }}{{- end -}}
+{{- if $oauth -}}
+{{- if $cs.managedRedis.enabled -}}
+{{- if or (ne $cs.redis.address "") (ne $cs.redis.caSecret "") }}{{ fail "broker.credentialStore.managedRedis.enabled derives the address and CA; leave redis.address and redis.caSecret empty" }}{{- end -}}
+{{- $_ := required "broker.credentialStore.managedRedis.tlsSecret is required for managed Redis" $cs.managedRedis.tlsSecret -}}
+{{- $_ := required "broker.credentialStore.managedRedis.aclSecret is required for managed Redis" $cs.managedRedis.aclSecret -}}
+{{- if ne $cs.managedRedis.image.digest "sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08" }}{{ fail "broker.credentialStore.managedRedis.image.digest must be the verified redis:7.4.5-alpine digest" }}{{- end -}}
+{{- else -}}
+{{- $addr := required "broker.credentialStore.redis.address (or managedRedis.enabled) is required with OAuth MCP servers" $cs.redis.address -}}
+{{- if or (regexMatch "[/@?#\\s]" $addr) (not (regexMatch "^(\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9.-]+):[0-9]{1,5}$" $addr)) }}{{ fail "broker.credentialStore.redis.address must be a bare host:port" }}{{- end -}}
+{{- end -}}
+{{- $_ := required "broker.credentialStore.redis.credentialsSecret is required with OAuth MCP servers" $cs.redis.credentialsSecret -}}
+{{- $_ := required "broker.credentialStore.encryption.secretName is required with OAuth MCP servers" $cs.encryption.secretName -}}
+{{- $_ := required "broker.credentialStore.encryption.activeID is required with OAuth MCP servers" $cs.encryption.activeID -}}
+{{- if eq (len $cs.encryption.keys) 0 }}{{ fail "broker.credentialStore.encryption.keys must list at least one KEK" }}{{- end -}}
+{{- $seen := dict -}}{{- $active := 0 -}}
+{{- range $cs.encryption.keys -}}
+{{- if hasKey $seen .id }}{{ fail (printf "broker.credentialStore.encryption.keys id %q is duplicated" .id) }}{{- end -}}
+{{- $_ := set $seen .id true -}}
+{{- if eq .id $cs.encryption.activeID }}{{- $active = add1 $active }}{{- end -}}
+{{- end -}}
+{{- if ne $active 1 }}{{ fail "broker.credentialStore.encryption.activeID must match exactly one key" }}{{- end -}}
+{{- $ms := dict -}}
+{{- range $name, $value := dict "dialTimeout" $cs.redis.dialTimeout "operationTimeout" $cs.redis.operationTimeout "healthTimeout" $cs.redis.healthTimeout -}}
+{{- $n := int64 (regexReplaceAll "(ms|s)$" ($value | toString) "") -}}
+{{- $v := ternary $n (mul $n 1000) (hasSuffix "ms" ($value | toString)) -}}
+{{- if or (le $v 0) (gt $v 30000) }}{{ fail (printf "broker.credentialStore.redis.%s must be positive and at most 30s" $name) }}{{- end -}}
+{{- $_ := set $ms $name $v -}}
+{{- end -}}
+{{- if gt (get $ms "healthTimeout") (get $ms "operationTimeout") }}{{ fail "broker.credentialStore.redis.healthTimeout must not exceed operationTimeout" }}{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "mecak8s.brokerProtectedStorage" -}}
+{{- $cs := .Values.broker.credentialStore -}}
+{{- $redis := dict "address" (include "mecak8s.credentialRedisAddress" .) "password_file" "/var/run/mecabroker/credential-store/redis/password" "dial_timeout" $cs.redis.dialTimeout "operation_timeout" $cs.redis.operationTimeout "health_timeout" $cs.redis.healthTimeout -}}
+{{- if $cs.redis.usernameKey }}{{- $_ := set $redis "username_file" "/var/run/mecabroker/credential-store/redis/username" }}{{- end -}}
+{{- if or $cs.managedRedis.enabled $cs.redis.caSecret }}{{- $_ := set $redis "ca_file" "/var/run/mecabroker/credential-store/redis/ca.pem" }}{{- end -}}
+{{- $keys := list -}}{{- range $cs.encryption.keys }}{{- $keys = append $keys (dict "id" .id "file" (printf "/var/run/mecabroker/credential-store/encryption/%s" .id)) }}{{- end -}}
+{{- dict "redis" $redis "encryption" (dict "active_id" $cs.encryption.activeID "keys" $keys) | toJson -}}
+{{- end -}}
+
+{{- define "mecak8s.brokerConfig" -}}
+{{- $profiles := list -}}
+{{- range $index, $server := .Values.mcp.servers -}}
+{{- if eq $server.auth.mode "oauth" -}}
+{{- if or (gt (len $server.auth.oauth.network.additionalOrigins) 0) (gt (len $server.auth.oauth.network.privateOrigins) 0) (ne (int $server.auth.oauth.network.maxRedirects) 0) }}{{ fail (printf "mcp.servers[%d].auth.oauth.network is unsupported by mecabroker" $index) }}{{- end -}}
+{{- if and (eq $server.auth.oauth.client.mode "dcr") (or (not $server.auth.oauth.upstream) (ne $server.auth.oauth.upstream.mode "oauth2")) }}{{ fail (printf "mcp.servers[%d] DCR requires explicit OAuth2 authorizationEndpoint and tokenEndpoint" $index) }}{{- end -}}
+{{- if eq $server.auth.oauth.client.mode "preregistered" -}}
+{{- $clientID := $server.auth.oauth.client.preregistered.id -}}
+{{- if or (eq (trim $clientID) "") (regexMatch "[\x00-\x1f\x7f]" $clientID) }}{{ fail "OAuth client id must be non-blank and contain no control characters" }}{{- end -}}
+{{- end -}}
+{{- $oauth := dict "scopes" $server.auth.oauth.scopes "request_refresh_token" (default false $server.auth.oauth.requestRefreshToken) -}}
+{{- if eq $server.auth.oauth.client.mode "preregistered" }}{{- $_ := set $oauth "client_mode" "preregistered" }}{{- $_ := set $oauth "client_id" $server.auth.oauth.client.preregistered.id }}{{- $_ := set $oauth "client_secret_file" (printf "/var/run/mecabroker/mcp-oauth/%d/client-secret" $index) }}{{- else if eq $server.auth.oauth.client.mode "cimd" }}{{- $_ := set $oauth "client_mode" "cimd" }}{{- $_ := set $oauth "cimd_document_url" $server.auth.oauth.client.cimd.documentURL }}{{- else }}{{- $_ := set $oauth "client_mode" "dcr" }}{{- $_ := set $oauth "dcr_discovery_url" $server.auth.oauth.client.dcr.discoveryURL }}{{- end -}}
+{{- if $server.auth.oauth.issuer }}{{- $_ := set $oauth "issuer" $server.auth.oauth.issuer }}{{- end -}}
+{{- if and $server.auth.oauth.upstream (eq $server.auth.oauth.upstream.mode "oauth2") }}{{- $_ := set $oauth "authorization_endpoint" $server.auth.oauth.upstream.oauth2.authorizationEndpoint }}{{- $_ := set $oauth "token_endpoint" $server.auth.oauth.upstream.oauth2.tokenEndpoint }}{{- end -}}
+{{- $profile := dict "name" $server.name "url" $server.url "auth" "oauth" "oauth" $oauth -}}
+{{- if $server.auth.oauth.tools }}{{- $tools := list }}{{- range $server.auth.oauth.tools }}{{- $tools = append $tools (dict "name" .name "description" .description "schema" .inputSchema "read_only" (default false .readOnly)) }}{{- end }}{{- $_ := set $profile "tools" $tools }}{{- end -}}
+{{- $profiles = append $profiles $profile -}}
+{{- else if and $.Values.mcp.broker.callbackURL (eq $server.auth.mode "none") -}}
+{{- $profiles = append $profiles (dict "name" $server.name "url" $server.url "auth" "none") -}}
+{{- end -}}
+{{- end -}}
+{{- $workload := dict "audience" .Values.broker.workloadJWT.audience "subject" (printf "system:serviceaccount:%s:%s" .Release.Namespace (include "mecak8s.fullname" .)) "trust_bundle_file" "/var/run/mecabroker/workload-jwt/ca.pem" "max_jwks_staleness" "900s" "kubernetes_bootstrap" (dict "discovery_url" "https://kubernetes.default.svc/.well-known/openid-configuration" "jwks_uri" "https://kubernetes.default.svc/openid/v1/jwks" "token_file" "/var/run/mecabroker/workload-jwt/token") -}}
+{{- $config := dict "api_version" "mecabroker.mecatl.dev/v1" "listener" (dict "public_address" "0.0.0.0:8443" "tls_cert_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.certKey) "tls_key_file" (printf "/var/run/mecabroker/tls/%s" .Values.broker.tls.keyKey)) "workload_jwt" $workload "callback_url" .Values.mcp.broker.callbackURL "profiles" $profiles "drain" (dict "propagation_delay" "2s" "timeout" "55s" "listener_shutdown_timeout" "5s") "transport" (dict "rpc_deadline" "10s" "execute_deadline" "120s" "handle_idle_timeout" "300s" "sweep_interval" "30s" "cleanup_timeout" "10s" "max_handles" 128 "max_owners" 128 "max_receipts" 4096 "max_receipt_bytes" 8388608 "max_pending_controls" 1024 "max_active_executes" 64) "runtime" (dict "max_logical_sessions" 1024 "logical_retention" "86400s" "max_pending_auth_states" 1024) -}}
+{{- if gt (int (include "mecak8s.brokerOAuthCount" .)) 0 }}{{- $_ := set $config "protected_storage" (include "mecak8s.brokerProtectedStorage" . | fromJson) }}{{- end -}}
+{{- $config | toPrettyJson -}}
+{{- end -}}
+
 {{- define "mecak8s.validateProviderSecurity" -}}
 {{- if and .Values.mockProvider .Values.security.tlsTerminatedUpstream -}}
 {{- fail "security.tlsTerminatedUpstream applies only to a real provider; it is ignored when mockProvider=true, so setting both is a mistake" -}}
@@ -155,7 +274,7 @@ mounted
 {{- end -}}
 {{- end -}}
 
-{{/* Validate cross-entry MCP invariants that JSON Schema cannot express. */}}
+{{/* Validate canonical MCP input before routing OAuth entries through the singleton. */}}
 {{- define "mecak8s.validateMCP" -}}
 {{- $seen := dict -}}
 {{- $ownedEnv := dict -}}
@@ -163,95 +282,20 @@ mounted
 {{- $staticCount := 0 -}}
 {{- range $server := .Values.mcp.servers -}}
 {{- $folded := lower $server.name -}}
-{{- if hasKey $seen $folded -}}{{ fail (printf "mcp.servers name %q is duplicated case-insensitively" $server.name) }}{{- end -}}
+{{- if hasKey $seen $folded }}{{ fail (printf "mcp.servers name %q is duplicated case-insensitively" $server.name) }}{{- end -}}
 {{- $_ := set $seen $folded true -}}
-{{- $envBase := upper $server.name -}}
-{{- if eq $server.auth.mode "staticBearer" -}}{{- $_ := set $ownedEnv (printf "MCP_%s_TOKEN" $envBase) true -}}{{- $staticCount = add1 $staticCount -}}{{- end -}}
-{{- if eq $server.auth.mode "oauth" -}}
-{{- $oauthCount = add1 $oauthCount -}}
-{{- if $server.insecureHTTP -}}{{ fail (printf "mcp.servers[%s].insecureHTTP is invalid for oauth" $server.name) }}{{- end -}}
-{{- range $scope := $server.auth.oauth.scopes -}}{{- if or (eq (trim $scope) "") (regexMatch "[\x00-\x1f\x7f]" $scope) -}}{{ fail (printf "mcp.servers[%s].auth.oauth.scopes must be non-blank and contain no control characters" $server.name) }}{{- end -}}{{- end -}}
-{{- if eq $server.auth.oauth.client.mode "preregistered" -}}
-{{- $clientID := $server.auth.oauth.client.preregistered.id -}}
-{{- if or (eq (trim $clientID) "") (regexMatch "[\x00-\x1f\x7f]" $clientID) -}}{{ fail (printf "mcp.servers[%s].auth.oauth.client.preregistered.id must be non-blank and contain no control characters" $server.name) }}{{- end -}}
-{{- $_ := set $ownedEnv (printf "MECATL_MCP_%s_CLIENT_SECRET" $envBase) true -}}
+{{- if eq $server.auth.mode "staticBearer" }}{{- $_ := set $ownedEnv (printf "MCP_%s_TOKEN" (upper $server.name)) true }}{{- $staticCount = add1 $staticCount }}{{- end -}}
+{{- if eq $server.auth.mode "oauth" }}{{- $oauthCount = add1 $oauthCount }}{{- if $server.insecureHTTP }}{{ fail (printf "mcp.servers[%s].insecureHTTP is invalid for oauth" $server.name) }}{{- end }}{{- range $scope := $server.auth.oauth.scopes }}{{- if or (eq (trim $scope) "") (regexMatch "[\x00-\x1f\x7f]" $scope) }}{{ fail (printf "mcp.servers[%s].auth.oauth.scopes must be non-blank and contain no control characters" $server.name) }}{{- end }}{{- end }}{{- end -}}
 {{- end -}}
-{{- end -}}
-{{- end -}}
-{{- if and (gt $oauthCount 0) (gt $staticCount 0) -}}{{ fail "mcp.servers staticBearer is unsupported with broker OAuth" }}{{- end -}}
-{{- $callbackURL := trim .Values.mcp.broker.callbackURL -}}
-{{- if and (gt $oauthCount 0) (not .Values.oidc.enabled) -}}{{ fail "mcp OAuth broker requires oidc.enabled=true for verified broker-control caller identity" }}{{- end -}}
-{{- if and (gt $oauthCount 0) (eq $callbackURL "") -}}{{ fail "mcp.broker.callbackURL is required with an OAuth MCP server" }}{{- end -}}
-{{- if and (ne $callbackURL "") (eq $oauthCount 0) -}}{{ fail "mcp.broker.callbackURL requires at least one OAuth MCP server" }}{{- end -}}
-{{- range $env := .Values.extraEnv -}}
-{{- if and (hasKey $env "name") (hasKey $ownedEnv $env.name) -}}{{ fail (printf "extraEnv name %q collides with an MCP authentication environment variable owned by the chart" $env.name) }}{{- end -}}
-{{- end -}}
+{{- if and (gt $oauthCount 0) (gt $staticCount 0) }}{{ fail "mcp.servers staticBearer is unsupported with broker OAuth" }}{{- end -}}
+{{- if and (gt $oauthCount 0) (not .Values.oidc.enabled) }}{{ fail "mcp OAuth requires oidc.enabled=true for verified broker-control caller identity" }}{{- end -}}
+{{- if and (gt $oauthCount 0) (eq (trim .Values.mcp.broker.callbackURL) "") }}{{ fail "mcp.broker.callbackURL is required with an OAuth MCP server" }}{{- end -}}
+{{- if and (ne (trim .Values.mcp.broker.callbackURL) "") (eq $oauthCount 0) }}{{ fail "mcp.broker.callbackURL requires at least one OAuth MCP server" }}{{- end -}}
+{{- range $env := .Values.extraEnv }}{{- if and (hasKey $env "name") (hasKey $ownedEnv $env.name) }}{{ fail (printf "extraEnv name %q collides with an MCP authentication environment variable owned by the chart" $env.name) }}{{- end }}{{- end -}}
 {{- end -}}
 
-{{/* Strict runtime operator profile. OAuth routes select broker authority; an empty
-server list explicitly selects global mode. */}}
+{{/* Agent only selects remote authority; all routes and OAuth material belong to the broker. */}}
 {{- define "mecak8s.mcpOAuthSettings" -}}
-{{- if not .Values.mcp.servers -}}
 mcp:
-  mode: global
-{{- else }}
-mcp:
-{{- if .Values.mcp.broker.callbackURL }}
-  mode: broker
-  broker:
-    callback_url: {{ .Values.mcp.broker.callbackURL | quote }}
-{{- end }}
-  servers:
-{{- range $server := .Values.mcp.servers }}
-{{- if or (eq $server.auth.mode "oauth") (eq $server.auth.mode "none") }}
-    - name: {{ $server.name | quote }}
-      url: {{ $server.url | quote }}
-      auth:
-        mode: {{ if eq $server.auth.mode "oauth" }}oauth{{ else }}none{{ end }}
-{{- if eq $server.auth.mode "oauth" }}
-        oauth:
-{{- if not (and $server.auth.oauth.upstream (eq $server.auth.oauth.upstream.mode "oauth2")) }}
-          issuer: {{ $server.auth.oauth.issuer | quote }}
-{{- end }}
-{{- if $server.auth.oauth.upstream }}
-          upstream:
-            mode: {{ $server.auth.oauth.upstream.mode }}
-{{- if eq $server.auth.oauth.upstream.mode "oauth2" }}
-            oauth2:
-              authorization_endpoint: {{ $server.auth.oauth.upstream.oauth2.authorizationEndpoint | quote }}
-              token_endpoint: {{ $server.auth.oauth.upstream.oauth2.tokenEndpoint | quote }}
-{{- end }}
-{{- end }}
-          client:
-            mode: {{ $server.auth.oauth.client.mode }}
-{{- if eq $server.auth.oauth.client.mode "preregistered" }}
-            preregistered:
-              id: {{ $server.auth.oauth.client.preregistered.id | quote }}
-              secret_env: {{ printf "MECATL_MCP_%s_CLIENT_SECRET" (upper $server.name) }}
-{{- else if eq $server.auth.oauth.client.mode "cimd" }}
-            cimd:
-              document_url: {{ $server.auth.oauth.client.cimd.documentURL | quote }}
-{{- else }}
-            dcr:
-              discovery_url: {{ $server.auth.oauth.client.dcr.discoveryURL | quote }}
-{{- end }}
-          scopes: {{ toJson $server.auth.oauth.scopes }}
-          request_refresh_token: {{ default false $server.auth.oauth.requestRefreshToken }}
-          network:
-            additional_origins: {{ toJson $server.auth.oauth.network.additionalOrigins }}
-            private_origins: {{ toJson $server.auth.oauth.network.privateOrigins }}
-            max_redirects: {{ $server.auth.oauth.network.maxRedirects }}
-{{- if $server.auth.oauth.tools }}
-          tools:
-{{- range $server.auth.oauth.tools }}
-            - name: {{ .name | quote }}
-              description: {{ .description | quote }}
-              input_schema: {{ .inputSchema | toJson }}
-              read_only: {{ default false .readOnly }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end }}
+  mode: {{ if .Values.mcp.broker.callbackURL }}broker{{ else }}global{{ end }}
 {{- end -}}

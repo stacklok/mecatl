@@ -12,14 +12,22 @@ import (
 // HandlerBundle is the fixed process-owned HTTP surface of an in-process broker.
 // Command roots choose the listener, but the adapter owns the exact route set.
 type HandlerBundle struct {
-	Authorization     http.Handler
-	Token             http.Handler
-	UpstreamCallback  http.Handler
-	Discovery         http.Handler
-	JWKS              http.Handler
+	// Authorization serves the ToolHive authorization endpoint.
+	Authorization http.Handler
+	// Token serves the ToolHive token endpoint.
+	Token http.Handler
+	// UpstreamCallback receives callbacks from upstream OAuth providers.
+	UpstreamCallback http.Handler
+	// Discovery serves the broker's authorization-server metadata.
+	Discovery http.Handler
+	// JWKS serves the broker signing keys used by protected-resource clients.
+	JWKS http.Handler
+	// ProtectedResource serves protected-resource metadata for the MCP endpoint.
 	ProtectedResource http.Handler
-	VMCP              http.Handler
-	Callback          http.Handler
+	// VMCP serves the aggregated Streamable HTTP MCP endpoint.
+	VMCP http.Handler
+	// Callback serves Mecatl's browser callback endpoint at the composed callback path.
+	Callback http.Handler
 }
 
 // Empty reports whether the process exposes no HTTP surface.

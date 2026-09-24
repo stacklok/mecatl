@@ -15,7 +15,7 @@ func TestToolHiveBrokerConfigCopiesParsedOperatorValues(t *testing.T) {
 	routes := []permconfig.MCPServerProfile{{
 		Name: "protected", URL: "https://mcp.example/mcp", Auth: permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
 			Issuer: "https://issuer.example", Scopes: []string{"read"},
-			Client: permconfig.MCPOAuthClientProfile{Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretEnv: "MECATL_CLIENT_SECRET"}},
+			Client: permconfig.MCPOAuthClientProfile{Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client", SecretFile: "../adapter/mcpbroker/testdata/client-secret"}},
 			Tools:  []permconfig.MCPStaticToolProfile{{Name: "reviewed", Description: "comparison only", InputSchema: []byte(`{"type":"object"}`), ReadOnly: true}},
 		}},
 	}}
@@ -27,7 +27,7 @@ func TestToolHiveBrokerConfigCopiesParsedOperatorValues(t *testing.T) {
 	if profile.OAuth.Scopes[0] != "read" || string(profile.Static[0].Schema) != `{"type":"object"}` {
 		t.Fatalf("adapter construction values alias permconfig input: %#v", profile)
 	}
-	if config.CallbackURL != "https://broker.example/callback" || config.Occupied[0] != "Read" {
+	if config.CallbackURL != "https://broker.example/callback" || config.ReservedToolNames[0] != "Read" {
 		t.Fatalf("adapter construction boundary = %#v", config)
 	}
 }
@@ -38,7 +38,7 @@ func TestToolHiveBrokerConfigPreservesStaticOIDCClientVariants(t *testing.T) {
 		client permconfig.MCPOAuthClientProfile
 		wantID string
 	}{
-		{name: "preregistered", client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "registered", SecretEnv: "MECATL_CLIENT_SECRET"}}, wantID: "registered"},
+		{name: "preregistered", client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "registered", SecretFile: "../adapter/mcpbroker/testdata/client-secret"}}, wantID: "registered"},
 		{name: "cimd", client: permconfig.MCPOAuthClientProfile{Mode: "cimd", CIMD: &permconfig.MCPCIMDClientProfile{DocumentURL: "https://client.example/oauth-client.json"}}, wantID: "https://client.example/oauth-client.json"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -121,7 +121,7 @@ func protectedToolHiveRoute(name string) permconfig.MCPServerProfile {
 		Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{
 			AuthorizationEndpoint: "https://issuer.example/authorize", TokenEndpoint: "https://issuer.example/token",
 		}},
-		Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: name + "-client"}},
+		Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: name + "-client", SecretFile: "../adapter/mcpbroker/testdata/client-secret"}},
 	}}}
 }
 

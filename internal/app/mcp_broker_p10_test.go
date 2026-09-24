@@ -25,6 +25,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	mcpbrokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 func TestCallMcpWithQueryBrokerSupport_Scenario1_BrokerOnlyFactory(t *testing.T) {
@@ -199,6 +200,41 @@ func TestEmptyBrokerAuthoritySkipsUnconfiguredRuntime(t *testing.T) {
 	t.Cleanup(built.Close)
 	if built.MCPBroker != nil || !built.MCPBrokerHandlers.Empty() {
 		t.Fatal("empty broker authority constructed broker resources")
+	}
+}
+
+func TestBuildRemoteMCPBrokerFactory(t *testing.T) {
+	catalogue, err := mcpbroker.Compile(mcpauthority.BrokerConfig{}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := mcpbroker.New(catalogue, func(_ context.Context, _ mcpbroker.SessionRef, _ string, call session.ToolCall) (session.ToolResult, error) {
+		return session.NewToolResult(call.ID, "ok"), nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	factoryCalled := false
+	built, err := Build(t.Context(), Config{
+		Workspace:    t.TempDir(),
+		UseMock:      true,
+		NoSoul:       true,
+		MCPAuthority: mcpauthority.NewBroker(mcpauthority.BrokerConfig{}),
+		MCPBrokerFactory: func(context.Context) (mcpbrokercontract.Service, func() error, error) {
+			factoryCalled = true
+			return remote, remote.Close, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build with remote MCP broker factory: %v", err)
+	}
+	t.Cleanup(built.Close)
+	if !factoryCalled {
+		t.Fatal("Build did not call the remote MCP broker factory")
+	}
+	if built.MCPBroker != nil || !built.MCPBrokerHandlers.Empty() {
+		t.Fatal("remote broker factory constructed local broker resources")
 	}
 }
 

@@ -225,7 +225,8 @@ the automated suite creates only its namespace before chart installation. For
 production settings, use `deploy/helm/mecak8s/` with an externally managed
 Redis endpoint and its required credentials.
 
-This convenience fixture makes no production network-isolation claim. It has
-no general NetworkPolicy; the default Kind network is not enforcement evidence.
-Use production authentication and network controls when exposing a service
-outside the local loopback workflow.
+This convenience fixture makes no production network-isolation claim. The chart
+still renders its default-deny ingress NetworkPolicy; egress restriction is
+owned by the deployment platform (CNI, service mesh, or egress gateway), not
+this disposable Kind fixture. Use production authentication and network
+controls when exposing a service outside the local loopback workflow.

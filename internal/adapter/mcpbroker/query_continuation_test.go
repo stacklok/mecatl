@@ -77,7 +77,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationContinuation(t *te
 						return session.ToolResult{}, err
 					}
 					return mcp.FilterCallResult(ctx, native.ID, "github", "list", filter, mcp.CallResult{StructuredContent: json.RawMessage(`{"keep":42,"raw_canary":"secret"}`)})
-				}), WithOAuthLoopbackForTest(t, roots), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+				}), WithOAuthLoopbackForTest(t, roots), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
 				if err != nil {
 					t.Fatal(err)
 				}

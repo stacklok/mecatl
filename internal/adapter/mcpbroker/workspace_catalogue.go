@@ -148,7 +148,7 @@ func resolveGrantedBundle(logical *logicalSession, authorization session.Externa
 // assembles the candidate attachment catalogue that replaces the static
 // declarations, without publishing it.
 func (a *Attachment) buildRefreshedCatalogue(ctx context.Context, logical *logicalSession, process *Process, backends []string) (*attachmentCatalogue, error) {
-	stagedRoutes, err := stageAuthenticatedDeclaredRoutes(ctx, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: ctx}, backends, a.catalogue, process.occupied)
+	stagedRoutes, err := stageAuthenticatedDeclaredRoutes(ctx, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: ctx}, backends, a.catalogue, process.reservedToolNames)
 	if err != nil {
 		return nil, err
 	}
@@ -261,12 +261,12 @@ func (a *Attachment) RefreshGrantedAuthorizationCatalogue(ctx context.Context, a
 
 // FreezeAuthenticatedCatalogue stages the configured protected backends in
 // their configured order and publishes one immutable attachment catalogue only
-// after every backend has supplied valid live metadata. occupied is the complete
+// after every backend has supplied valid live metadata. reservedToolNames is the complete
 // model-visible name set outside this attachment catalogue (core/global tools).
 // brokerCredential is opaque and is passed only through ToolHive's incoming
 // identity middleware.
-func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, occupied []string) (contract.WorkspaceCatalogue, error) {
-	frozen, _, err := a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, occupied, true)
+func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, reservedToolNames []string) (contract.WorkspaceCatalogue, error) {
+	frozen, _, err := a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, reservedToolNames, true)
 	return frozen, err
 }
 
@@ -274,39 +274,63 @@ func (a *Attachment) FreezeAuthenticatedCatalogue(ctx context.Context, ref contr
 // uses publish=false so the catalogue remains private until its logical commit.
 //
 //nolint:gocyclo // every early-return guards a distinct precondition (closed, stale ref, process authority, publish race); splitting would scatter the single freeze/publish invariant
-func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, occupied []string, publish bool) (contract.WorkspaceCatalogue, *attachmentCatalogue, error) {
+func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contract.WorkspaceEnrollmentRef, process *Process, brokerCredential oauth2.TokenSource, reservedToolNames []string, publish bool) (contract.WorkspaceCatalogue, *attachmentCatalogue, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if a == nil || process == nil || brokerCredential == nil || !ref.Valid() {
-		return nil, nil, ErrAuthenticatedDiscovery
-	}
-
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.closed {
+		a.mu.Unlock()
 		return nil, nil, contract.ErrAttachmentClosed
 	}
 	if a.catalogue != nil && a.catalogue.frozen != nil {
 		if a.catalogue.frozen.Ref() == ref {
-			return a.catalogue.frozen, a.catalogue, nil
+			frozen, catalogue := a.catalogue.frozen, a.catalogue
+			a.mu.Unlock()
+			return frozen, catalogue, nil
 		}
+		a.mu.Unlock()
 		return nil, nil, ErrAuthenticatedDiscovery
 	}
 	if err := a.stateErrorLocked(); err != nil {
+		a.mu.Unlock()
 		return nil, nil, err
 	}
 
 	backends, anonymous, ok := process.catalogueInputs(a.runtime)
 	if !ok || len(backends) == 0 {
+		a.mu.Unlock()
 		return nil, nil, ErrAuthenticatedDiscovery
 	}
 	base := a.catalogue
 	if base == nil {
+		a.mu.Unlock()
 		return nil, nil, ErrAuthenticatedDiscovery
 	}
+	if wait := a.freezing; wait != nil {
+		// Single flight: another freeze is running discovery. Wait for it, then
+		// re-evaluate from the top (it returns the published catalogue or retries).
+		a.mu.Unlock()
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+		return a.freezeAuthenticatedCatalogue(ctx, ref, process, brokerCredential, reservedToolNames, publish)
+	}
+	done := make(chan struct{})
+	a.freezing = done
+	defer func() {
+		a.mu.Lock()
+		if a.freezing == done {
+			a.freezing = nil
+		}
+		a.mu.Unlock()
+		close(done)
+	}()
 
-	stagedRoutes, err := stageAuthenticatedRoutes(ctx, process, brokerCredential, backends, base, occupied)
+	a.mu.Unlock()
+	stagedRoutes, verifiedTSID, err := stageAuthenticatedRoutes(ctx, a, process, brokerCredential, backends, base, reservedToolNames)
 	if err != nil {
 		reason := diagnosticReasonDiscoveryFailed
 		if errors.Is(err, ErrInvalidCatalogue) {
@@ -337,9 +361,14 @@ func (a *Attachment) freezeAuthenticatedCatalogue(ctx context.Context, ref contr
 
 	// A Process may close while a query returns. Do not publish a catalogue whose
 	// process no longer owns its discovery authority.
-	if !process.catalogueStillAvailable(a.runtime) || a.closed {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !process.catalogueStillAvailable(a.runtime) || a.closed || a.catalogue != base {
 		process.diagnostics().Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue freeze", "event", diagnosticEventAuthenticatedCatalogueFreeze, "reason", diagnosticReasonAuthorityUnavailable)
 		return nil, nil, ErrAuthenticatedDiscovery
+	}
+	if verifiedTSID != "" {
+		a.verifiedTSID = verifiedTSID
 	}
 	candidate := newAttachmentCatalogue(allRoutes, frozen.Tools(), frozen)
 	if publish {
@@ -410,14 +439,15 @@ func stageAuthenticatedDeclaredRoutes(ctx context.Context, process *Process, bro
 	return staged, nil
 }
 
-func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCredential oauth2.TokenSource, backends []string, base *attachmentCatalogue, occupied []string) ([]route, error) {
-	// The attachment lock remains held by FreezeAuthenticatedCatalogue throughout
-	// this work. Cancel/close races have one winner, and Tools cannot expose a
-	// partly staged catalogue.
-	seen := make(map[string]struct{}, len(occupied)+len(base.routes))
-	for _, name := range occupied {
+func stageAuthenticatedRoutes(ctx context.Context, _ *Attachment, process *Process, brokerCredential oauth2.TokenSource, backends []string, base *attachmentCatalogue, reservedToolNames []string) ([]route, string, error) {
+	// Runs without the attachment lock so upstream I/O never blocks other
+	// operations on the handle. The caller re-locks and exact-compares the base
+	// catalogue before publishing, so a stale result can never be installed and
+	// Tools cannot expose a partly staged catalogue.
+	seen := make(map[string]struct{}, len(reservedToolNames)+len(base.routes))
+	for _, name := range reservedToolNames {
 		if name == "" {
-			return nil, ErrInvalidCatalogue
+			return nil, "", ErrInvalidCatalogue
 		}
 		seen[name] = struct{}{}
 	}
@@ -427,6 +457,7 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 		}
 	}
 	staged := make([]route, 0)
+	verifiedTSID := ""
 	for backendIndex, backend := range backends {
 		capabilities, err := process.QueryAuthenticatedCapabilities(ctx, brokerCredential, backend)
 		if err != nil || capabilities.Backend != backend {
@@ -438,13 +469,19 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 			// backend position broke a catalogue freeze that otherwise fails
 			// all-or-nothing, without logging its configured name.
 			process.diagnostics().Log(ctx, port.LevelWarn, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscoveryFailed, "backend_index", backendIndex)
-			return nil, ErrAuthenticatedDiscovery
+			return nil, "", ErrAuthenticatedDiscovery
+		}
+		if process.discovery != nil && process.discovery.captureTSID {
+			if capabilities.verifiedTSID == "" || (verifiedTSID != "" && capabilities.verifiedTSID != verifiedTSID) {
+				return nil, "", ErrAuthenticatedDiscovery
+			}
+			verifiedTSID = capabilities.verifiedTSID
 		}
 		process.diagnostics().Log(ctx, port.LevelInfo, "mcp broker authenticated catalogue backend", "event", diagnosticEventAuthenticatedCatalogueBackend, "reason", diagnosticReasonDiscovered, "backend_index", backendIndex, "tools", len(capabilities.Tools))
 		for _, definition := range capabilities.Tools {
 			route, err := validateAuthenticatedRoute(backend, definition, seen)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			// Execution reuses the one outer ToolHive broker credential. The
 			// wrapper intentionally has no oauth route, so the agent loop cannot
@@ -455,9 +492,14 @@ func stageAuthenticatedRoutes(ctx context.Context, process *Process, brokerCrede
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return staged, nil
+	if process.discovery != nil && process.discovery.captureTSID {
+		if verifiedTSID == "" {
+			return nil, "", ErrAuthenticatedDiscovery
+		}
+	}
+	return staged, verifiedTSID, nil
 }
 
 // validateAuthenticatedRoute is the single admission boundary for protected

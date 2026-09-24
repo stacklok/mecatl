@@ -135,9 +135,17 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	defer done()
-	backends, target, _ := a.bundleBackends()
+	backends, target, process := a.bundleBackends()
 	if len(backends) == 0 {
 		return contract.WorkspaceEnrollmentPresentation{}, ErrWorkspaceEnrollmentUnsupported
+	}
+	if process != nil && process.protectedStorage != nil {
+		healthCtx, cancel := context.WithTimeout(opCtx, process.protectedStorage.healthTimeout)
+		err := process.protectedStorage.Health(healthCtx)
+		cancel()
+		if err != nil {
+			return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: protected storage unavailable")
+		}
 	}
 	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonRequestStarted, "backend_count", len(backends))
 
@@ -158,13 +166,17 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 	}
 	logical.mu.Unlock()
 
+	a.mu.Lock()
+	a.verifiedTSID = ""
+	a.mu.Unlock()
+
 	// Secret resolution is potentially slow and must NOT run while holding
 	// logical.mu: see the identical rationale on RequestAuthorization. Delegates
-	// to the shared resolveClientSecret (rather than re-deriving it here) so the
+	// to the shared resolveClientSecret (rather than re-reading it here) so the
 	// already-populated raw target.clientSecret (the confidential embedded
 	// broker's own client secret, set once at construction) is never bypassed
-	// in favor of a secretEnv lookup that a target like this one never has.
-	secret, err := target.resolveClientSecret(opCtx, a.runtime.oauth.resolveSecret)
+	// in favor of a secret-file read that a target like this one never has.
+	secret, err := target.resolveClientSecret(opCtx, a.runtime.oauth.readSecretFile)
 	if err != nil {
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
@@ -203,9 +215,9 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		status:         session.AuthorizationPending,
 	}
 	logical.authorizations[transaction.identity] = transaction
-	if !a.runtime.registerCallbackState(state, logical, transaction) {
+	if err := a.runtime.registerCallbackState(state, logical, transaction); err != nil {
 		delete(logical.authorizations, transaction.identity)
-		return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: create unique callback state")
+		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	url := presentWorkspaceTransaction(transaction)
 	a.runtime.logWorkspaceEnrollment(ctx, port.LevelInfo, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonStarted, "backend_count", len(backends))
@@ -302,8 +314,8 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	if process == nil {
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
-	occupied := append([]string(nil), process.occupied...)
-	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, occupied, false)
+	reservedToolNames := append([]string(nil), process.reservedToolNames...)
+	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, reservedToolNames, false)
 	if err != nil {
 		if callerErr := ctx.Err(); callerErr != nil {
 			// Discovery was interrupted by this observer, not rejected by the
@@ -361,6 +373,9 @@ func (a *Attachment) CancelWorkspaceEnrollment(ctx context.Context, ref contract
 	if !ref.Valid() {
 		return contract.WorkspaceEnrollmentResult{}, errors.New("mcpbroker: invalid workspace enrollment reference")
 	}
+	a.mu.Lock()
+	a.verifiedTSID = ""
+	a.mu.Unlock()
 	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationCancel, diagnosticEnrollmentReasonRequestCancelled)
 	logical := a.logical
 	a.enrollmentMu.Lock()

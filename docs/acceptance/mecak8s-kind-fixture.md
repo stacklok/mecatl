@@ -56,7 +56,8 @@ without introducing ToolHive as a dependency ([ADR-0048](../adr/0048-mecak8s.md)
   - verify: `TestMecak8sHelmChart_KindProfileAloneHasNoSecretDependency`
 - AC1.4: The local fixture documentation distinguishes the operator-run Kind
   fixture from the production Helm chart and the `e2e/k8s/` suite, and does not
-  claim production network isolation: it has no general NetworkPolicy and uses
+  claim production network isolation: it renders the chart's default-deny ingress
+  NetworkPolicy, while egress restriction is deployment/platform-owned, and uses
   static Kind `extraPortMappings` for host access, all bound to loopback.
   - verify: none — fixture boundary claims in documentation are reviewed by humans; `task docs` checks links and structure
 

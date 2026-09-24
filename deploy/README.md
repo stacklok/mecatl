@@ -1,5 +1,8 @@
 # Deploying mecated
 
+The single `deploy/helm/mecak8s` chart deploys the scalable `mecak8s` agent and
+its one-replica MCP broker together. See the public [mecak8s deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) for its TLS, callback, and maintenance contract.
+
 Kubernetes manifests for the mecatl server, `mecated`. The container image is
 built with [`ko`](https://ko.build) directly from `./cmd/mecated` — there is no
 Dockerfile. Manifests reference the image via the `ko://…` placeholder, which

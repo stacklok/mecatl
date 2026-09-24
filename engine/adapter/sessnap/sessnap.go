@@ -25,9 +25,11 @@ package sessnap
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -53,6 +55,7 @@ type Snapshot struct {
 	// PendingWorkspaceEnrollment contains only safe enrollment correlation; no
 	// endpoint, credential, callback, or discovered-service state is persisted.
 	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment `json:"pending_workspace_enrollment,omitempty"`
+	BrokerCredentialCustody    *brokerCredentialCustodyDTO         `json:"broker_credential_custody,omitempty"`
 	StopReason                 session.StopReason                  `json:"stop_reason,omitempty"`
 	// Kind and Relationship are the validated producer taxonomy from ADR 0217.
 	// A missing kind is legacy data and restores as unknown (fail-closed).
@@ -146,6 +149,56 @@ type Snapshot struct {
 	EnvironmentRef session.EnvironmentRef `json:"environment_ref"`
 	// Placement is safe display-only metadata and is never used for reattachment.
 	Placement session.PlacementMetadata `json:"placement,omitempty"`
+}
+
+type brokerCredentialCustodyDTO struct {
+	RecoveryReference  string                `json:"recovery_reference"`
+	SessionIncarnation session.IncarnationID `json:"session_incarnation"`
+	OwnerPartition     string                `json:"owner_partition"`
+	WorkloadPartition  string                `json:"workload_partition"`
+	ProfileDigest      string                `json:"profile_digest"`
+	Providers          []string              `json:"providers"`
+	ExpiresAt          time.Time             `json:"expires_at"`
+}
+
+func toBrokerCredentialCustodyDTO(c session.BrokerCredentialCustody) *brokerCredentialCustodyDTO {
+	owner, workload, profile := c.OwnerPartition(), c.WorkloadPartition(), c.ProfileDigest()
+	return &brokerCredentialCustodyDTO{
+		RecoveryReference: c.RecoveryReference(), SessionIncarnation: c.SessionIncarnation(),
+		OwnerPartition: hex.EncodeToString(owner[:]), WorkloadPartition: hex.EncodeToString(workload[:]), ProfileDigest: hex.EncodeToString(profile[:]),
+		Providers: c.Providers(), ExpiresAt: c.ExpiresAt(),
+	}
+}
+
+func fromBrokerCredentialCustodyDTO(dto *brokerCredentialCustodyDTO) (session.BrokerCredentialCustody, error) {
+	if dto == nil {
+		return session.BrokerCredentialCustody{}, nil
+	}
+	decode := func(value string) ([32]byte, error) {
+		var out [32]byte
+		if len(value) != hex.EncodedLen(len(out)) || value != strings.ToLower(value) {
+			return out, errors.New("invalid custody digest")
+		}
+		decoded, err := hex.DecodeString(value)
+		if err != nil {
+			return out, errors.New("invalid custody digest")
+		}
+		copy(out[:], decoded)
+		return out, nil
+	}
+	owner, err := decode(dto.OwnerPartition)
+	if err != nil {
+		return session.BrokerCredentialCustody{}, err
+	}
+	workload, err := decode(dto.WorkloadPartition)
+	if err != nil {
+		return session.BrokerCredentialCustody{}, err
+	}
+	profile, err := decode(dto.ProfileDigest)
+	if err != nil {
+		return session.BrokerCredentialCustody{}, err
+	}
+	return session.NewBrokerCredentialCustody(dto.RecoveryReference, dto.SessionIncarnation, owner, workload, profile, dto.Providers, dto.ExpiresAt)
 }
 
 // messageDTO mirrors session.Message with JSON tags. session.Message is
@@ -330,6 +383,9 @@ func Of(s *session.Session) (Snapshot, error) {
 		p := pending
 		snap.PendingWorkspaceEnrollment = &p
 	}
+	if custody, ok := s.BrokerCredentialCustody(); ok {
+		snap.BrokerCredentialCustody = toBrokerCredentialCustodyDTO(custody)
+	}
 	// Capture the recorded terminal reason faithfully (no limit derivation) so a
 	// terminal session round-trips through the matching transition on restore.
 	if r, ok := s.RecordedStopReason(); ok {
@@ -409,6 +465,15 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	if s.PendingWorkspaceEnrollment != nil {
 		if err := restored.BeginWorkspaceEnrollment(*s.PendingWorkspaceEnrollment); err != nil {
 			return nil, fmt.Errorf("sessnap: restore workspace enrollment: %w", err)
+		}
+	}
+	if s.BrokerCredentialCustody != nil {
+		custody, err := fromBrokerCredentialCustodyDTO(s.BrokerCredentialCustody)
+		if err != nil {
+			return nil, fmt.Errorf("sessnap: restore broker credential custody: %w", err)
+		}
+		if err := restored.RestoreBrokerCredentialCustody(custody); err != nil {
+			return nil, fmt.Errorf("sessnap: restore broker credential custody: %w", err)
 		}
 	}
 	return restored, nil

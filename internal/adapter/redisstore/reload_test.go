@@ -154,6 +154,7 @@ func TestProductionCandidateRotatesCAAndPasswordTransactionally(t *testing.T) {
 	}
 	defer store.Close()
 	old := store.testClient()
+	oldFollow := store.testFollowClient()
 
 	reloadWrite(t, dir, "ca.pem", caTwo)
 	awaitDiagnostic(t, diagnostics, "retrying")
@@ -167,6 +168,9 @@ func TestProductionCandidateRotatesCAAndPasswordTransactionally(t *testing.T) {
 	proxy.Switch(backendTwo.Addr())
 	reloadWrite(t, dir, "password", "password-two")
 	awaitClientChange(t, store, old)
+	if store.testFollowClient() == oldFollow {
+		t.Fatal("rotated production configuration left the follow client on the old generation")
+	}
 	if err := store.Ping(context.Background()); err != nil {
 		t.Fatalf("rotated production client failed: %v", err)
 	}

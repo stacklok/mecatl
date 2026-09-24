@@ -2,12 +2,16 @@ package mcpbroker
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stacklok/toolhive/pkg/authserver"
 	"github.com/stacklok/toolhive/pkg/authserver/storage"
+	"github.com/stacklok/toolhive/pkg/oauthproto"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	authtypes "github.com/stacklok/toolhive/pkg/vmcp/auth/types"
 
@@ -28,9 +32,14 @@ const (
 // construction. Composition reduces the operator schema to this value before
 // invoking the adapter.
 type ToolHiveConfig struct {
+	// CallbackURL is the public URL whose path receives OAuth callbacks for this process.
 	CallbackURL string
-	Profiles    []ToolHiveProfile
-	Occupied    []string
+	// Profiles declares the ordered upstream MCP backends and their authentication mode.
+	Profiles []ToolHiveProfile
+	// ReservedToolNames contains model-visible names supplied by the surrounding
+	// core/global catalogue. Broker discovery rejects collisions before it creates
+	// an attachment.
+	ReservedToolNames []string
 	// AuthStorage backs the embedded auth server's pending-authorization,
 	// token, grant, and DCR storage directly. Tests use this to inject a
 	// fake/spy storage.Storage; composition (which cannot import the
@@ -50,6 +59,8 @@ type ToolHiveConfig struct {
 	// lifecycle — EmbeddedAuthServer.Close calls storage.Close, which closes
 	// the client it was given, so no separate cleanup is needed beyond that.
 	AuthRedisClient redis.UniversalClient
+	// ProtectedStorage is the production encrypted storage seam for OAuth profiles.
+	ProtectedStorage *ProtectedStorageConfig
 	// Diagnostics receives per-backend authenticated-discovery outcomes during
 	// workspace-enrollment catalogue freeze (success + tool count, or failure +
 	// backend name) — see stageAuthenticatedRoutes. A nil value defaults to
@@ -59,22 +70,34 @@ type ToolHiveConfig struct {
 
 // ToolHiveProfile is one configured Streamable HTTP upstream.
 type ToolHiveProfile struct {
-	Name   string
-	URL    string
-	Auth   string
-	OAuth  *ToolHiveOAuth
+	// Name is the stable broker-side backend name used to route discovered tools.
+	Name string
+	// URL is the upstream Streamable HTTP endpoint contacted by ToolHive.
+	URL string
+	// Auth selects the upstream authentication mode, currently "none" or "oauth".
+	Auth string
+	// OAuth supplies the upstream OAuth and client-registration details when Auth is "oauth".
+	OAuth *ToolHiveOAuth
+	// Static declares trusted protected tools available before authenticated discovery.
 	Static []StaticTool
 }
 
 // ToolHiveOAuth contains only values needed to construct ToolHive's upstream.
 type ToolHiveOAuth struct {
-	Issuer                string
+	// Issuer identifies the upstream authorization-server issuer when metadata is used.
+	Issuer string
+	// AuthorizationEndpoint is the upstream endpoint where the user grants access.
 	AuthorizationEndpoint string
-	TokenEndpoint         string
-	ClientID              string
-	ClientSecretEnv       string
-	Scopes                []string
-	RequestRefreshToken   bool
+	// TokenEndpoint is the upstream endpoint used to exchange codes and refresh tokens.
+	TokenEndpoint string
+	// ClientID identifies the preregistered OAuth client.
+	ClientID string
+	// ClientSecretFile names the local file read when confidential-client authentication is needed.
+	ClientSecretFile string
+	// Scopes are requested for the upstream grant.
+	Scopes []string
+	// RequestRefreshToken asks the upstream for refresh-token-capable authorization.
+	RequestRefreshToken bool
 	// DCRDiscoveryURL enables RFC 7591 registration through RFC 8414 metadata.
 	DCRDiscoveryURL string
 }
@@ -82,9 +105,12 @@ type ToolHiveOAuth struct {
 // StaticTool is one trusted protected tool declaration. Its schema is copied
 // into the frozen model-facing catalogue; backend routing remains private.
 type StaticTool struct {
+	// Name and Description are the model-visible identity and help text.
 	Name, Description string
-	Schema            json.RawMessage
-	ReadOnly          bool
+	// Schema is the JSON input schema copied into the frozen tool specification.
+	Schema json.RawMessage
+	// ReadOnly marks the tool for dispatch policy; it does not grant upstream authorization.
+	ReadOnly bool
 }
 
 type toolHiveConstruction struct {
@@ -168,7 +194,7 @@ func toolHiveProviderKey(name string) (string, error) {
 func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authserver.UpstreamRunConfig, error) {
 	oauth := profile.OAuth
 	if oauth.DCRDiscoveryURL != "" {
-		if oauth.ClientID != "" || oauth.ClientSecretEnv != "" {
+		if oauth.ClientID != "" || oauth.ClientSecretFile != "" {
 			return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q combines DCR with a client identity", ErrInvalidCatalogue, profile.Name)
 		}
 		if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
@@ -179,6 +205,9 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 	if oauth.ClientID == "" {
 		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q is missing client identity", ErrInvalidCatalogue, profile.Name)
 	}
+	if err := validateClientSecretFile(oauth.ClientSecretFile); err != nil {
+		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q client secret file is invalid", ErrInvalidCatalogue, profile.Name)
+	}
 	if oauth.AuthorizationEndpoint != "" || oauth.TokenEndpoint != "" {
 		return toolHiveOAuth2Upstream(profile, provider, issuer, nil)
 	}
@@ -187,7 +216,7 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 	}
 	redirect := issuer + "/oauth/callback"
 	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: &authserver.OIDCUpstreamRunConfig{
-		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretEnvVar: oauth.ClientSecretEnv,
+		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretFile: oauth.ClientSecretFile,
 		RedirectURI: redirect, Scopes: append([]string(nil), oauth.Scopes...),
 		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth),
 	}}, nil
@@ -198,11 +227,15 @@ func toolHiveOAuth2Upstream(profile ToolHiveProfile, provider, issuer string, dc
 	if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
 		return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q has partial OAuth2 endpoints", ErrInvalidCatalogue, profile.Name)
 	}
-	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOAuth2, OAuth2Config: &authserver.OAuth2UpstreamRunConfig{
+	config := &authserver.OAuth2UpstreamRunConfig{
 		AuthorizationEndpoint: oauth.AuthorizationEndpoint, TokenEndpoint: oauth.TokenEndpoint, ClientID: oauth.ClientID,
-		ClientSecretEnvVar: oauth.ClientSecretEnv, RedirectURI: issuer + "/oauth/callback", Scopes: append([]string(nil), oauth.Scopes...),
+		ClientSecretFile: oauth.ClientSecretFile, RedirectURI: issuer + "/oauth/callback", Scopes: append([]string(nil), oauth.Scopes...),
 		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth), DCRConfig: dcr,
-	}}, nil
+	}
+	if oauth.ClientSecretFile != "" {
+		config.TokenEndpointAuthMethod = oauthproto.TokenEndpointAuthMethodClientSecretBasic
+	}
+	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOAuth2, OAuth2Config: config}, nil
 }
 
 func toolHiveAdditionalAuthorizationParams(oauth *ToolHiveOAuth) map[string]string {
@@ -229,4 +262,38 @@ func cloneStaticTools(in []StaticTool) []StaticTool {
 		out[i].Schema = append(json.RawMessage(nil), in[i].Schema...)
 	}
 	return out
+}
+
+const maxOAuthClientSecretBytes = 64 << 10
+
+// validateClientSecretFile proves that the configured credential is present and
+// bounded without retaining it. ToolHive reads the same path only while building
+// its in-process upstream client.
+func validateClientSecretFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	_, err := readClientSecretFile(path)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func readClientSecretFile(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	secret, err := io.ReadAll(io.LimitReader(file, maxOAuthClientSecretBytes+1))
+	if err != nil || len(secret) > maxOAuthClientSecretBytes {
+		return "", errors.New("invalid")
+	}
+	value := strings.TrimSpace(string(secret))
+	clear(secret)
+	if value == "" {
+		return "", errors.New("invalid")
+	}
+	return value, nil
 }

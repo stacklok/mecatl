@@ -64,6 +64,11 @@ tasks:
       - task --list
     silent: true
 
+  build:broker:
+    desc: Compile the standalone mecabroker binary into bin/
+    cmds:
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecabroker ./cmd/mecabroker
+
   build:
     desc: Compile binaries into bin/
     cmds:
@@ -75,6 +80,8 @@ tasks:
       # mecak8s: the storage-free, k8s-native agent binary (ADR 0048; a thin peer
       # of mecated composing app.Build with Redis store + k8s lease + drain gate).
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecak8s ./cmd/mecak8s
+      # mecabroker: the separately deployable authenticated ToolHive owner.
+      - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecabroker ./cmd/mecabroker
       - go build -ldflags "{{.BUILD_LDFLAGS}}" -o bin/mecatui ./cmd/mecatui
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
@@ -198,6 +205,62 @@ tasks:
           fi
         silent: true
       - ko build --push --bare ./cmd/mecak8s
+
+  ko:build:broker:
+    desc: Build the mecabroker image locally with ko (no push; tagged under ko.local)
+    env:
+      KO_DOCKER_REPO: ko.local
+      VERSION: "{{.BUILD_ID}}"
+    cmds:
+      - ko build --local --bare ./cmd/mecabroker
+
+  kind:load:broker:
+    desc: Build and load the local mecabroker image into the mecatl-dev Kind cluster with a digest reference
+    vars:
+      KIND_CLUSTER: '{{.KIND_CLUSTER | default "mecatl-dev"}}'
+      IMAGE: ko.local/mecabroker:dev
+      ARCHIVE: .scratch/mecabroker-kind/mecabroker.tar
+    preconditions:
+      - sh: command -v ko >/dev/null 2>&1
+        msg: "ko is not installed (https://ko.build/install/)"
+      - sh: command -v kind >/dev/null 2>&1
+        msg: "kind is not installed (https://kind.sigs.k8s.io/docs/user/quick-start/#installation)"
+      - sh: command -v docker >/dev/null 2>&1
+        msg: "docker is required for the broker Kind fixture"
+      - sh: kind get clusters | grep -qx '{{.KIND_CLUSTER}}'
+        msg: "Kind cluster '{{.KIND_CLUSTER}}' was not found; set KIND_CLUSTER or create it first"
+    cmds:
+      - mkdir -p .scratch/mecabroker-kind
+      - cmd: |
+          set -eu
+          image="$(KO_DOCKER_REPO=ko.local VERSION="{{.BUILD_ID}}" ko build --local --bare --tags dev ./cmd/mecabroker)"
+          docker tag "$image" '{{.IMAGE}}'
+      - docker save '{{.IMAGE}}' -o '{{.ARCHIVE}}'
+      - kind load image-archive '{{.ARCHIVE}}' --name '{{.KIND_CLUSTER}}'
+      - cmd: |
+          set -eu
+          node="$(kind get nodes --name '{{.KIND_CLUSTER}}' | head -n 1)"
+          digest="$(docker exec "$node" ctr -n k8s.io images ls | awk '$1 == "{{.IMAGE}}" {print $3; exit}')"
+          case "$digest" in
+            sha256:[0-9a-f][0-9a-f]*) ;;
+            *) echo "could not determine the imported broker image digest" >&2; exit 1 ;;
+          esac
+          docker exec "$node" ctr -n k8s.io images tag '{{.IMAGE}}' "ko.local/mecabroker@$digest"
+          echo "Use --set image.repository=ko.local/mecabroker --set image.digest=$digest"
+        silent: true
+      - rm -f '{{.ARCHIVE}}'
+
+  ko:publish:broker:
+    desc: Build and push the mecabroker image with ko (honours KO_DOCKER_REPO)
+    env:
+      VERSION: "{{.BUILD_ID}}"
+    cmds:
+      - cmd: |
+          if [ -z "${KO_DOCKER_REPO:-}" ]; then
+            echo "KO_DOCKER_REPO is required (for example ghcr.io/stacklok/mecatl/mecabroker)"; exit 1
+          fi
+        silent: true
+      - ko build --push --bare ./cmd/mecabroker
 
   ko:build:mecatui:
     desc: Build the mecatui image locally with ko (issue #302; no push; tagged under ko.local)
@@ -548,57 +611,47 @@ tasks:
 
   deploy:check:
     desc: |
-      Validate the deploy/helm/mecak8s chart WITHOUT a cluster: `helm lint`
-      every deploy/helm/mecak8s/ci/*-values.yaml fixture, schema-check the
-      rendered manifests (default + oidc.enabled=true), and assert the
-      caller-identity boundaries (ADR 0204). Needs helm + kubeconform; needs NO
-      cluster, so it runs in CI and on a laptop.
+      Validate the single deploy/helm/mecak8s chart WITHOUT a cluster: lint its
+      production fixtures, schema-check every rendered fixture, and assert the
+      mecak8s caller-identity boundaries. The chart always includes the singleton
+      broker, so secure renders supply both signed image digests and its TLS/CA
+      Secret names. Needs helm + kubeconform; needs NO cluster.
     vars:
-      PROD_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
-      SAFE_SET: redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+      PROD_SET: image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,image.tag=,broker.image.digest=sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210,broker.tls.secretName=mecabroker-tls,broker.clientCA.secretName=mecabroker-ca,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,security.allowUnsafeRealProvider=true
+      SAFE_SET: image.digest=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,image.tag=,broker.image.digest=sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210,broker.tls.secretName=mecabroker-tls,broker.clientCA.secretName=mecabroker-ca,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
     preconditions:
       - sh: command -v helm >/dev/null 2>&1
         msg: "helm is not installed (https://helm.sh/docs/intro/install/)"
       - sh: command -v kubeconform >/dev/null 2>&1
         msg: "kubeconform is not installed (go install github.com/yannh/kubeconform/cmd/kubeconform@latest)"
     cmds:
-      # `helm template | kubeconform` against every
-      # deploy/helm/mecak8s/ci/*-values.yaml fixture — a discoverable,
-      # `-f`-based example of a full production install, checked the same way
-      # as the --set-based PROD_SET/OIDC_SET renders below. Deliberately NOT
-      # `helm lint`: it does not fail on a template execution error (a
-      # `fail`/`required` violation prints as an INFO line and still exits 0),
-      # so it wouldn't catch the class of error this exists to catch. This is
-      # chart-testing's (`ct lint`) fixture-directory convention without the
-      # `ct` binary itself: `ct` shells out to Python yamale/yamllint even with
-      # its other validations disabled, a real toolchain dependency this
-      # repo's otherwise-all-Go tool chain (kind/ko/kubeconform/kustomize)
-      # doesn't carry — not worth it for value `helm template`+kubeconform
-      # already cover.
       - cmd: |
-          set -eu -o pipefail
+          set -eu
+          helm lint deploy/helm/mecak8s --set '{{.PROD_SET}}'
           for f in deploy/helm/mecak8s/ci/*-values.yaml; do
-            helm template deploy/helm/mecak8s -f "$f" | kubeconform -strict -summary -
+            output=".scratch/deploy-$(basename "$f" .yaml).yaml"
+            helm template fixture deploy/helm/mecak8s -f "$f" >"$output"
+            kubeconform -strict -summary - <"$output"
           done
         silent: true
       # Schema validation is kubeconform, NOT `kubectl apply --dry-run=client`:
       # kubectl maps kinds against the API server even with --validate=false, so
       # it needs a reachable cluster and cannot run here.
       - cmd: |
-          set -eu -o pipefail
-          helm template production deploy/helm/mecak8s --set '{{.PROD_SET}}' | kubeconform -strict -summary -
-          helm template production deploy/helm/mecak8s --set '{{.SAFE_SET}}' | kubeconform -strict -summary -
+          set -eu
+          for profile in production safe; do
+            output=".scratch/deploy-mecak8s-${profile}.yaml"
+            sets='{{.PROD_SET}}'
+            [ "$profile" != safe ] || sets='{{.SAFE_SET}}'
+            helm template "$profile" deploy/helm/mecak8s --set "$sets" >"$output"
+            kubeconform -strict -summary - <"$output"
+          done
         silent: true
-      # The oidc-enabled render must carry every base arg alongside the oidc
-      # args: Helm composes ONE args: list template-side rather than
-      # JSON6902-patching an existing one, so the specific "did the patch drop
-      # args" failure mode is structurally less likely here — kept anyway, it's
-      # cheap and still guards a future refactor of the args block.
       - cmd: |
-          set -eu -o pipefail
-          missing=""
+          set -eu
           rendered=$(helm template production deploy/helm/mecak8s --set '{{.SAFE_SET}}')
-          for arg in --grpc-addr --http-addr --redis-url --session-lease-k8s-namespace --headless --posture --oidc-issuer --oidc-audience --oidc-max-jwks-staleness=1h; do
+          missing=""
+          for arg in --grpc-addr --http-addr --redis-url --redis-follow-pool-size --redis-max-followers --session-lease-k8s-namespace --headless --posture --oidc-issuer --oidc-audience --oidc-max-jwks-staleness=1h; do
             echo "$rendered" | grep -q -- "$arg" || missing="$missing $arg"
           done
           if [ -n "$missing" ]; then

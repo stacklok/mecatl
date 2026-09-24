@@ -1,6 +1,6 @@
 {{- $oauth := false -}}
-{{- range .Values.mcp.servers -}}{{- if eq .auth.mode "oauth" -}}{{- $oauth = true -}}{{- end -}}{{- end -}}
-{{- if or $oauth (not .Values.mcp.servers) }}
+{{- range (default .Values.mcp.servers (dig "mecatl" "mcp" "servers" nil (default dict .Values.global))) -}}{{- if eq .auth.mode "oauth" -}}{{- $oauth = true -}}{{- end -}}{{- end -}}
+{{- if or $oauth (not (default .Values.mcp.servers (dig "mecatl" "mcp" "servers" nil (default dict .Values.global)))) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

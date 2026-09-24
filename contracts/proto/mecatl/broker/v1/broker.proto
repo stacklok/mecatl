@@ -1,0 +1,434 @@
+syntax = "proto3";
+
+package mecatl.broker.v1;
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
+
+import "google/protobuf/timestamp.proto";
+
+// BrokerService connects a harness to one authoritative MCP broker process. A broker
+// has one random incarnation; attachment handles and all lifecycle/Execute receipts
+// are process-local, lease-bound capabilities, not restart-continuous replica state.
+// Bindings identify logical state but are opaque, sensitive, and never filesystem paths.
+service BrokerService {
+  // Attach creates or reattaches a caller to a logical session. First attach may omit
+  // broker_incarnation; later attaches use the pinned current incarnation. Its returned
+  // handle is required for attachment RPCs and is replayable only in this process/lease.
+  rpc Attach(AttachRequest) returns (AttachResponse);
+  // Commit commits provisional attachment state. It needs current handle/incarnation;
+  // transport loss has an ambiguous outcome, not an Execute receipt guarantee.
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  // Abort terminally releases provisional state. Same-operation duplicates replay only
+  // during the handle lease; incompatible lifecycle operations fail.
+  rpc Abort(AbortRequest) returns (AbortResponse);
+  // Close terminally releases a handle but preserves its logical state. Same-operation
+  // duplicate outcomes are retained only for the attachment lease.
+  rpc Close(CloseRequest) returns (CloseResponse);
+  // Delete removes only the exact logical session and binding in the current incarnation.
+  // It is potentially ambiguous after transport loss and must not be blindly retried.
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  // Execute dispatches one descriptor-advertised invocation. The attachment and
+  // incarnation must be current. An identical call_id/invocation joins or replays only
+  // within its receipt lease; changed content fails before dispatch. After lost transport,
+  // retry only with exact structured DISPATCH_NOT_STARTED proof for this method.
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  // RequestAuthorization starts authorization for an exact attachment invocation using
+  // current handle/incarnation. Returned refs are opaque, attachment-bound, and expiring.
+  rpc RequestAuthorization(RequestAuthorizationRequest) returns (RequestAuthorizationResponse);
+  // AbortAuthorization abandons an authorization ref. A lost response is ambiguous.
+  rpc AbortAuthorization(AbortAuthorizationRequest) returns (AbortAuthorizationResponse);
+  // PresentAuthorization returns an ephemeral browser URL. Do not log or persist it.
+  rpc PresentAuthorization(PresentAuthorizationRequest) returns (PresentAuthorizationResponse);
+  // AuthorizationStatus reads an authorization ref without renewing absolute leases.
+  rpc AuthorizationStatus(AuthorizationStatusRequest) returns (AuthorizationStatusResponse);
+  // CancelAuthorization cancels a ref; retry/replay remains process- and lease-bound.
+  rpc CancelAuthorization(CancelAuthorizationRequest) returns (CancelAuthorizationResponse);
+  // BeginWorkspaceEnrollment starts eligible attachment pre-prompt enrollment.
+  rpc BeginWorkspaceEnrollment(BeginWorkspaceEnrollmentRequest) returns (BeginWorkspaceEnrollmentResponse);
+  // ObserveWorkspaceEnrollment reads an exact enrollment ref without renewing its lease.
+  rpc ObserveWorkspaceEnrollment(ObserveWorkspaceEnrollmentRequest) returns (ObserveWorkspaceEnrollmentResponse);
+  // CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
+  rpc CancelWorkspaceEnrollment(CancelWorkspaceEnrollmentRequest) returns (CancelWorkspaceEnrollmentResponse);
+  // StageCredentialCustody stages an exact completed protected enrollment.
+  rpc StageCredentialCustody(StageCredentialCustodyRequest) returns (StageCredentialCustodyResponse);
+  // CommitCredentialCustody promotes one exact staged custody record.
+  rpc CommitCredentialCustody(CommitCredentialCustodyRequest) returns (CommitCredentialCustodyResponse);
+  // RecoverCredentialAttachment creates fresh provisional state from current custody.
+  rpc RecoverCredentialAttachment(RecoverCredentialAttachmentRequest) returns (RecoverCredentialAttachmentResponse);
+  // TombstoneCredentialCustody removes one exact custody record's authority.
+  rpc TombstoneCredentialCustody(TombstoneCredentialCustodyRequest) returns (TombstoneCredentialCustodyResponse);
+}
+
+// BrokerErrorReason is the closed structured reason vocabulary in BrokerErrorDetail.
+// Unknown values, missing details, and status text prove no replay safety and fail closed.
+enum BrokerErrorReason {
+  // No classification: proves neither pre-dispatch failure nor replay safety.
+  BROKER_ERROR_REASON_UNSPECIFIED = 0;
+  // Process-local state is gone; treat as state loss, never proof Execute was not sent.
+  BROKER_ERROR_REASON_STATE_UNAVAILABLE = 1;
+  // Attachment closed; not proof that an earlier Execute did not dispatch.
+  BROKER_ERROR_REASON_ATTACHMENT_CLOSED = 2;
+  // Authorization ref absent; terminal control state, not an Execute dispatch proof.
+  BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND = 3;
+  // Exact proof that dispatch_method was not started. Only exact Execute method permits
+  // ordinary pre-dispatch Execute failure handling.
+  BROKER_ERROR_REASON_DISPATCH_NOT_STARTED = 4;
+  // Capacity rejection. It is Execute replay-safe only with exact Execute dispatch_method.
+  BROKER_ERROR_REASON_CAPACITY_REACHED = 5;
+  // Client's broker incarnation is stale; recover only before a new prompt, never replay.
+  BROKER_ERROR_REASON_INCARNATION_LOST = 6;
+  // Authorized continuity data is unavailable without revealing why.
+  BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE = 7;
+  // Stored custody was bound to a broker profile that no longer matches the
+  // broker's configuration; the custody can never be used again.
+  BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED = 8;
+}
+
+// BrokerErrorDetail provides stable error identity without status-text inference.
+message BrokerErrorDetail {
+  // Closed reason; unknown values are unsafe and clients must fail closed.
+  BrokerErrorReason reason = 1;
+  // Exact fully-qualified method only for dispatch-not-started (and Execute capacity)
+  // proof; empty otherwise. Compare exactly; never guess.
+  string dispatch_method = 2;
+}
+
+// AttachRequest identifies logical state to attach.
+message AttachRequest {
+  // Opaque logical session ID, never a filesystem location or guessed path.
+  string session_id = 1;
+  // Pinned process incarnation; empty only for initial attach, stale values are rejected.
+  string broker_incarnation = 2;
+  // Opaque persisted external binding for exact reattach or structured instance-loss classification.
+  string expected_binding = 3;
+}
+// AttachResponse establishes an ephemeral attachment capability.
+message AttachResponse {
+  // Durable opaque logical-incarnation identity for exact delete; sensitive, never logged.
+  string binding = 1;
+  // Ephemeral process-local capability for attachment RPCs; never persist it.
+  string handle = 2;
+  // Validated closed attach outcome (created or reattached).
+  string outcome = 3;
+  // Frozen descriptor capability snapshot for this attachment.
+  repeated ToolDescriptor tools = 4;
+  // Current random broker incarnation to pin; stale values are rejected.
+  string broker_incarnation = 5;
+  // Whether pre-prompt workspace enrollment is supported by this attachment.
+  bool workspace_enrollment = 6;
+  // Whether this attachment offers credential continuity (encrypted custody is
+  // configured). When true the host must stage custody or fail enrollment closed.
+  bool credential_continuity = 7;
+}
+
+// CommitRequest targets current attachment lifecycle state.
+message CommitRequest {
+  // Ephemeral attachment capability, never a durable ID or path.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// CommitResponse confirms commit completion.
+message CommitResponse {}
+// AbortRequest targets terminal attachment abort.
+message AbortRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// AbortResponse confirms abort; duplicate replay ends with the attachment lease.
+message AbortResponse {}
+// CloseRequest targets terminal attachment close without deleting logical state.
+message CloseRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// CloseResponse reports validated closed/already-closed lifecycle outcome.
+message CloseResponse {
+  // Closed outcome, validated by both peers.
+  string outcome = 1;
+}
+
+// DeleteRequest targets exact logical state rather than a process-local handle.
+message DeleteRequest {
+  // Opaque logical session identity, never a path.
+  string session_id = 1;
+  // Durable opaque binding from Attach; sensitive and never synthesized or logged.
+  string binding = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// DeleteResponse reports validated deleted/not-found outcome.
+message DeleteResponse {
+  // Closed delete outcome.
+  string outcome = 1;
+}
+
+// ToolDescriptor is an attachment-frozen remote tool capability advertisement.
+message ToolDescriptor {
+  // Stable advertised tool name used by invocation, not a filesystem path.
+  string name = 1;
+  // Valid UTF-8 model-visible tool description from the broker peer.
+  string description = 2;
+  // UTF-8 JSON-object schema bytes; untrusted descriptor data, never executable content.
+  bytes schema = 3;
+  // Read-only scheduling capability.
+  bool read_only = 4;
+  // Run-local dispatch barrier capability even when read_only.
+  bool dispatch_serial = 5;
+  // Authorization request/abort capability.
+  bool authorization_capable = 6;
+}
+
+// ExecuteRequest is a receipt-protected invocation.
+message ExecuteRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact advertised descriptor name.
+  string name = 2;
+  // Opaque call identity; reuse requires byte-identical invocation within receipt lease.
+  string call_id = 3;
+  // Sensitive untrusted JSON-object args; never log, guess, or execute outside descriptor.
+  bytes args = 4;
+  // Optional opaque provider item identity.
+  string item_id = 5;
+  // Current pinned broker incarnation, checked before dispatch.
+  string broker_incarnation = 6;
+}
+// ExecuteResponse carries the receipt-protected result.
+message ExecuteResponse {
+  // Result for requested call_id; textual values are valid UTF-8.
+  ToolResult result = 1;
+}
+// ToolResult is a model-visible tool completion.
+message ToolResult {
+  // Exact opaque requested call identity.
+  string call_id = 1;
+  // Valid UTF-8 model-visible summary; never raw binary.
+  string content = 2;
+  // Whether content and parts represent an error.
+  bool is_error = 3;
+  // Structured text, resource, and binary content blocks.
+  repeated ResultPart parts = 4;
+}
+// ResultPart is one structured tool-result component.
+message ResultPart {
+  // Valid UTF-8 neutral content-block taxonomy.
+  string block_kind = 1;
+  // Valid UTF-8 neutral media-kind taxonomy.
+  string media_kind = 2;
+  // MIME token preserved byte-exact by the neutral layer.
+  string mime_type = 3;
+  // Raw binary, not UTF-8 text; never log or coerce to text.
+  bytes data = 4;
+  // Valid UTF-8 opaque untrusted resource URL/reference, not a local path.
+  string url = 5;
+  // Valid UTF-8 text payload.
+  string text = 6;
+  // Valid UTF-8 resource/display name.
+  string name = 7;
+  // Valid UTF-8 display title.
+  string title = 8;
+  // Valid UTF-8 description.
+  string description = 9;
+  // Declared resource size when applicable.
+  int64 size = 10;
+  // Valid UTF-8 audience labels.
+  repeated string audience = 11;
+  // Relative resource priority when applicable.
+  double priority = 12;
+  // Valid UTF-8 source last-modified presentation value.
+  string last_modified = 13;
+}
+
+// RequestAuthorizationRequest identifies an authorization-capable invocation.
+message RequestAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact advertised authorization-capable descriptor name.
+  string name = 2;
+  // Opaque invocation ID, digest-pinned within the receipt lease.
+  string call_id = 3;
+  // Sensitive untrusted JSON-object args; never log or guess.
+  bytes args = 4;
+  // Optional opaque provider item identity.
+  string item_id = 5;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 6;
+}
+// RequestAuthorizationResponse says whether external authorization is required.
+message RequestAuthorizationResponse {
+  // Opaque attachment-bound expiring ref when required; never persist past lease/expiry.
+  Authorization authorization = 1;
+  // False requires authorization to be absent.
+  bool required = 2;
+}
+// AbortAuthorizationRequest targets an opaque authorization ref.
+message AbortAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// AbortAuthorizationResponse confirms abort request completion.
+message AbortAuthorizationResponse {}
+// Authorization identifies one expiring external authorization flow.
+message Authorization {
+  // Opaque sensitive authorization identity, never a location.
+  string id = 1;
+  // Opaque binding to external logical state; never log.
+  string binding = 2;
+  // Absolute expiry after which clients must stop using this ref.
+  google.protobuf.Timestamp expires_at = 3;
+}
+// PresentAuthorizationRequest targets authorization browser presentation.
+message PresentAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// PresentAuthorizationResponse supplies short-lived browser presentation data.
+message PresentAuthorizationResponse {
+  // Valid UTF-8 URL; sensitive presentation data, not a credential, path, or durable ID.
+  string url = 1;
+}
+// AuthorizationStatusRequest reads an opaque authorization ref.
+message AuthorizationStatusRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// AuthorizationStatusResponse carries validated closed authorization status.
+message AuthorizationStatusResponse {
+  // Status such as pending/granted/denied/expired/cancelled; unknown values fail closed.
+  string status = 1;
+}
+// CancelAuthorizationRequest cancels an opaque authorization ref.
+message CancelAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// CancelAuthorizationResponse carries validated closed cancellation outcome.
+message CancelAuthorizationResponse {
+  // Unknown outcome values fail closed.
+  string outcome = 1;
+}
+
+// WorkspaceRef identifies an expiring attachment-bound pre-prompt enrollment flow.
+message WorkspaceRef {
+  // Opaque sensitive enrollment identity, never a path or durable post-lease ID.
+  string id = 1;
+  // Bitset of external services needed before enrollment is connected.
+  uint32 required_services = 2;
+  // Absolute expiry after which clients must stop using this ref.
+  google.protobuf.Timestamp expires_at = 3;
+}
+// BeginWorkspaceEnrollmentRequest starts enrollment for an eligible attachment.
+message BeginWorkspaceEnrollmentRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// BeginWorkspaceEnrollmentResponse supplies opaque ref plus browser presentation.
+message BeginWorkspaceEnrollmentResponse {
+  // Attachment-bound opaque enrollment ref.
+  WorkspaceRef ref = 1;
+  // Valid UTF-8 sensitive browser URL, not a filesystem location.
+  string url = 2;
+}
+// ObserveWorkspaceEnrollmentRequest reads an exact enrollment before prompting.
+message ObserveWorkspaceEnrollmentRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque enrollment ref.
+  WorkspaceRef ref = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// ObserveWorkspaceEnrollmentResponse reports enrollment status and resulting tools.
+message ObserveWorkspaceEnrollmentResponse {
+  // Authoritative ref echo, including expiry.
+  WorkspaceRef ref = 1;
+  // Validated enrollment status; unknown values fail closed.
+  string status = 2;
+  // Descriptor snapshot when connected.
+  repeated ToolDescriptor tools = 3;
+}
+// CancelWorkspaceEnrollmentRequest cancels exact pre-prompt enrollment.
+message CancelWorkspaceEnrollmentRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque enrollment ref.
+  WorkspaceRef ref = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// CancelWorkspaceEnrollmentResponse reports final enrollment status and tools.
+message CancelWorkspaceEnrollmentResponse {
+  // Authoritative ref echo, including expiry.
+  WorkspaceRef ref = 1;
+  // Validated final status; unknown values fail closed.
+  string status = 2;
+  // Descriptor snapshot if final state is connected.
+  repeated ToolDescriptor tools = 3;
+}
+
+// ContinuityGuard binds custody to the exact durable session and authenticated partitions.
+message ContinuityGuard {
+  string session_id = 1;
+  string session_incarnation = 2;
+  bytes owner_partition = 3;
+  bytes workload_partition = 4;
+  bytes profile_digest = 5;
+  repeated string providers = 6;
+}
+message CustodyAssertion {
+  ContinuityGuard guard = 1;
+  string recovery_reference = 2;
+  google.protobuf.Timestamp attempt_deadline = 3;
+}
+message StageCredentialCustodyRequest {
+  string request_id = 1;
+  string handle = 2;
+  string broker_incarnation = 3;
+  ContinuityGuard guard = 4;
+  WorkspaceRef completed_enrollment = 5;
+  google.protobuf.Timestamp attempt_deadline = 6;
+}
+message StageCredentialCustodyResponse {
+  string recovery_reference = 1;
+  google.protobuf.Timestamp custody_expires_at = 2;
+  bytes profile_digest = 3;
+  repeated string providers = 4;
+}
+message CommitCredentialCustodyRequest { CustodyAssertion assertion = 1; }
+message CommitCredentialCustodyResponse {}
+message RecoverCredentialAttachmentRequest {
+  CustodyAssertion assertion = 1;
+  string request_id = 2;
+}
+message RecoverCredentialAttachmentResponse {
+  string binding = 1;
+  string handle = 2;
+  repeated ToolDescriptor tools = 3;
+  string broker_incarnation = 4;
+  bool workspace_enrollment = 5;
+}
+message TombstoneCredentialCustodyRequest { CustodyAssertion assertion = 1; }
+message TombstoneCredentialCustodyResponse {}

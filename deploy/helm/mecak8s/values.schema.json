@@ -24,16 +24,8 @@
         "credentialsSecret": {"type": "string"},
         "passwordKey": {"type": "string"},
         "caKey": {"type": "string"},
+        "follow": {"type": "object", "additionalProperties": false, "required": ["poolSize", "maxFollowers"], "properties": {"poolSize": {"type": "integer", "minimum": 1}, "maxFollowers": {"type": "integer", "minimum": 1}}},
         "usernameKey": {"type": "string"},
-        "follow": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["poolSize", "maxFollowers"],
-          "properties": {
-            "poolSize": {"type": "integer", "minimum": 1},
-            "maxFollowers": {"type": "integer", "minimum": 1}
-          }
-        },
         "filesystem": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "readLedger": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}
@@ -77,6 +69,7 @@
         "tlsTerminatedUpstream": {"type": "boolean"}
       }
     },
+    "podDisruptionBudget": {"type": "object", "additionalProperties": false, "required": ["enabled", "maxUnavailable"], "properties": {"enabled": {"type": "boolean"}, "maxUnavailable": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "string", "pattern": "^(100|[1-9]?[0-9])%$"}]}}},
     "replicaCount": {"type": "integer", "minimum": 1},
     "mockProvider": {"type": "boolean"},
     "defaultProvider": {"type": "string", "enum": ["", "openai", "openai-codex", "openrouter", "anthropic", "opencode", "toolhive"]},
@@ -241,6 +234,19 @@
         }
       }
     },
+    "broker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["image", "logging", "tls", "clientCA", "workloadJWT", "resources", "credentialStore"],
+      "properties": {
+        "image": {"type": "object", "additionalProperties": false, "required": ["repository", "digest", "tag", "pullPolicy"], "properties": {"repository": {"type": "string", "minLength": 1}, "digest": {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}, "tag": {"type": "string"}, "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}}},
+        "logging": {"type": "object", "additionalProperties": false, "required": ["level"], "properties": {"level": {"type": "string", "enum": ["debug", "info", "warn", "error"]}}},
+        "tls": {"type": "object", "additionalProperties": false, "required": ["secretName", "certKey", "keyKey"], "properties": {"secretName": {"type": "string"}, "certKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}, "keyKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}}},
+        "clientCA": {"type": "object", "additionalProperties": false, "required": ["secretName", "key", "serverName"], "properties": {"secretName": {"type": "string"}, "key": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}, "serverName": {"type": "string"}}},
+        "credentialStore": {"type": "object", "additionalProperties": false, "required": ["redis", "encryption", "managedRedis"], "properties": {"redis": {"type": "object", "additionalProperties": false, "required": ["address", "credentialsSecret", "usernameKey", "passwordKey", "caSecret", "caKey", "dialTimeout", "operationTimeout", "healthTimeout"], "properties": {"address": {"type": "string"}, "credentialsSecret": {"type": "string"}, "usernameKey": {"type": "string", "pattern": "^(|[A-Za-z0-9_-][A-Za-z0-9._-]*)$"}, "passwordKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}, "caSecret": {"type": "string"}, "caKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}, "dialTimeout": {"type": "string", "pattern": "^[1-9][0-9]*(ms|s)$"}, "operationTimeout": {"type": "string", "pattern": "^[1-9][0-9]*(ms|s)$"}, "healthTimeout": {"type": "string", "pattern": "^[1-9][0-9]*(ms|s)$"}}}, "encryption": {"type": "object", "additionalProperties": false, "required": ["secretName", "activeID", "keys"], "properties": {"secretName": {"type": "string"}, "activeID": {"type": "string", "pattern": "^(|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$"}, "keys": {"type": "array", "maxItems": 16, "items": {"type": "object", "additionalProperties": false, "required": ["id", "secretKey"], "properties": {"id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}, "secretKey": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$"}}}}}}, "managedRedis": {"type": "object", "additionalProperties": false, "required": ["enabled", "image", "persistence", "tlsSecret", "aclSecret"], "properties": {"enabled": {"type": "boolean"}, "image": {"type": "object", "additionalProperties": false, "required": ["repository", "tag", "digest"], "properties": {"repository": {"type": "string", "minLength": 1}, "tag": {"type": "string"}, "digest": {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"}}}, "persistence": {"type": "object", "additionalProperties": false, "required": ["size", "storageClassName"], "properties": {"size": {"type": "string", "pattern": "^[1-9][0-9]*(Ki|Mi|Gi|Ti)$"}, "storageClassName": {"type": "string"}}}, "tlsSecret": {"type": "string"}, "aclSecret": {"type": "string"}}}}},
+        "workloadJWT": {"type": "object", "additionalProperties": false, "required": ["audience", "lifetimeSeconds"], "properties": {"audience": {"type": "string", "minLength": 1}, "lifetimeSeconds": {"type": "integer", "minimum": 600, "maximum": 3600}}},
+        "resources": {"type": "object"}
+      }
+    },
     "learning": {
       "type": "object",
       "additionalProperties": false,
@@ -368,7 +374,15 @@
     "service": {"type": "object", "additionalProperties": false, "required": ["type", "grpcPort", "httpPort", "nodePorts"], "properties": {"type": {"type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"]}, "grpcPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "httpPort": {"type": "integer", "minimum": 1, "maximum": 65535}, "nodePorts": {"type": "object", "additionalProperties": false, "properties": {"grpc": {"type": "integer", "minimum": 30000, "maximum": 32767}, "http": {"type": "integer", "minimum": 30000, "maximum": 32767}}}}},
     "nameOverride": {"type": "string"},
     "fullnameOverride": {"type": "string"},
-    "podAnnotations": {"type": "object"}
+    "podAnnotations": {"type": "object"},
+    "networkPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "publicFrom"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "publicFrom": {"type": "array", "items": {"$ref": "#/definitions/networkPeer"}}
+      }
+    }
   },
   "allOf": [
     {
@@ -482,29 +496,16 @@
     {
       "if": {"properties": {"oidc": {"properties": {"enabled": {"const": true}}}, "learning": {"properties": {"store": {"properties": {"endpoint": {"minLength": 1}}}}}}},
       "then": false
-    },
-    {
-      "if": {
-        "required": ["mcp"],
-        "properties": {
-          "mcp": {
-            "required": ["broker"],
-            "properties": {
-              "broker": {
-                "required": ["callbackURL"],
-                "properties": {"callbackURL": {"minLength": 1}}
-              }
-            }
-          }
-        }
-      },
-      "then": {
-        "required": ["replicaCount"],
-        "properties": {"replicaCount": {"const": 1}}
-      }
     }
   ],
   "definitions": {
+    "networkPeer": {
+      "oneOf": [
+        {"type":"object","additionalProperties":false,"required":["ipBlock"],"properties":{"ipBlock":{"type":"object","additionalProperties":false,"required":["cidr"],"properties":{"cidr":{"type":"string","minLength":1},"except":{"type":"array","items":{"type":"string","minLength":1}}}}}},
+        {"type":"object","additionalProperties":false,"required":["namespaceSelector"],"properties":{"namespaceSelector":{"type":"object","minProperties":1},"podSelector":{"type":"object","minProperties":1}}},
+        {"type":"object","additionalProperties":false,"required":["podSelector"],"properties":{"podSelector":{"type":"object","minProperties":1}}}
+      ]
+    },
     "secretKeyRef": {
       "type": "object",
       "additionalProperties": false,

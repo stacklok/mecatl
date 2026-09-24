@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 
@@ -86,6 +87,9 @@ var (
 	// ErrProtectedRouteUnsupported reports the P08 boundary: OAuth routes are
 	// declared by P07 but are not executable until protected-route custody lands.
 	ErrProtectedRouteUnsupported = errors.New("mcpbroker: protected route unsupported")
+	// ErrInvalidSessionID means the caller supplied an identifier outside the
+	// broker's bounded logical-session grammar.
+	ErrInvalidSessionID = errors.New("mcpbroker: invalid session ID")
 )
 
 // ToolDefinition is the neutral result of discovering one tool on a configured
@@ -118,9 +122,9 @@ type Catalogue struct {
 }
 
 // Compile validates anonymous P07 declarations and neutral discovery results.
-// occupied contains names already visible to the model; collisions are rejected
+// reservedToolNames contains names already visible to the model; collisions are rejected
 // before any session attachment is created.
-func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occupied []string) (*Catalogue, error) {
+func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, reservedToolNames []string) (*Catalogue, error) {
 	backends := make(map[string]permconfig.MCPServerProfile, len(config.Routes))
 	for _, declaration := range config.Routes {
 		key := strings.ToLower(declaration.Name)
@@ -144,10 +148,10 @@ func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occu
 		backends[key] = declaration
 	}
 
-	seen := make(map[string]struct{}, len(occupied)+len(discovered))
-	for _, name := range occupied {
+	seen := make(map[string]struct{}, len(reservedToolNames)+len(discovered))
+	for _, name := range reservedToolNames {
 		if name == "" {
-			return nil, fmt.Errorf("%w: occupied tool name is empty", ErrInvalidCatalogue)
+			return nil, fmt.Errorf("%w: reserved tool name is empty", ErrInvalidCatalogue)
 		}
 		seen[name] = struct{}{}
 	}
@@ -203,6 +207,55 @@ func (c *Catalogue) Specs() []tool.ToolSpec {
 	return out
 }
 
+// Limits bounds broker-owned logical state. Zero values select safe defaults.
+type Limits struct {
+	// MaxLogicalSessions caps logical sessions retained by the process, independent of handles.
+	MaxLogicalSessions int
+	// LogicalRetention keeps a session and its ownership state after its last attachment closes.
+	// It is the broker's local retention window, not a client-visible lease duration.
+	LogicalRetention time.Duration
+	// SweepInterval controls how often expired sessions and callback transactions are reclaimed.
+	SweepInterval time.Duration
+	// MaxPendingStates caps callback/authorization states that have not reached a terminal outcome.
+	MaxPendingStates int
+}
+
+const (
+	defaultMaxLogicalSessions = 1024
+	defaultLogicalRetention   = 24 * time.Hour
+	defaultBrokerSweep        = time.Minute
+	defaultMaxPendingStates   = 1024
+	maxLogicalSessionIDBytes  = contract.MaxLogicalSessionIDBytes
+)
+
+func (l Limits) withDefaults() Limits {
+	if l.MaxLogicalSessions <= 0 {
+		l.MaxLogicalSessions = defaultMaxLogicalSessions
+	}
+	if l.LogicalRetention <= 0 {
+		l.LogicalRetention = defaultLogicalRetention
+	}
+	if l.SweepInterval <= 0 {
+		l.SweepInterval = defaultBrokerSweep
+	}
+	if l.MaxPendingStates <= 0 {
+		l.MaxPendingStates = defaultMaxPendingStates
+	}
+	return l
+}
+
+// WithLimits configures bounded logical-session and pending callback state.
+func WithLimits(limits Limits) Option {
+	return func(runtime *Runtime) {
+		runtime.limits = limits.withDefaults()
+		runtime.sweeperEnabled = true
+	}
+}
+
+func validLogicalSessionID(id session.SessionID) bool {
+	return contract.ValidLogicalSessionID(id)
+}
+
 // SessionRef is an opaque reference to one in-process logical-session incarnation.
 // SessionID is exposed for backend attribution; the incarnation remains private.
 type SessionRef struct {
@@ -214,20 +267,30 @@ type SessionRef struct {
 func (r SessionRef) SessionID() session.SessionID { return r.id }
 
 type logicalSession struct {
-	mu                  sync.RWMutex
-	ref                 SessionRef
-	deleted             bool
-	operationCtx        context.Context
-	cancelOps           context.CancelFunc
-	activeOps           int
-	operationsDone      chan struct{}
-	provisional         bool
-	cleaned             bool
-	cleanupStatus       session.AuthorizationStatus
-	authorizations      map[authorizationIdentity]*authorizationTransaction
-	grants              map[string]*oauthGrant
-	brokerCredential    *oauthGrant
-	completedEnrollment *completedWorkspaceEnrollment
+	mu                   sync.RWMutex
+	ref                  SessionRef
+	deleted              bool
+	operationCtx         context.Context
+	cancelOps            context.CancelFunc
+	activeOps            int
+	operationsDone       chan struct{}
+	provisional          bool
+	recoveredProvisional bool
+	cleaned              bool
+	cleanupStatus        session.AuthorizationStatus
+	authorizations       map[authorizationIdentity]*authorizationTransaction
+	grants               map[string]*oauthGrant
+	brokerCredential     *oauthGrant
+	completedEnrollment  *completedWorkspaceEnrollment
+	createdAt            time.Time
+	expiresAt            time.Time
+	attachments          int
+	recoveredSource      *recoveredCredentialSource
+	// recoveredCalls is the execution replay ledger for a recovered session,
+	// which has no OAuth grant of its own (no refresh token by design).
+	recoveredCalls   *oauthGrant
+	recoveryValid    func(context.Context) error
+	recoveryDeadline time.Time
 }
 
 // Caller is the private execution seam used by the in-process transport. The
@@ -260,14 +323,40 @@ type Runtime struct {
 	closed           bool
 	drainSessions    []*logicalSession
 	// process is set only when this Runtime is owned by a bundled ToolHive
-	// Process (NewToolHiveProcess). It lets an Attachment reach the pre-prompt
+	// Process (NewToolHiveProcess). It lets a Attachment reach the pre-prompt
 	// authenticated-discovery primitives without widening the neutral contract.
 	// nil for a plain Compile-based Runtime, which never supports workspace
 	// enrollment.
-	process *Process
+	process        *Process
+	limits         Limits
+	sweepStop      chan struct{}
+	sweepDone      chan struct{}
+	sweeperEnabled bool
 }
 
 var _ contract.Service = (*Runtime)(nil)
+var _ contract.BindingSessionDeleter = (*Runtime)(nil)
+var _ contract.ExpectedBindingAttacher = (*Runtime)(nil)
+
+// Ready verifies the process-local runtime without attaching a session or
+// executing upstream work.
+func (r *Runtime) Ready(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if r == nil {
+		return errors.New("mcpbroker: runtime is unavailable")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.closed || r.catalogue == nil || r.caller == nil {
+		return errors.New("mcpbroker: runtime is unavailable")
+	}
+	if r.process != nil {
+		return r.process.ready(ctx)
+	}
+	return nil
+}
 
 // New constructs an in-process broker. OAuth options are required only when the
 // catalogue contains protected routes.
@@ -283,13 +372,15 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 		return nil, fmt.Errorf("%w: create runtime binding: %v", ErrInvalidCatalogue, err)
 	}
 	runtime := &Runtime{
-		catalogue:     catalogue,
-		caller:        caller,
-		oauth:         defaultOAuthRuntimeOptions(),
-		diag:          port.NopDiagnostics{},
-		sessions:      make(map[session.SessionID]*logicalSession),
-		states:        make(map[string]callbackState),
-		bindingPrefix: base64.RawURLEncoding.EncodeToString(bindingSeed),
+		catalogue:      catalogue,
+		caller:         caller,
+		oauth:          defaultOAuthRuntimeOptions(),
+		diag:           port.NopDiagnostics{},
+		sessions:       make(map[session.SessionID]*logicalSession),
+		states:         make(map[string]callbackState),
+		bindingPrefix:  base64.RawURLEncoding.EncodeToString(bindingSeed),
+		limits:         (Limits{}).withDefaults(),
+		sweeperEnabled: true,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -324,6 +415,11 @@ func New(catalogue *Catalogue, caller Caller, options ...Option) (*Runtime, erro
 		}
 		runtime.oauth.httpClient = client
 	}
+	if runtime.sweeperEnabled {
+		runtime.sweepStop = make(chan struct{})
+		runtime.sweepDone = make(chan struct{})
+		go runtime.sweep()
+	}
 	return runtime, nil
 }
 
@@ -333,8 +429,8 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	if id == "" {
-		return nil, "", fmt.Errorf("%w: session ID is required", ErrInvalidCatalogue)
+	if !validLogicalSessionID(id) {
+		return nil, "", ErrInvalidSessionID
 	}
 	r.mu.Lock()
 	if r.closed {
@@ -344,54 +440,194 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	logical, exists := r.sessions[id]
 	outcome := contract.AttachReattached
 	if !exists {
+		if len(r.sessions) >= r.limits.MaxLogicalSessions {
+			r.mu.Unlock()
+			return nil, "", contract.ErrCapacity
+		}
 		r.nextGeneration++
+		now := time.Now()
 		operationCtx, cancelOps := context.WithCancel(context.Background())
 		logical = &logicalSession{
 			ref:            SessionRef{id: id, generation: r.nextGeneration},
 			operationCtx:   operationCtx,
 			cancelOps:      cancelOps,
 			provisional:    true,
+			createdAt:      now,
+			expiresAt:      now.Add(r.limits.LogicalRetention),
 			authorizations: make(map[authorizationIdentity]*authorizationTransaction),
 			grants:         make(map[string]*oauthGrant),
 		}
 		r.sessions[id] = logical
 		outcome = contract.AttachCreated
 	} else {
-		// Observation by an independent attachment publishes a provisional
-		// creation. Its creator may still Abort its own handle, but can no longer
-		// invalidate state another client has acquired.
 		logical.mu.Lock()
+		if logical.recoveredProvisional {
+			logical.mu.Unlock()
+			r.mu.Unlock()
+			return nil, "", contract.ErrContinuityUnavailable
+		}
+		// Observation by an independent attachment publishes a provisional
+		// ordinary creation. Recovered provisional state is deliberately excluded
+		// above and requires the exact expected-binding path.
 		logical.provisional = false
 		logical.mu.Unlock()
 	}
+	logical.mu.Lock()
+	logical.attachments++
+	logical.mu.Unlock()
 	r.mu.Unlock()
 
-	attachment := &Attachment{runtime: r, logical: logical, creator: outcome == contract.AttachCreated}
+	handle, err := r.newAttachedHandle(logical, outcome == contract.AttachCreated, false)
+	if err != nil {
+		return nil, "", err
+	}
+	r.logSessionAttach(ctx, id, outcome)
+	return handle, outcome, nil
+}
+
+// AttachSessionExpectedBinding reattaches only the exact existing logical
+// session selected by a persisted opaque binding. It never creates state and
+// does not observer-publish recovered provisional state.
+func (r *Runtime) AttachSessionExpectedBinding(ctx context.Context, id session.SessionID, expected session.ExternalBinding) (contract.Attachment, contract.AttachOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	if !validLogicalSessionID(id) || expected == "" {
+		return nil, "", contract.ErrContinuityUnavailable
+	}
+	prefix, _, found := strings.Cut(string(expected), ".")
+	if !found || prefix == "" {
+		return nil, "", contract.ErrContinuityUnavailable
+	}
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil, "", contract.ErrStateUnavailable
+	}
+	if prefix != r.bindingPrefix {
+		r.mu.Unlock()
+		return nil, "", errors.Join(contract.ErrStateUnavailable, contract.ErrBrokerIncarnationLost)
+	}
+	logical := r.sessions[id]
+	if logical == nil || expected != r.bindingFor(logical.ref.generation) {
+		r.mu.Unlock()
+		return nil, "", contract.ErrContinuityUnavailable
+	}
+	logical.mu.Lock()
+	if logical.deleted {
+		logical.mu.Unlock()
+		r.mu.Unlock()
+		return nil, "", contract.ErrContinuityUnavailable
+	}
+	recovered := logical.recoveredProvisional && logical.provisional
+	logical.attachments++
+	logical.mu.Unlock()
+	r.mu.Unlock()
+
+	handle, err := r.newAttachedHandle(logical, false, false)
+	if err != nil {
+		return nil, "", err
+	}
+	r.logExpectedBindingAttach(ctx, recovered)
+	if recovered {
+		return handle, contract.AttachRecoveredProvisional, nil
+	}
+	return handle, contract.AttachReattached, nil
+}
+
+func (r *Runtime) newRecoveredProvisional(id session.SessionID, deadline time.Time, source *recoveredCredentialSource) (*Attachment, error) {
+	if !validLogicalSessionID(id) || source == nil || !deadline.After(time.Now()) {
+		return nil, contract.ErrContinuityUnavailable
+	}
+	r.mu.Lock()
+	if r.closed || r.sessions[id] != nil || len(r.sessions) >= r.limits.MaxLogicalSessions {
+		r.mu.Unlock()
+		return nil, contract.ErrContinuityUnavailable
+	}
+	r.nextGeneration++
+	operationCtx, cancelOps := context.WithCancel(context.Background())
+	logical := &logicalSession{
+		ref:                  SessionRef{id: id, generation: r.nextGeneration},
+		operationCtx:         operationCtx,
+		cancelOps:            cancelOps,
+		provisional:          true,
+		recoveredProvisional: true,
+		authorizations:       make(map[authorizationIdentity]*authorizationTransaction),
+		grants:               make(map[string]*oauthGrant),
+		createdAt:            time.Now(),
+		expiresAt:            deadline,
+		attachments:          1,
+		recoveredSource:      source,
+		recoveredCalls:       &oauthGrant{executed: make(map[session.ToolCallID][32]byte)},
+		recoveryValid:        source.validateCurrent,
+		recoveryDeadline:     deadline,
+	}
+	r.sessions[id] = logical
+	r.mu.Unlock()
+	handle, err := r.newAttachedHandle(logical, false, true)
+	if err != nil {
+		_, _ = r.DeleteSession(context.Background(), id)
+		return nil, err
+	}
+	time.AfterFunc(time.Until(deadline), func() {
+		r.mu.Lock()
+		if r.sessions[id] == logical {
+			logical.mu.Lock()
+			if logical.recoveredProvisional && logical.provisional {
+				delete(r.sessions, id)
+				logical.markDeletedLocked(session.AuthorizationExpired)
+			}
+			logical.mu.Unlock()
+		}
+		r.mu.Unlock()
+	})
+	return handle, nil
+}
+
+func (r *Runtime) bindingFor(generation uint64) session.ExternalBinding {
+	return session.ExternalBinding(r.bindingPrefix + "." + fmt.Sprint(generation))
+}
+
+func (r *Runtime) newAttachedHandle(logical *logicalSession, creator, recoveredProvisional bool) (*Attachment, error) {
+	handle := &Attachment{runtime: r, logical: logical, creator: creator, recoveredProvisional: recoveredProvisional}
 	tools := make([]tool.Tool, len(r.catalogue.routes))
 	for i, route := range r.catalogue.routes {
-		base := &sessionTool{attachment: attachment, route: route}
+		base := &sessionTool{attachment: handle, route: route}
 		if route.oauth != nil {
 			tools[i] = &protectedSessionTool{sessionTool: base}
 		} else {
 			tools[i] = base
 		}
 	}
-	attachment.catalogue = newAttachmentCatalogue(r.catalogue.routes, tools, nil)
+	handle.catalogue = newAttachmentCatalogue(r.catalogue.routes, tools, nil)
 	logical.mu.RLock()
 	completed := logical.completedEnrollment
 	logical.mu.RUnlock()
 	if completed != nil {
-		if _, err := attachment.installCompletedEnrollment(completed); err != nil {
-			return nil, "", err
+		if _, err := handle.installCompletedEnrollment(completed); err != nil {
+			_ = handle.Abort(context.Background())
+			return nil, err
 		}
 	}
-	r.logSessionAttach(ctx, id, outcome)
-	return attachment, outcome, nil
+	return handle, nil
 }
 
 // DeleteSession logically deletes one broker session and invalidates all handles
 // to that incarnation. Reattachment later creates a fresh incarnation.
 func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (contract.DeleteOutcome, error) {
+	return r.deleteSession(ctx, id, "")
+}
+
+// DeleteSessionIfBinding atomically deletes only the exact opaque logical
+// incarnation selected by binding. It leaves a newer incarnation untouched.
+func (r *Runtime) DeleteSessionIfBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (contract.DeleteOutcome, error) {
+	if binding == "" {
+		return "", contract.ErrStateUnavailable
+	}
+	return r.deleteSession(ctx, id, binding)
+}
+
+func (r *Runtime) deleteSession(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (contract.DeleteOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -402,6 +638,10 @@ func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (cont
 	}
 	logical, exists := r.sessions[id]
 	if !exists {
+		r.mu.Unlock()
+		return contract.DeleteNotFound, nil
+	}
+	if binding != "" && binding != r.bindingFor(logical.ref.generation) {
 		r.mu.Unlock()
 		return contract.DeleteNotFound, nil
 	}
@@ -427,26 +667,57 @@ func (r *Runtime) DeleteSession(ctx context.Context, id session.SessionID) (cont
 // adapter-specific projection used by composition; the P06 lifecycle methods
 // satisfy the neutral contract.
 type Attachment struct {
-	mu             sync.RWMutex
-	enrollmentMu   sync.Mutex
-	runtime        *Runtime
-	logical        *logicalSession
-	closed         bool
-	creator        bool
-	settled        bool
-	activeOps      int
-	operationsDone chan struct{}
-	catalogue      *attachmentCatalogue
+	mu                   sync.RWMutex
+	enrollmentMu         sync.Mutex
+	runtime              *Runtime
+	logical              *logicalSession
+	closed               bool
+	detached             bool
+	creator              bool
+	recoveredProvisional bool
+	settled              bool
+	activeOps            int
+	operationsDone       chan struct{}
+	verifiedTSID         string
+	catalogue            *attachmentCatalogue
+	// freezing is closed when the in-flight authenticated catalogue freeze on
+	// this handle finishes; concurrent freezes wait on it instead of repeating
+	// upstream discovery.
+	freezing chan struct{}
+}
+
+func (a *Attachment) detachLogical() {
+	a.mu.Lock()
+	if a.detached {
+		a.mu.Unlock()
+		return
+	}
+	a.detached = true
+	a.mu.Unlock()
+	a.logical.mu.Lock()
+	if a.logical.attachments > 0 {
+		a.logical.attachments--
+	}
+	a.logical.mu.Unlock()
 }
 
 var _ contract.Attachment = (*Attachment)(nil)
 
-// Commit publishes this attachment's private creation. Reattached attachments
-// have already published the logical session by observing it, so Commit is a
-// harmless idempotent settlement for them.
+// Commit publishes this attachment's private creation or a recovered provisional
+// attempt. Reattached attachments otherwise settle idempotently.
+//
+//nolint:gocyclo // one ordered commit transaction over creation/reattach/recovered-provisional cases.
 func (a *Attachment) Commit(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	a.logical.mu.RLock()
+	recoveredProvisional := a.logical.recoveredProvisional && a.logical.provisional
+	recoverySource := a.logical.recoveredSource
+	recoveryValid := a.logical.recoveryValid
+	a.logical.mu.RUnlock()
+	if recoveredProvisional && recoverySource != nil && (recoveryValid == nil || recoveryValid(ctx) != nil) {
+		return contract.ErrContinuityUnavailable
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -456,7 +727,7 @@ func (a *Attachment) Commit(ctx context.Context) error {
 	if a.closed {
 		return contract.ErrAttachmentClosed
 	}
-	if a.creator {
+	if a.creator || a.recoveredProvisional {
 		a.runtime.mu.Lock()
 		a.logical.mu.Lock()
 		current := a.runtime.sessions[a.logical.ref.id]
@@ -465,16 +736,39 @@ func (a *Attachment) Commit(ctx context.Context) error {
 			a.runtime.mu.Unlock()
 			return contract.ErrStateUnavailable
 		}
-		a.logical.provisional = false
+		if !a.recoveredProvisional || (a.logical.recoveredProvisional && a.logical.provisional) {
+			wasRecovered := a.logical.recoveredProvisional && a.logical.provisional
+			if wasRecovered && !a.logical.recoveryDeadline.IsZero() && !a.logical.recoveryDeadline.After(time.Now()) {
+				a.logical.mu.Unlock()
+				a.runtime.mu.Unlock()
+				return contract.ErrContinuityUnavailable
+			}
+			a.logical.provisional = false
+			a.logical.recoveredProvisional = false
+			if wasRecovered {
+				a.logical.expiresAt = time.Now().Add(a.runtime.limits.LogicalRetention)
+				a.logical.recoveryDeadline = time.Time{}
+			}
+		}
 		a.logical.mu.Unlock()
 		a.runtime.mu.Unlock()
 	} else {
 		a.runtime.mu.RLock()
-		available := !a.runtime.closed && a.runtime.sessions[a.logical.ref.id] == a.logical
+		a.logical.mu.Lock()
+		available := !a.runtime.closed && a.runtime.sessions[a.logical.ref.id] == a.logical && !a.logical.deleted
+		if available && a.logical.recoveredProvisional && a.logical.provisional {
+			if !a.logical.recoveryDeadline.IsZero() && !a.logical.recoveryDeadline.After(time.Now()) {
+				a.logical.mu.Unlock()
+				a.runtime.mu.RUnlock()
+				return contract.ErrContinuityUnavailable
+			}
+			a.logical.provisional = false
+			a.logical.recoveredProvisional = false
+			a.logical.expiresAt = time.Now().Add(a.runtime.limits.LogicalRetention)
+			a.logical.recoveryDeadline = time.Time{}
+		}
+		a.logical.mu.Unlock()
 		a.runtime.mu.RUnlock()
-		a.logical.mu.RLock()
-		available = available && !a.logical.deleted
-		a.logical.mu.RUnlock()
 		if !available {
 			return contract.ErrStateUnavailable
 		}
@@ -483,9 +777,8 @@ func (a *Attachment) Commit(ctx context.Context) error {
 	return nil
 }
 
-// Abort closes this attachment and conditionally rolls back only a still-private
-// creation. A peer attachment publishes the logical session at reattachment, so
-// aborting the creator can never invalidate an observed peer.
+// Abort closes this attachment and conditionally rolls back only its still-private
+// creation or the recovered handle that minted a recovered provisional attempt.
 func (a *Attachment) Abort(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -495,15 +788,16 @@ func (a *Attachment) Abort(ctx context.Context) error {
 		a.mu.Unlock()
 		return nil
 	}
-	rollback := a.creator && !a.settled
+	rollback := (a.creator || a.recoveredProvisional) && !a.settled
 	a.closed = true
+	a.verifiedTSID = ""
 	a.settled = true
 	done := a.operationsDone
 	if rollback {
 		a.runtime.mu.Lock()
 		a.logical.mu.Lock()
 		deleted := false
-		if a.runtime.sessions[a.logical.ref.id] == a.logical && a.logical.provisional {
+		if a.runtime.sessions[a.logical.ref.id] == a.logical && a.logical.provisional && ((a.creator && !a.logical.recoveredProvisional) || (a.recoveredProvisional && a.logical.recoveredProvisional)) {
 			delete(a.runtime.sessions, a.logical.ref.id)
 			a.logical.markDeletedLocked(session.AuthorizationClosed)
 			deleted = true
@@ -519,15 +813,17 @@ func (a *Attachment) Abort(ctx context.Context) error {
 		select {
 		case <-done:
 		case <-ctx.Done():
+			a.detachLogical()
 			return ctx.Err()
 		}
 	}
+	a.detachLogical()
 	return nil
 }
 
 // Binding returns the opaque identity of this logical-session incarnation.
 func (a *Attachment) Binding() session.ExternalBinding {
-	return session.ExternalBinding(a.runtime.bindingPrefix + "." + fmt.Sprint(a.logical.ref.generation))
+	return a.runtime.bindingFor(a.logical.ref.generation)
 }
 
 // Tools returns a copy of the attachment's current whole catalogue. Publication
@@ -551,15 +847,18 @@ func (a *Attachment) Close(ctx context.Context) (contract.CloseOutcome, error) {
 		return contract.CloseAlreadyClosed, nil
 	}
 	a.closed = true
+	a.verifiedTSID = ""
 	done := a.operationsDone
 	a.mu.Unlock()
 	if done != nil {
 		select {
 		case <-done:
 		case <-ctx.Done():
+			a.detachLogical()
 			return contract.CloseClosed, ctx.Err()
 		}
 	}
+	a.detachLogical()
 	return contract.CloseClosed, nil
 }
 
@@ -627,6 +926,16 @@ type sessionTool struct {
 
 func (t *sessionTool) Spec() tool.ToolSpec { return copySpec(t.route.spec) }
 func (t *sessionTool) ReadOnly() bool      { return t.route.readOnly }
+
+func (t *sessionTool) ExecutionMetadata(session.ToolCall) (contract.ExecutionMetadata, bool) {
+	kind := contract.OutboundCredentialNone
+	if t.route.broker {
+		kind = contract.OutboundCredentialBrokerOAuth
+	} else if t.route.oauth != nil {
+		kind = contract.OutboundCredentialRouteOAuth
+	}
+	return contract.ExecutionMetadata{Backend: t.route.backend, OutboundCredentialKind: kind}, t.route.backend != ""
+}
 
 // Execute (sessionTool.Execute) invokes the attachment-bound native tool route.
 func (t *sessionTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
@@ -716,6 +1025,14 @@ func levelForTokenRefresh(reason string) port.Level {
 
 func (r *Runtime) logRouteUnavailable(ctx context.Context, sessionID session.SessionID, surface string) {
 	r.diag.Log(ctx, port.LevelWarn, "mcp broker route unavailable", "event", diagnosticEventRouteUnavailable, "surface", surface, "session", string(sessionID))
+}
+
+func (r *Runtime) logExpectedBindingAttach(ctx context.Context, recovered bool) {
+	reason := diagnosticReasonSessionReattached
+	if recovered {
+		reason = string(contract.AttachRecoveredProvisional)
+	}
+	r.diag.Log(ctx, port.LevelInfo, "mcp broker expected-binding attach", "event", diagnosticEventSessionAttach, "reason", reason)
 }
 
 func (r *Runtime) logSessionAttach(ctx context.Context, id session.SessionID, outcome contract.AttachOutcome) {

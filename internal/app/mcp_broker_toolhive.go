@@ -50,7 +50,7 @@ func buildToolHiveAuthRedisClient(cfg Config) (redis.UniversalClient, func(), er
 
 // toolHiveBrokerConfig is the construction boundary: operator-schema values are
 // copied once into immutable adapter-owned values before ToolHive sees them.
-func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL string, occupied []string, authRedisClient redis.UniversalClient, diag port.Diagnostics) mcpbroker.ToolHiveConfig {
+func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL string, reservedToolNames []string, authRedisClient redis.UniversalClient, diag port.Diagnostics) mcpbroker.ToolHiveConfig {
 	profiles := make([]mcpbroker.ToolHiveProfile, len(routes))
 	for i, route := range routes {
 		profile := mcpbroker.ToolHiveProfile{Name: route.Name, URL: route.URL, Auth: route.Auth.Mode}
@@ -66,7 +66,7 @@ func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL stri
 			}
 			if oauth.Client.Preregistered != nil {
 				converted.ClientID = oauth.Client.Preregistered.ID
-				converted.ClientSecretEnv = oauth.Client.Preregistered.SecretEnv
+				converted.ClientSecretFile = oauth.Client.Preregistered.SecretFile
 			} else if oauth.Client.CIMD != nil {
 				converted.ClientID = oauth.Client.CIMD.DocumentURL
 			} else if oauth.Client.DCR != nil {
@@ -81,7 +81,7 @@ func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL stri
 		profiles[i] = profile
 	}
 	return mcpbroker.ToolHiveConfig{
-		Profiles: profiles, CallbackURL: callbackURL, Occupied: append([]string(nil), occupied...),
+		Profiles: profiles, CallbackURL: callbackURL, ReservedToolNames: append([]string(nil), reservedToolNames...),
 		AuthRedisClient: authRedisClient, Diagnostics: diag,
 	}
 }

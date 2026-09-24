@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +43,7 @@ type oauthRoute struct {
 	tokenEndpoint         string
 	callbackURL           string
 	clientID              string
-	secretEnv             string
+	secretFile            string
 	clientSecret          string
 	scopes                []string
 	requestRefresh        bool
@@ -67,15 +66,11 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		"token endpoint":         profile.Upstream.OAuth2.TokenEndpoint,
 		"callback URL":           callbackURL,
 	} {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		if err := ValidateProtectedURL(raw, label); err != nil {
 			return nil, fmt.Errorf("%w: route %q has invalid %s", ErrInvalidCatalogue, declaration.Name, label)
 		}
-		if parsed.Scheme != "https" {
-			return nil, fmt.Errorf("%w: route %q requires HTTPS for %s", ErrInvalidCatalogue, declaration.Name, label)
-		}
 	}
-	if profile.Client.Preregistered.ID == "" || profile.Client.Preregistered.SecretEnv == "" || len(profile.Scopes) == 0 {
+	if profile.Client.Preregistered.ID == "" || profile.Client.Preregistered.SecretFile == "" || len(profile.Scopes) == 0 {
 		return nil, fmt.Errorf("%w: route %q has incomplete OAuth client metadata", ErrInvalidCatalogue, declaration.Name)
 	}
 	return &oauthRoute{
@@ -83,21 +78,21 @@ func compileOAuthRoute(callbackURL string, declaration permconfig.MCPServerProfi
 		tokenEndpoint:         profile.Upstream.OAuth2.TokenEndpoint,
 		callbackURL:           callbackURL,
 		clientID:              profile.Client.Preregistered.ID,
-		secretEnv:             profile.Client.Preregistered.SecretEnv,
+		secretFile:            profile.Client.Preregistered.SecretFile,
 		scopes:                append([]string(nil), profile.Scopes...),
 		requestRefresh:        profile.RequestRefreshToken,
 		resource:              declaration.URL,
 	}, nil
 }
 
-func (route *oauthRoute) resolveClientSecret(ctx context.Context, resolve func(context.Context, string) (string, error)) (string, error) {
+func (route *oauthRoute) resolveClientSecret(ctx context.Context, readFile func(context.Context, string) (string, error)) (string, error) {
 	if route.clientSecret != "" {
 		return route.clientSecret, nil
 	}
-	if route.secretEnv == "" {
+	if route.secretFile == "" {
 		return "", nil
 	}
-	return resolve(ctx, route.secretEnv)
+	return readFile(ctx, route.secretFile)
 }
 
 func (c *Catalogue) protected() bool {
@@ -111,7 +106,7 @@ func (c *Catalogue) protected() bool {
 
 type oauthRuntimeOptions struct {
 	httpClient           *http.Client
-	resolveSecret        func(context.Context, string) (string, error)
+	readSecretFile       func(context.Context, string) (string, error)
 	now                  func() time.Time
 	random               func([]byte) (int, error)
 	ttl                  time.Duration
@@ -130,14 +125,8 @@ type oauthRuntimeOptions struct {
 
 func defaultOAuthRuntimeOptions() oauthRuntimeOptions {
 	return oauthRuntimeOptions{
-		resolveSecret: func(_ context.Context, name string) (string, error) {
-			value, ok := os.LookupEnv(name)
-			if !ok || value == "" {
-				return "", errors.New("OAuth client secret is unavailable")
-			}
-			return value, nil
-		},
-		now: time.Now, random: rand.Read, ttl: defaultAuthorizationTTL, timeout: defaultExchangeTimeout,
+		readSecretFile: func(_ context.Context, path string) (string, error) { return readClientSecretFile(path) },
+		now:            time.Now, random: rand.Read, ttl: defaultAuthorizationTTL, timeout: defaultExchangeTimeout,
 	}
 }
 
@@ -173,11 +162,11 @@ func WithBrokerHTTPClientForTest(t interface{ Helper() }, client *http.Client) O
 	return func(runtime *Runtime) { runtime.oauth.testBrokerHTTPClient = client }
 }
 
-// WithOAuthSecretResolver resolves trusted secret references from P07 declarations.
-func WithOAuthSecretResolver(resolver func(context.Context, string) (string, error)) Option {
+// WithOAuthSecretFileReader installs a test-only reader for configured client-secret files.
+func WithOAuthSecretFileReader(reader func(context.Context, string) (string, error)) Option {
 	return func(runtime *Runtime) {
-		if resolver != nil {
-			runtime.oauth.resolveSecret = resolver
+		if reader != nil {
+			runtime.oauth.readSecretFile = reader
 		}
 	}
 }
@@ -259,14 +248,17 @@ type oauthGrant struct {
 	executed     map[session.ToolCallID][32]byte
 }
 
-func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) bool {
+func (r *Runtime) registerCallbackState(state string, logical *logicalSession, transaction *authorizationTransaction) error {
 	r.stateMu.Lock()
 	defer r.stateMu.Unlock()
+	if len(r.states) >= r.limits.MaxPendingStates {
+		return contract.ErrCapacity
+	}
 	if _, exists := r.states[state]; exists {
-		return false
+		return errors.New("create unique callback state")
 	}
 	r.states[state] = callbackState{logical: logical, transaction: transaction}
-	return true
+	return nil
 }
 
 func (r *Runtime) claimCallbackState(state string) (callbackState, bool) {
@@ -379,7 +371,7 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 	// deletion and Runtime.Close's ability to even reach the point of
 	// cancelling this operation's context, so holding it here would block
 	// unrelated shutdown/deletion for the duration of the round trip.
-	secret, err := t.route.oauth.resolveClientSecret(opCtx, t.attachment.runtime.oauth.resolveSecret)
+	secret, err := t.route.oauth.resolveClientSecret(opCtx, t.attachment.runtime.oauth.readSecretFile)
 	if err != nil {
 		return session.ExternalAuthorization{}, false, err
 	}
@@ -422,12 +414,12 @@ func (t *protectedSessionTool) RequestAuthorization(ctx context.Context, call se
 		transaction.bundleBackends = append([]string(nil), t.attachment.runtime.process.construction.protectedBackends...)
 	}
 	logical.authorizations[transaction.identity] = transaction
-	if !t.attachment.runtime.registerCallbackState(state, logical, transaction) {
+	if err := t.attachment.runtime.registerCallbackState(state, logical, transaction); err != nil {
 		delete(logical.authorizations, transaction.identity)
 		transaction.clientSecret = ""
 		transaction.verifier = ""
 		transaction.state = ""
-		return session.ExternalAuthorization{}, false, errors.New("create unique callback state")
+		return session.ExternalAuthorization{}, false, err
 	}
 	t.attachment.runtime.logAuthorization(ctx, t.attachment.logical.ref.SessionID(), diagnosticEventAuthorization, diagnosticReasonRequestStarted, port.LevelDebug, "request")
 	return transaction.external(), true, nil
@@ -1014,6 +1006,11 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 	hash := callHash(call)
 	logical.mu.Lock()
 	grant := logical.brokerCredential
+	var source oauth2.TokenSource = &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx}
+	if grant == nil && logical.recoveredSource != nil && logical.recoveredCalls != nil && !logical.provisional {
+		// A published recovered session executes with its B2 bearer source.
+		grant, source = logical.recoveredCalls, logical.recoveredSource
+	}
 	if grant == nil {
 		logical.mu.Unlock()
 		return session.ToolResult{}, contract.ErrAuthorizationNotFound
@@ -1023,7 +1020,7 @@ func (t *sessionTool) executeBroker(ctx context.Context, call session.ToolCall) 
 		return session.ToolResult{}, err
 	}
 	logical.mu.Unlock()
-	result, err := t.invoke(ctx, call, &brokerTokenSource{runtime: t.attachment.runtime, logical: logical, ctx: ctx})
+	result, err := t.invoke(ctx, call, source)
 	result.CallID = call.ID
 	return result, err
 }
@@ -1042,9 +1039,30 @@ func claimGrantCallLocked(grant *oauthGrant, call session.ToolCall, hash [32]byt
 	return nil
 }
 
+func (l *logicalSession) expireAuthorizationsLocked(runtime *Runtime, now time.Time) {
+	for identity, transaction := range l.authorizations {
+		if transaction.status != session.AuthorizationPending || now.Before(transaction.expiresAt) {
+			continue
+		}
+		runtime.removeCallbackState(transaction.state, transaction)
+		if transaction.cancel != nil {
+			transaction.cancel()
+		}
+		transaction.status = session.AuthorizationExpired
+		transaction.clientSecret = ""
+		transaction.verifier = ""
+		transaction.state = ""
+		delete(l.authorizations, identity)
+	}
+}
+
 func (l *logicalSession) markDeletedLocked(status session.AuthorizationStatus) {
 	l.deleted = true
 	l.provisional = false
+	if l.recoveredSource != nil {
+		l.recoveredSource.close()
+		l.recoveredSource = nil
+	}
 	l.cleanupStatus = status
 	l.cancelOps()
 }
@@ -1120,7 +1138,41 @@ func (r *Runtime) Close() error {
 	return nil
 }
 
-// closeAndDrain is Close, plus a bounded wait (closeDrainTimeout) for every
+func (r *Runtime) sweep() {
+	defer close(r.sweepDone)
+	ticker := time.NewTicker(r.limits.SweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.sweepStop:
+			return
+		case now := <-ticker.C:
+			r.sweepAt(now)
+		}
+	}
+}
+
+// sweepAt performs one retention pass. Keeping the pass separate from the
+// ticker makes the time boundary explicit and lets tests prove it directly.
+func (r *Runtime) sweepAt(now time.Time) {
+	var expired []*logicalSession
+	r.mu.Lock()
+	for id, logical := range r.sessions {
+		logical.mu.Lock()
+		logical.expireAuthorizationsLocked(r, now)
+		if logical.attachments == 0 && logical.activeOps == 0 && !logical.expiresAt.IsZero() && !now.Before(logical.expiresAt) {
+			delete(r.sessions, id)
+			logical.markDeletedLocked(session.AuthorizationExpired)
+			expired = append(expired, logical)
+		}
+		logical.mu.Unlock()
+	}
+	r.mu.Unlock()
+	for _, logical := range expired {
+		logical.maybeCleanupLocked(r)
+	}
+}
+
 // operation cancelled by Close to actually return, before the caller tears
 // down any dependency those operations might still be using. Used only by
 // Process.Close/rollback, which owns exactly such dependencies (vMCP server,
@@ -1147,6 +1199,9 @@ func (r *Runtime) closeAndSnapshot() []*logicalSession {
 	first := !r.closed
 	if first {
 		r.closed = true
+		if r.sweeperEnabled {
+			close(r.sweepStop)
+		}
 		r.drainSessions = make([]*logicalSession, 0, len(r.sessions))
 		for _, logical := range r.sessions {
 			r.drainSessions = append(r.drainSessions, logical)
@@ -1161,6 +1216,9 @@ func (r *Runtime) closeAndSnapshot() []*logicalSession {
 	}
 	sessions := append([]*logicalSession(nil), r.drainSessions...)
 	r.mu.Unlock()
+	if first && r.sweeperEnabled {
+		<-r.sweepDone
+	}
 
 	if first && r.oauth.httpClient != nil {
 		r.oauth.httpClient.CloseIdleConnections()

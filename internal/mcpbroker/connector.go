@@ -58,16 +58,24 @@ const (
 // ConnectorInventory describes broker-local catalogue publication, not session
 // installation, persistence, prompt readiness, authorization validity, or health.
 type ConnectorInventory struct {
-	Availability    Availability
+	// Availability reports whether the broker reached the inventory source.
+	Availability Availability
+	// EnrollmentState reports the connector's broker-owned enrollment phase.
 	EnrollmentState EnrollmentState
-	Connectors      []ConnectorStatus
+	// Connectors contains the bounded display rows returned to the caller.
+	Connectors []ConnectorStatus
+	// TotalConnectors is the untruncated total discovered by the broker.
 	TotalConnectors uint32
-	Truncated       bool
+	// Truncated reports that Connectors is only a prefix of the total result.
+	Truncated bool
 }
 
 // ConnectorStatus contains only a bounded display name and published tool count.
 type ConnectorStatus struct {
-	Name           string
+	// Name is a display label, not a routing key or credential-bearing endpoint.
+	Name string
+	// CatalogueState says whether this connector's tools are published to the broker catalogue.
 	CatalogueState CatalogueState
-	ToolCount      uint32
+	// ToolCount is the number of published tools for this connector.
+	ToolCount uint32
 }

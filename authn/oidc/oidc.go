@@ -4,8 +4,10 @@ package oidc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -55,6 +57,9 @@ type Config struct {
 	// the validator's hardened client. When set, the caller is responsible for
 	// preserving equivalent redirect and private-address protections.
 	HTTPClient *http.Client
+	// kubernetesBootstrap permits the internally constructed, endpoint-confined
+	// bearer client used only by NewKubernetesValidator.
+	kubernetesBootstrap bool
 }
 
 // ErrInvalidToken identifies a malformed, invalid, or otherwise inadmissible
@@ -76,6 +81,8 @@ type Validator struct {
 	// internalClient is owned by this validator; caller-supplied clients remain
 	// caller-owned and are never closed here.
 	internalClient *http.Client
+	healthClient   *http.Client
+	healthURL      string
 	closeOnce      sync.Once
 }
 
@@ -92,12 +99,15 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 	if cfg.AllowPrivateHTTPSIssuer && cfg.TrustedCAFile == "" {
 		return nil, fmt.Errorf("%w: trusted CA file is empty when private HTTPS issuer mode is enabled", ErrInvalidConfig)
 	}
-	if cfg.AllowPrivateHTTPSIssuer && cfg.HTTPClient != nil {
+	if cfg.AllowPrivateHTTPSIssuer && cfg.HTTPClient != nil && !cfg.kubernetesBootstrap {
 		return nil, fmt.Errorf("%w: custom HTTP client is not allowed with private HTTPS issuer mode", ErrInvalidConfig)
 	}
 	toolhiveConfig := authnConfig(cfg)
 	var internalClient *http.Client
-	if cfg.AllowPrivateHTTPSIssuer {
+	if cfg.AllowPrivateHTTPSIssuer && cfg.kubernetesBootstrap {
+		internalClient = cfg.HTTPClient
+		toolhiveConfig.HTTPClient = internalClient
+	} else if cfg.AllowPrivateHTTPSIssuer {
 		client, err := newPrivateHTTPSClient(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
@@ -114,7 +124,14 @@ func NewValidator(ctx context.Context, cfg Config) (*Validator, error) {
 		}
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
-	return &Validator{validator: validator, internalClient: internalClient}, nil
+	healthClient := cfg.HTTPClient
+	if internalClient != nil {
+		healthClient = internalClient
+	}
+	if healthClient == nil {
+		healthClient = http.DefaultClient
+	}
+	return &Validator{validator: validator, internalClient: internalClient, healthClient: healthClient, healthURL: cfg.JWKSURI}, nil
 }
 
 func authnConfig(cfg Config) authn.Config {
@@ -147,6 +164,68 @@ func (v *Validator) Validate(ctx context.Context, bearer string) (*session.Princ
 		return nil, fmt.Errorf("%w: verified claims have no issuer or subject", ErrInvalidToken)
 	}
 	return out, nil
+}
+
+// Ready performs a bounded, read-only verifier dependency check. It never
+// presents a credential or changes identity-provider state.
+func (v *Validator) Ready(ctx context.Context) error {
+	if v == nil || v.healthURL == "" {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.healthURL, nil)
+	if err != nil {
+		return fmt.Errorf("OIDC health request: %w", err)
+	}
+	response, err := v.healthClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("OIDC health request: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("OIDC health endpoint returned status %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	if err != nil {
+		return fmt.Errorf("OIDC health response: %w", err)
+	}
+	if len(body) > 1<<20 || !usableJWKS(body) {
+		return errors.New("OIDC health endpoint returned no usable signing keys")
+	}
+	return nil
+}
+
+type jwksDocument struct {
+	Keys []struct {
+		KID string `json:"kid"`
+		KTY string `json:"kty"`
+		N   string `json:"n"`
+		E   string `json:"e"`
+		X   string `json:"x"`
+		Y   string `json:"y"`
+	} `json:"keys"`
+}
+
+func usableJWKS(body []byte) bool {
+	var document jwksDocument
+	if json.Unmarshal(body, &document) != nil {
+		return false
+	}
+	for _, key := range document.Keys {
+		if key.KID == "" {
+			continue
+		}
+		switch key.KTY {
+		case "RSA":
+			if key.N != "" && key.E != "" {
+				return true
+			}
+		case "EC", "OKP":
+			if key.X != "" && (key.KTY == "OKP" || key.Y != "") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Close stops background JWKS refresh.

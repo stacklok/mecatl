@@ -2,7 +2,12 @@
 # server transport, finite spend ceilings, verified external Redis, and hostname
 # spreading. Placeholder references are schema/render inputs only.
 image:
-  tag: v0.0.0
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  tag: ""
+broker:
+  image:
+    digest: sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+    tag: ""
 mockProvider: false
 defaultProvider: openrouter
 model: anthropic/claude-sonnet-4-6

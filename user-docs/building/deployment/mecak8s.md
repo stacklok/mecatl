@@ -27,18 +27,47 @@ flowchart TD
     Pods --> K8sAPI
 ```
 
-If a pod stops, a surviving pod can acquire its leases and resume interrupted
-sessions from Redis. The pod is disposable; the session is not.
+Kill any pod. The survivor acquires the lease and resumes interrupted sessions from the Redis snapshot. The pod is disposable; the session is not.
 
-## Try mecak8s locally
+## Server-owned session placement
+
+Mecak8s uses the same path-free, server-owned placement contract as mecated. Its
+storage-free default binds new sessions to no-FS; clients omit placement or explicitly
+request `profile:"no-fs"` and never send a workspace/cwd/exact ref. Redis/driver state
+retains the exact private EnvironmentRef needed for reattachment. Schedule fires reauthorize
+that stored placement, and delegation cannot upgrade no-FS. A future remote filesystem
+provider can implement the same private Bind/Reattach contract without changing clients.
+
+## One Helm release
+
+`deploy/helm/mecak8s/` is the only Mecatl Helm chart. One release always creates the scalable `mecak8s` agent Deployment and one separate `mecabroker` Deployment. The broker is deliberately a singleton (`replicas: 1`, `Recreate`); it is present even with no OAuth route, where it is securely idle. There is no umbrella, external-broker mode, `remoteBroker`, or separately installable broker chart.
+
+The canonical MCP inputs are top-level `mcp.servers` and
+`mcp.broker.callbackURL`. Direct `none` and `staticBearer` servers run in the
+agent. If any server uses `auth.mode: oauth`, all configured routes are owned by
+the broker and the agent connects only to its in-release Service. Do not repeat
+routes in another values subtree.
+
+The operator must create the broker serving-key Secret (`broker.tls`, default
+`mecabroker-tls`) and the PEM CA Secret used by the agent (`broker.clientCA`,
+default `mecabroker-ca`) before every install, including an idle broker. The
+chart does not create a Certificate, Issuer, or cert-manager dependency.
+
+
+The chart runs a plaintext, Pod-only drain listener on port 8082. Kubernetes calls
+`GET /drain` there during preStop; normal HTTP/SSE API traffic, including TLS traffic,
+has no drain route. The Service intentionally exposes only gRPC and HTTP, not port
+8082. This protects Service and gateway traffic, but it is not a Pod-IP firewall:
+operators must restrict direct access to port 8082 with NetworkPolicy, mesh policy, or
+equivalent controls.
+
+## Try mecak8s locally with Kind
 
 The repository includes a disposable local Kind environment with Redis and two
 `mecak8s` replicas. Follow
 [Try Mecatl on Kubernetes](/building/getting-started/kubernetes.md) to create
 the cluster and connect with `mecatui`.
 
-For the optional Keycloak qualification flow and implementation details, see the
-[local Kind README](https://github.com/stacklok/mecatl/blob/main/deploy/mecak8s-kind/README.md).
 
 ## Before you deploy
 
@@ -250,28 +279,42 @@ the server's bounded delivery buffer quickly enough.
 
 ## Production Helm chart
 
-The production chart is published at
-`oci://ghcr.io/stacklok/mecatl/charts/mecak8s`; its source is in
-`deploy/helm/mecak8s/`. It requires an external Redis endpoint and creates no
-Redis StatefulSet. Reference a Kubernetes Secret for Redis credentials. The
-chart's default image tag matches its application and chart versions, so it
-pulls the corresponding signed `ghcr.io/stacklok/mecatl/mecak8s` release. Set
-`image.digest` to pin an immutable image. It accepts a canonical lowercase
-SHA-256 digest: `sha256:` followed by 64 lowercase hexadecimal characters. Set
-only one of `image.tag` and `image.digest`, or clear the tag to use
-`v<chart-version>`.
+`deploy/helm/mecak8s/` defines the production deployment contract.
+It creates no Redis StatefulSet.
+Set an external Redis endpoint.
+Set a credentials Secret reference when a configured key needs reading.
+Both `image` and `broker.image` independently accept a tag or a lowercase
+`sha256:` digest; leaving both selectors empty uses `v<chart-version>`.
+Published release chart artifacts pin both images by digest. Pin digests for
+reproducible production deployments; this is a recommendation, not a universal
+chart requirement.
+A real-provider deployment (`mockProvider: false`) has three explicit postures.
+In-pod TLS with OIDC.
+Edge-terminated TLS with `security.tlsTerminatedUpstream=true`, OIDC, and `tls.enabled=false` for a `ClusterIP` plaintext h2c backend.
+Or the explicit unsafe bypass.
+Setting both in-pod TLS and the upstream attestation is valid.
+The bypass annotates the pod as unsafe; a secure upstream attestation is annotated as TLS-terminated-upstream, and neither annotation can be set through `podAnnotations`.
 
-A real-provider deployment (`mockProvider: false`) must choose one of these
-security postures:
+Understand what edge mode costs before choosing it.
+On an h2c backend the caller's `Authorization: Bearer` token crosses the pod network in cleartext.
+Any workload that can reach the Service ClusterIP can read that token and replay it as the caller.
+The chart renders a default-deny ingress policy. Configure `networkPolicy.publicFrom`
+for gateway/workload peers. Egress restriction is deployment/platform-owned (CNI,
+service mesh, or egress gateway), not inferred or enforced by this chart.
+The explicit unsafe posture is still a development/trusted-mesh exception; image
+selection does not replace caller authentication or transport security.
+The upstream value is an attestation, not chart enforcement: nothing in the chart verifies gateway TLS, reachability, or token forwarding.
+The gateway must forward the original bearer token rather than use forwarded-identity authentication, and publish a `GRPCRoute` only—never public-route `/drain`, `/healthz`, or `/readyz`.
+The chart creates no Gateway, Route, or Certificate either; use an operator-owned `BackendTLSPolicy` or in-pod TLS for gateway-to-pod re-encryption.
+Change an existing pod-TLS release to h2c through a blue-green or maintenance cutover, not an assumed-safe rolling update.
+The chart retains two replicas, a PDB, rolling updates, restricted pod security, bounded resources, dynamic probes, and namespaced Lease RBAC.
+The chart creates no agent PVC. Its general NetworkPolicy is default-deny ingress
+only; egress restriction is deployment/platform-owned. The `oidc.*` values add a
+narrow raw-driver NetworkPolicy when caller identity is enabled.
 
-|Posture|Configuration|
-|-|-|
-|TLS in the pod|Enable `tls` and OIDC.|
-|TLS at an operator-owned edge|Set `security.tlsTerminatedUpstream=true`, enable OIDC, and optionally keep in-pod TLS for re-encryption.|
-|Unsafe bypass|Select the explicit bypass, which annotates the pod as unsafe.|
-
-The chart reserves its security-posture annotations; `podAnnotations` cannot
-override them.
+For an OpenAI-compatible gateway that trusts Kubernetes workload identity, use the
+chart's existing `extraArgs`, `extraVolumes`, and `extraVolumeMounts` to project a
+ServiceAccount token and pass an explicit gateway base URL with the bearer file:
 
 ### Installation telemetry identity
 
@@ -296,22 +339,6 @@ helm upgrade <RELEASE> oci://ghcr.io/stacklok/mecatl/charts/mecak8s \
   --set-string telemetry.installationID="$NEW_ID"
 ```
 
-### Use workload identity for an LLM gateway
-
-Edge-terminated h2c sends the caller's bearer token across the pod network in
-cleartext. Restrict the Service to gateway pods with NetworkPolicy or an mTLS
-mesh. The chart does not verify the gateway or provide a general NetworkPolicy.
-
-The gateway must forward the original bearer token and expose only the gRPC
-route. Do not publish `/drain`, `/healthz`, or `/readyz`. The chart creates no
-Gateway, Route, Certificate, or `BackendTLSPolicy`; configure those resources or
-retain in-pod TLS for re-encryption. Move an existing in-pod TLS release to h2c
-through a blue-green or maintenance cutover.
-
-For an OpenAI-compatible gateway that trusts Kubernetes workload identity, use
-the chart's existing `extraArgs`, `extraVolumes`, and `extraVolumeMounts` to
-project a ServiceAccount token and pass an explicit gateway base URL with the
-bearer file:
 
 ```yaml
 extraArgs:
@@ -370,6 +397,39 @@ rollout: live validation must show authenticated admission, request and
 header-size bounds, and client, IP, and principal rate limits apply before or
 independently of routing on attacker-controlled session IDs.
 
+```sh
+helm upgrade --install mecak8s deploy/helm/mecak8s --namespace mecatl --create-namespace \
+  --set image.repository=registry.example/mecak8s \
+  --set redis.endpoint=redis.example.internal:6379 \
+  --set redis.credentialsSecret=mecak8s-redis \
+  --set tls.enabled=true \
+  --set tls.secretName=mecak8s-tls \
+  --set oidc.enabled=true \
+  --set oidc.issuer=https://idp.example.com \
+  --set oidc.audience=mecatl
+```
+
+Chart 0.2.0 is a secure-default compatibility break for existing real-provider releases:
+add both in-pod controls before upgrading, or explicitly select the unsafe trusted-mesh
+bypass. `defaultProvider` and `model` render only when non-empty. Nullable
+`maxRunTokens`/`maxTeamTokens` pass no ceiling when unset and accept positive integers
+only. Optional `topologySpreadConstraints`, `affinity`, `nodeSelector`, and `tolerations`
+map to the pod spec and stay absent by default; hostname spreading is recommended for the
+two replicas when multiple nodes are available.
+
+Server cert/key and file-backed Redis CA/ACL Secret rotations are transactional and keep
+the last valid generation if projection is partial or validation fails. Keep old and new
+CAs together for an overlap period, then remove the old one after leaves have rotated.
+The server client-CA trust pool remains static and changing it requires a rolling restart.
+These reload guarantees apply to the agent's server TLS and Redis session-store
+connection, not the standalone broker. The legacy embedded broker construction
+had a separate Redis connection for ToolHive's inner authorization/pending state;
+it did not reload those credentials. The current `cmd/mecabroker` singleton wires
+no Redis connection and keeps both inner and outer broker state in memory.
+Agent sessions and their event log remain Redis-backed.
+
+The Redis Secret is mounted read-only with `defaultMode: 0440` and projects exactly the configured CA and ACL keys; unrelated Secret keys are not exposed. A password key alone uses Redis's default ACL user, while a username key requires a password key. `caKey` is optional: leaving it empty selects system-trust TLS, so an install against a publicly-rooted managed Redis with no ACL renders `--redis-tls` and no Secret volume at all. `credentialsSecret` is required exactly when some key needs reading. TLS-without-ACL external deployments are valid. The rendered command receives paths only, never Secret values. `values-kind.yaml` is deliberately the only profile that permits `ko.local` and plaintext Redis, and it passes `--redis-allow-plaintext` explicitly. It is not a production configuration.
+
 ### Connect global MCP servers
 
 Use `mcp.servers` for global streaming-HTTP connections. The chart supports no
@@ -397,33 +457,7 @@ mcp:
 ```
 
 The static token is projected as `MCP_GITHUB_TOKEN`; it never appears in Helm
-values, arguments, or a ConfigMap. For a browser-based GitHub OAuth App, use
-`auth.mode: oauth` with
-`upstream: {mode: oauth2, oauth2: {authorizationEndpoint, tokenEndpoint}}`
-instead of `issuer`, and optionally declare a static `tools` catalog. OAuth uses
-the per-session broker. One enrollment can cover several protected upstreams;
-each token is sent only to its configured backend.
-
-Set `mcp.broker.callbackURL` to the final public HTTPS callback. Route the full
-`/v1/mcp/broker/` prefix to the `mecak8s` HTTP listener. Broker mode requires
-OIDC caller identity.
-
-Declared protected tools appear as placeholders before enrollment. Successful
-enrollment discovers every protected backend and atomically replaces the
-placeholders with a frozen per-session catalog. Failure exposes no partial
-catalog. Keep preregistered client secrets in `SecretKeyRef`; broker metadata
-and profiles remain non-secret ConfigMap data.
-
-:::caution[Broker mode is single-replica]
-
-Broker sessions and OAuth state are process-local. The chart requires
-`replicaCount: 1` and uses the `Recreate` strategy when `mcp.broker.callbackURL`
-is set. Broker mode does not provide high availability or zero-downtime
-rollouts.
-
-:::
-
-For a preregistered OAuth client, add this shape to the server entry:
+values, arguments, or a ConfigMap.
 
 ```yaml
 auth:
@@ -448,7 +482,95 @@ Set `client.mode: cimd` with `cimd.documentURL` for client ID metadata, or
 registration. A plain OAuth2 upstream uses explicit `authorizationEndpoint` and
 `tokenEndpoint` values instead of `issuer`.
 
-### Inspect the broker catalogue in mecatui
+OAuth routes use the in-release broker. Set `mcp.broker.callbackURL` to the public
+final browser callback and route that URL plus the fixed `/v1/mcp/broker/` prefix
+to the **broker** HTTPS Service—not the agent HTTP Service. The agent's internal
+broker target is derived from the broker Service; the TLS server name defaults to
+that Service's cluster DNS name and must match the broker certificate SAN. Its
+projected workload JWT has the configured `broker.workloadJWT.audience` and is
+separate from the ServiceAccount credential used for Kubernetes leases.
+
+OAuth supports issuer discovery, explicit OAuth2 authorization/token endpoints,
+DCR, and CIMD. CIMD requires an HTTPS document URL and may use issuer discovery or
+an explicit OAuth2 endpoint pair; DCR requires explicit OAuth2 endpoints. The broker
+applies the same protected-URL validation to the CIMD document as to other OAuth
+endpoints. The legacy OAuth `network` controls remain unsupported except for the
+explicit empty policy (`additionalOrigins: []`, `privateOrigins: []`,
+`maxRedirects: 0`); enforce non-default egress/origin policy in the platform.
+
+The broker remains a one-replica `Recreate` workload. Its process log threshold is
+configured independently of the agent with `broker.logging.level` (`info` by
+default; `debug`, `warn`, and `error` are also valid). `logging.level` continues
+to configure only the mecak8s agent. Treat upgrades and changes
+to OAuth client Secrets as maintenance, explicitly restarting the broker after
+Secret projection. Browser callbacks, in-flight authorizations, and outer broker
+attachment state are not migrated; users must re-enroll after replacement.
+Outer broker state (callbacks, attachment handles, receipts, parked calls) stays
+in memory and resets on every broker restart. ToolHive's upstream credentials are
+different: with an OAuth server configured, the broker keeps them encrypted in a
+dedicated Redis, so a session that finished enrollment before its first prompt can
+get fresh broker authority after a confirmed broker replacement instead of
+authorizing again. Browser flows in progress and parked calls are still interrupted.
+Rollback the Helm release only after restoring compatible image digests and
+Secrets; it still cannot revive a callback or enrollment owned by the replaced
+broker.
+
+#### Broker credential storage
+
+Every OAuth MCP server requires `broker.credentialStore`; the chart refuses to
+render OAuth without it and rejects it when no OAuth server exists. Upgrading an
+existing OAuth release is a migration: supply the storage and keys, and expect users
+to authorize once more on the first rollout. You choose one of two backends, and you
+provide every credential and key as a Secret; the chart never generates or reads
+them.
+
+```yaml
+broker:
+  credentialStore:
+    redis:
+      address: broker-redis.example.internal:6379   # external Redis, TLS only
+      credentialsSecret: broker-redis-credentials   # keys: password, optional username
+      usernameKey: username
+      caSecret: broker-redis-ca                     # empty uses system roots
+    encryption:
+      secretName: broker-credential-keks            # one 32-byte raw key per entry
+      activeID: current
+      keys:
+        - {id: current, secretKey: kek-current}
+```
+
+For chart-managed Redis, leave `redis.address` and `redis.caSecret` empty and set
+`managedRedis.enabled: true` with `managedRedis.tlsSecret` (`tls.crt`, `tls.key`,
+`ca.crt`) and `managedRedis.aclSecret` (`users.acl`). The chart then renders one
+singleton StatefulSet (`redis:7.4.5-alpine` pinned by digest, TLS-only on 6379,
+append-only file with `everysec`, `noeviction`, `maxmemory 384mb`), one headless
+Service whose `<release>-mecak8s-credential-redis.<namespace>.svc` name is both the
+broker's address and the name the certificate SAN must contain, and a NetworkPolicy
+admitting only this release's broker pods on 6379. The broker's Redis ACL user needs
+access to keys matching `~mecatl:authserver:*` only.
+
+Know the limits before relying on it:
+
+Know the limits before relying on it:
+
+- Managed Redis is durable but not highly available. The append-only file with
+  `everysec` can lose the last second of writes, and the retained PVC is not a
+  backup. Helm uninstall deletes nothing from Redis and leaves the PVC; deleting
+  data, snapshots, and old keys is up to you.
+- Redis TCP probes only prove the socket is open. The broker checks the real TLS
+  and ACL connection at startup, in `/readyz`, and on every credential operation.
+- To rotate the encryption key, add the new key, change `activeID` to it, keep the
+  old key listed so existing rows still decrypt, and restart the broker. Restart it
+  after rotating any Redis credential, CA, or TLS Secret too.
+- After restoring an older Redis backup, install a new active key, remove every old
+  key that could decrypt the restored rows, and restart. This deliberately discards
+  all retained credentials; users authorize again.
+- Deleting a session, cancelling its enrollment, or rotating the agent's workload
+  identity removes its stored credential. A recovered broker token that was already
+  handed out stays valid until it expires, at most two minutes later; it cannot be
+  renewed.
+
+#### Inspect and refresh from mecatui
 
 On a broker-only `mecak8s` connection, `/mcp` shows the owned session's local
 broker catalogue: enrollment state, connector names, catalogue state, and tool
@@ -482,8 +604,42 @@ The panel is not an upstream health check. It requires the authenticated owner
 of the session. Broker-only sessions do not expose direct MCP resources,
 prompts, or groups.
 
-Keep MCP and OAuth endpoints on HTTPS and permit their egress through your
-NetworkPolicy or mesh. `insecureHTTP: true` is accepted only for non-loopback,
+#### Rotate broker TLS and its client CA
+
+Broker serving certificates and the agent's broker CA trust pool do **not** hot
+reload. Updating externally managed Secrets does not automatically roll either
+Deployment: the chart does not checksum their contents. The operator must order
+the Secret updates and explicit rollouts as follows (also when the broker is idle):
+
+1. Update the Secret referenced by `broker.clientCA` to contain both old and new
+   CA roots. Keep the broker serving its old certificate. Wait for the updated
+   bundle to be projected before proceeding.
+2. Explicitly roll the **agent** Deployment and wait for every replacement to be
+   ready with the overlapping trust bundle. Coordinate active agent runs: with
+   OAuth configured the agent Deployment also uses `Recreate`, so this is not a
+   zero-downtime step.
+3. During a maintenance window, drain active work and stop starting new
+   enrollments. Update the certificate/key Secret referenced by `broker.tls`
+   with the new matching pair, retaining a SAN matching `broker.clientCA.serverName`
+   (or its derived Service DNS default). After projection, explicitly restart the
+   **broker** Deployment and wait for readiness. Its singleton replacement
+   interrupts attachments and browser flows; restart enrollment afterward. A
+   lost response may represent a completed upstream mutation—reconcile via a
+   safe read/status operation instead of automatically retrying it.
+4. Verify agent-to-broker TLS and gateway backend trust with the new certificate.
+   Only then remove the old CA root from `broker.clientCA`, wait for projection,
+   and explicitly roll the **agents again** to retire the old trust. Update any
+   operator-owned gateway backend CA bundle in the same overlap-first order.
+
+For a leaf-only renewal under the same CA, the overlap/agent trust updates are
+unnecessary, but the broker Secret update and controlled broker restart are still
+required. Keep the old root during a rollback window; reverting only the Helm
+revision cannot restore externally managed Secret contents or old broker state.
+
+Keep MCP and OAuth endpoints on HTTPS and enforce their egress through the
+platform (CNI, mesh, or egress gateway). The chart's NetworkPolicy supplies only
+ingress isolation; it cannot enforce callback paths, TLS identity, OAuth identity,
+or a hostname. `insecureHTTP: true` is accepted only for non-loopback,
 non-OAuth HTTP servers and allows a bearer to cross the pod network in
 cleartext. Use it only for an isolated in-cluster endpoint.
 
@@ -493,19 +649,14 @@ transition. The chart reserves these environment names:
 `MECATL_INSTALLATION_ID`, `MECATL_DRIVER_AUTH_TOKEN`, and authentication names
 generated by `mcp.servers`. Rendering fails when `extraEnv` collides with one.
 
-Broker authorization storage uses a separate Redis connection that does not
-reload Redis CA or ACL files. Restart the pod after rotating those files. The
-main session-store connection can remain healthy, so `/readyz` does not detect a
-stale broker connection.
-
 ### Configure logging
 
 The chart exposes the process logging threshold separately from metrics and
 OTLP:
 
 ```yaml
-logging:
-  level: debug
+extraArgs:
+  - --log-level=debug
 ```
 
 This renders `--log-level=debug`, including the embedded
@@ -516,6 +667,7 @@ that are not modeled by the chart; if it also contains `--log-level`, its later
 argument takes precedence.
 
 ### Mount trusted skills, agents, and rules
+
 
 Set `XDG_CONFIG_HOME` to the mount root, put files below
 `<root>/mecatl/{skills,agents,rules}`, and set `skills.autoDiscover: true`
@@ -724,18 +876,23 @@ requires them.
 
 The chart creates these resources:
 
-|Resource|Behavior|
-|-|-|
-|ServiceAccount, Role, and RoleBinding|Grants only the required Lease verbs.|
-|Deployment|Runs two storage-free replicas by default; one replica is supported.|
-|ConfigMap|Stores the non-secret installation UUID for telemetry.|
-|ClusterIP Service|Exposes gRPC on 8080 and HTTP/SSE on 8081.|
-|PodDisruptionBudget|Uses `maxUnavailable: 1` for two or more replicas and is omitted for one.|
-|Raw-driver NetworkPolicy|Created only with OIDC and limits raw-driver ingress to agent pods.|
-|Local Redis fixture|Created only by the disposable `values-kind.yaml` profile.|
+| Template | What it creates |
+|---|---|
+| `rbac.yaml` | ServiceAccount + Role (lease verbs only) + RoleBinding |
+| `deployment.yaml` | Agent Deployment — `replicas: 2` by default (one is supported), no PVC, storage-free |
+| `service.yaml` | ClusterIP Service exposing gRPC (8080) and HTTP/SSE (8081) |
+| `configmap.yaml` | Stores the non-secret installation UUID for telemetry |
+| `pdb.yaml` | PodDisruptionBudget (`maxUnavailable: 1`) when `replicaCount >= 2`; omitted for one replica |
+| `networkpolicy.yaml` | Default-deny ingress; egress restriction is deployment/platform-owned (CNI, mesh, or egress gateway) |
+| `raw-driver-networkpolicy.yaml` | Rendered only when `oidc.enabled` — scopes ingress on `app.kubernetes.io/component: raw-driver` pods to the agent pod only |
+| `redis-local.yaml` | Rendered only under the disposable `values-kind.yaml` profile (`redis.local.enabled`) — an in-cluster Redis StatefulSet + Service for Kind/offline use, never for production |
 
-The chart creates no namespace or general NetworkPolicy. Supply network policy
-for your provider, MCP, Redis, identity-provider, and Kubernetes API traffic.
+The chart renders `networkpolicy.yaml` as default-deny ingress and intentionally
+leaves egress restriction to the deployment platform (CNI, mesh, or egress
+gateway). Configure ingress peers in `networkPolicy.publicFrom`.
+
+The chart creates no namespace. Supply network policy for your provider, MCP,
+Redis, and identity-provider egress traffic.
 
 Deployment details:
 
@@ -976,6 +1133,10 @@ The chart rejects partial profiles and never derives the public resource URL
 from pod addresses. Metadata discovery is anonymous HTTPS and remains separate
 from authenticated gRPC transport.
 
+The chart's general NetworkPolicy is default-deny ingress only. Egress restriction
+for the IdP/JWKS, Redis, provider/MCP, and remote-broker peers is deployment/platform-owned;
+enabling caller identity does not change that boundary.
+
 ### Use it from the TUI
 
 For a static bearer, pass a token from your IdP with `--auth-token` or
@@ -990,14 +1151,14 @@ For a development port-forward, bearer traffic stays on loopback:
 ```sh
 kubectl port-forward -n mecatl service/mecak8s-mecak8s 8080:8080 &
 export MECATL_AUTH_TOKEN="$(your-oidc-cli print-access-token)"
-mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
+bin/mecatui connect 127.0.0.1:8080 --auth-token "$MECATL_AUTH_TOKEN"
 ```
 
 To verify authentication, remove the environment fallback and submit a prompt:
 
 ```sh
 env -u MECATL_AUTH_TOKEN \
-  mecatui connect 127.0.0.1:8080
+  bin/mecatui connect 127.0.0.1:8080
 ```
 
 A gRPC connection can succeed before authentication. The first request must fail
@@ -1093,9 +1254,25 @@ Unlike `mecated`, `mecak8s` requires Redis, enables Kubernetes session leases by
 default, and exposes `--redis-url`. It does not include the `config`,
 `skills promote`, `perf-mcp`, or ACP operator commands.
 
-`mecak8s` does not support the local ChatGPT Codex subscription entry at
-`providers.openai-codex.oauth`. API-key entries in `auth.yaml` remain supported.
-Use an API-key provider instead of mounting a local Codex OAuth credential.
+The experimental local `auth.yaml` path for ChatGPT Codex subscription provider
+`openai-codex` is intentionally **not supported** by `mecak8s`. This rejection is
+limited to `providers.openai-codex.oauth`: existing `auth.yaml` API-key entries
+remain supported. Use an API-key provider today; a future Codex deployment needs
+a separate Kubernetes Secret or external-secret design. Do not mount a local
+Codex OAuth entry and assume the binary will accept it. See [ADR
+0215](https://github.com/stacklok/mecatl/blob/main/docs/adr/0215-openai-subscription-manual-token.md).
+
+| Capability | mecated | mecak8s |
+|---|---|---|
+| Interactive TUI clients | Yes (`mecatui` connects; `--headless=false` default) | No (`--headless=true` default; headless-only) |
+| Prometheus `/metrics` listener | Yes (`--metrics-addr`) | Opt-in (`--metrics-addr`, loopback only — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)) |
+| OTel traces and runtime admin mux | Yes | Opt-in (`--otlp-*` push + the `/metrics` loopback admin mux — [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)) |
+| `perf-mcp` diagnostics subcommand | Yes | No |
+| `skills promote` / `config` subcommands | Yes | No |
+| JSONL on-disk session store | Yes (`--store-dir`) | No — Redis only |
+| Single-replica without external state | Yes (in-memory or JSONL) | No — Redis is required |
+
+If you need the `perf-mcp` diagnostics subcommand, the `skills promote` / `config` subcommands, or an interactive TUI client, run `mecated` instead. `mecak8s` offers OPT-IN telemetry (`--metrics-addr` loopback scrape + `--otlp-*` push, see [ADR 0098](https://github.com/stacklok/mecatl/blob/main/docs/adr/0098-headless-telemetry.md)); for multi-replica deployments with `mecated` and Redis-backed state you would need to wire `--redis-url` — but that flag does not exist on `mecated`. `mecak8s` is the only binary that exposes it.
 
 ---
 

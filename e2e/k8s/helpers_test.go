@@ -24,9 +24,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -126,7 +132,10 @@ func kindDeleteCluster() {
 // deterministic tag to that SAME image — deploy/mecak8s-vmcp/Taskfile.yml's
 // image-build-load task uses the identical pattern, so there is no ref to parse
 // out of ko's output.
-const e2eImageRef = "ko.local/mecak8s:e2e"
+const (
+	e2eImageRef       = "ko.local/mecak8s:e2e"
+	e2eBrokerImageRef = "ko.local/mecabroker:e2e"
+)
 
 // koBuildMecak8sImage builds the mecak8s image with ko into the local container
 // daemon under e2eImageRef. Unlike the old one-shot kustomize-era `ko resolve`
@@ -145,6 +154,16 @@ func koBuildMecak8sImage() {
 		"ko build --local --bare --tags=e2e ./cmd/mecak8s failed\n--- output ---\n%s", out)
 }
 
+func koBuildMecabrokerImage() {
+	ginkgo.GinkgoHelper()
+	ctx := ginkgoSuiteCtx()
+	build := exec.CommandContext(ctx, "ko", "build", "--local", "--bare", "--tags=e2e", "./cmd/mecabroker")
+	build.Dir = repoRoot()
+	build.Env = append(build.Environ(), "KO_DOCKER_REPO=ko.local/mecabroker")
+	out, err := build.CombinedOutput()
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
+		"ko build --local --bare --tags=e2e ./cmd/mecabroker failed\n--- output ---\n%s", out)
+}
 func koBuildLearningDriverImage() {
 	ginkgo.GinkgoHelper()
 	ctx := ginkgoSuiteCtx()
@@ -202,6 +221,35 @@ func saveAndLoadImage(imageRef string) {
 		"kind load image-archive %s failed\n--- output ---\n%s", tmpPath, loadOut)
 }
 
+// provisionBrokerTLS creates only disposable Kind fixture credentials. Production
+// operators provide the serving keypair and client CA out of band; the chart never
+// weakens TLS or creates them. One self-signed leaf is sufficient here because the
+// agent trusts the explicitly projected PEM as its broker CA.
+func provisionBrokerTLS() {
+	ginkgo.GinkgoHelper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "generate broker fixture key")
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "generate broker fixture serial")
+	name := "mecak8s-agent-broker." + k8sNamespace + ".svc"
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: name},
+		DNSNames:              []string{name},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}, nil, &key.PublicKey, key)
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "create broker fixture certificate")
+	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	applyOpaqueSecret(ginkgoSuiteCtx(), "mecabroker-tls", map[string][]byte{"tls.crt": cert, "tls.key": keyPEM})
+	applyOpaqueSecret(ginkgoSuiteCtx(), "mecabroker-ca", map[string][]byte{"ca.pem": cert})
+}
+
 // helmInstallMecak8sChart creates + labels the mecatl namespace (PSS restricted,
 // mirroring deploy/mecak8s-vmcp/Taskfile.yml's chart-apply task) and installs the
 // deploy/helm/mecak8s chart with the disposable Kind values profile
@@ -232,82 +280,22 @@ func helmInstallMecak8sChart() {
 		"pod-security.kubernetes.io/warn=restricted",
 		"--overwrite")
 
+	provisionBrokerTLS()
+
 	installOut, err := boundedCommandOutput(ctx, 1<<20, "helm", "upgrade", "--install", "mecak8s", chartDir,
 		"--namespace", k8sNamespace,
 		"--values", filepath.Join(chartDir, "values-kind.yaml"),
 		"--set", "image.repository=ko.local/mecak8s",
 		"--set", "image.tag=e2e",
-		"--set", "fullnameOverride=mecak8s-agent",
+		"--set", "broker.image.repository=ko.local/mecabroker",
+		"--set", "broker.image.tag=e2e",
+		"--set", "broker.tls.secretName=mecabroker-tls",
+		"--set", "broker.clientCA.secretName=mecabroker-ca",
+		"--set", "broker.clientCA.serverName=mecak8s-agent-broker."+k8sNamespace+".svc",
 		"--wait", "--timeout=4m")
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(),
 		"helm upgrade --install mecak8s failed\n--- output ---\n%s", installOut)
-
-	kubectlApplyStdin(ctx, []byte(agentBaselineEgressNetworkPolicy))
 }
-
-// agentBaselineEgressNetworkPolicy re-homes, into the e2e fixture, the three
-// egress rules deploy/mecak8s/networkpolicy.yaml used to provide before the
-// kustomize→Helm convergence (the chart itself now ships no NetworkPolicy by
-// design — network isolation is left to the cluster). It is REQUIRED here for
-// a structural reason, not belt-and-suspenders: the OIDC specs' own
-// mecak8s-agent-allow-dex-egress / -jwks-proxy-egress policies (in
-// oidc_helpers_test.go) select the agent pod with an Egress policyType, and
-// Kubernetes NetworkPolicy semantics mean the FIRST policy of a given
-// policyType that selects a pod flips that pod from unrestricted to
-// deny-except-explicitly-listed for that direction — additively unioned
-// across every policy that also selects it. Without this baseline, applying
-// the Dex fixture's policies leaves the agent pod able to reach ONLY Dex and
-// the JWKS proxy, and loses DNS, the k8s API (Lease coordination), and Redis
-// — which is exactly what broke when the agent pod's labels were corrected
-// from the stale kustomize-era `mecatl` to the chart's actual `mecak8s` (see
-// the fix in oidc_helpers_test.go): the label fix made those two Egress
-// policies start matching the real agent pod, which then had no baseline
-// allow-rule to union with.
-//
-// Applied unconditionally in helmInstallMecak8sChart — even before any OIDC
-// spec runs — because it must be in place BEFORE the Dex fixture's own
-// policies are applied for a later spec to have any chance of correct union
-// semantics, and applying it early costs nothing (the same DNS/API/Redis
-// egress every spec, OIDC or not, already needs).
-const agentBaselineEgressNetworkPolicy = `
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: mecak8s-agent-baseline-egress
-  namespace: mecatl
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: mecak8s
-      app.kubernetes.io/component: agent
-  policyTypes: ["Egress"]
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # No 'to' selector = any destination IP on 443: the k8s API server
-    # (Lease coordination) and, when the live provider is enabled, the
-    # external LLM endpoint. Same rationale as the deleted kustomize policy.
-    - ports:
-        - protocol: TCP
-          port: 443
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: redis
-      ports:
-        - protocol: TCP
-          port: 6379
-`
 
 // waitPodsReady waits for both agent replicas AND the Redis pod to be Ready.
 // The two waits are SEPARATE label selectors, not one part-of=mecak8s query:

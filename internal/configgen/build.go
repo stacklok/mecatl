@@ -534,7 +534,7 @@ func mcpSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:          "mcp",
 		Tier:         TierOperator,
-		Doc:          "Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; all secret-shaped values are MECATL_* environment references, never values in YAML. Project mcp blocks are ignored with a value-free warning.",
+		Doc:          "Strict OPERATOR-TIER Streamable HTTP MCP authority configuration. Mode selects one mutually exclusive global or session-broker authority; broker mode carries its callback configuration and neutral route declarations. Authentication is a closed none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2 endpoints; client secrets are file references, never values in YAML. Other secret-shaped values remain MECATL_* environment references. Project mcp blocks are ignored with a value-free warning.",
 		CommentedOut: true,
 		Fields:       fields,
 		Example: []string{
@@ -561,7 +561,7 @@ func mcpSubtree(docs Docs) *Subtree {
 			"            mode: preregistered",
 			"            preregistered:",
 			"              id: mecatl-github-mcp",
-			"              secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET",
+			"              secret_file: /var/run/secrets/mecatl/github-mcp-client-secret",
 			"          scopes: [repo]",
 			"          request_refresh_token: true",
 			"          network: {}",

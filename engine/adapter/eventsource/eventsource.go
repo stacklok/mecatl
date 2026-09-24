@@ -135,6 +135,12 @@ type SessionMeta struct {
 	// runtime reattachment, in which case it MUST be supplied here — there is
 	// no other path into Fold's reconstructed Session for it.
 	ExternalBinding session.ExternalBinding
+	// BrokerCredentialCustody and PendingWorkspaceEnrollment are trusted
+	// non-event-carried metadata. The event log has no enrollment lifecycle events,
+	// so a caller that needs to recover an in-flight enrollment must supply both
+	// values here; Fold fails closed when their aggregate invariants do not hold.
+	PendingWorkspaceEnrollment *session.PendingWorkspaceEnrollment
+	BrokerCredentialCustody    *session.BrokerCredentialCustody
 	// CreatedAt is the creation timestamp.
 	CreatedAt time.Time
 }
@@ -166,6 +172,8 @@ var (
 // error, ErrReconstruct if the reconstructed history or authorization lifecycle is
 // inconsistent, and ErrPrivateStateRequired if a well-formed authorization lifecycle
 // remains open after the final event. It never panics.
+//
+//nolint:gocyclo // one ordered fold transaction dispatching over the closed event-kind taxonomy.
 func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Session, error) {
 	f := &folder{}
 	for ev, err := range events {
@@ -207,10 +215,26 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.ModelID = meta.ModelID
 	s.ReasoningEffort = meta.ReasoningEffort
 	s.ExternalBinding = meta.ExternalBinding
+	if meta.PendingWorkspaceEnrollment != nil {
+		if len(f.messages) != 0 || f.curOpen || f.pending != nil || f.restoreState() != session.StateIdle {
+			return nil, fmt.Errorf("%w: workspace enrollment cannot be represented with event history", ErrPrivateStateRequired)
+		}
+		if err := s.BeginWorkspaceEnrollment(*meta.PendingWorkspaceEnrollment); err != nil {
+			return nil, fmt.Errorf("%w: restore workspace enrollment: %w", ErrReconstruct, err)
+		}
+	}
+	if meta.BrokerCredentialCustody != nil {
+		if err := s.RestoreBrokerCredentialCustody(meta.BrokerCredentialCustody.Clone()); err != nil {
+			return nil, fmt.Errorf("%w: restore broker credential custody: %w", ErrReconstruct, err)
+		}
+	}
 	s.DebugMCPServers = append([]string(nil), meta.DebugMCPServers...)
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
 	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
+	if meta.PendingWorkspaceEnrollment != nil {
+		return s, nil
+	}
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask

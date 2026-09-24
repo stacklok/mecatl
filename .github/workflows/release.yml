@@ -563,6 +563,108 @@ jobs:
           # silently failing at it.
           create-storage-record: false
 
+  publish-mecabroker:
+    needs: guard
+    name: Build, publish, sign, attest mecabroker
+    outputs:
+      image_ref: ${{ steps.build.outputs.digest }}
+      image_digest: ${{ steps.build.outputs.image_digest }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+      packages: write # push image + SBOM to GHCR
+      id-token: write # OIDC: cosign keyless signing AND provenance (ghcr login uses GITHUB_TOKEN, not OIDC)
+      attestations: write # SLSA build provenance via actions/attest-build-provenance
+    env:
+      # mecabroker publishes under its own GHCR repo (/mecabroker suffix),
+      # matching deploy/helm/mecak8s/values.yaml's broker.image.repository
+      # default. ko appends the binary import path unless --bare is used.
+      KO_DOCKER_REPO: ghcr.io/${{ github.repository }}/mecabroker
+      # On workflow_dispatch github.ref_name is the default branch, so prefer
+      # the explicit input; on a tag push github.ref_name is the tag.
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # ko reads the base image digest from .ko.yaml; no deep history needed.
+          fetch-depth: 1
+          ref: ${{ env.VERSION }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          # engine/ is its own module (go.work monorepo); its go.sum is part of
+          # the build cache key alongside the root's.
+          cache-dependency-path: |
+            go.sum
+            engine/go.sum
+            authn/oidc/go.sum
+
+      - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # OIDC-backed registry login. The GITHUB_TOKEN is scoped to this repo's
+      # packages by the job `permissions.packages: write` above — no PAT, no
+      # username/password stored in secrets.
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | ko login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Build multi-arch, push by digest, and have ko generate + push an SPDX
+      # SBOM next to the image. --bare keeps the repo path clean (no import-path
+      # suffix). We tag both the version and latest. The digest is captured for
+      # signing so we sign the immutable artifact, not a mutable tag.
+      - name: Build and push image (+ SBOM)
+        id: build
+        run: |
+          set -euo pipefail
+          KO_DOCKER_REPO="${KO_DOCKER_REPO}" ko build \
+            --platform=linux/amd64,linux/arm64 \
+            --bare \
+            --sbom=spdx \
+            -t "${VERSION}" -t latest \
+            --image-refs=image-refs.txt \
+            --image-label=org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            --image-label=org.opencontainers.image.title=mecabroker \
+            --image-label=org.opencontainers.image.revision=${{ github.sha }} \
+            --image-label=org.opencontainers.image.vendor=Stacklok \
+            ./cmd/mecabroker
+          digest="$(head -n1 image-refs.txt)"
+          {
+            echo "digest=${digest}"
+            echo "image_name=${digest%@*}"
+            echo "image_digest=${digest##*@}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Built ${digest}"
+
+      - name: Sign image (keyless)
+        env:
+          IMAGE: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}"
+
+      - name: Generate SBOM file
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM (keyless)
+        env:
+          IMAGE: ${{ steps.build.outputs.digest }}
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.build.outputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.image_digest }}
+          push-to-registry: true
+          create-storage-record: false
+
   # Not a Go binary, so this doesn't go through ko like the jobs above — a
   # plain docker/build-push-action build of the existing dev/Compose
   # Dockerfile. The bot's TypeScript source still lives under
@@ -801,7 +903,7 @@ jobs:
   # Publish the chart only after its default image tag exists.
   publish-helm-chart:
     name: Package, publish, sign Helm chart
-    needs: [guard, publish-mecak8s]
+    needs: [guard, publish-mecak8s, publish-mecabroker]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -815,6 +917,7 @@ jobs:
       # On workflow_dispatch github.ref_name is the default branch, so prefer
       # the explicit input; on a tag push github.ref_name is the tag.
       VERSION: ${{ inputs.tag || github.ref_name }}
+      BROKER_IMAGE_DIGEST: ${{ needs.publish-mecabroker.outputs.image_digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -842,7 +945,7 @@ jobs:
       # Redis and secure real-provider guards. Lint with the minimal production
       # overrides that target already uses. The chart version supplies the image tag.
       - name: helm lint
-        run: helm lint "${CHART_PATH}" --set redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
+        run: helm lint "${CHART_PATH}" --set broker.image.digest=${BROKER_IMAGE_DIGEST},broker.tls.secretName=mecabroker-tls,broker.clientCA.secretName=mecabroker-ca,redis.endpoint=redis.example.internal:6379,redis.credentialsSecret=redis-credentials,tls.enabled=true,tls.secretName=mecak8s-tls,oidc.enabled=true,oidc.issuer=https://idp.example.com,oidc.audience=mecatl
 
       - name: helm package
         env:

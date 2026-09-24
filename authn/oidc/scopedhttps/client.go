@@ -3,11 +3,13 @@
 package scopedhttps
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,11 +19,12 @@ import (
 )
 
 const (
-	clientTimeout       = 15 * time.Second
-	tlsHandshakeTimeout = 10 * time.Second
-	maxIdleConnections  = 8
-	maxIdlePerHost      = 2
-	idleConnTimeout     = 30 * time.Second
+	clientTimeout        = 15 * time.Second
+	tlsHandshakeTimeout  = 10 * time.Second
+	maxIdleConnections   = 8
+	maxIdlePerHost       = 2
+	maxOIDCResponseBytes = 4 << 20
+	idleConnTimeout      = 30 * time.Second
 )
 
 type approvedEndpoint struct {
@@ -121,6 +124,7 @@ func rootsFromPEM(pemBytes []byte) (*x509.CertPool, error) {
 func newPolicy(ctx context.Context, endpointCAs map[string][]byte, lookup func(context.Context, string) ([]net.IP, error)) (policy, error) {
 	endpoints := make(map[string]approvedEndpoint)
 	authorityRoots := make(map[string]*x509.CertPool)
+	authorityCAs := make(map[string][]byte)
 	for raw, ca := range endpointCAs {
 		if raw == "" {
 			continue
@@ -138,19 +142,19 @@ func newPolicy(ctx context.Context, endpointCAs map[string][]byte, lookup func(c
 		if err != nil {
 			return policy{}, fmt.Errorf("HTTPS endpoint %q: %w", raw, err)
 		}
-		// Two endpoints sharing one host:port authority (e.g. an issuer's
-		// discovery doc and its JWKS URI on the same host and port)
-		// legitimately share one pool; a distinct authority -- including the
-		// SAME hostname on a DIFFERENT port, a different issuer entirely --
-		// always gets its own. Roots are never merged across authorities.
 		key := net.JoinHostPort(host, port)
 		if existing, ok := authorityRoots[key]; ok {
-			roots = existing
-			if !roots.AppendCertsFromPEM(ca) {
-				return policy{}, fmt.Errorf("HTTPS endpoint %q: trusted CA bundle contains no certificates", raw)
+			// A host:port is one TLS authority. Never silently union trust
+			// material when two configured URLs name that authority: the
+			// configuration is ambiguous and accepting either CA would weaken
+			// the exact endpoint policy.
+			if !bytes.Equal(ca, authorityCAs[key]) {
+				return policy{}, fmt.Errorf("HTTPS authority %q has conflicting CA bundles", key)
 			}
+			roots = existing
 		}
 		authorityRoots[key] = roots
+		authorityCAs[key] = append([]byte(nil), ca...)
 		if _, ok := endpoints[key]; ok {
 			continue
 		}
@@ -287,5 +291,35 @@ func (t scopedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if _, ok := t.policy.endpoint(req.URL.Hostname(), port); !ok {
 		return nil, fmt.Errorf("HTTPS target %q is not an approved endpoint", req.URL.Host)
 	}
-	return t.next.RoundTrip(req)
+	response, err := t.next.RoundTrip(req)
+	if err != nil || response == nil || response.Body == nil {
+		return response, err
+	}
+	response.Body = &boundedBody{ReadCloser: response.Body, remaining: maxOIDCResponseBytes}
+	return response, nil
+}
+
+type boundedBody struct {
+	io.ReadCloser
+	remaining int64
+}
+
+func (b *boundedBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		return 0, errors.New("OIDC response exceeds the configured size limit")
+	}
+	limit := b.remaining
+	if int64(len(p)) > limit {
+		limit++
+	}
+	if int64(len(p)) > limit {
+		p = p[:int(limit)]
+	}
+	n, err := b.ReadCloser.Read(p)
+	if int64(n) > b.remaining {
+		b.remaining = 0
+		return int(b.remaining), errors.New("OIDC response exceeds the configured size limit")
+	}
+	b.remaining -= int64(n)
+	return n, err
 }

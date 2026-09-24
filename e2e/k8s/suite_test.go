@@ -49,12 +49,14 @@ var _ = ginkgo.BeforeSuite(func() {
 	ginkgo.By("creating the kind cluster")
 	kindCreateCluster()
 
-	ginkgo.By("building the mecak8s and fixture learning-driver images with ko")
+	ginkgo.By("building the mecak8s, mecabroker, and fixture learning-driver images with ko")
 	koBuildMecak8sImage()
+	koBuildMecabrokerImage()
 	koBuildLearningDriverImage()
 
 	ginkgo.By("saving the images to tarballs + loading them into the kind node")
 	saveAndLoadImage(e2eImageRef)
+	saveAndLoadImage(e2eBrokerImageRef)
 	saveAndLoadImage(learningDriverImage)
 
 	ginkgo.By("installing the deploy/helm/mecak8s chart (values-kind.yaml)")

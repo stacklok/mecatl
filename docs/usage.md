@@ -16,6 +16,7 @@ See [ADR 0321](./adr/0321-canonical-user-documentation-ownership.md) for the own
 | Workspace trust | [Permissions and posture](https://mecatl.dev/docs/features/permissions-and-posture#project-trust) |
 | Skills, commands, soul, and user model | [Skills, commands, and soul](https://mecatl.dev/docs/features/skills-commands-and-soul) |
 | `mecak8s` | [Cloud-native k8s with mecak8s](https://mecatl.dev/docs/building/deployment/mecak8s) |
+| MCP broker | [Cloud-native k8s with mecak8s](https://mecatl.dev/docs/building/deployment/mecak8s#connect-global-mcp-servers) |
 | gRPC API | [gRPC API reference](https://mecatl.dev/docs/reference/grpc-api) |
 | HTTP and SSE API | [HTTP and SSE API reference](https://mecatl.dev/docs/reference/http-sse-api) |
 | Configuration | [Configure Mecatl](https://mecatl.dev/docs/building/deployment/settings) |

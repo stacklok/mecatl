@@ -367,6 +367,26 @@ func assertAuthorizationResultBeforeResolved(t *testing.T, events []session.Even
 	}
 }
 
+func TestSingletonBrokerRemediation_Scenario2_ProtectedContinuationNeverRebinds(t *testing.T) {
+	f := newLifecycleFixture(t, session.AuthorizationPending, nil, time.Now, nil)
+	var replacementCalls atomic.Int32
+	f.svc.cfg.MCPBrokerFactory = func(context.Context) (brokercontract.Service, func() error, error) {
+		replacementCalls.Add(1)
+		return f.broker, func() error { return nil }, nil
+	}
+	// The continuation is durably bound to the old incarnation. A replacement
+	// broker can only present a different binding, and this live control path must
+	// fail rather than invoking the pre-prompt replacement factory.
+	f.attach.binding = "replacement-binding"
+	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
+	if _, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control); !errors.Is(err, ErrBrokerBindingMismatch) {
+		t.Fatalf("protected continuation = %v, want binding mismatch", err)
+	}
+	if replacementCalls.Load() != 0 || f.attach.tool.calls.Load() != 0 {
+		t.Fatalf("continuation rebound or dispatched: factory=%d calls=%d", replacementCalls.Load(), f.attach.tool.calls.Load())
+	}
+}
+
 func TestMCPAuthorizationPresentationAndPendingAreInert(t *testing.T) {
 	now := time.Now
 	f := newLifecycleFixture(t, session.AuthorizationPending, nil, now, nil)

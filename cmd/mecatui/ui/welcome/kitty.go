@@ -206,7 +206,7 @@ func transmitMascot(cols, rows int, nativeResolution bool) string {
 	// rides the escape, base64+chunked) — no temp file, no os/exec.
 	opts := &kitty.Options{
 		Action:           kitty.TransmitAndPut,
-		Quiet:            2,
+		Quiet:            2, // q=2 suppresses terminal responses from the image protocol.
 		Format:           kitty.PNG,
 		Transmission:     kitty.Direct,
 		ID:               MascotImageID,

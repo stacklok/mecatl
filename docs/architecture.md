@@ -186,9 +186,11 @@ raw secret only in private process memory for HTTP-Basic code exchange and refre
 service count, an opaque reference, and a presentation URL—not upstream names, endpoints,
 callback state, codes, or tokens.
 
-`mecated` and `mecak8s` mount ToolHive's fixed broker handler bundle on their existing
-primary HTTP mux before the API catch-all; no second listener or context-value catalogue
-channel exists. The same broker origin has two callback roles: every upstream provider returns
+`mecated` mounts ToolHive's fixed broker handler bundle on its existing primary HTTP
+mux before the API catch-all. `mecak8s` instead uses the remote broker adapter and mounts
+no ToolHive handlers: it dials with CA-verified TLS, an explicit expected DNS name, and a
+projected workload token reread for every RPC. The same broker origin has two callback roles:
+every upstream provider returns
 to ToolHive's fixed `/v1/mcp/broker/oauth/callback` prefix, while ToolHive's completed chain
 returns to the operator-configured final mecatl callback URL. Ingress must route the complete
 fixed broker prefix as well as that final callback path to the listener. The final callback URL
@@ -225,10 +227,9 @@ session snapshot persists an opaque broker-incarnation binding and reload requir
 match. Ordinary `CloseSession` detaches locally, while permanent owner deletion and retention
 also delete broker transactions, grants, and replay state.
 
-This runtime retains a process-local mecatl session/attachment boundary. A persisted binding from a prior process is never inferred as live: ordinary rehydration leaves broker tools unavailable and does not attach, discover, refresh credentials, or open browser consent. An owner-authorized stable idle session may explicitly invoke the existing whole-bundle refresh control; it withdraws the old wrappers before replacement and admits them only after complete authenticated discovery and persistence. ToolHive's configured Redis storage may preserve its inner authorization/token state, but mecatl makes no grant-reuse guarantee and never exposes that material. Durable/remote outer broker ownership and multi-replica routing remain later-stage concerns.
-OAuth broker mode is therefore not safe behind mecak8s's default multi-replica Service until an
-affinity or durable-broker decision is made; the chart enforces `replicaCount: 1` when broker
-callback mode is configured and does not silently change its replica behavior.
+This runtime retains a process-local mecatl session/attachment boundary. A persisted binding from a prior process is never inferred as live: ordinary rehydration leaves broker tools unavailable and does not attach, discover, refresh credentials, or open browser consent. An owner-authorized stable idle session may explicitly invoke the existing whole-bundle refresh control; it withdraws the old wrappers before replacement and admits them only after complete authenticated discovery and persistence. ToolHive's configured Redis storage may preserve its inner authorization/token state, but mecatl makes no grant-reuse guarantee and never exposes that material. Agent sessions and their event log remain Redis-backed independently of broker storage.
+
+Remote OAuth broker mode is served only by the singleton `mecabroker` workload in the same `deploy/helm/mecak8s` release, reached from `mecak8s` over a CA-verified connection authenticated with an audience-bound workload token. `mecak8s` remains horizontally scalable for agent traffic because it never owns ToolHive callback state itself; the chart enforces `replicaCount: 1` on the `mecabroker` workload only. Durable/remote outer broker ownership across a `mecabroker` restart and multi-replica broker routing remain later-stage concerns.
 
 The owner-scoped broker connector inventory is available to authenticated mecatui
 sessions through `/mcp` when the server advertises its broker-status capability. The
@@ -237,6 +238,53 @@ broker-local publication facts, not a connection test. It neither enables direct
 resources/prompts nor probes upstreams or persists a status cache. Its
 panel explicitly distinguishes that publication from session installation,
 persistence, prompt readiness, current authorization, and live health.
+
+The versioned remote adapter under `internal/adapter/mcpbrokergrpc` pins each client and
+attachment handle to one broker-process incarnation. Connection establishment, ordinary
+RPCs, Execute, idle-handle retention, and cleanup are all finitely bounded. Every RPC has
+method-specific protobuf messages and failures carry a closed structured reason; unknown
+reasons and malformed peer payloads are protocol failures, never status-text inference.
+Stale incarnations are rejected before state access across the complete RPC surface.
+Abort and Close, plus Execute keyed by the full call identity and argument digest, retain
+immutable receipts until an absolute lease deadline that reads cannot extend. Duplicates
+join or replay the same receipt without redispatch; after expiry they fail with
+`state_unavailable`. Execute validates the response call ID before exposing it to session
+state. Only a recognized, method-bound `dispatch_not_started` detail proves pre-dispatch
+failure; cancellation, deadline, transport loss, and malformed or absent proof after
+possible dispatch become a fixed model-visible ambiguous outcome with no automatic retry,
+hedge, rebind, or replay. That result tells the model the operation may already have
+completed, forbids an automatic repeat, and directs it to reconcile through a known-safe
+status/read path before seeking explicit operator direction when the outcome cannot be established.
+Both broker-enabled main and per-session engine factories carry this instruction; disabled
+engines do not. Explicit close and idle reclamation close only the attachment, not its
+logical broker session. Workload ownership is retained for that logical state's full retention
+window; retirement deletes the logical state before releasing its owner slot, so a different
+workload cannot inherit retained grants through session-ID reuse. Concurrent pre-prompt
+recovery attempts coalesce on the first confirmed client-generation replacement rather than
+closing a replacement that another session has already adopted. A fresh client may start a new
+pre-prompt enrollment after restart, but a live protected-call authorization never rebinds. This is a single-process failure
+boundary, not replica interchangeability, restart durability, callback failover,
+exactly-once effects, or HA ([ADR 0362](adr/0362-process-bound-remote-mcp-broker.md),
+[ADR 0364](adr/0364-bounded-singleton-mcp-broker-correctness.md)).
+
+The production `cmd/mecabroker` image is deployed by the single `mecak8s` Helm
+chart alongside the agent. It remains exactly one replica with `Recreate`, no
+PDB or autoscaling. Both ToolHive's inner authorization/pending/token storage and
+outer broker attachments, callbacks, and enrollment correlation are currently
+in-memory and nonmigratable across broker replacement. The agent's Redis session
+store does not persist them. The public Service exposes one
+TLS listener that multiplexes gRPC and browser callback routes by HTTP/2 gRPC
+content type. A loopback-only admin
+listener serves bounded health/readiness/drain through fixed self-probe subcommands; it is
+not a Service or NetworkPolicy port. One process-local coordinator gates both public
+route classes: `GET /drain` atomically rejects new work and makes readiness false, then
+waits only the configured endpoint-propagation interval. SIGTERM performs the final
+finite active-operation drain, listener shutdown, and ToolHive resource close. Readiness covers validated TLS identity,
+OIDC verifier initialization, profile/routes, ToolHive construction, anonymous discovery,
+and static protected-route validation, but is never an ownership fence. Restart interrupts
+attachments and outer callback correlation. Operators supply concrete namespace, pod, and
+CIDR egress policy for DNS, OIDC/JWKS, upstream OAuth, and MCP destinations; Kubernetes
+NetworkPolicy provides no external hostname enforcement ([ADR 0363](adr/0363-single-replica-mcp-broker-topology.md)).
 
 The [formal domain model](architecture/mecatl.modelith.md) (generated by modelith) is a supporting reference — start with the prose [domain model](architecture/domain-model.md) for the human walkthrough.
 
@@ -330,7 +378,7 @@ own pnpm lockfile and runtime-focused build/test gates kept separate from the Go
 modules and the npm-based `website/` tree. A release tag stages an inspected
 artifact on public npmjs through trusted publishing; a maintainer must approve
 the candidate with 2FA before it becomes public
-([ADR 0328](adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). SDK releases begin
+([ADR 0364](adr/0328-typescript-sdk-npmjs-stacklok-oss.md)). SDK releases begin
 with a bot-authored PR that adds a generated `sdk/typescript/CHANGELOG.md` entry
 and advances `sdk/typescript/VERSION` and `package.json` together. Merging that
 exact three-file change makes the release App create the path-qualified tag. Its

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"reflect"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -19,6 +20,24 @@ var (
 	// state cannot be recovered. Callers should resolve a parked authorization
 	// deterministically rather than silently creating a replacement transaction.
 	ErrStateUnavailable = errors.New("mcp broker state unavailable")
+	// ErrBrokerIncarnationLost marks structured proof from a remote broker that
+	// the client's pinned process incarnation no longer serves the request. It is
+	// always returned together with ErrStateUnavailable; generic transport loss
+	// must never satisfy this marker.
+	ErrBrokerIncarnationLost = errors.New("mcp broker incarnation lost")
+	// ErrContinuityProtocol means the remote endpoint does not implement the
+	// continuity protocol required by this client. It is fail-closed and is
+	// deliberately distinct from a temporarily unavailable continuity service.
+	ErrContinuityProtocol = errors.New("mcp broker continuity protocol unsupported")
+	// ErrContinuityUnavailable means a continuity operation could not safely
+	// proceed. It intentionally reveals no custody or provisional-state detail.
+	ErrContinuityUnavailable = errors.New("mcp broker continuity unavailable")
+	// ErrContinuityProfileChanged marks a custody guard whose protected provider,
+	// destination, or profile no longer matches the broker configuration. It is
+	// also ErrContinuityUnavailable so existing callers remain fail-closed.
+	ErrContinuityProfileChanged = errors.New("mcp broker continuity profile changed")
+	// ErrCapacity means admission was refused without evicting existing authority.
+	ErrCapacity = errors.New("mcp broker capacity reached")
 	// ErrAttachmentClosed means an operation used a locally closed attachment.
 	ErrAttachmentClosed = errors.New("mcp broker attachment closed")
 	// ErrAuthorizationNotFound means the exact authorization reference is unknown
@@ -29,23 +48,69 @@ var (
 	ErrInvalidWorkspaceCatalogue = errors.New("mcp broker invalid workspace catalogue")
 )
 
+// MaxLogicalSessionIDBytes bounds logical session identifiers before registry access.
+const MaxLogicalSessionIDBytes = 256
+
+// ValidLogicalSessionID is the shared bounded identifier contract. It is called
+// before either an adapter or transport owner registry is consulted.
+func ValidLogicalSessionID(id session.SessionID) bool {
+	value := string(id)
+	if value == "" || len(value) > MaxLogicalSessionIDBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// ExecutionMetadata is private execution provenance for broker diagnostics. It
+// deliberately excludes URLs, scopes, credentials, and request data.
+type ExecutionMetadata struct {
+	Backend                string
+	OutboundCredentialKind OutboundCredentialKind
+}
+
+// OutboundCredentialKind is the closed credential-custody vocabulary.
+type OutboundCredentialKind string
+
+// Outbound credential kinds are diagnostic-only labels, not credentials.
+const (
+	OutboundCredentialNone OutboundCredentialKind = "none"
+	//nolint:gosec // Diagnostic label, not a hardcoded credential.
+	OutboundCredentialRouteOAuth OutboundCredentialKind = "route_oauth"
+	//nolint:gosec // Diagnostic label, not a hardcoded credential.
+	OutboundCredentialBrokerOAuth OutboundCredentialKind = "broker_oauth"
+)
+
+// ExecutionMetadataProvider is optional. Absence is safe and means that a
+// transport must log no backend or outbound credential attribution.
+type ExecutionMetadataProvider interface {
+	ExecutionMetadata(session.ToolCall) (ExecutionMetadata, bool)
+}
+
 // AttachOutcome is the closed result vocabulary for AttachSession.
 type AttachOutcome string
 
 const (
 	// AttachCreated means the logical broker session was created.
 	AttachCreated AttachOutcome = "created"
-	// AttachReattached means an attachment was opened to existing logical state.
+	// AttachReattached means a session handle was opened to existing logical state.
 	AttachReattached AttachOutcome = "reattached"
+	// AttachRecoveredProvisional means a fresh handle was opened to an exact
+	// recovered provisional attempt. It remains unpublished until Commit.
+	AttachRecoveredProvisional AttachOutcome = "recovered_provisional"
 )
 
 // CloseOutcome is the closed, idempotent result vocabulary for Attachment.Close.
 type CloseOutcome string
 
 const (
-	// CloseClosed means this call released the local attachment.
+	// CloseClosed means this call released the local session handle.
 	CloseClosed CloseOutcome = "closed"
-	// CloseAlreadyClosed means the attachment had already been released.
+	// CloseAlreadyClosed means the session handle had already been released.
 	CloseAlreadyClosed CloseOutcome = "already_closed"
 )
 
@@ -103,9 +168,13 @@ func (s WorkspaceEnrollmentStatus) Valid() bool {
 // broker-owned enrollment. It contains no URL, credential, backend selection, or
 // discovered definition.
 type WorkspaceEnrollmentRef struct {
-	ID               session.WorkspaceEnrollmentID
+	// ID identifies the enrollment transaction without exposing its process-local state.
+	ID session.WorkspaceEnrollmentID
+	// RequiredServices records how many broker services must be connected before the
+	// enrollment may publish a complete catalogue.
 	RequiredServices uint32
-	ExpiresAt        time.Time
+	// ExpiresAt is the broker's absolute expiry for this enrollment reference.
+	ExpiresAt time.Time
 }
 
 // Valid reports whether r is a complete enrollment reference.
@@ -116,7 +185,9 @@ func (r WorkspaceEnrollmentRef) Valid() bool {
 // WorkspaceEnrollmentPresentation is the ephemeral browser presentation for an
 // enrollment. URL deliberately exists only on this non-durable value.
 type WorkspaceEnrollmentPresentation struct {
+	// Ref is the exact enrollment transaction the browser flow must complete.
 	Ref WorkspaceEnrollmentRef
+	// URL is a short-lived presentation address; callers must not persist it as authority.
 	URL string
 }
 
@@ -214,6 +285,14 @@ type frozenTool struct {
 
 func (t *frozenTool) Spec() tool.ToolSpec { return cloneToolSpec(t.spec) }
 
+func (t *frozenTool) ExecutionMetadata(call session.ToolCall) (ExecutionMetadata, bool) {
+	metadata, ok := t.Tool.(ExecutionMetadataProvider)
+	if !ok {
+		return ExecutionMetadata{}, false
+	}
+	return metadata.ExecutionMetadata(call)
+}
+
 // Advertised forwards to the wrapped tool's own Disclosable projection when it
 // has one, so the freeze boundary does not silently widen what the model sees
 // (Catalog.AdvertisedSpecs falls back to Spec() for a non-Disclosable tool,
@@ -231,6 +310,14 @@ type frozenAuthorizationTool struct {
 }
 
 func (t *frozenAuthorizationTool) Spec() tool.ToolSpec { return cloneToolSpec(t.spec) }
+
+func (t *frozenAuthorizationTool) ExecutionMetadata(call session.ToolCall) (ExecutionMetadata, bool) {
+	metadata, ok := t.AuthorizationRequester.(ExecutionMetadataProvider)
+	if !ok {
+		return ExecutionMetadata{}, false
+	}
+	return metadata.ExecutionMetadata(call)
+}
 
 func (t *frozenAuthorizationTool) Advertised() tool.ToolSpec {
 	if d, ok := t.AuthorizationRequester.(tool.Disclosable); ok {
@@ -294,22 +381,36 @@ func (r WorkspaceEnrollmentResult) Valid() bool {
 // or success.
 type WorkspaceEnrollmentAttachment interface {
 	ResetWorkspaceEnrollment(context.Context) error
+	// BeginWorkspaceEnrollment creates a broker-owned enrollment and returns a
+	// short-lived browser presentation for it.
 	BeginWorkspaceEnrollment(context.Context) (WorkspaceEnrollmentPresentation, error)
+	// ObserveWorkspaceEnrollment returns the broker's current result for this exact ref.
 	ObserveWorkspaceEnrollment(context.Context, WorkspaceEnrollmentRef) (WorkspaceEnrollmentResult, error)
+	// CancelWorkspaceEnrollment settles this exact enrollment as cancelled when possible.
 	CancelWorkspaceEnrollment(context.Context, WorkspaceEnrollmentRef) (WorkspaceEnrollmentResult, error)
 }
 
 // Service attaches consumers to broker state keyed by the stable mecatl session
 // identity. AttachSession does not transfer ownership: multiple process-local
-// attachments may refer to the same logical state. DeleteSession, unlike Close,
+// session handles may refer to the same logical state. DeleteSession, unlike Close,
 // durably and idempotently destroys that logical state.
 type Service interface {
+	// AttachSession opens a local session handle to the current incarnation,
+	// creating logical state when necessary.
 	AttachSession(context.Context, session.SessionID) (Attachment, AttachOutcome, error)
-	// DeleteSession durably invalidates every attachment to the deleted logical
+	// DeleteSession durably invalidates every session handle to the deleted logical
 	// session incarnation. A later AttachSession with the same SessionID creates a
-	// new incarnation; stale attachments must return ErrStateUnavailable. Any
-	// generation or fencing mechanism used to enforce this remains implementation-private.
+	// new incarnation; stale session handles must return ErrStateUnavailable. Any
+	// generation or fencing mechanism used to enforce this remains private.
 	DeleteSession(context.Context, session.SessionID) (DeleteOutcome, error)
+}
+
+// BindingSessionDeleter is the optional atomic logical-delete capability. It
+// preserves the legacy unbound DeleteSession contract while allowing a remote
+// caller that holds an opaque binding to fail closed rather than deleting a
+// newer incarnation of the same session.
+type BindingSessionDeleter interface {
+	DeleteSessionIfBinding(context.Context, session.SessionID, session.ExternalBinding) (DeleteOutcome, error)
 }
 
 // Attachment is a process-local handle to one logical broker session.
@@ -325,15 +426,15 @@ type Attachment interface {
 	// implementation keeps any creation token private so remote brokers can provide
 	// the same transaction without exposing storage generations or CAS values.
 	Commit(context.Context) error
-	// Abort abandons this attachment's uncommitted creation and closes the local
+	// Abort abandons this session handle's uncommitted creation and closes the local
 	// handle. It may delete logical state only while that creation is still private;
-	// once another attachment has observed the session, Abort must preserve that
+	// once another session handle has observed the session, Abort must preserve that
 	// peer and degrade to local close. It is idempotent.
 	Abort(context.Context) error
 	// Binding is the opaque identity of this exact logical-session incarnation.
 	// It is persisted by the host and must match exactly on reattachment.
 	Binding() session.ExternalBinding
-	// Tools returns independently owned wrappers bound to this attachment.
+	// Tools returns independently owned wrappers bound to this session handle.
 	Tools() []tool.Tool
 	// RefreshGrantedAuthorizationCatalogue atomically replaces static protected
 	// declarations with authenticated metadata after the exact bundle grant. A
@@ -345,11 +446,11 @@ type Attachment interface {
 	// part of ExternalAuthorization or any broker reference intended for storage.
 	PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error)
 	// AuthorizationStatus queries the exact authorization and remains available
-	// after closing an old attachment and reattaching to the logical session.
+	// after closing an old session handle and reattaching to the logical session.
 	AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error)
 	// CancelAuthorization precisely cancels the exact authorization reference.
 	CancelAuthorization(context.Context, session.ExternalAuthorization) (CancelOutcome, error)
-	// Close releases only this local attachment and is idempotent. It never
+	// Close releases only this local session handle and is idempotent. It never
 	// deletes logical broker state.
 	Close(context.Context) (CloseOutcome, error)
 }

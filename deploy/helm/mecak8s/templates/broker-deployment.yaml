@@ -1,0 +1,144 @@
+{{- include "mecak8s.validateBroker" . -}}
+{{- include "mecak8s.validateBrokerCredentialStore" . -}}
+{{- $credentialStore := gt (int (include "mecak8s.brokerOAuthCount" .)) 0 -}}
+{{- $cs := .Values.broker.credentialStore -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mecak8s.brokerFullname" . }}
+  labels: {{- include "mecak8s.brokerLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    # Broker grants and callback correlation are process-local.
+    type: Recreate
+  selector:
+    matchLabels: {{- include "mecak8s.brokerLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "mecak8s.brokerLabels" . | nindent 8 }}
+      annotations:
+        checksum/broker-config: {{ include "mecak8s.brokerConfig" . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "mecak8s.brokerFullname" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 70
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: broker
+          image: {{ if .Values.broker.image.digest }}{{ .Values.broker.image.repository }}@{{ .Values.broker.image.digest }}{{ else }}{{ .Values.broker.image.repository }}:{{ default (printf "v%s" .Chart.Version) .Values.broker.image.tag }}{{ end }}
+          imagePullPolicy: {{ .Values.broker.image.pullPolicy }}
+          args: ["--config=/etc/mecabroker/broker.json", "--log-level={{ .Values.broker.logging.level }}"]
+          ports:
+            - {name: public, containerPort: 8443}
+          startupProbe:
+            exec: {command: ["/ko-app/mecabroker", "ready"]}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec: {command: ["/ko-app/mecabroker", "ready"]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: ["/ko-app/mecabroker", "health"]}
+            periodSeconds: 20
+          lifecycle:
+            preStop:
+              exec: {command: ["/ko-app/mecabroker", "drain"]}
+          resources: {{- toYaml .Values.broker.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts:
+            - {name: tls, mountPath: /var/run/mecabroker/tls, readOnly: true}
+            - {name: workload-jwt, mountPath: /var/run/mecabroker/workload-jwt, readOnly: true}
+            - {name: broker-config, mountPath: /etc/mecabroker, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+{{- if $credentialStore }}
+            - {name: credential-redis-client, mountPath: /var/run/mecabroker/credential-store/redis, readOnly: true}
+            - {name: credential-encryption, mountPath: /var/run/mecabroker/credential-store/encryption, readOnly: true}
+{{- end }}
+{{- range $index, $server := .Values.mcp.servers }}
+{{- if and (eq $server.auth.mode "oauth") (eq $server.auth.oauth.client.mode "preregistered") }}
+            - {name: mcp-oauth-client-secret-{{ $index }}, mountPath: /var/run/mecabroker/mcp-oauth/{{ $index }}, readOnly: true}
+{{- end }}
+{{- end }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Values.broker.tls.secretName | quote }}
+            defaultMode: 0440
+            items:
+              - {key: {{ .Values.broker.tls.certKey | quote }}, path: {{ .Values.broker.tls.certKey | quote }} }
+              - {key: {{ .Values.broker.tls.keyKey | quote }}, path: {{ .Values.broker.tls.keyKey | quote }} }
+        - name: workload-jwt
+          projected:
+            defaultMode: 0440
+            sources:
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - {key: ca.crt, path: ca.pem}
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 600
+        - name: broker-config
+          configMap:
+            name: {{ include "mecak8s.brokerFullname" . }}-config
+            defaultMode: 0444
+        - name: tmp
+          emptyDir: {sizeLimit: 64Mi}
+{{- if $credentialStore }}
+        # Broker-only Redis client credentials and CA; each item projected exactly, no subPath.
+        - name: credential-redis-client
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ $cs.redis.credentialsSecret | quote }}
+                  items:
+                    - {key: {{ $cs.redis.passwordKey | quote }}, path: password}
+{{- if $cs.redis.usernameKey }}
+                    - {key: {{ $cs.redis.usernameKey | quote }}, path: username}
+{{- end }}
+{{- if $cs.managedRedis.enabled }}
+              - secret:
+                  name: {{ $cs.managedRedis.tlsSecret | quote }}
+                  items:
+                    - {key: ca.crt, path: ca.pem}
+{{- else if $cs.redis.caSecret }}
+              - secret:
+                  name: {{ $cs.redis.caSecret | quote }}
+                  items:
+                    - {key: {{ $cs.redis.caKey | quote }}, path: ca.pem}
+{{- end }}
+        # One exact item per KEK id; the broker reads them via os.OpenRoot.
+        - name: credential-encryption
+          secret:
+            secretName: {{ $cs.encryption.secretName | quote }}
+            defaultMode: 0440
+            items:
+{{- range $cs.encryption.keys }}
+              - {key: {{ .secretKey | quote }}, path: {{ .id | quote }}}
+{{- end }}
+{{- end }}
+{{- range $index, $server := .Values.mcp.servers }}
+{{- if and (eq $server.auth.mode "oauth") (eq $server.auth.oauth.client.mode "preregistered") }}
+        - name: mcp-oauth-client-secret-{{ $index }}
+          secret:
+            secretName: {{ $server.auth.oauth.client.preregistered.secretKeyRef.name | quote }}
+            defaultMode: 0440
+            items:
+              - {key: {{ $server.auth.oauth.client.preregistered.secretKeyRef.key | quote }}, path: client-secret}
+{{- end }}
+{{- end }}

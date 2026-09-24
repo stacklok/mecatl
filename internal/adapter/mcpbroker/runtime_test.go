@@ -78,20 +78,20 @@ func TestADR_0298_CompileAdmitsMultipleOAuthRoutes(t *testing.T) {
 
 func TestCompileRejectsCollisionsAndNonAnonymousDeclarations(t *testing.T) {
 	tests := []struct {
-		name       string
-		config     mcpauthority.BrokerConfig
-		discovered []ToolDefinition
-		occupied   []string
-		want       error
+		name              string
+		config            mcpauthority.BrokerConfig
+		discovered        []ToolDefinition
+		reservedToolNames []string
+		want              error
 	}{
-		{name: "core collision", config: anonymousConfig(), discovered: []ToolDefinition{{Backend: "calendar", Name: "Read"}}, occupied: []string{"Read"}, want: ErrInvalidCatalogue},
+		{name: "core collision", config: anonymousConfig(), discovered: []ToolDefinition{{Backend: "calendar", Name: "Read"}}, reservedToolNames: []string{"Read"}, want: ErrInvalidCatalogue},
 		{name: "route collision", config: anonymousConfig(), discovered: []ToolDefinition{{Backend: "calendar", Name: "same"}, {Backend: "search", Name: "same"}}, want: ErrInvalidCatalogue},
 		{name: "unknown backend", config: anonymousConfig(), discovered: []ToolDefinition{{Backend: "private", Name: "mcp__private__get"}}, want: ErrInvalidCatalogue},
 		{name: "protected deferred", config: mcpauthority.BrokerConfig{Routes: []permconfig.MCPServerProfile{{Name: "github", Auth: permconfig.MCPAuthProfile{Mode: "oauth"}}}}, want: ErrProtectedRouteUnsupported},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := Compile(test.config, test.discovered, test.occupied)
+			_, err := Compile(test.config, test.discovered, test.reservedToolNames)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("Compile error = %v, want %v", err, test.want)
 			}
@@ -157,7 +157,7 @@ func toolByName(t *testing.T, attachment *Attachment, name string) tool.Tool {
 	return nil
 }
 
-func TestCallMcpWithQueryBrokerSupport_Scenario1_BoundedAttachmentProjection(t *testing.T) {
+func TestCallMcpWithQueryBrokerSupport_Scenario1_BoundedSessionHandleProjection(t *testing.T) {
 	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_BoundedAttachmentProjection(t *
 	}
 }
 
-func TestCallMcpWithQueryBrokerSupport_Scenario1_AttachmentIsolationAndAuthorization(t *testing.T) {
+func TestCallMcpWithQueryBrokerSupport_Scenario1_SessionHandleIsolationAndAuthorization(t *testing.T) {
 	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -291,7 +291,7 @@ func TestCallMcpWithQueryBrokerSupport_Scenario1_AuthorizationDelegatesExactNati
 		return session.ToolResult{}, errors.New("must not execute before authorization")
 	}), WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 		return session.ToolResult{}, errors.New("must not execute before authorization")
-	}), WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "secret", nil }))
+	}), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestWrappersBindCanonicalSessionAndPrivateRoute(t *testing.T) {
 	}
 }
 
-func TestAttachmentCloseWaitIsContextAwareWithoutEarlyStateCleanup(t *testing.T) {
+func TestSessionHandleCloseWaitIsContextAwareWithoutEarlyStateCleanup(t *testing.T) {
 	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -551,5 +551,123 @@ func TestRuntimeCloseAndDrainUsesOneProcessDeadline(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed >= 2*timeout {
 		t.Fatalf("drain elapsed %v, want one %v process deadline", elapsed, timeout)
+	}
+}
+
+func TestSingletonBrokerRemediation_Scenario2_BoundedAdmissionAcrossBrokerRegistries(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, nil
+	}, WithLimits(Limits{MaxLogicalSessions: 1, LogicalRetention: 20 * time.Millisecond, SweepInterval: 5 * time.Millisecond, MaxPendingStates: 1}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	for _, id := range []session.SessionID{"", "bad\x00id", session.SessionID(strings.Repeat("x", maxLogicalSessionIDBytes+1))} {
+		if _, _, err := runtime.AttachSession(context.Background(), id); !errors.Is(err, ErrInvalidSessionID) {
+			t.Fatalf("AttachSession(%q) error = %v, want invalid ID", id, err)
+		}
+	}
+	first, _, err := runtime.AttachSession(context.Background(), "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.AttachSession(context.Background(), "two"); !errors.Is(err, contract.ErrCapacity) {
+		t.Fatalf("capacity error = %v", err)
+	}
+	if _, err := first.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, _, err := runtime.AttachSession(context.Background(), "two"); err == nil {
+			break
+		} else if !errors.Is(err, contract.ErrCapacity) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	second, _, err := runtime.AttachSession(context.Background(), "two")
+	if err != nil {
+		t.Fatalf("retained logical session was not reclaimed: %v", err)
+	}
+	_, _ = second.Close(context.Background())
+
+	protectedCatalogue, err := Compile(protectedConfig("https://accounts.example/token"), []ToolDefinition{{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protectedRuntime, err := New(protectedCatalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, nil
+	},
+		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
+			return session.ToolResult{}, nil
+		}),
+		WithLimits(Limits{MaxLogicalSessions: 2, LogicalRetention: time.Hour, SweepInterval: time.Hour, MaxPendingStates: 1}),
+		WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer protectedRuntime.Close()
+	one, _, err := protectedRuntime.AttachSession(t.Context(), "pending-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, _, err := protectedRuntime.AttachSession(t.Context(), "pending-two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstProtected := one.Tools()[0].(tool.AuthorizationRequester)
+	if _, required, requestErr := firstProtected.RequestAuthorization(t.Context(), session.NewToolCall("pending-1", "mcp__github__create", json.RawMessage(`{}`))); requestErr != nil || !required {
+		t.Fatalf("first pending authorization = required:%v err:%v", required, requestErr)
+	}
+	secondProtected := two.Tools()[0].(tool.AuthorizationRequester)
+	if _, _, requestErr := secondProtected.RequestAuthorization(t.Context(), session.NewToolCall("pending-2", "mcp__github__create", json.RawMessage(`{}`))); !errors.Is(requestErr, contract.ErrCapacity) {
+		t.Fatalf("pending-state capacity error = %v, want structured capacity", requestErr)
+	}
+}
+
+func TestSingletonBrokerRemediation_Scenario2_RetentionAndOwnership(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, nil
+	}, WithLimits(Limits{MaxLogicalSessions: 1, LogicalRetention: 15 * time.Millisecond, SweepInterval: time.Millisecond}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, _, err := runtime.AttachSession(t.Context(), "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * runtime.limits.LogicalRetention)
+	if _, _, err := runtime.AttachSession(t.Context(), "new"); !errors.Is(err, contract.ErrCapacity) {
+		t.Fatalf("active logical session was evicted by retention: %v", err)
+	}
+	if _, err := active.Close(t.Context()); err != nil {
+		t.Fatalf("close active attachment: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		candidate, _, attachErr := runtime.AttachSession(t.Context(), "new")
+		if attachErr == nil {
+			_, _ = candidate.Close(t.Context())
+			break
+		}
+		if !errors.Is(attachErr, contract.ErrCapacity) || time.Now().After(deadline) {
+			t.Fatalf("unattached logical session was not reclaimed: %v", attachErr)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatalf("close runtime: %v", err)
+	}
+	if _, _, err := runtime.AttachSession(t.Context(), "after-close"); err == nil {
+		t.Fatal("closed runtime admitted a new attachment")
 	}
 }

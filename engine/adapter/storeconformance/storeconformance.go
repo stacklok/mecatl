@@ -52,6 +52,33 @@ func Run(t *testing.T, newStore func(t *testing.T) port.SessionStore) {
 		assertSessionEqual(t, got, want)
 	})
 
+	t.Run("broker credential custody round trip", func(t *testing.T) {
+		st := newStore(t)
+		s := newSession("conf-custody")
+		var authority session.Authority
+		authority.CapabilitySet.Tools = []string{"Read"}
+		authority.Provenance = "test"
+		mustOK(t, "BindAuthority", s.BindAuthority(authority))
+		pending := session.PendingWorkspaceEnrollment{ID: "enroll-custody", RequiredServices: 1, ExpiresAt: time.Now().Add(time.Hour).UTC()}
+		mustOK(t, "BeginWorkspaceEnrollment", s.BeginWorkspaceEnrollment(pending))
+		var owner, workload, profile [32]byte
+		owner[0], workload[0], profile[0] = 1, 2, 3
+		custody, err := session.NewBrokerCredentialCustody("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", s.Incarnation(), owner, workload, profile, []string{"provider"}, time.Now().Add(time.Hour).UTC())
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustOK(t, "InstallBrokerCredentialCustody", s.InstallBrokerCredentialCustody(pending, custody, time.Now()))
+		got := roundTrip(t, st, s)
+		loaded, ok := got.BrokerCredentialCustody()
+		if !ok || loaded.RecoveryReference() != custody.RecoveryReference() || loaded.SessionIncarnation() != custody.SessionIncarnation() || loaded.OwnerPartition() != custody.OwnerPartition() || loaded.WorkloadPartition() != custody.WorkloadPartition() || loaded.ProfileDigest() != custody.ProfileDigest() || !reflect.DeepEqual(loaded.Providers(), custody.Providers()) || !loaded.ExpiresAt().Equal(custody.ExpiresAt()) {
+			t.Fatalf("custody = %+v, %v", loaded, ok)
+		}
+		loadedPending, ok := got.PendingWorkspaceEnrollment()
+		if !ok || loadedPending != pending {
+			t.Fatalf("pending enrollment = %+v, %v; want %+v, true", loadedPending, ok, pending)
+		}
+	})
+
 	t.Run("kind relationship round trip", func(t *testing.T) {
 		cases := []struct {
 			id   session.SessionID

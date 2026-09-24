@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -334,7 +336,7 @@ func loadOAuthProfile(profile permconfig.MCPServerProfile, lookup func(string) (
 		AllowedScopes: allowedScopes, RequestRefreshToken: requestRefresh,
 		Network: mcp.OAuthNetworkPolicy{AdditionalOrigins: append([]string(nil), decl.Network.AdditionalOrigins...), PrivateOrigins: append([]string(nil), decl.Network.PrivateOrigins...), MaxRedirects: decl.Network.MaxRedirects},
 	}
-	if err := loadOAuthClient(profile, decl, lookup, opts); err != nil {
+	if err := loadOAuthClient(profile, decl, opts); err != nil {
 		return nil, err
 	}
 
@@ -420,11 +422,11 @@ func loadNativeOAuthProfile(server string, local *permconfig.MCPLocalCredentialP
 	return opts, nil
 }
 
-func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOAuthProfile, lookup func(string) (string, bool), opts *mcp.OAuthOptions) error {
+func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOAuthProfile, opts *mcp.OAuthOptions) error {
 	if client := decl.Client.Preregistered; client != nil {
-		secret, ok := lookupMCPEnv(lookup, client.SecretEnv)
-		if !ok || secret == "" {
-			return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_env", Ref: client.SecretEnv, Kind: ErrMCPProfileSecret, Expected: "a non-empty client secret in the referenced MECATL_* environment variable", Remedy: "set the referenced environment variable before starting mecatl"}
+		secret, err := readMCPClientSecretFile(client.SecretFile)
+		if err != nil {
+			return &MCPProfileError{Server: profile.Name, Field: "auth.oauth.client.preregistered.secret_file", Ref: client.SecretFile, Kind: ErrMCPProfileSecret, Expected: "a non-empty client secret file", Remedy: "mount the client secret file before starting mecatl"}
 		}
 		opts.Client.Preregistered = &oauthex.ClientCredentials{ClientID: client.ID, ClientSecretAuth: &oauthex.ClientSecretAuth{ClientSecret: secret}, Issuer: decl.Issuer}
 		return nil
@@ -441,6 +443,26 @@ func loadOAuthClient(profile permconfig.MCPServerProfile, decl *permconfig.MCPOA
 	}
 	opts.Client.ClientIDMetadataDocumentURL = decl.Client.CIMD.DocumentURL
 	return nil
+}
+
+const maxMCPClientSecretBytes = 64 << 10
+
+func readMCPClientSecretFile(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	secret, err := io.ReadAll(io.LimitReader(file, maxMCPClientSecretBytes+1))
+	if err != nil || len(secret) > maxMCPClientSecretBytes {
+		return "", ErrMCPProfileSecret
+	}
+	value := strings.TrimSpace(string(secret))
+	clear(secret)
+	if value == "" {
+		return "", ErrMCPProfileSecret
+	}
+	return value, nil
 }
 
 func lookupMCPEnv(lookup func(string) (string, bool), name string) (string, bool) {
