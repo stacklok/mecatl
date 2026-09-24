@@ -218,6 +218,57 @@ func TestSDKPDFArtifacts_Scenario1_RejectInvalidOrUnauthorized(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("stored PDF records = %d, want 1", count)
 	}
+	t.Run("foreign principal HTTP upload", func(t *testing.T) {
+		lifecycle := &pdfUploadLifecycle{pdfPromptLifecycle: &pdfPromptLifecycle{}}
+		svc, owner := newOwnedPDFUploadService(t, lifecycle)
+		handler := server.NewHTTPHandler(svc)
+		request := func(ctx context.Context) *httptest.ResponseRecorder {
+			t.Helper()
+			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s-pdf/pdfs?name=report.pdf", bytes.NewReader(valid)).WithContext(ctx)
+			req.Header.Set("Content-Type", "application/pdf")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			return rec
+		}
+		foreign := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://idp.example", Subject: "bob", GrantType: session.GrantTypeUser})
+		denied := request(foreign)
+		if denied.Code != http.StatusNotFound || bytes.Contains(denied.Body.Bytes(), valid) || lifecycle.calls != 0 || len(lifecycle.bytes) != 0 {
+			t.Fatalf("foreign HTTP upload status=%d, stage calls=%d, staged bytes=%d", denied.Code, lifecycle.calls, len(lifecycle.bytes))
+		}
+		allowed := request(owner)
+		if allowed.Code != http.StatusCreated || lifecycle.calls != 1 || !bytes.Equal(lifecycle.bytes, valid) {
+			t.Fatalf("owner HTTP upload status=%d, stage calls=%d, staged=%q", allowed.Code, lifecycle.calls, lifecycle.bytes)
+		}
+	})
+	t.Run("foreign principal gRPC upload", func(t *testing.T) {
+		lifecycle := &pdfUploadLifecycle{pdfPromptLifecycle: &pdfPromptLifecycle{}}
+		svc, _ := newOwnedPDFUploadService(t, lifecycle)
+		auth := server.NewAuthenticator(server.SecurityConfig{Validator: fakeValidator{ok: map[string]session.Principal{
+			"alice-token": {Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser},
+			"bob-token":   {Issuer: "https://idp.example", Subject: "bob", GrantType: session.GrantTypeUser},
+		}}})
+		defer auth.Close()
+		client, closeClient := dialGRPCSecure(t, svc, auth)
+		defer closeClient()
+		upload := func(token string) (*mecatlv1.UploadPdfResponse, error) {
+			t.Helper()
+			stream, err := client.UploadPdf(bearerCtx(t.Context(), token))
+			if err != nil {
+				return nil, err
+			}
+			_ = stream.Send(&mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Metadata{Metadata: &mecatlv1.UploadPdfMetadata{SessionId: "s-pdf", Name: "report.pdf", MimeType: "application/pdf"}}})
+			_ = stream.Send(&mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Chunk{Chunk: valid}})
+			return stream.CloseAndRecv()
+		}
+		denied, err := upload("bob-token")
+		if status.Code(err) != codes.NotFound || denied != nil || lifecycle.calls != 0 || len(lifecycle.bytes) != 0 {
+			t.Fatalf("foreign gRPC upload = %+v, %v; stage calls=%d, staged bytes=%d", denied, err, lifecycle.calls, len(lifecycle.bytes))
+		}
+		allowed, err := upload("alice-token")
+		if err != nil || allowed.GetArtifactId() != "artifact" || lifecycle.calls != 1 || !bytes.Equal(lifecycle.bytes, valid) {
+			t.Fatalf("owner gRPC upload = %+v, %v; stage calls=%d, staged=%q", allowed, err, lifecycle.calls, lifecycle.bytes)
+		}
+	})
 }
 
 type pdfUploadLifecycle struct {
@@ -255,6 +306,26 @@ func newPDFUploadService(t *testing.T, lifecycle server.PDFArtifactLifecycle) *s
 	}
 	t.Cleanup(svc.Close)
 	return svc
+}
+
+func newOwnedPDFUploadService(t *testing.T, lifecycle server.PDFArtifactLifecycle) (*server.Service, context.Context) {
+	t.Helper()
+	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
+	svc, err := newPlacementTeamTestService(server.Config{
+		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
+		Store:  memstore.New(), PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
+		NewID: func() session.SessionID { return "s-pdf" }, PDFArtifacts: lifecycle,
+		DefaultCapabilities: port.ProviderCapabilities{PDF: true}, OwnershipEnforced: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateSession(owner, session.ModeDefault, session.Limits{}); err != nil {
+		svc.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	return svc, owner
 }
 
 func TestPDFUploadRejectsTextOnlySelectedSessionBeforeStorage(t *testing.T) {
@@ -318,6 +389,52 @@ func TestPDFUploadGRPCStreamsChunksAndRejectsBadMetadata(t *testing.T) {
 	_, err = bad.CloseAndRecv()
 	if status.Code(err) != codes.InvalidArgument || lifecycle.calls != 1 {
 		t.Fatalf("wrong MIME upload = %v, stage calls=%d", err, lifecycle.calls)
+	}
+}
+
+func TestPDFUploadGRPCRejectsMalformedFrameSequenceAndBounds(t *testing.T) {
+	metadataFrame := func() *mecatlv1.UploadPdfRequest {
+		return &mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Metadata{Metadata: &mecatlv1.UploadPdfMetadata{SessionId: "s-pdf", Name: "report.pdf", MimeType: "application/pdf"}}}
+	}
+	chunkFrame := func(data []byte) *mecatlv1.UploadPdfRequest {
+		return &mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Chunk{Chunk: data}}
+	}
+	for _, tc := range []struct {
+		name       string
+		frames     []*mecatlv1.UploadPdfRequest
+		overflow   bool
+		wantCode   codes.Code
+		wantStages int
+	}{
+		{name: "chunk before metadata", frames: []*mecatlv1.UploadPdfRequest{chunkFrame([]byte("%PDF-1.7\n%%EOF")), metadataFrame(), chunkFrame([]byte("%PDF-1.7\n%%EOF"))}, wantCode: codes.InvalidArgument},
+		{name: "repeated metadata", frames: []*mecatlv1.UploadPdfRequest{metadataFrame(), chunkFrame([]byte("%PDF-1.7\n%%EOF")), metadataFrame()}, wantCode: codes.InvalidArgument, wantStages: 1},
+		{name: "empty chunk", frames: []*mecatlv1.UploadPdfRequest{metadataFrame(), chunkFrame([]byte("%PDF-1.7\n%%EOF")), chunkFrame(nil)}, wantCode: codes.InvalidArgument, wantStages: 1},
+		{name: "oversized chunk", frames: []*mecatlv1.UploadPdfRequest{metadataFrame(), chunkFrame(bytes.Repeat([]byte("x"), 256<<10+1))}, wantCode: codes.InvalidArgument, wantStages: 1},
+		{name: "total overflow", frames: []*mecatlv1.UploadPdfRequest{metadataFrame()}, overflow: true, wantCode: codes.ResourceExhausted, wantStages: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lifecycle := &pdfUploadLifecycle{pdfPromptLifecycle: &pdfPromptLifecycle{}}
+			client, closeClient := dialGRPC(t, newPDFUploadService(t, lifecycle))
+			defer closeClient()
+			stream, err := client.UploadPdf(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, frame := range tc.frames {
+				_ = stream.Send(frame)
+			}
+			if tc.overflow {
+				chunk := chunkFrame(bytes.Repeat([]byte("x"), 256<<10))
+				for range 80 {
+					_ = stream.Send(chunk)
+				}
+				_ = stream.Send(chunkFrame([]byte("x")))
+			}
+			response, err := stream.CloseAndRecv()
+			if status.Code(err) != tc.wantCode || response != nil || lifecycle.calls != tc.wantStages || len(lifecycle.bytes) != 0 {
+				t.Fatalf("malformed upload = %+v, %v; stage calls=%d, staged bytes=%d, want code=%v calls=%d", response, err, lifecycle.calls, len(lifecycle.bytes), tc.wantCode, tc.wantStages)
+			}
+		})
 	}
 }
 

@@ -7,14 +7,21 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -257,13 +264,101 @@ func TestSDKPDFArtifacts_Scenario3_OwnershipAndCancellation(t *testing.T) {
 	if !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("deleted session download = %v", err)
 	}
+	t.Run("gRPC cancellation", testPDFGRPCDownloadCancellation)
+}
+
+func testPDFGRPCDownloadCancellation(t *testing.T) {
+	objects := &pdfCancellationObjects{
+		pdfMemoryObjects: &pdfMemoryObjects{data: make(map[string][]byte)},
+		closed:           make(chan struct{}), blocked: make(chan struct{}),
+	}
+	svc, _ := newPDFDownloadFixture(t, objects, true)
+	alice := &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser}
+	owner := session.WithPrincipal(t.Context(), alice)
+	created, err := svc.CreateSessionWithProfile(owner, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("pdf-grpc-cancel"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := svc.UploadPdf(owner, created.ID, "report.pdf", bytes.NewReader(pdfDownloadBytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := server.NewAuthenticator(server.SecurityConfig{Validator: fakeValidator{ok: map[string]session.Principal{"alice-token": *alice}}})
+	defer auth.Close()
+	var sent atomic.Int32
+	finished := make(chan struct{})
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamInterceptor(), func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if info.FullMethod != mecatlv1.HarnessService_DownloadPdf_FullMethodName {
+			return handler(srv, stream)
+		}
+		defer close(finished)
+		return handler(srv, &pdfTrackedServerStream{ServerStream: stream, sent: &sent})
+	}))
+	mecatlv1.RegisterHarnessServiceServer(gs, server.NewHarnessServer(svc))
+	go func() { _ = gs.Serve(lis) }()
+	conn, err := grpc.NewClient("passthrough:///pdf-grpc-cancel", grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+		return lis.DialContext(ctx)
+	}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		gs.Stop()
+		_ = lis.Close()
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(); gs.Stop(); _ = lis.Close() }()
+	ctx, cancel := context.WithCancel(bearerCtx(t.Context(), "alice-token"))
+	defer cancel()
+	stream, err := mecatlv1.NewHarnessServiceClient(conn).DownloadPdf(ctx, &mecatlv1.DownloadPdfRequest{SessionId: string(created.ID), ArtifactId: meta.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := stream.Recv()
+	if err != nil || len(first.GetChunk()) == 0 {
+		t.Fatalf("first gRPC download chunk = %+v, %v", first, err)
+	}
+	select {
+	case <-objects.blocked:
+	case <-time.After(3 * time.Second):
+		t.Fatal("gRPC download did not reach the blocked object read")
+	}
+	cancel()
+	select {
+	case <-objects.closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled gRPC download did not close its object reader")
+	}
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled gRPC download handler did not finish")
+	}
+	next, err := stream.Recv()
+	if next != nil || grpcstatus.Code(err) != codes.Canceled || sent.Load() != 1 || objects.openCount() != 1 {
+		t.Fatalf("cancelled gRPC download next=%+v, err=%v, server chunks=%d, readers=%d", next, err, sent.Load(), objects.openCount())
+	}
+}
+
+type pdfTrackedServerStream struct {
+	grpc.ServerStream
+	sent *atomic.Int32
+}
+
+func (s *pdfTrackedServerStream) SendMsg(msg any) error {
+	err := s.ServerStream.SendMsg(msg)
+	if err == nil {
+		if _, ok := msg.(*mecatlv1.DownloadPdfResponse); ok {
+			s.sent.Add(1)
+		}
+	}
+	return err
 }
 
 type pdfCancellationObjects struct {
 	*pdfMemoryObjects
-	mu     sync.Mutex
-	opens  int
-	closed chan struct{}
+	mu      sync.Mutex
+	opens   int
+	closed  chan struct{}
+	blocked chan struct{}
 }
 
 func (o *pdfCancellationObjects) Open(ctx context.Context, key string) (io.ReadCloser, error) {
@@ -283,22 +378,27 @@ func (o *pdfCancellationObjects) Open(ctx context.Context, key string) (io.ReadC
 	if err != nil {
 		return nil, err
 	}
-	return &pdfCancellationReader{data: data, closed: o.closed}, nil
+	return &pdfCancellationReader{data: data, closed: o.closed, blocked: o.blocked}, nil
 }
 
 func (o *pdfCancellationObjects) openCount() int { o.mu.Lock(); defer o.mu.Unlock(); return o.opens }
 
 type pdfCancellationReader struct {
-	data   []byte
-	first  bool
-	closed chan struct{}
-	once   sync.Once
+	data    []byte
+	first   bool
+	closed  chan struct{}
+	blocked chan struct{}
+	once    sync.Once
 }
 
 func (r *pdfCancellationReader) Read(dst []byte) (int, error) {
 	if !r.first {
 		r.first = true
 		return copy(dst, r.data), nil
+	}
+	if r.blocked != nil {
+		close(r.blocked)
+		r.blocked = nil
 	}
 	<-r.closed
 	return 0, io.EOF
