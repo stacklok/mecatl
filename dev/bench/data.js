@@ -267452,6 +267452,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790230958494,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c572271a7e6046851e8ddf2b1d72681e6364c337",
+          "message": "docs(models): explain plan-mode model slot (#1840)\n\nDocument plan-mode model slot configuration.",
+          "timestamp": "2026-09-24T10:28:28+03:00",
+          "tree_id": "b098149d424682f2942bc0d7fdb81952438298d4",
+          "url": "https://github.com/stacklok/mecatl/commit/c572271a7e6046851e8ddf2b1d72681e6364c337"
+        },
+        "date": 1790235566195,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3278.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 71,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1154,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -350710,6 +350749,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790235563499,
+  "lastUpdate": 1790235567093,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
