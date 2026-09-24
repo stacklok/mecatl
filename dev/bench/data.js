@@ -268553,6 +268553,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790238743952,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2329ae936fefd72df667e5b8c56d3ded5d53578a",
+          "message": "docs: define independent HarnessContext sources (Plan / Interface) (#1814)\n\nCo-authored-by: OpenAI <noreply@openai.com>",
+          "timestamp": "2026-09-24T15:28:49+03:00",
+          "tree_id": "84787b66a158727a2a3d8b79ecbbc09be0ae09e3",
+          "url": "https://github.com/stacklok/mecatl/commit/2329ae936fefd72df667e5b8c56d3ded5d53578a"
+        },
+        "date": 1790253615028,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3317,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -352153,6 +352192,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790253611051,
+  "lastUpdate": 1790253616192,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
