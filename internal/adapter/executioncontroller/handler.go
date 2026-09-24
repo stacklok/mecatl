@@ -22,8 +22,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
@@ -43,11 +45,12 @@ type GrantSigner struct {
 
 // HandlerConfig configures authentication and capability grants.
 type HandlerConfig struct {
-	Clients  map[string]ClientPolicy
-	Signer   GrantSigner
-	Verifier executionenv.GrantVerifier
-	Ready    func() bool
-	Security *SecurityManager
+	Clients     map[string]ClientPolicy
+	Signer      GrantSigner
+	Verifier    executionenv.GrantVerifier
+	Ready       func() bool
+	Security    *SecurityManager
+	Diagnostics port.Diagnostics
 }
 
 // Profile is the externally visible immutable execution profile.
@@ -514,6 +517,9 @@ func (h *Handler) DeleteRetiredEnvironment(ctx context.Context, q *executionv1.D
 	}
 	req := adminLifecycleRequest{Environment: ref, OwnerHash: ownerHash(owner), Client: c.id, AdministratorFor: c.policy.AdministratorFor, ExpectedPVCUID: q.GetExpectedPvcUid(), OperationID: q.GetOperationId()}
 	if err := h.adminLifecycleBackend.DeleteRetiredEnvironment(ctx, req); err != nil {
+		if h.cfg.Diagnostics != nil {
+			h.cfg.Diagnostics.Log(ctx, port.LevelWarn, "execution backend failure", "operation", "delete_retired", "reason", backendReasonClass(err))
+		}
 		return nil, backendError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -845,6 +851,37 @@ func securityAuthorizationError(err error) error {
 		return wireError(executionenv.CodeNotReady, true)
 	}
 	return wireError(executionenv.CodeUnauthenticated, false)
+}
+
+func backendReasonClass(err error) string {
+	var controlled *executionenv.Error
+	if errors.As(err, &controlled) && controlled.Code.Valid() {
+		return string(controlled.Code)
+	}
+	switch {
+	case apierrors.IsInvalid(err):
+		return "invalid"
+	case apierrors.IsConflict(err):
+		return "conflict"
+	case apierrors.IsTimeout(err), apierrors.IsServerTimeout(err), errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case apierrors.IsTooManyRequests(err):
+		return "rate_limited"
+	case apierrors.IsForbidden(err):
+		return "forbidden"
+	case apierrors.IsUnauthorized(err):
+		return "unauthorized"
+	case apierrors.IsNotFound(err):
+		return "not_found"
+	case apierrors.IsAlreadyExists(err):
+		return "already_exists"
+	case apierrors.IsServiceUnavailable(err):
+		return "unavailable"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	default:
+		return "other"
+	}
 }
 
 func backendError(err error) error {

@@ -214,11 +214,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 		}
 		r.queue.AddAfter(name, deadline.Sub(now))
 	}
-	profileName := textNested(env.Object, "spec", "profile")
-	p, ok := r.profiles.get(profileName)
-	if !ok || p.Digest != textNested(env.Object, "spec", "profileDigest") {
-		return r.setCondition(ctx, env, "Ready", false, "InvalidProfile", "configured profile is unavailable or changed")
-	}
 	// The admitted durable delete owns finalization, including after DELETE has
 	// set deletionTimestamp. A peer must not re-arm the generic finalizer.
 	if textNested(env.Object, "status", "lifecycleOperation", "type") == deleteRetiredEnvironment {
@@ -238,11 +233,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, name string) error {
 	if textNested(env.Object, "status", "lifecycleOperation", "id") != "" {
 		return r.reconcileLifecycle(ctx, env)
 	}
+	if conditionTrue(env, "Retired") {
+		return nil
+	}
 	if textNested(env.Object, "spec", "desired") == "Retiring" {
-		if conditionTrue(env, "Retired") {
-			return nil
-		}
 		return r.setCondition(ctx, env, "Ready", false, "UnsupportedRetirementRequest", "retirement requires the exact administrator lifecycle operation")
+	}
+	profileName := textNested(env.Object, "spec", "profile")
+	p, ok := r.profiles.get(profileName)
+	if !ok || p.Digest != textNested(env.Object, "spec", "profileDigest") {
+		return r.setCondition(ctx, env, "Ready", false, "InvalidProfile", "configured profile is unavailable or changed")
 	}
 	pvcName := resourceName("workspace", name)
 	podName := resourceName("executor", name)

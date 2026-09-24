@@ -35,6 +35,11 @@ func (r *Reconciler) reconcileLifecycle(ctx context.Context, env *unstructured.U
 	if kind == deleteRetiredEnvironment {
 		return r.reconcileRetainedDelete(ctx, env, op, pvcName, pvcUID)
 	}
+	if kind == "ReplaceExecutor" {
+		if _, ok := r.replacementProfile(env); !ok {
+			return r.setLifecycleFenceUnknown(ctx, env, "replacement profile is unavailable")
+		}
+	}
 	epoch := intNested(op, "expectedEpoch")
 	if podUID == "" || epoch <= 0 || !podIdentityMatches || textNested(env.Object, "status", "pvc", "uid") != pvcUID || intNested(env.Object, "status", "epoch") != epoch {
 		return r.setLifecycleFenceUnknown(ctx, env, "lifecycle operation no longer matches the exact executor and workspace")
@@ -171,9 +176,14 @@ func (r *Reconciler) prepareReplacement(ctx context.Context, env *unstructured.U
 	})
 }
 
-func (r *Reconciler) finishReplacement(ctx context.Context, env *unstructured.Unstructured, operationID string) error {
+func (r *Reconciler) replacementProfile(env *unstructured.Unstructured) (resolvedProfile, bool) {
 	profile, ok := r.profiles.get(textNested(env.Object, "spec", "profile"))
-	if !ok || profile.Digest != textNested(env.Object, "spec", "profileDigest") {
+	return profile, ok && profile.Digest == textNested(env.Object, "spec", "profileDigest")
+}
+
+func (r *Reconciler) finishReplacement(ctx context.Context, env *unstructured.Unstructured, operationID string) error {
+	profile, ok := r.replacementProfile(env)
+	if !ok {
 		return r.setLifecycleFenceUnknown(ctx, env, "replacement profile is unavailable")
 	}
 	pvcName := textNested(env.Object, "status", "pvc", "name")

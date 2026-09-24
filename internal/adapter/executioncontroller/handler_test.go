@@ -7,6 +7,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,8 +18,12 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
@@ -106,6 +112,8 @@ func (*fakeBackend) FindReferenceIntent(context.Context, executionenv.Environmen
 type adminFakeBackend struct {
 	*fakeBackend
 	migratedSchema int64
+	deleteErr      error
+	deletedRequest adminLifecycleRequest
 }
 
 func (*adminFakeBackend) ReplaceExecutor(context.Context, adminLifecycleRequest) error { return nil }
@@ -113,8 +121,9 @@ func (*adminFakeBackend) RetireExact(context.Context, adminLifecycleRequest) err
 func (*adminFakeBackend) RecoverEnvironment(context.Context, adminLifecycleRequest) error {
 	return nil
 }
-func (*adminFakeBackend) DeleteRetiredEnvironment(context.Context, adminLifecycleRequest) error {
-	return nil
+func (b *adminFakeBackend) DeleteRetiredEnvironment(_ context.Context, req adminLifecycleRequest) error {
+	b.deletedRequest = req
+	return b.deleteErr
 }
 func (b *adminFakeBackend) MigrateEnvironment(_ context.Context, req adminLifecycleRequest) error {
 	b.migratedSchema = req.ExpectedSchema
@@ -133,6 +142,57 @@ func structTLSState(cert *x509.Certificate) (s tls.ConnectionState) {
 	s.PeerCertificates = []*x509.Certificate{cert}
 	s.VerifiedChains = [][]*x509.Certificate{{cert}}
 	return s
+}
+
+type handlerDiagnosticRecord struct {
+	level port.Level
+	msg   string
+	attrs []any
+}
+
+type handlerDiagnosticRecorder struct {
+	records []handlerDiagnosticRecord
+}
+
+func (d *handlerDiagnosticRecorder) Log(_ context.Context, level port.Level, msg string, attrs ...any) {
+	d.records = append(d.records, handlerDiagnosticRecord{level: level, msg: msg, attrs: append([]any(nil), attrs...)})
+}
+
+func (d *handlerDiagnosticRecorder) With(...any) port.Diagnostics { return d }
+
+func TestDeleteRetiredBackendFailureDiagnosticIsBounded(t *testing.T) {
+	const (
+		id       = "spiffe://cluster/ns/admin"
+		sentinel = "sentinel-private-operation-delete-retired"
+	)
+	backend := &adminFakeBackend{fakeBackend: newFakeBackend(), deleteErr: errors.New(sentinel + " env=env operation=delete-op")}
+	diagnostics := &handlerDiagnosticRecorder{}
+	h := NewHandler(HandlerConfig{Clients: map[string]ClientPolicy{id: {Administrator: true}}, Diagnostics: diagnostics}, backend)
+	_, err := h.DeleteRetiredEnvironment(authenticatedContext(id), &executionv1.DeleteRetiredEnvironmentRequest{
+		Environment:    &executionv1.EnvironmentRef{Id: "env", Revision: "rev"},
+		Owner:          &executionv1.Owner{Issuer: "issuer", Subject: "alice"},
+		ExpectedPvcUid: "pvc-uid",
+		OperationId:    "delete-op",
+	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("code=%v, want %v", status.Code(err), codes.Internal)
+	}
+	if backend.deletedRequest.OperationID != "delete-op" || backend.deletedRequest.Environment.ID != "env" {
+		t.Fatalf("backend request=%+v", backend.deletedRequest)
+	}
+	if len(diagnostics.records) != 1 {
+		t.Fatalf("diagnostic records=%d, want 1: %+v", len(diagnostics.records), diagnostics.records)
+	}
+	record := diagnostics.records[0]
+	if record.level != port.LevelWarn || record.msg != "execution backend failure" {
+		t.Fatalf("diagnostic=%+v", record)
+	}
+	if len(record.attrs) != 4 || record.attrs[0] != "operation" || record.attrs[1] != "delete_retired" || record.attrs[2] != "reason" || record.attrs[3] != "other" {
+		t.Fatalf("diagnostic attrs=%#v", record.attrs)
+	}
+	if strings.Contains(fmt.Sprint(record), sentinel) {
+		t.Fatalf("diagnostic leaked backend error: %+v", record)
+	}
 }
 
 func TestListReferenceIntentsProjectsAttestedOwner(t *testing.T) {
@@ -344,6 +404,27 @@ func TestRunClaimResponseKeepsNonAuthoritySigningFailureInternal(t *testing.T) {
 	details := st.Details()
 	if len(details) != 1 || details[0].(*executionv1.ErrorDetail).Code != string(executionenv.CodeInternal) || details[0].(*executionv1.ErrorDetail).Retryable {
 		t.Fatalf("details=%v", details)
+	}
+}
+
+func TestBackendReasonClassIsBounded(t *testing.T) {
+	invalid := apierrors.NewInvalid(schema.GroupKind{Group: "example.test", Kind: "Fixture"}, "private-resource-name", field.ErrorList{field.Invalid(field.NewPath("status"), "private-value", "private-detail")})
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "Kubernetes invalid", err: invalid, want: "invalid"},
+		{name: "Kubernetes conflict", err: apierrors.NewConflict(schema.GroupResource{Group: "example.test", Resource: "fixtures"}, "private-resource-name", context.Canceled), want: "conflict"},
+		{name: "controlled", err: &executionenv.Error{Code: executionenv.CodeNotReady, Message: "private-detail"}, want: "not_ready"},
+		{name: "unknown", err: errors.New("private-detail"), want: "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := backendReasonClass(tc.err); got != tc.want {
+				t.Fatalf("reason=%q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

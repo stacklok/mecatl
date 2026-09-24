@@ -459,6 +459,22 @@ func quiesceLifetimeProvider(ctx context.Context, kubeconfig string) error {
 var errLifetimeNotQuiesced = errors.New("execution provider must be quiesced")
 
 func helmLifetime(ctx context.Context, kubeconfig string, args ...string) ([]byte, error) {
+	if helmLifecycleMutation(args) {
+		versionArgs := []string{"version", "--template", "{{.Version}}"}
+		cmd := exec.CommandContext(ctx, "helm", versionArgs...)
+		cmd.Env = cleanEnv()
+		version, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("detect Helm version: %w", err)
+		}
+		major, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(string(version)), "v"), ".")
+		if major == "4" {
+			// Helm 4 defaults chart lifecycle writes to server-side apply. Use
+			// client-side mode so reviewed external ConfigMap rotation and the
+			// following quiesced chart update do not contend for field ownership.
+			args = append(args, "--server-side=false")
+		}
+	}
 	full := append([]string{"--kubeconfig", kubeconfig, "--kube-context", os.Getenv("MECATL_KUBE_CONTEXT"), "--namespace", namespace}, args...)
 	cmd := exec.CommandContext(ctx, "helm", full...)
 	cmd.Env = cleanEnv()
@@ -472,6 +488,58 @@ func helmLifetime(ctx context.Context, kubeconfig string, args ...string) ([]byt
 		return nil, fmt.Errorf("Helm %s failed: %w (output suppressed)", args[0], err)
 	}
 	return out.Bytes(), nil
+}
+
+func helmLifecycleMutation(args []string) bool {
+	if len(args) == 0 || args[0] != "install" && args[0] != "upgrade" {
+		return false
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--dry-run") {
+			return false
+		}
+	}
+	return true
+}
+
+func TestHelmLifetimeSelectsClientSideWritesOnlyForHelm4(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		version     string
+		args        []string
+		wantVersion bool
+		wantFlag    bool
+	}{
+		{name: "Helm 4 upgrade", version: "v4.0.0", args: []string{"upgrade", "mecatl-execution", "chart"}, wantVersion: true, wantFlag: true},
+		{name: "Helm 3 install", version: "v3.16.4", args: []string{"install", "mecatl-execution", "chart"}, wantVersion: true},
+		{name: "Helm 4 server dry run", version: "v4.0.0", args: []string{"install", "mecatl-execution", "chart", "--dry-run=server"}},
+		{name: "Helm 4 read", version: "v4.0.0", args: []string{"get", "values", "mecatl-execution"}},
+		{name: "Helm 4 uninstall", version: "v4.0.0", args: []string{"uninstall", "mecatl-execution"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			marker := filepath.Join(dir, "calls")
+			script := fmt.Sprintf("#!/bin/sh\nset -eu\nprintf '%%s\\n' \"$*\" >> %q\nif [ \"$1\" = version ]; then printf '%%s\\n' %q; fi\n", marker, tc.version)
+			if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if _, err := helmLifetime(t.Context(), "fixture-kubeconfig", tc.args...); err != nil {
+				t.Fatal(err)
+			}
+			calls, err := os.ReadFile(marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(calls)
+			if strings.Contains(got, "version --template {{.Version}}") != tc.wantVersion {
+				t.Fatalf("version probe mismatch: %q", got)
+			}
+			if strings.Contains(got, "--server-side=false") != tc.wantFlag {
+				t.Fatalf("client-side mode mismatch: %q", got)
+			}
+		})
+	}
 }
 
 func TestLifetimeOutputRejectsOversizedArtifacts(t *testing.T) {

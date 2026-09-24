@@ -22,7 +22,9 @@ import (
 	"k8s.io/client-go/rest"
 
 	executionv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/execution/v1"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/executioncontroller"
+	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
@@ -74,7 +76,7 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	podexec := executioncontroller.NewPodExecutor(cfg, kube, namespace)
 	store := executioncontroller.NewStore(dyn, namespace, profiles, podexec).WithKubeClient(kube)
 	reconciler := executioncontroller.NewReconciler(dyn, kube, namespace, profiles)
-	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Security: security, Ready: func() bool { return reconciler.Ready() && security.Ready() }}, store)
+	handler := executioncontroller.NewHandler(executioncontroller.HandlerConfig{Security: security, Ready: func() bool { return reconciler.Ready() && security.Ready() }, Diagnostics: slogdiag.New(os.Stderr, true, port.LevelInfo)}, store)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	go security.Run(ctx, reloadInterval)

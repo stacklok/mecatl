@@ -61,6 +61,9 @@ func (s *Store) startLifecycle(ctx context.Context, q adminLifecycleRequest, kin
 			}
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "another lifecycle operation is active"}
 		}
+		if conditionTrue(o, "Retired") {
+			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is already retired"}
+		}
 		expiredRun := expiredLifecycleClaimMatches(o, q, s.now())
 		if lifecycleAdmissionBlocked(o, q, expiredRun) {
 			return &executionenv.Error{Code: executionenv.CodeConflict, Message: "environment is not healthy and idle"}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -125,6 +126,31 @@ func TestHealthyTerminalLifecycleRejectsIncompleteEvidence(t *testing.T) {
 	}
 }
 
+func TestRetiredEnvironmentIsTerminalWithoutDesiredSpecTransition(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{})
+	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
+	setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
+	setConditionObject(env, "Ready", false, "Retained", "environment is retired with retained storage")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	kube := kubefake.NewSimpleClientset(retainedPVC())
+	r := NewReconciler(dynamicClient, kube, "ns", testProfiles())
+	t.Cleanup(r.queue.ShutDown)
+
+	if err := r.Reconcile(t.Context(), "env"); err != nil {
+		t.Fatal(err)
+	}
+	if actions := kube.Actions(); len(actions) != 0 {
+		t.Fatalf("retired environment re-entered provisioning with actions %v", actions)
+	}
+	got, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textNested(got.Object, "status", "fenceState") != fenceHealthy || !conditionTrue(got, "Retired") {
+		t.Fatalf("retired environment changed terminal state: %v", got.Object["status"])
+	}
+}
+
 func TestRetirementCompletionReceiptReplaysOnlyExactOperation(t *testing.T) {
 	env := lifecycleAdminEnvironment(2, []any{})
 	q := adminRequestFixture()
@@ -147,6 +173,233 @@ func TestRetirementCompletionReceiptReplaysOnlyExactOperation(t *testing.T) {
 	q.OwnerHash = "other-owner"
 	if err := store.RetireExact(t.Context(), q); err == nil {
 		t.Fatal("wrong subject replayed retirement receipt")
+	}
+}
+
+func TestRetiredEnvironmentRejectsNewReplacementButKeepsExactReplaysAndDelete(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{})
+	q := adminRequestFixture()
+	_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
+	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
+	setConditionObject(env, "ExecutorTerminated", true, "TerminalPodProof", "proved")
+	setConditionObject(env, "Ready", false, "Retained", "environment is retired with retained storage")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+
+	if err := store.RetireExact(t.Context(), q); err != nil {
+		t.Fatalf("exact completed retirement replay failed: %v", err)
+	}
+	replacement := q
+	replacement.OperationID = "replacement-after-retirement"
+	if err := store.ReplaceExecutor(t.Context(), replacement); err == nil {
+		t.Fatal("retired environment admitted a new replacement")
+	} else {
+		var controlled *executionenv.Error
+		if !errors.As(err, &controlled) || controlled.Code != executionenv.CodeConflict {
+			t.Fatalf("new replacement error=%v, want controlled conflict", err)
+		}
+	}
+	got, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textNested(got.Object, "status", "lifecycleOperation", "id") != "" || !conditionTrue(got, "Retired") {
+		t.Fatalf("rejected replacement mutated retired status: %v", got.Object["status"])
+	}
+
+	deleteRequest := q
+	deleteRequest.OperationID = "delete-after-rejected-replacement"
+	if err := store.DeleteRetiredEnvironment(t.Context(), deleteRequest); err != nil {
+		t.Fatalf("retained delete was stranded after rejected replacement: %v", err)
+	}
+}
+
+func TestCompletedReplacementReplayRemainsIdempotentAfterRetirement(t *testing.T) {
+	env := lifecycleAdminEnvironment(2, []any{})
+	q := adminRequestFixture()
+	_ = unstructured.SetNestedMap(env.Object, map[string]any{
+		operationIDField: q.OperationID, "previousPodUID": q.ExpectedPodUID,
+		"replacementPodUID": "replacement-pod", "pvcUID": q.ExpectedPVCUID,
+		"previousEpoch": int64(q.ExpectedEpoch), "replacementEpoch": int64(q.ExpectedEpoch + 1),
+	}, "status", "lastReplacement")
+	_ = unstructured.SetNestedField(env.Object, int64(q.ExpectedEpoch+1), "status", "epoch")
+	_ = unstructured.SetNestedField(env.Object, "replacement-pod", "status", "pod", "uid")
+	setConditionObject(env, "Retired", true, "WorkspaceRetained", "retained")
+	setConditionObject(env, "Ready", false, "Retained", "environment is retired with retained storage")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	store := NewStore(dynamicClient, "ns", testProfiles(), nil)
+
+	if err := store.ReplaceExecutor(t.Context(), q); err != nil {
+		t.Fatalf("exact completed replacement replay failed after retirement: %v", err)
+	}
+	got, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textNested(got.Object, "status", "lifecycleOperation", "id") != "" || textNested(got.Object, "status", "pod", "uid") != "replacement-pod" || !conditionTrue(got, "Retired") {
+		t.Fatalf("completed replacement replay mutated retired status: %v", got.Object["status"])
+	}
+}
+
+func TestAdmittedRetireAndDeleteIgnoreLaterProfileDrift(t *testing.T) {
+	for _, mode := range []string{"removed", "changed"} {
+		t.Run(mode, func(t *testing.T) {
+			env := lifecycleAdminEnvironment(2, []any{})
+			pod, pvc := terminalExecutor(), retainedPVC()
+			pod.Name, pvc.Name = resourceName("executor", "env"), resourceName("workspace", "env")
+			pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName = pvc.Name
+			_ = unstructured.SetNestedField(env.Object, pod.Name, "status", "pod", "name")
+			_ = unstructured.SetNestedField(env.Object, pvc.Name, "status", "pvc", "name")
+			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+			allocations := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: profileAllocationConfigMap, Namespace: "ns"}, Data: map[string]string{profileAllocationKey("go"): `["env"]`}}
+			kube := kubefake.NewSimpleClientset(pod, pvc, allocations)
+			kube.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				obj, err := kube.Tracker().Get(corev1.SchemeGroupVersion.WithResource("pods"), "ns", action.(k8stesting.DeleteAction).GetName())
+				if err != nil {
+					return true, nil, err
+				}
+				return len(obj.(*corev1.Pod).Finalizers) != 0, nil, nil
+			})
+			store := NewStore(dynamicClient, "ns", testProfiles(), nil).WithKubeClient(kube)
+			q := adminRequestFixture()
+			if err := store.RetireExact(t.Context(), q); err != nil {
+				t.Fatal(err)
+			}
+			drifted := &Profiles{byName: map[string]resolvedProfile{}}
+			if mode == "changed" {
+				profile, _ := testProfiles().get("go")
+				profile.Digest = "sha256:changed"
+				drifted.byName["go"] = profile
+			}
+			r := NewReconciler(dynamicClient, kube, "ns", drifted)
+			t.Cleanup(r.queue.ShutDown)
+			for range 8 {
+				if err := r.Reconcile(t.Context(), "env"); err != nil {
+					t.Fatal(err)
+				}
+				current, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+				if err == nil && conditionTrue(current, "Retired") {
+					break
+				}
+			}
+			retired, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("read retired environment after profile %s: %v", mode, err)
+			}
+			if !conditionTrue(retired, "Retired") || !conditionTrue(retired, "ExecutorTerminated") || textNested(retired.Object, "status", "lifecycleOperation", "id") != "" {
+				t.Fatalf("admitted retirement stranded after profile %s: status=%v", mode, retired.Object["status"])
+			}
+			q.OperationID = "delete-after-profile-" + mode
+			if err := store.DeleteRetiredEnvironment(t.Context(), q); err != nil {
+				t.Fatal(err)
+			}
+			for range 6 {
+				err := r.Reconcile(t.Context(), "env")
+				if apierrors.IsNotFound(err) {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, getErr := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{}); apierrors.IsNotFound(getErr) {
+					break
+				}
+			}
+			if _, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("retained CR survived delete after profile %s: %v", mode, err)
+			}
+			if _, err := kube.CoreV1().PersistentVolumeClaims("ns").Get(t.Context(), pvc.Name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("retained PVC survived delete after profile %s: %v", mode, err)
+			}
+			if slots := profileSlots(t, kube); len(slots) != 0 {
+				t.Fatalf("profile slot survived delete after profile %s: %v", mode, slots)
+			}
+		})
+	}
+}
+
+func TestProfileDriftBlocksEveryReplacementMutation(t *testing.T) {
+	for _, mode := range []string{"removed", "changed"} {
+		for _, phase := range []string{"Quiescing", "WaitingForTermination", "RemovingPodFinalizer", "WaitingForPodDeletion", "CreatingReplacement"} {
+			t.Run(mode+"/"+phase, func(t *testing.T) {
+				env := lifecycleAdminEnvironment(2, []any{})
+				q := adminRequestFixture()
+				_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": q.OperationID, "type": "ReplaceExecutor", "phase": phase, "expectedEpoch": int64(q.ExpectedEpoch), "expectedPodUID": q.ExpectedPodUID, "expectedPVCUID": q.ExpectedPVCUID}, "status", "lifecycleOperation")
+				if phase == "RemovingPodFinalizer" || phase == "WaitingForPodDeletion" || phase == "CreatingReplacement" {
+					_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
+				}
+				if phase == "CreatingReplacement" {
+					unstructured.RemoveNestedField(env.Object, "status", "pod")
+				}
+				objects := []runtime.Object{retainedPVC()}
+				if phase != "WaitingForPodDeletion" && phase != "CreatingReplacement" {
+					objects = append(objects, terminalExecutor())
+				}
+				dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+				kube := kubefake.NewSimpleClientset(objects...)
+				profiles := &Profiles{byName: map[string]resolvedProfile{}}
+				if mode == "changed" {
+					profile, _ := testProfiles().get("go")
+					profile.Digest = "sha256:changed"
+					profiles.byName["go"] = profile
+				}
+				r := NewReconciler(dynamicClient, kube, "ns", profiles)
+				t.Cleanup(r.queue.ShutDown)
+
+				if err := r.Reconcile(t.Context(), "env"); err != nil {
+					t.Fatal(err)
+				}
+				got, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if gotPhase := textNested(got.Object, "status", "lifecycleOperation", "phase"); gotPhase != phase {
+					t.Fatalf("replacement phase advanced after profile %s: got %q, want %q", mode, gotPhase, phase)
+				}
+				for _, action := range kube.Actions() {
+					if action.GetResource().Resource == "pods" && action.GetVerb() != "get" {
+						t.Fatalf("profile %s caused Pod mutation during %s: %v", mode, phase, action)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestProfileDriftStillBlocksProvisioningAndReplacementCreation(t *testing.T) {
+	for _, phase := range []string{"provisioning", "CreatingReplacement"} {
+		t.Run(phase, func(t *testing.T) {
+			env := lifecycleAdminEnvironment(2, []any{})
+			if phase == "CreatingReplacement" {
+				q := adminRequestFixture()
+				_ = unstructured.SetNestedMap(env.Object, terminationProof(q, terminalExecutor()), "status", "terminationProof")
+				unstructured.RemoveNestedField(env.Object, "status", "pod")
+				_ = unstructured.SetNestedMap(env.Object, map[string]any{"id": q.OperationID, "type": "ReplaceExecutor", "phase": phase, "expectedEpoch": int64(q.ExpectedEpoch), "expectedPodUID": q.ExpectedPodUID, "expectedPVCUID": q.ExpectedPVCUID}, "status", "lifecycleOperation")
+			}
+			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+			kube := kubefake.NewSimpleClientset(retainedPVC())
+			r := NewReconciler(dynamicClient, kube, "ns", &Profiles{byName: map[string]resolvedProfile{}})
+			t.Cleanup(r.queue.ShutDown)
+			if err := r.Reconcile(t.Context(), "env"); err != nil {
+				t.Fatal(err)
+			}
+			got, err := dynamicClient.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), "env", metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if phase == "provisioning" {
+				if conditionTrue(got, "Ready") || textNested(got.Object, "status", "fenceState") != fenceHealthy {
+					t.Fatalf("ordinary provisioning did not reject missing profile: %v", got.Object["status"])
+				}
+			} else if textNested(got.Object, "status", "fenceState") != "FenceUnknown" || textNested(got.Object, "status", "lifecycleOperation", "phase") != phase {
+				t.Fatalf("replacement creation did not fail closed on missing profile: %v", got.Object["status"])
+			}
+			for _, action := range kube.Actions() {
+				if action.GetVerb() == "create" {
+					t.Fatalf("profile drift created runtime resource during %s", phase)
+				}
+			}
+		})
 	}
 }
 

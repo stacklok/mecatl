@@ -47,7 +47,8 @@ func TestCreateStageProjectionRejectsRawAndPrivateData(t *testing.T) {
 	}
 	const sentinel = "PRIVATE-URL-TOKEN-OWNER-REF-STACK"
 	valid := `{"msg":"remote create stage","level":"DEBUG","stage":"attach_poll","reason":"not_ready_nonretryable","elapsed_ms":480000,"calls":4800,"session":"0123456789abcdef0123456789abcdef","error":"` + sentinel + `","grant":"` + sentinel + `"}`
-	input := sentinel + "\n" + `{"msg":"` + sentinel + `"}` + "\n" + valid + "\n"
+	backend := `{"msg":"execution backend failure","level":"WARN","operation":"delete_retired","reason":"invalid","error":"` + sentinel + `","resource":"` + sentinel + `"}`
+	input := sentinel + "\n" + `{"msg":"` + sentinel + `"}` + "\n" + valid + "\n" + backend + "\n"
 	for _, field := range []string{"stage", "reason", "session", "elapsed_ms", "calls"} {
 		var row map[string]any
 		if err := json.Unmarshal([]byte(valid), &row); err != nil {
@@ -66,7 +67,7 @@ func TestCreateStageProjectionRejectsRawAndPrivateData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("projection failed: %v", err)
 	}
-	if strings.Contains(string(out), sentinel) || strings.Contains(string(out), "grant") || strings.Count(string(out), `"kind":"create_stage"`) != 1 || !strings.Contains(string(out), "not_ready_nonretryable") {
+	if strings.Contains(string(out), sentinel) || strings.Contains(string(out), "grant") || strings.Count(string(out), `"kind":"create_stage"`) != 1 || strings.Count(string(out), `"kind":"backend_failure"`) != 1 || !strings.Contains(string(out), `"operation":"delete_retired","reason":"invalid"`) || !strings.Contains(string(out), "not_ready_nonretryable") {
 		t.Fatal("projection leaked or lost discriminating state")
 	}
 	cmd = exec.CommandContext(t.Context(), "jq", "-Rnc", "--arg", "source", "mecak8s", "-f", "create-stages.jq")

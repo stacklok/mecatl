@@ -292,6 +292,9 @@ networkPolicy:
 EOF
 fi
 
+# Keep the initial fixture install on Helm's default apply mode. On Helm 4 this
+# deliberately seeds server-side field ownership; the lifetime scenario then
+# proves the supported client-side upgrade can follow external hot rotation.
 set -- upgrade --install mecatl-execution "$root/deploy/helm/mecatl-execution" \
   --namespace execution-qualification \
   -f "$root/deploy/mecatl-execution-kind/execution-values.yaml"

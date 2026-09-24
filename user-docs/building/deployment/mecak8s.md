@@ -287,12 +287,21 @@ and verification dates with a current, reviewed rotation window. Increase
 issuer/audience, key state, key window, or TLS identity change.
 
 Install the provider chart separately from `mecak8s`, before allocating any
-execution environments. Use a namespace dedicated to this provider release:
+execution environments. Helm 3.16 is the minimum supported version. Helm 4 uses
+server-side apply by default, so each chart lifecycle command selects client-side
+mode when needed.
+
+Use a namespace dedicated to this provider release:
 
 ```sh
+HELM_APPLY_MODE=
+case "$(helm version --template '{{.Version}}')" in
+  v4.*) HELM_APPLY_MODE=--server-side=false ;;
+esac
 helm install mecatl-execution ./deploy/helm/mecatl-execution \
   --namespace <NAMESPACE> \
-  --values execution-values.yaml
+  --values execution-values.yaml \
+  $HELM_APPLY_MODE
 kubectl rollout status deployment/mecatl-execution --namespace <NAMESPACE>
 ```
 
@@ -395,6 +404,14 @@ names, profiles, network policy configuration, and security Secret name**. Keep
 operator configuration store. Retain the operator-owned Secret and its key
 history independently; the chart neither owns nor reads Secret contents.
 
+Finish and verify any external authority rotation before starting a chart
+upgrade. Do not rotate the authority ConfigMap while Helm is writing chart
+resources. Each Helm lifecycle command below initializes `HELM_APPLY_MODE` for
+the current shell. Helm 4 selects client-side field ownership, while Helm 3.16
+leaves the value empty. Continue to use reviewed current values and the quiescence
+procedure below. Do not use `--force-conflicts` or `--take-ownership` as a blanket
+takeover.
+
 **Before quiescing:** verify that the retained profiles ConfigMap has a nonempty
 `data["lifetime.json"]` and that the authority/capacity ledgers and original
 release ownership are intact. Pre-retention installations without this history
@@ -427,8 +444,13 @@ For a compatible provider upgrade:
    data, rather than empty bootstrap data, in the new release:
 
    ```sh
+   HELM_APPLY_MODE=
+   case "$(helm version --template '{{.Version}}')" in
+     v4.*) HELM_APPLY_MODE=--server-side=false ;;
+   esac
    helm upgrade mecatl-execution ./deploy/helm/mecatl-execution \
-     --namespace <NAMESPACE> --values execution-values.yaml --wait --timeout=4m
+     --namespace <NAMESPACE> --values execution-values.yaml \
+     --wait --timeout=4m $HELM_APPLY_MODE
    ```
 
 4. Complete any supported, explicit environment-schema migration while client
@@ -448,8 +470,13 @@ helm uninstall mecatl-execution --namespace <NAMESPACE>
 Reinstall with the same identity and preserved values:
 
 ```sh
+HELM_APPLY_MODE=
+case "$(helm version --template '{{.Version}}')" in
+  v4.*) HELM_APPLY_MODE=--server-side=false ;;
+esac
 helm install mecatl-execution ./deploy/helm/mecatl-execution \
-  --namespace <NAMESPACE> --values execution-values.yaml --wait --timeout=4m
+  --namespace <NAMESPACE> --values execution-values.yaml \
+  --wait --timeout=4m $HELM_APPLY_MODE
 ```
 
 Helm adopts retained resources only when their managed-by label and release-name
@@ -466,7 +493,8 @@ perform ownership or history lookups and is not an adoption mechanism. Keep
 provider writers stopped for upgrades; lookup plus apply is not a cross-resource
 transaction. Rendering rejects a nonzero existing provider Deployment or any
 remaining provider Pod, including a terminating Pod. Changed release/namespace
-adoption, chart rollback, `--take-ownership`, CRD or namespace deletion with
+adoption, chart rollback, `--force-conflicts`, `--take-ownership`, CRD or
+namespace deletion with
 retained resources, and force-finalizer cleanup are unsupported.
 
 Final infrastructure decommission is not automated by this candidate. Supported

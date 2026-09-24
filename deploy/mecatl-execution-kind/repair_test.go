@@ -41,6 +41,9 @@ helm_kube() { printf '%s\n' "$@" > "$MARKER"; }
 			if hasSkip != (profile == "production") {
 				t.Fatalf("profile %s --skip-crds=%v, want production only; args=%s", profile, hasSkip, args)
 			}
+			if strings.Contains("\n"+string(args), "\n--server-side=false\n") {
+				t.Fatal("initial fixture install must preserve Helm 4 default apply mode for the migration proof")
+			}
 		})
 	}
 }
