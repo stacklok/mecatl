@@ -3,7 +3,7 @@ package app
 import "testing"
 
 // Separating observations from configured inventory floors must not change the
-// existing reasoning-presence policy (tri-state redesign is outside ADR 0353).
+// existing reasoning-presence policy (tri-state redesign is outside ADR 0357).
 func TestProviderDiscoveryPreservesConfiguredDefaultReasoningFloor(t *testing.T) {
 	d := discoveryFixture(t, map[string]providerEntry{"custom": {defaultModel: "configured"}})
 	if supported, known := modelReasoningSupport(d.reg, "custom", "configured"); supported || !known {
