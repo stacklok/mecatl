@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
@@ -92,7 +95,10 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		callID = session.ToolCallID("pdf-call")
 	)
 	promptPDF := []byte("%PDF-1.7\nreplica-prompt-6748\n%%EOF")
+	steerPDF := []byte("%PDF-1.7\nreplica-steer-2483\n%%EOF")
 	toolPDF := []byte("%PDF-1.7\nreplica-tool-9765\n%%EOF")
+	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
+	foreign := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://idp.example", Subject: "bob", GrantType: session.GrantTypeUser})
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
@@ -111,9 +117,20 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	firstMetadata := newMetadata()
 	firstArtifacts := pdfartifact.New(firstMetadata, objects)
 	var firstRequests []port.LLMRequest
+	firstTurnEntered := make(chan struct{})
+	firstTurnRelease := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseFirstTurn := func() { releaseOnce.Do(func() { close(firstTurnRelease) }) }
+	defer releaseFirstTurn()
 	firstProvider := mockllm.NewWith([]mockllm.Option{
 		mockllm.WithCapabilities(port.ProviderCapabilities{PDF: true}),
-		mockllm.WithRequestObserver(func(req port.LLMRequest) { firstRequests = append(firstRequests, req) }),
+		mockllm.WithRequestObserver(func(req port.LLMRequest) {
+			firstRequests = append(firstRequests, req)
+			if len(firstRequests) == 1 {
+				close(firstTurnEntered)
+				<-firstTurnRelease
+			}
+		}),
 	}, mockllm.ToolCallTurn(session.NewToolCall(callID, "PDF", json.RawMessage(`{}`))), mockllm.TextTurn("created"))
 	firstCfg := Config{
 		Model: model, UserModelDir: t.TempDir(), NoSoul: true,
@@ -126,7 +143,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	first, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
 		Store:  pdfServiceStore(firstMetadata, firstArtifacts), EventLog: firstMetadata,
-		PDFArtifacts: firstArtifacts,
+		PDFArtifacts: firstArtifacts, OwnershipEnforced: true,
 		SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 			return firstFactory(ctx, sel, specs, profile, workspace, mode, []tool.Tool{pdfReplicaTool{pdf: toolPDF}})
 		},
@@ -135,12 +152,12 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(first.Close)
-	source, err := first.CreateSessionWithProvider(t.Context(), session.ModeDefault, session.Limits{MaxTurns: 5, MaxToolCalls: 5},
+	source, err := first.CreateSessionWithProvider(owner, session.ModeDefault, session.Limits{MaxTurns: 5, MaxToolCalls: 5},
 		server.ProviderSelector{ProviderID: providerOpenAI, ModelID: model})
 	if err != nil {
 		t.Fatal(err)
 	}
-	promptArtifact, err := first.UploadPdf(t.Context(), source.ID, "prompt.pdf", bytes.NewReader(promptPDF))
+	promptArtifact, err := first.UploadPdf(owner, source.ID, "prompt.pdf", bytes.NewReader(promptPDF))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,12 +165,37 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := first.StartRunContent(t.Context(), source.ID, "read the attached PDF", []session.Content{promptPart})
+	steerArtifact, err := first.UploadPdf(owner, source.ID, "steer.pdf", bytes.NewReader(steerPDF))
 	if err != nil {
 		t.Fatal(err)
 	}
+	steerPart, err := session.NewPDFContent(steerArtifact.ID, steerArtifact.Name, steerArtifact.Size, steerArtifact.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record, ok, err := firstMetadata.PDFRecordForSession(owner, source.ID, steerArtifact.ID); err != nil || !ok || record.State != redisstore.PDFReady {
+		t.Fatalf("uploaded steer PDF state = %+v, present=%t, err=%v; want ready before recording", record, ok, err)
+	}
+	run, err := first.StartRunContent(owner, source.ID, "read the attached PDF", []session.Content{promptPart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-firstTurnEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first model call never reached the live steer window")
+	}
+	if _, err := first.SteerRun(foreign, source.ID, run.RunID(), "foreign steer", []session.Content{steerPart}, "foreign-steer"); !errors.Is(err, server.ErrNotFound) {
+		t.Fatalf("foreign principal steered the owner run: %v", err)
+	}
+	ack, err := first.SteerRun(owner, source.ID, run.RunID(), "read this steer PDF too", []session.Content{steerPart}, "pdf-steer")
+	if err != nil || ack.Outcome != agent.SteerAccepted || ack.RunID != run.RunID() {
+		t.Fatalf("owner live PDF steer = %+v, %v", ack, err)
+	}
+	releaseFirstTurn()
 	var result session.ToolResult
-	recorder := server.NewRunEventRecorder(context.WithoutCancel(t.Context()), first, source.ID)
+	var sawSteerPrompt, sawSteerEcho bool
+	recorder := server.NewRunEventRecorder(context.WithoutCancel(owner), first, source.ID)
 	for ev := range run.Events() {
 		recorder.Observe(ev)
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
@@ -162,10 +204,22 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		if ev.Type == session.EvToolResult && ev.ToolResult != nil {
 			result = *ev.ToolResult
 		}
+		if ev.Type == session.EvUserPrompt && ev.UserPrompt != nil && ev.UserPrompt.Text == "read this steer PDF too" {
+			sawSteerPrompt = len(ev.UserPrompt.Parts) == 1 && reflect.DeepEqual(ev.UserPrompt.Parts[0], steerPart)
+		}
+		if ev.Type == session.EvSteer && ev.Steer != nil && ev.Steer.MessageID == "pdf-steer" {
+			sawSteerEcho = len(ev.Steer.Parts) == 1 && reflect.DeepEqual(ev.Steer.Parts[0], steerPart)
+		}
 	}
 	recorder.Close()
-	first.Persist(t.Context(), source.ID)
+	first.Persist(owner, source.ID)
 	first.FinishRun(source.ID, run)
+	if !sawSteerPrompt || !sawSteerEcho {
+		t.Fatalf("live PDF steer was not recorded and echoed as the same reference: prompt=%t echo=%t", sawSteerPrompt, sawSteerEcho)
+	}
+	if record, ok, err := firstMetadata.PDFRecordForSession(owner, source.ID, steerArtifact.ID); err != nil || !ok || record.State != redisstore.PDFCommitted {
+		t.Fatalf("recorded steer PDF state = %+v, present=%t, err=%v; want committed", record, ok, err)
+	}
 	if result.CallID != callID || result.IsError || len(result.Parts) != 2 ||
 		result.Parts[1].BlockKind != session.BlockPDFArtifact || result.Parts[1].ArtifactID == "" {
 		t.Fatalf("replica A did not externalize its actual tool result: %+v", result)
@@ -176,7 +230,16 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		!bytes.Equal(firstRequests[0].Messages[0].Parts[0].Data, promptPDF) {
 		t.Fatalf("replica A did not send the uploaded prompt PDF to its selected model: %+v", firstRequests)
 	}
-	stored, err := firstMetadata.Load(t.Context(), source.ID)
+	var firstSteerHydrated bool
+	for _, message := range firstRequests[1].Messages {
+		if message.Role == session.RoleUser && message.Text == "read this steer PDF too" && len(message.Parts) == 1 {
+			firstSteerHydrated = message.Parts[0].ArtifactID == steerArtifact.ID && bytes.Equal(message.Parts[0].Data, steerPDF)
+		}
+	}
+	if !firstSteerHydrated {
+		t.Fatalf("replica A model did not receive the live steer PDF: %+v", firstRequests[1].Messages)
+	}
+	stored, err := firstMetadata.Load(owner, source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +252,16 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		stored.Conversation.Messages[2].ToolResult.Parts[1].ArtifactID != toolID {
 		t.Fatalf("replica A persisted incomplete PDF references: %+v", stored.Conversation.Messages)
 	}
-	assertReplicaPDFRedisReferences(t, mr, source.ID, promptArtifact.ID, toolID, promptPDF, toolPDF)
+	var storedSteerReference bool
+	for _, message := range stored.Conversation.Messages {
+		if message.Role == session.RoleUser && message.Text == "read this steer PDF too" && len(message.Parts) == 1 {
+			storedSteerReference = reflect.DeepEqual(message.Parts[0], steerPart)
+		}
+	}
+	if !storedSteerReference {
+		t.Fatalf("replica A persisted no reference-only PDF steer: %+v", stored.Conversation.Messages)
+	}
+	assertReplicaPDFRedisReferences(t, mr, source.ID, []string{promptArtifact.ID, steerArtifact.ID, toolID}, promptPDF, steerPDF, toolPDF)
 	first.Close()
 
 	secondMetadata := newMetadata()
@@ -211,7 +283,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	second, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
 		Store:  pdfServiceStore(secondMetadata, secondArtifacts), EventLog: secondMetadata,
-		PDFArtifacts: secondArtifacts,
+		PDFArtifacts: secondArtifacts, OwnershipEnforced: true,
 		SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 			if sel.ProviderID != providerOpenAI || sel.ModelID != model {
 				t.Errorf("replica B selected %q/%q, want %q/%q", sel.ProviderID, sel.ModelID, providerOpenAI, model)
@@ -224,7 +296,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(second.Close)
-	resumed, err := second.StartRun(t.Context(), source.ID, "continue")
+	resumed, err := second.StartRun(owner, source.ID, "continue")
 	if err != nil {
 		t.Fatalf("replica B failed to resume: %v", err)
 	}
@@ -233,15 +305,18 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 			resumed.Approve(ev.Ask.AskID, session.VerdictAllowOnce)
 		}
 	}
-	second.Persist(t.Context(), source.ID)
+	second.Persist(owner, source.ID)
 	second.FinishRun(source.ID, resumed)
 	if selected != 1 {
 		t.Fatalf("replica B selected factory calls = %d, want 1", selected)
 	}
-	var replayedPrompt, replayedTool bool
+	var replayedPrompt, replayedSteer, replayedTool bool
 	for _, message := range replay.Messages {
 		if message.Role == session.RoleUser && len(message.Parts) > 0 && message.Parts[0].ArtifactID == promptArtifact.ID {
 			replayedPrompt = bytes.Equal(message.Parts[0].Data, promptPDF)
+		}
+		if message.Role == session.RoleUser && message.Text == "read this steer PDF too" && len(message.Parts) == 1 && message.Parts[0].ArtifactID == steerArtifact.ID {
+			replayedSteer = bytes.Equal(message.Parts[0].Data, steerPDF)
 		}
 		if message.ToolResult != nil && message.ToolResult.CallID == callID {
 			for _, part := range message.ToolResult.Parts {
@@ -251,11 +326,11 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 			}
 		}
 	}
-	if !replayedPrompt || !replayedTool {
-		t.Fatalf("replica B model replay missed prompt PDF or tool reference: prompt=%t tool=%t messages=%+v",
-			replayedPrompt, replayedTool, replay.Messages)
+	if !replayedPrompt || !replayedSteer || !replayedTool {
+		t.Fatalf("replica B model replay missed PDF reference: prompt=%t steer=%t tool=%t messages=%+v",
+			replayedPrompt, replayedSteer, replayedTool, replay.Messages)
 	}
-	_, reader, err := second.DownloadPdf(t.Context(), source.ID, toolID)
+	_, reader, err := second.DownloadPdf(owner, source.ID, toolID)
 	if err != nil {
 		t.Fatalf("replica B tool PDF download: %v", err)
 	}
@@ -264,7 +339,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if readErr != nil || !bytes.Equal(downloaded, toolPDF) {
 		t.Fatalf("replica B tool PDF differs: size=%d err=%v", len(downloaded), readErr)
 	}
-	final, err := secondMetadata.Load(t.Context(), source.ID)
+	final, err := secondMetadata.Load(owner, source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,10 +347,10 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		len(final.Conversation.Messages[0].Parts[0].Data) != 0 {
 		t.Fatal("replica B provider hydration mutated persisted prompt history")
 	}
-	assertReplicaPDFRedisReferences(t, mr, source.ID, promptArtifact.ID, toolID, promptPDF, toolPDF)
+	assertReplicaPDFRedisReferences(t, mr, source.ID, []string{promptArtifact.ID, steerArtifact.ID, toolID}, promptPDF, steerPDF, toolPDF)
 }
 
-func assertReplicaPDFRedisReferences(t *testing.T, mr *miniredis.Miniredis, id session.SessionID, promptID, toolID string, PDFs ...[]byte) {
+func assertReplicaPDFRedisReferences(t *testing.T, mr *miniredis.Miniredis, id session.SessionID, artifactIDs []string, PDFs ...[]byte) {
 	t.Helper()
 	fields, err := mr.HKeys("mecatl:session:" + string(id))
 	if err != nil {
@@ -296,7 +371,7 @@ func assertReplicaPDFRedisReferences(t *testing.T, mr *miniredis.Miniredis, id s
 	if len(entries) == 0 {
 		t.Fatal("Redis event stream is empty")
 	}
-	for _, artifactID := range []string{promptID, toolID} {
+	for _, artifactID := range artifactIDs {
 		if !strings.Contains(snapshot.String(), artifactID) || !strings.Contains(events.String(), artifactID) {
 			t.Fatalf("Redis snapshot or event stream omitted artifact reference %q", artifactID)
 		}

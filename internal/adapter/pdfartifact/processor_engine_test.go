@@ -3,7 +3,9 @@ package pdfartifact
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -92,16 +94,21 @@ func runArtifactResult(t *testing.T, processor port.ToolResultProcessor, result 
 
 func assertArtifactViews(t *testing.T, pdf []byte, views ...session.ToolResult) {
 	t.Helper()
+	digest := sha256.Sum256(pdf)
+	wantSHA256 := hex.EncodeToString(digest[:])
+	encoded := base64.StdEncoding.EncodeToString(pdf)
 	var id string
 	for index, view := range views {
 		if view.CallID != "call-1" || view.IsError || len(view.Parts) != 3 || view.Parts[1].BlockKind != session.BlockPDFArtifact {
 			t.Fatalf("view %d = %+v", index, view)
 		}
 		block := view.Parts[1]
-		if id == "" {
+		if index == 0 {
 			id = block.ArtifactID
 		}
-		if block.ArtifactID != id || block.Name != "artifact.pdf" || block.Size != int64(len(pdf)) || block.SHA256 == "" || len(block.Data) != 0 || bytes.Contains([]byte(view.Content), pdf) {
+		if id == "" || block.ArtifactID != id || block.Name != "artifact.pdf" || block.Size != int64(len(pdf)) ||
+			block.SHA256 != wantSHA256 || block.MIMEType != "application/pdf" || len(block.Data) != 0 || block.URL != "" ||
+			bytes.Contains([]byte(view.Content), pdf) || strings.Contains(view.Content, encoded) {
 			t.Fatalf("view %d leaked or changed PDF metadata: %+v", index, view)
 		}
 	}
