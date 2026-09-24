@@ -270021,6 +270021,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790265644113,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "627d07b9b65075eddf860b28f71e6154d0e76ad8",
+          "message": "feat(studio): implement appearance foundation (#1873)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-24T18:20:32+02:00",
+          "tree_id": "bde14193009d79dc41c38e89ee74f6c10e49bce3",
+          "url": "https://github.com/stacklok/mecatl/commit/627d07b9b65075eddf860b28f71e6154d0e76ad8"
+        },
+        "date": 1790267469519,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3299,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 91.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -354077,6 +354116,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790267466522,
+  "lastUpdate": 1790267470183,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
