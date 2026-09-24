@@ -240082,6 +240082,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790200723170,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a689339651fdc84c3d1c65f43a7f5b10f017223",
+          "message": "feat(mecatui): render StatusML terminal hyperlinks (#1834)\n\nCo-authored-by: Mecatl <noreply@stacklok.com>",
+          "timestamp": "2026-09-23T21:49:53-07:00",
+          "tree_id": "2dd678fed265605fee65309e3760cf30cf603c16",
+          "url": "https://github.com/stacklok/mecatl/commit/0a689339651fdc84c3d1c65f43a7f5b10f017223"
+        },
+        "date": 1790226037550,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -348752,6 +348786,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790226034735,
+  "lastUpdate": 1790226038602,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
