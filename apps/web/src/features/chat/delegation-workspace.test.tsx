@@ -607,6 +607,115 @@ describe("mounted delegated activity", () => {
     expect(container?.textContent).toContain("Activity history incomplete");
   });
 
+  for (const closeBeforeIdle of [false, true]) {
+    it(`replays the terminal child event after an attached stream ${closeBeforeIdle ? "ends without a result" : "is interrupted by idle status"}`, async () => {
+      const followStream = heldStream();
+      let sessionState = "running";
+      let activityRequests = 0;
+      let followSignal: AbortSignal | undefined;
+      const fetcher = async (request: Request): Promise<Response> => {
+        const path = new URL(request.url).pathname;
+        if (path === "/api/v1/runtime") {
+          return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
+        }
+        if (path === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
+        if (path === "/api/v1/sessions") {
+          return json({
+            complete: true,
+            items: [
+              {
+                capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+                createdAt: "2026-09-24T12:00:00Z",
+                debugTargetSessionId: "",
+                id: "session-a",
+                modelId: "test",
+                state: sessionState,
+                title: "Session A",
+                titleProvenance: "",
+                titleRevision: "0",
+                turns: 1,
+                updatedAt: "2026-09-24T12:00:00Z",
+              },
+            ],
+          });
+        }
+        if (path === "/api/v1/sessions/session-a") {
+          return json({
+            capabilities: { image: false, manualCompaction: false, modelSelection: false },
+            id: "session-a",
+            mode: "default",
+            state: sessionState,
+            usage: {
+              cacheReadTokens: "0",
+              cacheWriteTokens: "0",
+              inputTokens: "0",
+              outputTokens: "0",
+              reasoningTokens: "0",
+            },
+          });
+        }
+        if (path === "/api/v1/sessions/session-a/transcript") {
+          return json({ complete: true, messages: [], sessionId: "session-a" });
+        }
+        if (path === "/api/v1/sessions/session-a/activity") {
+          activityRequests += 1;
+          if (activityRequests === 1) {
+            followSignal = request.signal;
+            return followStream.response;
+          }
+          return completedStream(
+            { runId: "run-a", sessionId: "session-a", type: "run.started" },
+            event("subagent.start", "1", {
+              childId: "child-a",
+              parentCallId: "call-a",
+            }),
+            event("subagent.end", "2", {
+              childId: "child-a",
+              parentCallId: "call-a",
+              stop: "end_turn",
+            }),
+            event("result", "3", { stop: "end_turn" }),
+          );
+        }
+        throw new Error(`Unexpected request ${path}`);
+      };
+
+      await mountWorkspace(fetcher, () => <ChatWorkspace sessionId="session-a" />);
+      await act(async () => vi.waitFor(() => expect(followSignal).toBeDefined()));
+      await act(async () => {
+        followStream.send({ runId: "run-a", sessionId: "session-a", type: "run.started" });
+        followStream.send(
+          event("subagent.start", "1", { childId: "child-a", parentCallId: "call-a" }),
+        );
+      });
+      expect(container?.textContent).toContain("Subagent child-a");
+      expect(container?.textContent).toContain("Running");
+
+      if (closeBeforeIdle) {
+        await act(async () => followStream.close());
+        await act(async () =>
+          vi.waitFor(() => expect(container?.textContent).toContain("Outcome unknown")),
+        );
+      }
+      sessionState = "idle";
+      await act(async () => {
+        await queryClient?.invalidateQueries();
+      });
+      if (!closeBeforeIdle) {
+        await act(async () => vi.waitFor(() => expect(followSignal?.aborted).toBe(true)));
+      }
+      await act(async () =>
+        vi.waitFor(() => expect(container?.textContent).toContain("Session Aidle")),
+      );
+      await act(async () => vi.waitFor(() => expect(activityRequests).toBe(2)));
+      const card = [...(container?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
+        (button) => button.textContent?.includes("Subagent child-a"),
+      );
+      expect(card?.textContent).toContain("Finished");
+      expect(card?.textContent).not.toContain("Outcome unknown");
+    });
+  }
+
   it("keeps inline activity through a transcript refresh and opens only on request", async () => {
     const stream = heldStream();
     const requests: string[] = [];

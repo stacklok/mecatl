@@ -1518,6 +1518,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       continuation.followedRunId = followedRunId;
     };
 
+    // A prior run in this chat may have completed, but this reader must earn
+    // its own terminal observation before it can suppress settled replay.
+    if (owns() && activityFollowedSession.current === owner.sessionId) {
+      activityFollowedSession.current = undefined;
+    }
     if (replay && owns()) setMessages([]);
 
     let stream: AsyncIterable<RunStreamEvent> | undefined = firstStream;
@@ -1533,9 +1538,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           break;
         }
         if (!shouldApply(delivery)) continue;
-        if (delivery.type === "run.event" && owner.sessionId) {
-          activityFollowedSession.current = owner.sessionId;
-        }
         setDelegationFleet((current) =>
           current.sessionId === owner.sessionId
             ? foldDelegationDelivery(current, delivery)
@@ -1800,6 +1802,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           ? markDelegationRunUnfollowed(current, followedRunId)
           : current,
       );
+    }
+    if (sawResult && !unfollowed && owns() && !streamFailure.error && owner.sessionId) {
+      activityFollowedSession.current = owner.sessionId;
     }
     return runStreamEnd(
       {
