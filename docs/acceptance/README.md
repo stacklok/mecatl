@@ -403,6 +403,8 @@ PR after verification. There is no cleanup or status-only PR.
 
 - [Mecatl Studio settings](studio-settings.md) — the fourth Studio feature layer: the safe, capability-gated runtime-settings inventory, storage health, the eight-section settings workspace, and chat's model picker restored over the live inventory. Status: landed in the implementation candidate; authoritative on merge.
 
+- [Mecatl Studio settings routes and About](studio-settings-routes-and-about.md) — direct section URLs, legacy redirects, provider detail, authenticated build facts, read-only deployment settings, and the shortcuts reference. Status: proposed.
+
 - [Mecatl Studio global search and keyboard shortcuts](studio-search-shortcuts.md) — the last Studio feature layer: a browser-owned search index over already-served inventories, the closed shortcut registry, the reference page with honest help features, and the palette in the top nav. Status: landed in the implementation candidate; authoritative on merge.
 
 - [Mecatl Studio workspace shell](studio-workspace-shell.md) — responsive workspace navigation and search interaction, accessible error routes, installable assets, and honest loaded-shell offline status. Status: proposed.
