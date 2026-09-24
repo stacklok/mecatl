@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -140,6 +141,57 @@ func TestADR_0362_LiveAndRestoredExactPlanAsk(t *testing.T) {
 // TestStudioPlanAsk_Scenario2_DuplicateAndStaleVerdicts guards the negative
 // branches: ordinary origin, lease-race replacement, and explicit iteration.
 func TestStudioPlanAsk_Scenario2_DuplicateAndStaleVerdicts(t *testing.T) {
+	t.Run("ended restored run", func(t *testing.T) {
+		store := memstore.New()
+		ended := makePlanControlSession(t, "exact-plan-ended")
+		if err := ended.Complete(); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Save(t.Context(), ended); err != nil {
+			t.Fatal(err)
+		}
+		llm := mockllm.New(mockllm.TextTurn("must not run"))
+		svc := exactPlanService(t, store, llm, nil)
+		if _, err := svc.ResolvePlanAsk(t.Context(), ended.ID, ended.RunID(), "plan-ask", session.VerdictAllowAlways); !errors.Is(err, server.ErrStaleRunControl) {
+			t.Fatalf("ended verdict = %v, want stale_run_control", err)
+		}
+		got, err := store.Load(t.Context(), ended.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != session.StateCompleted || got.Mode != session.ModePlan || got.RunID() != ended.RunID() || llm.Calls() != 0 {
+			t.Fatalf("ended verdict mutated run: state=%s mode=%s run=%s calls=%d", got.State, got.Mode, got.RunID(), llm.Calls())
+		}
+	})
+	t.Run("cancelling live run", func(t *testing.T) {
+		llm := mockllm.New(mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"plan":"one"}`)), mockllm.TextTurn("must not run"))
+		svc := planApprovalService(t, llm, allowRules())
+		t.Cleanup(svc.Close)
+		sess, err := svc.CreateSession(t.Context(), session.ModePlan, session.Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := svc.StartRunContent(context.Background(), sess.ID, "make a plan", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		askID, _ := awaitLivePlanAsk(t, run, "c1", "one")
+		if err := svc.Cancel(t.Context(), sess.ID, run.RunID()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.ResolvePlanAsk(t.Context(), sess.ID, run.RunID(), askID, session.VerdictAllowOnce); !errors.Is(err, server.ErrStaleRunControl) {
+			t.Fatalf("cancelling verdict = %v, want stale_run_control", err)
+		}
+		drainApprovedEvents(t, run.Events())
+		svc.FinishRun(sess.ID, run)
+		got, err := svc.GetSession(t.Context(), sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Mode != session.ModePlan || got.RunID() != run.RunID() || llm.Calls() != 1 {
+			t.Fatalf("cancelling verdict mutated run: mode=%s run=%s calls=%d", got.Mode, got.RunID(), llm.Calls())
+		}
+	})
 	t.Run("foreign session is concealed before live run lookup", func(t *testing.T) {
 		store := memstore.New()
 		llm := mockllm.New(mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"plan":"one"}`)))
@@ -325,6 +377,10 @@ func TestExactPlanAsk_TransportParity(t *testing.T) {
 	}
 	client, closeClient := dialGRPC(t, svc)
 	defer closeClient()
+	staleRequest := &mecatlv1.ResolvePlanAskRequest{SessionId: string(parked.ID), ExpectedRunId: "old-run", AskId: "plan-ask", Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE}
+	if _, err := client.ResolvePlanAsk(t.Context(), staleRequest); status.Code(err) != codes.Aborted {
+		t.Fatalf("stale gRPC status = %v, want Aborted", err)
+	}
 	if _, err := client.ResolvePlanAsk(t.Context(), &mecatlv1.ResolvePlanAskRequest{}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("empty gRPC control = %v, want InvalidArgument", err)
 	}
@@ -333,6 +389,17 @@ func TestExactPlanAsk_TransportParity(t *testing.T) {
 	}
 	h := server.NewHTTPHandler(svc)
 	path := "/v1/sessions/" + string(parked.ID) + "/controls/resolve-plan-ask"
+	staleRec := httptest.NewRecorder()
+	h.ServeHTTP(staleRec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"expected_run_id":"old-run","ask_id":"plan-ask","verdict":"allow_once"}`)))
+	var staleProblem struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(staleRec.Body.Bytes(), &staleProblem); err != nil {
+		t.Fatal(err)
+	}
+	if staleRec.Code != http.StatusConflict || staleProblem.Code != "stale_run_control" {
+		t.Fatalf("stale HTTP status=%d code=%q", staleRec.Code, staleProblem.Code)
+	}
 	for _, body := range []string{
 		`{}`,
 		`{"expected_run_id":"run","ask_id":"ask","verdict":1}`,
