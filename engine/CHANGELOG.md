@@ -324,6 +324,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Workspace-free harness prompt sources (ADR 0357)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
 
+- **Exact reflection identity** — `agent.NewEvidenceReflector` now requires a
+  `session.ProviderModelID` and the identity-less
+  `NewEvidenceReflectorForProviderModel` compatibility constructor is removed.
+  Reflection usage is therefore always attributed to its composition-selected
+  provider/model rather than a fabricated `unknown/<model>` identity. Changed
+  (breaking, pre-v1 minor).
+
 - **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
   `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
   `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and

@@ -168,8 +168,7 @@ func MemberTools(t *team.Team, self string, hooks port.HookRunner) []tool.Tool
 func NewEngine(deps Deps) *Engine
 func NewEngineAskReviewer(engine *Engine, opts ...EngineAskReviewerOption) ChildAskReviewer
 func NewEngineJudge(engine *Engine, opts ...EngineJudgeOption) BranchJudge
-func NewEvidenceReflector(provider port.LLMProvider, model string, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error)
-func NewEvidenceReflectorForProviderModel(provider port.LLMProvider, identity session.ProviderModelID, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error)
+func NewEvidenceReflector(provider port.LLMProvider, identity session.ProviderModelID, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error)
 func NewInspectMemberTool(store port.SessionStore) tool.Tool
 func NewInspectMemberToolWithOwnership(store port.SessionStore, ownershipEnforced bool) tool.Tool
 func NewInspectSubagentTool(store port.SessionStore) tool.Tool

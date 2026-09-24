@@ -135,7 +135,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 		workerCfg.Model = model
 		workerCfg.LearningMode, workerCfg.LearningSensitivity, workerCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		var err error
-		reflector, err = agent.NewEvidenceReflectorForProviderModel(entry.provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, buildTokenCounter(workerCfg), agent.ReflectionLimits{})
+		reflector, err = agent.NewEvidenceReflector(entry.provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, buildTokenCounter(workerCfg), agent.ReflectionLimits{})
 		if err != nil {
 			return errors.Join(errAttemptSetupTransient, err)
 		}
