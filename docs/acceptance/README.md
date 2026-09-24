@@ -131,6 +131,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
 - [Purpose-attributed auxiliary token usage](auxiliary-token-usage.md) — records every reachable session-associated auxiliary LLM call in the canonical ledger under a purpose-specific provider/model-attributed kind, without changing main-run accounting or budgets. Status: proposed.
 - [Acceptance-proof resolution efficiency](acceptance-proof-resolution-efficiency.md) — keeps plan-proof resolution fail closed while avoiding duplicate task execution within the existing Doc validation runner; Vitest batching is deferred. Status: proposed.
+- [Workspace enrollment preserves session authority](workspace-enrollment-authority.md) — preserves all still-authorized composed tools while atomically replacing the authenticated broker bundle; already-corrupted snapshots remain narrowed by explicit compatibility decision. Status: proposed.
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
@@ -163,6 +164,11 @@ PR after verification. There is no cleanup or status-only PR.
   Markdown and input-rail exceptions. Status: landed.
 - [Mecatui functional conversation-card rendering](mecatui-functional-conversation-card-rendering.md) — follows the landed card-layout correction with deterministic, stateless prepared conversation-card rendering and caller-owned cache keys, while preserving main-scrollback frame, anchor, selection, and cache invariants. Status: proposed.
 - [Mecatui typed scrollback model](mecatui-typed-scrollback-model.md) — replaces the main scrollback's broad mutable block union with a sealed, typed client-local state model whose transitions own stable identity and revisioning while the root UI retains event projection, rendering, cache, frame, and viewport ownership. Status: proposed.
+- [Harness context source authority](harness-context.md) — deployment-configured project
+  instructions and customizations independent of execution, with API, file, and explicitly
+  shared execution-file sources. Status: proposed; exact operator policy, clean prompt-API break,
+  and current-policy restart rebinding are ready for human Plan / Interface review. No runtime
+  behavior is shipped by the plan.
 - [Headless mecatui credential storage](headless-client-credential-storage.md) —
   Linux-first, read-only Secret Service detection for a root-pinned keyring or
   owner-only plaintext local credential backend; selection and upgrade-only
@@ -198,7 +204,7 @@ PR after verification. There is no cleanup or status-only PR.
   contract in place with selectable-provider facets, bounded literal-term search, opaque
   snapshot-bound continuation, and stable model-visible workflow guidance while preserving
   exact `(provider_id, model_id)` selection identity. Status: landed implementation candidate;
-  authoritative only after human merge of amendment PR #1864 and the stacked implementation PR.
+  amendment PR #1864 is merged, and this becomes authoritative after the implementation PR merges.
 - [Jev delegated-model router](jev-model-router.md) — adds an explicitly selected,
   bounded Jev decision backend plus shared candidate, outcome, and breaker evidence on the
   existing delegation event, mecatui, and session-debugger paths. Status: landed implementation

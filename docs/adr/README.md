@@ -92,6 +92,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0037 — Engine public-API stability contract](./0037-engine-stability-contract.md)
 - [0038 — Event-sourced SessionStore rehydration (the reference fold)](./0038-event-sourced-rehydration.md) *(Decision 3 origin-opacity and no-public-replay clauses proposed to be superseded by 0337)*
 - [0337 — Classify synthetic user-prompt origin at emission](./0337-synthetic-user-prompt-origin.md) *(proposed)*
+- [0357 - Harness context source authority is independent of execution](./0357-harness-context-source-authority.md) *(proposed)*
 - [0043 — Ephemeral turn-0 instruction fragments](./0043-ephemeral-turn0-instruction-fragments.md)
 - [0044 — Host-supplied askID discriminator (cross-process-reconstructable askID)](./0044-host-supplied-askid-discriminator.md)
 - [0047 — Absolute path resolution inside the workspace root](./0047-absolute-path-resolution.md) *(skill read-root carve-out superseded by 0108)*
@@ -223,6 +224,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
 - [0345 — Host-local direct MCP onboarding and credential custody](./0345-direct-mcp-onboarding.md) *(proposed)*
 - [0326 — Lazy ToolHive grants refresh declared metadata](./0326-lazy-toolhive-metadata-refresh.md)
+- [0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md) *(Decision 6 superseded by 0358)*
+- [0358 — Durable workspace-enrollment broker authority provenance](./0358-durable-workspace-enrollment-broker-authority.md) *(proposed; supersedes ADR 0335 Decision 6 only)*
 
 ### Performance & diagnostics
 - [0018 — Perf observability](./0018-perf-observability.md)
