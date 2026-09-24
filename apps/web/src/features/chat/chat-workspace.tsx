@@ -42,6 +42,7 @@ import {
   Eraser,
   ExternalLink,
   GitFork,
+  ListTodo,
   ListTree,
   MessageSquareText,
   MoreHorizontal,
@@ -143,6 +144,15 @@ import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
 import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
 import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
+import { DelegationCardRow, type DelegationFocus } from "./delegation-card";
+import {
+  applyDelegationDelivery,
+  createDelegationFleet,
+  type DelegationFleet,
+  markDelegationHistoryIncomplete,
+  markDelegationRunUnfollowed,
+} from "./delegation-fleet";
+import { type DelegationAnchor, placeDelegationCards } from "./delegation-placement";
 import { DraftGreeting } from "./draft-greeting";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
 import { FailedTurnCard } from "./failed-turn-card";
@@ -252,6 +262,50 @@ const defaultDraftConfiguration: DraftChatConfiguration = {
   toolAccess: "all",
 };
 
+function delegationFamilyForKind(kind: string): DelegationFocus["family"] | undefined {
+  if (kind === "subagent.start" || kind === "subagent.tool" || kind === "subagent.end") {
+    return "subagent";
+  }
+  if (kind === "parallel.start" || kind === "parallel.branch" || kind === "parallel.end") {
+    return "parallel";
+  }
+  if (
+    kind === "team.start" ||
+    kind === "team.member" ||
+    kind === "team.tasks" ||
+    kind === "team.findings" ||
+    kind === "team.end"
+  ) {
+    return "team";
+  }
+  return undefined;
+}
+
+function hasUnsettledDelegation(fleet: DelegationFleet, runId: string): boolean {
+  return (
+    fleet.subagents.some((item) => item.runId === runId && item.state !== "finished") ||
+    fleet.parallelGroups.some(
+      (item) =>
+        item.runId === runId &&
+        (item.state !== "finished" || item.branches.some((branch) => branch.state !== "finished")),
+    ) ||
+    fleet.teams.some(
+      (item) =>
+        item.runId === runId &&
+        (item.state !== "finished" || item.members.some((member) => member.state !== "finished")),
+    )
+  );
+}
+
+function foldDelegationDelivery(fleet: DelegationFleet, delivery: RunStreamEvent): DelegationFleet {
+  const next = applyDelegationDelivery(fleet, delivery);
+  return delivery.type === "run.event" &&
+    delivery.event.kind === "result" &&
+    hasUnsettledDelegation(next, delivery.event.runId)
+    ? markDelegationRunUnfollowed(next, delivery.event.runId)
+    : next;
+}
+
 export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const recovery = useAuthRecovery();
   const [arrivalSeed] = useState(() => consumeChatSeed(new URL(window.location.href)));
@@ -275,6 +329,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const compactSession = useMutation(compactSessionMutation());
   const forkSession = useMutation(forkSessionMutation());
   const clearSession = useMutation(clearSessionMutation());
+  const [delegationFleet, setDelegationFleet] = useState(() =>
+    createDelegationFleet(sessionId ?? ""),
+  );
+  const [delegationAnchors, setDelegationAnchors] = useState<Record<string, DelegationAnchor>>({});
+  const [activityFocus, setActivityFocus] = useState<DelegationFocus>();
+  const [activityFocusRequest, setActivityFocusRequest] = useState(0);
+  const activityOpener = useRef<HTMLButtonElement>(null);
+  const activityOpenerFocus = useRef<DelegationFocus>(undefined);
+  const sessionActivityControl = useRef<HTMLButtonElement>(null);
   const [isRunning, setIsRunning] = useState(false);
   const activeRun = useRef<RunOwner | undefined>(undefined);
   const { loadedTranscriptSession, messages, setMessages } = useChatMessages(
@@ -324,6 +387,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const lastInventoryRow = useRef<SessionSummaryResponse | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
+  const visibleDelegationFleet =
+    delegationFleet.sessionId === (sessionId ?? "")
+      ? delegationFleet
+      : createDelegationFleet(sessionId ?? "");
+  const delegationPlacement = useMemo(
+    () => placeDelegationCards(messages, visibleDelegationFleet, delegationAnchors),
+    [messages, visibleDelegationFleet, delegationAnchors],
+  );
   const chatFolders = useChatFolders();
   const agentName = useAgentDisplayName().value.trim() || defaultAgentName;
   const userName = useUserDisplayName().value.trim() || "You";
@@ -396,6 +467,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     viewedSessionId.current = sessionId;
     activityRefresh.current = undefined;
     authorizationActivityCursor.current = undefined;
+    setDelegationFleet(createDelegationFleet(sessionId ?? ""));
+    setDelegationAnchors({});
+    setActivityFocus(undefined);
+    activityOpenerFocus.current = undefined;
+    activityOpener.current = null;
     // A run belongs to one session: leaving it stops its stream here, so its
     // asks, controls, and queue can never act on the chat the user opened.
     const owner = activeRun.current;
@@ -697,7 +773,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setError(undefined);
     setNotice(undefined);
     setApprovals([]);
-    if (!resumeFrom) setMessages([]);
+    if (!resumeFrom) {
+      setMessages([]);
+      setDelegationFleet(createDelegationFleet(sessionId));
+      setDelegationAnchors({});
+    }
 
     void (async () => {
       const streamFailure: StreamFailure = {};
@@ -1336,6 +1416,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           break;
         }
         if (!shouldApply(delivery)) continue;
+        setDelegationFleet((current) =>
+          current.sessionId === owner.sessionId
+            ? foldDelegationDelivery(current, delivery)
+            : current,
+        );
         if (delivery.type === "run.error") {
           onRunError?.();
           failure = { message: delivery.message, permanent: false, prompt: activePrompt };
@@ -1360,6 +1445,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             resumeFrom = decision.cursor;
           } else {
             unfollowed = true;
+            setDelegationFleet((current) =>
+              current.sessionId === owner.sessionId
+                ? markDelegationHistoryIncomplete(current)
+                : current,
+            );
             loadedTranscriptSession.current = undefined;
             if (owner.sessionId) {
               void queryClient.invalidateQueries({
@@ -1410,6 +1500,31 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           failure = undefined;
           sawResult = false;
           persistContinuation();
+        }
+        const delegationFamily = delegationFamilyForKind(event.kind);
+        const payload = event.payload;
+        const parentCallId =
+          typeof payload === "object" && payload !== null && "parentCallId" in payload
+            ? payload.parentCallId
+            : undefined;
+        if (
+          !event.unknown &&
+          delegationFamily &&
+          typeof parentCallId === "string" &&
+          parentCallId.length > 0 &&
+          owner.sessionId
+        ) {
+          ensureAssistant(activeAssistantId);
+          const anchorKey = JSON.stringify([
+            owner.sessionId,
+            event.runId,
+            delegationFamily,
+            parentCallId,
+          ]);
+          const anchor = { assistantId: activeAssistantId };
+          setDelegationAnchors((current) =>
+            current[anchorKey] ? current : { ...current, [anchorKey]: anchor },
+          );
         }
         if (event.usage && !replay) setLiveUsage(event.usage);
         if (event.kind === "session.title" && owner.sessionId) {
@@ -1558,6 +1673,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     // catch-up notice no longer describes anything.
     if (!unfollowed && owns()) {
       setNotice((current) => (current === CATCHING_UP_NOTICE ? undefined : current));
+    }
+    if (owns() && followedRunId) {
+      setDelegationFleet((current) =>
+        current.sessionId === owner.sessionId && hasUnsettledDelegation(current, followedRunId)
+          ? markDelegationRunUnfollowed(current, followedRunId)
+          : current,
+      );
     }
     return runStreamEnd(
       {
@@ -1990,6 +2112,23 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             )}
           </div>
           <Button
+            aria-label="Open session activity"
+            disabled={!sessionId}
+            onClick={(event) => {
+              activityOpener.current = event.currentTarget;
+              activityOpenerFocus.current = undefined;
+              setActivityFocus(undefined);
+              setActivityFocusRequest((value) => value + 1);
+              setContentPreview({ kind: "activity" });
+            }}
+            ref={sessionActivityControl}
+            size="sm"
+            variant="ghost"
+          >
+            <ListTodo aria-hidden="true" />
+            <span className="hidden sm:inline">Activity</span>
+          </Button>
+          <Button
             aria-label="Open local canvas"
             onClick={() => setContentPreview({ kind: "canvas" })}
             size="sm"
@@ -2164,7 +2303,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             ) : (
               <ChatTranscript
                 agentName={agentName}
+                delegationsByMessageId={delegationPlacement.byMessageId}
                 messages={messages}
+                onOpenActivity={(focus, opener) => {
+                  activityOpener.current = opener;
+                  activityOpenerFocus.current = focus;
+                  setActivityFocus(focus);
+                  setActivityFocusRequest((value) => value + 1);
+                  setContentPreview({ kind: "activity" });
+                }}
                 onOpenThread={(message) => void openSideThread(message)}
                 onReviewAuthorization={(authorization) =>
                   setContentPreview({ authorization, kind: "authorization" })
@@ -2184,6 +2331,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   threadMap[threadKeyForMessage(message)]?.sessionId
                 }
                 userName={userName}
+              />
+            )}
+            {delegationPlacement.unanchored.length > 0 && (
+              <DelegationCardRow
+                activities={delegationPlacement.unanchored}
+                onOpen={(focus, opener) => {
+                  activityOpener.current = opener;
+                  activityOpenerFocus.current = focus;
+                  setActivityFocus(focus);
+                  setActivityFocusRequest((value) => value + 1);
+                  setContentPreview({ kind: "activity" });
+                }}
               />
             )}
           </div>
@@ -2316,6 +2475,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       </section>
       {displayedPreview && (
         <ContentPreviewPanel
+          activity={{
+            fallbackOpener: sessionActivityControl.current,
+            fleet: visibleDelegationFleet,
+            focus: activityFocus,
+            focusRequest: activityFocusRequest,
+            onFocusChange: setActivityFocus,
+            opener: activityOpener.current,
+            openerFocus: activityOpenerFocus.current,
+          }}
           authorizationDisabled={authorizationBusy !== undefined}
           authorizationUncertain={
             displayedPreview?.kind === "authorization" &&

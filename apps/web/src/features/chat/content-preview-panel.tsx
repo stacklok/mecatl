@@ -3,13 +3,20 @@
 import {
   Braces,
   FileText,
+  ListTree,
   NotebookPen,
   PanelRightClose,
   Pencil,
   ScanEye,
   ShieldCheck,
 } from "lucide-react";
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, useState } from "react";
+import {
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
@@ -19,6 +26,9 @@ import {
   AuthorizationReview,
 } from "./authorization-review";
 import { HighlightedCode } from "./code-highlight";
+import type { DelegationFocus } from "./delegation-card";
+import type { DelegationFleet } from "./delegation-fleet";
+import { SessionActivityContent } from "./delegation-panel";
 import type { LocalFilePreview } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
 import { SideThreadPanel } from "./side-thread-panel";
@@ -29,12 +39,24 @@ export type ContentPreview =
   | { file: LocalFilePreview; kind: "file" }
   | { kind: "tool"; tool: ToolActivity }
   | { kind: "canvas" }
+  | { kind: "activity" }
   | { kind: "thread"; messageKey: string; parentSessionId: string; sessionId: string };
 
 /** The read-only previews `GenericPreviewPanel` renders — every kind except the independently-driven "thread" panel. */
 type StaticPreview = Exclude<ContentPreview, { kind: "thread" }>;
 
+interface ActivityPreviewState {
+  fallbackOpener?: HTMLButtonElement | null;
+  fleet: DelegationFleet;
+  focus?: DelegationFocus;
+  focusRequest: number;
+  onFocusChange: (focus?: DelegationFocus) => void;
+  opener?: HTMLButtonElement | null;
+  openerFocus?: DelegationFocus;
+}
+
 export function ContentPreviewPanel({
+  activity,
   authorizationDisabled = false,
   authorizationUncertain = false,
   canvas,
@@ -44,6 +66,7 @@ export function ContentPreviewPanel({
   onClose,
   preview,
 }: {
+  activity?: ActivityPreviewState;
   authorizationDisabled?: boolean;
   authorizationUncertain?: boolean;
   canvas: string;
@@ -77,6 +100,7 @@ export function ContentPreviewPanel({
   }
   return (
     <GenericPreviewPanel
+      activity={activity}
       authorizationDisabled={authorizationDisabled}
       authorizationUncertain={authorizationUncertain}
       canvas={canvas}
@@ -90,6 +114,7 @@ export function ContentPreviewPanel({
 }
 
 function GenericPreviewPanel({
+  activity,
   authorizationDisabled,
   authorizationUncertain,
   canvas,
@@ -99,6 +124,7 @@ function GenericPreviewPanel({
   onClose,
   preview,
 }: {
+  activity?: ActivityPreviewState;
   authorizationDisabled: boolean;
   authorizationUncertain: boolean;
   canvas: string;
@@ -112,6 +138,29 @@ function GenericPreviewPanel({
   preview: StaticPreview;
 }) {
   const width = usePanelWidth("contentPreview");
+  const title = useRef<HTMLHeadingElement>(null);
+  const lastActivityFocusRequest = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (preview.kind !== "activity" || !activity) return;
+    if (lastActivityFocusRequest.current === activity.focusRequest) return;
+    lastActivityFocusRequest.current = activity.focusRequest;
+    if (!activity?.focus) title.current?.focus();
+  }, [preview.kind, activity]);
+
+  function close() {
+    onClose();
+    if (preview.kind !== "activity") return;
+    const replacement = activity?.openerFocus
+      ? [...document.querySelectorAll<HTMLButtonElement>("button[data-delegation-focus]")].find(
+          (button) => button.dataset.delegationFocus === JSON.stringify(activity.openerFocus),
+        )
+      : undefined;
+    const target =
+      (activity?.opener?.isConnected ? activity.opener : undefined) ??
+      replacement ??
+      activity?.fallbackOpener;
+    target?.focus();
+  }
 
   function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
     event.currentTarget.focus();
@@ -133,13 +182,20 @@ function GenericPreviewPanel({
       <button
         aria-label="Close preview"
         className="absolute inset-0 z-30 bg-black/35 min-[760px]:hidden"
-        onClick={onClose}
+        onClick={close}
         type="button"
       />
       <aside
         aria-label={previewTitle(preview)}
         className="absolute inset-x-0 bottom-0 z-40 flex h-[94dvh] flex-col rounded-t-2xl border bg-background shadow-2xl min-[760px]:relative min-[760px]:inset-auto min-[760px]:order-3 min-[760px]:h-full min-[760px]:w-[var(--content-panel-width)] min-[760px]:shrink-0 min-[760px]:rounded-none min-[760px]:border-y-0 min-[760px]:border-r-0"
         style={{ "--content-panel-width": `${width.value}px` } as CSSProperties}
+        onKeyDown={(event) => {
+          if (preview.kind === "activity" && event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close();
+          }
+        }}
       >
         <button
           aria-label="Resize preview panel"
@@ -157,6 +213,8 @@ function GenericPreviewPanel({
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           {preview.kind === "authorization" ? (
             <ShieldCheck aria-hidden="true" className="size-4 text-brand-ink" />
+          ) : preview.kind === "activity" ? (
+            <ListTree aria-hidden="true" className="size-4 text-brand-ink" />
           ) : preview.kind === "canvas" ? (
             <NotebookPen aria-hidden="true" className="size-4 text-brand-ink" />
           ) : preview.kind === "tool" ? (
@@ -164,8 +222,14 @@ function GenericPreviewPanel({
           ) : (
             <FileText aria-hidden="true" className="size-4 text-brand-ink" />
           )}
-          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{previewTitle(preview)}</h2>
-          <Button aria-label="Close preview" onClick={onClose} size="icon" variant="ghost">
+          <h2
+            className="min-w-0 flex-1 truncate text-sm font-semibold"
+            ref={title}
+            tabIndex={preview.kind === "activity" ? -1 : undefined}
+          >
+            {previewTitle(preview)}
+          </h2>
+          <Button aria-label="Close preview" onClick={close} size="icon" variant="ghost">
             <PanelRightClose aria-hidden="true" />
           </Button>
         </header>
@@ -179,13 +243,20 @@ function GenericPreviewPanel({
               onOperate={onAuthorizationOperation ?? (async () => undefined)}
               onRefreshActivity={onRefreshAuthorizationActivity}
             />
+          ) : preview.kind === "activity" && activity ? (
+            <SessionActivityContent
+              key={activity.focusRequest}
+              fleet={activity.fleet}
+              focus={activity.focus}
+              onFocusChange={activity.onFocusChange}
+            />
           ) : preview.kind === "canvas" ? (
             <LocalCanvasEditor onChange={onCanvasChange} value={canvas} />
           ) : preview.kind === "tool" ? (
             <ToolResultPreview tool={preview.tool} />
-          ) : (
+          ) : preview.kind === "file" ? (
             <FilePreview file={preview.file} />
-          )}
+          ) : null}
         </div>
       </aside>
     </>
@@ -304,6 +375,7 @@ function FilePreviewContent({ file }: { file: LocalFilePreview }) {
 
 function previewTitle(preview: StaticPreview) {
   if (preview.kind === "authorization") return "Authorization review";
+  if (preview.kind === "activity") return "Session activity";
   if (preview.kind === "canvas") return "Local canvas";
   if (preview.kind === "tool") return `${preview.tool.name} result`;
   return preview.file.name;

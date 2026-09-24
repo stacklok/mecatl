@@ -59,6 +59,7 @@ export function DelegationCard({
     return (
       <button
         className={cardClass}
+        data-delegation-focus={JSON.stringify({ family: "subagent", key: activity.key })}
         onClick={(event) => onOpen({ family: "subagent", key: activity.key }, event.currentTarget)}
         type="button"
       >
@@ -83,6 +84,7 @@ export function DelegationCard({
     return (
       <button
         className={cardClass}
+        data-delegation-focus={JSON.stringify({ family: "parallel", key: activity.key })}
         onClick={(event) => onOpen({ family: "parallel", key: activity.key }, event.currentTarget)}
         type="button"
       >
@@ -121,6 +123,11 @@ export function DelegationCard({
   return (
     <button
       className={cardClass}
+      data-delegation-focus={JSON.stringify({
+        family: "team",
+        key: activity.key,
+        memberKey: member?.key,
+      })}
       onClick={(event) =>
         onOpen({ family: "team", key: activity.key, memberKey: member?.key }, event.currentTarget)
       }

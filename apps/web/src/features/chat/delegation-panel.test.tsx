@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
+import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
+import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
 import type { DelegationFocus } from "./delegation-card";
+import { DelegationCardRow } from "./delegation-card";
 import type { SubagentActivity, TeamActivity } from "./delegation-fleet";
 import { createDelegationFleet } from "./delegation-fleet";
 import { SessionActivityContent } from "./delegation-panel";
@@ -103,6 +105,125 @@ const subagent: SubagentActivity = {
 };
 
 describe("session activity content", () => {
+  it("opens activity from a card and restores focus on close", async () => {
+    const fleet = { ...createDelegationFleet("session-a"), subagents: [subagent] };
+    function Journey() {
+      const [preview, setPreview] = useState<ContentPreview>();
+      const [focus, setFocus] = useState<DelegationFocus>();
+      const [focusRequest, setFocusRequest] = useState(0);
+      const [revision, setRevision] = useState(0);
+      const opener = useRef<HTMLButtonElement>(null);
+      const openerFocus = useRef<DelegationFocus>(undefined);
+      const sessionControl = useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <button
+            onClick={(event) => {
+              opener.current = event.currentTarget;
+              openerFocus.current = undefined;
+              setFocus(undefined);
+              setFocusRequest((value) => value + 1);
+              setPreview({ kind: "activity" });
+            }}
+            ref={sessionControl}
+            type="button"
+          >
+            Session activity
+          </button>
+          <DelegationCardRow
+            activities={[subagent]}
+            key={revision}
+            onOpen={(next, button) => {
+              opener.current = button;
+              openerFocus.current = next;
+              setFocus(next);
+              setFocusRequest((value) => value + 1);
+              setPreview({ kind: "activity" });
+            }}
+          />
+          <button onClick={() => setRevision((value) => value + 1)} type="button">
+            Refresh transcript rows
+          </button>
+          {preview && (
+            <ContentPreviewPanel
+              activity={{
+                fallbackOpener: sessionControl.current,
+                fleet,
+                focus,
+                focusRequest,
+                onFocusChange: setFocus,
+                opener: opener.current,
+                openerFocus: openerFocus.current,
+              }}
+              canvas=""
+              onCanvasChange={() => {}}
+              onClose={() => setPreview(undefined)}
+              preview={preview}
+            />
+          )}
+        </>
+      );
+    }
+    const node = await mount(<Journey />);
+    const card = node.querySelector("fieldset button") as HTMLButtonElement;
+    card.focus();
+    await act(async () => card.click());
+    expect(node.querySelector('aside[aria-label="Session activity"]')).not.toBeNull();
+    expect(document.activeElement?.textContent).toBe("Subagent child-s");
+    const teamTab = [...node.querySelectorAll('[role="tab"]')].find((tab) =>
+      tab.textContent?.includes("Teams"),
+    ) as HTMLButtonElement;
+    await act(async () => teamTab.click());
+    expect(teamTab.getAttribute("aria-selected")).toBe("true");
+    await act(async () =>
+      node
+        .querySelector('aside[aria-label="Session activity"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    expect(node.querySelector('aside[aria-label="Session activity"]')).toBeNull();
+    expect(document.activeElement).toBe(card);
+
+    await act(async () => card.click());
+    const closeButton = node.querySelector(
+      'button[aria-label="Close preview"]',
+    ) as HTMLButtonElement;
+    await act(async () => closeButton.click());
+    expect(document.activeElement).toBe(card);
+
+    await act(async () => card.click());
+    const refresh = [...node.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Refresh transcript rows"),
+    ) as HTMLButtonElement;
+    await act(async () => refresh.click());
+    expect(card.isConnected).toBe(false);
+    const replacement = node.querySelector("fieldset button") as HTMLButtonElement;
+    await act(async () =>
+      (
+        node.querySelector(
+          'aside[aria-label="Session activity"] button[aria-label="Close preview"]',
+        ) as HTMLButtonElement
+      ).click(),
+    );
+    expect(document.activeElement).toBe(replacement);
+
+    await act(async () => replacement.click());
+
+    const control = [...node.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Session activity"),
+    ) as HTMLButtonElement;
+    control.focus();
+    await act(async () => control.click());
+    expect(
+      node.querySelector('aside[aria-label="Session activity"]')?.contains(document.activeElement),
+    ).toBe(true);
+    expect(document.activeElement?.textContent).toBe("Session activity");
+    await act(async () =>
+      node
+        .querySelector('aside[aria-label="Session activity"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+    );
+    expect(document.activeElement).toBe(control);
+  });
   it("renders team roster tasks and findings as plain text", async () => {
     const fleet = { ...createDelegationFleet("session-a"), teams: [team] };
     let focused: DelegationFocus | undefined;
