@@ -8,7 +8,7 @@
 **Delivery:** Split. Review the additive BFF and browser interaction contract in an independent Plan / Interface PR before an implementation PR.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1847](https://github.com/stacklok/mecatl/issues/1847).
-**Plan PR:** added when opened
+**Plan PR:** [stacklok/mecatl#1880](https://github.com/stacklok/mecatl/pull/1880)
 **Approved baseline:** absent until this Plan / Interface PR merges
 
 The existing chat retains its durable streamed run, bounded replay, queue, and controls while the transcript becomes a flat, readable conversation and the composer remains usable from desktop to a 320 px viewport. The same BFF owns SDK access and projects the few additional title and scheduled-delivery facts needed for honest live UI. The [Studio architecture topic](../architecture.md#mecatl-studio), [original chat contract](studio-chat.md), and [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) govern the boundary.
