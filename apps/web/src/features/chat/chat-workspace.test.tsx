@@ -45,6 +45,5 @@ describe("chat workspace run ownership", () => {
     expect(controlTarget(current, "chat-b")).toBeUndefined();
     expect(isStaleRunControl({ code: "stale_run_control", status: 409 })).toBe(true);
     expect(isStaleRunControl({ code: "runtime_unavailable", status: 503 })).toBe(false);
-
   });
 });
