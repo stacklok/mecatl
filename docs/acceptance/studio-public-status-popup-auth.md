@@ -8,7 +8,7 @@
 **Delivery:** Split. The new public and security interfaces need their own Plan / Interface review before implementation; the implementation PR will independently target `main`.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1845](https://github.com/stacklok/mecatl/issues/1845).
-**Plan PR:** pending
+**Plan PR:** [#1860](https://github.com/stacklok/mecatl/pull/1860)
 **Approved baseline:** absent until the Plan / Interface PR merges
 
 An anonymous browser can distinguish a reachable Studio BFF, an unavailable daemon, and a required sign-in using only a coarse public status response. OIDC login completes in a same-origin popup while the original tab retains its route and draft. Detailed runtime data and feature APIs remain behind the existing session gate.
