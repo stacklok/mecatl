@@ -1,11 +1,3 @@
-// Package scrollback owns Mecatui's logical conversation document. It models cards
-// and their lifecycle without depending on rendering, terminal, viewport, or
-// client-event packages.
-//
-// A Conversation owns all stored payloads. Its component facades accept input by
-// value and detach referenced data; snapshots likewise detach mutable data before
-// returning it. Consumers are renderers and UI controllers that need the document
-// model but must not mutate it directly.
 package scrollback
 
 import "reflect"
