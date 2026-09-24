@@ -235,11 +235,35 @@ func TestPDFArtifactStorage_ReconcileExpiryAndDeletion(t *testing.T) {
 	if len(objects.data) != 0 {
 		t.Fatal("expired unreferenced object survived reconciliation")
 	}
-	artifact, err = storage.Stage(t.Context(), id, "keep.pdf", strings.NewReader("%PDF-1.7\n%%EOF"))
+	artifact, err = storage.Stage(t.Context(), id, "mentioned.pdf", strings.NewReader("%PDF-1.7\n%%EOF"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.RecordUserPrompt("artifact "+artifact.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadata.Save(t.Context(), sess); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(25 * time.Hour)
+	if _, err := storage.Resolve(t.Context(), id, artifact.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("text-only mention protected expired upload: %v", err)
+	}
+	if err := storage.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(objects.data) != 0 {
+		t.Fatal("text-only mention protected expired object")
+	}
+	artifact, err = storage.Stage(t.Context(), id, "keep.pdf", strings.NewReader("%PDF-1.7\n%%EOF"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	part, err := session.NewPDFContent(artifact.ID, artifact.Name, artifact.Size, artifact.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RecordUserPromptWithParts("artifact "+artifact.ID, []session.Content{part}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := metadata.Save(t.Context(), sess); err != nil {

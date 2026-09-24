@@ -1,7 +1,6 @@
 package redisstore
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/stacklok/mecatl/engine/adapter/sessnap"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -252,9 +252,8 @@ func (st *Store) CommitPDFRecords(ctx context.Context, id session.SessionID, art
 	return nil
 }
 
-// PDFReferencedInSnapshot answers conservatively from the authoritative
-// snapshot. Artifact IDs are opaque ASCII tokens stored verbatim in the JSON
-// projection; a coincidental match retains an object rather than deleting it.
+// PDFReferencedInSnapshot checks typed PDF parts in the authoritative snapshot.
+// A corrupt snapshot is an error, so reconciliation cannot delete uncertain data.
 func (st *Store) PDFReferencedInSnapshot(ctx context.Context, id session.SessionID, artifactID string) (bool, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
@@ -268,7 +267,27 @@ func (st *Store) PDFReferencedInSnapshot(ctx context.Context, id session.Session
 	if err != nil {
 		return false, errors.New("pdf artifact: metadata unavailable")
 	}
-	return bytes.Contains(blob, []byte(artifactID)), nil
+	restored, err := sessnap.Unmarshal(blob)
+	if err != nil || restored.ID != id {
+		return false, errors.New("pdf artifact: corrupt snapshot")
+	}
+	for _, message := range restored.Conversation.Messages {
+		if message.Role == session.RoleUser {
+			for _, part := range message.Parts {
+				if part.Kind == session.MediaPDF && part.ArtifactID == artifactID {
+					return true, nil
+				}
+			}
+		}
+		if message.Role == session.RoleTool && message.ToolResult != nil {
+			for _, part := range message.ToolResult.Parts {
+				if part.BlockKind == session.BlockPDFArtifact && part.ArtifactID == artifactID {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 // PDFSessionExists is used before prefix cleanup. A Redis outage returns an
@@ -372,69 +391,53 @@ func (st *Store) PDFRecords(ctx context.Context) iter.Seq2[struct {
 		SessionID session.SessionID
 		Record    PDFRecord
 	}, error) bool) {
+		type entry = struct {
+			SessionID session.SessionID
+			Record    PDFRecord
+		}
 		client, release, err := st.clients.acquire()
 		if err != nil {
-			yield(struct {
-				SessionID session.SessionID
-				Record    PDFRecord
-			}{}, errors.New("pdf artifact: metadata unavailable"))
+			yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
 			return
 		}
 		defer release()
-		var cursor uint64
-		for {
-			keys, next, err := client.Scan(ctx, cursor, pdfArtifactKeyPrefix+"*", 100).Result()
-			if err != nil {
-				yield(struct {
-					SessionID session.SessionID
-					Record    PDFRecord
-				}{}, errors.New("pdf artifact: metadata unavailable"))
+		scan := client.Scan(ctx, 0, pdfArtifactKeyPrefix+"*", 100).Iterator()
+		for scan.Next(ctx) {
+			key := scan.Val()
+			if key == pdfDeletionOutboxKey {
+				continue
+			}
+			id := session.SessionID(strings.TrimPrefix(key, pdfArtifactKeyPrefix))
+			if id == "" {
+				continue
+			}
+			fields := client.HScan(ctx, key, 0, "*", 100).Iterator()
+			for fields.Next(ctx) {
+				field := fields.Val()
+				if !fields.Next(ctx) {
+					if fields.Err() != nil {
+						yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
+					} else {
+						yield(entry{}, errors.New("pdf artifact: corrupt metadata"))
+					}
+					return
+				}
+				var rec PDFRecord
+				if json.Unmarshal([]byte(fields.Val()), &rec) != nil || rec.ID != field {
+					yield(entry{}, errors.New("pdf artifact: corrupt metadata"))
+					return
+				}
+				if !yield(entry{id, rec}, nil) {
+					return
+				}
+			}
+			if fields.Err() != nil {
+				yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
 				return
 			}
-			for _, key := range keys {
-				if key == pdfDeletionOutboxKey {
-					continue
-				}
-				id := session.SessionID(strings.TrimPrefix(key, pdfArtifactKeyPrefix))
-				if id == "" {
-					continue
-				}
-				var fieldCursor uint64
-				for {
-					fields, following, err := client.HScan(ctx, key, fieldCursor, "*", 100).Result()
-					if err != nil {
-						yield(struct {
-							SessionID session.SessionID
-							Record    PDFRecord
-						}{}, errors.New("pdf artifact: metadata unavailable"))
-						return
-					}
-					for i := 0; i+1 < len(fields); i += 2 {
-						var rec PDFRecord
-						if json.Unmarshal([]byte(fields[i+1]), &rec) != nil {
-							yield(struct {
-								SessionID session.SessionID
-								Record    PDFRecord
-							}{}, errors.New("pdf artifact: corrupt metadata"))
-							return
-						}
-						if !yield(struct {
-							SessionID session.SessionID
-							Record    PDFRecord
-						}{id, rec}, nil) {
-							return
-						}
-					}
-					if following == 0 {
-						break
-					}
-					fieldCursor = following
-				}
-			}
-			if next == 0 {
-				return
-			}
-			cursor = next
+		}
+		if scan.Err() != nil {
+			yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
 		}
 	}
 }
