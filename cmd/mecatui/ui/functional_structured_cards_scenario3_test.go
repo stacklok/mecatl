@@ -21,7 +21,7 @@ func scenario3Conversation() *conversation {
 	return c
 }
 
-func TestMecatuiTypedScrollbackModel_Scenario3_CacheRevisionFastPathPreserved(t *testing.T) {
+func TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardPreparation(t *testing.T) {
 	c := scenario3Conversation()
 	r := newCacheRenderer()
 	r.renderConversationFrame(&c.scrollback, false)
@@ -50,6 +50,10 @@ func TestMecatuiTypedScrollbackModel_Scenario3_CacheRevisionFastPathPreserved(t 
 	if got := r.cardPrepares; got != prepares+1 {
 		t.Fatalf("one content revision prepared %d cards, want one", got-prepares)
 	}
+}
+
+func TestMecatuiTypedScrollbackModel_Scenario3_CacheRevisionFastPathPreserved(t *testing.T) {
+	TestMecatuiFunctionalConversationCards_Scenario3_RevisionGuardAvoidsSettledCardPreparation(t)
 }
 
 func TestMecatuiFunctionalConversationCards_Scenario3_FrameProvenanceMatchesPreparedRows(t *testing.T) {
