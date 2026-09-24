@@ -7296,7 +7296,7 @@ type attributedAskReviewer struct {
 
 func (r attributedAskReviewer) Review(ctx context.Context, req agent.ChildAskReviewRequest) (agent.ChildAskReview, session.AuxiliaryUsage, error) {
 	review, usage, err := r.inner.Review(ctx, req)
-	usage = attributedAuxiliaryUsage(session.UsageKindAskReviewer, r.identity, usage.Buckets[session.UsageKindAskReviewer].Total)
+	usage = attributedAuxiliaryUsage(session.UsageKindAskReviewer, r.identity, usage)
 	return review, usage, err
 }
 
@@ -7412,19 +7412,28 @@ func attachAskAdjudicator(deps agent.Deps, cfg Config, provReg *providerRegistry
 // provider-fixed-per-session hazard the rest of this file avoids. The per-session
 // closure already closes over the right (provider, parentModel), so each call re-derives
 // the contamination-safe deps for the classifier model.
-func attributedAuxiliaryUsage(kind session.UsageKind, identity session.ProviderModelID, usage session.Usage) session.AuxiliaryUsage {
-	if usage == (session.Usage{}) {
-		return session.AuxiliaryUsage{}
-	}
+func attributedAuxiliaryUsage(kind session.UsageKind, identity session.ProviderModelID, in session.AuxiliaryUsage) session.AuxiliaryUsage {
 	providerID := strings.Join(strings.Fields(identity.ProviderID), " ")
 	modelID := strings.Join(strings.Fields(identity.ModelID), " ")
-	attribution := "unknown"
+	fallback := ""
 	if providerID != "" && modelID != "" {
-		attribution = providerID + "/" + modelID
+		fallback = providerID + "/" + modelID
 	}
-	return session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-		kind: {Total: usage, Models: map[string]session.Usage{attribution: usage}},
-	}}
+	out := session.AuxiliaryUsage{}
+	for _, bucket := range in.Buckets {
+		for attribution, usage := range bucket.Models {
+			if usage == (session.Usage{}) {
+				continue
+			}
+			if fallback != "" && !strings.Contains(attribution, "/") {
+				attribution = fallback
+			}
+			out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+				kind: {Models: map[string]session.Usage{attribution: usage}},
+			}})
+		}
+	}
+	return out
 }
 
 func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) *agent.SubagentModelRouter {
@@ -7476,7 +7485,13 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 				return agent.ModelRouteResult{Reason: agent.RouterMissClassifierError}
 			}
 			out := cfg.jevRouter.Route(ctx, taskPrompt, toJevCategories(cfg.RouterCategories))
-			usage := attributedAuxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: "jev", ModelID: router.ClassifierModel}, out.Usage)
+			usage := session.AuxiliaryUsage{}
+			if out.Usage != (session.Usage{}) {
+				attribution := "jev/" + router.ClassifierModel
+				usage = session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+					session.UsageKindRouter: {Total: out.Usage, Models: map[string]session.Usage{attribution: out.Usage}},
+				}}
+			}
 			return resolveCandidate(out.Category, usage, jevRouterMissReason(out.Miss), out.OK, out.Confidence)
 		}
 		return router
@@ -7492,7 +7507,7 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 			category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
 				TaskPrompt: taskPrompt, Categories: cats, Default: cfg.RouterDefaultCategory,
 			})
-			usage := attributedAuxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: parentProviderID, ModelID: classifierModel}, classifierUsage.Buckets[session.UsageKindRouter].Total)
+			usage := attributedAuxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: parentProviderID, ModelID: classifierModel}, classifierUsage)
 			return resolveCandidate(category, usage, missReason, ok, nil)
 		},
 	}

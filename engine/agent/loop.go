@@ -664,6 +664,9 @@ type Run struct {
 	// NopDiagnostics returns NopDiagnostics. It is set before the run goroutine
 	// starts and only read after, so it needs no synchronisation.
 	diag port.Diagnostics
+	// auxiliaryUsageMu serializes utility/hook accounting emitted by concurrent
+	// read-only tool executions before they mutate the run-owned Session aggregate.
+	auxiliaryUsageMu sync.Mutex
 	// saveWarned makes the session-persistence WARN sticky per RUN. A store that
 	// is broken is broken for every save, and save runs at least once per turn, so
 	// logging unconditionally would emit up to MaxTurns near-identical lines per
@@ -2985,6 +2988,16 @@ func (e *Engine) refreshOperatorProfile(ctx context.Context, r *Run, cfg *prompt
 	}
 }
 
+func (r *Run) recordAuxiliaryUsage(sess *session.Session, usage session.AuxiliaryUsage) {
+	if r == nil {
+		sess.RecordAuxiliaryUsage(usage)
+		return
+	}
+	r.auxiliaryUsageMu.Lock()
+	sess.RecordAuxiliaryUsage(usage)
+	r.auxiliaryUsageMu.Unlock()
+}
+
 func estimateRequestTokens(counter TokenCounter, req port.LLMRequest) int {
 	total := countLayered(counter, req.System) + counter.CountMessages(req.Messages)
 	for _, spec := range req.Tools {
@@ -3031,6 +3044,7 @@ func (e *Engine) maybeCompact(ctx context.Context, r *Run, sess *session.Session
 		budget = 1
 	}
 	result, compacted, usage, err := e.compactionCandidate(ctx, sess.Conversation, budget)
+	usage = remapAuxiliaryUsage(ctx, r.diag, session.UsageKindCompaction, usage)
 	// The active run owns sess through its existing run capability; record all
 	// provider-reported usage before handling a terminal compaction error.
 	sess.RecordAuxiliaryUsage(usage)
@@ -3448,7 +3462,11 @@ func (e *Engine) observeCompletion(ctx context.Context, r *Run, sess *session.Se
 	}
 	if observer, ok := e.deps.LearningObserver.(auxiliaryUsageObserver); ok {
 		auxUsage, err := observer.ObserveWithUsage(ctx, tr)
+		auxUsage = remapAuxiliaryUsage(ctx, r.diag, session.UsageKindReflection, auxUsage)
 		sess.RecordAuxiliaryUsage(auxUsage)
+		if len(auxUsage.Buckets) > 0 {
+			e.save(ctx, r, sess)
+		}
 		if err != nil {
 			r.diag.Log(ctx, port.LevelWarn, "completed-trajectory observer failed", "error", err)
 		}

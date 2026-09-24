@@ -202,7 +202,7 @@ type attributedBranchJudge struct {
 
 func (j attributedBranchJudge) Judge(ctx context.Context, candidates []agent.BranchSummary, criteria string) (int, string, session.AuxiliaryUsage, error) {
 	winner, rationale, usage, err := j.inner.Judge(ctx, candidates, criteria)
-	usage = attributedAuxiliaryUsage(session.UsageKindParallelJudge, j.identity, usage.Buckets[session.UsageKindParallelJudge].Total)
+	usage = attributedAuxiliaryUsage(session.UsageKindParallelJudge, j.identity, usage)
 	return winner, rationale, usage, err
 }
 
