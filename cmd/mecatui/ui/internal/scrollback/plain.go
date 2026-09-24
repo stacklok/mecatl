@@ -1,53 +1,56 @@
 package scrollback
 
-// NoticeCardSnapshot is part of the internal typed scrollback contract.
+// NoticeCardSnapshot is the detached payload for a notice; Recover marks a
+// notice emitted while recovering a session.
 type NoticeCardSnapshot struct {
 	Text    string
 	Recover bool
 }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindNotice.
 func (NoticeCardSnapshot) Kind() Kind       { return KindNotice }
 func (NoticeCardSnapshot) payloadSnapshot() {}
 
-// TurnStatCardSnapshot is part of the internal typed scrollback contract.
+// TurnStatCardSnapshot is the detached payload for turn statistics text.
 type TurnStatCardSnapshot struct{ Text string }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindTurnStat.
 func (TurnStatCardSnapshot) Kind() Kind       { return KindTurnStat }
 func (TurnStatCardSnapshot) payloadSnapshot() {}
 
-// ErrorCardSnapshot is part of the internal typed scrollback contract.
+// ErrorCardSnapshot is the detached payload for an error; Permanent identifies
+// an error that will not be retried.
 type ErrorCardSnapshot struct {
 	Text      string
 	Permanent bool
 }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindError.
 func (ErrorCardSnapshot) Kind() Kind       { return KindError }
 func (ErrorCardSnapshot) payloadSnapshot() {}
 
-// HookCardSnapshot is part of the internal typed scrollback contract.
+// HookCardSnapshot is the detached payload recording a hook phase, tool, and
+// decision, with optional display text.
 type HookCardSnapshot struct{ Text, Phase, Tool, Decision string }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindHook.
 func (HookCardSnapshot) Kind() Kind       { return KindHook }
 func (HookCardSnapshot) payloadSnapshot() {}
 
-// DeliveryCardSnapshot is part of the internal typed scrollback contract.
+// DeliveryCardSnapshot is the detached payload for a scheduled delivery.
 type DeliveryCardSnapshot struct{ ScheduleName, FireID, Text string }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindDelivery.
 func (DeliveryCardSnapshot) Kind() Kind       { return KindDelivery }
 func (DeliveryCardSnapshot) payloadSnapshot() {}
 
-// PlainCards is part of the internal typed scrollback contract.
+// PlainCards appends non-streaming informational cards to its Conversation.
 type PlainCards struct{ conversation *Conversation }
 
-// Notices is part of the internal typed scrollback contract.
+// Notices returns the facade for appending non-streaming informational cards.
 func (c *Conversation) Notices() PlainCards { return PlainCards{conversation: c} }
 
-// AddNotice is part of the internal typed scrollback contract.
+// AddNotice appends a normal notice and returns its new, stable block ID.
 func (p PlainCards) AddNotice(text string) BlockID {
 	return p.conversation.append(NoticeCardSnapshot{Text: text})
 }
@@ -72,37 +75,38 @@ func (p PlainCards) RetractLatestNotice(text string) bool {
 	return false
 }
 
-// AddRecoveryNotice is part of the internal typed scrollback contract.
+// AddRecoveryNotice appends a recovery notice and returns its new, stable block ID.
 func (p PlainCards) AddRecoveryNotice(text string) BlockID {
 	return p.conversation.append(NoticeCardSnapshot{Text: text, Recover: true})
 }
 
-// AddTurnStat is part of the internal typed scrollback contract.
+// AddTurnStat appends turn statistics text and returns its new, stable block ID.
 func (p PlainCards) AddTurnStat(text string) BlockID {
 	return p.conversation.append(TurnStatCardSnapshot{Text: text})
 }
 
-// AddError is part of the internal typed scrollback contract.
+// AddError appends an error card and returns its new, stable block ID.
 func (p PlainCards) AddError(text string, permanent bool) BlockID {
 	return p.conversation.append(ErrorCardSnapshot{Text: text, Permanent: permanent})
 }
 
-// AddHook is part of the internal typed scrollback contract.
+// AddHook appends a hook card without display text and returns its new, stable block ID.
 func (p PlainCards) AddHook(phase, tool, decision string) BlockID {
 	return p.AddHookText("", phase, tool, decision)
 }
 
-// AddHookText is part of the internal typed scrollback contract.
+// AddHookText appends a hook card and returns its new, stable block ID.
 func (p PlainCards) AddHookText(text, phase, tool, decision string) BlockID {
 	return p.conversation.append(HookCardSnapshot{Text: text, Phase: phase, Tool: tool, Decision: decision})
 }
 
-// AddDelivery is part of the internal typed scrollback contract.
+// AddDelivery appends an unscheduled delivery and returns its new, stable block ID.
 func (p PlainCards) AddDelivery(fireID, text string) BlockID {
 	return p.AddDeliveryWithSchedule("", fireID, text)
 }
 
-// AddDeliveryWithSchedule is part of the internal typed scrollback contract.
+// AddDeliveryWithSchedule appends a scheduled delivery and returns its new,
+// stable block ID.
 func (p PlainCards) AddDeliveryWithSchedule(scheduleName, fireID, text string) BlockID {
 	return p.conversation.append(DeliveryCardSnapshot{ScheduleName: scheduleName, FireID: fireID, Text: text})
 }

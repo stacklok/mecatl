@@ -2,16 +2,13 @@ package scrollback
 
 import "reflect"
 
-// Usage is token accounting associated with a delegation without coupling the
-// model to the client package.
-// Usage is part of the internal typed scrollback contract.
+// Usage records token accounting associated with a delegation or team member.
 type Usage struct {
 	InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens, ReasoningTokens int64
 }
 
-// RoutingDecision is the bounded, scalar router evidence retained with a
-// delegation or team member. Optional values preserve source absence.
-// RoutingDecision is part of the internal typed scrollback contract.
+// RoutingDecision retains scalar routing evidence. Nil confidence values preserve
+// absence in the source event and are detached when stored or snapshotted.
 type RoutingDecision struct {
 	Backend, ClassifierModel, CandidateCategory, CandidateModel string
 	Confidence, MinimumConfidence                               *float64
@@ -20,12 +17,11 @@ type RoutingDecision struct {
 	BreakerOpen                                                 bool
 }
 
-// Float64 is part of the internal typed scrollback contract.
+// Float64 returns a pointer to v for optional scalar fields.
 func Float64(v float64) *float64 { return &v }
 
-// TraceEntry is one bounded delegation preview. A trace has at most
-// MaxTraceEntries entries; child content remains a client-only preview.
-// TraceEntry is part of the internal typed scrollback contract.
+// TraceEntry is one delegation preview event. At most MaxTraceEntries trailing
+// entries are retained when an update is stored.
 type TraceEntry struct {
 	Kind, Text, ToolName, Detail string
 	Error                        bool
@@ -34,14 +30,15 @@ type TraceEntry struct {
 // MaxTraceEntries bounds retained delegation trace entries.
 const MaxTraceEntries = 12
 
-// SubagentStart is part of the internal typed scrollback contract.
+// SubagentStart describes a started delegated child.
 type SubagentStart struct {
 	ChildID, Goal, Model, RoutedCategory, RoutedModel, RoutingReason string
 	Background                                                       bool
 	Routing                                                          RoutingDecision
 }
 
-// SubagentUpdate is part of the internal typed scrollback contract.
+// SubagentUpdate is the current or terminal state of a delegated child. Done
+// seals the update: only an identical replay is accepted afterwards.
 type SubagentUpdate struct {
 	Current, Stop, Cause string
 	Trace                []TraceEntry
@@ -52,7 +49,8 @@ type SubagentUpdate struct {
 	Artifacts            []Artifact
 }
 
-// SubagentCardSnapshot is part of the internal typed scrollback contract.
+// SubagentCardSnapshot is the detached payload of a specialized Subagent tool
+// card, including its call lifecycle and child state.
 type SubagentCardSnapshot struct {
 	Call     ToolCall
 	Resolved bool
@@ -61,17 +59,19 @@ type SubagentCardSnapshot struct {
 	Update   SubagentUpdate
 }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindSubagent.
 func (SubagentCardSnapshot) Kind() Kind       { return KindSubagent }
 func (SubagentCardSnapshot) payloadSnapshot() {}
 
-// SubagentCards is part of the internal typed scrollback contract.
+// SubagentCards transitions tool cards for delegated children.
 type SubagentCards struct{ conversation *Conversation }
 
-// Subagents is part of the internal typed scrollback contract.
+// Subagents returns the facade for subagent lifecycle transitions.
 func (c *Conversation) Subagents() SubagentCards { return SubagentCards{conversation: c} }
 
-// Start is part of the internal typed scrollback contract.
+// Start specializes the indexed pending Subagent tool card with start. It returns
+// false for a missing, wrong-kind, or non-Subagent call; an identical replay
+// succeeds without changing its revision.
 func (s SubagentCards) Start(callID string, start SubagentStart) bool {
 	c := s.conversation
 	i, ok := c.call(callID)
@@ -94,7 +94,9 @@ func (s SubagentCards) Start(callID string, start SubagentStart) bool {
 	}
 }
 
-// UpdateStart is part of the internal typed scrollback contract.
+// UpdateStart replaces the start data for an existing subagent card. It returns
+// false when callID does not identify such a card; identical input is a successful
+// no-op.
 func (s SubagentCards) UpdateStart(callID string, start SubagentStart) bool {
 	c := s.conversation
 	i, ok := c.call(callID)
@@ -113,7 +115,9 @@ func (s SubagentCards) UpdateStart(callID string, start SubagentStart) bool {
 	return c.replace(i, payload)
 }
 
-// Update is part of the internal typed scrollback contract.
+// Update records a subagent update. It returns false for a missing or wrong-kind
+// card and for a conflicting update after Done; identical updates succeed as
+// no-ops.
 func (s SubagentCards) Update(callID string, update SubagentUpdate) bool {
 	c := s.conversation
 	i, ok := c.call(callID)

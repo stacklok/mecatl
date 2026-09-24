@@ -1,13 +1,17 @@
 package scrollback
 
-// AppendixSnapshot is part of the internal typed scrollback contract.
+// AppendixSnapshot is a detached description of the changed-files appendix. ID
+// is allocated once when the first non-empty path is recorded; PrecedingBlockID
+// identifies the final ordinary card at snapshot time, or zero when there is none.
 type AppendixSnapshot struct {
 	ID               BlockID
 	Files            []string
 	PrecedingBlockID BlockID
 }
 
-// AppendixSnapshot is part of the internal typed scrollback contract.
+// AppendixSnapshot returns the current changed-files appendix and true, or false
+// if no non-empty file path has been recorded. Its Files slice is detached from
+// the Conversation.
 func (c *Conversation) AppendixSnapshot() (AppendixSnapshot, bool) {
 	if c.appendix == nil {
 		return AppendixSnapshot{}, false
@@ -17,7 +21,9 @@ func (c *Conversation) AppendixSnapshot() (AppendixSnapshot, bool) {
 	}, true
 }
 
-// RecordFileChange is part of the internal typed scrollback contract.
+// RecordFileChange records path in the conversation's changed-files appendix and
+// returns that appendix's stable ID. Empty paths return zero. Repeated paths do
+// not add another entry and return the existing appendix ID when it exists.
 func (c *Conversation) RecordFileChange(path string) BlockID {
 	if path == "" {
 		return 0

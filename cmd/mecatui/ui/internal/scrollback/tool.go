@@ -2,9 +2,8 @@ package scrollback
 
 import "reflect"
 
-// Artifact is a presentation-neutral user-audience tool artifact. Its fields
-// mirror the logical media/resource facts without depending on client events.
-// Artifact is part of the internal typed scrollback contract.
+// Artifact is presentation-neutral content produced by a tool. Data is binary
+// content; the remaining fields describe its logical media or resource form.
 type Artifact struct {
 	Kind, MIMEType string
 	Data           []byte
@@ -13,38 +12,43 @@ type Artifact struct {
 	Description    string
 }
 
-// ToolCall is part of the internal typed scrollback contract.
+// ToolCall describes the request represented by a tool card. Add copies its
+// Artifacts and indexes a non-empty ID for later lifecycle transitions.
 type ToolCall struct {
 	ID, Name  string
 	Arguments string
 	Artifacts []Artifact
 }
 
-// ToolResult is part of the internal typed scrollback contract.
+// ToolResult describes a resolved tool call. IsError records an error result;
+// Artifacts are detached when stored or returned in a snapshot.
 type ToolResult struct {
 	Body      string
 	IsError   bool
 	Artifacts []Artifact
 }
 
-// ToolCardSnapshot is part of the internal typed scrollback contract.
+// ToolCardSnapshot is the detached payload for a tool call. Resolved distinguishes
+// a pending call from one with its terminal Result.
 type ToolCardSnapshot struct {
 	Call     ToolCall
 	Resolved bool
 	Result   ToolResult
 }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindTool.
 func (ToolCardSnapshot) Kind() Kind       { return KindTool }
 func (ToolCardSnapshot) payloadSnapshot() {}
 
-// ToolCards is part of the internal typed scrollback contract.
+// ToolCards adds tool cards and records their one-way results.
 type ToolCards struct{ conversation *Conversation }
 
-// Tools is part of the internal typed scrollback contract.
+// Tools returns the facade for adding and resolving tool cards.
 func (c *Conversation) Tools() ToolCards { return ToolCards{conversation: c} }
 
-// Add is part of the internal typed scrollback contract.
+// Add appends a pending tool card, copies its mutable artifacts, and returns its
+// new stable block ID. A non-empty call.ID is available to Resolve and specialized
+// subagent or team transitions.
 func (t ToolCards) Add(call ToolCall) BlockID {
 	c := t.conversation
 	id := c.append(ToolCardSnapshot{Call: cloneCall(call)})
@@ -57,7 +61,9 @@ func (t ToolCards) Add(call ToolCall) BlockID {
 	return id
 }
 
-// Resolve is part of the internal typed scrollback contract.
+// Resolve records result as the terminal result for the call indexed by callID.
+// It returns false for an unknown call or a conflicting replay. An identical
+// replay succeeds without changing the card or its revision.
 func (t ToolCards) Resolve(callID string, result ToolResult) bool {
 	c := t.conversation
 	i, ok := c.call(callID)

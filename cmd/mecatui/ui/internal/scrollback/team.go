@@ -2,13 +2,14 @@ package scrollback
 
 import "reflect"
 
-// TeamStart is part of the internal typed scrollback contract.
+// TeamStart identifies a team and its initial member lanes.
 type TeamStart struct {
 	TeamID string
 	Lanes  []TeamLane
 }
 
-// TeamUpdate is part of the internal typed scrollback contract.
+// TeamUpdate is the current or terminal state of a team. Done seals the update:
+// only an identical replay is accepted afterwards.
 type TeamUpdate struct {
 	TeamID   string
 	Lanes    []TeamLane
@@ -36,16 +37,16 @@ type TeamLane struct {
 	ContextUsed, ContextWindow                        int64
 }
 
-// Task is part of the internal typed scrollback contract.
+// Task is a team task and its assignment, state, and prerequisite task IDs.
 type Task struct {
 	ID, Description, State, Assignee string
 	Dependencies                     []string
 }
 
-// Finding is part of the internal typed scrollback contract.
+// Finding is a result reported by a named team member.
 type Finding struct{ Member, Body string }
 
-// TeamCardSnapshot is part of the internal typed scrollback contract.
+// TeamCardSnapshot is the detached payload of a specialized Team tool card.
 type TeamCardSnapshot struct {
 	Call     ToolCall
 	Resolved bool
@@ -53,17 +54,18 @@ type TeamCardSnapshot struct {
 	Update   TeamUpdate
 }
 
-// Kind is part of the internal typed scrollback contract.
+// Kind returns KindTeam.
 func (TeamCardSnapshot) Kind() Kind       { return KindTeam }
 func (TeamCardSnapshot) payloadSnapshot() {}
 
-// TeamCards is part of the internal typed scrollback contract.
+// TeamCards transitions tool cards for teams.
 type TeamCards struct{ conversation *Conversation }
 
-// Teams is part of the internal typed scrollback contract.
+// Teams returns the facade for team lifecycle transitions.
 func (c *Conversation) Teams() TeamCards { return TeamCards{conversation: c} }
 
-// Start is part of the internal typed scrollback contract.
+// Start specializes the indexed pending Team tool card. It returns false for a
+// missing, wrong-kind, or non-Team call; an identical replay succeeds as a no-op.
 func (t TeamCards) Start(callID string, start TeamStart) bool {
 	c := t.conversation
 	i, ok := c.call(callID)
@@ -87,7 +89,8 @@ func (t TeamCards) Start(callID string, start TeamStart) bool {
 	}
 }
 
-// Update is part of the internal typed scrollback contract.
+// Update records a team update. It returns false for a missing or wrong-kind card
+// and for a conflicting update after Done; identical updates succeed as no-ops.
 func (t TeamCards) Update(callID string, update TeamUpdate) bool {
 	c := t.conversation
 	i, ok := c.call(callID)
