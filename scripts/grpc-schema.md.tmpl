@@ -43,7 +43,7 @@ HTTP/SSE, see [Connect with gRPC or HTTP](/building/deployment/grpc-http.md).
 | RPC details | Client streaming | Server streaming | Description |
 |---|---|---|---|
 {{range .Methods -}}
-| **RPC:** `{{.Name}}`<br />**Request:** `{{.RequestLongType}}`<br />**Response:** `{{.ResponseLongType}}` | {{if .RequestStreaming}}Yes{{else}}No{{end}} | {{if .ResponseStreaming}}Yes{{else}}No{{end}} | {{template "rpc-description" .}} |
+| **RPC:** `{{.Name}}`<br />**Request:** `{{.RequestLongType}}`<br />**Response:** `{{.ResponseLongType}}` | <span className="grpc-mobile-label">Client streaming</span>{{if .RequestStreaming}}Yes{{else}}No{{end}} | <span className="grpc-mobile-label">Server streaming</span>{{if .ResponseStreaming}}Yes{{else}}No{{end}} | {{if .Description}}<span className="grpc-mobile-label">Description</span>{{end}}{{template "rpc-description" .}} |
 {{end}}
 </div>
 
