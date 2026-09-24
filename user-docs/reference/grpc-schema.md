@@ -636,6 +636,20 @@ session.Content for tool-result Parts). A sum-type over Kind.
 
 
 
+#### `mecatl.v1.ContextOccupancy`
+
+ContextOccupancy is the latest display-only context-meter numerator recorded
+for a completed agent-loop turn. It is neither durable token accounting nor a
+run budget baseline.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `input_tokens` | `int64` |  |  |  |
+| `estimated` | `bool` |  |  |  |
+
+
+
+
 #### `mecatl.v1.ControlRefused`
 
 ControlRefused is the metadata-only acknowledgement for a rejected in-stream
@@ -2938,6 +2952,7 @@ Session is a snapshot of server-side session state.
 | `title_metadata` | `SessionTitle` |  |  | title_metadata is the canonical bounded, source-free title lifecycle projection. |
 | `token_usage` | `Session.TokenUsageEntry` | repeated |  | token_usage is the canonical durable session token accounting. Map keys identify usage types; `main` is ordinary main-session agent usage. Other keys are server-defined and are not enumerated here. |
 | `session_capabilities` | `SessionCapabilities` |  |  | session_capabilities is the selected provider+model&#39;s authoritative media input capability. It mirrors CreateSessionResponse.session_capabilities so GetSession, resume, clear, and fork retain accurate media gates. Nil on an older server tells clients to fall back to the server-wide capabilities. |
+| `latest_context_occupancy` | `ContextOccupancy` |  |  | latest_context_occupancy is optional display state from the latest completed agent-loop turn. Its absence is unknown, including for legacy snapshots. |
 
 
 
@@ -3629,6 +3644,7 @@ overloading the shared Event fields.
 |---|---|---|---|---|
 | `usage` | `Usage` |  |  | usage is THIS turn&#39;s model-call token accounting (not the run total or the durable session total). |
 | `duration_ms` | `int64` |  |  | duration_ms is the elapsed milliseconds for the turn&#39;s model call; 0 when the server had no clock. |
+| `estimated` | `bool` |  |  | estimated is true when usage.input_tokens is a display-only fallback estimate rather than provider-reported usage. |
 
 
 

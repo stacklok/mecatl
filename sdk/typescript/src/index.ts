@@ -204,6 +204,7 @@ export type {
   ServerCapabilities,
   SessionActivityReplayStatus,
   SessionCapabilities,
+  SessionContextOccupancy,
   SessionPlacement,
   SessionRelationship,
   SessionResolvedModel,

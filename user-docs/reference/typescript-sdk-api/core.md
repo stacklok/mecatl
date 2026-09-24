@@ -169,6 +169,7 @@ For entry points and runtime support, see the [SDK API overview](./index.md).
 | [`SessionActivityReplayStatus`](#api-sessionactivityreplaystatus-interface) | Interface |
 | [`SessionBusyError`](#api-sessionbusyerror-class) | Class |
 | [`SessionCapabilities`](#api-sessioncapabilities-interface) | Interface |
+| [`SessionContextOccupancy`](#api-sessioncontextoccupancy-interface) | Interface |
 | [`SessionLimits`](#api-sessionlimits-interface) | Interface |
 | [`SessionMcpServer`](#api-sessionmcpserver-interface) | Interface |
 | [`SessionMode`](#api-sessionmode-typealias) | Type alias |
@@ -4922,6 +4923,26 @@ readonly audio: boolean;
 readonly image: boolean;
 ```
 
+<Heading as="h3" id="api-sessioncontextoccupancy-interface"><code>SessionContextOccupancy</code></Heading>
+
+Display-only context meter data from the latest completed session turn.
+
+```ts
+export interface SessionContextOccupancy
+```
+
+<Heading as="h4" id="api-sessioncontextoccupancy-estimated-propertysignature"><code>SessionContextOccupancy.estimated</code></Heading>
+
+```ts
+readonly estimated: boolean;
+```
+
+<Heading as="h4" id="api-sessioncontextoccupancy-inputtokens-propertysignature"><code>SessionContextOccupancy.inputTokens</code></Heading>
+
+```ts
+readonly inputTokens: bigint;
+```
+
 <Heading as="h3" id="api-sessionlimits-interface"><code>SessionLimits</code></Heading>
 
 Optional stop conditions for a newly created session.
@@ -5223,6 +5244,12 @@ readonly debugMcpTools: readonly string[];
 
 ```ts
 readonly kind: string;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-latestcontextoccupancy-propertysignature"><code>SessionSnapshot.latestContextOccupancy</code></Heading>
+
+```ts
+readonly latestContextOccupancy?: SessionContextOccupancy;
 ```
 
 <Heading as="h4" id="api-sessionsnapshot-limits-propertysignature"><code>SessionSnapshot.limits</code></Heading>
