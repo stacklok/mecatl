@@ -166,6 +166,10 @@ PR after verification. There is no cleanup or status-only PR.
   that wraps raw dynamic rows before styling, preventing Lipgloss alignment
   padding from becoming vertical whitespace while retaining intentional
   Markdown and input-rail exceptions. Status: landed.
+- [Mecatui full-width tool cards](mecatui-full-width-tool-cards.md) — makes every
+  framed main-conversation tool execution, including Skill activation, consume
+  the complete conversation width while preserving resize, wrapping, selection,
+  and collapsed/expanded content behavior. Status: proposed.
 - [Mecatui functional conversation-card rendering](mecatui-functional-conversation-card-rendering.md) — follows the landed card-layout correction with deterministic, stateless prepared conversation-card rendering and caller-owned cache keys, while preserving main-scrollback frame, anchor, selection, and cache invariants. Status: proposed.
 - [Mecatui typed scrollback model](mecatui-typed-scrollback-model.md) — replaces the main scrollback's broad mutable block union with a sealed, typed client-local state model whose transitions own stable identity and revisioning while the root UI retains event projection, rendering, cache, frame, and viewport ownership. Status: proposed.
 - [Harness context source authority](harness-context.md) — deployment-configured project
