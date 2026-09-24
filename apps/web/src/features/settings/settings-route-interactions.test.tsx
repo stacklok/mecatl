@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
-import { getAuthSessionQueryKey } from "@mecatl-studio/contracts/query";
+import { getAuthSessionQueryKey, getPublicStatusQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterContextProvider } from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { stringSearchParams } from "../../lib/search-params";
 import { SettingsSectionPage } from "../../routes/workspace.settings_.$section";
@@ -71,22 +70,50 @@ describe("settings route interactions", () => {
       ]) {
         const router = await load(path);
         window.history.replaceState({}, "", router.state.location.href);
-        const client = new QueryClient();
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
         client.setQueryData(getAuthSessionQueryKey(), { mode: "oidc", status: "anonymous" });
-        const markup = renderToStaticMarkup(
-          <QueryClientProvider client={client}>
-            <AuthGate>
-              <p>Private detail facts</p>
-            </AuthGate>
-          </QueryClientProvider>,
-        );
-        const document = new DOMParser().parseFromString(markup, "text/html");
-        const signIn = document.querySelector<HTMLAnchorElement>('a[href^="/api/v1/auth/login?"]');
-        expect(signIn).not.toBeNull();
-        expect(
-          new URL(signIn?.href ?? "", window.location.origin).searchParams.get("return_to"),
-        ).toBe(path);
-        expect(markup).not.toContain("Private detail facts");
+        client.setQueryData(getPublicStatusQueryKey(), {
+          connection: "reachable",
+          signInRequired: true,
+        });
+        const open = vi.spyOn(window, "open").mockReturnValue(null);
+        const host = document.createElement("div");
+        document.body.append(host);
+        const root = createRoot(host);
+        try {
+          await act(async () => {
+            root.render(
+              <QueryClientProvider client={client}>
+                <AuthGate>
+                  <p>Private detail facts</p>
+                </AuthGate>
+              </QueryClientProvider>,
+            );
+          });
+          const signIn = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+            button.textContent?.includes("Sign in to Mecatl"),
+          );
+          expect(signIn).toBeDefined();
+          expect(host.textContent).not.toContain("Private detail facts");
+
+          await act(async () => signIn?.click());
+          expect(open).toHaveBeenCalledTimes(1);
+          const popupUrl = new URL(String(open.mock.calls[0]?.[0]), window.location.origin);
+          expect(popupUrl.pathname).toBe("/api/v1/auth/login");
+          expect(popupUrl.searchParams.get("flow")).toBe("popup");
+          expect(popupUrl.searchParams.get("return_to")).toBe(path);
+
+          const manual = host.querySelector<HTMLAnchorElement>('a[href^="/api/v1/auth/login?"]');
+          expect(manual).not.toBeNull();
+          const manualUrl = new URL(manual?.href ?? "", window.location.origin);
+          expect(manualUrl.searchParams.get("flow")).toBeNull();
+          expect(manualUrl.searchParams.get("return_to")).toBe(path);
+          expect(`${window.location.pathname}${window.location.search}`).toBe(path);
+        } finally {
+          await act(async () => root.unmount());
+          host.remove();
+          vi.restoreAllMocks();
+        }
       }
     } finally {
       window.history.replaceState({}, "", original);

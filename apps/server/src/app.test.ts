@@ -80,7 +80,10 @@ describe("Studio BFF", () => {
     const headers = { Cookie: "studio_access=valid" };
     const runtime = await app.request("/api/v1/runtime", { headers });
     expect(runtime.status).toBe(200);
-    await expect(runtime.json()).resolves.toEqual(sampleSnapshot());
+    await expect(runtime.json()).resolves.toEqual({
+      ...sampleSnapshot(),
+      sdkVersion: installedSdkPackageVersion(),
+    });
 
     const health = await app.request("/api/v1/storage/health", { headers });
     expect(health.status).toBe(200);

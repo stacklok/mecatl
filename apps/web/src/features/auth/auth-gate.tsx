@@ -31,6 +31,11 @@ const initialRecovery: RecoveryState = {
 
 function currentLoginUrl(popup: boolean): string {
   const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return authLoginUrl(returnTo, popup);
+}
+
+/** Keep the full requested browser URL through the interactive sign-in round trip. */
+export function authLoginUrl(returnTo: string, popup = false) {
   const query = new URLSearchParams({ return_to: returnTo });
   if (popup) query.set("flow", "popup");
   return `/api/v1/auth/login?${query}`;
@@ -227,11 +232,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
       )}
     </AuthRecoveryContext.Provider>
   );
-}
-
-/** Keep the full requested browser URL through the interactive sign-in round trip. */
-export function authLoginUrl(returnTo: string) {
-  return `/api/v1/auth/login?${new URLSearchParams({ return_to: returnTo }).toString()}`;
 }
 
 function PublicShell() {

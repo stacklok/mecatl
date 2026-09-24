@@ -210,6 +210,7 @@ describe("settings routes", () => {
       noteLoginComplete: () => undefined,
       noteLoginFailure: () => undefined,
       save: async () => undefined,
+      signInRequired: async () => true,
       startLogin: async () => "https://issuer.example.com/authorize",
     };
     const gated = createApp({ authentication: auth, runtime: fakeRuntime(), settings: service });
