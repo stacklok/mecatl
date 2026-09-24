@@ -24,6 +24,7 @@
     method func (*Session).Interrupt() error
     method func (*Session).InterruptAuthorization() ([]ToolResult, error)
     method func (*Session).LastError() string
+    method func (*Session).LatestContextOccupancy() (ContextOccupancy, bool)
     method func (*Session).LimitTripped() (StopReason, bool)
     method func (*Session).PauseForApproval(ask PendingAsk) error
     method func (*Session).PauseForAuthorization(pending PendingAuthorization) error
@@ -35,6 +36,7 @@
     method func (*Session).RecordFailureMetadata(metadata RetryMetadata) error
     method func (*Session).RecordHarnessPrompt(text string) error
     method func (*Session).RecordLastError(cause string) error
+    method func (*Session).RecordLatestContextOccupancy(occupancy ContextOccupancy)
     method func (*Session).RecordPrincipalPromptWithParts(text string, parts []Content, instructions []Message) error
     method func (*Session).RecordTitleAttempt(attempt TitleAttempt)
     method func (*Session).RecordTitleSourcePrompt(text string)
@@ -341,6 +343,7 @@ type AuthorizationStatus string
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
 type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
+type ContextOccupancy struct{InputTokens int; Estimated bool}
 type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string

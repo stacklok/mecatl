@@ -311,6 +311,10 @@ type Session struct {
 	// tokenUsage is the aggregate-owned canonical durable accounting ledger.
 	// TokenUsageSnapshot returns an owned external view.
 	tokenUsage map[UsageKind]TokenUsage
+	// latestContextOccupancy is the optional display-only input-token numerator
+	// from the latest completed agent-loop turn. It is distinct from tokenUsage
+	// and must not participate in accounting or run-budget decisions.
+	latestContextOccupancy *ContextOccupancy
 	// usageAttribution is the normalized run-scoped provider/model attribution
 	// selected by composition. Empty means a restored or inert session has not
 	// yet lazily derived it from its durable labels.
