@@ -356,9 +356,12 @@ for await (const event of downloadRun) {
 }
 ```
 
-Each `Run` can be consumed only once, by event iteration or `result()`. HTTP and
-gRPC both stream PDF uploads and downloads. Ending download iteration early or
-cancelling its request closes the stream. Artifact IDs are scoped to the
+Each `Run` can be consumed only once, by event iteration or `result()`.
+`downloadPdf()` starts its request when you consume the iterator. Pass an
+`AbortSignal` in its request options to cancel an active download; ending
+iteration early also closes the response body. HTTP and gRPC both stream PDF
+uploads and downloads. You can compare the saved file with the block's `size`
+and `sha256` when you need to verify it. Artifact IDs are scoped to the
 owning session; another session cannot use them. On `mecak8s`, an operator must
 [configure PDF artifact storage](/building/deployment/mecak8s.md#store-pdf-artifacts)
 before the server advertises this capability. Local `mecated` does not provide

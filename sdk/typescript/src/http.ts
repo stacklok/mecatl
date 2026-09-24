@@ -436,6 +436,71 @@ class HttpTransport implements Transport {
     const firstInput = first.done ? create(method.input) : create(method.input, first.value);
     const jsonInput = encodeInput(method, firstInput);
     const effectiveSignal = timeoutSignal(signal, timeoutMs);
+    if (method.name === "DownloadPdf") {
+      const resolved = resolveHTTPBinaryRoute(method, jsonInput);
+      if (
+        resolved?.classification.requestBody !== "none" ||
+        resolved.classification.response !== "binary"
+      ) {
+        throw new UnsupportedFeatureError("http_DownloadPdf", { transport: "http" });
+      }
+      await iterator.return?.();
+      const response = await this.#request(
+        { body: false, method: resolved.method, path: resolved.path },
+        {},
+        effectiveSignal,
+        header,
+      );
+      if (!response.ok) await this.#problem(response);
+      if (
+        !(response.headers.get("content-type") ?? "").toLowerCase().startsWith("application/pdf") ||
+        response.body === null
+      ) {
+        throw malformedSuccess("DownloadPdf returned an invalid PDF stream", response);
+      }
+      const reader = response.body.getReader();
+      const output = method.output;
+      const messages = (async function* (): AsyncIterable<MessageShape<O>> {
+        let completed = false;
+        let total = 0;
+        const onAbort = () => {
+          void reader.cancel().catch(() => undefined);
+        };
+        effectiveSignal?.addEventListener("abort", onAbort, { once: true });
+        try {
+          for (;;) {
+            if (effectiveSignal?.aborted) throw normalizeError(effectiveSignal.reason, "http");
+            const next = await reader.read();
+            if (effectiveSignal?.aborted) throw normalizeError(effectiveSignal.reason, "http");
+            if (next.done) {
+              completed = true;
+              break;
+            }
+            total += next.value.byteLength;
+            if (total > PDF_MAX_BYTES) {
+              throw malformedSuccess("DownloadPdf exceeds the PDF size limit", response);
+            }
+            for (let offset = 0; offset < next.value.byteLength; offset += PDF_CHUNK_BYTES) {
+              yield create(output, {
+                chunk: next.value.subarray(offset, offset + PDF_CHUNK_BYTES),
+              } as unknown as MessageInitShape<O>);
+            }
+          }
+        } finally {
+          effectiveSignal?.removeEventListener("abort", onAbort);
+          if (!completed) await reader.cancel().catch(() => undefined);
+          reader.releaseLock();
+        }
+      })();
+      return {
+        header: response.headers,
+        message: messages,
+        method,
+        service: method.parent,
+        stream: true,
+        trailer: new Headers(),
+      };
+    }
     if (method.name === "UploadPdf") {
       const firstFrame = firstInput as unknown as UploadPdfRequest;
       if (

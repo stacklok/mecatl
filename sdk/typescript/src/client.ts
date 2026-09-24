@@ -72,7 +72,13 @@ import {
   type Storage,
   type UserModel,
 } from "./namespaces-ops.js";
-import { PDF_MAX_BYTES, type PdfSource, pdfUploadFrames, validatePdfUpload } from "./pdf-upload.js";
+import {
+  PDF_CHUNK_BYTES,
+  PDF_MAX_BYTES,
+  type PdfSource,
+  pdfUploadFrames,
+  validatePdfUpload,
+} from "./pdf-upload.js";
 import { createPlanResolution, type PlanApprovalVerdict, type PlanResolution } from "./plan.js";
 import {
   createRawClient,
@@ -384,6 +390,18 @@ export interface Session {
     options: { name: string },
     requestOptions?: RequestOptions,
   ): Promise<PdfPromptPart>;
+  /**
+   * Streams a session-owned PDF artifact in ordered byte chunks.
+   *
+   * The stream starts on first consumption. Returning from its iterator closes
+   * the transport response and cancels any unfinished download.
+   *
+   * @param artifactId - Opaque ID from a PDF tool-result block.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns An async byte stream with no whole-file buffer.
+   * @throws `UnsupportedFeatureError` when artifact storage is unavailable.
+   */
+  downloadPdf(artifactId: string, requestOptions?: RequestOptions): AsyncIterable<Uint8Array>;
   /**
    * Starts a run and resolves once its first run-ID-bearing event arrives.
    *
@@ -930,6 +948,62 @@ class SessionImpl implements Session {
       });
     }
     return pdfPart(response.artifactId);
+  }
+
+  async *downloadPdf(
+    artifactId: string,
+    requestOptions?: RequestOptions,
+  ): AsyncIterable<Uint8Array> {
+    this.#operations.assertOpen();
+    assertRequestNotAborted(requestOptions, this.#operations.transportKind);
+    pdfPart(artifactId);
+    if (this.#promptCapabilities?.pdfArtifacts !== true) {
+      throw new UnsupportedFeatureError("pdf_artifacts", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    const cancel = new AbortController();
+    const signals = [this.#operations.clientSignal, cancel.signal];
+    if (requestOptions?.signal !== undefined) signals.push(requestOptions.signal);
+    const signal = AbortSignal.any(signals);
+    const sessionId = this.id;
+    let total = 0;
+    const frames = this.#operations
+      .stream(
+        HarnessService.method.downloadPdf,
+        (async function* () {
+          yield { sessionId, artifactId };
+        })(),
+        { ...requestOptions, signal },
+      )
+      [Symbol.asyncIterator]();
+    try {
+      for (;;) {
+        const next = await frames.next();
+        if (next.done) break;
+        const frame = next.value;
+        const chunk = frame.chunk;
+        if (
+          !(chunk instanceof Uint8Array) ||
+          chunk.byteLength === 0 ||
+          chunk.byteLength > PDF_CHUNK_BYTES
+        ) {
+          throw new ProtocolError("DownloadPdf returned an invalid chunk", {
+            transport: this.#operations.transportKind,
+          });
+        }
+        total += chunk.byteLength;
+        if (total > PDF_MAX_BYTES) {
+          throw new ProtocolError("DownloadPdf exceeds the PDF size limit", {
+            transport: this.#operations.transportKind,
+          });
+        }
+        yield chunk;
+      }
+    } finally {
+      cancel.abort();
+      await frames.return?.();
+    }
   }
 
   async run(

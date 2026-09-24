@@ -1,8 +1,11 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -37,13 +40,43 @@ func (h *HTTPHandler) uploadPDF(w http.ResponseWriter, r *http.Request) {
 	}{ArtifactID: artifact.ID, Name: artifact.Name, Size: artifact.Size, SHA256: artifact.SHA256})
 }
 
-// downloadPDF reserves the reviewed binary route. The download slice replaces
-// this fail-closed handler with a streaming reader; ownership is already checked
-// by Service.DownloadPdf before any content could be returned.
+// downloadPDF streams one authorized object through the reviewed binary route.
 func (h *HTTPHandler) downloadPDF(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DownloadPdf(r.Context(), session.SessionID(r.PathValue("id")), r.PathValue("artifact_id")); err != nil {
+	meta, reader, err := h.svc.DownloadPdf(r.Context(), session.SessionID(r.PathValue("id")), r.PathValue("artifact_id"))
+	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	writeServiceError(w, ErrPDFArtifactsUnavailable)
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", safePDFAttachmentName(meta.Name)))
+	w.Header().Set("Content-Length", strconv.FormatInt(meta.Size, 10))
+	w.WriteHeader(http.StatusOK)
+	_ = streamPDF(r.Context(), meta, reader, func(chunk []byte) error {
+		if _, err := w.Write(chunk); err != nil {
+			return err
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return nil
+	})
+}
+
+func safePDFAttachmentName(name string) string {
+	if len(name) == 0 || len(name) > 255 {
+		return "artifact.pdf"
+	}
+	var safe strings.Builder
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_' {
+			safe.WriteRune(r)
+		} else {
+			safe.WriteByte('_')
+		}
+	}
+	if safe.String() == "." || safe.String() == ".." {
+		return "artifact.pdf"
+	}
+	return safe.String()
 }

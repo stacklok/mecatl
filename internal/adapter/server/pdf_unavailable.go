@@ -33,11 +33,33 @@ func (s *Service) UploadPdf(ctx context.Context, id session.SessionID, name stri
 	return PDFArtifact{}, ErrInternal
 }
 
-// DownloadPdf is the fail-closed service seam until PDF artifact storage is
-// composed. The later download task replaces the body and returns a reader.
-func (s *Service) DownloadPdf(ctx context.Context, id session.SessionID, _ string) error {
+// DownloadPdf authorizes the exact persisted session before opening any PDF
+// object. A caller owns the returned reader and must close it.
+func (s *Service) DownloadPdf(ctx context.Context, id session.SessionID, artifactID string) (PDFArtifact, io.ReadCloser, error) {
 	if _, err := s.GetSession(ctx, id); err != nil {
-		return err
+		return PDFArtifact{}, nil, err
 	}
-	return ErrPDFArtifactsUnavailable
+	if s.cfg.PDFArtifacts == nil {
+		return PDFArtifact{}, nil, ErrPDFArtifactsUnavailable
+	}
+	meta, reader, err := s.cfg.PDFArtifacts.Open(ctx, id, artifactID)
+	if err != nil {
+		if reader != nil {
+			_ = reader.Close()
+		}
+		if ctx.Err() != nil {
+			return PDFArtifact{}, nil, ctx.Err()
+		}
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidArgument) {
+			return PDFArtifact{}, nil, err
+		}
+		return PDFArtifact{}, nil, ErrInternal
+	}
+	if reader == nil || meta.ID != artifactID || meta.Size <= 0 || meta.Size > maxPDFUploadBytes {
+		if reader != nil {
+			_ = reader.Close()
+		}
+		return PDFArtifact{}, nil, ErrInternal
+	}
+	return meta, reader, nil
 }
