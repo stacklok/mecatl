@@ -129,11 +129,20 @@ to unavailable execution files still depends on that backend and follows its sou
 
 Command listing first loads and owner-authorizes the session, then binds from its authoritative stored
 owner and profile; it does not reattach an unrelated execution backend. Build owns a concurrency-safe
-per-session binding cache: first creation is single-flight, failed creation is retryable, reuse verifies
-principal/profile consistency, and retirement is idempotent and waits for in-flight borrowers before
-cleanup. Actual session teardown retires the binding, and Build shutdown closes all remaining bindings.
-An explicitly execution-file-backed source may still authorize and bind that source backend. Actual
-runs separately admit the execution capabilities they need.
+per-session binding cache: first creation is single-flight, failed creation is retryable, and reuse
+verifies principal/profile consistency. Retirement closes a binding generation, not the durable
+session ID forever. It rejects new borrows of that generation and delays cleanup until its existing
+borrowers release. Explicit owner-authorized supported reload calls the consumer-local
+`CommandSourceResolver.Activate(context.Context, session.SessionID, *session.Principal, string) error`
+under the Service's existing per-session lifecycle serialization. It verifies the stored owner/profile
+and current source authorization before publishing a fresh generation; failure leaves retirement
+intact, and an already-active matching generation remains unchanged. Ordinary or stale queued Borrow
+cannot reactivate a retired generation. Each release targets its exact generation, so draining old
+borrowers and old cleanup cannot close or evict a replacement. Actual session teardown retires the
+current generation; Build shutdown retires all generations and permanently prevents both borrowing
+and activation. This preserves existing close/reload compatibility without a public or durable
+generation identity. An explicitly execution-file-backed source may still authorize and bind that
+source backend. Actual runs separately admit the execution capabilities they need.
 
 Keep existing command precedence as the compatibility default and preserve established miss and
 fail-soft behavior within an explicitly configured composition. A missing optional source can

@@ -28,6 +28,7 @@ consume it in sibling changes, rather than introducing backend-specific source r
 - [x] Integration stack — Decision: model/contract first, shared implementation second, then PR #580 and a separate Redis #1811 integration.
 - [x] Composition configuration and resolution schema — Decision: trusted composition registers source IDs, and operator-only configuration names enabled IDs plus a highest-precedence-first source order for each content kind. Instructions combine in that order or select the first nonempty source in `replace` mode. Commands, rules, skills, and agent definitions resolve exact-name collisions by order, with exact operator-declared exclusions and named lower-source overrides. Resolution performs no recursive merge and assigns no transport-derived precedence.
 - [x] Public API transition — Decision: make the workspace-free `engine/prompt` API break directly, with source-bound filesystem adapters. The implementation PR updates API snapshots and `engine/CHANGELOG.md`; it does not retain workspace-taking compatibility overloads or adapters.
+- [x] Binding-generation retirement — Decision: the operator explicitly authorizes close to retire a binding generation, not a session ID forever. Explicit owner-authorized supported reload activates a fresh generation under current authorization; retired generations never reopen, stale borrows do not reactivate them, old releases cannot affect replacements, and Build shutdown prevents activation. This clarification is authorized for the draft stack; it does not claim approval by plan merge.
 - [x] Restart and deployment reconfiguration — Decision: on harness restart, existing sessions and schedules rebind to the current deployment composition under current authorization. Configuration changes may change resumed context. Do not add a durable `HarnessContextRef`, reject legacy state, or infer a binding from stored execution placement.
 
 ## Interface contract
@@ -242,6 +243,7 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
 
   type CommandSourceResolver interface {
       Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error)
+      Activate(context.Context, session.SessionID, *session.Principal, string) error
       Retire(session.SessionID)
   }
   ```
@@ -252,11 +254,22 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
   ownerless local/system-principal behavior remains valid. The Build-owned resolver serializes first
   creation per session ID, verifies that every reuse has the same principal/profile, snapshots once,
   and retries a later call after failed creation rather than caching a poisoned entry. The returned
-  release function borrows one in-flight reference. `Retire` is idempotent, prevents new borrows, and
-  delays cleanup until active calls release; actual session teardown paths invoke it, and `Built.Close`
-  retires and closes all remaining bindings. Agent command expansion borrows the same binding and
-  policy. A source explicitly backed by execution files may itself authorize and bind that backend;
-  independent discovery does not require execution reattachment.
+  release function borrows one in-flight reference to that exact binding generation. `Retire` is
+  idempotent and retires the current generation, not the durable session ID forever: it prevents new
+  borrows of that generation and delays its cleanup until its active calls release. Actual session
+  teardown invokes it. A supported explicit reload (`LoadSession` or `LoadSessionWithMCP`) first
+  owner-authorizes the stored session and, under the existing per-session lifecycle serialization,
+  calls `Activate` with its stored ID, cloned Owner, and Profile. `Activate` verifies the same
+  owner/profile and current source authorization, and publishes a fresh generation only after
+  successful binding. An already-active same-owner/profile generation remains unchanged; a failed
+  activation leaves retirement intact and can be retried. Neither an ordinary nor a stale queued
+  `Borrow` may reactivate a retired generation. Old borrowers retain their exact generation until
+  release; old releases and cleanup cannot remove or close its replacement. `Built.Close` permanently
+  closes admission to both Borrow and Activate and retires all generations, including those still
+  draining. No public generation selector or durable generation field is added. Agent command
+  expansion borrows the same binding and policy. A source explicitly backed by execution files may
+  itself authorize and bind that backend; independent discovery does not require execution
+  reattachment.
 
   Process-scoped resources close from `Built.Close`; session/principal-scoped resources close when
   their binding retires and again safely at Build shutdown. The implementation adds this owned cache,
@@ -356,7 +369,7 @@ a durable context identity or legacy-state rejection.
   - verify: `TestADR_0354_HarnessContext_Scenario4_ConfiguredChainFailureSemantics`
 - AC4.3: After restart, an existing session and a scheduled fire resolve the current operator policy and current authorization. A changed configuration can change resumed context without a stored context reference, destructive migration, or fallback to stored execution placement.
   - verify: `TestADR_0354_HarnessContext_Scenario4_RestartRebindsCurrentPolicy`
-- AC4.4: Concurrent first use creates one principal-scoped binding per session ID; same-owner/profile calls reuse it without sharing snapshots, live lookups, or caches across owners. Failed creation is retryable, mismatched principal/profile reuse fails closed, retirement waits for in-flight borrowers and is idempotent, and actual session teardown plus Build shutdown close the binding. Caller-neutral process sources remain safely shared.
+- AC4.4: Concurrent first use creates one principal-scoped binding generation per session ID; same-owner/profile calls reuse it without sharing snapshots, live lookups, or caches across owners. Failed creation is retryable, mismatched principal/profile reuse fails closed, and retirement is idempotent and lets existing borrowers drain. Actual session teardown retires that generation. Explicit owner-authorized supported reload can activate a fresh generation under current source authorization; stale queued Borrow alone cannot reactivate it, and old releases or cleanup cannot evict or close the replacement. Build shutdown retires all generations and prevents later activation. Caller-neutral process sources remain safely shared.
   - verify: `TestADR_0354_HarnessContext_Scenario4_PrincipalScopedBindingIsolation`
 
 ### Scenario 5 - Hybrid context composition and controlled overrides
