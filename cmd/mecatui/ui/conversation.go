@@ -450,7 +450,11 @@ func blockFromSnapshot(s scrollback.BlockSnapshot) (block, bool) {
 }
 
 func (c *conversation) syncSnapshot(i int) {
-	b, ok := blockFromSnapshot(c.scrollback.SnapshotAt(i))
+	c.syncBlock(c.scrollback.SnapshotAt(i))
+}
+
+func (c *conversation) syncBlock(snapshot scrollback.BlockSnapshot) {
+	b, ok := blockFromSnapshot(snapshot)
 	if !ok {
 		return
 	}

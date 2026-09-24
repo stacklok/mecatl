@@ -64,6 +64,16 @@ func (c *Conversation) SnapshotAt(i int) BlockSnapshot {
 	return BlockSnapshot{ID: card.id, Revision: card.revision, Payload: clonePayload(card.payload)}
 }
 
+// SnapshotForCall returns the current detached snapshot for a call without scanning
+// historical snapshots. Call IDs are indexed when their tool card is appended.
+func (c *Conversation) SnapshotForCall(callID string) (BlockSnapshot, bool) {
+	i, ok := c.call(callID)
+	if !ok {
+		return BlockSnapshot{}, false
+	}
+	return c.SnapshotAt(i), true
+}
+
 func (c *Conversation) append(payload PayloadSnapshot) BlockID {
 	c.nextID++
 	c.cards = append(c.cards, card{id: c.nextID, payload: clonePayload(payload)})

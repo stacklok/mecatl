@@ -1,6 +1,8 @@
 package scrollback
 
-func cloneStrings(in []string) []string { return append([]string(nil), in...) }
+import "slices"
+
+func cloneStrings(in []string) []string { return slices.Clone(in) }
 
 func cloneCall(in ToolCall) ToolCall {
 	in.Artifacts = cloneArtifacts(in.Artifacts)
@@ -13,7 +15,7 @@ func cloneResult(in ToolResult) ToolResult {
 }
 
 func cloneArtifacts(in []Artifact) []Artifact {
-	out := append([]Artifact(nil), in...)
+	out := slices.Clone(in)
 	for i := range out {
 		out[i].Data = append([]byte(nil), out[i].Data...)
 	}
@@ -35,7 +37,7 @@ func cloneTrace(in []TraceEntry) []TraceEntry {
 	if len(in) > MaxTraceEntries {
 		in = in[len(in)-MaxTraceEntries:]
 	}
-	return append([]TraceEntry(nil), in...)
+	return slices.Clone(in)
 }
 
 func cloneSubagentStart(in SubagentStart) SubagentStart {
@@ -56,15 +58,15 @@ func cloneTeamLane(in TeamLane) TeamLane {
 }
 
 func cloneTeamUpdate(in TeamUpdate) TeamUpdate {
-	in.Lanes = append([]TeamLane(nil), in.Lanes...)
+	in.Lanes = slices.Clone(in.Lanes)
 	for i := range in.Lanes {
 		in.Lanes[i] = cloneTeamLane(in.Lanes[i])
 	}
-	in.Tasks = append([]Task(nil), in.Tasks...)
+	in.Tasks = slices.Clone(in.Tasks)
 	for i := range in.Tasks {
 		in.Tasks[i].Dependencies = cloneStrings(in.Tasks[i].Dependencies)
 	}
-	in.Findings = append([]Finding(nil), in.Findings...)
+	in.Findings = slices.Clone(in.Findings)
 	return in
 }
 

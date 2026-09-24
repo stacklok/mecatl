@@ -91,6 +91,9 @@ func (t TeamCards) Update(callID string, update TeamUpdate) bool {
 	if !ok {
 		return false
 	}
+	if payload.Update.Done {
+		return true
+	}
 	update = cloneTeamUpdate(update)
 	if reflect.DeepEqual(payload.Update, update) {
 		return true

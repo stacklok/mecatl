@@ -1,7 +1,5 @@
 package scrollback
 
-import "reflect"
-
 // Artifact is a presentation-neutral user-audience tool artifact. Its fields
 // mirror the logical media/resource facts without depending on client events.
 // Artifact is part of the internal typed scrollback contract.
@@ -66,21 +64,21 @@ func (t ToolCards) Resolve(callID string, result ToolResult) bool {
 	}
 	switch payload := c.cards[i].payload.(type) {
 	case ToolCardSnapshot:
-		if payload.Resolved && reflect.DeepEqual(payload.Result, result) {
+		if payload.Resolved {
 			return true
 		}
 		payload.Resolved = true
 		payload.Result = cloneResult(result)
 		return c.replace(i, payload)
 	case SubagentCardSnapshot:
-		if payload.Resolved && reflect.DeepEqual(payload.Result, result) {
+		if payload.Resolved {
 			return true
 		}
 		payload.Resolved = true
 		payload.Result = cloneResult(result)
 		return c.replace(i, payload)
 	case TeamCardSnapshot:
-		if payload.Resolved && reflect.DeepEqual(payload.Result, result) {
+		if payload.Resolved {
 			return true
 		}
 		payload.Resolved = true

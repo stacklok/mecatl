@@ -98,6 +98,9 @@ func (s SubagentCards) Update(callID string, update SubagentUpdate) bool {
 	if !ok {
 		return false
 	}
+	if payload.Update.Done {
+		return true
+	}
 	update = cloneSubagentUpdate(update)
 	if reflect.DeepEqual(payload.Update, update) {
 		return true

@@ -231,6 +231,7 @@ var oracleSteps = []struct {
 var oracleNonMutators = map[string]string{
 	"appendBlock":         "legacy delegation compatibility gateway",
 	"syncSnapshot":        "typed model snapshot projection gateway, driven by ordinary mutators",
+	"syncBlock":           "typed model snapshot projection gateway, driven by syncSnapshot and syncCall",
 	"syncCall":            "typed call projection gateway, driven by typed delegation mutations",
 	"subagentCard":        "typed snapshot lookup",
 	"teamCard":            "typed snapshot lookup",

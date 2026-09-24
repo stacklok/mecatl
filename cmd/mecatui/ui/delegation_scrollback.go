@@ -50,35 +50,18 @@ func traceFromScroll(in []scrollback.TraceEntry) []teamTrace {
 }
 
 func (c *conversation) syncCall(callID string) {
-	for i := 0; i < c.scrollback.Len(); i++ {
-		s := c.scrollback.SnapshotAt(i)
-		switch p := s.Payload.(type) {
-		case scrollback.ToolCardSnapshot:
-			if p.Call.ID == callID {
-				c.syncSnapshot(i)
-				return
-			}
-		case scrollback.SubagentCardSnapshot:
-			if p.Call.ID == callID {
-				c.syncSnapshot(i)
-				return
-			}
-		case scrollback.TeamCardSnapshot:
-			if p.Call.ID == callID {
-				c.syncSnapshot(i)
-				return
-			}
-		}
+	if snapshot, ok := c.scrollback.SnapshotForCall(callID); ok {
+		c.syncBlock(snapshot)
 	}
 }
 
 func (c *conversation) subagentCard(callID string) (scrollback.SubagentCardSnapshot, bool) {
-	for i := 0; i < c.scrollback.Len(); i++ {
-		if p, ok := c.scrollback.SnapshotAt(i).Payload.(scrollback.SubagentCardSnapshot); ok && p.Call.ID == callID {
-			return p, true
-		}
+	snapshot, ok := c.scrollback.SnapshotForCall(callID)
+	if !ok {
+		return scrollback.SubagentCardSnapshot{}, false
 	}
-	return scrollback.SubagentCardSnapshot{}, false
+	payload, ok := snapshot.Payload.(scrollback.SubagentCardSnapshot)
+	return payload, ok
 }
 
 func (c *conversation) applySubagentTyped(msg client.SubagentMsg) {
@@ -126,12 +109,12 @@ func teamLaneFor(lanes []scrollback.TeamLane, name string) ([]scrollback.TeamLan
 }
 
 func (c *conversation) teamCard(callID string) (scrollback.TeamCardSnapshot, bool) {
-	for i := 0; i < c.scrollback.Len(); i++ {
-		if p, ok := c.scrollback.SnapshotAt(i).Payload.(scrollback.TeamCardSnapshot); ok && p.Call.ID == callID {
-			return p, true
-		}
+	snapshot, ok := c.scrollback.SnapshotForCall(callID)
+	if !ok {
+		return scrollback.TeamCardSnapshot{}, false
 	}
-	return scrollback.TeamCardSnapshot{}, false
+	payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot)
+	return payload, ok
 }
 
 func (c *conversation) ensureTeamCard(callID, teamID string, roster []client.TeamMemberSpec) bool {
@@ -190,7 +173,7 @@ func (c *conversation) applyTeamTyped(msg client.TeamMsg) {
 	case client.TeamFindings:
 		u.Findings = scrollFindings(msg.Findings)
 	case client.TeamEnd:
-		u.Rounds, u.Stop, u.Usage, u.Done = msg.Rounds, msg.Stop, scrollUsage(msg.Usage), true
+		u.Rounds, u.Stop, u.Usage, u.Tasks, u.Findings, u.Done = msg.Rounds, msg.Stop, scrollUsage(msg.Usage), scrollTasks(msg.Tasks), scrollFindings(msg.Findings), true
 		for _, d := range msg.Dispositions {
 			var i int
 			u.Lanes, i = teamLaneFor(u.Lanes, d.Name)

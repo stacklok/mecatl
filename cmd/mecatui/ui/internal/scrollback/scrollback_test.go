@@ -186,3 +186,56 @@ func TestComponentFacadesAdvanceRevisionsAndOwnNestedData(t *testing.T) {
 		t.Fatalf("snapshot mutation leaked into conversation: %q", got)
 	}
 }
+
+func TestMecatuiTypedScrollbackModel_Scenario1_TerminalTransitionsAreNoOps(t *testing.T) {
+	var c Conversation
+	c.Tools().Add(ToolCall{ID: "sub"})
+	if !c.Subagents().Start("sub", SubagentStart{}) || !c.Subagents().Update("sub", SubagentUpdate{Done: true, Stop: "end_turn"}) {
+		t.Fatal("complete subagent")
+	}
+	before := c.SnapshotAt(0)
+	if !c.Subagents().Update("sub", SubagentUpdate{Current: "late"}) {
+		t.Fatal("terminal subagent update should be accepted as a no-op")
+	}
+	if got := c.SnapshotAt(0); !reflect.DeepEqual(got, before) {
+		t.Fatalf("terminal subagent update changed card: %#v", got)
+	}
+
+	c.Tools().Add(ToolCall{ID: "team"})
+	if !c.Teams().Start("team", TeamStart{}) || !c.Teams().Update("team", TeamUpdate{Done: true, Tasks: []Task{{ID: "final"}}, Findings: []Finding{{Body: "final"}}}) {
+		t.Fatal("complete team")
+	}
+	before = c.SnapshotAt(1)
+	if !c.Teams().Update("team", TeamUpdate{Tasks: []Task{{ID: "late"}}}) {
+		t.Fatal("terminal team update should be accepted as a no-op")
+	}
+	if got := c.SnapshotAt(1); !reflect.DeepEqual(got, before) {
+		t.Fatalf("terminal team update changed card: %#v", got)
+	}
+
+	c.Tools().Add(ToolCall{ID: "tool"})
+	if !c.Tools().Resolve("tool", ToolResult{Body: "first"}) {
+		t.Fatal("resolve tool")
+	}
+	before = c.SnapshotAt(2)
+	if !c.Tools().Resolve("tool", ToolResult{Body: "late"}) {
+		t.Fatal("terminal tool resolution should be accepted as a no-op")
+	}
+	if got := c.SnapshotAt(2); !reflect.DeepEqual(got, before) {
+		t.Fatalf("terminal tool resolution changed card: %#v", got)
+	}
+}
+
+func TestMecatuiTypedScrollbackModel_Scenario2_EmptySlicesRemainNonNil(t *testing.T) {
+	var c Conversation
+	c.Messages().AddUser(UserInput{Media: []string{}})
+	user := c.SnapshotAt(0).Payload.(UserCardSnapshot)
+	if user.Media == nil {
+		t.Fatal("non-nil empty media lost during snapshot")
+	}
+	c.Tools().Add(ToolCall{ID: "call", Artifacts: []Artifact{}})
+	tool := c.SnapshotAt(1).Payload.(ToolCardSnapshot)
+	if tool.Call.Artifacts == nil {
+		t.Fatal("non-nil empty artifacts lost during snapshot")
+	}
+}
