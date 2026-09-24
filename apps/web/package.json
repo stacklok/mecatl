@@ -12,6 +12,8 @@
     "typecheck": "tsr generate && tsc --noEmit && tsc --noEmit -p tsconfig.browser.json"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource/merriweather": "5.3.0",
     "@mecatl-studio/contracts": "workspace:*",
     "@radix-ui/react-alert-dialog": "1.1.15",
     "@radix-ui/react-dialog": "1.1.15",
