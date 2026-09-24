@@ -13,7 +13,12 @@ export type PaletteDef = {
 };
 
 export const BUILT_IN_PALETTES: readonly PaletteDef[] = Object.freeze([
-  { id: "default", label: "Default", description: "Stacklok green.", swatch: "hsl(161 94% 21%)" },
+  {
+    id: "default",
+    label: "Default",
+    description: "Stacklok green.",
+    swatch: "var(--default-palette-accent)",
+  },
   {
     id: "aztec",
     label: "Aztec",

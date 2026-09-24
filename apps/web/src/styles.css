@@ -38,10 +38,11 @@
   --sidebar: hsl(240 4.8% 98.5%);
   --avatar-background: oklch(0.696 0 0 / 89.8%);
   --logo: hsl(0 0% 28%);
-  --brand: hsl(161 94% 21%);
+  --default-palette-accent: hsl(161 94% 21%);
+  --brand: var(--default-palette-accent);
   --brand-foreground: hsl(0 0% 100%);
-  --brand-label: hsl(161 94% 21%);
-  --brand-ink: hsl(161 94% 21%);
+  --brand-label: var(--default-palette-accent);
+  --brand-ink: var(--default-palette-accent);
   --link: hsl(211 92% 43%);
   --input-icon: hsl(240 3.8% 46.1%);
   --control-border: #83838a;
@@ -51,7 +52,7 @@
   --info: hsl(211 92% 43%);
   --badge-outline-border: hsl(240 5.9% 90%);
   --badge-outline-text: hsl(240 10% 3.9%);
-  --btn-primary: hsl(161 94% 21%);
+  --btn-primary: var(--default-palette-accent);
   --btn-primary-hover: #02543a;
   --radius: 0.5rem;
   --title: hsl(240 5% 18%);

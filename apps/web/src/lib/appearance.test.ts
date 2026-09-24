@@ -240,7 +240,7 @@ describe("appearance state", () => {
         id: "default",
         label: "Default",
         description: "Stacklok green.",
-        swatch: "hsl(161 94% 21%)",
+        swatch: "var(--default-palette-accent)",
       },
       {
         id: "aztec",

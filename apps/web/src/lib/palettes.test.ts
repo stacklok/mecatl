@@ -81,6 +81,10 @@ describe("Studio palette tokens", () => {
 
     const light = declarations(":root");
     const dark = declarations(".dark");
+    expect(light.get("--default-palette-accent")).toBe("hsl(161 94% 21%)");
+    for (const role of ["--brand", "--brand-label", "--brand-ink", "--btn-primary"]) {
+      expect(light.get(role)).toBe("var(--default-palette-accent)");
+    }
     for (const [role, expectedLight, expectedDark] of [
       ["--nav-search-border", "#a5b0ae", "#728481"],
       ["--nav-search-text", "#cbd4d4", "#b4c0c1"],
@@ -93,8 +97,8 @@ describe("Studio palette tokens", () => {
       ["--sidebar", "hsl(240 4.8% 98.5%)", "hsl(240 6.3% 12.5%)"],
       ["--avatar-background", "oklch(0.696 0 0 / 89.8%)", "oklch(0.696 0 0 / 89.8%)"],
       ["--logo", "hsl(0 0% 28%)", "hsl(0 0% 58%)"],
-      ["--brand-label", "hsl(161 94% 21%)", "hsl(158 64% 52%)"],
-      ["--brand-ink", "hsl(161 94% 21%)", "hsl(142 50% 60%)"],
+      ["--brand-label", "var(--default-palette-accent)", "hsl(158 64% 52%)"],
+      ["--brand-ink", "var(--default-palette-accent)", "hsl(142 50% 60%)"],
       ["--link", "hsl(211 92% 43%)", "hsl(211 92% 66%)"],
       ["--input-icon", "hsl(240 3.8% 46.1%)", "hsl(0 0% 100%)"],
     ] as const) {
