@@ -7,10 +7,10 @@ import {
   type RunStreamEvent,
   type StartRunRequest,
 } from "@mecatl-studio/contracts";
-import { MecatlError } from "@stacklok-oss/mecatl-sdk";
-import { describe, expect, it } from "vitest";
+import { type Client, MecatlError } from "@stacklok-oss/mecatl-sdk";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app";
-import type { ActivityDelivery, ChatService } from "../mecatl/chat";
+import { type ActivityDelivery, type ChatService, createMecatlChatService } from "../mecatl/chat";
 import { csrfHeaders } from "../testing/fakes";
 
 let createdSessionRequest: CreateSessionRequest | undefined;
@@ -271,6 +271,93 @@ describe("chat routes", () => {
 
     expect(empty.status).toBe(400);
     expect(malformed.status).toBe(400);
+  });
+
+  it("accepts the exact 10 MiB image, 20 MiB prompt, and 16-image boundaries", async () => {
+    const imageData = Buffer.alloc(10 * 1024 * 1024).toString("base64");
+    const tinyData = Buffer.from([1]).toString("base64");
+    const forwarded: StartRunRequest[] = [];
+    const bounded = createApp({
+      chat: {
+        ...chat,
+        async *run(sessionId, runRequest) {
+          forwarded.push(runRequest);
+          yield { runId: "run-bounded", sessionId, type: "run.started" };
+        },
+      },
+    });
+    const send = (images: StartRunRequest["images"]) =>
+      bounded.request("/api/v1/sessions/session-1/runs", {
+        body: JSON.stringify({ images, prompt: "" }),
+        headers: csrfHeaders("t", { "Content-Type": "application/json" }),
+        method: "POST",
+      });
+
+    const exact = await send([
+      { data: imageData, mimeType: "image/png", name: "first.png" },
+      { data: imageData, mimeType: "image/png", name: "second.png" },
+    ]);
+    expect(exact.status).toBe(200);
+    await exact.text();
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]?.images).toHaveLength(2);
+
+    const sixteen = await send(
+      Array.from({ length: 16 }, (_, index) => ({
+        data: tinyData,
+        mimeType: "image/png",
+        name: `${index}.png`,
+      })),
+    );
+    expect(sixteen.status).toBe(200);
+    await sixteen.text();
+    expect(forwarded).toHaveLength(2);
+    expect(forwarded[1]?.images).toHaveLength(16);
+  });
+
+  it("rejects decoded image excess and the 17th image before any SDK access", async () => {
+    const getSession = vi.fn();
+    const guarded = createApp({
+      chat: createMecatlChatService({ sessions: { get: getSession } } as unknown as Client),
+    });
+    const send = (images: StartRunRequest["images"]) =>
+      guarded.request("/api/v1/sessions/session-1/runs", {
+        body: JSON.stringify({ images, prompt: "" }),
+        headers: csrfHeaders("t", { "Content-Type": "application/json" }),
+        method: "POST",
+      });
+    const tinyData = Buffer.from([1]).toString("base64");
+    const exactData = Buffer.alloc(10 * 1024 * 1024).toString("base64");
+    const oversizedData = Buffer.alloc(10 * 1024 * 1024 + 1).toString("base64");
+    const image = (data: string, name: string) => ({ data, mimeType: "image/png", name });
+
+    // Base64 rounds both sizes to the same encoded length; the decoded bytes decide.
+    expect(oversizedData.length).toBe(exactData.length);
+    const oversized = await send([image(oversizedData, "oversized.png")]);
+    await oversized.text();
+    expect(getSession).not.toHaveBeenCalled();
+    expect(oversized.status).toBe(400);
+
+    const aggregate = await send([
+      image(exactData, "first.png"),
+      image(exactData, "second.png"),
+      image(tinyData, "extra.png"),
+    ]);
+    await aggregate.text();
+    expect(getSession).not.toHaveBeenCalled();
+    expect(aggregate.status).toBe(400);
+
+    const seventeen = await send(
+      Array.from({ length: 17 }, (_, index) => image(tinyData, `${index}.png`)),
+    );
+    await seventeen.text();
+    expect(getSession).not.toHaveBeenCalled();
+    expect(seventeen.status).toBe(400);
+
+    // Positive control: this SDK seam is called for a request that passes validation.
+    const accepted = await send([image(tinyData, "accepted.png")]);
+    await accepted.text();
+    expect(getSession).toHaveBeenCalledOnce();
   });
 
   it("routes controls to the active run", async () => {
