@@ -70,14 +70,21 @@ func (t TeamCards) Start(callID string, start TeamStart) bool {
 	if !ok {
 		return false
 	}
-	payload, ok := c.cards[i].payload.(ToolCardSnapshot)
-	if !ok {
+	start.Lanes = cloneTeamLanes(start.Lanes)
+	switch payload := c.cards[i].payload.(type) {
+	case ToolCardSnapshot:
+		if payload.Call.Name != "Team" {
+			return false
+		}
+		return c.replace(i, TeamCardSnapshot{
+			Call: payload.Call, Resolved: payload.Resolved, Result: payload.Result,
+			Update: TeamUpdate{TeamID: start.TeamID, Lanes: start.Lanes},
+		})
+	case TeamCardSnapshot:
+		return payload.Update.TeamID == start.TeamID && reflect.DeepEqual(payload.Update.Lanes, start.Lanes)
+	default:
 		return false
 	}
-	return c.replace(i, TeamCardSnapshot{
-		Call: payload.Call, Resolved: payload.Resolved, Result: payload.Result,
-		Update: TeamUpdate{TeamID: start.TeamID, Lanes: start.Lanes},
-	})
 }
 
 // Update is part of the internal typed scrollback contract.
@@ -91,10 +98,10 @@ func (t TeamCards) Update(callID string, update TeamUpdate) bool {
 	if !ok {
 		return false
 	}
-	if payload.Update.Done {
-		return true
-	}
 	update = cloneTeamUpdate(update)
+	if payload.Update.Done {
+		return reflect.DeepEqual(payload.Update, update)
+	}
 	if reflect.DeepEqual(payload.Update, update) {
 		return true
 	}

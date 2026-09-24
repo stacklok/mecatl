@@ -57,11 +57,16 @@ func cloneTeamLane(in TeamLane) TeamLane {
 	return in
 }
 
-func cloneTeamUpdate(in TeamUpdate) TeamUpdate {
-	in.Lanes = slices.Clone(in.Lanes)
-	for i := range in.Lanes {
-		in.Lanes[i] = cloneTeamLane(in.Lanes[i])
+func cloneTeamLanes(in []TeamLane) []TeamLane {
+	out := slices.Clone(in)
+	for i := range out {
+		out[i] = cloneTeamLane(out[i])
 	}
+	return out
+}
+
+func cloneTeamUpdate(in TeamUpdate) TeamUpdate {
+	in.Lanes = cloneTeamLanes(in.Lanes)
 	in.Tasks = slices.Clone(in.Tasks)
 	for i := range in.Tasks {
 		in.Tasks[i].Dependencies = cloneStrings(in.Tasks[i].Dependencies)

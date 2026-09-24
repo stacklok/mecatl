@@ -51,7 +51,7 @@ func (c *conversation) addTeamFixture(b block) {
 	if callID == "" {
 		callID = fmt.Sprintf("team-fixture-%d", c.scrollback.Len())
 	}
-	c.addTool(callID, b.toolName, b.toolArgs)
+	c.addTool(callID, "Team", b.toolArgs)
 	roster := make([]client.TeamMemberSpec, len(b.teamLanes))
 	for i, lane := range b.teamLanes {
 		roster[i] = client.TeamMemberSpec{Name: lane.name, Role: lane.role, Mutating: lane.mutating, Lead: lane.lead, RoutedCategory: lane.routedCategory, RoutedModel: lane.routedModel, RoutingReason: lane.routingReason, Model: lane.model, RoutingDecision: lane.routingDecision}

@@ -61,10 +61,11 @@ func TestMecatuiTypedScrollbackModel_Scenario2_DelegationPreviewIsolation(t *tes
 func TestMecatuiTypedScrollbackModel_Scenario3_FrameAnchorAndSelectionContinuity(t *testing.T) {
 	var c conversation
 	c.addTool("sub", "Subagent", `{}`)
-	applySubagentTo(&c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "sub", ChildID: "child", Goal: "inspect"})
+	applySubagentTo(&c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "sub", ChildID: "child", Goal: "SELECTION-SOURCE inspect"})
 	c.addNotice("tail")
 	r := newCacheRenderer()
 	before := r.renderConversationFrame(&c.scrollback, false)
+	point := scenario3SelectionPoint(t, before, conversationRegionArguments, "SELECTION-SOURCE")
 	anchor, ok := before.observedAnchorForRow(0, towardStart)
 	if !ok {
 		t.Fatal("missing specialized-card anchor")
@@ -77,6 +78,16 @@ func TestMecatuiTypedScrollbackModel_Scenario3_FrameAnchorAndSelectionContinuity
 	}
 	if _, ok := after.rowForAnchor(anchor); !ok {
 		t.Fatalf("specialized-card anchor %+#v was not restored after reflow/result", anchor)
+	}
+	if _, _, ok := resolveSelectionPoint(after, point); !ok {
+		t.Fatal("selection did not survive reflow and a late result that preserved its source")
+	}
+	if !c.scrollback.Subagents().UpdateStart("sub", scrollback.SubagentStart{ChildID: "child", Goal: "replacement source"}) {
+		t.Fatal("replace selected source")
+	}
+	changed := r.renderConversationFrame(&c.scrollback, true)
+	if _, _, ok := resolveSelectionPoint(changed, point); ok {
+		t.Fatal("selection survived after its selected source changed")
 	}
 }
 
@@ -116,6 +127,13 @@ func TestMecatuiTypedScrollbackModel_Scenario2_DelegationCardsRemainSpecialized(
 	var c conversation
 	c.addTool("sub", "Subagent", `{}`)
 	c.addTool("team", "Team", `{}`)
+	c.addTool("ordinary-sub", "Read", `{}`)
+	c.addTool("ordinary-team", "Read", `{}`)
+	applySubagentTo(&c, client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "ordinary-sub", ToolName: "Read", InnerKind: "tool.call"})
+	applyTeamTo(&c, client.TeamMsg{Kind: client.TeamTasks, ParentCallID: "ordinary-team", TeamID: "late", Tasks: []client.TeamTask{{ID: "late"}}})
+	if c.scrollback.SnapshotAt(2).Payload.Kind() != scrollback.KindTool || c.scrollback.SnapshotAt(3).Payload.Kind() != scrollback.KindTool {
+		t.Fatal("non-start delegation projection specialized ordinary tool cards")
+	}
 	applySubagentTo(&c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "sub", ChildID: "child", Goal: "inspect"})
 	applyTeamTo(&c, client.TeamMsg{Kind: client.TeamStart, ParentCallID: "team", TeamID: "team", Roster: []client.TeamMemberSpec{{Name: "member"}}})
 	if _, ok := c.scrollback.SnapshotAt(0).Payload.(scrollback.SubagentCardSnapshot); !ok {

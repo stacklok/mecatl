@@ -37,6 +37,32 @@ func TestMecatuiTypedScrollbackModel_Scenario1_StableIdentityAndImmutableSnapsho
 	}
 }
 
+func TestMecatuiTypedScrollbackModel_Scenario1_PayloadFamiliesAreSpecialized(t *testing.T) {
+	var c Conversation
+	c.Tools().Add(ToolCall{ID: "ordinary", Name: "Read"})
+	c.Tools().Add(ToolCall{ID: "wrong-sub", Name: "Read"})
+	c.Tools().Add(ToolCall{ID: "sub", Name: "Subagent"})
+	c.Tools().Add(ToolCall{ID: "wrong-team", Name: "Read"})
+	c.Tools().Add(ToolCall{ID: "team", Name: "Team"})
+
+	if c.Subagents().Update("ordinary", SubagentUpdate{Current: "late"}) ||
+		c.Teams().Update("ordinary", TeamUpdate{TeamID: "late"}) ||
+		c.Subagents().Start("wrong-sub", SubagentStart{}) ||
+		c.Teams().Start("wrong-team", TeamStart{}) {
+		t.Fatal("non-start or mismatched delegation transition specialized an ordinary tool")
+	}
+	if !c.Subagents().Start("sub", SubagentStart{ChildID: "child"}) ||
+		!c.Teams().Start("team", TeamStart{TeamID: "team-1"}) {
+		t.Fatal("matching start did not specialize its expected tool family")
+	}
+	want := []Kind{KindTool, KindTool, KindSubagent, KindTool, KindTeam}
+	for i, kind := range want {
+		if got := c.SnapshotAt(i).Payload.Kind(); got != kind {
+			t.Fatalf("card %d kind = %v, want %v", i, got, kind)
+		}
+	}
+}
+
 func TestMecatuiTypedScrollbackModel_Scenario1_TransitionsAdvanceVisibleRevision(t *testing.T) {
 	var c Conversation
 	c.Tools().Add(ToolCall{ID: "call", Name: "Subagent"})
@@ -98,7 +124,7 @@ func TestMecatuiTypedScrollbackModel_Scenario1_ChangedFilesAppendixIdentityAndFa
 
 func TestMecatuiTypedScrollbackModel_Scenario2_TransitionsAndSnapshotsOwnNestedData(t *testing.T) {
 	var c Conversation
-	c.Tools().Add(ToolCall{ID: "sub", Artifacts: []Artifact{{Kind: "image", Data: []byte("call")}}})
+	c.Tools().Add(ToolCall{ID: "sub", Name: "Subagent", Artifacts: []Artifact{{Kind: "image", Data: []byte("call")}}})
 	decision := RoutingDecision{Confidence: Float64(0.8), MinimumConfidence: Float64(0.5)}
 	if !c.Subagents().Start("sub", SubagentStart{Goal: "goal", Routing: decision}) {
 		t.Fatal("start subagent")
@@ -127,7 +153,7 @@ func TestMecatuiTypedScrollbackModel_Scenario2_TransitionsAndSnapshotsOwnNestedD
 		t.Fatalf("subagent snapshot leaked mutation: %#v", got.Update)
 	}
 
-	c.Tools().Add(ToolCall{ID: "team"})
+	c.Tools().Add(ToolCall{ID: "team", Name: "Team"})
 	if !c.Teams().Start("team", TeamStart{TeamID: "team-1"}) {
 		t.Fatal("start team")
 	}
@@ -157,7 +183,7 @@ func TestComponentFacadesAdvanceRevisionsAndOwnNestedData(t *testing.T) {
 		t.Fatalf("assistant revision = %d, want 1", got)
 	}
 
-	call := ToolCall{ID: "sub", Artifacts: []Artifact{{Data: []byte("call")}}}
+	call := ToolCall{ID: "sub", Name: "Subagent", Artifacts: []Artifact{{Data: []byte("call")}}}
 	c.Tools().Add(call)
 	call.Artifacts[0].Data[0] = 'X'
 	if !c.Subagents().Start("sub", SubagentStart{Routing: RoutingDecision{Confidence: Float64(0.8)}}) {
@@ -189,37 +215,49 @@ func TestComponentFacadesAdvanceRevisionsAndOwnNestedData(t *testing.T) {
 
 func TestMecatuiTypedScrollbackModel_Scenario1_TerminalTransitionsAreNoOps(t *testing.T) {
 	var c Conversation
-	c.Tools().Add(ToolCall{ID: "sub"})
-	if !c.Subagents().Start("sub", SubagentStart{}) || !c.Subagents().Update("sub", SubagentUpdate{Done: true, Stop: "end_turn"}) {
+	c.Tools().Add(ToolCall{ID: "sub", Name: "Subagent"})
+	terminalSubagent := SubagentUpdate{Done: true, Stop: "end_turn"}
+	if !c.Subagents().Start("sub", SubagentStart{}) || !c.Subagents().Update("sub", terminalSubagent) {
 		t.Fatal("complete subagent")
 	}
 	before := c.SnapshotAt(0)
-	if !c.Subagents().Update("sub", SubagentUpdate{Current: "late"}) {
-		t.Fatal("terminal subagent update should be accepted as a no-op")
+	if !c.Subagents().Update("sub", terminalSubagent) {
+		t.Fatal("identical terminal subagent replay should be accepted")
+	}
+	if c.Subagents().Update("sub", SubagentUpdate{Current: "late"}) {
+		t.Fatal("conflicting terminal subagent update should be rejected")
 	}
 	if got := c.SnapshotAt(0); !reflect.DeepEqual(got, before) {
 		t.Fatalf("terminal subagent update changed card: %#v", got)
 	}
 
-	c.Tools().Add(ToolCall{ID: "team"})
-	if !c.Teams().Start("team", TeamStart{}) || !c.Teams().Update("team", TeamUpdate{Done: true, Tasks: []Task{{ID: "final"}}, Findings: []Finding{{Body: "final"}}}) {
+	c.Tools().Add(ToolCall{ID: "team", Name: "Team"})
+	terminalTeam := TeamUpdate{Done: true, Tasks: []Task{{ID: "final"}}, Findings: []Finding{{Body: "final"}}}
+	if !c.Teams().Start("team", TeamStart{}) || !c.Teams().Update("team", terminalTeam) {
 		t.Fatal("complete team")
 	}
 	before = c.SnapshotAt(1)
-	if !c.Teams().Update("team", TeamUpdate{Tasks: []Task{{ID: "late"}}}) {
-		t.Fatal("terminal team update should be accepted as a no-op")
+	if !c.Teams().Update("team", terminalTeam) {
+		t.Fatal("identical terminal team replay should be accepted")
+	}
+	if c.Teams().Update("team", TeamUpdate{Tasks: []Task{{ID: "late"}}}) {
+		t.Fatal("conflicting terminal team update should be rejected")
 	}
 	if got := c.SnapshotAt(1); !reflect.DeepEqual(got, before) {
 		t.Fatalf("terminal team update changed card: %#v", got)
 	}
 
 	c.Tools().Add(ToolCall{ID: "tool"})
-	if !c.Tools().Resolve("tool", ToolResult{Body: "first"}) {
+	result := ToolResult{Body: "first"}
+	if !c.Tools().Resolve("tool", result) {
 		t.Fatal("resolve tool")
 	}
 	before = c.SnapshotAt(2)
-	if !c.Tools().Resolve("tool", ToolResult{Body: "late"}) {
-		t.Fatal("terminal tool resolution should be accepted as a no-op")
+	if !c.Tools().Resolve("tool", result) {
+		t.Fatal("identical terminal tool result replay should be accepted")
+	}
+	if c.Tools().Resolve("tool", ToolResult{Body: "late"}) {
+		t.Fatal("conflicting terminal tool result should be rejected")
 	}
 	if got := c.SnapshotAt(2); !reflect.DeepEqual(got, before) {
 		t.Fatalf("terminal tool resolution changed card: %#v", got)

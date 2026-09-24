@@ -136,6 +136,10 @@ type renderer struct {
 	// long the scrollback is. Touched only on the update goroutine.
 	blockRenders int
 
+	// snapshotLoads counts detached model payload snapshots requested after metadata
+	// lookup. It is the test seam proving settled cache hits do not clone model state.
+	snapshotLoads int
+
 	// cardPrepares counts all migrated functional-card preparations. The counter is
 	// deliberately below renderBlock's composite-key guard so tests can prove a
 	// settled frame performs no snapshot or preparation.
@@ -641,6 +645,7 @@ func (r *renderer) walkConversation(c *scrollback.Conversation, expand bool) ([]
 			r.renderedBlocksScratch = append(r.renderedBlocksScratch, entry.out)
 			continue
 		}
+		r.snapshotLoads++
 		b, ok := blockFromSnapshot(c.SnapshotAt(i))
 		if !ok {
 			continue

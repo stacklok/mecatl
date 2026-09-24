@@ -27,8 +27,12 @@ func TestMecatuiTypedScrollbackModel_Scenario3_CacheRevisionFastPathPreserved(t 
 	r.renderConversationFrame(&c.scrollback, false)
 	prepares := r.cardPrepares
 	renders := r.blockRenders
+	snapshots := r.snapshotLoads
 
 	r.renderConversationFrame(&c.scrollback, false)
+	if r.snapshotLoads != snapshots {
+		t.Fatalf("settled frame loaded model snapshots: %d → %d", snapshots, r.snapshotLoads)
+	}
 	if r.cardPrepares != prepares {
 		t.Fatalf("settled frame prepared cards: %d → %d", prepares, r.cardPrepares)
 	}

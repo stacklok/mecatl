@@ -78,13 +78,20 @@ func (s SubagentCards) Start(callID string, start SubagentStart) bool {
 	if !ok {
 		return false
 	}
-	payload, ok := c.cards[i].payload.(ToolCardSnapshot)
-	if !ok {
+	start = cloneSubagentStart(start)
+	switch payload := c.cards[i].payload.(type) {
+	case ToolCardSnapshot:
+		if payload.Call.Name != "Subagent" {
+			return false
+		}
+		return c.replace(i, SubagentCardSnapshot{
+			Call: payload.Call, Resolved: payload.Resolved, Result: payload.Result, Start: start,
+		})
+	case SubagentCardSnapshot:
+		return reflect.DeepEqual(payload.Start, start)
+	default:
 		return false
 	}
-	return c.replace(i, SubagentCardSnapshot{
-		Call: payload.Call, Resolved: payload.Resolved, Result: payload.Result, Start: start,
-	})
 }
 
 // UpdateStart is part of the internal typed scrollback contract.
@@ -117,10 +124,10 @@ func (s SubagentCards) Update(callID string, update SubagentUpdate) bool {
 	if !ok {
 		return false
 	}
-	if payload.Update.Done {
-		return true
-	}
 	update = cloneSubagentUpdate(update)
+	if payload.Update.Done {
+		return reflect.DeepEqual(payload.Update, update)
+	}
 	if reflect.DeepEqual(payload.Update, update) {
 		return true
 	}

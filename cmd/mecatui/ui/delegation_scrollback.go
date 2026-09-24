@@ -117,8 +117,10 @@ func (c *conversation) ensureTeamCard(callID, teamID string, roster []client.Tea
 }
 
 func (c *conversation) applyTeamTyped(msg client.TeamMsg) {
-	if !c.ensureTeamCard(msg.ParentCallID, msg.TeamID, msg.Roster) {
-		return
+	if msg.Kind == client.TeamStart {
+		if !c.ensureTeamCard(msg.ParentCallID, msg.TeamID, msg.Roster) {
+			return
+		}
 	}
 	p, ok := c.teamCard(msg.ParentCallID)
 	if !ok {

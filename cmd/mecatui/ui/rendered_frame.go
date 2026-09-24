@@ -227,6 +227,7 @@ func (r *renderer) blockFrameRowsTyped(c *scrollback.Conversation, index int, me
 	}
 	if prepared == nil {
 		var ok bool
+		r.snapshotLoads++
 		b, ok := blockFromSnapshot(c.SnapshotAt(index))
 		if !ok {
 			return nil
