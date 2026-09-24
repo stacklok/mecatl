@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RunStreamEvent, SessionUsageResponse } from "@mecatl-studio/contracts";
+import type {
+  RunStreamEvent,
+  SessionTranscriptResponse,
+  SessionUsageResponse,
+} from "@mecatl-studio/contracts";
 import type { ApprovalRequest } from "./approval-panel";
 import type { ChatImage } from "./local-file-preview";
 import type { ToolActivity } from "./tool-activity";
@@ -14,6 +18,7 @@ export interface RunFailure {
 
 export interface ChatMessage {
   content: string;
+  delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
   failure?: { detail: string; message: string; permanent: boolean };
   id: string;
   images?: ChatImage[];
@@ -82,6 +87,7 @@ function stringValue(value: unknown): string {
 
 export function messagesFromTranscript(
   entries: Array<{
+    delivery?: SessionTranscriptResponse["messages"][number]["delivery"];
     images?: ChatImage[];
     role: string;
     text: string;
@@ -118,6 +124,7 @@ export function messagesFromTranscript(
 
     messages.push({
       content: entry.text,
+      delivery: entry.delivery,
       id: `transcript-${index}`,
       images: entry.images?.length
         ? entry.images.map((image, imageIndex) => ({

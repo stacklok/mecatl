@@ -2,6 +2,8 @@
 
 import type { ChatMessage } from "./chat-state";
 
+export type RecordedDeliveryMessage = ChatMessage;
+
 interface InventoryRow {
   id: string;
   updatedAt: string;
@@ -39,16 +41,7 @@ export function shouldCheckDeliveryAfterInventory(facts: DeliveryCheckFacts): bo
   return Number.isFinite(before) && Number.isFinite(after) && after > before;
 }
 
-export interface RecordedDeliveryMessage extends ChatMessage {
-  delivery?: {
-    fireId: string;
-    kind: "started" | "completed";
-    scheduleName?: string;
-    stop?: string;
-  };
-}
-
-function deliveryKey(message: RecordedDeliveryMessage): string | undefined {
+function deliveryKey(message: ChatMessage): string | undefined {
   const note = message.delivery;
   return note ? JSON.stringify([note.fireId, note.kind]) : undefined;
 }
@@ -57,7 +50,7 @@ function deliveryKey(message: RecordedDeliveryMessage): string | undefined {
  * Add only notes proved by the saved transcript. Keep the existing row for an
  * already-seen delivery: it may carry richer live content, reasoning, or tools.
  */
-export function mergeRecordedDeliveryMessages<T extends RecordedDeliveryMessage>(
+export function mergeRecordedDeliveryMessages<T extends ChatMessage>(
   current: T[],
   authoritative: readonly T[],
 ): T[] {

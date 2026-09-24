@@ -4,7 +4,7 @@
 **Work classification:** Bounded — aligns one existing Studio feature's presentation and browser interaction, with additive BFF projections of facts already supplied by the published SDK. It adds no daemon, trust, or deployment boundary.
 **Decision record:** None — [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) already owns the one-origin browser/BFF and published-SDK boundary; this plan keeps it and makes bounded product-interface choices within it.
 **Phase:** Studio design alignment
-**Status:** proposed, 2026-09-24. The design baseline and all material behavior and interface choices below are resolved for Plan / Interface review.
+**Status:** in-progress, 2026-09-24. Implementation is stacked on the unmerged Plan / Interface PR #1880 by the directing user's explicit authorization; contract approval remains pending.
 **Delivery:** Split. Review the additive BFF and browser interaction contract in an independent Plan / Interface PR before an implementation PR.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1847](https://github.com/stacklok/mecatl/issues/1847).

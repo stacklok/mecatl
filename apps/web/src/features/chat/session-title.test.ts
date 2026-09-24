@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { adoptSessionTitle } from "./session-title";
+import { adoptSessionTitle, sessionTitleFromEvent } from "./session-title";
 
 describe("session title adoption", () => {
   it("adopts only newer title revisions", () => {
@@ -37,5 +37,15 @@ describe("session title adoption", () => {
       ...generated,
       titleRevision: "0",
     });
+  });
+
+  it("adopts a JSON-safe title event without converting its revision to a number", () => {
+    const event = sessionTitleFromEvent("chat-1", {
+      provenance: "generated",
+      revision: "9007199254740997",
+      title: "Newer title",
+    });
+    expect(event?.titleRevision).toBe("9007199254740997");
+    expect(sessionTitleFromEvent("chat-1", { revision: 2, title: "bad" })).toBeUndefined();
   });
 });

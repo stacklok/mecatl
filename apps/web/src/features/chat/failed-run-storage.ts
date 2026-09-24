@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RunFailure } from "./chat-state";
 import { readUserScopedItem, writeUserScopedItem } from "../../lib/account-storage";
+import type { RunFailure } from "./chat-state";
 
 type Store = Pick<Storage, "getItem" | "key" | "length" | "removeItem" | "setItem">;
 

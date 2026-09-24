@@ -177,6 +177,15 @@ describe("messagesFromTranscript", () => {
       ],
     );
   });
+
+  it("retains the BFF delivery annotation and projected body in saved history", () => {
+    const delivery = { fireId: "fire-1", kind: "completed" as const, scheduleName: "Daily" };
+    const messages = messagesFromTranscript([
+      { delivery, role: "user", text: "The scheduled output", toolCalls: [] },
+    ]);
+    expect(messages[0]?.delivery).toEqual(delivery);
+    expect(messages[0]?.content).toBe("The scheduled output");
+  });
 });
 
 function usage(overrides: Partial<SessionUsageResponse> = {}): SessionUsageResponse {

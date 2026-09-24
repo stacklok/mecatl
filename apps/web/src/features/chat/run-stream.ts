@@ -149,6 +149,27 @@ export function controlTarget(
   return target && target.sessionId === viewedSessionId ? target : undefined;
 }
 
+/** A stale control is the one BFF error for which steering may become a queue. */
+export function isStaleRunControl(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    error.status === 409 &&
+    "code" in error &&
+    error.code === "stale_run_control"
+  );
+}
+
+/** Retry is a BFF session action, offered only for an authoritative failed run. */
+export function canRetryFailedRun(
+  failure: RunFailure | undefined,
+  sessionId: string | undefined,
+  isRunning: boolean,
+): boolean {
+  return Boolean(sessionId && failure && !failure.permanent && !isRunning);
+}
+
 /** True when a queue for `queueSessionId` may start its next run in the current view. */
 export function drainsQueue(
   end: RunStreamEnd,

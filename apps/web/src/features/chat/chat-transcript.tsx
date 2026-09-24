@@ -66,6 +66,7 @@ function TranscriptRow({
   const label = user ? userName : agentName;
   const hasContent =
     message.content ||
+    message.delivery ||
     message.images?.length ||
     message.reasoning ||
     (showToolCalls && message.tools?.length) ||
@@ -126,7 +127,20 @@ function TranscriptRow({
           })}
         </div>
       )}
-      {message.content ? (
+      {message.delivery ? (
+        <div className="rounded-lg border bg-muted/30 p-3 text-sm" data-delivery-note>
+          <p className="font-medium">
+            Scheduled task {message.delivery.scheduleName} {message.delivery.kind}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Fire {message.delivery.fireId}
+            {message.delivery.stop ? ` · Stop reason: ${message.delivery.stop}` : ""}
+          </p>
+          {message.content && (
+            <p className="mt-2 whitespace-pre-wrap break-words">{message.content}</p>
+          )}
+        </div>
+      ) : message.content ? (
         <MarkdownMessage>{message.content}</MarkdownMessage>
       ) : streaming ? (
         <StreamingIndicator />
@@ -174,7 +188,7 @@ function TranscriptRow({
       {!streaming && message.turnStat && (
         <p className="mt-2 text-xs tabular-nums text-muted-foreground">{message.turnStat}</p>
       )}
-      {onOpenThread && message.content && (
+      {onOpenThread && message.content && !message.delivery && (
         <button
           aria-label={threadSessionId ? "Open side thread" : "Reply in side thread"}
           className="mt-2 flex items-center gap-1 text-xs text-muted-foreground underline disabled:opacity-50"

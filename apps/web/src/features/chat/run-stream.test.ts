@@ -11,6 +11,7 @@ import {
   createActivityDeduplicator,
   decideTruncation,
   drainsQueue,
+  isStaleRunControl,
   MAX_ACTIVITY_REATTACHES,
   MISSING_HISTORY_NOTICE,
   ownsChatView,
@@ -236,6 +237,13 @@ describe("run ownership", () => {
     expect(controlTarget(target, "chat-a")).toBe(target);
     expect(controlTarget(target, "chat-b")).toBeUndefined();
     expect(controlTarget(undefined, "chat-a")).toBeUndefined();
+  });
+
+  it("recognizes only the BFF stale-run conflict for a queue fallback", () => {
+    expect(isStaleRunControl({ code: "stale_run_control", status: 409 })).toBe(true);
+    expect(isStaleRunControl({ code: "runtime_unavailable", status: 503 })).toBe(false);
+    expect(isStaleRunControl({ code: "stale_run_control", status: 400 })).toBe(false);
+    expect(isStaleRunControl(new Error("network down"))).toBe(false);
   });
 
   it("drains a queue only into its own, still-viewed session after a settled stream", () => {

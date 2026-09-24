@@ -19,3 +19,22 @@ export function adoptSessionTitle(
   if (BigInt(candidate.titleRevision) > BigInt(current.titleRevision)) return candidate;
   return current;
 }
+
+/** The BFF forwards the JSON-safe SDK title payload within the existing run.event. */
+export function sessionTitleFromEvent(
+  sessionId: string,
+  payload: unknown,
+): SessionTitleRevision | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  if (!("title" in payload) || !("revision" in payload)) return undefined;
+  if (typeof payload.title !== "string" || typeof payload.revision !== "string") {
+    return undefined;
+  }
+  return {
+    id: sessionId,
+    title: payload.title,
+    titleProvenance:
+      "provenance" in payload && typeof payload.provenance === "string" ? payload.provenance : "",
+    titleRevision: payload.revision,
+  };
+}

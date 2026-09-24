@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RunStreamEvent, SessionUsageResponse } from "@mecatl-studio/contracts";
+import type {
+  ListSessionsResponse,
+  RunStreamEvent,
+  SessionSummaryResponse,
+  SessionUsageResponse,
+} from "@mecatl-studio/contracts";
 import {
   cancelRun,
   resolveRunPermission,
@@ -48,6 +53,7 @@ import {
 } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -85,19 +91,18 @@ import { notifyRunCompletion } from "../../lib/browser-notifications";
 import { modelPreferenceId, useDisabledModels } from "../../lib/model-preferences";
 import {
   defaultAgentName,
-  useAgentAvatar,
   useAgentDisplayName,
   useEnterSendBehavior,
   useExpandDetails,
   useSessionListSide,
   useShowToolCalls,
   useStartOn,
-  useUserAvatar,
   useUserDisplayName,
 } from "../../lib/profile-preferences";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { useShortcut } from "../shortcuts/shortcut-provider";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
+import { type AwayFacts, AwayNoticeTracker } from "./away-notice";
 import {
   ChatComposer,
   type ComposerEnterAction,
@@ -106,6 +111,7 @@ import {
 } from "./chat-composer";
 import { groupSessions, useChatFolders } from "./chat-folders";
 import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
+import { consumeChatSeed } from "./chat-seed";
 import { ChatSessionControls } from "./chat-session-controls";
 import {
   type ChatMessage,
@@ -125,12 +131,14 @@ import {
   toolCall,
   toolResult,
 } from "./chat-state";
+import { ChatStatus, type ChatStatusFacts, deriveChatStatus } from "./chat-status";
+import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
 import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
 import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
 import { DraftGreeting } from "./draft-greeting";
-import { FailedTurnCard } from "./failed-turn-card";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
+import { FailedTurnCard } from "./failed-turn-card";
 import { pickLatestEligibleChat } from "./latest-chat";
 import { appendCanvasQuote, useLocalCanvas } from "./local-canvas";
 import {
@@ -146,9 +154,12 @@ import {
   abortsOnSessionSwitch,
   acceptsDelivery,
   CATCHING_UP_NOTICE,
+  canRetryFailedRun,
   controlTarget,
+  createActivityDeduplicator,
   decideTruncation,
   drainsQueue,
+  isStaleRunControl,
   ownsChatView,
   type RunOwnership,
   type RunStreamEnd,
@@ -156,6 +167,11 @@ import {
   runStreamEnd,
 } from "./run-stream";
 import { ChatsMenuButton, SessionSidebar } from "./session-sidebar";
+import {
+  adoptSessionTitle,
+  type SessionTitleRevision,
+  sessionTitleFromEvent,
+} from "./session-title";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
 import {
@@ -167,6 +183,10 @@ import {
 } from "./thread-map";
 import { type ToolActivity, ToolActivityList } from "./tool-activity";
 import { formatTurnStat, usageMenuLines } from "./turn-stats";
+import {
+  mergeRecordedDeliveryMessages,
+  shouldCheckDeliveryAfterInventory,
+} from "./use-delivery-follow";
 import { useLatestChatAutoOpen } from "./use-latest-chat-auto-open";
 
 /** A pending destructive confirmation, rendered as one shared AlertDialog. */
@@ -207,6 +227,7 @@ const defaultDraftConfiguration: DraftChatConfiguration = {
 
 export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const recovery = useAuthRecovery();
+  const [arrivalSeed] = useState(() => consumeChatSeed(new URL(window.location.href)));
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const sessions = useQuery(listSessionsOptions());
@@ -244,18 +265,29 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [failedRun, setFailedRun] = useState<RunFailure>();
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
-  const [seedText, setSeedText] = useState<string>();
+  const [seedText, setSeedText] = useState<string | undefined>(arrivalSeed.seed?.text);
+  const [seedRequiresConfirmation, setSeedRequiresConfirmation] = useState(
+    arrivalSeed.seed?.requiresConfirmation ?? false,
+  );
+  const [statusFacts, setStatusFacts] = useState<ChatStatusFacts>({ phase: "idle" });
+  const [returnNotice, setReturnNotice] = useState<string>();
+  const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
+  const [reconnectGeneration, setReconnectGeneration] = useState(0);
   const [liveUsage, setLiveUsage] = useState<SessionUsageResponse>();
   const [controlPending, setControlPending] = useState(false);
   const activeRun = useRef<RunOwner | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
+  const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
+  const awayTracker = useRef(new AwayNoticeTracker());
+  const awayFacts = useRef<AwayFacts | undefined>(undefined);
+  const returnNoticeTimer = useRef<number | undefined>(undefined);
+  const lastInventoryRow = useRef<SessionSummaryResponse | undefined>(undefined);
+  const loadedTranscriptSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
   const chatFolders = useChatFolders();
   const agentName = useAgentDisplayName().value.trim() || defaultAgentName;
-  const agentAvatar = useAgentAvatar().value;
   const userName = useUserDisplayName().value.trim() || "You";
-  const userAvatar = useUserAvatar().value;
   const sessionListSide = useSessionListSide().value;
   const { setValue: setShowToolCalls, value: showToolCalls } = useShowToolCalls();
   const { setValue: setExpandDetails, value: expandDetails } = useExpandDetails();
@@ -265,9 +297,17 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const canvas = useLocalCanvas(sessionId ?? "draft");
   const threadMap = useThreadMap(sessionId ?? "");
   const threadSessionIds = useThreadSessionIds();
+  const titledSessionItems = useMemo(
+    () =>
+      (sessions.data?.items ?? []).map((session) => ({
+        ...session,
+        title: titleCache.get(session.id)?.title ?? session.title,
+      })),
+    [sessions.data?.items, titleCache],
+  );
   const visibleSessionItems = useMemo(
-    () => (sessions.data?.items ?? []).filter((session) => !threadSessionIds.has(session.id)),
-    [sessions.data?.items, threadSessionIds],
+    () => titledSessionItems.filter((session) => !threadSessionIds.has(session.id)),
+    [titledSessionItems, threadSessionIds],
   );
   const navigationOrder = useMemo(
     () =>
@@ -292,11 +332,38 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     startOn: startOn.value,
   });
 
+  const adoptTitle = useCallback((candidate: SessionTitleRevision) => {
+    setTitleCache((current) => {
+      const previous = current.get(candidate.id);
+      const adopted = adoptSessionTitle(previous, candidate);
+      if (!adopted || adopted === previous) return current;
+      const next = new Map(current);
+      next.set(candidate.id, adopted);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
-    if (!isRunning && transcript.data) {
-      setMessages(messagesFromTranscript(transcript.data.messages));
+    for (const session of sessions.data?.items ?? []) adoptTitle(session);
+  }, [adoptTitle, sessions.data?.items]);
+
+  useEffect(() => {
+    if (arrivalSeed.url.href !== window.location.href) {
+      window.history.replaceState(window.history.state, "", arrivalSeed.url);
     }
-  }, [isRunning, transcript.data]);
+  }, [arrivalSeed.url]);
+
+  useEffect(() => {
+    if (!sessionId || isRunning || !transcript.data) return;
+    const saved = messagesFromTranscript(transcript.data.messages);
+    setMessages((current) => {
+      if (loadedTranscriptSession.current !== sessionId || current.length === 0) {
+        loadedTranscriptSession.current = sessionId;
+        return saved;
+      }
+      return mergeRecordedDeliveryMessages(current, saved);
+    });
+  }, [isRunning, sessionId, transcript.data]);
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
@@ -312,13 +379,17 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }
     setError(undefined);
     setNotice(undefined);
+    setReturnNotice(undefined);
+    awayTracker.current.clear();
     setApprovals([]);
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
     setContentPreview(undefined);
     setSelectionAction(undefined);
-    if (!sessionId) {
+    if (!activeRun.current || activeRun.current.sessionId !== sessionId) {
+      loadedTranscriptSession.current = undefined;
       setMessages([]);
+      setStatusFacts({ phase: "idle" });
     }
   }, [sessionId]);
 
@@ -329,12 +400,150 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (!atTranscriptBottom) return;
     const frame = window.requestAnimationFrame(() => {
       const element = transcriptScroll.current;
-      element?.scrollTo({ behavior: "smooth", top: element.scrollHeight });
+      if (element) element.scrollTop = element.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
   }, [atTranscriptBottom, messages]);
 
-  const selectedSession = sessions.data?.items.find((session) => session.id === sessionId);
+  const selectedSession = titledSessionItems.find((session) => session.id === sessionId);
+  const chatStatus = deriveChatStatus({
+    ...statusFacts,
+    approvals,
+    sessionState: selectedSession?.state,
+  });
+
+  useEffect(() => {
+    if (!sessionId || lastInventoryRow.current?.id === sessionId) return;
+    lastInventoryRow.current = sessions.data?.items.find((item) => item.id === sessionId);
+  }, [sessionId, sessions.data?.items]);
+
+  // The inventory is the authority for titles and for deciding whether an idle
+  // origin chat may have received a short scheduled delivery between polls.
+  useEffect(() => {
+    if (!sessionId || !visible || runtime.data?.connection !== "online") return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "hidden" || viewedSessionId.current !== sessionId) return;
+      void (async () => {
+        const result = await sessions.refetch();
+        if (!result.isSuccess || viewedSessionId.current !== sessionId) return;
+        const next = result.data.items.find((item) => item.id === sessionId);
+        const previous = lastInventoryRow.current;
+        lastInventoryRow.current = next;
+        if (
+          shouldCheckDeliveryAfterInventory({
+            connected: runtime.data?.connection === "online",
+            idle: !activeRun.current && next?.state !== "running" && next?.state !== "awaiting",
+            next,
+            previous,
+            sessionId,
+            visible: document.visibilityState !== "hidden",
+          })
+        ) {
+          await transcript.refetch();
+        }
+      })();
+    }, 20_000);
+    return () => window.clearInterval(interval);
+  }, [runtime.data?.connection, sessionId, sessions.refetch, transcript.refetch, visible]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const facts: AwayFacts = {
+      connection: runtime.data?.connection ?? "connecting",
+      phase:
+        selectedSession?.state === "awaiting"
+          ? "awaiting"
+          : selectedSession?.state === "running" || isRunning
+            ? "working"
+            : selectedSession
+              ? "idle"
+              : "unknown",
+      sessionId,
+    };
+    awayFacts.current = facts;
+    const onVisibility = () => {
+      const now = Date.now();
+      if (document.visibilityState === "hidden") {
+        setVisible(false);
+        setReturnNotice(undefined);
+        awayTracker.current.hide(awayFacts.current ?? facts, now);
+        return;
+      }
+      setVisible(true);
+      void (async () => {
+        const [connection, inventory, detail] = await Promise.all([
+          runtime.refetch(),
+          sessions.refetch(),
+          sessionDetail.refetch(),
+        ]);
+        const refreshed =
+          connection.isSuccess &&
+          inventory.isSuccess &&
+          detail.isSuccess &&
+          viewedSessionId.current === sessionId;
+        const row = inventory.data?.items.find((item) => item.id === sessionId);
+        lastInventoryRow.current = row;
+        if (
+          refreshed &&
+          !activeRun.current &&
+          (row?.state === "running" || row?.state === "awaiting")
+        ) {
+          setReconnectGeneration((current) => current + 1);
+        }
+        const notice = awayTracker.current.resume(
+          {
+            connection: connection.data?.connection ?? "connecting",
+            phase:
+              row?.state === "awaiting"
+                ? "awaiting"
+                : row?.state === "running"
+                  ? "working"
+                  : row
+                    ? "idle"
+                    : "unknown",
+            refreshed,
+            sessionId,
+          },
+          Date.now(),
+        );
+        if (!notice || viewedSessionId.current !== sessionId) return;
+        if (returnNoticeTimer.current) window.clearTimeout(returnNoticeTimer.current);
+        setReturnNotice(notice.text);
+        returnNoticeTimer.current = window.setTimeout(
+          () => setReturnNotice(undefined),
+          notice.durationMs,
+        );
+      })();
+    };
+    const onFocus = () => {
+      if (document.visibilityState !== "hidden" && runtime.data?.connection === "online") {
+        void sessions.refetch();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    if (document.visibilityState === "hidden") awayTracker.current.hide(facts, Date.now());
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [
+    isRunning,
+    runtime.data?.connection,
+    runtime.refetch,
+    selectedSession,
+    sessionDetail.refetch,
+    sessionId,
+    sessions.refetch,
+  ]);
+
+  useEffect(
+    () => () => {
+      if (returnNoticeTimer.current) window.clearTimeout(returnNoticeTimer.current);
+      awayTracker.current.clear();
+    },
+    [],
+  );
   const approval = approvals[0];
   const models: ComposerModelOption[] =
     runtimeSettings.data?.models
@@ -383,6 +592,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     activeRun.current = owner;
     setIsRunning(true);
     setReattached(true);
+    setStatusFacts({ phase: "following" });
     setError(undefined);
     setNotice(undefined);
     setApprovals([]);
@@ -395,18 +605,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         const stream = await watchActivity(owner, streamFailure);
         end = await consumeRun(owner, stream, streamFailure, crypto.randomUUID(), "", true);
         if (streamFailure.error && !controller.signal.aborted) throw streamFailure.error;
-        const failure = end.kind === "settled" ? end.failure : undefined;
-        if (failure && ownsChatView(owner, activeRun.current, viewedSessionId.current)) {
-          setFailedRun(failure);
-        }
-        if (!controller.signal.aborted && end.kind === "settled") {
-          notifyRunCompletion(selectedSession?.title ?? "Chat", Boolean(failure));
-        }
       } catch (caught) {
-        end = { kind: "settled" };
+        end = { kind: "uncertain" };
         if (!controller.signal.aborted) {
           if (ownsChatView(owner, activeRun.current, viewedSessionId.current)) {
-            setError(errorMessage(caught));
+            setError(`Could not confirm this run's outcome: ${errorMessage(caught)}`);
           }
           await queryClient.invalidateQueries({
             queryKey: getSessionTranscriptOptions({ path: { sessionId } }).queryKey,
@@ -414,16 +617,30 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         }
       } finally {
         if (activeRun.current === owner) {
+          let refreshed: SessionSummaryResponse | undefined;
+          if (!controller.signal.aborted) {
+            try {
+              refreshed = await refreshSession(sessionId);
+            } catch {
+              // A failed refresh cannot certify that an old replay result is current.
+            }
+          }
+          if (!refreshed || refreshed.state === "running" || refreshed.state === "awaiting") {
+            if (end.kind === "settled") end = { kind: "uncertain" };
+          }
           activeRun.current = undefined;
-          setRunTarget(undefined);
+          if (end.kind === "settled") setRunTarget(undefined);
           setApprovals([]);
           setIsRunning(false);
           setReattached(false);
-          if (!controller.signal.aborted) {
-            await refreshSession(sessionId);
-            if (drainsQueue(end, sessionId, viewedSessionId.current, controller.signal.aborted)) {
-              drainNextQueuedMessage(sessionId);
-            }
+          if (end.kind !== "settled")
+            setStatusFacts((current) => ({ phase: "closed", runId: current.runId }));
+          if (end.kind === "settled") {
+            if (end.failure) setFailedRun(end.failure);
+            notifyRunCompletion(refreshed?.title ?? "Chat", Boolean(end.failure));
+          }
+          if (drainsQueue(end, sessionId, viewedSessionId.current, controller.signal.aborted)) {
+            drainNextQueuedMessage(sessionId);
           }
         }
       }
@@ -439,11 +656,24 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         setReattached(false);
       }
     };
-  }, [sessionId, watchable, reattachEpoch]);
+  }, [reconnectGeneration, reattachEpoch, sessionId, watchable]);
 
   async function selectSession(id: string) {
     setSidebarOpen(false);
     await navigate({ search: { sessionId: id }, to: "/workspace/chat" });
+  }
+
+  async function renameChat(id: string, title: string) {
+    try {
+      const renamed = await renameSession.mutateAsync({
+        body: { title },
+        path: { sessionId: id },
+      });
+      adoptTitle({ id, ...renamed });
+      await queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
   }
 
   function openTextPrompt(prompt: TextPrompt) {
@@ -475,6 +705,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setNotice(undefined);
     setMessages([]);
     setSidebarOpen(false);
+    setSeedRequiresConfirmation(false);
     await navigate({ search: { sessionId: undefined }, to: "/workspace/chat" });
   }
 
@@ -526,6 +757,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       // Seeded, not auto-sent: the composer already reviews a starter prompt
       // before sending it, and this consent-gated action deserves the same
       // final look before the evidence actually goes to the model.
+      setSeedRequiresConfirmation(false);
       setSeedText(DEBUG_OPENING_PROMPT);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -602,6 +834,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setFailedRun(undefined);
     setLiveUsage(undefined);
     setIsRunning(true);
+    setStatusFacts({ phase: "sending" });
     let activeSessionId = targetSessionId;
     const assistantId = crypto.randomUUID();
     const controller = new AbortController();
@@ -613,6 +846,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     try {
       activeSessionId ??= await createSessionForRun(owner);
       if (!activeSessionId) return;
+      loadedTranscriptSession.current = activeSessionId;
       clearFailedRun(activeSessionId);
       if (owns()) {
         setMessages((current) => [
@@ -666,12 +900,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         }
       }
     } catch (caught) {
-      end = { kind: "settled" };
+      end = { kind: "uncertain" };
       if (!controller.signal.aborted) {
-        const failure = { message: errorMessage(caught), permanent: false, prompt };
-        if (owns()) setFailedRun(failure);
-        if (activeSessionId) saveFailedRun(activeSessionId, failure);
-        notifyRunCompletion(selectedSession?.title ?? "Your chat", true);
+        if (owns()) setError(`Could not confirm this run's outcome: ${errorMessage(caught)}`);
       }
     } finally {
       if (!accepted) onAccepted?.(false);
@@ -688,13 +919,21 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     const owned = activeRun.current === owner;
     if (owned) {
       activeRun.current = undefined;
-      setRunTarget(undefined);
+      if (end.kind === "settled") setRunTarget(undefined);
       setApprovals([]);
     }
-    if (owner.sessionId) await refreshSession(owner.sessionId);
+    if (owner.sessionId) {
+      try {
+        await refreshSession(owner.sessionId);
+      } catch {
+        // Run outcome comes from the stream; a failed inventory refresh cannot undo it.
+      }
+    }
     if (!owned) return;
     setLiveUsage(undefined);
     setIsRunning(false);
+    if (end.kind !== "settled")
+      setStatusFacts((current) => ({ phase: "closed", runId: current.runId }));
     if (
       drainsQueue(end, owner.sessionId, viewedSessionId.current, owner.controller.signal.aborted)
     ) {
@@ -711,7 +950,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       setNotice("Verify your sign-in before sending this draft.");
       return false;
     }
-    if (!isRunning) {
+    if (!isRunning && !(statusFacts.phase === "closed" && controlTarget(runTarget, sessionId))) {
       // Keep the draft until the first stream delivery proves the write was accepted.
       // The rest of the run continues in the background, leaving queue/steer available.
       return await new Promise<boolean>((resolve) => {
@@ -737,7 +976,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         setNotice("Sent — steering the active run.");
         return true;
       } catch (caught) {
-        setError(errorMessage(caught));
+        if (!isStaleRunControl(caught)) {
+          setError(errorMessage(caught));
+          return false;
+        }
+        queuedMessages.add(prompt);
+        setNotice("The run ended before steering. Message queued for this chat.");
+        return true;
       }
     }
     queuedMessages.add(prompt);
@@ -753,12 +998,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   }
 
   async function retryFailedRun() {
-    if (!sessionId || !failedRun || failedRun.permanent || isRunning) return;
+    if (!canRetryFailedRun(failedRun, sessionId, isRunning) || !sessionId || !failedRun) return;
     setError(undefined);
     setNotice(undefined);
     setFailedRun(undefined);
     setLiveUsage(undefined);
     setIsRunning(true);
+    setStatusFacts({ phase: "sending" });
     const retrySessionId = sessionId;
     const assistantId = crypto.randomUUID();
     const controller = new AbortController();
@@ -791,16 +1037,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         }
       }
     } catch (caught) {
-      end = { kind: "settled" };
+      end = { kind: "uncertain" };
       if (!controller.signal.aborted) {
-        const failure = {
-          message: errorMessage(caught),
-          permanent: false,
-          prompt: failedRun.prompt,
-        };
-        if (owns()) setFailedRun(failure);
-        saveFailedRun(retrySessionId, failure);
-        notifyRunCompletion(selectedSession?.title ?? "Your chat", true);
+        if (owns()) {
+          setError(`Could not confirm this retry's outcome: ${errorMessage(caught)}`);
+          setFailedRun(failedRun);
+        }
       }
     } finally {
       await finishRun(owner, end);
@@ -842,6 +1084,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     let followedRunId: string | undefined;
     let reattaches = 0;
     let unfollowed = false;
+    const shouldApply = createActivityDeduplicator();
     const owns = () => ownsChatView(owner, activeRun.current, viewedSessionId.current);
 
     if (replay && owns()) setMessages([]);
@@ -858,8 +1101,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           unfollowed = true;
           break;
         }
+        if (!shouldApply(delivery)) continue;
         if (delivery.type === "run.error") {
           failure = { message: delivery.message, permanent: false, prompt: activePrompt };
+          setStatusFacts({ failure, phase: "following", runId: followedRunId });
           continue;
         }
         if (delivery.type === "run.truncated") {
@@ -867,9 +1112,20 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           const decision = decideTruncation(delivery, reattaches);
           setNotice(decision.notice);
           if (decision.action === "reattach") {
+            if (owner.sessionId) {
+              try {
+                await queryClient.fetchQuery({
+                  ...getSessionTranscriptOptions({ path: { sessionId: owner.sessionId } }),
+                  staleTime: 0,
+                });
+              } catch {
+                // Replay still has a cursor; a later refresh can load the saved transcript.
+              }
+            }
             resumeFrom = decision.cursor;
           } else {
             unfollowed = true;
+            loadedTranscriptSession.current = undefined;
             if (owner.sessionId) {
               void queryClient.invalidateQueries({
                 queryKey: getSessionTranscriptOptions({ path: { sessionId: owner.sessionId } })
@@ -885,6 +1141,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           if (!startsNewRun(followedRunId, delivery.runId)) continue;
           followedRunId = delivery.runId;
           setRunTarget({ runId: delivery.runId, sessionId: delivery.sessionId });
+          setStatusFacts({ phase: "following", runId: delivery.runId });
           failure = undefined;
           sawResult = false;
           turnStartedAt = Date.now();
@@ -901,23 +1158,28 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         if (
           event.runId &&
           owner.sessionId !== undefined &&
-          followedRunId !== undefined &&
           startsNewRun(followedRunId, event.runId)
         ) {
           followedRunId = event.runId;
           setRunTarget({ runId: event.runId, sessionId: owner.sessionId });
+          setStatusFacts({ phase: "following", runId: event.runId });
           failure = undefined;
           sawResult = false;
         }
         if (event.usage && !replay) setLiveUsage(event.usage);
-        if (event.kind === "user_prompt" && replay) {
-          activePrompt = payloadText(event.payload) || event.text;
+        if (event.kind === "session.title" && owner.sessionId) {
+          const title = sessionTitleFromEvent(owner.sessionId, event.payload);
+          if (title) adoptTitle(title);
+        }
+        if (event.kind === "user_prompt" && (replay || event.delivery)) {
+          activePrompt = event.delivery ? event.text : payloadText(event.payload) || event.text;
           const images = payloadImages(event.payload);
           activeAssistantId = crypto.randomUUID();
           setMessages((current) => [
             ...current,
             {
               content: activePrompt,
+              delivery: event.delivery,
               id: crypto.randomUUID(),
               images: images.length ? images : undefined,
               role: "user",
@@ -962,14 +1224,24 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         } else if (event.kind === "permission.retract") {
           const askId = permissionAskId(event.payload);
           setApprovals((current) => retractApproval(current, askId));
+          if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "approval") {
           const askId = permissionAskId(event.payload);
           setApprovals((current) => retractApproval(current, askId));
+          if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "result") {
           sawResult = true;
           failure = failureFromResult(event.payload, activePrompt);
           const resultText = payloadText(event.payload) || event.text;
           const stop = stopReasonFromResult(event.payload);
+          setStatusFacts({
+            failure,
+            phase: "following",
+            runId: followedRunId,
+            sawResult,
+            stopReason: stop,
+          });
+          if (owner.sessionId) awayTracker.current.record(owner.sessionId, "result");
           const turnStat =
             !replay && event.usage
               ? formatTurnStat(event.usage, Date.now() - turnStartedAt)
@@ -1006,7 +1278,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     return runStreamEnd({ failure, sawResult }, unfollowed, prompt);
   }
 
-  async function refreshSession(activeSessionId: string) {
+  async function refreshSession(
+    activeSessionId: string,
+  ): Promise<SessionSummaryResponse | undefined> {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() }),
       queryClient.invalidateQueries({
@@ -1016,6 +1290,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         queryKey: getSessionDetailOptions({ path: { sessionId: activeSessionId } }).queryKey,
       }),
     ]);
+    return queryClient
+      .getQueryData<ListSessionsResponse>(listSessionsQueryKey())
+      ?.items.find((item) => item.id === activeSessionId);
   }
 
   function ensureAssistant(id: string) {
@@ -1228,10 +1505,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         }}
         onMoveToFolder={chatFolders.move}
         onRename={(session, title) => {
-          void renameSession
-            .mutateAsync({ body: { title }, path: { sessionId: session.id } })
-            .then(() => queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() }))
-            .catch((caught) => setError(errorMessage(caught)));
+          void renameChat(session.id, title);
         }}
         onRenameFolder={(folder) => {
           openTextPrompt({
@@ -1351,12 +1625,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                       initialValue: selectedSession?.title ?? "",
                       label: "Chat name",
                       onConfirm: (title) => {
-                        void renameSession
-                          .mutateAsync({ body: { title }, path: { sessionId } })
-                          .then(() =>
-                            queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() }),
-                          )
-                          .catch((caught) => setError(errorMessage(caught)));
+                        void renameChat(sessionId, title);
                       },
                       title: "Rename chat",
                     });
@@ -1397,11 +1666,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {isRunning && (
+          {(isRunning ||
+            (statusFacts.phase === "closed" && controlTarget(runTarget, sessionId))) && (
             <div className="flex items-center gap-2">
-              <Badge variant="success">
-                {reattached ? "Reconnected to run" : "Mecatl is working"}
-              </Badge>
+              {isRunning && (
+                <Badge variant="success">
+                  {reattached ? "Reconnected to run" : "Mecatl is working"}
+                </Badge>
+              )}
               {controlTarget(runTarget, sessionId) && (
                 <Button
                   disabled={controlPending}
@@ -1423,9 +1695,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           onScroll={(event) => {
             setSelectionAction(undefined);
             const element = event.currentTarget;
-            setAtTranscriptBottom(
-              element.scrollHeight - element.scrollTop - element.clientHeight < 80,
-            );
+            setAtTranscriptBottom(isNearTranscriptBottom(element));
           }}
           ref={transcriptScroll}
         >
@@ -1434,36 +1704,37 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
             ) : messages.length === 0 ? (
               <div className="m-auto flex flex-col items-center">
-                <DraftGreeting onPickSeed={setSeedText} />
+                <DraftGreeting
+                  onPickSeed={(seed) => {
+                    setSeedRequiresConfirmation(false);
+                    setSeedText(seed);
+                  }}
+                />
                 {!sessionId && (
                   <ContinueLatestChip latest={latestChat} onContinue={selectSession} />
                 )}
               </div>
             ) : (
-              <div className="space-y-7">
-                {messages.map((message, index) => {
-                  const threadSessionId = threadMap[threadKeyForMessage(message)]?.sessionId;
-                  return (
-                    <Message
-                      agentAvatar={agentAvatar}
-                      agentName={agentName}
-                      key={message.id}
-                      message={message}
-                      onPreviewImage={(image) =>
-                        setContentPreview({ file: imagePreview(image, true), kind: "file" })
-                      }
-                      onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
-                      onOpenThread={() => void openSideThread(message)}
-                      showToolCalls={showToolCalls}
-                      streaming={isRunning && index === messages.length - 1}
-                      threadDisabled={forkSession.isPending}
-                      threadSessionId={threadSessionId}
-                      userAvatar={userAvatar}
-                      userName={userName}
-                    />
-                  );
-                })}
-              </div>
+              <ChatTranscript
+                agentName={agentName}
+                messages={messages}
+                onOpenThread={(message) => void openSideThread(message)}
+                onPreviewImage={(image) =>
+                  setContentPreview({ file: imagePreview(image, true), kind: "file" })
+                }
+                onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                showToolCalls={showToolCalls}
+                streamingMessageId={
+                  isRunning && messages.at(-1)?.role === "assistant"
+                    ? messages.at(-1)?.id
+                    : undefined
+                }
+                threadDisabled={forkSession.isPending}
+                threadSessionIdForMessage={(message) =>
+                  threadMap[threadKeyForMessage(message)]?.sessionId
+                }
+                userName={userName}
+              />
             )}
           </div>
         </div>
@@ -1475,6 +1746,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             onClick={() => {
               const element = transcriptScroll.current;
               element?.scrollTo({ behavior: "smooth", top: element.scrollHeight });
+              setAtTranscriptBottom(true);
             }}
             size="icon"
             variant="secondary"
@@ -1483,6 +1755,19 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           </Button>
         )}
 
+        {chatStatus && (
+          <div className="mx-auto mb-2 w-[calc(100%-2rem)] max-w-3xl">
+            <ChatStatus status={chatStatus} />
+          </div>
+        )}
+        {returnNotice && (
+          <div
+            className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg border bg-background px-3 py-2 text-sm"
+            role="status"
+          >
+            {returnNotice}
+          </div>
+        )}
         {error && (
           <div className="mx-auto mb-3 flex w-[calc(100%-2rem)] max-w-3xl items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-foreground">
             <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
@@ -1555,11 +1840,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           onPreviewImage={(image) =>
             setContentPreview({ file: imagePreview(image, false), kind: "file" })
           }
-          onSeedConsumed={() => setSeedText(undefined)}
+          onSeedConsumed={() => {
+            setSeedText(undefined);
+            setSeedRequiresConfirmation(false);
+          }}
           onSend={handleComposerSend}
           safetyLevel={runtime.data?.capabilities.posture}
+          seedCanConfirm={
+            runtime.data?.connection === "online" &&
+            !isRunning &&
+            !(statusFacts.phase === "closed" && controlTarget(runTarget, sessionId)) &&
+            !watchable &&
+            !createSession.isPending &&
+            (!sessionId || Boolean(selectedSession))
+          }
+          seedRequiresConfirmation={seedRequiresConfirmation}
           seedText={seedText}
-          working={isRunning}
+          working={
+            isRunning ||
+            (statusFacts.phase === "closed" && Boolean(controlTarget(runTarget, sessionId)))
+          }
           workingBehavior={enterSendBehavior}
         />
       </section>

@@ -75,4 +75,30 @@ describe("chat transcript", () => {
     );
     expect(html).not.toContain('id="chat-message-empty"');
   });
+
+  it("renders a recorded scheduled delivery as inert plain text", () => {
+    const html = renderToStaticMarkup(
+      <ChatTranscript
+        messages={[
+          {
+            content: "<script>alert(1)</script> **literal**",
+            delivery: {
+              fireId: "fire-1",
+              kind: "completed",
+              scheduleName: "Daily <task>",
+              stop: "end_turn",
+            },
+            id: "delivery-1",
+            role: "user",
+          },
+        ]}
+        showToolCalls
+      />,
+    );
+    expect(html).toContain('data-delivery-note="true"');
+    expect(html).toContain("Daily &lt;task&gt;");
+    expect(html).toContain("**literal**");
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("<<<UNTRUSTED");
+  });
 });

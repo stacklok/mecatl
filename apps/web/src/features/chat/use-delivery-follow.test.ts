@@ -25,7 +25,7 @@ describe("delivery follow", () => {
     ).toBe(true);
     const liveStart: RecordedDeliveryMessage = {
       content: "Task started",
-      delivery: { fireId: "fire-1", kind: "started" },
+      delivery: { fireId: "fire-1", kind: "started", scheduleName: "Daily" },
       id: "live-start",
       role: "user",
       tools: [{ args: "{}", id: "tool-1", name: "Read", output: "live detail" }],
@@ -40,13 +40,13 @@ describe("delivery follow", () => {
     const transcript: RecordedDeliveryMessage[] = [
       {
         content: "Task started",
-        delivery: { fireId: "fire-1", kind: "started" },
+        delivery: { fireId: "fire-1", kind: "started", scheduleName: "Daily" },
         id: "transcript-start",
         role: "user",
       },
       {
         content: "Task completed",
-        delivery: { fireId: "fire-1", kind: "completed", stop: "end_turn" },
+        delivery: { fireId: "fire-1", kind: "completed", scheduleName: "Daily", stop: "end_turn" },
         id: "transcript-complete",
         role: "user",
       },
