@@ -62,21 +62,23 @@ it("keeps the maskable mark inside the central safe circle", async () => {
 
   const radiusSquared = (width * 0.4) ** 2;
   let outsideMark: string | undefined;
+  let foregroundInside = 0;
   for (let y = 0; y < height && !outsideMark; y++) {
     for (let x = 0; x < width; x++) {
+      const position = (y * width + x) * 4;
+      const differsFromBackground = pixels
+        .subarray(position, position + 4)
+        .some((channel, index) => channel !== background[index]);
       if ((x + 0.5 - width / 2) ** 2 + (y + 0.5 - height / 2) ** 2 <= radiusSquared) {
+        if (differsFromBackground) foregroundInside++;
         continue;
       }
-      const position = (y * width + x) * 4;
-      if (
-        pixels
-          .subarray(position, position + 4)
-          .some((channel, index) => channel !== background[index])
-      ) {
+      if (differsFromBackground) {
         outsideMark = `${x},${y}`;
         break;
       }
     }
   }
   expect(outsideMark).toBeUndefined();
+  expect(foregroundInside).toBeGreaterThan(0);
 });
