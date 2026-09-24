@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearUserScopedStorage,
   readUserScopedItem,
@@ -8,17 +8,37 @@ import {
   writeUserScopedItem,
 } from "./account-storage";
 
-function memoryStore(initial: Record<string, string> = {}) {
+interface StoreFaults {
+  enumerate?: boolean;
+  readAccount?: boolean;
+  remove?: boolean;
+  writeAccount?: boolean;
+}
+
+function memoryStore(initial: Record<string, string> = {}, faults: StoreFaults = {}) {
   const data = new Map(Object.entries(initial));
   return {
     data,
-    getItem: (key: string) => data.get(key) ?? null,
-    key: (index: number) => [...data.keys()][index] ?? null,
+    getItem: (key: string) => {
+      if (faults.readAccount && key === "studio.account") throw new Error("account read blocked");
+      return data.get(key) ?? null;
+    },
+    key: (index: number) => {
+      if (faults.enumerate) throw new Error("storage enumeration blocked");
+      return [...data.keys()][index] ?? null;
+    },
     get length() {
+      if (faults.enumerate) throw new Error("storage enumeration blocked");
       return data.size;
     },
-    removeItem: (key: string) => void data.delete(key),
-    setItem: (key: string, value: string) => void data.set(key, value),
+    removeItem: (key: string) => {
+      if (faults.remove && key.startsWith("studio.")) throw new Error("storage removal blocked");
+      data.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      if (faults.writeAccount && key === "studio.account") throw new Error("account write blocked");
+      data.set(key, value);
+    },
   };
 }
 
@@ -88,7 +108,8 @@ describe("account-scoped browser storage", () => {
     });
 
     expect(() => reconcileAccount("bob", blocked, session)).not.toThrow();
-    expect([...session.data.entries()]).toEqual([["studio.account", "bob"]]);
+    expect([...session.data.entries()]).toEqual([["studio.account", "!cleanup-pending"]]);
+    expect(readUserScopedItem("studio.chat.failedRun.s1", session)).toBeNull();
   });
 
   it("keeps an in-memory fallback while storage is blocked and clears it on account change", () => {
@@ -116,6 +137,150 @@ describe("account-scoped browser storage", () => {
     expect(readUserScopedItem("studio.chat.queue.s1", blocked)).toBe("queued");
     reconcileAccount("bob", blocked, blocked);
     expect(readUserScopedItem("studio.chat.queue.s1", blocked)).toBeNull();
+  });
+
+  it("quarantines failed removals in both stores across an account switch and reload", async () => {
+    const localFaults = { remove: true };
+    const sessionFaults = { remove: true };
+    const local = memoryStore(
+      {
+        "studio.account": "alice",
+        "studio.chat.folders": "Alice's folder",
+        "studio.chat.queue.same": "Alice's queued prompt",
+      },
+      localFaults,
+    );
+    const session = memoryStore(
+      {
+        "studio.account": "alice",
+        "studio.chat.failedRun.same": "Alice's failed prompt",
+      },
+      sessionFaults,
+    );
+
+    expect(reconcileAccount("bob", local, session)).toBe(true);
+    expect(local.data.get("studio.account")).not.toBe("bob");
+    expect(session.data.get("studio.account")).not.toBe("bob");
+    for (const [key, store] of [
+      ["studio.chat.folders", local],
+      ["studio.chat.queue.same", local],
+      ["studio.chat.failedRun.same", session],
+    ] as const) {
+      expect(readUserScopedItem(key, store)).toBeNull();
+    }
+
+    writeUserScopedItem("studio.chat.queue.same", "Bob's queued prompt", local);
+    writeUserScopedItem("studio.chat.failedRun.same", "Bob's failed prompt", session);
+    expect(reconcileAccount("bob", local, session)).toBe(false);
+    expect(readUserScopedItem("studio.chat.queue.same", local)).toBe("Bob's queued prompt");
+    expect(readUserScopedItem("studio.chat.failedRun.same", session)).toBe("Bob's failed prompt");
+    expect(local.data.get("studio.chat.queue.same")).toBe("Alice's queued prompt");
+
+    vi.resetModules();
+    const reloaded = await import("./account-storage");
+    expect(reloaded.reconcileAccount("bob", local, session)).toBe(true);
+    expect(reloaded.readUserScopedItem("studio.chat.folders", local)).toBeNull();
+    expect(reloaded.readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
+    expect(reloaded.readUserScopedItem("studio.chat.failedRun.same", session)).toBeNull();
+
+    localFaults.remove = false;
+    sessionFaults.remove = false;
+    vi.resetModules();
+    const recovered = await import("./account-storage");
+    expect(recovered.reconcileAccount("bob", local, session)).toBe(true);
+    expect([...local.data.entries()]).toEqual([["studio.account", "bob"]]);
+    expect([...session.data.entries()]).toEqual([["studio.account", "bob"]]);
+    recovered.writeUserScopedItem("studio.chat.queue.same", "Bob's new prompt", local);
+    recovered.writeUserScopedItem("studio.chat.failedRun.same", "Bob's new failure", session);
+
+    vi.resetModules();
+    const sameAccountReload = await import("./account-storage");
+    expect(sameAccountReload.reconcileAccount("bob", local, session)).toBe(false);
+    expect(sameAccountReload.readUserScopedItem("studio.chat.queue.same", local)).toBe(
+      "Bob's new prompt",
+    );
+    expect(sameAccountReload.readUserScopedItem("studio.chat.failedRun.same", session)).toBe(
+      "Bob's new failure",
+    );
+  });
+
+  it("fails closed when storage enumeration or account-marker reads throw", async () => {
+    const localFaults = { enumerate: true };
+    const sessionFaults = { readAccount: true };
+    const local = memoryStore(
+      { "studio.account": "alice", "studio.chat.queue.same": "Alice's queued prompt" },
+      localFaults,
+    );
+    const session = memoryStore(
+      { "studio.account": "alice", "studio.chat.failedRun.same": "Alice's failed prompt" },
+      sessionFaults,
+    );
+
+    expect(reconcileAccount("bob", local, session)).toBe(true);
+    expect(readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
+    expect(readUserScopedItem("studio.chat.failedRun.same", session)).toBeNull();
+    writeUserScopedItem("studio.chat.queue.same", "Bob's draft", local);
+    expect(readUserScopedItem("studio.chat.queue.same", local)).toBe("Bob's draft");
+
+    vi.resetModules();
+    const reloaded = await import("./account-storage");
+    expect(reloaded.reconcileAccount("bob", local, session)).toBe(true);
+    expect(reloaded.readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
+    expect(reloaded.readUserScopedItem("studio.chat.failedRun.same", session)).toBeNull();
+
+    localFaults.enumerate = false;
+    sessionFaults.readAccount = false;
+    vi.resetModules();
+    const recovered = await import("./account-storage");
+    expect(recovered.reconcileAccount("bob", local, session)).toBe(true);
+    expect(recovered.readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
+    expect(recovered.readUserScopedItem("studio.chat.failedRun.same", session)).toBeNull();
+  });
+
+  it("keeps a failed sign-out clear pending when the same account returns", async () => {
+    const faults = { remove: true };
+    const local = memoryStore(
+      { "studio.account": "alice", "studio.chat.folders": "Alice's folder" },
+      faults,
+    );
+    const session = memoryStore({ "studio.account": "alice" });
+
+    clearUserScopedStorage(local, session);
+    vi.resetModules();
+    const reloaded = await import("./account-storage");
+    expect(reloaded.reconcileAccount("alice", local, session)).toBe(true);
+    expect(reloaded.readUserScopedItem("studio.chat.folders", local)).toBeNull();
+  });
+
+  it("does not trust unmarked data when account-marker writes are blocked", async () => {
+    const faults = { remove: true, writeAccount: true };
+    const local = memoryStore(
+      { "studio.chat.folders": "Alice's folder", "studio.chat.queue.same": "Alice's prompt" },
+      faults,
+    );
+    const session = memoryStore({ "studio.chat.failedRun.same": "Alice's failure" }, faults);
+
+    expect(reconcileAccount("bob", local, session)).toBe(true);
+    expect(local.data.has("studio.account")).toBe(false);
+    expect(session.data.has("studio.account")).toBe(false);
+    expect(readUserScopedItem("studio.chat.folders", local)).toBeNull();
+    expect(readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
+    expect(readUserScopedItem("studio.chat.failedRun.same", session)).toBeNull();
+    writeUserScopedItem("studio.chat.queue.same", "Bob's draft", local);
+    expect(local.data.get("studio.chat.queue.same")).toBe("Alice's prompt");
+
+    vi.resetModules();
+    const reloaded = await import("./account-storage");
+    expect(reloaded.reconcileAccount("bob", local, session)).toBe(true);
+    expect(reloaded.readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
+
+    faults.remove = false;
+    faults.writeAccount = false;
+    vi.resetModules();
+    const recovered = await import("./account-storage");
+    expect(recovered.reconcileAccount("bob", local, session)).toBe(true);
+    expect([...local.data.entries()]).toEqual([["studio.account", "bob"]]);
+    expect([...session.data.entries()]).toEqual([["studio.account", "bob"]]);
   });
 
   it("clears the previous account's data when a different account signs in", () => {

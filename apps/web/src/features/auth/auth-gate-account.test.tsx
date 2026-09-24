@@ -29,6 +29,8 @@ it("drops account data and prior BFF snapshots before the next account renders",
     complete: true,
     items: [{ id: "same", title: "Alice" }],
   });
+  window.localStorage.setItem("studio.account", "alice");
+  window.sessionStorage.setItem("studio.account", "alice");
   window.localStorage.setItem("studio.chat.folders", "Alice's folder");
   window.sessionStorage.setItem("studio.chat.failed.same", "Alice's failed prompt");
   window.localStorage.setItem("theme", "dark");
