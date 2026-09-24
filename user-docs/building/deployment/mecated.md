@@ -296,6 +296,36 @@ The experimental `openai-codex` provider uses a manually supplied ChatGPT Codex
 token and has no login or refresh flow. See the same credential guide for its
 schema and lifecycle.
 
+#### Context discovery recovery
+
+For a provider that supports discovery, the first session prompt starts or joins
+listing when the model has no known context window. A failed or empty listing returns
+`context_window_unavailable` (HTTP 503 or gRPC `Unavailable`) without recording the
+prompt. Native authenticated providers list on demand; starting the daemon does
+not authenticate to their model-list endpoint. ToolHive and required Codex default
+selection retain their bounded startup probes.
+
+Restore the configured provider's reachability and credentials, then retry after
+the ten-second per-provider cooldown. Each ordinary discovery attempt and admission
+wait is bounded to ten seconds. Client cancellation ends only that client's wait;
+shutdown cancels and joins discovery before closing its credential resources.
+ListModels requests can also refresh providers after cooldown, but opening the
+picker is not a prerequisite for retry.
+
+If the provider cannot supply metadata, configure a verified window under the exact
+provider/model key in operator-global `models.context_windows`, then restart
+`mecated` to load the settings. The deployment-wide `--context-window-override`
+takes precedence over that map. Use the provider's actual limit rather than a guessed
+value to bypass rejection; see [Context windows](/features/context-windows.md) for
+configuration and precedence. Discovery metadata is process-local and reacquired
+after restart; previously successful metadata can remain usable until then even
+after a listing failure. It does not establish current inference authorization.
+
+This gate covers Service session entry, including failed-step retry and restored
+approval resumption. Direct child, utility, and team engine entry can still use the
+128000 defensive fallback for unknown models. For rejected text and attachment
+recovery in `mecatui`, see [model context troubleshooting](/features/choose-models.md#model-context-metadata-is-unavailable).
+
 #### Offline mock providers (no credentials)
 
 `--mock` provides one canned text response for offline smoke tests.

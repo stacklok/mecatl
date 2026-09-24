@@ -505,9 +505,18 @@ including:
 - context limit when known.
 
 They do not expose API keys or provider-private credentials. The inventory is
-server-specific and can differ according to the providers and credentials
-configured at startup. A provider's live model catalog may refresh while the
-server is running.
+server-specific and depends on the providers and credentials configured at startup.
+Each `ListModels` request, including client startup and SDK requests, can refresh
+available providers after a ten-second per-provider cooldown. Concurrent requests
+share a fetch; one provider's cooldown does not prevent another from refreshing.
+The request waits up to ten seconds and returns models and safe provider statuses
+from one snapshot. There is no periodic refresh or metadata cache on disk.
+
+The server retains each provider's last non-empty model metadata for its lifetime,
+even if a later listing fails, is unauthorized, or returns no models. The latest
+status still reports that outcome where provider status is exposed. A later
+non-empty listing replaces the retained list. Retained metadata can become stale;
+it does not guarantee current model access or context limits.
 
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
 inspect this same resolved inventory. Start without `provider_id` when the
@@ -555,3 +564,35 @@ session as authoritative.
 - [Context windows](./context-windows.md) for context limits and fallback.
 - [Capability and deployment matrix](./capability-matrix.md) for deployment
   availability.
+
+## Troubleshooting
+
+### Model context metadata is unavailable
+
+You can send the first prompt in a new or resumed session without opening
+`/models` first. If the selected model's context window is unknown and its provider
+supports discovery, the server starts or joins discovery for that provider before
+executing the prompt. Native authenticated providers perform this listing on demand
+rather than at startup.
+Known configured, retained live, or catalog windows need no listing.
+
+When discovery fails or returns an empty list and no positive window is known,
+the server rejects execution with `context_window_unavailable`. Your existing
+conversation remains available, and the rejected prompt has not been recorded as
+a server turn. Restore provider discovery, or ask the server operator to configure
+the model's verified [exact context window](./context-windows.md). Retry after the
+ten-second cooldown; another failed attempt requires another explicit request.
+Cancelling your wait leaves the server's bounded discovery attempt running.
+
+In `mecatui`, **Retry** sends the identical prepared text and attachments without
+rereading files or the clipboard. **Back** restores the editable draft, including
+staged pastes and images, and asks before replacing a newer draft. Cancelling that
+confirmation keeps both drafts. **Discard submission** releases the rejected
+payload. Recovery holds one submission in client memory under the existing size
+limits; accepting the prompt, changing sessions, exiting, or an unrelated terminal
+error releases it. There is no automatic replay or recovery after client restart.
+
+API clients receive gRPC `Unavailable` with ErrorInfo domain `mecatl.stacklok.com`
+and reason `context_window_unavailable`, or HTTP 503. Match the structured reason,
+not error-message text, and retry explicitly after addressing discovery. For daemon
+configuration, see [context discovery recovery](/building/deployment/mecated.md#context-discovery-recovery).

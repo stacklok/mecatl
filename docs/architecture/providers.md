@@ -360,15 +360,15 @@ catalog). The widened `SessionEngineFactory func(ctx, sel, specs)` is the ONE se
 a per-session engine — it serves BOTH a non-default provider/model AND client-provided
 MCP servers (orthogonal inputs → ONE engine over ONE catalog). The composition factory
 resolves the selector against the registry and builds Deps via
-**`engineDepsForProvider`**, which re-derives EVERY provider/model-closing field
-(LLM, Compactor, Model, model-keyed TokenCounter, `PromptConfig.Env.Model`, and the
-**context-window resolver** `Deps.ContextWindow` — a `func() int` built by
-`reg.windowResolver` (override→live→catalog→128k floor) and read live at the point of
-use, so the compaction trigger AGREES with the `ListModels`-advertised `context_limit`
-and self-corrects after a live-catalog swap with no rebuild; only a genuinely
-uncatalogued passthrough model falls back to the 128k default). The DEFAULT model
-resolves through the SAME resolver (`baseEngineDeps`, issue #63) — it is no longer
-pinned to the 128k floor.
+**`engineDepsForProvider`**, which re-derives the LLM, Compactor, Model, model-keyed
+TokenCounter, `PromptConfig.Env.Model`, and context-window resolver.
+`Deps.ContextWindow` is a `func() int` built by
+`reg.windowResolver` (global override → exact configuration → retained live metadata
+→ catalog → defensive 128000 floor), read at the point of use. An accepted metadata
+publication therefore updates context resolution without rebuilding the engine. The
+[Service admission gate](context-and-compaction.md) separately decides whether that
+floor is permitted before execution; the resolver's positive scalar alone is not
+admission evidence. The default model uses the same resolver.
 This is the contamination fix: a shallow clone swapping only the
 LLM would compact/count through the wrong model. The resolution table:
 
@@ -393,16 +393,19 @@ cap, `createSession` returns `ErrTooManySessionEngines` (gRPC `ResourceExhausted
 HTTP 429); `CloseSession`/`EndSession` frees a slot. (Keys are NEVER on the wire — only
 the provider id.)
 
-**Model inventory (`ListModels` / `internal/app/modelsnapshot.go`).** `modelSnapshot`
-joins the registry's AVAILABLE providers to the embedded catalog and projects each
-model into the proto `ModelInfo` (public metadata only — id, provider_id, display_name,
-image/reasoning flags, context_limit — never a key/env/base-URL). Composition stores
-that projection in one atomic resolved inventory shared by `ListModels` and the
-read-only `DiscoverModels` tool. Publication and reads deep-copy every `ModelInfo`,
-and each discovery call captures its own canonically sorted scalar projection, so
-publisher or reader mutation cannot change a page or its inventory digest. Live
-refresh swaps that same inventory, so both views retain the existing
-floor/last-known-good/empty semantics without a second lister or probe.
+**Model inventory.** `internal/app/provider_discovery.go` (`providerDiscovery`)
+is the Build-owned listing and publication owner. It borrows the registry's frozen
+provider-to-lister set; registry membership, credentials, and default selection
+remain separate responsibilities. Bootstrap, one-shot startup, ListModels, and
+Service context admission all request or join provider-local attempts through
+`request`. Protocol wrappers in `internal/app/modellister.go` translate responses
+but do not coordinate refresh or publish metadata.
+
+The owner projects public model metadata only—ID, provider ID, display name,
+image/reasoning flags, and context limit, never a key, environment value, or base
+URL. Publication and reads deep-copy every `ModelInfo`, and each `DiscoverModels`
+call captures its own canonically sorted scalar projection, so publisher or reader
+mutation cannot change a page or its inventory digest.
 
 An unfiltered first call returns a complete selectable-provider facet alongside the
 bounded model page. Optional byte-exact provider/model filters compose with a bounded
@@ -416,18 +419,71 @@ The pair remains the exact selection handle, and discovery never probes, refresh
 routes, or selects. The tool is registered through the common catalog assembly,
 including no-FS sessions, and receives no workspace or shell input. The `mock`
 provider advertises no selectable models. `ServerCapabilities.model_selection` is true
-iff the inventory is non-empty or a refresh source is available, gating the client's
-model picker. Provider key/base-URL flags landed in `cmd/mecated` earlier; the picker
-UX is a client concern.
+when inventory is non-empty or a refresh source is available, including a demand-only
+native source.
 
-**Capability single-source (`internal/app/capability.go`).** A model's true input
-capability is the INTERSECTION `catalog-per-model-modalities ∩ adapter-Capabilities()`,
-computed by `modelCapability` in composition (the only layer holding both inputs). That
-ONE neutral `port.ProviderCapabilities` feeds three sinks so they cannot disagree:
-`ModelInfo.image` (ListModels), the `CreateSessionResponse.session_capabilities` echo
-(per-session), and the ACP gate (`Service.ProviderCapabilities()`, the default caps).
-The server/acp adapters receive only the computed value — no catalog/registry type
-crosses inward. Keys are never on the wire — only the provider id.
+An ordinary attempt has a ten-second deadline. Concurrent requests for one provider
+join that attempt; other providers start and publish independently. A ten-second
+provider-local cooldown starts when the owner publishes the terminal outcome.
+Timeout publishes failure and wakes waiters even if the lister has not returned;
+the slot remains occupied until return, and late results cannot replace the outcome.
+A request during cooldown or while a timed-out fetch still occupies the slot returns
+the current snapshot without sleeping or starting a replacement. Cancelling a waiter
+ends only its wait: the owner keeps the bounded fetch for other readers and publication.
+
+Native authenticated providers are demand-only. Their first unknown-window prompt
+starts discovery without a picker visit. Eligible non-native providers receive one
+startup refresh, with completed bootstrap attempts skipped. ToolHive's parallel
+protocol probes retain their 1.5-second budgets and default-selection rules; Codex's
+required default lookup retains its five-second budget. Any ListModels demand,
+including client startup or an SDK call, can refresh available listers after cooldown,
+including healthy providers. ListModels fans out under one ten-second wait bound;
+admission requests only its selected provider. There is no periodic refresh or
+durable metadata cache.
+
+Accepted non-empty observations replace that provider's list. Failure, unauthorized,
+and empty outcomes retain its last non-empty observations and original observation
+time for the Build's lifetime, while reporting the latest safe outcome. A provider
+without retained observations uses `providerInventoryFloor`; a successful live list
+uses its returned membership plus the custom provider's configured-default floor.
+The Codex floor never invents entitlements. Its lister leaves absent context windows
+absent, and pure resolution applies the matching OpenAI catalog window as catalog
+provenance. Positive retained metadata can age; listing is evidence for resolution,
+not authorization for inference.
+
+Publication holds a local completion-tail lock across candidate acceptance,
+registry-owned default healing, capture of default provider/model/auto-selected facts,
+projection, and commit. Healing and reminting use candidate capabilities outside the
+short publication lock. `internal/app/provider_discovery_projection.go` projects from
+that candidate and captured defaults. The owner atomically publishes observations,
+outcomes, and model/status rows before waking waiters; timeout and Close serialize
+with the same tail. Lister entries are cloned on acceptance, and
+`CurrentModelSnapshot` returns detached protobuf messages and slices.
+
+`internal/adapter/server/service.go` (`ListModelSnapshot`) refreshes once and captures
+one combined read-only `ModelSnapshot` for either HTTP or gRPC. The models-only
+`ListModels` projection remains available to Go callers. `DiscoverModels`, capability
+and context reads, and schedule selector validation are pure reads; they do not list
+or acquire credentials. Service binds the same inventory into its schedule manager,
+including an injected manager. Only standalone Services without an inventory reader
+use the `SetModels`/`SetProviderStatus` fallback; neither setter can write a wired
+Build's inventory.
+
+On Build failure and normal `Built.Close`, the owner prohibits new work, cancels
+attempts, and joins fetch/startup workers and deadline callbacks before borrowed
+credential resources close. Bounded physical shutdown requires listers to honor
+cancellation. Attempts, cooldowns, and observations reset at the next Build. See the
+[resource and fidelity inventory](../adr/0027-cloud-native.md) and
+[context admission boundary](context-and-compaction.md).
+
+**Capability intersection (`internal/app/capability.go`).** `modelCapability` combines
+live-first model modalities (catalog fallback, then adapter-only for unknown models)
+with adapter capabilities in composition. Inventory projection uses the explicit
+candidate snapshot through `modelCapabilityCandidate`. Already-built session engines
+retain their construction-time capabilities and effort configuration; publication
+does not rebuild them or pin all collaborators to a metadata generation. Context
+windows separately resolve at use. Provider credentials and raw listing errors are
+never part of public model/status projections.
 
 **Per-sub-agent provider (shipped).** A Subagent agent def or team member may pin a
 `provider:` (orthogonal to `model:`) to run its child engine on a DIFFERENT provider
