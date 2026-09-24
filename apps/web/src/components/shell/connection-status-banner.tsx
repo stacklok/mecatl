@@ -1,30 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle } from "lucide-react";
-import { connectionBannerMessages, connectionBannerState } from "./connection-status-banner-state";
+import { AlertTriangle, LogIn, RefreshCw } from "lucide-react";
+import { useAuthRecovery } from "../../features/auth/auth-recovery-context";
+import { PopupFallback } from "../../features/auth/popup-fallback";
+import { Button } from "../ui/button";
+import { statusBannerMessages, statusBannerState } from "./connection-status-banner-state";
 
 /**
- * A thin banner shown above the top nav only when the Mecatl connection has
- * a problem — never a persistent status chip in the nav itself (Studio's
- * "the top nav carries no status chips" rule). Renders nothing while the
- * connection is healthy or still resolving.
+ * The public connection and sign-in facts share one banner contract with
+ * the future shell layout (#1844). No detailed runtime query runs here.
  */
-export function ConnectionStatusBanner({ placement }: { placement: "global" | "transient" }) {
-  const runtime = useQuery(getRuntimeOptions());
-  const state = connectionBannerState(runtime);
+export function ConnectionStatusBanner() {
+  const { banner, phase, popupIssue, retrySession, startPopupLogin } = useAuthRecovery();
+  const state = statusBannerState(banner);
 
   if (state === "hidden") return null;
-  if ((state.kind === "unavailable") !== (placement === "global")) return null;
 
   return (
     <div
-      className="flex min-h-11 min-w-0 w-full shrink-0 items-center gap-2 bg-warning/90 py-2 pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] text-xs font-medium text-black"
+      className="flex shrink-0 flex-wrap items-center gap-2 bg-warning/90 px-4 py-1.5 text-xs font-medium text-black"
       role="status"
     >
       <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
-      <span className="min-w-0 break-words">{connectionBannerMessages[state.kind]}</span>
+      <span>{statusBannerMessages[state]}</span>
+      {state === "session-check-failed" && (
+        <Button onClick={retrySession} size="sm" variant="outline">
+          <RefreshCw aria-hidden="true" /> Retry session check
+        </Button>
+      )}
+      {state === "sign-in" && (
+        <>
+          <Button onClick={startPopupLogin} size="sm" variant="outline">
+            <LogIn aria-hidden="true" /> {phase === "sign-in" ? "Sign in" : "Sign in again"}
+          </Button>
+          {popupIssue && <PopupFallback />}
+        </>
+      )}
     </div>
   );
 }

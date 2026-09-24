@@ -1,35 +1,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import type { GetRuntimeResponse } from "@mecatl-studio/contracts/generated";
+import type { GetPublicStatusResponse } from "@mecatl-studio/contracts/generated";
 
-export type RuntimeResponse = GetRuntimeResponse;
+export type PublicStatus = GetPublicStatusResponse;
 
-/** What the connection banner renders, derived from the `/api/v1/runtime` query. */
-export type ConnectionBannerState = "hidden" | { kind: "reconnecting" } | { kind: "unavailable" };
+export type StatusBannerInput = {
+  publicStatus?: PublicStatus;
+  publicStatusFailed: boolean;
+  sessionCheckFailed: boolean;
+  authenticated: boolean;
+};
 
-export const connectionBannerMessages = {
-  reconnecting: "Reconnecting to the Mecatl instance…",
-  unavailable: "Mecatl is unavailable right now.",
-} as const satisfies Record<Exclude<ConnectionBannerState, "hidden">["kind"], string>;
+export type StatusBannerState =
+  | "hidden"
+  | "bff-unavailable"
+  | "daemon-unavailable"
+  | "session-check-failed"
+  | "sign-in";
 
-/**
- * Hidden while the query is still resolving or the connection is `online`;
- * `reconnecting` maps to its own message; an error (including a `503`) or
- * any other non-online connection reads as unavailable.
- */
-export function connectionBannerState(runtime: {
-  isPending: boolean;
-  isError: boolean;
-  data?: RuntimeResponse;
-}): ConnectionBannerState {
-  if (runtime.isPending) return "hidden";
-  if (runtime.isError || runtime.data === undefined) return { kind: "unavailable" };
-  switch (runtime.data.connection) {
-    case "online":
-      return "hidden";
-    case "reconnecting":
-      return { kind: "reconnecting" };
-    default:
-      return { kind: "unavailable" };
-  }
+export const statusBannerMessages = {
+  "bff-unavailable": "Studio is unavailable right now.",
+  "daemon-unavailable": "The Mecatl instance is unavailable right now.",
+  "session-check-failed": "We couldn't verify your sign-in. Try again.",
+  "sign-in": "Sign in to use this Mecatl workspace.",
+} as const;
+
+export function statusBannerState(input: StatusBannerInput): StatusBannerState {
+  if (input.publicStatusFailed) return "bff-unavailable";
+  if (input.publicStatus?.connection === "unavailable") return "daemon-unavailable";
+  if (input.sessionCheckFailed) return "session-check-failed";
+  if (input.publicStatus?.signInRequired && !input.authenticated) return "sign-in";
+  return "hidden";
 }
