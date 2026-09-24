@@ -241066,6 +241066,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790230312959,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6118a7fc6566f9607fb2971a5d5a9b46e3597a83",
+          "message": "test(app): eliminate stale session reconciliation flake (#1838)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-23T23:00:32-07:00",
+          "tree_id": "ef3d8566cb49156d3aff57d32e0d292ffd22bffa",
+          "url": "https://github.com/stacklok/mecatl/commit/6118a7fc6566f9607fb2971a5d5a9b46e3597a83"
+        },
+        "date": 1790230954304,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -350195,6 +350229,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790230951609,
+  "lastUpdate": 1790230955564,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
