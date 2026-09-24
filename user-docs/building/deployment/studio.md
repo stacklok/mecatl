@@ -181,9 +181,9 @@ Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
 action retries the failed run without sending the prompt again. Image messages
 can be sent after the current run ends.
 
-Folders and queued messages survive a reload for the same account. Studio clears
-account-scoped chat data when you sign out or switch accounts. Appearance
-preferences remain on the device.
+Folders, queued messages, and account preferences survive a reload for the same
+account. Studio clears them when you sign out or switch accounts. The device
+theme remains.
 
 ### Return to a chat
 
