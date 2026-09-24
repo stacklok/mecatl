@@ -4,12 +4,12 @@
 **Work classification:** Bounded — reduces CI work while preserving the repository-local acceptance-proof resolution contract; no public or durable architecture boundary changes.
 **Decision record:** None — this is a repository CI policy and resolver implementation decision, not a durable system architecture decision.
 **Phase:** CI validation efficiency
-**Status:** proposed, 2026-09-23. User-authorized Split Plan / Interface candidate.
+**Status:** in-progress, 2026-09-23. Implementation started from approved Plan / Interface baseline e69247a474cceb84ce878fd5e33cf6236b88f7fc.
 **Delivery:** Split. Two proof-resolution behaviors change and require separate contract review before implementation.
 **Expected tasks:** 2
 **Issue:** None — user-authorized bounded CI improvement.
 **Plan PR:** [#1831](https://github.com/stacklok/mecatl/pull/1831)
-**Approved baseline:** absent until this plan PR merges
+**Approved baseline:** e69247a474cceb84ce878fd5e33cf6236b88f7fc
 
 Acceptance-plan CI must retain fail-closed proof-reference integrity without re-running unrelated implementation workloads for every plan-only pull request. Task proofs establish that their allowlisted verification target remains registered; their execution remains the responsibility of the target's existing relevant CI job.
 

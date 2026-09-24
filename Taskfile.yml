@@ -998,6 +998,11 @@ tasks:
       - task: sdk:docs
       - task: docs:check
 
+  ac-trace:vitest-index:
+    deps: [sdk:install, studio:install]
+    cmds:
+      - ACTRACE_VITEST_INDEX="{{.ROOT_DIR}}/.scratch/ac-trace/vitest-title-index.json" node scripts/build-vitest-proof-index.mjs
+
   ac-trace:
     desc: "Report acceptance-criteria → test coverage for every docs/acceptance/ plan (report-only)"
     # sdk:install is a REAL dependency, not a convenience: .actrace.yml resolves
@@ -1011,7 +1016,9 @@ tasks:
     # a `vitest:` proof under apps/ is parsed with the compiler hoisted to
     # apps/node_modules (typescript is a devDependency of the apps/ root), so
     # without it every apps/ proof is rejected the same way.
-    deps: [sdk:install, studio:install]
+    deps: [ac-trace:vitest-index]
+    env:
+      ACTRACE_VITEST_INDEX: "{{.ROOT_DIR}}/.scratch/ac-trace/vitest-title-index.json"
     cmds:
       # go run (pinned), NOT a go.mod `tool` directive — ac-trace is an INTERNAL
       # module, and a tool directive would force EVERY build of the root module
@@ -1021,13 +1028,17 @@ tasks:
 
   ac-trace-strict:
     desc: "Gate a landed plan's verify: contract — exit non-zero when a named proof doesn't resolve"
-    deps: [sdk:install, studio:install]
+    deps: [ac-trace:vitest-index]
+    env:
+      ACTRACE_VITEST_INDEX: "{{.ROOT_DIR}}/.scratch/ac-trace/vitest-title-index.json"
     cmds:
       - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --strict
 
   ac-trace-matrix:
     desc: "Regenerate the committed docs/acceptance/traceability.md matrix (AC → proof); never gates"
-    deps: [sdk:install, studio:install]
+    deps: [ac-trace:vitest-index]
+    env:
+      ACTRACE_VITEST_INDEX: "{{.ROOT_DIR}}/.scratch/ac-trace/vitest-title-index.json"
     cmds:
       - go run github.com/stacklok/ac-trace/cmd/actrace@v0.0.4 --matrix
 
