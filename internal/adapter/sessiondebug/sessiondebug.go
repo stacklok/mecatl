@@ -787,7 +787,7 @@ func (t *inspectTool) networkView(ctx context.Context, target session.SessionID,
 func projectNetworkAttempt(row session.NetworkAttemptPayload) networkAttemptEvidence {
 	outcome := row.StreamOutcome
 	if outcome == "" {
-		outcome = "unavailable"
+		outcome = session.StreamOutcomeUnavailable
 	}
 	return networkAttemptEvidence{
 		RunSerial: row.RunSerial, Turn: row.Turn, Attempt: row.Attempt, MaxAttempts: row.MaxAttempts,

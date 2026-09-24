@@ -335,17 +335,23 @@ type attemptStructure struct {
 	outcome  string
 }
 
+// observe records the row's structural fields when they form a valid
+// observation, mirroring engine/session's validNetworkStreamOutcome rule for
+// the subset this local pre-validation opts into (a "" outcome is simply not
+// an observation yet, not a rejection).
 func (s *attemptStructure) observe(row session.NetworkAttemptPayload) {
-	if row.StreamOutcome == "" || row.StreamOutcome == "complete" && (row.ProviderTerminalObserved == nil || !*row.ProviderTerminalObserved) {
-		return
-	}
+	terminal := row.ProviderTerminalObserved
 	switch row.StreamOutcome {
-	case "complete", "incomplete", "stream_error", "cancelled":
-		if row.ProviderTerminalObserved == nil {
+	case session.StreamOutcomeComplete:
+		if terminal == nil || !*terminal {
 			return
 		}
-	case "unavailable":
-		if row.ProviderTerminalObserved != nil {
+	case session.StreamOutcomeIncomplete, session.StreamOutcomeStreamError, session.StreamOutcomeCancelled:
+		if terminal == nil {
+			return
+		}
+	case session.StreamOutcomeUnavailable:
+		if terminal != nil {
 			return
 		}
 	default:
@@ -360,7 +366,7 @@ func (s *attemptStructure) observe(row session.NetworkAttemptPayload) {
 func (s *attemptStructure) unavailable() {
 	s.mu.Lock()
 	if s.outcome == "" {
-		s.outcome = "unavailable"
+		s.outcome = session.StreamOutcomeUnavailable
 	}
 	s.mu.Unlock()
 }
@@ -1325,6 +1331,14 @@ func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagno
 			}
 			clean := true
 			consumed := true
+			// stoppedOnError tracks whether the range stopped on a chunk that
+			// carried a mid-stream error. restSeqUnbounded/restSeqIdleBounded
+			// already report that attempt's structural summary via
+			// logMidStreamError BEFORE yielding it (see the comment there), so
+			// reporting it again here would produce two terminal rows for one
+			// outer attempt (ADR 0357 AC3.2: at most one final summary per
+			// attempt). Only an error-free early stop is unreported elsewhere.
+			stoppedOnError := false
 			result.remaining(func(chunk port.Chunk, err error) bool {
 				if err != nil {
 					clean = false
@@ -1334,6 +1348,7 @@ func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagno
 				}
 				if !yield(chunk, err) {
 					consumed = false
+					stoppedOnError = err != nil
 					return false
 				}
 				return err == nil
@@ -1341,7 +1356,7 @@ func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagno
 			if clean && consumed {
 				p.observeFinalStructure(diagnostic, session.StreamProgressComplete)
 				p.recordSuccess()
-			} else if !consumed {
+			} else if !consumed && !stoppedOnError {
 				p.observeFinalStructure(diagnostic, session.StreamProgressVisible)
 			}
 		case session.StreamProgressUnknown, session.StreamProgressPrecommit:

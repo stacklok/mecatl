@@ -325,29 +325,22 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 	return func(yield func(port.Chunk, error) bool) {
 		defer func() { _ = stream.Close() }()
 		var st streamState
-		observed := false
-		observe := func(terminal bool, outcome string) {
-			if observed {
-				return
-			}
-			observed = true
-			port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: outcome})
-		}
+		observe := port.ObserveAttemptOnce(ctx)
 		for stream.Next() {
 			select {
 			case <-ctx.Done():
-				observe(false, "cancelled")
+				observe(false, session.StreamOutcomeCancelled)
 				return
 			default:
 			}
 			event := stream.Current()
 			chunks, terr := translate(event, &st)
 			if st.done {
-				outcome := "complete"
+				outcome := session.StreamOutcomeComplete
 				if terr != nil {
-					outcome = "stream_error"
+					outcome = session.StreamOutcomeStreamError
 				} else if mapStop(st.stopReason) == session.StopError {
-					outcome = "incomplete"
+					outcome = session.StreamOutcomeIncomplete
 				}
 				observe(true, outcome)
 			}
@@ -357,7 +350,7 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 				}
 			}
 			if terr != nil {
-				observe(st.done, "stream_error")
+				observe(st.done, session.StreamOutcomeStreamError)
 				yield(port.Chunk{}, terr)
 				return
 			}
@@ -366,17 +359,17 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			// Don't report a plain context cancellation as a stream error; the
 			// caller cancelled deliberately.
 			if ctx.Err() != nil {
-				observe(false, "cancelled")
+				observe(false, session.StreamOutcomeCancelled)
 				return
 			}
-			observe(false, "stream_error")
+			observe(false, session.StreamOutcomeStreamError)
 			yield(port.Chunk{}, anthropicStreamErr(err, err.Error()))
 			return
 		}
 		if ctx.Err() != nil {
-			observe(false, "cancelled")
+			observe(false, session.StreamOutcomeCancelled)
 		} else if !st.done {
-			observe(false, "incomplete")
+			observe(false, session.StreamOutcomeIncomplete)
 		}
 	}, nil
 }

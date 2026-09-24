@@ -679,6 +679,18 @@ func validNetworkAttemptScalars(in NetworkAttemptPayload) bool {
 		networkAttemptStatusValid(in.HTTPStatus) && networkAttemptStatusValid(in.InBandStatus)
 }
 
+// StreamOutcome is the closed vocabulary of structural stream-completion
+// outcomes ADR 0357 defines for NetworkAttemptPayload.StreamOutcome. Producers
+// (provider adapters, llmresilience) and consumers (the debugger projection)
+// share these constants so the vocabulary cannot silently drift between them.
+const (
+	StreamOutcomeComplete    = "complete"
+	StreamOutcomeIncomplete  = "incomplete"
+	StreamOutcomeStreamError = "stream_error"
+	StreamOutcomeCancelled   = "cancelled"
+	StreamOutcomeUnavailable = "unavailable"
+)
+
 func validNetworkAttemptVocabulary(in NetworkAttemptPayload) bool {
 	return networkAttemptOneOf(in.RetryDisposition, "retryable", "permanent", "unknown") &&
 		networkAttemptOneOf(in.StreamProgress, "precommit", "visible", "complete", "unknown") &&
@@ -690,11 +702,11 @@ func validNetworkStreamOutcome(in NetworkAttemptPayload) bool {
 	switch in.StreamOutcome {
 	case "":
 		return in.ProviderTerminalObserved == nil
-	case "unavailable":
+	case StreamOutcomeUnavailable:
 		return in.ProviderTerminalObserved == nil
-	case "complete":
+	case StreamOutcomeComplete:
 		return in.ProviderTerminalObserved != nil && *in.ProviderTerminalObserved
-	case "incomplete", "stream_error", "cancelled":
+	case StreamOutcomeIncomplete, StreamOutcomeStreamError, StreamOutcomeCancelled:
 		return in.ProviderTerminalObserved != nil
 	default:
 		return false

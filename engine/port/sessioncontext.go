@@ -74,6 +74,22 @@ func ObserveAttempt(ctx context.Context, observation session.NetworkAttemptPaylo
 	}
 }
 
+// ObserveAttemptOnce returns a reporter bound to ctx that forwards at most one
+// provider-terminal observation to ObserveAttempt: the first call wins and every
+// later call is silently dropped. Provider adapters share this so their
+// "report the stream's terminal outcome exactly once" contract lives in one
+// place instead of being reimplemented per adapter.
+func ObserveAttemptOnce(ctx context.Context) func(terminal bool, outcome string) {
+	var observed bool
+	return func(terminal bool, outcome string) {
+		if observed {
+			return
+		}
+		observed = true
+		ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: outcome})
+	}
+}
+
 // WithSessionID returns a child context carrying the exact identity of the
 // session that owns model calls made with that context. It grants no authority.
 func WithSessionID(ctx context.Context, id session.SessionID) context.Context {

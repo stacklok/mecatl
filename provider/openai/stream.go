@@ -205,7 +205,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			return nil, nil
 		}
 		st.done = true
-		st.streamOutcome = "incomplete"
+		st.streamOutcome = session.StreamOutcomeIncomplete
 		usage := mapUsage(event.Response.Usage)
 		return []port.Chunk{
 			{Kind: port.ChunkUsage, Usage: &usage},
@@ -216,7 +216,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			return nil, nil
 		}
 		st.done = true
-		st.streamOutcome = "stream_error"
+		st.streamOutcome = session.StreamOutcomeStreamError
 		return nil, &responseStreamError{
 			msg:      "response failed: " + responseErrorString(event.Response.Error),
 			status:   providerErrorStatus(string(event.Response.Error.Code), event.Response.Error.Message),
@@ -230,7 +230,7 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			return nil, nil
 		}
 		st.done = true
-		st.streamOutcome = "stream_error"
+		st.streamOutcome = session.StreamOutcomeStreamError
 		return nil, &responseStreamError{
 			msg:      "stream error: " + streamErrorString(event),
 			status:   providerErrorStatus(event.Code, event.Message),
@@ -251,12 +251,12 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 		return nil, nil
 	}
 	st.done = true
-	st.streamOutcome = "complete"
+	st.streamOutcome = session.StreamOutcomeComplete
 	switch mapStop(event.Response.Status) {
 	case session.StopCancelled:
-		st.streamOutcome = "cancelled"
+		st.streamOutcome = session.StreamOutcomeCancelled
 	case session.StopError:
-		st.streamOutcome = "incomplete"
+		st.streamOutcome = session.StreamOutcomeIncomplete
 	}
 	usage := mapUsage(event.Response.Usage)
 	chunks := make([]port.Chunk, 0, 4)
