@@ -118,7 +118,6 @@ import {
   enqueueApproval,
   errorMessage,
   failureFromResult,
-  messagesFromTranscript,
   payloadImages,
   payloadText,
   permissionAsk,
@@ -184,10 +183,8 @@ import {
 } from "./thread-map";
 import { type ToolActivity, ToolActivityList } from "./tool-activity";
 import { formatTurnStat, usageMenuLines } from "./turn-stats";
-import {
-  mergeRecordedDeliveryMessages,
-  shouldCheckDeliveryAfterInventory,
-} from "./use-delivery-follow";
+import { useChatMessages } from "./use-chat-messages";
+import { shouldCheckDeliveryAfterInventory } from "./use-delivery-follow";
 import { useLatestChatAutoOpen } from "./use-latest-chat-auto-open";
 
 /** A pending destructive confirmation, rendered as one shared AlertDialog. */
@@ -249,8 +246,14 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const compactSession = useMutation(compactSessionMutation());
   const forkSession = useMutation(forkSessionMutation());
   const clearSession = useMutation(clearSessionMutation());
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const activeRun = useRef<RunOwner | undefined>(undefined);
+  const { loadedTranscriptSession, messages, setMessages } = useChatMessages(
+    sessionId,
+    isRunning,
+    transcript.data,
+    activeRun,
+  );
   const [reattached, setReattached] = useState(false);
   const [reattachEpoch, setReattachEpoch] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -276,14 +279,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [reconnectGeneration, setReconnectGeneration] = useState(0);
   const [liveUsage, setLiveUsage] = useState<SessionUsageResponse>();
   const [controlPending, setControlPending] = useState(false);
-  const activeRun = useRef<RunOwner | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
   const awayTracker = useRef(new AwayNoticeTracker());
   const awayFacts = useRef<AwayFacts | undefined>(undefined);
   const returnNoticeTimer = useRef<number | undefined>(undefined);
   const lastInventoryRow = useRef<SessionSummaryResponse | undefined>(undefined);
-  const loadedTranscriptSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
   const chatFolders = useChatFolders();
@@ -355,18 +356,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   }, [arrivalSeed.url]);
 
   useEffect(() => {
-    if (!sessionId || isRunning || !transcript.data) return;
-    const saved = messagesFromTranscript(transcript.data.messages);
-    setMessages((current) => {
-      if (loadedTranscriptSession.current !== sessionId || current.length === 0) {
-        loadedTranscriptSession.current = sessionId;
-        return saved;
-      }
-      return mergeRecordedDeliveryMessages(current, saved);
-    });
-  }, [isRunning, sessionId, transcript.data]);
-
-  useEffect(() => {
     viewedSessionId.current = sessionId;
     // A run belongs to one session: leaving it stops its stream here, so its
     // asks, controls, and queue can never act on the chat the user opened.
@@ -387,11 +376,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setLiveUsage(undefined);
     setContentPreview(undefined);
     setSelectionAction(undefined);
-    if (!activeRun.current || activeRun.current.sessionId !== sessionId) {
-      loadedTranscriptSession.current = undefined;
-      setMessages([]);
+    if (!activeRun.current || activeRun.current.sessionId !== sessionId)
       setStatusFacts({ phase: "idle" });
-    }
   }, [sessionId]);
 
   useEffect(() => () => activeRun.current?.controller.abort(), []);
@@ -467,10 +453,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       if (document.visibilityState === "hidden") {
         setVisible(false);
         setReturnNotice(undefined);
-        awayTracker.current.hide(awayFacts.current ?? facts, now);
+        awayTracker.current.restartHide(awayFacts.current ?? facts, now);
         return;
       }
       setVisible(true);
+      const returnGeneration = awayTracker.current.beginReturn();
       void (async () => {
         const [connection, inventory, detail] = await Promise.all([
           runtime.refetch(),
@@ -483,6 +470,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           detail.isSuccess &&
           viewedSessionId.current === sessionId;
         const row = inventory.data?.items.find((item) => item.id === sessionId);
+        if (
+          !awayTracker.current.isCurrentReturn(returnGeneration) ||
+          document.visibilityState === "hidden" ||
+          viewedSessionId.current !== sessionId
+        ) {
+          return;
+        }
         lastInventoryRow.current = row;
         if (
           refreshed &&
@@ -506,6 +500,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             sessionId,
           },
           Date.now(),
+          returnGeneration,
         );
         if (!notice || viewedSessionId.current !== sessionId) return;
         if (returnNoticeTimer.current) window.clearTimeout(returnNoticeTimer.current);

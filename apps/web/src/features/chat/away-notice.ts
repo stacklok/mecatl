@@ -20,6 +20,7 @@ export interface ReturnNotice {
 }
 
 export class AwayNoticeTracker {
+  #generation = 0;
   #hidden?: {
     atMs: number;
     facts: AwayFacts;
@@ -29,6 +30,12 @@ export class AwayNoticeTracker {
 
   hide(facts: AwayFacts, atMs: number): void {
     if (this.#hidden) return;
+    this.restartHide(facts, atMs);
+  }
+
+  /** A second hide starts a fresh interval and invalidates an unfinished return refresh. */
+  restartHide(facts: AwayFacts, atMs: number): void {
+    this.#generation += 1;
     this.#hidden = {
       atMs,
       facts,
@@ -44,10 +51,21 @@ export class AwayNoticeTracker {
   }
 
   clear(): void {
+    this.#generation += 1;
     this.#hidden = undefined;
   }
 
-  resume(facts: RefreshedAwayFacts, atMs: number): ReturnNotice | undefined {
+  beginReturn(): number {
+    this.#generation += 1;
+    return this.#generation;
+  }
+
+  isCurrentReturn(generation: number): boolean {
+    return generation === this.#generation;
+  }
+
+  resume(facts: RefreshedAwayFacts, atMs: number, generation: number): ReturnNotice | undefined {
+    if (generation !== this.#generation) return undefined;
     const hidden = this.#hidden;
     this.#hidden = undefined;
     if (

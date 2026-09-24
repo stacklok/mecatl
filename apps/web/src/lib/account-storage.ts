@@ -10,6 +10,7 @@
 export const userScopedPrefix = "studio.";
 export const accountStorageKey = `${userScopedPrefix}account`;
 const volatileItems = new Map<string, string>();
+const volatileWrites = new Set<string>();
 let volatileAccount: string | undefined;
 
 type Store = Pick<Storage, "getItem" | "key" | "length" | "removeItem" | "setItem">;
@@ -52,6 +53,7 @@ export function clearUserScopedStorage(
   clearStore(store);
   if (sessionStore !== store) clearStore(sessionStore);
   volatileItems.clear();
+  volatileWrites.clear();
   volatileAccount = undefined;
 }
 
@@ -61,6 +63,7 @@ export function readUserScopedItem(
   store: Store | null | undefined = browserStorage(),
 ): string | null {
   if (!key.startsWith(userScopedPrefix)) return null;
+  if (volatileWrites.has(key)) return volatileItems.get(key) ?? null;
   try {
     if (store != null) {
       const value = store.getItem(key);
@@ -83,10 +86,16 @@ export function writeUserScopedItem(
   if (value === null) volatileItems.delete(key);
   else volatileItems.set(key, value);
   try {
-    if (value === null) store?.removeItem(key);
-    else store?.setItem(key, value);
+    if (store == null) {
+      volatileWrites.add(key);
+    } else {
+      if (value === null) store.removeItem(key);
+      else store.setItem(key, value);
+      volatileWrites.delete(key);
+    }
   } catch {
-    // The in-memory copy remains available until this page closes.
+    // A quota error may leave readable but stale storage, so prefer this page's copy.
+    volatileWrites.add(key);
   }
 }
 
