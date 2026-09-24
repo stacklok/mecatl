@@ -166,3 +166,28 @@ func TestAuxiliaryTokenUsage_Scenario2_RetryAndPartialUsageAreCountedOnce(t *tes
 		t.Fatalf("partial/retry usage = %#v, want each emission once: %#v", got, want)
 	}
 }
+
+func TestAuxiliaryTokenUsage_Scenario2_ReflectionTerminalErrorAndCancelRetainUsage(t *testing.T) {
+	input, _ := admittedInput(t)
+	identity := session.ProviderModelID{ProviderID: "provider-r", ModelID: "reflection-model"}
+	usage := session.Usage{InputTokens: 5, OutputTokens: 2}
+	for name, turn := range map[string]mockllm.Turn{
+		"terminal error":  {Chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}, {Kind: port.ChunkDone, Stop: session.StopError}}},
+		"terminal cancel": {Chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}, {Kind: port.ChunkDone, Stop: session.StopCancelled}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reflector, err := agent.NewEvidenceReflector(mockllm.New(turn), identity, nil, agent.ReflectionLimits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, gotUsage, err := reflector.Reflect(t.Context(), input)
+			if !errors.Is(err, agent.ErrReflectionProvider) {
+				t.Fatalf("Reflect error = %v, want reflection provider terminal failure", err)
+			}
+			bucket := gotUsage.Buckets[session.UsageKindReflection]
+			if bucket.Total != usage || bucket.Models["provider-r/reflection-model"] != usage {
+				t.Fatalf("terminal %s usage = %#v, want %#v attributed to selected model", name, bucket, usage)
+			}
+		})
+	}
+}

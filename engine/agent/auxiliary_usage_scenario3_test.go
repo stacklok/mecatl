@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -273,4 +274,49 @@ func runningAuxiliaryParent(t *testing.T, id session.SessionID) *session.Session
 		t.Fatal(err)
 	}
 	return sess
+}
+
+type auxiliaryUsageForker struct{}
+
+func (auxiliaryUsageForker) Fork(context.Context, tool.Environment, string) (tool.Environment, func() error, string, error) {
+	return judgeEnvironment, func() error { return nil }, "", nil
+}
+
+func TestAuxiliaryTokenUsage_Scenario3_ParallelJudgeRecordsInheritedModel(t *testing.T) {
+	usage := session.Usage{InputTokens: 8, OutputTokens: 2}
+	for _, join := range []string{"judge", "best"} {
+		t.Run(join, func(t *testing.T) {
+			child := NewEngine(Deps{
+				LLM:     mockllm.New(mockllm.TextTurn("first branch"), mockllm.TextTurn("second branch")),
+				Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "inherited-model",
+			})
+			judge := NewEngineJudge(NewEngine(Deps{
+				LLM: mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
+					{Kind: port.ChunkText, Text: `{"winner":2,"rationale":"second is best"}`},
+					{Kind: port.ChunkUsage, Usage: &usage},
+					{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+				}}), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "inherited-model",
+			})).(*engineJudge)
+			judge.identity = session.ProviderModelID{ProviderID: "provider-p", ModelID: "inherited-model"}
+
+			parallel := NewParallelTool(child, auxiliaryUsageForker{}, WithParallelJudge(judge), WithParallelConcurrency(1)).(*ParallelTool)
+			parent := runningAuxiliaryParent(t, session.SessionID("parallel-parent-"+join))
+			owner := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt()})
+			caps := owner.parentCaps(&Run{children: newChildRunRegistry(), diag: port.NopDiagnostics{}}, parent, 0)
+			result, err := parallel.ExecuteWithParent(t.Context(), session.NewToolCall("parallel-call", parallelToolName, []byte(`{"tasks":["one","two"],"join":"`+join+`"}`)), judgeEnvironment, nil, caps)
+			if err != nil || result.IsError {
+				t.Fatalf("Parallel %s result = %#v, %v", join, result, err)
+			}
+			if !strings.Contains(result.Content, "branch-2 [WINNER]") {
+				t.Fatalf("Parallel %s did not apply actual judge result: %s", join, result.Content)
+			}
+			bucket := parent.TokenUsageSnapshot()[session.UsageKindParallelJudge]
+			if bucket.Total != usage || bucket.Models["provider-p/inherited-model"] != usage {
+				t.Fatalf("Parallel %s parent usage = %#v, want %#v under inherited model", join, bucket, usage)
+			}
+			if main := parent.UsageFor(session.UsageKindMain); main != (session.Usage{}) {
+				t.Fatalf("Parallel %s folded judge usage into main: %+v", join, main)
+			}
+		})
+	}
 }
