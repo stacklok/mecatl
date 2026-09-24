@@ -2863,6 +2863,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// complexity stays under the lint cap.
 	schedClose, err := startScheduler(ctx, cfg, store, sessionLease, leaseOwner, svc, assets.deliveryQueue)
 	if err != nil {
+		pdfReconcileClose()
 		refreshClose()
 		svc.Close()
 		childLiveness.Close()
