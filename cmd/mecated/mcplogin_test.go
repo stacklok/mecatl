@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
@@ -261,7 +262,7 @@ func TestMCPLoginUsesExplicitOperatorPrecedence(t *testing.T) {
 	}
 }
 
-func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
+func TestRunMCPLoginExecutionPathUsesFixedCallback(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	t.Setenv("MECATL_LOGIN_KEY", key)
 	t.Setenv("MECATL_LOGIN_CREDENTIAL", base64.StdEncoding.EncodeToString([]byte("opaque")))
@@ -278,8 +279,8 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 		if server.Name != "GitHub" || server.OAuth == nil || server.OAuth.CredentialStore == nil || server.OAuth.CredentialReader != nil {
 			t.Fatalf("selected server = %#v", server)
 		}
-		if !opts.NoBrowser || opts.URLWriter == nil || opts.RedirectURL != "" {
-			t.Fatalf("runtime options = %#v; no-browser or random-path default was not forwarded", opts)
+		if !opts.NoBrowser || opts.URLWriter == nil || !opts.PinCallbackPath || opts.RedirectURL != "" {
+			t.Fatalf("runtime options = %#v; no-browser or pinned-callback-path was not forwarded", opts)
 		}
 		if loginOpts.DCRAction != mcp.OAuthDCRLoginRetryRegistration {
 			t.Fatalf("login options = %#v", loginOpts)
@@ -314,6 +315,98 @@ func TestRunMCPLoginExecutionPathUsesRandomCallback(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("login seam called for rejected profile: %d", calls)
+	}
+}
+
+// noopLauncher discards the authorization URL: the tests using it complete the
+// loopback callback directly over HTTP instead of going through a real browser.
+type noopLauncher struct{}
+
+func (noopLauncher) Open(context.Context, string) error { return nil }
+
+// TestRunMCPLoginProductionOptionsKeepDCRPriorityThroughRealRuntime proves the
+// app-wiring layer, not just the isolated mcp/oauthlogin package: it captures the
+// EXACT oauthlogin.Options runMCPLoginContext builds in production (PinCallbackPath
+// always true, per TestRunMCPLoginExecutionPathUsesFixedCallback above), obtains a
+// GENUINE registration-bound callback path from mcp.PrepareOAuthDCRLogin against a
+// real DCR fixture (the same call app.LoginMCPWithOptions makes for a
+// DCR-configured server), then feeds both into a REAL oauthlogin.Runtime driven
+// through AuthorizeWithCallbackPath. If a future refactor of how PinCallbackPath is
+// threaded through cmd/mecated/internal/app ever let it win over an explicit DCR
+// callback path, this test would fail even though
+// TestPinCallbackPathDoesNotOverrideRegistrationBoundPath (mcp/oauthlogin package)
+// only pins the invariant in isolation.
+func TestRunMCPLoginProductionOptionsKeepDCRPriorityThroughRealRuntime(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	t.Setenv("MECATL_LOGIN_KEY", key)
+	t.Setenv("MECATL_LOGIN_CREDENTIAL", base64.StdEncoding.EncodeToString([]byte("opaque")))
+
+	local := filepath.Join(t.TempDir(), "local.yaml")
+	if err := os.WriteFile(local, []byte(mcpLoginOAuthYAML("GitHub", "local", filepath.Join(t.TempDir(), "credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := executeMCPLogin
+	t.Cleanup(func() { executeMCPLogin = original })
+	var captured oauthlogin.Options
+	executeMCPLogin = func(_ context.Context, _ mcp.ServerConfig, opts oauthlogin.Options, _ app.MCPLoginOptions) error {
+		captured = opts
+		return nil
+	}
+	var out strings.Builder
+	if err := runMCPLogin([]string{"github", "--permission-config", local, "--no-browser"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !captured.PinCallbackPath || captured.RedirectURL != "" {
+		t.Fatalf("captured production options = %#v", captured)
+	}
+
+	fixture := newMCPLoginDCRFixture(t)
+	dcrSettings := filepath.Join(t.TempDir(), "dcr-settings.yaml")
+	if err := os.WriteFile(dcrSettings, []byte(mcpLoginDCRYAML(fixture, filepath.Join(t.TempDir(), "dcr-credentials"))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := loadMCPLoginProfiles([]string{dcrSettings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = profiles.Close() }()
+	server, ok := profiles.OAuthServer("connector")
+	if !ok {
+		t.Fatal("connector DCR profile missing")
+	}
+	mcp.AllowOAuthLoopbackForTest(t, server.OAuth)
+	mcp.TrustOAuthCertificateForTest(t, server.OAuth, fixture.server.Certificate())
+	prepared, dcrPath, err := mcp.PrepareOAuthDCRLogin(context.Background(), server.URL, *server.OAuth, mcp.OAuthDCRLoginReuse)
+	if err != nil {
+		t.Fatalf("prepare real DCR registration: %v", err)
+	}
+
+	captured.Launcher = noopLauncher{}
+	runtime, err := oauthlogin.New(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var redirect string
+	err = runtime.AuthorizeWithCallbackPath(ctx, prepared.Issuer, dcrPath, func(ctx context.Context, got string, present func(context.Context, string) (oauthlogin.Result, error)) error {
+		redirect = got
+		go func() {
+			req, _ := http.NewRequest(http.MethodGet, redirect+"?code=code&state=s&iss="+url.QueryEscape(prepared.Issuer), nil)
+			resp, doErr := (&http.Client{}).Do(req)
+			if doErr == nil {
+				resp.Body.Close()
+			}
+		}()
+		_, presentErr := present(ctx, "https://as.example.test/authorize?state=s")
+		return presentErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, parseErr := url.Parse(redirect)
+	if parseErr != nil || parsed.Path != dcrPath {
+		t.Fatalf("redirect = %q, want the real DCR registration-bound path %q despite production PinCallbackPath: true", redirect, dcrPath)
 	}
 }
 

@@ -22,10 +22,22 @@ const (
 	callbackBytes   = 32
 	shutdownTimeout = time.Second
 
+	// fixedCallbackPath is the well-known, pre-registerable callback path shared by
+	// ExactRedirectURL (fixed path + fixed port) and Options.PinCallbackPath (fixed
+	// path + ephemeral port) — see PinCallbackPath's doc comment for why a target's
+	// own capabilities decide which of the two a caller should use.
+	fixedCallbackPath = "/oauth/callback"
+
+	// exactRedirectAddress is the fixed bind address AND Host-header match for
+	// ExactRedirectURL — kept as ONE constant so a future port change can't desync
+	// the address fixedRedirect binds/matches from the literal ExactRedirectURL
+	// serves, which would only surface via TestFixedRedirectValidationIsStrict.
+	exactRedirectAddress = "127.0.0.1:18473"
+
 	// ExactRedirectURL is the fixed callback URI used by remote mecatui login.
 	// It is deliberately IPv4-literal and must not be changed to localhost or
 	// a wildcard address.
-	ExactRedirectURL = "http://127.0.0.1:18473/oauth/callback"
+	ExactRedirectURL = "http://" + exactRedirectAddress + fixedCallbackPath
 
 	// ToolHiveCompatibleRedirectURL is the fixed callback URI used by native
 	// LLM login so an existing ToolHive-compatible client registration works.
@@ -74,10 +86,30 @@ type Options struct {
 	URLWriter io.Writer
 	Launcher  BrowserLauncher
 
-	// RedirectURL enables an explicitly configured callback. Only the package's
-	// fixed redirect constants are accepted; empty preserves the random-path,
-	// ephemeral-port behavior used by existing callers.
+	// RedirectURL enables an explicitly configured callback with a FIXED PORT as
+	// well as a fixed path. Only the package's fixed redirect constants
+	// (ExactRedirectURL, ToolHiveCompatibleRedirectURL) are accepted. Use this only
+	// for a target that requires an exact redirect_uri string match (a
+	// general-purpose OIDC or ToolHive-compatible target with no obligation to
+	// implement RFC 8252 loopback dynamic-port matching) — it reintroduces local
+	// port-squatting exposure that PinCallbackPath does not (see its doc comment).
+	// Mutually exclusive with PinCallbackPath. Empty preserves the random-path,
+	// ephemeral-port default.
 	RedirectURL string
+
+	// PinCallbackPath fixes the callback's PATH to the same well-known value
+	// ExactRedirectURL uses, while still binding an EPHEMERAL port. Use this for a
+	// target whose authorization server implements RFC 8252 §7.3 loopback dynamic-
+	// port matching — the AS accepts any port for a registered loopback redirect_uri
+	// as long as the path matches — which lets a client register one fixed
+	// redirect_uri while every login still gets its own unpredictable port,
+	// preserving the squatting resistance a fixed port gives up. Mutually exclusive
+	// with RedirectURL: New rejects setting both rather than silently picking one.
+	// A per-call explicit callback path (AuthorizeWithCallbackPath, used for DCR's
+	// own registration-bound path) always takes priority over this option, since
+	// that path — not this well-known one — is what a DCR client actually
+	// registered; see resolveCallbackMode's case order.
+	PinCallbackPath bool
 }
 
 // Result is the validated loopback authorization response.
@@ -111,6 +143,9 @@ func New(opts Options) (*Runtime, error) {
 			return nil, errors.New("OAuth redirect URL is invalid")
 		}
 	}
+	if opts.RedirectURL != "" && opts.PinCallbackPath {
+		return nil, errors.New("OAuth redirect URL and pinned callback path are mutually exclusive")
+	}
 	launcher := opts.Launcher
 	if launcher == nil {
 		launcher = systemBrowserLauncher{}
@@ -140,7 +175,7 @@ func (r *Runtime) AuthorizeWithCallbackPath(ctx context.Context, expectedIssuer,
 	return r.authorize(ctx, expectedIssuer, callbackPath, authorize)
 }
 
-func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath string, authorize AuthorizeFunc) error { //nolint:gocyclo // callback lifecycle and cleanup states stay explicit.
+func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath string, authorize AuthorizeFunc) error {
 	if ctx == nil {
 		return errors.New("OAuth authorization requires a context")
 	}
@@ -162,27 +197,11 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	path := ""
-	address := "127.0.0.1:0"
-	callbackHost := ""
-	redirectURL := ""
-	attemptPolicy := attemptMatchingRoute
-	if r.opts.RedirectURL == "" {
-		path = callbackPath
-		if path == "" {
-			path, err = randomCallbackPath(r.random)
-			if err != nil {
-				return errors.New("generate OAuth callback path: failed")
-			}
-		}
-	} else {
-		fixed, _ := fixedRedirect(r.opts.RedirectURL)
-		path = fixed.path
-		address = fixed.address
-		callbackHost = fixed.host
-		redirectURL = r.opts.RedirectURL
-		attemptPolicy = attemptFixedRoute
+	mode, err := resolveCallbackMode(r.opts, callbackPath, r.random)
+	if err != nil {
+		return err
 	}
+	path, address, callbackHost, redirectURL, attemptPolicy := mode.path, mode.address, mode.callbackHost, mode.redirectURL, mode.attemptPolicy
 	ln, err := r.listen(ctx, "tcp4", address)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -319,7 +338,7 @@ type fixedRedirectConfig struct {
 func fixedRedirect(raw string) (fixedRedirectConfig, bool) {
 	switch raw {
 	case ExactRedirectURL:
-		return fixedRedirectConfig{address: "127.0.0.1:18473", host: "127.0.0.1:18473", path: "/oauth/callback"}, true
+		return fixedRedirectConfig{address: exactRedirectAddress, host: exactRedirectAddress, path: fixedCallbackPath}, true
 	case ToolHiveCompatibleRedirectURL:
 		return fixedRedirectConfig{address: "localhost:8666", host: "localhost:8666", path: "/callback"}, true
 	default:
@@ -334,6 +353,65 @@ func validCallbackPath(path string) bool {
 	encoded := strings.TrimPrefix(path, callbackPrefix)
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
 	return err == nil && len(raw) == callbackBytes && base64.RawURLEncoding.EncodeToString(raw) == encoded
+}
+
+// callbackMode bundles the callback path, bind address, Host-header match, any
+// pre-computed redirect URL, and attempt policy resolveCallbackMode picks for one
+// authorize call. A struct, rather than resolveCallbackMode returning its five
+// fields positionally, so a future reorder or an added field fails to compile at
+// the call site instead of silently binding the wrong value (all but attemptPolicy
+// are plain strings).
+type callbackMode struct {
+	path          string
+	address       string
+	callbackHost  string
+	redirectURL   string
+	attemptPolicy callbackAttemptPolicy
+}
+
+// resolveCallbackMode picks the callback path, bind address, Host-header match, any
+// pre-computed redirect URL, and attempt policy for one authorize call. Extracted
+// purely to keep authorize's branch count under the gocyclo limit. Priority order
+// matters: a fixed Options.RedirectURL (exact port+path match, for a target with no
+// RFC 8252 loopback support) wins first; an explicit per-call callbackPath (from
+// AuthorizeWithCallbackPath — DCR's own registration-bound path) wins second, ahead
+// of PinCallbackPath, because that path — not the well-known PinCallbackPath one —
+// is what a DCR client actually registered with the authorization server;
+// PinCallbackPath (fixed path, ephemeral port) is third; a fresh random path with an
+// ephemeral port is the default when none of the above apply.
+//
+// Attempt policy is independent of that priority: only Options.RedirectURL and
+// PinCallbackPath are genuinely PUBLIC, pre-registered routes (attemptFixedRoute —
+// ambient probes never exhaust the attempt budget, since a real client can keep
+// retrying a public path indefinitely). callbackPath and the random default are both
+// unguessable, capability-bearing paths — a callbackPath is durable and reused
+// across logins rather than single-use, which makes it a MORE valuable target for a
+// local co-resident process that manages to observe it once, not less — so both
+// keep the bounded attemptMatchingRoute lockout callback.go's ServeHTTP applies to
+// state-secret probing.
+func resolveCallbackMode(opts Options, callbackPath string, random io.Reader) (callbackMode, error) {
+	mode := callbackMode{address: "127.0.0.1:0", attemptPolicy: attemptMatchingRoute}
+	switch {
+	case opts.RedirectURL != "":
+		fixed, _ := fixedRedirect(opts.RedirectURL)
+		mode.path = fixed.path
+		mode.address = fixed.address
+		mode.callbackHost = fixed.host
+		mode.redirectURL = opts.RedirectURL
+		mode.attemptPolicy = attemptFixedRoute
+	case callbackPath != "":
+		mode.path = callbackPath
+	case opts.PinCallbackPath:
+		mode.path = fixedCallbackPath
+		mode.attemptPolicy = attemptFixedRoute
+	default:
+		path, err := randomCallbackPath(random)
+		if err != nil {
+			return callbackMode{}, errors.New("generate OAuth callback path: failed")
+		}
+		mode.path = path
+	}
+	return mode, nil
 }
 
 func canonicalIssuer(raw string) (string, error) {

@@ -398,6 +398,12 @@ environment-variable name.
 - OAuth credentials authenticate the MCP connection. They do not grant the model
   permission to call a tool: every namespaced MCP tool still passes through the
   ordinary permission policy and audit path.
+- Register `http://127.0.0.1/oauth/callback` as the redirect_uri for a
+  preregistered client or a published CIMD document. `mecated mcp login` binds
+  this exact path on a fresh ephemeral port for every run; RFC 8252 loopback
+  matching ignores the port component, so the authorization server accepts the
+  registered value regardless of which port a given login receives. Direct DCR
+  registers its own redirect_uri automatically and needs no manual entry.
 - OAuth supports RFC 9728 metadata with one exact resource and authorization
   server, and S256. Preregistered confidential clients remain
   Basic-authenticated; direct DCR clients use the public `none` method with no
