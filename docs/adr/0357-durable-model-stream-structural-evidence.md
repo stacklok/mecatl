@@ -1,4 +1,4 @@
-# ADR 0347 — Durable model-stream structural evidence
+# ADR 0357 — Durable model-stream structural evidence
 
 - Status: Accepted
 - Date: 2026-09-17
@@ -47,4 +47,3 @@ authority is introduced by this decision.
 - [ADR 0255](./0255-sanitized-network-attempt-evidence.md)
 - [ADR 0257](./0257-session-debugger-hardening.md)
 - [Architecture overview](../architecture.md)
-- [Implementation notes](../design/IMPLEMENTATION-NOTES.md)

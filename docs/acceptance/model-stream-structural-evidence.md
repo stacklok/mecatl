@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — introduces a new durable, target-bound evidence contract across provider adapters, the engine loop, EventLog relay, and debugger projection.
-**Decision record:** [ADR 0347](../adr/0347-durable-model-stream-structural-evidence.md)
+**Decision record:** [ADR 0357](../adr/0357-durable-model-stream-structural-evidence.md)
 **Phase:** capability
 **Status:** proposed, 2026-09-17. Human decisions settled from the Sol recommendation pass; ready for Plan / Interface review.
 **Delivery:** Split. The durable evidence boundary and cross-module interfaces need human review before implementation.
@@ -37,13 +37,13 @@ This plan extends the existing failed-attempt evidence boundary in [ADR 0255](..
 
 A fixture-backed OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages stream produces visible text and a provider-specific semantic terminal marker. The text is never retained in the structural payload. The completed outer resilience attempt produces one validated summary correlated to its logical turn; facts not available at the current adapter seam remain unavailable.
 
-Relevant boundaries are the provider adapters, `engine/port/sessioncontext.go`, `engine/agent/loop.go`, and the existing `network.attempt` lifecycle described in [implementation notes](../design/IMPLEMENTATION-NOTES.md#dedicated-session-debugger).
+Relevant boundaries are the provider adapters, `engine/port/sessioncontext.go`, `engine/agent/loop.go`, and the existing `network.attempt` lifecycle described in [ADR 0255](../adr/0255-sanitized-network-attempt-evidence.md).
 
 **Acceptance:**
 - AC1.1: Each supported in-tree provider fixture emits one structural summary for a successful outer resilience attempt with `StreamOutcome=complete`, `ProviderTerminalObserved=true`, and no content fields.
-  - verify: `TestADR_0347_Scenario1_SuccessfulProviderFixtures`
+  - verify: `TestADR_0357_Scenario1_SuccessfulProviderFixtures`
 - AC1.2: The first model chunk is observable while the fixture source remains open; structural evidence is finalized at attempt termination, and existing cancellation/establishment-timeout/stream-idle tests remain green without whole-response buffering.
-  - verify: `TestADR_0347_Scenario1_PreservesStreaming`
+  - verify: `TestADR_0357_Scenario1_PreservesStreaming`
 
 ### Scenario 2 — Incomplete, errored, and cancelled streams are honest
 
@@ -53,13 +53,13 @@ This preserves the fail-closed producer boundary in [ADR 0255](../adr/0255-sanit
 
 **Acceptance:**
 - AC2.1: Truncated, errored, and cancelled attempts produce the approved closed outcomes; `ProviderTerminalObserved=false` is recorded when the adapter can determine that no recognized terminal semantic was accepted, while unavailable support remains distinguishable.
-  - verify: `TestADR_0347_Scenario2_IncompleteErrorCancelled`
+  - verify: `TestADR_0357_Scenario2_IncompleteErrorCancelled`
 - AC2.2: Invalid structural vocabulary or scalar values are rejected before persistence and never become a healthy/complete row; existing failed-attempt evidence remains intact.
-  - verify: `TestADR_0347_Scenario2_InvalidEvidenceRejected`
+  - verify: `TestADR_0357_Scenario2_InvalidEvidenceRejected`
 - AC2.3: Pre-stream transport/HTTP failures retain the existing failure evidence and do not receive a fabricated structural completion summary.
-  - verify: `TestADR_0347_Scenario2_PreStreamFailureEvidence`
+  - verify: `TestADR_0357_Scenario2_PreStreamFailureEvidence`
 - AC2.4: A missing structural field is projected as unavailable, not as a complete, zero-valued healthy fact.
-  - verify: `TestADR_0347_Scenario2_UnavailableIsExplicit`
+  - verify: `TestADR_0357_Scenario2_UnavailableIsExplicit`
 
 ### Scenario 3 — Retries persist separately and survive client loss
 
@@ -69,11 +69,11 @@ The relay-only durability rule follows [AGENTS.md](../../AGENTS.md) and the exis
 
 **Acceptance:**
 - AC3.1: Retry attempts are distinct appended rows with the same target/run/turn correlation and distinct outer-attempt ordinals; no durable uniqueness is inferred from that diagnostic tuple.
-  - verify: `TestADR_0347_Scenario3_RetryCorrelation`
+  - verify: `TestADR_0357_Scenario3_RetryCorrelation`
 - AC3.2: The resilience wrapper emits at most one final structural summary for each outer attempt/decision slot, and adapter-internal repair requests do not create a second durable correlation hierarchy or block chunk delivery.
-  - verify: `TestADR_0347_Scenario3_ObservationLifecycle`
+  - verify: `TestADR_0357_Scenario3_ObservationLifecycle`
 - AC3.3: A disconnected client does not prevent the structural event from reaching EventLog, and EventLog failure remains non-fatal to the model run.
-  - verify: `TestADR_0347_Scenario3_DurableAfterDisconnect`
+  - verify: `TestADR_0357_Scenario3_DurableAfterDisconnect`
 
 ### Scenario 4 — Debugger is the sole bounded observation surface
 
@@ -83,13 +83,13 @@ The projection must retain the debugger boundary established by [ADR 0254](../ad
 
 **Acceptance:**
 - AC4.1: The debugger projects bounded structural rows only through the already authorized exact target incarnation and reports observations without assigning fault to Mecatl, a gateway, or a model.
-  - verify: `TestADR_0347_Scenario4_DebuggerProjection`
+  - verify: `TestADR_0357_Scenario4_DebuggerProjection`
 - AC4.2: Ordinary gRPC/HTTP/SSE live streams, subscriptions/watch and SDK attachment surfaces, ACP, direct Team streams, and public EventLog readback contain no structural-evidence event.
-  - verify: `TestADR_0347_Scenario4_PublicSurfacesOmitEvidence`
+  - verify: `TestADR_0357_Scenario4_PublicSurfacesOmitEvidence`
 - AC4.3: A second build/process can inspect retained evidence only for the exact target incarnation; legacy rows retain their existing evidence and absent structural fields are unavailable rather than inferred healthy.
-  - verify: `TestADR_0347_Scenario4_RestartAndAvailability`
+  - verify: `TestADR_0357_Scenario4_RestartAndAvailability`
 - AC4.4: Projection bounds and observation-only wording remain enforced for the additive structural fields; malformed evidence cannot bypass validation or fencing.
-  - verify: `TestADR_0347_Scenario4_BoundedProjection`
+  - verify: `TestADR_0357_Scenario4_BoundedProjection`
 
 ## Out of scope
 
