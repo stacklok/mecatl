@@ -265984,6 +265984,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790200728411,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a689339651fdc84c3d1c65f43a7f5b10f017223",
+          "message": "feat(mecatui): render StatusML terminal hyperlinks (#1834)\n\nCo-authored-by: Mecatl <noreply@stacklok.com>",
+          "timestamp": "2026-09-23T21:49:53-07:00",
+          "tree_id": "2dd678fed265605fee65309e3760cf30cf603c16",
+          "url": "https://github.com/stacklok/mecatl/commit/0a689339651fdc84c3d1c65f43a7f5b10f017223"
+        },
+        "date": 1790226041646,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3300,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 93.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1155,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -348786,6 +348825,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790226038602,
+  "lastUpdate": 1790226042678,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
