@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -153,6 +154,37 @@ func TestReflectSessionAuxiliaryUsageRequiresCurrentOwnership(t *testing.T) {
 		}
 		if got := persisted.UsageFor(session.UsageKindReflection); got != usage {
 			t.Fatalf("persisted reflection usage = %+v, want %+v", got, usage)
+		}
+		projected := toProtoSession(persisted, ResolvedModel{}, nil, port.ProviderCapabilities{})
+		if got := projected.GetTokenUsage()[string(session.UsageKindReflection)].GetModels()["server-provider/server-model"]; got.GetInputTokens() != int64(usage.InputTokens) || got.GetOutputTokens() != int64(usage.OutputTokens) {
+			t.Fatalf("projected persisted reflection usage = %+v, want %+v", got, usage)
+		}
+	})
+
+	t.Run("current owner persists returned usage on reflection error", func(t *testing.T) {
+		store := &auxiliaryUsageStore{SessionStore: memstore.New()}
+		id := session.SessionID("current-owner-error")
+		if err := store.Save(t.Context(), completedAuxiliaryUsageSession(t, id)); err != nil {
+			t.Fatal(err)
+		}
+		store.saves = 0
+		svc := &Service{cfg: Config{
+			Store: store, Diagnostics: port.NopDiagnostics{}, MutationCapability: NewSessionMutationCapability(false),
+			ReflectSession: func(context.Context, *session.Session) (ReflectionReceipt, error) {
+				return ReflectionReceipt{Usage: aux}, ErrUnavailable
+			},
+		}}
+		if _, err := svc.ReflectSession(t.Context(), id); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("ReflectSession error = %v, want unavailable", err)
+		}
+		persisted, err := store.Load(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		projected := toProtoSession(persisted, ResolvedModel{}, nil, port.ProviderCapabilities{})
+		got := projected.GetTokenUsage()[string(session.UsageKindReflection)].GetModels()["server-provider/server-model"]
+		if got.GetInputTokens() != int64(usage.InputTokens) || got.GetOutputTokens() != int64(usage.OutputTokens) {
+			t.Fatalf("error-path projected reflection usage = %+v, want %+v", got, usage)
 		}
 	})
 

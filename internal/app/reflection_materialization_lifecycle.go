@@ -23,6 +23,18 @@ func explicitReflectionServiceError(err error) error {
 	}
 }
 
+func explicitReflectionServiceResult(r reflectionReceipt, reflectionErr, lifecycleErr error) (server.ReflectionReceipt, error) {
+	receipt := server.ReflectionReceipt{
+		ID: r.ID, Disposition: string(r.Disposition), Reason: r.Err, Queued: r.Queued,
+		Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted,
+		Usage: r.Usage,
+	}
+	if lifecycleErr != nil {
+		return receipt, explicitReflectionServiceError(lifecycleErr)
+	}
+	return receipt, explicitReflectionServiceError(reflectionErr)
+}
+
 // materializationLifecycle owns synchronous pre-admission scans. Callers do the
 // scan themselves; the gate only supplies cancellation and bounded active-count
 // joining, so admission never creates a goroutine per scan.

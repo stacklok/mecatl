@@ -2540,14 +2540,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			} else {
 				r, err = explicitReflection.reflectWithEvents(ctx, trajectory, nil)
 			}
-			if lifecycleErr := materialization.Err(); lifecycleErr != nil {
-				return server.ReflectionReceipt{}, explicitReflectionServiceError(lifecycleErr)
-			}
-			return server.ReflectionReceipt{
-				ID: r.ID, Disposition: string(r.Disposition), Reason: r.Err, Queued: r.Queued,
-				Abstained: r.Abstained, Staged: r.Staged, Promoted: r.Promoted, Conflicted: r.Conflicted,
-				Usage: r.Usage,
-			}, explicitReflectionServiceError(err)
+			return explicitReflectionServiceResult(r, err, materialization.Err())
 		},
 		PromoteProposal: func(ctx context.Context, part learning.ProposalPartition, id learning.ProposalID, version learning.ProposalVersion, approved bool) (learning.ProposalRecord, error) {
 			if cfg.OwnershipEnforced && session.PrincipalFromContext(ctx) == nil {
@@ -4657,6 +4650,7 @@ func engineDepsForProvider(
 		Diagnostics:           cfg.diag(),
 		PromptConfig:          promptConfig(modelCfg, cfg.gitStatus),
 		Model:                 model,
+		ProviderModel:         session.ProviderModelID{ProviderID: modelCfg.auxiliaryProviderID, ModelID: model},
 		ContextWindow:         windowFn,
 		CompactionRatio:       defaultCompactionRatio,
 		OperatorProfileSource: cfg.operatorProfileSource,
@@ -6724,6 +6718,7 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		Hooks:              hooks,
 		PromptConfig:       pc,
 		Model:              model,
+		ProviderModel:      session.ProviderModelID{ProviderID: cfg.auxiliaryProviderID, ModelID: model},
 		// Diagnostics is LIVE for child engines (correlated by session + the agent
 		// role below) so interleaved child diagnostics are readable on the operator
 		// channel — this is DISTINCT from Sink/ToolCallRecorder (telemetry/audit),
@@ -7135,19 +7130,17 @@ func buildParallelEngineFactory(cfg Config, provReg *providerRegistry, provider 
 // branches are the bulk-token workers the cheap child default exists for. Pinned
 // by TestParallelJudgeStaysOnParentModel; documented in MULTI-PROVIDER.md.
 func buildParallelJudgeEngine(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider) *agent.Engine {
-	return newChildEngine(cfg, "parallel-judge", provider, tool.NewCatalog(), cfg.Model,
-		reg.windowResolver(cfg, providerID, cfg.Model), promptConfig(cfg, cfg.gitStatus))
+	return agent.NewEngine(parallelJudgeDeps(cfg, reg, providerID, provider))
 }
 
-type attributedAskReviewer struct {
-	inner    agent.ChildAskReviewer
-	identity session.ProviderModelID
-}
-
-func (r attributedAskReviewer) Review(ctx context.Context, req agent.ChildAskReviewRequest) (agent.ChildAskReview, session.AuxiliaryUsage, error) {
-	review, usage, err := r.inner.Review(ctx, req)
-	usage = attributedAuxiliaryUsage(session.UsageKindAskReviewer, r.identity, usage)
-	return review, usage, err
+// parallelJudgeDeps exposes the judge's composition inputs for focused wiring
+// tests; the Engine keeps its dependencies private after construction.
+func parallelJudgeDeps(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider) agent.Deps {
+	cfg.auxiliaryProviderID = providerID
+	deps := childEngineDepsForProvider(cfg, "parallel-judge", provider, cfg.Model,
+		reg.windowResolver(cfg, providerID, cfg.Model), tool.NewCatalog(), promptConfig(cfg, cfg.gitStatus), nil)
+	deps.ProviderModel = session.ProviderModelID{ProviderID: providerID, ModelID: cfg.Model}
+	return deps
 }
 
 // buildAskAdjudicator constructs the OPT-IN automated child-ask reviewer (issue
@@ -7171,7 +7164,7 @@ func buildAskAdjudicator(cfg Config, provReg *providerRegistry, provider port.LL
 		opts = append(opts, agent.WithAskReviewPolicy(cfg.SubagentAskReviewerPolicy))
 	}
 	inner := agent.NewEngineAskReviewer(agent.NewEngine(deps), opts...)
-	return attributedAskReviewer{inner: inner, identity: session.ProviderModelID{ProviderID: parentProviderID, ModelID: deps.Model}}
+	return inner
 }
 
 // askAdjudicatorDeps builds the reviewer engine's agent.Deps — split out from
@@ -7202,6 +7195,7 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 		model = parentModel
 	}
 	windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
+	cfg.auxiliaryProviderID = parentProviderID
 	// newChildEngineForProvider's deps builder: the reviewer compacts/counts/
 	// prompts on ITS resolved model with a re-derived window — and, crucially,
 	// childEngineDepsForProvider forces ChildAskReviewer nil, so the reviewer
@@ -7214,6 +7208,7 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 	// no-verdict failure), not be nudged into a second call before the turn cap
 	// trips. A negative value is the explicit "disable nudging" sentinel.
 	deps.MaxNoProgressNudges = -1
+	deps.ProviderModel = session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}
 	return deps, true
 }
 
@@ -7262,30 +7257,6 @@ func attachAskAdjudicator(deps agent.Deps, cfg Config, provReg *providerRegistry
 // provider-fixed-per-session hazard the rest of this file avoids. The per-session
 // closure already closes over the right (provider, parentModel), so each call re-derives
 // the contamination-safe deps for the classifier model.
-func attributedAuxiliaryUsage(kind session.UsageKind, identity session.ProviderModelID, in session.AuxiliaryUsage) session.AuxiliaryUsage {
-	providerID := strings.Join(strings.Fields(identity.ProviderID), " ")
-	modelID := strings.Join(strings.Fields(identity.ModelID), " ")
-	fallback := ""
-	if providerID != "" && modelID != "" {
-		fallback = providerID + "/" + modelID
-	}
-	out := session.AuxiliaryUsage{}
-	for _, bucket := range in.Buckets {
-		for attribution, usage := range bucket.Models {
-			if usage == (session.Usage{}) {
-				continue
-			}
-			if fallback != "" && !strings.Contains(attribution, "/") {
-				attribution = fallback
-			}
-			out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-				kind: {Models: map[string]session.Usage{attribution: usage}},
-			}})
-		}
-	}
-	return out
-}
-
 func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) *agent.SubagentModelRouter {
 	if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
 		return nil
@@ -7349,18 +7320,27 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 	return &agent.SubagentModelRouter{
 		Backend: routerBackendLLM, ClassifierModel: classifierModel,
 		Route: func(ctx context.Context, taskPrompt string) agent.ModelRouteResult {
-			windowFn := childWindowFor(cfg, provReg, parentProviderID, classifierModel)
-			deps := childEngineDepsForProvider(cfg, "model-router", provider, classifierModel, windowFn,
-				tool.NewCatalog(), promptConfig(modelCfgFor(cfg, classifierModel), cfg.gitStatus), nil)
-			deps.MaxNoProgressNudges = -1
+			deps := modelRouterDeps(cfg, provReg, provider, parentProviderID, classifierModel)
 			eng := agent.NewEngine(deps)
 			category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
 				TaskPrompt: taskPrompt, Categories: cats, Default: cfg.RouterDefaultCategory,
 			})
-			usage := attributedAuxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ProviderID: parentProviderID, ModelID: classifierModel}, classifierUsage)
-			return resolveCandidate(category, usage, missReason, ok, nil)
+			return resolveCandidate(category, classifierUsage, missReason, ok, nil)
 		},
 	}
+}
+
+// modelRouterDeps keeps the classifier's provider-bound construction inspectable
+// before its dependencies become private inside the per-call Engine.
+func modelRouterDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, classifierModel string) agent.Deps {
+	windowFn := childWindowFor(cfg, provReg, parentProviderID, classifierModel)
+	utilityCfg := cfg
+	utilityCfg.auxiliaryProviderID = parentProviderID
+	deps := childEngineDepsForProvider(utilityCfg, "model-router", provider, classifierModel, windowFn,
+		tool.NewCatalog(), promptConfig(modelCfgFor(cfg, classifierModel), cfg.gitStatus), nil)
+	deps.MaxNoProgressNudges = -1
+	deps.ProviderModel = session.ProviderModelID{ProviderID: parentProviderID, ModelID: classifierModel}
+	return deps
 }
 
 func toJevCategories(categories []permconfig.RouterCategory) []jevrouter.Category {

@@ -19,9 +19,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   Added (minor).
 
 - **Auxiliary provider/model identity** — adds `session.ProviderModelID`, the
-  opaque server-selected provider/model identity for an auxiliary model call.
-  It deliberately carries no selector/default, context-window, reasoning-effort,
-  provider-instance, or credential semantics. Added (minor).
+  opaque server-selected provider/model identity for an auxiliary model call, and
+  `agent.Deps.ProviderModel` so composition supplies that exact immutable identity
+  alongside the engine's LLM provider. It deliberately carries no selector/default,
+  context-window, reasoning-effort, provider-instance, or credential semantics.
+  Added (minor).
 
 - **Purpose-attributed auxiliary token usage foundation** — adds
   `session.AuxiliaryUsage` with owned-copy merging and the recognized

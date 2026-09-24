@@ -7,6 +7,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 )
 
@@ -24,6 +25,27 @@ func checkerModel(t *testing.T, cfg Config, parentModel string) string {
 	}
 	_, _ = checker.Check(context.Background(), modelhook.CheckRequest{Prompt: "inspect: ok"})
 	return got
+}
+
+func TestGuardrailCompositionReturnsExactProviderModelIdentity(t *testing.T) {
+	usage := session.Usage{InputTokens: 9, OutputTokens: 3}
+	provider := mockllm.New(mockllm.ChunksTurn(
+		mockllm.TextChunk(`{"safe":true}`),
+		mockllm.UsageChunk(usage),
+		mockllm.DoneChunk(session.StopEndTurn),
+	))
+	checker := buildGuardrailsChecker(Config{Model: "parent", UseMock: true, GuardrailsModel: "guard-id"}, nil, provider, "openai", "parent")
+	if checker == nil {
+		t.Fatal("configured guardrail checker was not built")
+	}
+	result, err := checker.Check(t.Context(), modelhook.CheckRequest{Prompt: "inspect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket := result.Usage.Buckets[session.UsageKindGuardrail]
+	if bucket.Total != usage || bucket.Models["openai/guard-id"] != usage {
+		t.Fatalf("guardrail composition attribution = %#v, want exact openai/guard-id=%+v", bucket, usage)
+	}
 }
 
 // TestSlotsByteIdenticalDefault is the G1 pin (ADR 0030): with NO slot configured

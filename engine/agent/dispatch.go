@@ -1650,7 +1650,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 			ctx, cancel := context.WithTimeout(context.Background(), askReviewTimeout)
 			defer cancel()
 			review, usage, err := reviewer.Review(ctx, ChildAskReviewRequest{Ask: ask, Isolated: isolated})
-			r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(ctx, r.diag, session.UsageKindAskReviewer, usage))
+			r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindAskReviewer, usage)
 			switch {
 			case errors.Is(err, ErrNotReviewable):
 				// ABSTENTION: the reviewer cannot judge THIS ask. Fall through to the

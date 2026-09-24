@@ -193,17 +193,6 @@ type catalogSession struct {
 	sessionTools []tool.Tool
 }
 
-type attributedBranchJudge struct {
-	inner    agent.BranchJudge
-	identity session.ProviderModelID
-}
-
-func (j attributedBranchJudge) Judge(ctx context.Context, candidates []agent.BranchSummary, criteria string) (int, string, session.AuxiliaryUsage, error) {
-	winner, rationale, usage, err := j.inner.Judge(ctx, candidates, criteria)
-	usage = attributedAuxiliaryUsage(session.UsageKindParallelJudge, j.identity, usage)
-	return winner, rationale, usage, err
-}
-
 // assembleCatalog registers every tool family into a fresh catalog, in the
 // canonical order (which preserves the global-wins MCP precedence — mcp.Register
 // is first-wins + skip-and-continue):
@@ -466,10 +455,7 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// main-session parity — see buildForceCopyRunner.
 	forceCopyRunner := buildForceCopyRunner(cfg)
 	parallelChild := buildParallelChildEngine(cfg, reg, s.provider, s.providerID, s.model, forceCopyRunner)
-	judge := attributedBranchJudge{
-		inner:    agent.NewEngineJudge(buildParallelJudgeEngine(modelCfgFor(cfg, s.model), reg, s.providerID, s.provider)),
-		identity: session.ProviderModelID{ProviderID: s.providerID, ModelID: s.model},
-	}
+	judge := agent.NewEngineJudge(buildParallelJudgeEngine(modelCfgFor(cfg, s.model), reg, s.providerID, s.provider))
 	opts := []agent.ParallelOption{
 		agent.WithParallelSubagentStopHook(hooks),
 		agent.WithParallelJudge(judge),

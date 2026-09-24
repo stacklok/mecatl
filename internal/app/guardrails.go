@@ -92,8 +92,7 @@ func foldOperatorGuardrails(cfg Config) Config {
 // an unparseable/ambiguous reply is an ERROR too — so the Runner takes its
 // fail-open/closed path rather than trusting a malformed verdict.
 type engineGuardrailsChecker struct {
-	engine   *agent.Engine
-	identity session.ProviderModelID
+	engine *agent.Engine
 }
 
 // Check drives the checker engine and parses the verdict. The prompt is fully
@@ -101,7 +100,6 @@ type engineGuardrailsChecker struct {
 // drives + parses.
 func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	text, usage, err := agent.RunGuardrailCheck(ctx, c.engine, req.Prompt)
-	usage = attributedAuxiliaryUsage(session.UsageKindGuardrail, c.identity, usage)
 	if err != nil {
 		return modelhook.CheckResult{Usage: usage}, err
 	}
@@ -355,23 +353,39 @@ func resolveGuardrailsCheckerModel(cfg Config) (model string, src guardrailSourc
 // new metrics label), the no-progress nudge disabled. Returns nil when the model
 // does not resolve (defensive — Build already failed fast via
 // normalizeGuardrailsModel).
-func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) modelhook.VerdictChecker {
-	resolved, _, configured := resolveGuardrailsCheckerModel(cfg)
-	if !configured {
+func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) modelhook.VerdictChecker {
+	deps, ok := guardrailsCheckerDeps(cfg, provReg, provider, parentProviderID, parentModel)
+	if !ok {
 		return nil
 	}
-	windowFn := childWindowFor(cfg, provReg, parentProviderID, resolved)
-	deps := childEngineDepsForProvider(cfg, "guardrail-checker", provider, resolved, windowFn,
+	return engineGuardrailsChecker{engine: agent.NewEngine(deps)}
+}
+
+// guardrailsCheckerDeps keeps the checker construction inspectable before its
+// dependencies become private inside the Engine.
+func guardrailsCheckerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) (agent.Deps, bool) {
+	resolved, _, configured := resolveGuardrailsCheckerModel(cfg)
+	if !configured {
+		return agent.Deps{}, false
+	}
+	providerID := parentProviderID
+	if providerID == "" {
+		providerID = cfg.auxiliaryProviderID
+		if providerID == "" && provReg != nil {
+			providerID = provReg.Default()
+		}
+	}
+	windowFn := childWindowFor(cfg, provReg, providerID, resolved)
+	utilityCfg := cfg
+	utilityCfg.auxiliaryProviderID = providerID
+	deps := childEngineDepsForProvider(utilityCfg, "guardrail-checker", provider, resolved, windowFn,
 		tool.NewCatalog(), promptConfig(modelCfgFor(cfg, resolved), cfg.gitStatus), nil)
 	// Disable the no-progress nudge: the checker caps at MaxTurns=1 and an empty
 	// (verdict-less) first turn must end in exactly ONE provider call (treated as a
 	// no-verdict failure), not be nudged into a second.
 	deps.MaxNoProgressNudges = -1
-	providerID := parentProviderID
-	if providerID == "" {
-		providerID = provReg.Default()
-	}
-	return engineGuardrailsChecker{engine: agent.NewEngine(deps), identity: session.ProviderModelID{ProviderID: providerID, ModelID: resolved}}
+	deps.ProviderModel = session.ProviderModelID{ProviderID: providerID, ModelID: resolved}
+	return deps, true
 }
 
 // buildGuardrailsEscapeChecker builds the ADR-0080 escape route's checker, or

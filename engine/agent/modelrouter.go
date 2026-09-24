@@ -297,7 +297,7 @@ func runModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest, 
 	run := engine.Run(operationCtx, sess, judgeEnvironment, RunRequest{Text: buildModelRoutePrompt(req)})
 	final, stop := drainChild(run, childPosture{role: "model-router"})
 	collectUsage := func() session.AuxiliaryUsage {
-		return auxiliaryUsage(session.UsageKindRouter, session.ProviderModelID{ModelID: engine.deps.Model}, sess.UsageFor(session.UsageKindMain))
+		return utilityEngineUsage(session.UsageKindRouter, engine.deps.ProviderModel, sess)
 	}
 	switch stop {
 	case session.StopError:
