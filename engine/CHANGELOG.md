@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Auxiliary-usage purpose normalization** — adds `agent.RemapAuxiliaryUsage`,
+  allowing owner-side adapters to retain producer-reported model totals while
+  confining the returned result to their authorized auxiliary-purpose bucket.
+  Added (minor).
+
 - **Auxiliary provider/model identity** — adds `session.ProviderModelID`, the
   opaque server-selected provider/model identity for an auxiliary model call.
   It deliberately carries no selector/default, context-window, reasoning-effort,

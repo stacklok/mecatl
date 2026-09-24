@@ -25,9 +25,9 @@ func auxiliaryUsage(kind session.UsageKind, identity session.ProviderModelID, us
 	}}
 }
 
-// remapAuxiliaryUsage confines a producer result to the caller-owned purpose while
+// RemapAuxiliaryUsage confines a producer result to the caller-owned purpose while
 // preserving every non-empty model attribution and its reported totals.
-func remapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose session.UsageKind, in session.AuxiliaryUsage) session.AuxiliaryUsage {
+func RemapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose session.UsageKind, in session.AuxiliaryUsage) session.AuxiliaryUsage {
 	out := session.AuxiliaryUsage{}
 	unexpected, empty := false, false
 	for kind, bucket := range in.Buckets {
@@ -51,4 +51,8 @@ func remapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose ses
 		diag.Log(ctx, port.LevelDebug, "auxiliary usage result normalized", "unexpected_bucket", unexpected, "empty_bucket", empty)
 	}
 	return out
+}
+
+func remapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose session.UsageKind, in session.AuxiliaryUsage) session.AuxiliaryUsage {
+	return RemapAuxiliaryUsage(ctx, diag, purpose, in)
 }

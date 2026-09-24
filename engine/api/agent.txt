@@ -156,6 +156,7 @@ func NewTeamTool(factory TeamMemberEngineFactory, opts ...TeamOption) tool.Tool
 func NewUserModelObserver(engine *Engine) *UserModelReviewer
 func NewUserModelReviewer(store port.SessionStore, engine *Engine) *UserModelReviewer
 func ParseReflectionOutcome(in learning.Input, raw []byte, limits ReflectionLimits) (learning.Outcome, error)
+func RemapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose session.UsageKind, in session.AuxiliaryUsage) session.AuxiliaryUsage
 func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, session.AuxiliaryUsage, error)
 func RunModelRouter(ctx context.Context, engine *Engine, req ModelRouteRequest) (category string, usage session.AuxiliaryUsage, missReason string, ok bool)
 func StripLoneCodeFence(s string) string
