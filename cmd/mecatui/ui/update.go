@@ -2482,10 +2482,7 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 		m.maintenanceCleanupJobID = intent.jobID
 		return m, nil, true, false
 	case sessionsTranscriptAdoptionIntent:
-		m.caps = intent.capabilities
-		(&m).setResolvedSessionModel(intent.model)
-		m.activeMode = intent.mode
-		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript)
+		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript, intent.snapshot)
 		return mm, cmd, true, stopSurfaceDispatch
 	case sessionsStartupQuitIntent:
 		if sessions, ok := m.modal.(*sessionsState); ok && sessions.pageCancel != nil {

@@ -143,11 +143,9 @@ func (sessionsCleanupJobIntent) isSurfaceIntent() {}
 
 // Transcript adoption replaces the Model's active chat with authoritative surface data.
 type sessionsTranscriptAdoptionIntent struct {
-	row          client.SessionListItem
-	transcript   conversation
-	capabilities client.Capabilities
-	model        client.ResolvedModel
-	mode         string
+	row        client.SessionListItem
+	transcript conversation
+	snapshot   client.SessionSnapshot
 }
 
 func (sessionsTranscriptAdoptionIntent) isSurfaceIntent() {}
@@ -191,6 +189,7 @@ type sessionTranscriptLoadedMsg struct {
 	surfaceRequestToken uint64
 	requestToken        uint64
 	transcript          client.SessionTranscript
+	snapshot            client.SessionSnapshot
 	err                 error
 }
 
@@ -199,11 +198,15 @@ func (s *sessionsState) loadTranscriptCmd() tea.Cmd {
 	requestToken := s.transcriptRequestToken
 	surfaceRequestToken := s.transcriptSurfaceRequestToken
 	id := s.selected.ID
-	loader := s.transcripter
+	loader, getter := s.transcripter, s.forker
 	s.loading, s.loadErr = true, nil
 	return func() tea.Msg {
 		transcript, err := loader.GetSessionTranscript(s.deps.ctx, id)
-		return sessionTranscriptLoadedMsg{sessionID: id, surfaceRequestToken: surfaceRequestToken, requestToken: requestToken, transcript: transcript, err: err}
+		if err != nil || getter == nil {
+			return sessionTranscriptLoadedMsg{sessionID: id, surfaceRequestToken: surfaceRequestToken, requestToken: requestToken, transcript: transcript, err: err}
+		}
+		snapshot, err := getter.GetSession(s.deps.ctx, id)
+		return sessionTranscriptLoadedMsg{sessionID: id, surfaceRequestToken: surfaceRequestToken, requestToken: requestToken, transcript: transcript, snapshot: snapshot, err: err}
 	}
 }
 
@@ -215,6 +218,7 @@ func (s *sessionsState) openTranscript(row client.SessionListItem, inspect bool)
 	}
 	s.loadErr = nil
 	s.transcript = conversation{}
+	s.snapshot = client.SessionSnapshot{}
 	s.transcriptRend = nil
 	s.transcriptStuck = true
 	s.view = sessionsTranscript
@@ -334,6 +338,7 @@ type sessionsState struct {
 	deps                          surfaceDeps
 	activeSessionID               string
 	transcript                    conversation
+	snapshot                      client.SessionSnapshot
 	transcriptVP                  viewport.Model
 	transcriptRend                *renderer
 	transcriptStuck               bool
@@ -775,9 +780,10 @@ func (s *sessionsState) handleForked(msg sessionForkedMsg) {
 		Kind: msg.transcript.Kind, Relationship: msg.transcript.Relationship,
 	}
 	s.transcript = conversationFromTranscript(msg.transcript.Messages)
+	s.snapshot = msg.snapshot
 	s.transcriptRend = nil
 	s.inspect = false
-	s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript}
+	s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript, snapshot: s.snapshot}
 }
 
 func (s *sessionsState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
@@ -819,10 +825,11 @@ func (s *sessionsState) handleTranscriptLoaded(msg sessionTranscriptLoadedMsg) {
 		return
 	}
 	s.transcript = conversationFromTranscript(msg.transcript.Messages)
+	s.snapshot = msg.snapshot
 	s.transcriptRend = nil
 	s.transcriptStuck = true
 	if !s.inspect {
-		s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript}
+		s.intent = sessionsTranscriptAdoptionIntent{row: s.selected, transcript: s.transcript, snapshot: s.snapshot}
 	}
 }
 
