@@ -1,4 +1,4 @@
-# ADR 0357 — Provider-scoped model discovery ownership
+# ADR 0358 — Provider-scoped model discovery ownership
 
 - Status: Proposed
 - Date: 2026-09-23
