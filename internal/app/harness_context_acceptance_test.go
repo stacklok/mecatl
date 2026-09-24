@@ -80,7 +80,7 @@ func hcConfiguredFiles(t *testing.T, source tool.Workspace) Config {
 		}}}}
 }
 
-func TestADR_0354_HarnessContext_Scenario1_SourceIndependentOfExecution(t *testing.T) {
+func TestADR_0357_HarnessContext_Scenario1_SourceIndependentOfExecution(t *testing.T) {
 	source := memfs.NewWorkspace("/not-a-host-path")
 	if _, err := source.CreateFile(t.Context(), "AGENTS.md", []byte("SELECTED-CONTEXT")); err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestADR_0354_HarnessContext_Scenario1_SourceIndependentOfExecution(t *testi
 	}
 }
 
-func TestADR_0354_HarnessContext_Scenario1_NoFSKeepsConfiguredSources(t *testing.T) {
+func TestADR_0357_HarnessContext_Scenario1_NoFSKeepsConfiguredSources(t *testing.T) {
 	sourceDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sourceDir, "AGENTS.md"), []byte("FILE-BACKED-LOGICAL-SOURCE"), 0o600); err != nil {
 		t.Fatal(err)

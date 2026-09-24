@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestADR_0354_HarnessContext_Scenario3_ChildAttenuationPreserved(t *testing.T) {
+func TestADR_0357_HarnessContext_Scenario3_ChildAttenuationPreserved(t *testing.T) {
 	for _, profile := range []server.SessionProfile{server.ProfileDefault, server.ProfileNoFS} {
 		t.Run(string(profile), func(t *testing.T) {
 			kinds := harnessEmptyKinds()
@@ -113,7 +113,7 @@ func TestADR_0354_HarnessContext_Scenario3_ChildAttenuationPreserved(t *testing.
 	}
 }
 
-func TestADR_0354_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority(t *testing.T) {
+func TestADR_0357_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority(t *testing.T) {
 	for _, trusted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "untrusted", true: "trusted"}[trusted], func(t *testing.T) {
 			kinds := harnessEmptyKinds()
@@ -174,5 +174,5 @@ func TestADR_0354_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority(
 			}
 		})
 	}
-	t.Run("specialist and profile ceiling", TestADR_0354_HarnessContext_Scenario3_ChildAttenuationPreserved)
+	t.Run("specialist and profile ceiling", TestADR_0357_HarnessContext_Scenario3_ChildAttenuationPreserved)
 }

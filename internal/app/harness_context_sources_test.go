@@ -86,7 +86,7 @@ func (s markedHarnessSkills) ReadSkillAsset(ctx context.Context, name, asset str
 	return s.SkillSource.ReadSkillAsset(ctx, name, asset)
 }
 
-func TestADR_0354_HarnessContext_Scenario5_PerKindOverrideResolution(t *testing.T) {
+func TestADR_0357_HarnessContext_Scenario5_PerKindOverrideResolution(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		missing string
@@ -194,7 +194,7 @@ func TestADR_0354_HarnessContext_Scenario5_PerKindOverrideResolution(t *testing.
 	})
 }
 
-func TestADR_0354_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testing.T) {
+func TestADR_0357_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testing.T) {
 	kinds := harnessEmptyKinds()
 	policy := permconfig.HarnessContextKind{Sources: []string{"fixture"}, Mode: "combine"}
 	kinds.Rules = policy
