@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace.index'
 import { Route as WorkspaceChatRouteImport } from './routes/workspace.chat'
+import { Route as WorkspaceMemoryRouteImport } from './routes/workspace.memory'
 import { Route as WorkspaceSchedulesRouteImport } from './routes/workspace.schedules'
 import { Route as WorkspaceSettingsRouteImport } from './routes/workspace.settings'
 import { Route as WorkspaceShortcutsRouteImport } from './routes/workspace.shortcuts'
@@ -39,6 +40,11 @@ const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
 const WorkspaceChatRoute = WorkspaceChatRouteImport.update({
   id: '/chat',
   path: '/chat',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceMemoryRoute = WorkspaceMemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
   getParentRoute: () => WorkspaceRoute,
 } as any)
 const WorkspaceSchedulesRoute = WorkspaceSchedulesRouteImport.update({
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/workspace': typeof WorkspaceRouteWithChildren
   '/workspace/chat': typeof WorkspaceChatRoute
+  '/workspace/memory': typeof WorkspaceMemoryRoute
   '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/settings': typeof WorkspaceSettingsRoute
   '/workspace/shortcuts': typeof WorkspaceShortcutsRoute
@@ -95,6 +102,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/workspace/chat': typeof WorkspaceChatRoute
+  '/workspace/memory': typeof WorkspaceMemoryRoute
   '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/settings': typeof WorkspaceSettingsRoute
   '/workspace/shortcuts': typeof WorkspaceShortcutsRoute
@@ -109,6 +117,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/workspace': typeof WorkspaceRouteWithChildren
   '/workspace/chat': typeof WorkspaceChatRoute
+  '/workspace/memory': typeof WorkspaceMemoryRoute
   '/workspace/schedules': typeof WorkspaceSchedulesRoute
   '/workspace/settings': typeof WorkspaceSettingsRoute
   '/workspace/shortcuts': typeof WorkspaceShortcutsRoute
@@ -124,6 +133,7 @@ export interface FileRouteTypes {
     | '/'
     | '/workspace'
     | '/workspace/chat'
+    | '/workspace/memory'
     | '/workspace/schedules'
     | '/workspace/settings'
     | '/workspace/shortcuts'
@@ -136,6 +146,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/workspace/chat'
+    | '/workspace/memory'
     | '/workspace/schedules'
     | '/workspace/settings'
     | '/workspace/shortcuts'
@@ -149,6 +160,7 @@ export interface FileRouteTypes {
     | '/'
     | '/workspace'
     | '/workspace/chat'
+    | '/workspace/memory'
     | '/workspace/schedules'
     | '/workspace/settings'
     | '/workspace/shortcuts'
@@ -192,6 +204,13 @@ declare module '@tanstack/react-router' {
       path: '/chat'
       fullPath: '/workspace/chat'
       preLoaderRoute: typeof WorkspaceChatRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/workspace/memory': {
+      id: '/workspace/memory'
+      path: '/memory'
+      fullPath: '/workspace/memory'
+      preLoaderRoute: typeof WorkspaceMemoryRouteImport
       parentRoute: typeof WorkspaceRoute
     }
     '/workspace/schedules': {
@@ -248,6 +267,7 @@ declare module '@tanstack/react-router' {
 
 interface WorkspaceRouteChildren {
   WorkspaceChatRoute: typeof WorkspaceChatRoute
+  WorkspaceMemoryRoute: typeof WorkspaceMemoryRoute
   WorkspaceSchedulesRoute: typeof WorkspaceSchedulesRoute
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRoute
   WorkspaceShortcutsRoute: typeof WorkspaceShortcutsRoute
@@ -260,6 +280,7 @@ interface WorkspaceRouteChildren {
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceChatRoute: WorkspaceChatRoute,
+  WorkspaceMemoryRoute: WorkspaceMemoryRoute,
   WorkspaceSchedulesRoute: WorkspaceSchedulesRoute,
   WorkspaceSettingsRoute: WorkspaceSettingsRoute,
   WorkspaceShortcutsRoute: WorkspaceShortcutsRoute,

@@ -1,24 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { SettingsWorkspace } from "../features/settings/settings-workspace";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/workspace/settings")({
-  component: SettingsIndexPage,
+  beforeLoad: () => {
+    throw redirect({
+      params: { section: "profile" },
+      replace: true,
+      search: { item: undefined },
+      to: "/workspace/settings/$section",
+    });
+  },
 });
-
-function SettingsIndexPage() {
-  const navigate = useNavigate();
-  return (
-    <SettingsWorkspace
-      onSectionChange={(section) =>
-        void navigate({
-          params: { section },
-          search: { item: undefined },
-          to: "/workspace/settings/$section",
-        })
-      }
-      section="profile"
-    />
-  );
-}

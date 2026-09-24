@@ -254,6 +254,23 @@ describe("knowledge routes", () => {
     await expect(notFound.json()).resolves.toMatchObject({ code: "not_found" });
   });
 
+  it("passes a percent-encoded slash in a memory key through to the exact lookup", async () => {
+    const keys: string[] = [];
+    const keyed = csrfApp({
+      knowledge: {
+        ...knowledge,
+        getMemory: async (key) => {
+          keys.push(key);
+          return knowledge.getMemory(key);
+        },
+      },
+    });
+    const response = await keyed.request("/api/v1/user-memory/team%2Fvoice");
+    expect(response.status).toBe(200);
+    expect(keys).toEqual(["team/voice"]);
+    expect(await response.json()).toMatchObject({ current: { key: "team/voice" } });
+  });
+
   it("returns learned-skill detail, diff, and lifecycle history", async () => {
     const detail = await app.request("/api/v1/learned-skills/review?ownerAgent=mecatl&version=v2");
     expect(detail.status).toBe(200);

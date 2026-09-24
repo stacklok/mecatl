@@ -56,7 +56,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (state === "sign-in") {
     const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    const loginUrl = `/api/v1/auth/login?${new URLSearchParams({ return_to: returnTo }).toString()}`;
+    const loginUrl = authLoginUrl(returnTo);
     const message = wasAuthenticated.current
       ? "Sign in again to keep using the agent."
       : "Sign in with the identity provider configured by this Mecatl deployment.";
@@ -73,6 +73,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   return children;
+}
+
+/** Keep the full requested browser URL through the interactive sign-in round trip. */
+export function authLoginUrl(returnTo: string) {
+  return `/api/v1/auth/login?${new URLSearchParams({ return_to: returnTo }).toString()}`;
 }
 
 function GateFrame({ children, message }: { children?: ReactNode; message: string }) {

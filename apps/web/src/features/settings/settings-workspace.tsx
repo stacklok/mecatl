@@ -39,30 +39,30 @@ type Model = GetRuntimeSettingsResponse["models"][number];
 /** Where a problem with this app (not the connected agent) is reported. */
 const supportUrl = "https://github.com/stacklok/mecatl/issues";
 
-/**
- * Grouped as Preferences / Agent runtime / Support. A section appears only
- * when the BFF has data behind it; permissions, MCP tools, and experimental
- * switches need daemon-side configuration Studio cannot change, so they are
- * omitted rather than faked.
- */
+/** The stable route list is shared by desktop and mobile settings navigation. */
 const settingsGroups: Array<{
   items: Array<{ label: string; value: SettingsSection }>;
   title: string;
 }> = [
   {
     items: [
-      { label: "You", value: "profile" },
-      { label: "Personalise", value: "appearance" },
+      { label: "Profile", value: "profile" },
+      { label: "Appearance", value: "appearance" },
     ],
     title: "Preferences",
   },
   {
     items: [
       { label: "Agent", value: "agent" },
+      { label: "Permissions", value: "permissions" },
+      { label: "Providers", value: "providers" },
+      { label: "Models", value: "models" },
+      { label: "MCP tools", value: "mcp-tools" },
+      { label: "Storage", value: "storage" },
       { label: "Memory", value: "memory" },
       { label: "Learning", value: "learning" },
-      { label: "Providers", value: "models" },
-      { label: "Storage", value: "storage" },
+      { label: "Diagnostics", value: "diagnostics" },
+      { label: "Labs", value: "labs" },
     ],
     title: "Agent runtime",
   },
@@ -70,13 +70,9 @@ const settingsGroups: Array<{
 ];
 
 export function SettingsWorkspace({
-  item,
-  onItemChange,
   onSectionChange,
   section = "profile",
 }: {
-  item?: string;
-  onItemChange?: (item?: string) => void;
   onSectionChange?: (section: SettingsSection) => void;
   section?: SettingsSection;
 }) {
@@ -91,7 +87,7 @@ export function SettingsWorkspace({
       <div className="mx-auto w-full max-w-6xl px-4 py-7 sm:px-8 sm:py-10">
         <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          See how the agent is connected and which models it can use.
+          Review your preferences and the settings managed by this deployment.
         </p>
 
         <div className="mt-7 sm:hidden">
@@ -147,6 +143,14 @@ export function SettingsWorkspace({
             {section === "profile" && <IdentitySettings />}
             {section === "agent" && <AgentSettings />}
             {section === "appearance" && <InterfaceSettings />}
+            {section === "providers" &&
+              (error ? (
+                <StateCard text={errorMessage(error)} />
+              ) : loading ? (
+                <StateCard text="Loading settings…" />
+              ) : (
+                settings.data && <ProviderInventory settings={settings.data} />
+              ))}
             {section === "models" &&
               (error ? (
                 <StateCard text={errorMessage(error)} />
@@ -154,10 +158,7 @@ export function SettingsWorkspace({
                 <StateCard text="Loading settings…" />
               ) : (
                 settings.data && (
-                  <>
-                    <ProviderInventory settings={settings.data} />
-                    <ModelInventory modelPreferences={modelPreferences} settings={settings.data} />
-                  </>
+                  <ModelInventory modelPreferences={modelPreferences} settings={settings.data} />
                 )
               ))}
             {section === "about" &&
@@ -169,11 +170,40 @@ export function SettingsWorkspace({
                 runtime.data &&
                 settings.data && <AboutAgent runtime={runtime.data} settings={settings.data} />
               ))}
-            {section === "memory" && (
-              <MemorySettings onSelect={onItemChange ?? (() => {})} selectedKey={item} />
-            )}
+            {section === "memory" && <MemorySettings />}
             {section === "learning" && <LearningReview />}
             {section === "storage" && <StorageSettings />}
+            {section === "permissions" && (
+              <Section icon={Server} title="Permissions">
+                <p className="text-sm text-muted-foreground">
+                  Permission posture is managed by this deployment. Studio can show its runtime
+                  status, but cannot change it here.
+                </p>
+              </Section>
+            )}
+            {section === "mcp-tools" && (
+              <Section icon={Server} title="MCP tools">
+                <p className="text-sm text-muted-foreground">
+                  MCP availability comes from the connected runtime. Tool setup is managed by this
+                  deployment.
+                </p>
+              </Section>
+            )}
+            {section === "diagnostics" && (
+              <Section icon={Server} title="Diagnostics">
+                <p className="text-sm text-muted-foreground">
+                  Runtime and storage diagnostics are read-only deployment facts.
+                </p>
+              </Section>
+            )}
+            {section === "labs" && (
+              <Section icon={Server} title="Labs">
+                <p className="text-sm text-muted-foreground">
+                  Experimental features are made available by this deployment. There are no Labs
+                  controls in Studio yet.
+                </p>
+              </Section>
+            )}
           </div>
         </div>
       </div>
