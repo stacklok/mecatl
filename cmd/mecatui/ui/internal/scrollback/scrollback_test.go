@@ -239,3 +239,13 @@ func TestMecatuiTypedScrollbackModel_Scenario2_EmptySlicesRemainNonNil(t *testin
 		t.Fatal("non-nil empty artifacts lost during snapshot")
 	}
 }
+
+func TestConversationMetadataAtDoesNotExposePayload(t *testing.T) {
+	var c Conversation
+	c.Messages().AddUser(UserInput{Text: "hello"})
+
+	got := c.MetadataAt(0)
+	if got.ID != 1 || got.Revision != 0 || got.Kind != KindUser {
+		t.Fatalf("MetadataAt(0) = %#v", got)
+	}
+}

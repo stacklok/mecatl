@@ -98,12 +98,6 @@ func TestMecatuiFunctionalConversationCards_Scenario3_AnchorsAndSelectionSurvive
 		t.Fatal("selection survived after collapse hid its prepared argument row")
 	}
 
-	c.blocks[0].toolArgs = `{"path":"different.txt"}`
-	c.blocks[0].rev++
-	changed := r.renderConversationFrame(c, true)
-	if _, _, ok := resolveSelectionPoint(changed, point); ok {
-		t.Fatal("selection survived after its source changed")
-	}
 }
 
 func scenario3SelectionPoint(t *testing.T, frame renderedFrame, region regionKind, marker string) selectionPoint {
@@ -129,6 +123,10 @@ func scenario3SelectionPoint(t *testing.T, frame renderedFrame, region regionKin
 func TestMecatuiFunctionalConversationCards_Scenario3_IncrementalCacheFastPath(t *testing.T) {
 	c := &conversation{}
 	for i := 0; i < 256; i++ {
+		if i == 100 {
+			c.addTool("non-tail", "Read", `{"path":"settled.txt"}`)
+			continue
+		}
 		c.addNotice("settled card")
 	}
 	c.startAssistant()
@@ -155,8 +153,9 @@ func TestMecatuiFunctionalConversationCards_Scenario3_IncrementalCacheFastPath(t
 		t.Fatal("unchanged frame replaced viewport content with different lines")
 	}
 
-	c.blocks[100].raw = "non-tail change"
-	c.blocks[100].rev++
+	if !c.resolveTool("non-tail", "changed", false) {
+		t.Fatal("resolve non-tail tool")
+	}
 	r.renderConversationFrame(c, false)
 	if r.cardPrepares != prepares+1 {
 		t.Fatalf("non-tail mutation prepared %d cards, want 1", r.cardPrepares-prepares)

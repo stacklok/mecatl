@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // regionKind is the closed semantic vocabulary for rows in a rendered conversation.
@@ -159,77 +161,118 @@ func (f renderedFrame) rowForAnchor(anchor readingAnchor) (int, bool) {
 // explicitly to frame assembly. renderConversationLines remains the byte-identical
 // viewport wrapper.
 func (r *renderer) renderConversationFrame(c *conversation, expand bool) renderedFrame {
-	presentation := c.presentationBlocks()
-	renderedBlocks, firstChanged := r.walkBlocks(presentation, expand)
+	renderedBlocks, metadata, prepared, firstChanged := r.walkConversation(c, expand)
 	n := len(renderedBlocks)
 	prefixN := min(firstChanged, n)
 	key := joinPrefixState{width: r.width, expand: expand}
 	prefixLines, prefixProvenance, ok := r.blocks.prefix(key, prefixN)
 	if !ok {
-		prefixLines, prefixProvenance = r.rebuildFramePrefix(presentation, renderedBlocks, prefixN, expand)
+		prefixLines, prefixProvenance = r.rebuildFramePrefix(c, metadata, prepared, renderedBlocks, prefixN, expand)
 		r.blocks.replacePrefix(prefixLines, prefixProvenance, prefixN, key)
 	}
 
-	// Phase 2 — frame/provenance assembly: append cached prefix and changed suffix
-	// into lockstep line and provenance slices.
 	frame := renderedFrame{
-		lines: make([]string, 0, len(prefixLines)+(n-prefixN)*2+1),
-		// The viewport never retains provenance, so the renderer can reuse this
-		// frame-local backing array after the caller projects the current frame.
+		lines:      make([]string, 0, len(prefixLines)+(n-prefixN)*2+1),
 		provenance: r.frameProvenanceScratch[:0],
 	}
-	if expand && len(c.filesChanged) > 0 {
-		frame.appendixID = c.changedFilesAppendixID
+	if expand {
+		if appendix, ok := c.scrollback.AppendixSnapshot(); ok && len(appendix.Files) > 0 {
+			frame.appendixID = uint64(appendix.ID)
+		}
 	}
 	frame.lines = append(frame.lines, prefixLines...)
 	frame.provenance = append(frame.provenance, prefixProvenance...)
 	for i := prefixN; i < n; i++ {
-		r.appendFrameSegment(&frame, presentation, renderedBlocks, i, expand)
+		r.appendFrameSegment(&frame, c, metadata, prepared, renderedBlocks, i, expand)
 	}
-	// The trailing split element is the existing terminal empty viewport line.
 	frame.lines = append(frame.lines, "")
 	frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome})
 	r.frameProvenanceScratch = frame.provenance
 	return frame
 }
 
-func (r *renderer) rebuildFramePrefix(presentation []block, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
+func (r *renderer) rebuildFramePrefix(c *conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, prefixN int, expand bool) ([]string, []renderedRow) {
 	lines := make([]string, 0, prefixN*2)
 	provenance := make([]renderedRow, 0, prefixN*2)
 	for i := 0; i < prefixN; i++ {
 		frame := renderedFrame{lines: lines, provenance: provenance}
-		r.appendFrameSegment(&frame, presentation, renderedBlocks, i, expand)
+		r.appendFrameSegment(&frame, c, metadata, prepared, renderedBlocks, i, expand)
 		lines, provenance = frame.lines, frame.provenance
 	}
 	return lines, provenance
 }
 
-func (r *renderer) appendFrameSegment(frame *renderedFrame, presentation []block, renderedBlocks []string, index int, expand bool) {
+func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, metadata []scrollback.BlockMetadata, prepared []*block, renderedBlocks []string, index int, expand bool) {
 	if index > 0 {
-		for n := 0; n < blockBlankLinesAfter(presentation, index); n++ {
+		for n := 0; n < blockBlankLinesAfterMetadata(metadata, index); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
 	}
 	rendered := renderedBlocks[index]
-	rows := r.blockFrameRows(index, &presentation[index], rendered, expand)
+	rows := r.blockFrameRowsTyped(c, index, metadata[index], prepared[index], rendered, expand)
 	for row, line := range strings.Split(rendered, "\n") {
 		frame.lines = append(frame.lines, line)
 		frame.provenance = append(frame.provenance, rows[row])
 	}
 }
 
-func (r *renderer) blockFrameRows(index int, b *block, rendered string, expand bool) []renderedRow {
-	key := r.blockRenderKey(b, expand)
+func (r *renderer) blockFrameRowsTyped(c *conversation, index int, meta scrollback.BlockMetadata, prepared *block, rendered string, expand bool) []renderedRow {
+	key := blockRenderKey{revision: int(meta.Revision), context: r.renderContext(expand)}
 	if rows, ok := r.blocks.frameRowsFor(index, key); ok {
 		return rows
 	}
 	if entry, ok := r.blocks.renderedBlock(index, key); ok && len(entry.rows) > 0 {
 		return entry.rows
 	}
-	rows := r.provenanceRows(b, rendered, expand)
+	if prepared == nil {
+		var ok bool
+		b, ok := blockFromSnapshot(c.scrollback.SnapshotAt(index))
+		if !ok {
+			return nil
+		}
+		prepared = &b
+	}
+	rows := r.provenanceRows(prepared, rendered, expand)
 	r.blocks.storeFrameRows(index, frameBlockEntry{key: key, rows: rows})
 	return rows
+}
+
+func blockKindFromMetadata(kind scrollback.Kind) blockKind {
+	switch kind {
+	case scrollback.KindUser:
+		return blockUser
+	case scrollback.KindAssistant:
+		return blockAssistant
+	case scrollback.KindNotice:
+		return blockNotice
+	case scrollback.KindTurnStat:
+		return blockTurnStat
+	case scrollback.KindError:
+		return blockError
+	case scrollback.KindHook:
+		return blockHook
+	case scrollback.KindDelivery:
+		return blockDelivery
+	default:
+		return blockTool
+	}
+}
+
+func blockBlankLinesAfterMetadata(metadata []scrollback.BlockMetadata, i int) int {
+	previous := blockKindFromMetadata(metadata[i-1].Kind)
+	current := blockKindFromMetadata(metadata[i].Kind)
+	switch previous {
+	case blockTool:
+		return interBlockBlankLinesNone
+	case blockTurnStat:
+		return interBlockBlankLinesCompact
+	case blockAssistant:
+		if current == blockTurnStat {
+			return interBlockBlankLinesNone
+		}
+	}
+	return interBlockBlankLinesCompact
 }
 
 func (r *renderer) provenanceRows(b *block, rendered string, expand bool) []renderedRow {

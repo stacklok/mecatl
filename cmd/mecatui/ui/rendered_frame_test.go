@@ -53,8 +53,8 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 			t.Fatalf("artifact row %d has region %v, want enclosing tool result", i, frame.provenance[i].region)
 		}
 	}
-	if frame.appendixID != c.changedFilesAppendixID {
-		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.changedFilesAppendixID)
+	if frame.appendixID != c.changedFilesAppendixID() {
+		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.changedFilesAppendixID())
 	}
 }
 

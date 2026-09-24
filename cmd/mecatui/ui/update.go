@@ -4685,8 +4685,10 @@ func (m *Model) conversationContent() string {
 	frame := m.rend.renderConversationFrame(&m.conv, m.expandTools)
 	content := strings.Join(frame.lines, "\n")
 	if m.expandTools {
-		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
-			content += "\n" + list
+		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
+			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
+				content += "\n" + list
+			}
 		}
 	}
 	return content
@@ -4727,9 +4729,11 @@ func (m *Model) refreshView() {
 	}
 	content := strings.Join(frame.lines, "\n")
 	if m.expandTools {
-		if list := m.rend.renderChangedFiles(m.conv.filesChanged); list != "" {
-			content += "\n" + list
-			frame = frameWithAppendix(frame, content, m.conv.changedFilesAppendixID)
+		if appendix, ok := m.conv.scrollback.AppendixSnapshot(); ok {
+			if list := m.rend.renderChangedFiles(appendix.Files); list != "" {
+				content += "\n" + list
+				frame = frameWithAppendix(frame, content, uint64(appendix.ID))
+			}
 		}
 	}
 	// An active text selection is now rendered by US (styleSelection splices the

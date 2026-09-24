@@ -114,10 +114,10 @@ func TestADR_0301_SelectionPreservesLiveStableText(t *testing.T) {
 		if strings.Contains(ansi.Strip(m.vp.GetContent()), "pending update") {
 			t.Fatalf("selection exposed hidden pending conversation content: %q", m.vp.GetContent())
 		}
-		if got := m.sel.anchorPoint.blockID; got != m.conv.changedFilesAppendixID {
-			t.Fatalf("appendix selection block = %d, want appendix ID %d", got, m.conv.changedFilesAppendixID)
+		if got := m.sel.anchorPoint.blockID; got != m.conv.changedFilesAppendixID() {
+			t.Fatalf("appendix selection block = %d, want appendix ID %d", got, m.conv.changedFilesAppendixID())
 		}
-		if !m.conversationView.frame.hasRegion(m.conv.changedFilesAppendixID, conversationRegionAppendix) {
+		if !m.conversationView.frame.hasRegion(m.conv.changedFilesAppendixID(), conversationRegionAppendix) {
 			t.Fatal("displayed complete frame was not used for selection projection")
 		}
 		m.refreshView()

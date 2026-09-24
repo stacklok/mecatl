@@ -95,7 +95,7 @@ func TestStatusLine_Scenario2_HeaderSystemIndicatorsSurviveOverride(t *testing.T
 	m.width = 100
 	m.generatedStatusLine.Header = customization.Render(`<header><accent>CUSTOM</accent></header>`, nil).Header
 	m.caps.Posture = postureAuto
-	m.conv.filesChanged = []string{"changed.go"}
+	m.conv.recordFileChange("changed.go")
 	header := stripANSIstr(m.renderHeader())
 	for _, want := range []string{"CUSTOM", autoBadgeText, "✎ 1 file"} {
 		if !strings.Contains(header, want) {

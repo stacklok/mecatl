@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // maxToolResultLines caps how many visible display rows of a tool result are
@@ -166,9 +167,11 @@ type renderer struct {
 	inputView  string
 	inputValid bool
 
-	// renderedBlocksScratch is renderer-owned allocation reuse for one block-render
-	// pass. Consumers receive the returned slice from walkBlocks explicitly.
+	// Render-pass scratch is renderer-owned allocation reuse. Metadata carries no
+	// payload; prepared holds detached payloads only for this pass's cache misses.
 	renderedBlocksScratch []string
+	metadataScratch       []scrollback.BlockMetadata
+	preparedScratch       []*block
 
 	// vpViewCache/vpViewValid memoize the rendered VIEWPORT OUTPUT — the OUTERMOST
 	// render layer, above blockRenderCache. View() calls vp.View() which runs
@@ -625,6 +628,47 @@ func (r *renderer) walkBlocks(conversationBlocks []block, expand bool) ([]string
 // prefix lines being newline-free — they are split single lines, but
 // SetContentLines is free to re-split them and the fresh array still absorbs the
 // result.
+// walkConversation reads cheap typed metadata first. A detached payload snapshot
+// is materialized only for a whole-card cache miss; settled cards never clone or
+// prepare their payload merely to prove their cached output is still valid.
+func (r *renderer) walkConversation(c *conversation, expand bool) ([]string, []scrollback.BlockMetadata, []*block, int) {
+	n := c.scrollback.Len()
+	firstChanged := n
+	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
+	if cap(r.metadataScratch) < n {
+		r.metadataScratch = make([]scrollback.BlockMetadata, n)
+	} else {
+		r.metadataScratch = r.metadataScratch[:n]
+	}
+	if cap(r.preparedScratch) < n {
+		r.preparedScratch = make([]*block, n)
+	} else {
+		r.preparedScratch = r.preparedScratch[:n]
+		clear(r.preparedScratch)
+	}
+	metadata := r.metadataScratch
+	prepared := r.preparedScratch
+	for i := 0; i < n; i++ {
+		meta := c.scrollback.MetadataAt(i)
+		metadata[i] = meta
+		key := blockRenderKey{revision: int(meta.Revision), context: r.renderContext(expand)}
+		if entry, ok := r.blocks.renderedBlock(i, key); ok {
+			r.renderedBlocksScratch = append(r.renderedBlocksScratch, entry.out)
+			continue
+		}
+		b, ok := blockFromSnapshot(c.scrollback.SnapshotAt(i))
+		if !ok {
+			continue
+		}
+		prepared[i] = &b
+		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &b, expand))
+		if i < firstChanged {
+			firstChanged = i
+		}
+	}
+	return r.renderedBlocksScratch, metadata, prepared, firstChanged
+}
+
 func (r *renderer) renderConversationLines(c *conversation, expand bool) []string {
 	return r.renderConversationFrame(c, expand).lines
 }

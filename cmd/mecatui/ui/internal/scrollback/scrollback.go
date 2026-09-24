@@ -40,6 +40,14 @@ type BlockSnapshot struct {
 	Payload  PayloadSnapshot
 }
 
+// BlockMetadata identifies a card for renderer cache lookup without cloning its
+// payload. It deliberately exposes only logical identity, revision, and kind.
+type BlockMetadata struct {
+	ID       BlockID
+	Revision uint64
+	Kind     Kind
+}
+
 type card struct {
 	id       BlockID
 	revision uint64
@@ -66,6 +74,13 @@ func (c *Conversation) SnapshotAt(i int) BlockSnapshot {
 
 // SnapshotForCall returns the current detached snapshot for a call without scanning
 // historical snapshots. Call IDs are indexed when their tool card is appended.
+// MetadataAt returns the cache identity for a card without allocating or
+// detaching its payload. Renderers use SnapshotAt only after a cache miss.
+func (c *Conversation) MetadataAt(i int) BlockMetadata {
+	card := c.cards[i]
+	return BlockMetadata{ID: card.id, Revision: card.revision, Kind: card.payload.Kind()}
+}
+
 func (c *Conversation) SnapshotForCall(callID string) (BlockSnapshot, bool) {
 	i, ok := c.call(callID)
 	if !ok {

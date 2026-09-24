@@ -397,15 +397,8 @@ type conversation struct {
 	// scrollback is the authoritative logical document for ordinary conversation cards.
 	// blocks is a renderer compatibility projection retained for delegation cards until
 	// their dedicated migration; it is refreshed only from immutable snapshots here.
-	scrollback  scrollback.Conversation
-	blocks      []block
-	nextBlockID uint64
-	// filesChanged preserves first-seen order; filesSeen tracks membership. The
-	// appendix receives its identity at the first distinct change, even though it
-	// is not yet a physical rendered block.
-	filesChanged           []string
-	filesSeen              map[string]struct{}
-	changedFilesAppendixID uint64
+	scrollback scrollback.Conversation
+	blocks     []block
 	// subagentFleet preserves first-seen order; fleetIndex maps ChildID → its slot so
 	// repeated tool/end events for a child update the same lane in O(1).
 	subagentFleet []subagentLane
@@ -465,15 +458,7 @@ func (c *conversation) syncBlock(snapshot scrollback.BlockSnapshot) {
 		}
 	}
 	c.blocks = append(c.blocks, b)
-	if b.id > c.nextBlockID {
-		c.nextBlockID = b.id
-	}
 }
-
-// presentationBlocks returns the renderer cache's immutable snapshot projection.
-// syncSnapshot refreshes a card only when the typed model advances its revision;
-// Task 3's delegation compatibility cards share this ordered presentation slice.
-func (c *conversation) presentationBlocks() []block { return c.blocks }
 
 func artifacts(blocks []client.ContentBlock) []scrollback.Artifact {
 	out := make([]scrollback.Artifact, len(blocks))
@@ -498,19 +483,29 @@ func (c *conversation) recordFileChange(path string) {
 	if id == 0 {
 		return
 	}
-	appendix, _ := c.scrollback.AppendixSnapshot()
-	c.filesChanged = appendix.Files
-	c.changedFilesAppendixID = uint64(appendix.ID)
-	if c.changedFilesAppendixID > c.nextBlockID {
-		c.nextBlockID = c.changedFilesAppendixID
+}
+
+func (c *conversation) changedFiles() []string {
+	appendix, ok := c.scrollback.AppendixSnapshot()
+	if !ok {
+		return nil
 	}
+	return appendix.Files
+}
+
+func (c *conversation) changedFilesAppendixID() uint64 {
+	appendix, ok := c.scrollback.AppendixSnapshot()
+	if !ok {
+		return 0
+	}
+	return uint64(appendix.ID)
 }
 
 // isEmpty reports whether the conversation has no blocks yet — the first-run
 // state, before any prompt is sent. The zero-state welcome card renders in the
 // empty viewport while this holds (and vanishes the instant the first block,
 // e.g. the user prompt, is appended).
-func (c *conversation) isEmpty() bool { return len(c.blocks) == 0 }
+func (c *conversation) isEmpty() bool { return c.scrollback.Len() == 0 }
 
 // addUser appends a text-only user-prompt block.
 func (c *conversation) addUser(text string) {
