@@ -188,6 +188,25 @@ Studio listens on port `3100` on every interface inside the image, answers
 user. Scale it horizontally without shared storage: every
 replica needs only the same `STUDIO_SESSION_SECRET`.
 
+### Sign in and recover
+
+Use **Sign in** to complete your identity provider's login in a popup. Studio
+keeps the original tab, route, and unfinished draft open. If the browser blocks
+the popup or you close it, use **Retry** or the manual new-tab sign-in link. Return
+to the Studio tab after signing in through the new tab so it can check your
+session.
+
+If your session expires while Studio is open, sign in again. Studio refetches
+reads after you return to the same account. Retry a write or stream yourself
+because the first request may have reached the deployment before its response
+was lost. If you sign in to a different account, Studio clears the previous
+account's browser data and unfinished draft before opening that workspace.
+
+The connection banner shows a Studio or deployment outage ahead of a sign-in
+prompt. A pending connection check is neutral. When Studio cannot verify your
+session, use the banner's retry action; the current route and draft stay in
+place while it checks again.
+
 ### Static token or no authentication
 
 Studio can also run as a single service identity by setting
