@@ -5,7 +5,7 @@
 **Decision record:** None — this is a focused application of the landed Mecatui bounded-control contract; its surface-local behavior belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-list adoption, slash-command palette slice
 **Status:** landed, 2026-09-23. The implementation candidate, including the operator-approved presentation and streaming-Escape amendments, passed its gates and review; this transition becomes authoritative when its implementation PR merges.
-**Amendment:** 2026-09-23 — the operator explicitly authorized a direct amendment on implementation PR #1833: while a slash palette is visible during a run, Escape dismisses it; normal running cancellation resumes after dismissal.
+**Amendment:** 2026-09-23 — the operator explicitly authorized direct implementation-PR amendments: while a slash palette is visible during a run, Escape dismisses it; normal running cancellation resumes after dismissal. The palette also adopts the shared logical-item overflow indicator and lone-item promotion behavior from `bounded.List`.
 **Delivery:** Split. The palette has distinct inline-filtering, built-in dispatch, completion, and layout behavior that needs its interaction contract reviewed before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1742](https://github.com/stacklok/mecatl/issues/1742).

@@ -5,6 +5,7 @@
 **Decision record:** None — this is a focused application of the landed Mecatui bounded-control contract; its surface-local behavior belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-list adoption, mention palette slice
 **Status:** landed, 2026-09-23. The implementation candidate passed its gates and review; this transition becomes authoritative when its implementation PR merges.
+**Amendment:** 2026-09-23 — the operator explicitly authorized a direct implementation-PR amendment adopting shared logical-item overflow indicators and lone-item promotion from `bounded.List`.
 **Delivery:** Split. The mention palette has distinct local filesystem discovery, path completion, literal-prose fallback, and streaming interaction behavior that need their interaction contract reviewed before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1742](https://github.com/stacklok/mecatl/issues/1742).

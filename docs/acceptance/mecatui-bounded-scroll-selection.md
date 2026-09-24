@@ -6,6 +6,7 @@
 **Phase:** bounded scroll-cursor convergence, slice 1
 **Status:** landed in this implementation candidate, 2026-09-15. Authoritative when the implementation PR merges; the operator authorized opening without rebasing for repository-wide ac-trace fixes already present on current `origin/main`.
 **Amendment:** 2026-09-15 — after the early package-private API checkpoint, the operator explicitly waived a separate amendment PR and authorized this implementation-branch amendment for stable item identity, independent viewport/cursor anchors, caller-owned selected styling, and tiny-width behavior.
+**Amendment:** 2026-09-23 — the operator explicitly authorized a direct implementation-PR amendment: indicator-adjusted `bounded.List` views count hidden logical items independently above and below, render a lone hidden item in place of its respective indicator when it fits, and fully reveal a selected item whenever it fits in the offered body.
 **Delivery:** Split. Shared cursor, layout, style, and pointer semantics need human interface review before implementation changes multiple surfaces.
 **Expected tasks:** 2
 **Issue:** [stacklok/mecatl#1589](https://github.com/stacklok/mecatl/issues/1589).
@@ -26,6 +27,7 @@ This is an incremental targeted correction, not the future formal migration of e
 - [x] Cursor and scroll movement — Decision: cursor identity/within-item position and viewport position are separate state. Up/Down moves one logical item and minimally scrolls to reveal it; Page Up/Page Down keeps the approved item-aware paging behavior, including oversized segments. Mouse wheel scrolls the viewport by one physical line without moving the cursor; clicking a Model row moves the cursor and minimally reveals it.
 - [x] Bubbles reuse — Decision: reuse the installed Bubbles v2 and `x/ansi` patterns where they preserve the contract—separate cursor/viewport state, fixed gutter, caller-owned line styling, content-update clamping—but do not adopt `list.Model`, `table.Model`, or `viewport.Model` as the core because their fixed/indexed or private physical-line models cannot preserve variable-height stable item identity and hit metadata.
 - [x] Pointer ownership — Decision: Models uses the existing `surface` hit lifecycle. Agents receives a narrow root-level wheel branch before conversation scrolling; it gains no click targets or second hit registry. Compact and `vp short` Agents fallbacks consume wheel without changing viewport or cursor state. Enter remains activation; hover styling is deferred.
+- [x] Logical indicator adjustment — Decision: `bounded.List` counts hidden logical items independently above and below its physical window. An indicator appears only for more than one hidden item on its own side. When exactly one hidden item fits after taking back that side's chrome row, render the complete item instead; never suppress one side's indicator merely because the other side overflows. A selected item is fully visible whenever its physical height fits the offered body; an oversized selected item retains item-aware segment paging.
 
 ## Interface contract
 
