@@ -293,6 +293,10 @@ type Config struct {
 	SessionCleared func(session.SessionID)
 	// PDFArtifacts owns private session-scoped PDF objects. Nil disables uploads.
 	PDFArtifacts PDFArtifactLifecycle
+	// PDFUploadReceiveTimeout bounds a gRPC upload from its first receive,
+	// including an idle authenticated stream before metadata arrives.
+	// Zero selects the default receive lifetime.
+	PDFUploadReceiveTimeout time.Duration
 	// StorageManagementAuthorized gates process-wide storage health. A nil
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.

@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -309,6 +311,10 @@ func newPDFUploadService(t *testing.T, lifecycle server.PDFArtifactLifecycle) *s
 }
 
 func newOwnedPDFUploadService(t *testing.T, lifecycle server.PDFArtifactLifecycle) (*server.Service, context.Context) {
+	return newOwnedPDFUploadServiceWithReceiveTimeout(t, lifecycle, 0)
+}
+
+func newOwnedPDFUploadServiceWithReceiveTimeout(t *testing.T, lifecycle server.PDFArtifactLifecycle, receiveTimeout time.Duration) (*server.Service, context.Context) {
 	t.Helper()
 	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
 	svc, err := newPlacementTeamTestService(server.Config{
@@ -316,6 +322,7 @@ func newOwnedPDFUploadService(t *testing.T, lifecycle server.PDFArtifactLifecycl
 		Store:  memstore.New(), PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
 		NewID: func() session.SessionID { return "s-pdf" }, PDFArtifacts: lifecycle,
 		DefaultCapabilities: port.ProviderCapabilities{PDF: true}, OwnershipEnforced: true,
+		PDFUploadReceiveTimeout: receiveTimeout,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -486,6 +493,46 @@ func (p *pdfUploadProbe) Stage(ctx context.Context, _ session.SessionID, name st
 	return server.PDFArtifact{ID: "artifact", Name: name, Size: int64(len(head) + len(tail)), SHA256: strings.Repeat("a", 64)}, nil
 }
 
+type pdfUploadFailedStage struct {
+	*pdfPromptLifecycle
+	finished chan struct{}
+}
+
+type pdfUploadObservedStream struct {
+	grpc.ServerStream
+	recvFinished chan struct{}
+	once         sync.Once
+}
+
+type pdfUploadTrackingObjects struct {
+	*pdfMemoryObjects
+	started chan struct{}
+	deleted chan struct{}
+}
+
+func (o *pdfUploadTrackingObjects) Put(ctx context.Context, key string, source io.Reader) error {
+	close(o.started)
+	return o.pdfMemoryObjects.Put(ctx, key, source)
+}
+
+func (o *pdfUploadTrackingObjects) Delete(ctx context.Context, key string) error {
+	close(o.deleted)
+	return o.pdfMemoryObjects.Delete(ctx, key)
+}
+
+func (s *pdfUploadObservedStream) RecvMsg(message any) error {
+	err := s.ServerStream.RecvMsg(message)
+	if err != nil {
+		s.once.Do(func() { close(s.recvFinished) })
+	}
+	return err
+}
+
+func (p *pdfUploadFailedStage) Stage(context.Context, session.SessionID, string, io.Reader) (server.PDFArtifact, error) {
+	close(p.finished)
+	return server.PDFArtifact{}, server.ErrInvalidArgument
+}
+
 // TestSDKPDFArtifacts_Scenario1_StreamTransports guards first-byte delivery to
 // storage, completion backpressure, and cancellation in both server transports.
 func TestSDKPDFArtifacts_Scenario1_StreamTransports(t *testing.T) {
@@ -497,6 +544,206 @@ func TestSDKPDFArtifacts_Scenario1_StreamTransports(t *testing.T) {
 			t.Fatalf("%s did not reach storage before request EOF", where)
 		}
 	}
+	// RecvMsg observes the server's final status without half-closing the client
+	// send side. Its context has no deadline: the server must end an idle upload.
+	receiveHalfOpen := func(t *testing.T, stream interface{ RecvMsg(any) error }, cancel context.CancelFunc) error {
+		t.Helper()
+		finished := make(chan error, 1)
+		go func() {
+			finished <- stream.RecvMsg(new(mecatlv1.UploadPdfResponse))
+		}()
+		select {
+		case err := <-finished:
+			return err
+		case <-time.After(2 * time.Second):
+			cancel()
+			<-finished
+			t.Fatal("half-open gRPC upload did not finish without a client deadline")
+			return nil
+		}
+	}
+	newAuthenticatedClientForService := func(t *testing.T, svc *server.Service) (mecatlv1.HarnessServiceClient, <-chan struct{}, func()) {
+		t.Helper()
+		auth := server.NewAuthenticator(server.SecurityConfig{Validator: fakeValidator{ok: map[string]session.Principal{
+			"alice-token": {Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser},
+		}}})
+		recvFinished := make(chan struct{})
+		client, closeClient := dialGRPCSecure(t, svc, auth, func(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+			return handler(srv, &pdfUploadObservedStream{ServerStream: stream, recvFinished: recvFinished})
+		})
+		return client, recvFinished, func() { closeClient(); auth.Close() }
+	}
+	newAuthenticatedClient := func(t *testing.T, lifecycle server.PDFArtifactLifecycle, receiveTimeout time.Duration) (mecatlv1.HarnessServiceClient, <-chan struct{}, func()) {
+		t.Helper()
+		svc, _ := newOwnedPDFUploadServiceWithReceiveTimeout(t, lifecycle, receiveTimeout)
+		return newAuthenticatedClientForService(t, svc)
+	}
+	metadata := &mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Metadata{Metadata: &mecatlv1.UploadPdfMetadata{SessionId: "s-pdf", Name: "report.pdf", MimeType: "application/pdf"}}}
+	t.Run("authenticated stream expires before metadata", func(t *testing.T) {
+		lifecycle := &pdfUploadLifecycle{pdfPromptLifecycle: &pdfPromptLifecycle{}}
+		client, recvFinished, cleanup := newAuthenticatedClient(t, lifecycle, 150*time.Millisecond)
+		defer cleanup()
+		ctx, cancel := context.WithCancel(bearerCtx(context.Background(), "alice-token"))
+		defer cancel()
+		if _, hasDeadline := ctx.Deadline(); hasDeadline {
+			t.Fatal("test client unexpectedly has a deadline")
+		}
+		stream, err := client.UploadPdf(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := receiveHalfOpen(t, stream, cancel); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("idle pre-metadata gRPC upload = %v, want server DeadlineExceeded", err)
+		}
+		wait(t, recvFinished, "pre-metadata gRPC Recv release")
+		if lifecycle.calls != 0 {
+			t.Fatalf("idle pre-metadata upload entered storage %d times", lifecycle.calls)
+		}
+	})
+	t.Run("authenticated half-open upload expires and releases staging", func(t *testing.T) {
+		probe := newPDFUploadProbe()
+		client, recvFinished, cleanup := newAuthenticatedClient(t, probe, 150*time.Millisecond)
+		defer cleanup()
+		ctx, cancel := context.WithCancel(bearerCtx(context.Background(), "alice-token"))
+		defer cancel()
+		if _, hasDeadline := ctx.Deadline(); hasDeadline {
+			t.Fatal("test client unexpectedly has a deadline")
+		}
+		stream, err := client.UploadPdf(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(metadata); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(&mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Chunk{Chunk: []byte("%PDF-")}}); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, probe.first, "half-open gRPC upload")
+		if err := receiveHalfOpen(t, stream, cancel); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("half-open gRPC upload = %v, want server DeadlineExceeded", err)
+		}
+		wait(t, recvFinished, "expired gRPC Recv release")
+		select {
+		case err := <-probe.finished:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("staging result = %v, want deadline exceeded", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("expired gRPC upload left staging running")
+		}
+	})
+	t.Run("expired upload removes real staging record", func(t *testing.T) {
+		mr, err := miniredis.Run()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer mr.Close()
+		metadataStore, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = metadataStore.Close() }()
+		objects := &pdfUploadTrackingObjects{
+			pdfMemoryObjects: &pdfMemoryObjects{data: make(map[string][]byte)},
+			started:          make(chan struct{}), deleted: make(chan struct{}),
+		}
+		svc, err := newPlacementTeamTestService(server.Config{
+			Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
+			Store:  metadataStore, PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
+			NewID: func() session.SessionID { return "s-pdf" }, PDFArtifacts: pdfartifact.New(metadataStore, objects),
+			DefaultCapabilities: port.ProviderCapabilities{PDF: true}, OwnershipEnforced: true,
+			PDFUploadReceiveTimeout: 150 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer svc.Close()
+		owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
+		if _, err := svc.CreateSession(owner, session.ModeDefault, session.Limits{}); err != nil {
+			t.Fatal(err)
+		}
+		client, recvFinished, cleanup := newAuthenticatedClientForService(t, svc)
+		defer cleanup()
+		ctx, cancel := context.WithCancel(bearerCtx(context.Background(), "alice-token"))
+		defer cancel()
+		stream, err := client.UploadPdf(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(metadata); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(&mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Chunk{Chunk: []byte("%PDF-")}}); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, objects.started, "PDF object staging")
+		if err := receiveHalfOpen(t, stream, cancel); status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("half-open real PDF upload = %v, want server DeadlineExceeded", err)
+		}
+		wait(t, recvFinished, "real upload gRPC Recv release")
+		wait(t, objects.deleted, "expired PDF object cleanup")
+		if len(objects.data) != 0 {
+			t.Fatalf("expired upload left %d objects", len(objects.data))
+		}
+		for record, err := range metadataStore.PDFRecords(t.Context()) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Fatalf("expired upload left staging record %+v", record)
+		}
+	})
+	t.Run("failed staging ends without client half-close", func(t *testing.T) {
+		probe := &pdfUploadFailedStage{pdfPromptLifecycle: &pdfPromptLifecycle{}, finished: make(chan struct{})}
+		client, recvFinished, cleanup := newAuthenticatedClient(t, probe, 150*time.Millisecond)
+		defer cleanup()
+		ctx, cancel := context.WithCancel(bearerCtx(context.Background(), "alice-token"))
+		defer cancel()
+		stream, err := client.UploadPdf(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(metadata); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, probe.finished, "failed gRPC staging")
+		if err := receiveHalfOpen(t, stream, cancel); status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("failed half-open gRPC upload = %v, want staging error", err)
+		}
+		wait(t, recvFinished, "failed-stage gRPC Recv release")
+	})
+	t.Run("slow chunks within receive lifetime succeed", func(t *testing.T) {
+		probe := newPDFUploadProbe()
+		client, recvFinished, cleanup := newAuthenticatedClient(t, probe, 500*time.Millisecond)
+		defer cleanup()
+		ctx, cancel := context.WithCancel(bearerCtx(context.Background(), "alice-token"))
+		defer cancel()
+		stream, err := client.UploadPdf(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(metadata); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Send(&mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Chunk{Chunk: []byte("%PDF-")}}); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, probe.first, "slow gRPC upload")
+		select {
+		case <-time.After(30 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatal("slow upload cancelled before its receive lifetime")
+		}
+		close(probe.release)
+		if err := stream.Send(&mecatlv1.UploadPdfRequest{Payload: &mecatlv1.UploadPdfRequest_Chunk{Chunk: []byte("1.7\n%%EOF")}}); err != nil {
+			t.Fatal(err)
+		}
+		response, err := stream.CloseAndRecv()
+		if err != nil || response.GetArtifactId() != "artifact" {
+			t.Fatalf("slow gRPC upload = %+v, %v", response, err)
+		}
+		wait(t, recvFinished, "completed gRPC Recv release")
+	})
 	t.Run("gRPC backpressure", func(t *testing.T) {
 		probe := newPDFUploadProbe()
 		client, closeClient := dialGRPC(t, newPDFUploadService(t, probe))

@@ -27,12 +27,13 @@ import (
 // dialGRPCSecure stands up an in-memory gRPC server with the given Authenticator
 // installed as interceptors, returning a client and cleanup. The returned client
 // sends no credentials; tests attach metadata per-call.
-func dialGRPCSecure(t *testing.T, svc *server.Service, auth *server.Authenticator) (mecatlv1.HarnessServiceClient, func()) {
+func dialGRPCSecure(t *testing.T, svc *server.Service, auth *server.Authenticator, streamInterceptors ...grpc.StreamServerInterceptor) (mecatlv1.HarnessServiceClient, func()) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
+	streamInterceptors = append([]grpc.StreamServerInterceptor{auth.StreamInterceptor()}, streamInterceptors...)
 	gs := grpc.NewServer(
 		grpc.UnaryInterceptor(auth.UnaryInterceptor()),
-		grpc.StreamInterceptor(auth.StreamInterceptor()),
+		grpc.ChainStreamInterceptor(streamInterceptors...),
 	)
 	mecatlv1.RegisterHarnessServiceServer(gs, server.NewHarnessServer(svc))
 	go func() { _ = gs.Serve(lis) }()
