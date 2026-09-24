@@ -246,6 +246,10 @@ func createSnapshotAndMetadata(ctx context.Context, client redis.UniversalClient
 }
 
 var deleteMetadataScript = redis.NewScript(`
+if ARGV[5] == '1' then
+  local kind = redis.call('TYPE', KEYS[12]).ok
+  if kind ~= 'none' and kind ~= 'zset' then return redis.error_reply('invalid PDF deletion outbox') end
+end
 local member = redis.call('HGET', KEYS[1], 'metadata_entry')
 local owner_scope = redis.call('HGET', KEYS[1], 'metadata_owner') or ''
 if member then
@@ -284,14 +288,18 @@ if lineage then
   end
 end
 redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[11])
+if ARGV[5] == '1' then
+  redis.call('ZADD', KEYS[12], ARGV[6], ARGV[3])
+end
 redis.call('INCR', KEYS[6])
 return 1
 `)
 
-func deleteSessionAndMetadata(ctx context.Context, client redis.UniversalClient, id session.SessionID) error {
+func deleteSessionAndMetadata(ctx context.Context, client redis.UniversalClient, id session.SessionID, pdfEnabled bool) error {
+	stamp := time.Now().UTC()
 	return deleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), redisLineageRecordPartition(id), redisLineageRecordPartition(id), redisLineageOrderPartition(redisLineageRecordPartition(id)), ledgerKey(id)},
-		metadataGlobalScope, metadataOwnerIndexBase, string(id), time.Now().UTC().Format(time.RFC3339Nano),
+		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), redisLineageRecordPartition(id), redisLineageRecordPartition(id), redisLineageOrderPartition(redisLineageRecordPartition(id)), ledgerKey(id), pdfDeletionOutboxKey},
+		metadataGlobalScope, metadataOwnerIndexBase, string(id), stamp.Format(time.RFC3339Nano), redisBool(pdfEnabled), stamp.Unix(),
 	).Err()
 }
 
@@ -299,6 +307,10 @@ var conditionalDeleteMetadataScript = redis.NewScript(`
 local member = redis.call('HGET', KEYS[1], 'metadata_entry')
 if not member or member ~= ARGV[1] then
   return 0
+end
+if ARGV[6] == '1' then
+  local kind = redis.call('TYPE', KEYS[12]).ok
+  if kind ~= 'none' and kind ~= 'zset' then return redis.error_reply('invalid PDF deletion outbox') end
 end
 local owner_scope = redis.call('HGET', KEYS[1], 'metadata_owner') or ''
 redis.call('ZREM', KEYS[2], member)
@@ -335,20 +347,30 @@ if lineage then
   end
 end
 redis.call('DEL', KEYS[1], KEYS[4], KEYS[5], KEYS[7], KEYS[11])
+if ARGV[6] == '1' then
+  redis.call('ZADD', KEYS[12], ARGV[7], ARGV[4])
+end
 redis.call('INCR', KEYS[6])
 return 1
 `)
 
-func deleteSessionIfMetadataUnchanged(ctx context.Context, client redis.UniversalClient, expected port.SessionDiscoveryMeta) (bool, error) {
+func deleteSessionIfMetadataUnchanged(ctx context.Context, client redis.UniversalClient, expected port.SessionDiscoveryMeta, pdfEnabled bool) (bool, error) {
 	member, err := encodeMetadataMember(expected)
 	if err != nil {
 		return false, err
 	}
 	result, err := conditionalDeleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageOrderPartition(redisLineageRecordPartition(expected.ID)), ledgerKey(expected.ID)},
-		member, metadataGlobalScope, metadataOwnerIndexBase, string(expected.ID), time.Now().UTC().Format(time.RFC3339Nano),
+		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageOrderPartition(redisLineageRecordPartition(expected.ID)), ledgerKey(expected.ID), pdfDeletionOutboxKey},
+		member, metadataGlobalScope, metadataOwnerIndexBase, string(expected.ID), time.Now().UTC().Format(time.RFC3339Nano), redisBool(pdfEnabled), time.Now().UTC().Unix(),
 	).Int()
 	return result == 1, err
+}
+
+func redisBool(v bool) string {
+	if v {
+		return "1"
+	}
+	return "0"
 }
 
 var pageMetadataScript = redis.NewScript(`

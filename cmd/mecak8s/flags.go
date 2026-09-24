@@ -35,6 +35,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/pdfartifact"
 	"github.com/stacklok/mecatl/internal/adapter/mcpauthority"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/cliconfig"
@@ -167,6 +168,9 @@ type config struct {
 	redisReadLedger     bool
 	redisFollowPoolSize int
 	redisMaxFollowers   int
+	artifactS3Bucket    string
+	artifactS3Region    string
+	artifactS3Endpoint  string
 
 	// Remote learning driver: the app validates that it advertises the complete
 	// distributed-learning repository capability set before startup proceeds.
@@ -389,6 +393,9 @@ func parseFlags(argv []string) (config, error) {
 	fs.StringVar(&cfg.redisTLSCAFile, "redis-tls-ca", "", "Path to a PEM CA bundle in a mounted Secret for Redis TLS verification. Replaces the system trust store; required with ACL credentials unless --redis-tls is set")
 	fs.IntVar(&cfg.redisFollowPoolSize, "redis-follow-pool-size", defaultRedisFollowPoolSize, "Maximum Redis connections reserved for blocking event followers")
 	fs.IntVar(&cfg.redisMaxFollowers, "redis-max-followers", defaultRedisMaxFollowers, "Maximum event followers admitted by this process")
+	fs.StringVar(&cfg.artifactS3Bucket, "artifact-s3-bucket", "", "Dedicated private S3-compatible bucket for PDF artifacts")
+	fs.StringVar(&cfg.artifactS3Region, "artifact-s3-region", "", "Region for the S3-compatible PDF artifact bucket")
+	fs.StringVar(&cfg.artifactS3Endpoint, "artifact-s3-endpoint", "", "Optional HTTPS S3-compatible endpoint (path-style requests)")
 	fs.StringVar(&cfg.learningStoreURL, "learning-store-url", "", "Host:port of a distributed learning gRPC driver. It must provide attempt, proposal, and skill repositories or startup fails")
 	fs.StringVar(&cfg.driverAuthToken, "driver-auth-token", "", "Bearer token for store-driver RPCs. Reads MECATL_DRIVER_AUTH_TOKEN when empty; cleartext remote connections are refused")
 	fs.BoolVar(&cfg.driverTLS, "driver-tls", false, "Use TLS for store-driver connections")
@@ -629,6 +636,17 @@ func parseFlags(argv []string) (config, error) {
 	}
 	if cfg.redisMaxFollowers > cfg.redisFollowPoolSize {
 		return config{}, errors.New("--redis-max-followers must not exceed --redis-follow-pool-size")
+	}
+	if cfg.artifactS3Bucket != "" || cfg.artifactS3Region != "" || cfg.artifactS3Endpoint != "" {
+		if cfg.artifactS3Bucket == "" || cfg.artifactS3Region == "" {
+			return config{}, errors.New("--artifact-s3-bucket and --artifact-s3-region must be set together")
+		}
+		if cfg.redisURL == "" {
+			return config{}, errors.New("PDF artifacts require --redis-url for durable metadata")
+		}
+		if err := (pdfartifact.S3Config{Bucket: cfg.artifactS3Bucket, Region: cfg.artifactS3Region, Endpoint: cfg.artifactS3Endpoint}).Validate(); err != nil {
+			return config{}, errors.New("invalid PDF artifact S3 configuration: endpoint must use HTTPS without credentials")
+		}
 	}
 
 	return cfg, nil
