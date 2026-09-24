@@ -262,6 +262,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Changed
 
+- **Exact reflection identity** — `agent.NewEvidenceReflector` now requires a
+  `session.ProviderModelID` and the identity-less
+  `NewEvidenceReflectorForProviderModel` compatibility constructor is removed.
+  Reflection usage is therefore always attributed to its composition-selected
+  provider/model rather than a fabricated `unknown/<model>` identity. Changed
+  (breaking, pre-v1 minor).
+
 - **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
   `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
   `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and

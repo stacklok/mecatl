@@ -62,7 +62,7 @@ func TestAuxiliaryTokenUsage_Scenario2_ReflectionRecordsSelectedModel(t *testing
 		{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 7, OutputTokens: 2, CacheReadTokens: 1}},
 		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 	}})
-	reflector, err := agent.NewEvidenceReflectorForProviderModel(provider, identity, nil, agent.ReflectionLimits{})
+	reflector, err := agent.NewEvidenceReflector(provider, identity, nil, agent.ReflectionLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestAuxiliaryTokenUsage_Scenario2_RetryAndPartialUsageAreCountedOnce(t *tes
 		{Kind: port.ChunkDone, Stop: session.StopEndTurn},
 	}})
 	provider := retryingProvider{attempts: []*mockllm.Provider{first, second}}
-	reflector, err := agent.NewEvidenceReflectorForProviderModel(provider, identity, nil, agent.ReflectionLimits{})
+	reflector, err := agent.NewEvidenceReflector(provider, identity, nil, agent.ReflectionLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
