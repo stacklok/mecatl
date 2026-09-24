@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useState } from "react";
+import { readUserScopedItem, writeUserScopedItem } from "./account-storage";
 
 /**
  * The resizable panels, each with its own persisted width. The chat list
@@ -25,8 +26,11 @@ export function clampPanelWidth(value: number) {
 }
 
 /** The width stored for `panel`, or the default when nothing usable is stored. */
-export function storedPanelWidth(storage: Pick<Storage, "getItem">, panel: ResizablePanel) {
-  const stored = Number.parseFloat(storage.getItem(panelWidthStorageKeys[panel]) ?? "");
+export function storedPanelWidth(
+  storage: Pick<Storage, "getItem"> | undefined,
+  panel: ResizablePanel,
+) {
+  const stored = Number.parseFloat(readUserScopedItem(panelWidthStorageKeys[panel], storage) ?? "");
   return Number.isFinite(stored) ? clampPanelWidth(stored) : defaultPanelWidth;
 }
 
@@ -47,12 +51,7 @@ export function usePanelWidth(panel: ResizablePanel) {
       const value = clampPanelWidth(next);
       const storageKey = panelWidthStorageKeys[panel];
       setValueState(value);
-      try {
-        if (value === defaultPanelWidth) window.localStorage.removeItem(storageKey);
-        else window.localStorage.setItem(storageKey, String(value));
-      } catch {
-        // Resizing still works for this page if browser storage is unavailable.
-      }
+      writeUserScopedItem(storageKey, value === defaultPanelWidth ? null : String(value));
       window.dispatchEvent(new Event(changedEvent));
     },
     [panel],
@@ -61,9 +60,5 @@ export function usePanelWidth(panel: ResizablePanel) {
 }
 
 function readPanelWidth(panel: ResizablePanel) {
-  try {
-    return storedPanelWidth(window.localStorage, panel);
-  } catch {
-    return defaultPanelWidth;
-  }
+  return storedPanelWidth(undefined, panel);
 }

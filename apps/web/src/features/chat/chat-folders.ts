@@ -32,7 +32,7 @@ export function useChatFolders() {
   useEffect(() => {
     const synchronize = (event: StorageEvent) => {
       if (event.key === null || event.key === storageKey) {
-        setState(parseChatFolders(event.newValue));
+        setState(readChatFolders());
       }
     };
     window.addEventListener("storage", synchronize);

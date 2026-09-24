@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useState } from "react";
+import { readUserScopedItem, writeUserScopedItem } from "../../lib/account-storage";
 
 const canvasKeyPrefix = "studio.chat.canvas.";
 
@@ -11,12 +12,7 @@ export function useLocalCanvas(sessionId: string) {
   const setValue = useCallback(
     (next: string) => {
       setValueState(next);
-      try {
-        if (next) window.localStorage.setItem(storageKey(sessionId), next);
-        else window.localStorage.removeItem(storageKey(sessionId));
-      } catch {
-        // The editor remains useful in memory when browser storage is unavailable.
-      }
+      writeUserScopedItem(storageKey(sessionId), next || null);
     },
     [sessionId],
   );
@@ -34,11 +30,7 @@ export function appendCanvasQuote(canvas: string, selection: string) {
 }
 
 function readCanvas(sessionId: string) {
-  try {
-    return window.localStorage.getItem(storageKey(sessionId)) ?? "";
-  } catch {
-    return "";
-  }
+  return readUserScopedItem(storageKey(sessionId)) ?? "";
 }
 
 function storageKey(sessionId: string) {

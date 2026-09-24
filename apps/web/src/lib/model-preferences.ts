@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useState } from "react";
+import { readUserScopedItem, writeUserScopedItem } from "./account-storage";
 
 const disabledModelsKey = "studio.chat.models.disabled";
 
@@ -38,19 +39,9 @@ export function useDisabledModels() {
 }
 
 function readDisabledModels() {
-  try {
-    return parseDisabledModels(window.localStorage.getItem(disabledModelsKey));
-  } catch {
-    return new Set<string>();
-  }
+  return parseDisabledModels(readUserScopedItem(disabledModelsKey));
 }
 
 function writeDisabledModels(ids: Set<string>) {
-  try {
-    const value = serializeDisabledModels(ids);
-    if (value) window.localStorage.setItem(disabledModelsKey, value);
-    else window.localStorage.removeItem(disabledModelsKey);
-  } catch {
-    // Browser storage is an enhancement; keep the in-memory value for this page.
-  }
+  writeUserScopedItem(disabledModelsKey, serializeDisabledModels(ids) ?? null);
 }

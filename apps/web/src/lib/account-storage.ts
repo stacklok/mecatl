@@ -43,7 +43,7 @@ function readableAccount(store: Store | undefined): { ok: boolean; value: string
   }
 }
 
-function scopedKeys(store: Store | undefined): string[] | undefined {
+function scopedKeys(store: Pick<Storage, "key" | "length"> | undefined): string[] | undefined {
   if (store === undefined) return typeof window === "undefined" ? [] : undefined;
   try {
     const keys: string[] = [];
@@ -114,7 +114,7 @@ export function clearUserScopedStorage(
 /** Keeps account data usable during a storage exception for this open page. */
 export function readUserScopedItem(
   key: string,
-  store: Store | null | undefined = browserStorage(),
+  store: Pick<Storage, "getItem"> | null | undefined = browserStorage(),
 ): string | null {
   if (!key.startsWith(userScopedPrefix)) return null;
   if (quarantined || volatileWrites.has(key)) return volatileItems.get(key) ?? null;
@@ -129,6 +129,22 @@ export function readUserScopedItem(
     // Fall through to the in-memory copy from this page.
   }
   return volatileItems.get(key) ?? null;
+}
+
+/** Enumerate only keys belonging to the current in-memory account view. */
+export function listUserScopedKeys(
+  prefix: string,
+  store: Pick<Storage, "key" | "length"> | null | undefined = browserStorage(),
+): string[] {
+  if (!prefix.startsWith(userScopedPrefix)) return [];
+  const memoryKeys = [...volatileItems.keys()].filter((key) => key.startsWith(prefix));
+  if (quarantined) return memoryKeys;
+  const keys = scopedKeys(store ?? undefined);
+  if (keys === undefined) return memoryKeys;
+  const pendingWrites = [...volatileWrites].filter(
+    (key) => key.startsWith(prefix) && volatileItems.has(key),
+  );
+  return [...new Set([...keys.filter((key) => key.startsWith(prefix)), ...pendingWrites])];
 }
 
 export function writeUserScopedItem(
