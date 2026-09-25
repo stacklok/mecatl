@@ -15,6 +15,7 @@ const volatileItems = new Map<string, string>();
 const volatileWrites = new Set<string>();
 let volatileAccount: string | undefined;
 let quarantined = false;
+let accountStore: Store | undefined;
 
 type Store = Pick<Storage, "getItem" | "key" | "length" | "removeItem" | "setItem">;
 
@@ -100,6 +101,32 @@ function resetVolatileState(): void {
   volatileAccount = undefined;
 }
 
+type AccountAccess = "verified" | "memory" | "blocked";
+
+function markerAccess(store: Pick<Storage, "getItem"> | null | undefined): AccountAccess {
+  if (store == null) return "memory";
+  try {
+    const marker = store.getItem(accountStorageKey);
+    if (marker === volatileAccount) return "verified";
+    // A failed cleanup can still hold this page's drafts in memory. An absent
+    // marker or another account's marker cannot authorize access to the store.
+    return marker === cleanupPending ? "memory" : "blocked";
+  } catch {
+    return "memory";
+  }
+}
+
+/** Recheck the shared marker at the storage seam; storage has no cross-tab CAS. */
+function accountAccess(store: Pick<Storage, "getItem"> | null | undefined): AccountAccess {
+  if (volatileAccount === undefined) return "verified";
+  // A failed cleanup has already detached this page from both physical stores.
+  if (quarantined) return "memory";
+  const shared = accountStore ?? browserStorage();
+  const sharedAccess = markerAccess(shared);
+  if (sharedAccess !== "verified") return sharedAccess;
+  return store === shared ? "verified" : markerAccess(store);
+}
+
 export function clearUserScopedStorage(
   store: Store | undefined = browserStorage(),
   sessionStore: Store | undefined = browserSessionStorage(),
@@ -107,6 +134,7 @@ export function clearUserScopedStorage(
   const localCleared = clearStore(store);
   const sessionCleared = sessionStore === store ? localCleared : clearStore(sessionStore);
   resetVolatileState();
+  accountStore = undefined;
   quarantined = !localCleared || !sessionCleared;
   if (quarantined) markCleanupPending(store, sessionStore);
 }
@@ -117,7 +145,11 @@ export function readUserScopedItem(
   store: Pick<Storage, "getItem"> | null | undefined = browserStorage(),
 ): string | null {
   if (!key.startsWith(userScopedPrefix)) return null;
-  if (quarantined || volatileWrites.has(key)) return volatileItems.get(key) ?? null;
+  const access = accountAccess(store);
+  if (access === "blocked") return null;
+  if (access === "memory" || quarantined || volatileWrites.has(key)) {
+    return volatileItems.get(key) ?? null;
+  }
   try {
     if (store != null) {
       const value = store.getItem(key);
@@ -134,11 +166,13 @@ export function readUserScopedItem(
 /** Enumerate only keys belonging to the current in-memory account view. */
 export function listUserScopedKeys(
   prefix: string,
-  store: Pick<Storage, "key" | "length"> | null | undefined = browserStorage(),
+  store: Pick<Storage, "getItem" | "key" | "length"> | null | undefined = browserStorage(),
 ): string[] {
   if (!prefix.startsWith(userScopedPrefix)) return [];
+  const access = accountAccess(store);
+  if (access === "blocked") return [];
   const memoryKeys = [...volatileItems.keys()].filter((key) => key.startsWith(prefix));
-  if (quarantined) return memoryKeys;
+  if (access === "memory" || quarantined) return memoryKeys;
   const keys = scopedKeys(store ?? undefined);
   if (keys === undefined) return memoryKeys;
   const pendingWrites = [...volatileWrites].filter(
@@ -153,9 +187,11 @@ export function writeUserScopedItem(
   store: Store | null | undefined = browserStorage(),
 ): void {
   if (!key.startsWith(userScopedPrefix)) return;
+  const access = accountAccess(store);
+  if (access === "blocked") return;
   if (value === null) volatileItems.delete(key);
   else volatileItems.set(key, value);
-  if (quarantined) {
+  if (access === "memory" || quarantined) {
     volatileWrites.add(key);
     return;
   }
@@ -195,6 +231,7 @@ export function reconcileAccount(
   sessionStore: Store | undefined = browserSessionStorage(),
 ): boolean {
   if (account === undefined || account === "") return false;
+  accountStore = store;
   if (quarantined && volatileAccount === account) return false;
 
   const local = readableAccount(store);

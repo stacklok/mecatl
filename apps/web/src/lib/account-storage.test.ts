@@ -86,6 +86,66 @@ describe("account-scoped browser storage", () => {
     expect([...session.data.entries()]).toEqual([["studio.account", "bob"]]);
   });
 
+  it("quarantines a stale tab before its account-change storage event", async () => {
+    const local = memoryStore({ "mecatl-studio-theme": "dark" });
+    const aliceSession = memoryStore();
+    const bobSession = memoryStore();
+
+    vi.resetModules();
+    const aliceTab = await import("./account-storage");
+    expect(aliceTab.reconcileAccount("alice", local, aliceSession)).toBe(false);
+    aliceTab.writeUserScopedItem("studio.chat.folders", "Alice's folder", local);
+    aliceTab.writeUserScopedItem("studio.chat.queue.same", "Alice's queued prompt", local);
+    aliceTab.writeUserScopedItem(
+      "studio.chat.failedRun.same",
+      "Alice's failed prompt",
+      aliceSession,
+    );
+
+    vi.resetModules();
+    const bobTab = await import("./account-storage");
+    expect(bobTab.reconcileAccount("bob", local, bobSession)).toBe(true);
+    bobTab.writeUserScopedItem("studio.chat.folders", "Bob's folder", local);
+    bobTab.writeUserScopedItem("studio.chat.queue.same", "Bob's queued prompt", local);
+    bobTab.writeUserScopedItem("studio.chat.failedRun.same", "Bob's failed prompt", bobSession);
+
+    // Alice's module has received no storage event and still believes she is signed in.
+    expect(aliceTab.readUserScopedItem("studio.chat.folders", local)).toBeNull();
+    expect(aliceTab.readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
+    expect(aliceTab.listUserScopedKeys("studio.chat.queue.", local)).toEqual([]);
+    expect(aliceTab.readUserScopedItem("studio.chat.failedRun.same", aliceSession)).toBeNull();
+    expect(aliceTab.listUserScopedKeys("studio.chat.failedRun.", aliceSession)).toEqual([]);
+    aliceTab.writeUserScopedItem("studio.chat.folders", "Alice's replacement", local);
+    aliceTab.writeUserScopedItem("studio.chat.queue.same", "Alice's replacement", local);
+    aliceTab.writeUserScopedItem("studio.chat.failedRun.same", "Alice's replacement", aliceSession);
+
+    expect(local.data.get("studio.account")).toBe("bob");
+    expect(local.data.get("studio.chat.folders")).toBe("Bob's folder");
+    expect(local.data.get("studio.chat.queue.same")).toBe("Bob's queued prompt");
+    expect(bobSession.data.get("studio.chat.failedRun.same")).toBe("Bob's failed prompt");
+    expect(aliceSession.data.get("studio.chat.failedRun.same")).toBe("Alice's failed prompt");
+    expect(local.data.get("mecatl-studio-theme")).toBe("dark");
+    expect(bobTab.readUserScopedItem("studio.chat.folders", local)).toBe("Bob's folder");
+  });
+
+  it("keeps current-account drafts in memory when the marker becomes unreadable", () => {
+    const localFaults = { readAccount: false };
+    const local = memoryStore({}, localFaults);
+    const session = memoryStore();
+
+    expect(reconcileAccount("alice", local, session)).toBe(false);
+    writeUserScopedItem("studio.chat.queue.same", "saved queue", local);
+    writeUserScopedItem("studio.chat.failedRun.same", "saved failure", session);
+
+    localFaults.readAccount = true;
+    writeUserScopedItem("studio.chat.queue.same", "memory queue", local);
+    writeUserScopedItem("studio.chat.failedRun.same", "memory failure", session);
+    expect(readUserScopedItem("studio.chat.queue.same", local)).toBe("memory queue");
+    expect(readUserScopedItem("studio.chat.failedRun.same", session)).toBe("memory failure");
+    expect(local.data.get("studio.chat.queue.same")).toBe("saved queue");
+    expect(session.data.get("studio.chat.failedRun.same")).toBe("saved failure");
+  });
+
   it("clears the available store when the other storage area throws", () => {
     const blocked = {
       getItem: () => {
@@ -269,7 +329,11 @@ describe("account-scoped browser storage", () => {
     expect(readUserScopedItem("studio.chat.queue.same", local)).toBeNull();
     expect(readUserScopedItem("studio.chat.failedRun.same", session)).toBeNull();
     writeUserScopedItem("studio.chat.queue.same", "Bob's draft", local);
+    writeUserScopedItem("studio.chat.failedRun.same", "Bob's failed draft", session);
+    expect(readUserScopedItem("studio.chat.queue.same", local)).toBe("Bob's draft");
+    expect(readUserScopedItem("studio.chat.failedRun.same", session)).toBe("Bob's failed draft");
     expect(local.data.get("studio.chat.queue.same")).toBe("Alice's prompt");
+    expect(session.data.get("studio.chat.failedRun.same")).toBe("Alice's failure");
 
     vi.resetModules();
     const reloaded = await import("./account-storage");
