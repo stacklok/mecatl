@@ -27,9 +27,13 @@ type streamState struct {
 
 	// done is set when a TERMINAL Responses event is observed
 	// (response.completed / response.incomplete / response.failed / a top-level
-	// error). streamOutcome is the corresponding bounded structural classification.
-	done          bool
-	streamOutcome string
+	// error). It guards against emitting a second ChunkDone if both
+	// response.completed and a later terminal event arrive, AND it is the
+	// truncation signal: a clean EOF with done==false means the stream ended
+	// without a terminal event (e.g. a dropped connection), which Stream fails closed as
+	// errTruncatedStream rather than letting the engine promote partial text to a
+	// successful StopEndTurn.
+	done bool
 
 	// responseID is learned only from a typed Responses event and lets a later
 	// top-level error correlate with the response it terminated.
@@ -205,7 +209,6 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			return nil, nil
 		}
 		st.done = true
-		st.streamOutcome = session.StreamOutcomeIncomplete
 		usage := mapUsage(event.Response.Usage)
 		return []port.Chunk{
 			{Kind: port.ChunkUsage, Usage: &usage},
@@ -216,7 +219,6 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			return nil, nil
 		}
 		st.done = true
-		st.streamOutcome = session.StreamOutcomeStreamError
 		return nil, &responseStreamError{
 			msg:      "response failed: " + responseErrorString(event.Response.Error),
 			status:   providerErrorStatus(string(event.Response.Error.Code), event.Response.Error.Message),
@@ -230,7 +232,6 @@ func translate(event responses.ResponseStreamEventUnion, st *streamState) ([]por
 			return nil, nil
 		}
 		st.done = true
-		st.streamOutcome = session.StreamOutcomeStreamError
 		return nil, &responseStreamError{
 			msg:      "stream error: " + streamErrorString(event),
 			status:   providerErrorStatus(event.Code, event.Message),
@@ -251,13 +252,6 @@ func translateCompleted(event responses.ResponseStreamEventUnion, st *streamStat
 		return nil, nil
 	}
 	st.done = true
-	st.streamOutcome = session.StreamOutcomeComplete
-	switch mapStop(event.Response.Status) {
-	case session.StopCancelled:
-		st.streamOutcome = session.StreamOutcomeCancelled
-	case session.StopError:
-		st.streamOutcome = session.StreamOutcomeIncomplete
-	}
 	usage := mapUsage(event.Response.Usage)
 	chunks := make([]port.Chunk, 0, 4)
 	// The routed DOWNSTREAM provider (issue #480): the openrouter_metadata

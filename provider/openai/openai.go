@@ -33,7 +33,6 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/provider/ssefilter"
 )
 
@@ -375,16 +374,11 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 	defer func() { _ = stream.Close() }()
 
 	st := streamState{providerRoute: p.metadataHeader}
-	observe := port.ObserveAttemptOnce(ctx)
 	for stream.Next() {
 		if ctx.Err() != nil {
-			observe(false, session.StreamOutcomeCancelled)
 			return emitted, false, nil
 		}
 		chunks, terr := translate(stream.Current(), &st)
-		if st.done {
-			observe(true, st.streamOutcome)
-		}
 		for _, c := range chunks {
 			emitted = true
 			if !yield(c, nil) {
@@ -395,11 +389,6 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 			// A terminal failure event (response.failed / error / incomplete)
 			// carries the provider's real message; surface it as the stream's
 			// error so the loop reports the reason rather than a bare stop.
-			// The st.done branch above already reports true+the real outcome for
-			// every live translate error path; this is a defensive fallback for
-			// any future translate error that returns without setting done, so a
-			// row is never silently skipped in favor of an "unavailable" default.
-			observe(st.done, session.StreamOutcomeStreamError)
 			return emitted, false, terr
 		}
 	}
@@ -407,10 +396,8 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 		// Don't report a plain context cancellation as a stream error; the
 		// caller cancelled deliberately.
 		if ctx.Err() != nil {
-			observe(false, session.StreamOutcomeCancelled)
 			return emitted, false, nil
 		}
-		observe(false, session.StreamOutcomeStreamError)
 		return emitted, false, withHTTPErrorMetadata(streamErr)
 	}
 	if !st.done && ctx.Err() == nil {
@@ -421,11 +408,7 @@ func (p *Provider) streamAttempt(ctx context.Context, params responses.ResponseN
 		// text to a successful StopEndTurn (loop.go finishTurnNoTools). Surface
 		// a truncation error instead (retryable pre-commit; terminal once a
 		// committing chunk has gone out, by the no-replay rule).
-		observe(false, session.StreamOutcomeIncomplete)
 		return emitted, false, errTruncatedStream
-	}
-	if ctx.Err() != nil {
-		observe(false, session.StreamOutcomeCancelled)
 	}
 	return emitted, false, nil
 }

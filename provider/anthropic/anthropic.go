@@ -325,32 +325,20 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 	return func(yield func(port.Chunk, error) bool) {
 		defer func() { _ = stream.Close() }()
 		var st streamState
-		observe := port.ObserveAttemptOnce(ctx)
 		for stream.Next() {
 			select {
 			case <-ctx.Done():
-				observe(false, session.StreamOutcomeCancelled)
 				return
 			default:
 			}
 			event := stream.Current()
 			chunks, terr := translate(event, &st)
-			if st.done {
-				outcome := session.StreamOutcomeComplete
-				if terr != nil {
-					outcome = session.StreamOutcomeStreamError
-				} else if mapStop(st.stopReason) == session.StopError {
-					outcome = session.StreamOutcomeIncomplete
-				}
-				observe(true, outcome)
-			}
 			for _, c := range chunks {
 				if !yield(c, nil) {
 					return
 				}
 			}
 			if terr != nil {
-				observe(st.done, session.StreamOutcomeStreamError)
 				yield(port.Chunk{}, terr)
 				return
 			}
@@ -359,17 +347,9 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 			// Don't report a plain context cancellation as a stream error; the
 			// caller cancelled deliberately.
 			if ctx.Err() != nil {
-				observe(false, session.StreamOutcomeCancelled)
 				return
 			}
-			observe(false, session.StreamOutcomeStreamError)
 			yield(port.Chunk{}, anthropicStreamErr(err, err.Error()))
-			return
-		}
-		if ctx.Err() != nil {
-			observe(false, session.StreamOutcomeCancelled)
-		} else if !st.done {
-			observe(false, session.StreamOutcomeIncomplete)
 		}
 	}, nil
 }
