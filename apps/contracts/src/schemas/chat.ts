@@ -237,6 +237,10 @@ export const resolvePermissionRequestSchema = z.object({
   verdict: permissionVerdictSchema,
 });
 
+export const resolvePlanAskRequestSchema = z.strictObject({
+  verdict: z.enum(["approve", "accept_edits", "iterate"]),
+});
+
 export const steerRunRequestSchema = z.object({
   text: z.string().trim().min(1).max(1_000_000),
 });

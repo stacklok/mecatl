@@ -8,18 +8,20 @@ describe("Mecatl chat event serialization", () => {
   it("converts SDK bigint fields into JSON-safe strings", () => {
     const event = {
       kind: "turn.end",
-      payload: { durationMs: 250n, usage: undefined },
+      payload: {
+        durationMs: 250n,
+        usage: {
+          cacheReadTokens: 1n,
+          cacheWriteTokens: 2n,
+          inputTokens: 3n,
+          outputTokens: 4n,
+          reasoningTokens: 5n,
+        },
+      },
       runId: "run-1",
       seq: 7n,
       text: "",
       turn: 2,
-      usage: {
-        cacheReadTokens: 1n,
-        cacheWriteTokens: 2n,
-        inputTokens: 3n,
-        outputTokens: 4n,
-        reasoningTokens: 5n,
-      },
     } as Event;
 
     expect(serializeEvent(event)).toMatchObject({
@@ -109,7 +111,6 @@ describe("Mecatl chat sessions", () => {
           createdAtUnix: 0n,
           modifiedAtUnix: 0n,
           sessionId: "session-1",
-          title: "Legacy title",
           titleMetadata: { provenance: "generated", revision, title: "Generated title" },
           turns: 0,
         },
@@ -118,7 +119,6 @@ describe("Mecatl chat sessions", () => {
           createdAtUnix: 0n,
           modifiedAtUnix: 0n,
           sessionId: "session-2",
-          title: "Legacy title",
           turns: 0,
         },
       ],
@@ -137,7 +137,7 @@ describe("Mecatl chat sessions", () => {
         titleProvenance: "generated",
         titleRevision: "9007199254740993",
       },
-      { title: "Legacy title", titleProvenance: "", titleRevision: "0" },
+      { title: "Untitled chat", titleProvenance: "", titleRevision: "0" },
     ]);
     await expect(service.renameSession("session-1", "Operator title")).resolves.toEqual({
       title: "Operator title",
@@ -169,7 +169,6 @@ describe("Mecatl chat sessions", () => {
 
   it("maps snapshot configuration, capabilities, and cumulative token usage", async () => {
     const snapshot = vi.fn().mockResolvedValue({
-      capabilities: { manualCompaction: true, modelSelection: true },
       resolvedModel: {
         contextWindow: 200_000n,
         modelId: "claude-sonnet",
@@ -205,6 +204,11 @@ describe("Mecatl chat sessions", () => {
       },
     });
     const service = createMecatlChatService({
+      server: {
+        compatibility: vi.fn().mockResolvedValue({
+          capabilities: { manualCompaction: true, modelSelection: true },
+        }),
+      },
       sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
     } as unknown as Client);
 
@@ -259,7 +263,7 @@ describe("Mecatl chat sessions", () => {
           mimeType: "image/png",
         },
       ],
-      {},
+      { serverOwnedPlanContinuation: true },
       { signal: expect.any(AbortSignal) },
     );
     expect(deliveries).toEqual([{ runId: "run-1", sessionId: "session-1", type: "run.started" }]);
@@ -287,7 +291,7 @@ describe("Mecatl chat sessions", () => {
 
     expect(run).toHaveBeenCalledWith(
       [expect.objectContaining({ kind: "image", mimeType: "image/jpeg" })],
-      {},
+      { serverOwnedPlanContinuation: true },
       { signal: expect.any(AbortSignal) },
     );
   });
@@ -347,7 +351,6 @@ describe("Mecatl chat sessions", () => {
   it("round-trips the extra-high and max reasoning-effort tiers", async () => {
     for (const reasoningEffort of ["xhigh", "max"] as const) {
       const snapshot = vi.fn().mockResolvedValue({
-        capabilities: {},
         resolvedModel: {
           contextWindow: 200_000n,
           modelId: "claude-sonnet",
@@ -360,6 +363,11 @@ describe("Mecatl chat sessions", () => {
         tokenUsage: {},
       });
       const service = createMecatlChatService({
+        server: {
+          compatibility: vi.fn().mockResolvedValue({
+            capabilities: { manualCompaction: false, modelSelection: false },
+          }),
+        },
         sessions: { get: vi.fn().mockResolvedValue({ snapshot }) },
       } as unknown as Client);
 
@@ -427,6 +435,53 @@ describe("Mecatl chat sessions", () => {
     );
     expect(controls).toHaveBeenCalledWith("run-1");
     expect(steer).toHaveBeenCalledWith("focus on the auth module");
+  });
+
+  it("gates plan control on the published SDK feature", async () => {
+    const resolvePlanAsk = vi.fn().mockResolvedValue(undefined);
+    const resolvePlan = vi.fn();
+    const run = vi.fn().mockResolvedValue({
+      id: "run-plan",
+      async *[Symbol.asyncIterator]() {},
+    });
+    const controls = vi.fn().mockReturnValue({ resolvePlanAsk });
+    const get = vi.fn().mockResolvedValue({ controls, resolvePlan, run });
+    const compatibility = vi.fn().mockResolvedValue({
+      features: new Set(["exact_plan_ask_control"]),
+    });
+    const service = createMecatlChatService({
+      server: { compatibility },
+      sessions: { get },
+    } as unknown as Client);
+
+    for await (const _delivery of service.run(
+      "session-1",
+      { images: [], prompt: "Write the plan" },
+      new AbortController().signal,
+    )) {
+      // Drain the normal prompt stream.
+    }
+    expect(run).toHaveBeenCalledWith(
+      "Write the plan",
+      { serverOwnedPlanContinuation: true },
+      { signal: expect.any(AbortSignal) },
+    );
+
+    for (const verdict of ["approve", "accept_edits", "iterate"] as const) {
+      await expect(
+        service.resolvePlanAsk("session-1", "run-plan", "ask-plan", verdict),
+      ).resolves.toBe("acknowledged");
+      expect(resolvePlanAsk).toHaveBeenLastCalledWith("ask-plan", verdict);
+    }
+    expect(controls).toHaveBeenCalledWith("run-plan");
+    expect(resolvePlan).not.toHaveBeenCalled();
+
+    compatibility.mockResolvedValue({ features: new Set() });
+    resolvePlanAsk.mockClear();
+    await expect(
+      service.resolvePlanAsk("session-1", "run-plan", "ask-plan", "approve"),
+    ).resolves.toBe("unavailable");
+    expect(resolvePlanAsk).not.toHaveBeenCalled();
   });
 
   it("resolves a permission on a reattached run through its exact durable run handle", async () => {

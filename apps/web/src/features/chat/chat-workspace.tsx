@@ -10,6 +10,7 @@ import {
   cancelAuthorization,
   cancelRun,
   recheckAuthorization,
+  resolvePlanAsk,
   resolveRunPermission,
   retrySession,
   startRun,
@@ -165,6 +166,8 @@ import {
   imagePreview,
 } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
+import { PlanControlBridge, type PlanVerdict } from "./plan-control-bridge";
 import { QueuedMessageList } from "./queued-message-list";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import {
@@ -387,6 +390,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
   const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
+  const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
   const awayTracker = useRef(new AwayNoticeTracker());
@@ -475,6 +479,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
+    planFollowController.current?.abort();
+    planFollowController.current = undefined;
     activityRefresh.current = undefined;
     authorizationActivityCursor.current = undefined;
     activityFollowedSession.current = undefined;
@@ -518,7 +524,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     };
   }, [sessionId, setMessages]);
 
-  useEffect(() => () => activeRun.current?.controller.abort(), []);
+  useEffect(
+    () => () => {
+      activeRun.current?.controller.abort();
+      planFollowController.current?.abort();
+    },
+    [],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow every streamed message update while the reader remains at the bottom
   useEffect(() => {
@@ -2044,7 +2056,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   async function respondToApproval(verdict: ApprovalVerdict) {
     const target = controlTarget(runTarget, sessionId);
-    if (!target || !approval) {
+    if (!target || !approval || approval.tool === "PresentPlan") {
       return;
     }
     setControlPending(true);
@@ -2060,6 +2072,55 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
+      setControlPending(false);
+    }
+  }
+
+  async function respondToPlan(verdict: PlanVerdict) {
+    const target = controlTarget(runTarget, sessionId);
+    if (!target || !approval || approval.tool !== "PresentPlan") return;
+    const askId = approval.askId;
+    setControlPending(true);
+    setError(undefined);
+    try {
+      await resolvePlanAsk({
+        body: { verdict },
+        path: { askId, runId: target.runId, sessionId: target.sessionId },
+        throwOnError: true,
+      });
+      if (viewedSessionId.current === target.sessionId) {
+        setApprovals((current) => retractApproval(current, askId));
+      }
+      if (viewedSessionId.current !== target.sessionId) return;
+      if (verdict === "iterate") {
+        if (viewedSessionId.current === target.sessionId) setNotice("Plan iteration requested.");
+        return;
+      }
+      if (viewedSessionId.current === target.sessionId) {
+        setNotice("Plan approval accepted; checking whether execution started.");
+      }
+      const controller = new AbortController();
+      planFollowController.current = controller;
+      const evidence = await followPlanContinuationFromBff(
+        { askId, planRunId: target.runId, sessionId: target.sessionId },
+        controller.signal,
+      );
+      if (controller.signal.aborted || viewedSessionId.current !== target.sessionId) return;
+      if (evidence.kind === "started") {
+        setNotice("Plan approved; execution started.");
+      } else if (evidence.kind === "failed") {
+        setNotice(undefined);
+        setError("Plan approval was recorded, but execution could not start.");
+      } else {
+        setNotice(undefined);
+        setError(
+          "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
+        );
+      }
+    } catch (caught) {
+      if (viewedSessionId.current === target.sessionId) setError(errorMessage(caught));
+    } finally {
+      planFollowController.current = undefined;
       setControlPending(false);
     }
   }
@@ -2556,15 +2617,28 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             {notice}
           </div>
         )}
-        {approval && (
-          <ApprovalPanel
-            approval={approval}
-            disabled={controlPending}
-            onRespond={(verdict) => void respondToApproval(verdict)}
-            position={1}
-            total={approvals.length}
-          />
-        )}
+        {approval &&
+          (approval.tool === "PresentPlan" ? (
+            <PlanControlBridge
+              approval={approval}
+              disabled={controlPending}
+              onRespond={(verdict) => void respondToPlan(verdict)}
+              unavailableReason={
+                exactPlanControlAvailability(runtime.data?.features).reason ??
+                (controlTarget(runTarget, sessionId)
+                  ? undefined
+                  : "The exact plan control target is unavailable.")
+              }
+            />
+          ) : (
+            <ApprovalPanel
+              approval={approval}
+              disabled={controlPending}
+              onRespond={(verdict) => void respondToApproval(verdict)}
+              position={1}
+              total={approvals.length}
+            />
+          ))}
         {failedRun && (
           <RunFailurePanel
             failure={failedRun}

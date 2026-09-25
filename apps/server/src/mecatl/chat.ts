@@ -19,7 +19,9 @@ import {
   type McpAuthorizationOperation,
   MecatlError,
   type PermissionVerdict,
+  type PlanApprovalVerdict,
   type Run,
+  ServerFeature,
   SessionMode,
   textPart,
 } from "@stacklok-oss/mecatl-sdk";
@@ -83,6 +85,12 @@ export interface ChatService {
     title: string,
   ): Promise<{ title: string; titleProvenance: string; titleRevision: string }>;
   retry(sessionId: string, signal: AbortSignal): AsyncIterable<RunStreamEvent>;
+  resolvePlanAsk(
+    sessionId: string,
+    runId: string,
+    askId: string,
+    verdict: PlanApprovalVerdict,
+  ): Promise<"acknowledged" | "stale" | "unavailable">;
   resolvePermission(
     sessionId: string,
     runId: string,
@@ -275,13 +283,16 @@ export function createMecatlChatService(client: Client): ChatService {
 
     async detail(sessionId, signal) {
       const session = await client.sessions.get(sessionId, { signal });
-      const snapshot = await session.snapshot({ signal });
+      const [snapshot, compatibility] = await Promise.all([
+        session.snapshot({ signal }),
+        client.server.compatibility(),
+      ]);
       const resolvedModel = snapshot.resolvedModel;
       return {
         capabilities: {
           image: snapshot.sessionCapabilities?.image === true,
-          manualCompaction: snapshot.capabilities?.manualCompaction === true,
-          modelSelection: snapshot.capabilities?.modelSelection === true,
+          manualCompaction: compatibility.capabilities.manualCompaction,
+          modelSelection: compatibility.capabilities.modelSelection,
         },
         id: snapshot.sessionId,
         mode: fromSessionMode(snapshot.mode),
@@ -342,7 +353,7 @@ export function createMecatlChatService(client: Client): ChatService {
             id: session.sessionId,
             modelId: session.modelId,
             state: session.state,
-            title: session.titleMetadata?.title || session.title || "Untitled chat",
+            title: session.titleMetadata?.title || "Untitled chat",
             titleProvenance: session.titleMetadata?.provenance ?? "",
             titleRevision: session.titleMetadata?.revision?.toString() ?? "0",
             turns: session.turns,
@@ -380,6 +391,30 @@ export function createMecatlChatService(client: Client): ChatService {
       yield* streamRun(sessionId, run);
     },
 
+    async resolvePlanAsk(sessionId, runId, askId, verdict) {
+      const compatibility = await client.server.compatibility();
+      if (!compatibility.features.has(ServerFeature.ExactPlanAskControl)) return "unavailable";
+      try {
+        const session = await client.sessions.get(sessionId);
+        await session.controls(runId).resolvePlanAsk(askId, verdict);
+        return "acknowledged";
+      } catch (error) {
+        if (error instanceof MecatlError) {
+          if (error.code === "unsupported_feature") return "unavailable";
+          if (
+            [
+              "stale_run_control",
+              "ask_not_pending",
+              "failed_precondition",
+              "not_awaiting_plan",
+            ].includes(error.code)
+          )
+            return "stale";
+        }
+        throw error;
+      }
+    },
+
     async resolvePermission(sessionId, runId, askId, verdict) {
       try {
         const session = await client.sessions.get(sessionId);
@@ -404,7 +439,7 @@ export function createMecatlChatService(client: Client): ChatService {
             ),
           ]
         : request.prompt;
-      const run = await session.run(prompt, {}, { signal });
+      const run = await session.run(prompt, { serverOwnedPlanContinuation: true }, { signal });
       yield* streamRun(sessionId, run);
     },
 
@@ -571,15 +606,20 @@ export function serializeEvent(
   event: Event,
 ): Extract<RunStreamEvent, { type: "run.event" }>["event"] {
   const note = event.kind === "user_prompt" ? projectDeliveryNote(event.text) : undefined;
+  const eventPayload = event.kind === "unknown" ? undefined : event.payload;
+  const eventUsage =
+    typeof eventPayload === "object" && eventPayload !== null && "usage" in eventPayload
+      ? eventPayload.usage
+      : undefined;
   const usage =
-    event.usage === undefined
+    eventUsage === undefined
       ? undefined
       : {
-          cacheReadTokens: event.usage.cacheReadTokens.toString(),
-          cacheWriteTokens: event.usage.cacheWriteTokens.toString(),
-          inputTokens: event.usage.inputTokens.toString(),
-          outputTokens: event.usage.outputTokens.toString(),
-          reasoningTokens: event.usage.reasoningTokens.toString(),
+          cacheReadTokens: eventUsage.cacheReadTokens.toString(),
+          cacheWriteTokens: eventUsage.cacheWriteTokens.toString(),
+          inputTokens: eventUsage.inputTokens.toString(),
+          outputTokens: eventUsage.outputTokens.toString(),
+          reasoningTokens: eventUsage.reasoningTokens.toString(),
         };
 
   if (event.kind === "unknown") {
