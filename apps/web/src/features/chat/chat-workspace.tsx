@@ -421,7 +421,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const { setValue: setExpandDetails, value: expandDetails } = useExpandDetails();
   const disabledModels = useDisabledModels().disabled;
   const enterSendBehavior = useEnterSendBehavior().value;
-  const queuedMessages = useQueuedMessages(sessionId ?? "");
+  const queuedMessages = useQueuedMessages(provenChat ? (sessionId ?? "") : "");
   const canvas = useLocalCanvas(sessionId ?? "draft");
   const threadAssociations = useThreadAssociations(sessionId ?? "", transcript.data);
   const threadSessionIds = useThreadSessionIds();
