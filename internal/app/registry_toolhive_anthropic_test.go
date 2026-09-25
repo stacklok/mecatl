@@ -621,37 +621,39 @@ func requireDeadlineNear(t *testing.T, observed <-chan deadlineObservation, want
 }
 
 func TestToolhiveProbeDeadlinePublishesHealthySibling(t *testing.T) {
-	observed := make(chan deadlineObservation, 2)
-	reg := &providerRegistry{
-		entries: map[string]providerEntry{
-			providerToolhive: {
-				id: providerToolhive, available: true,
-				lister: deadlineAwareLister{modelID: "openai-healthy", observed: observed},
+	synctest.Test(t, func(t *testing.T) {
+		observed := make(chan deadlineObservation, 2)
+		reg := &providerRegistry{
+			entries: map[string]providerEntry{
+				providerToolhive: {
+					id: providerToolhive, available: true,
+					lister: deadlineAwareLister{modelID: "openai-healthy", observed: observed},
+				},
+				providerToolhiveAnthropic: {
+					id: providerToolhiveAnthropic, available: true,
+					lister: deadlineAwareLister{stall: true, observed: observed},
+				},
 			},
-			providerToolhiveAnthropic: {
-				id: providerToolhiveAnthropic, available: true,
-				lister: deadlineAwareLister{stall: true, observed: observed},
-			},
-		},
-		meta: newLiveMetaStore(),
-	}
+			meta: newLiveMetaStore(),
+		}
 
-	bindDiscoveryFixture(t, reg)
-	started := time.Now()
-	if err := probeToolhive(reg, Config{}); err != nil {
-		t.Fatalf("probeToolhive: %v", err)
-	}
-	if elapsed := time.Since(started); elapsed < toolhiveProbeTimeout-300*time.Millisecond || elapsed > toolhiveProbeTimeout+time.Second {
-		t.Fatalf("probe elapsed = %v, want bounded near %v", elapsed, toolhiveProbeTimeout)
-	}
-	requireDeadlineNear(t, observed, toolhiveProbeTimeout)
-	requireDeadlineNear(t, observed, toolhiveProbeTimeout)
-	if model, ok := reg.meta.lookup(providerToolhive, "openai-healthy"); !ok || model.ID != "openai-healthy" {
-		t.Fatalf("healthy probe metadata was not published: %+v, ok=%v", model, ok)
-	}
-	if _, ok := reg.meta.lookup(providerToolhiveAnthropic, "openai-healthy"); ok {
-		t.Fatal("failed native probe published sibling metadata under the wrong provider")
-	}
+		bindDiscoveryFixture(t, reg)
+		started := time.Now()
+		if err := probeToolhive(reg, Config{}); err != nil {
+			t.Fatalf("probeToolhive: %v", err)
+		}
+		if elapsed := time.Since(started); elapsed != toolhiveProbeTimeout {
+			t.Fatalf("probe elapsed = %v, want %v", elapsed, toolhiveProbeTimeout)
+		}
+		requireDeadlineNear(t, observed, toolhiveProbeTimeout)
+		requireDeadlineNear(t, observed, toolhiveProbeTimeout)
+		if model, ok := reg.meta.lookup(providerToolhive, "openai-healthy"); !ok || model.ID != "openai-healthy" {
+			t.Fatalf("healthy probe metadata was not published: %+v, ok=%v", model, ok)
+		}
+		if _, ok := reg.meta.lookup(providerToolhiveAnthropic, "openai-healthy"); ok {
+			t.Fatal("failed native probe published sibling metadata under the wrong provider")
+		}
+	})
 }
 
 func TestToolhiveBackgroundRefreshCarriesOperationDeadline(t *testing.T) {
