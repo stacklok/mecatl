@@ -25,7 +25,6 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
@@ -35,23 +34,29 @@ import (
 )
 
 func TestRootSessionProviderCorrelation_ConfiguredGuardrailDispatchPreservesRoot(t *testing.T) {
-	checker := &recordingProvider{inner: mockllm.New(mockllm.TextTurn(`{"safe":true,"reason":"ok"}`))}
+	verdict := `{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`
+	checker := &recordingProvider{inner: mockllm.New(mockllm.TextTurn(verdict), mockllm.TextTurn(verdict))}
 	cfg := Config{
 		UseMock:         true,
 		GuardrailsModel: "checker-model",
 		GuardrailsRules: []GuardrailRule{{Match: "Grep", Phases: []string{"pre"}, Mode: "block"}},
 	}
-	hooks := buildGuardrailsHooks(cfg, nil, checker, providerMock, "parent-model", hookexec.New(nil), nil)
+	reviewer := buildGuardrailsActionReviewer(cfg, nil, checker, providerMock, nil)
+	if reviewer == nil {
+		t.Fatal("configured guardrail factory returned nil reviewer")
+	}
 	catalog := tool.NewCatalog()
 	catalog.MustRegister(stubTool{name: "Grep"})
 	parent := mockllm.New(
 		mockllm.ToolCallTurn(session.NewToolCall("guarded", "Grep", []byte(`{}`))),
 		mockllm.TextTurn("done"),
 	)
-	engine := agent.NewEngine(agent.Deps{
-		LLM: parent, Catalog: catalog, Hooks: hooks, Model: "parent-model",
+	deps := agent.Deps{
+		LLM: parent, Catalog: catalog, Model: "parent-model",
 		Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil),
-	})
+	}
+	attachGuardrailReviewer(&deps, reviewer, nil)
+	engine := agent.NewEngine(deps)
 	sess := session.New("s1", session.ModeDefault,
 		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
 		session.Limits{}, time.Unix(1, 0))
@@ -59,7 +64,7 @@ func TestRootSessionProviderCorrelation_ConfiguredGuardrailDispatchPreservesRoot
 	}
 
 	model, active, root := checker.lastObservation()
-	if model != "checker-model" || !strings.HasPrefix(string(active), "guardrail-checker-") || root != "main" {
+	if model != "checker-model" || !strings.HasPrefix(string(active), "guardrail-review-") || root != "main" {
 		t.Fatalf("configured guardrail provider observation = model %q active %q root %q", model, active, root)
 	}
 }
