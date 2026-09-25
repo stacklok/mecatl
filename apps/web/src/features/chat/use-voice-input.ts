@@ -46,7 +46,15 @@ export function useVoiceInput(value: string, onChange: (value: string) => void) 
       window.isSecureContext !== false &&
         Boolean(window.SpeechRecognition ?? window.webkitSpeechRecognition),
     );
-    return () => recognitionRef.current?.stop();
+    return () => {
+      const recognition = recognitionRef.current;
+      recognitionRef.current = undefined;
+      try {
+        recognition?.stop();
+      } catch {
+        // Unmount still invalidates callbacks when the browser refuses stop.
+      }
+    };
   }, []);
 
   const stop = useCallback(() => {
@@ -54,7 +62,11 @@ export function useVoiceInput(value: string, onChange: (value: string) => void) 
     recognitionRef.current = undefined;
     setIsListening(false);
     setInterimTranscript("");
-    recognition?.stop();
+    try {
+      recognition?.stop();
+    } catch {
+      // A refused or already-ended browser recognition can reject stop.
+    }
   }, []);
 
   const toggle = useCallback(() => {
@@ -88,6 +100,7 @@ export function useVoiceInput(value: string, onChange: (value: string) => void) 
     recognition.interimResults = true;
     recognition.lang = navigator.language || "en-US";
     recognition.onresult = (event) => {
+      if (recognitionRef.current !== recognition) return;
       let finalText = "";
       let interimText = "";
       for (let index = 0; index < event.results.length; index += 1) {
@@ -106,6 +119,7 @@ export function useVoiceInput(value: string, onChange: (value: string) => void) 
       setInterimTranscript("");
     };
     recognition.onerror = (event) => {
+      if (recognitionRef.current !== recognition) return;
       setErrorMessage(speechFailureMessage(event.error));
       recognition.onend?.();
     };
@@ -113,6 +127,22 @@ export function useVoiceInput(value: string, onChange: (value: string) => void) 
       recognition.start();
       recognitionRef.current = recognition;
       setIsListening(true);
+      // Start remains in the click gesture. A permission query is only a
+      // fallback for browsers that report denial without a recognition event.
+      try {
+        void navigator.permissions
+          ?.query({ name: "microphone" })
+          .then((permission) => {
+            if (permission.state !== "denied" || recognitionRef.current !== recognition) return;
+            stop();
+            setErrorMessage(speechFailureMessage("not-allowed"));
+          })
+          .catch(() => {
+            // Recognition events still handle browsers without a working query.
+          });
+      } catch {
+        // Recognition events still handle browsers without a working query.
+      }
     } catch (error) {
       setErrorMessage(speechFailureMessage(error));
       setIsListening(false);
