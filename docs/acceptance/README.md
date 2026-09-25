@@ -407,6 +407,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Mecatl Studio session activity](studio-session-activity.md) — distinct browser projections and read-only inline cards and panel content for Subagent, Parallel, and Team events. Status: proposed.
 - [Mecatl Studio chat transcript and composer](studio-chat-transcript-composer.md) — aligns streamed rows, status and input behavior, bounded replay, and BFF-projected title and delivery facts within the existing Studio boundary. Status: proposed.
 - [Mecatl Studio chat approvals, review, and Escape](studio-chat-approvals-review-escape.md) — exact run-and-ask plan verdicts, inline permission and authorization review, one-layer Escape handling, and evidence-bound developer steer trace. Status: in-progress.
+- [Mecatl Studio minimap, side panels, and session inspection](studio-session-inspection-panels.md) — message navigation, a shared panel frame, safe local previews and threads, and capability-gated read-only inspection through authenticated BFF routes. Status: proposed.
 
 - [Mecatl Studio schedules](studio-schedules.md) — the second Studio feature layer: capability-gated schedule inventory, create/update mapping onto the SDK spec with unexposed fields preserved, lifecycle actions and fire history, and the browser cron builder and phrase parser. Status: landed in the implementation candidate; authoritative on merge.
 
