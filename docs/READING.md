@@ -52,10 +52,10 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | Step | Page |
 | --- | --- |
 | 1 | [Project README](../README.md) — feature overview and quick start |
-| 2 | [Build your first agent](https://mecatl.dev/docs/building/getting-started/first-agent) |
-| 3 | [See Mecatl in 60 seconds](https://mecatl.dev/docs/building/getting-started/demo) |
-| 4 | [Run `mecated` standalone](https://mecatl.dev/docs/building/deployment/mecated) |
-| Then | Choose a task, feature, deployment, or reference from the [public documentation](https://mecatl.dev/docs/) |
+| 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
+| 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
+| 4 | [Run `mecated` standalone](../user-docs/building/deployment/mecated.md) |
+| Then | Choose a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
 
 ---
 
@@ -63,7 +63,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 
 | Step | Page |
 | --- | --- |
-| 1 | [Building on mecatl](https://github.com/stacklok/mecatl/blob/main/user-docs/building/index.md) |
+| 1 | [Building on mecatl](../user-docs/building/index.md) |
 | 2 | [`engine/session`](../engine/session) — the domain entry point |
-| 3 | [Extension points](https://github.com/stacklok/mecatl/blob/main/user-docs/building/extension-points/index.md) |
+| 3 | [Extension points](../user-docs/building/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |

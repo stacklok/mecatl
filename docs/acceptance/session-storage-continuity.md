@@ -213,7 +213,7 @@ sessions**. The capability-driven client and explicit vocabulary follow [ADR-021
 A daemon operator follows tested systemd or macOS launchd examples, inspects policy and dry-run
 impact, and performs a quiesced backup/migration/restore. The daemon remains the sole automatic
 cleanup owner under [ADR-0226](../adr/0226-session-storage-maintenance.md), with storage privacy
-and lifecycle documented in [`user-docs/reference/configuration.md`](https://mecatl.dev/docs/reference/configuration).
+and lifecycle documented in [`user-docs/reference/configuration.md`](../../user-docs/reference/configuration.md).
 
 **Acceptance:**
 - AC9.1: Tested systemd user-service and launchd examples parse, resolve the intended executable/config/state paths, preserve each argument exactly, and invoke the daemon-owned retention configuration rather than an external deletion command.

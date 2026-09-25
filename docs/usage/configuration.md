@@ -1,5 +1,5 @@
 # Configuration documentation moved
 
-See [Configure Mecatl](https://mecatl.dev/docs/building/deployment/settings) and
-the generated [configuration reference](https://mecatl.dev/docs/reference/configuration).
+See [Configure Mecatl](../../user-docs/building/deployment/settings.md) and
+the generated [configuration reference](../../user-docs/reference/configuration.md).
 See [ADR 0321](../adr/0321-canonical-user-documentation-ownership.md) for the ownership decision.

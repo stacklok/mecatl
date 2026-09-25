@@ -59,4 +59,4 @@ continue to govern ToolHive LLM lifecycle and direct mode respectively.
 - [ADR 0064](./0064-toolhive-llm-gateway-provider.md) and [ADR 0102](./0102-toolhive-direct-mode.md)
 - [ADR 0218](./0218-credential-store.md) — encrypted CAS store
 - [Architecture: providers](../architecture/providers.md)
-- [Run mecated standalone](https://mecatl.dev/docs/building/deployment/mecated) — native LLM endpoint operation
+- [Run mecated standalone](../../user-docs/building/deployment/mecated.md) — native LLM endpoint operation

@@ -59,6 +59,6 @@ compatibility files, which must never regain substantive content.
 ## See also
 
 - User documentation authoring contract: `user-docs/_README.md`
-- [Reference index](https://mecatl.dev/docs/reference/)
+- [Reference index](../../user-docs/reference/index.md)
 - [ADR 0002](./0002-documentation-lifecycle.md)
 - [Issue 1029](https://github.com/stacklok/mecatl/issues/1029)
