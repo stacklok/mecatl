@@ -137,7 +137,7 @@ func (*sourceWorkspace) ReplaceFile(context.Context, string, tool.FileVersion, [
 	return tool.FileVersion{}, tool.ErrFileOperationUnsupported
 }
 
-func (s *Service) executionFilesAcquirer(owner *session.Principal, ref session.EnvironmentRef) ExecutionFilesAcquirer {
+func (s *Service) executionWorkspaceAcquirer(owner *session.Principal, ref session.EnvironmentRef) ExecutionWorkspaceAcquirer {
 	return func(ctx context.Context) (tool.Workspace, func() error, error) {
 		if s == nil || s.placementBinder == nil || !ref.Valid() {
 			return nil, nil, fmt.Errorf("acquire selected harness execution files: %w", ErrPlacementUnavailable)

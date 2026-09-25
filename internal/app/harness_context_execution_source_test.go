@@ -113,12 +113,12 @@ func harnessExecutionConfig(t *testing.T, provider *harnessExecutionProvider, re
 	cfg.PlacementProvider, cfg.PlacementScope = provider, "test"
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { *requests = append(*requests, req) })}, mockllm.TextTurn("done"), mockllm.TextTurn("done"))
 	cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{{
-		ID: "repository", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, ExecutionFiles: true,
+		ID: "repository", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, UsesExecutionWorkspace: true,
 		Bind: func(ctx context.Context, scope HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
-			if scope.SessionID == "" || scope.AcquireExecutionFiles == nil {
+			if scope.SessionID == "" || scope.AcquireExecutionWorkspace == nil {
 				return nil, nil, errors.New("missing exact execution-file capability")
 			}
-			workspace, release, err := scope.AcquireExecutionFiles(ctx)
+			workspace, release, err := scope.AcquireExecutionWorkspace(ctx)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -126,9 +126,9 @@ func harnessExecutionConfig(t *testing.T, provider *harnessExecutionProvider, re
 		},
 	}}
 	cfg.HarnessCommandSources = []HarnessSourceRegistration[server.CommandSourceBinding]{{
-		ID: "repository", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, ExecutionFiles: true,
+		ID: "repository", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, UsesExecutionWorkspace: true,
 		Bind: func(ctx context.Context, scope HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
-			workspace, release, err := scope.AcquireExecutionFiles(ctx)
+			workspace, release, err := scope.AcquireExecutionWorkspace(ctx)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -405,8 +405,8 @@ func testExecutionSourceFailureBoundaries(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var failedWorkspace, otherWorkspace tool.Workspace
-			reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "repository", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, ExecutionFiles: true, Bind: func(bindCtx context.Context, scope HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
-				ws, release, err := scope.AcquireExecutionFiles(bindCtx)
+			reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "repository", Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, UsesExecutionWorkspace: true, Bind: func(bindCtx context.Context, scope HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+				ws, release, err := scope.AcquireExecutionWorkspace(bindCtx)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -429,8 +429,8 @@ func testExecutionSourceFailureBoundaries(t *testing.T) {
 			}
 			defer resolver.Close()
 			engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
-			factory := func(factoryCtx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionFilesAcquirer, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool) (server.SessionEngineResult, error) {
-				_, release, err := resolver.BorrowWithExecutionFiles(factoryCtx, id, owner, string(profile), acquire)
+			factory := func(factoryCtx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionWorkspaceAcquirer, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool) (server.SessionEngineResult, error) {
+				_, release, err := resolver.BorrowWithExecutionWorkspace(factoryCtx, id, owner, string(profile), acquire)
 				if err != nil {
 					return server.SessionEngineResult{}, err
 				}
@@ -512,7 +512,7 @@ func testExecutionSourceSelectionFactory(t *testing.T) {
 	cfg.PlacementProvider, cfg.PlacementScope = provider, "test"
 	var process, independent, commands, forbidden atomic.Int32
 	check := func(scope HarnessSourceScope) {
-		if scope.AcquireExecutionFiles != nil {
+		if scope.AcquireExecutionWorkspace != nil {
 			t.Error("non-execution registration received acquisition callback")
 		}
 	}
@@ -532,7 +532,7 @@ func testExecutionSourceSelectionFactory(t *testing.T) {
 		}},
 	}
 	for _, id := range []HarnessSourceID{"disabled", "repository"} {
-		cfg.HarnessInstructionSources = append(cfg.HarnessInstructionSources, HarnessSourceRegistration[prompt.InstructionAssembler]{ID: id, Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, ExecutionFiles: true, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+		cfg.HarnessInstructionSources = append(cfg.HarnessInstructionSources, HarnessSourceRegistration[prompt.InstructionAssembler]{ID: id, Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "project"}, UsesExecutionWorkspace: true, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 			forbidden.Add(1)
 			return nil, nil, errors.New("unselected registration bound")
 		}})
@@ -561,7 +561,7 @@ func testExecutionSourceSelectionFactory(t *testing.T) {
 
 func TestADR_0359_HarnessContext_Scenario6_NonselectedSourcesDoNotAttachExecution(t *testing.T) {
 	t.Run("real factory selection", testExecutionSourceSelectionFactory)
-	reg := HarnessSourceRegistration[prompt.InstructionAssembler]{ID: "bad", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "project"}, ExecutionFiles: true, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+	reg := HarnessSourceRegistration[prompt.InstructionAssembler]{ID: "bad", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "project"}, UsesExecutionWorkspace: true, Bind: func(context.Context, HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 		return hcAssembler("x"), nil, nil
 	}}
 	if err := validateHarnessRegistration("instructions", []HarnessSourceRegistration[prompt.InstructionAssembler]{reg}); err == nil {
@@ -574,11 +574,11 @@ func TestADR_0359_HarnessContext_Scenario6_NonselectedSourcesDoNotAttachExecutio
 	}
 
 	acquire := func(context.Context) (tool.Workspace, func() error, error) { return nil, nil, nil }
-	cfg := Config{harnessScope: &HarnessSourceScope{SessionID: "selected", AcquireExecutionFiles: acquire}}
-	if harnessBindingScope(cfg, false).AcquireExecutionFiles != nil {
+	cfg := Config{harnessScope: &HarnessSourceScope{SessionID: "selected", AcquireExecutionWorkspace: acquire}}
+	if harnessBindingScope(cfg, false).AcquireExecutionWorkspace != nil {
 		t.Fatal("unselected registration received execution-file capability")
 	}
-	if harnessBindingScope(cfg, true).AcquireExecutionFiles == nil {
+	if harnessBindingScope(cfg, true).AcquireExecutionWorkspace == nil {
 		t.Fatal("selected execution-file registration lost capability")
 	}
 

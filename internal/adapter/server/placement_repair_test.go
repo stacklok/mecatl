@@ -64,7 +64,7 @@ func (p *sourcePlacementProvider) Reattach(context.Context, PlacementReattachReq
 	return p.binding, nil
 }
 
-func TestExecutionFilesAcquisitionIsReadOnlyAndLedgerIndependent(t *testing.T) {
+func TestExecutionWorkspaceAcquisitionIsReadOnlyAndLedgerIndependent(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "source", Revision: "v1"}
 	workspace := memfs.NewWorkspace("/source")
 	version, err := workspace.CreateFile(t.Context(), "original.txt", []byte("original"))
@@ -77,7 +77,7 @@ func TestExecutionFilesAcquisitionIsReadOnlyAndLedgerIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, release, err := svc.executionFilesAcquirer(nil, ref)(t.Context())
+	source, release, err := svc.executionWorkspaceAcquirer(nil, ref)(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestExecutionFilesAcquisitionIsReadOnlyAndLedgerIndependent(t *testing.T) {
 	}
 }
 
-func TestExecutionFilesAcquisitionNoFSIsActionable(t *testing.T) {
+func TestExecutionWorkspaceAcquisitionNoFSIsActionable(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}
 	defaultRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "default", Revision: "v1"}
 	provider := &sourcePlacementProvider{binding: PlacementBinding{Ref: defaultRef, Environment: tool.MustEnvironment(defaultRef, memfs.NewWorkspace("/source"), memledger.New(), nil)}}
@@ -118,7 +118,7 @@ func TestExecutionFilesAcquisitionNoFSIsActionable(t *testing.T) {
 	if buildErr != nil {
 		t.Fatal(buildErr)
 	}
-	_, _, err := svc.executionFilesAcquirer(nil, ref)(t.Context())
+	_, _, err := svc.executionWorkspaceAcquirer(nil, ref)(t.Context())
 	if !errors.Is(err, ErrPlacementUnavailable) || !strings.Contains(err.Error(), "requires execution files") || strings.Contains(err.Error(), "/") {
 		t.Fatalf("no-FS source error = %v", err)
 	}

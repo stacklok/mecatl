@@ -76,8 +76,8 @@ func (s *Service) ListCommandsForSession(ctx context.Context, id session.Session
 	}
 	var binding CommandSourceBinding
 	var release func()
-	if resolver, ok := s.cfg.Commands.(executionFilesCommandSourceResolver); ok {
-		binding, release, err = resolver.BorrowWithExecutionFiles(ctx, sess.ID, sess.Owner.Clone(), sess.Profile, s.executionFilesAcquirer(sess.Owner, sess.EnvironmentRef))
+	if resolver, ok := s.cfg.Commands.(executionWorkspaceCommandSourceResolver); ok {
+		binding, release, err = resolver.BorrowWithExecutionWorkspace(ctx, sess.ID, sess.Owner.Clone(), sess.Profile, s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef))
 	} else {
 		binding, release, err = s.cfg.Commands.Borrow(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
 	}

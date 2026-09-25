@@ -21,7 +21,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestRedisWorkspaceSlashCommandDiscoveryDoesNotImplicitlySelectExecutionFiles(t *testing.T) {
+func TestRedisWorkspaceSlashCommandDiscoveryDoesNotImplicitlyUseExecutionWorkspace(t *testing.T) {
 	mr := miniredis.RunT(t)
 	built, err := buildIsolated(t, t.Context(), Config{
 		RedisURL:            mr.Addr(),

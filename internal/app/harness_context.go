@@ -21,12 +21,12 @@ import (
 type HarnessSourceID string
 
 // HarnessSourceScope is the authoritative session identity and optional selected
-// execution-file capability supplied to a principal-scoped binding.
+// execution-workspace capability supplied to a principal-scoped binding.
 type HarnessSourceScope struct {
-	SessionID             session.SessionID
-	Principal             *session.Principal
-	Profile               string
-	AcquireExecutionFiles func(context.Context) (tool.Workspace, func() error, error)
+	SessionID                 session.SessionID
+	Principal                 *session.Principal
+	Profile                   string
+	AcquireExecutionWorkspace func(context.Context) (tool.Workspace, func() error, error)
 }
 
 // HarnessSourceScopeKind controls whether a registration is shared by the
@@ -53,11 +53,12 @@ type HarnessProvenancePolicy struct {
 
 // HarnessSourceRegistration describes one trusted kind-specific source.
 type HarnessSourceRegistration[T any] struct {
-	ID             HarnessSourceID
-	Scope          HarnessSourceScopeKind
-	Provenance     HarnessProvenancePolicy
-	ExecutionFiles bool
-	Bind           func(context.Context, HarnessSourceScope) (T, func() error, error)
+	ID         HarnessSourceID
+	Scope      HarnessSourceScopeKind
+	Provenance HarnessProvenancePolicy
+	// UsesExecutionWorkspace declares this source's workspace dependency; it neither enables it nor grants authority.
+	UsesExecutionWorkspace bool
+	Bind                   func(context.Context, HarnessSourceScope) (T, func() error, error)
 }
 
 const (
@@ -89,7 +90,7 @@ func validateHarnessRegistration[T any](kind string, regs []HarnessSourceRegistr
 		if reg.Scope != HarnessSourceScopeProcess && reg.Scope != HarnessSourceScopePrincipal {
 			return fmt.Errorf("harness context %s source %q has invalid scope", kind, reg.ID)
 		}
-		if reg.ExecutionFiles && (reg.Scope != HarnessSourceScopePrincipal || reg.Provenance.Fixed != harnessProjectTier) {
+		if reg.UsesExecutionWorkspace && (reg.Scope != HarnessSourceScopePrincipal || reg.Provenance.Fixed != harnessProjectTier) {
 			return fmt.Errorf("harness context %s source %q execution files require principal scope and fixed project provenance", kind, reg.ID)
 		}
 		if reg.Bind == nil {
@@ -403,7 +404,7 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 			}
 			continue
 		}
-		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.ExecutionFiles))
+		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.UsesExecutionWorkspace))
 		if bindErr != nil || source == nil {
 			if cleanup != nil {
 				_ = cleanup()
@@ -454,7 +455,7 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 			}
 			continue
 		}
-		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.ExecutionFiles))
+		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.UsesExecutionWorkspace))
 		if bindErr != nil || source == nil {
 			if cleanup != nil {
 				_ = cleanup()
@@ -533,7 +534,7 @@ func resolveProcessHarnessSnapshots(ctx context.Context, cfg *Config) error {
 			}
 			continue
 		}
-		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.ExecutionFiles))
+		source, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.UsesExecutionWorkspace))
 		if bindErr != nil || source == nil {
 			if cleanup != nil {
 				_ = cleanup()
@@ -968,10 +969,10 @@ func initializeHarnessCommandResolver(ctx context.Context, policy harnessKindPol
 }
 
 func (r *harnessCommandResolver) Activate(ctx context.Context, id session.SessionID, principal *session.Principal, profile string) error {
-	return r.ActivateWithExecutionFiles(ctx, id, principal, profile, nil)
+	return r.ActivateWithExecutionWorkspace(ctx, id, principal, profile, nil)
 }
 
-func (r *harnessCommandResolver) ActivateWithExecutionFiles(ctx context.Context, id session.SessionID, principal *session.Principal, profile string, acquire server.ExecutionFilesAcquirer) error {
+func (r *harnessCommandResolver) ActivateWithExecutionWorkspace(ctx context.Context, id session.SessionID, principal *session.Principal, profile string, acquire server.ExecutionWorkspaceAcquirer) error {
 	_, release, err := r.borrow(ctx, id, principal, profile, acquire, true)
 	if err == nil {
 		release()
@@ -980,15 +981,15 @@ func (r *harnessCommandResolver) ActivateWithExecutionFiles(ctx context.Context,
 }
 
 func (r *harnessCommandResolver) Borrow(ctx context.Context, id session.SessionID, principal *session.Principal, profile string) (server.CommandSourceBinding, func(), error) {
-	return r.BorrowWithExecutionFiles(ctx, id, principal, profile, nil)
+	return r.BorrowWithExecutionWorkspace(ctx, id, principal, profile, nil)
 }
 
-func (r *harnessCommandResolver) BorrowWithExecutionFiles(ctx context.Context, id session.SessionID, principal *session.Principal, profile string, acquire server.ExecutionFilesAcquirer) (server.CommandSourceBinding, func(), error) {
+func (r *harnessCommandResolver) BorrowWithExecutionWorkspace(ctx context.Context, id session.SessionID, principal *session.Principal, profile string, acquire server.ExecutionWorkspaceAcquirer) (server.CommandSourceBinding, func(), error) {
 	return r.borrow(ctx, id, principal, profile, acquire, false)
 }
 
 //nolint:gocyclo // Reservation, cancellation, retirement, and atomic publication are one lifecycle state transition.
-func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionID, principal *session.Principal, profile string, acquire server.ExecutionFilesAcquirer, activate bool) (server.CommandSourceBinding, func(), error) {
+func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionID, principal *session.Principal, profile string, acquire server.ExecutionWorkspaceAcquirer, activate bool) (server.CommandSourceBinding, func(), error) {
 	for {
 		r.mu.Lock()
 		if r.closed {
@@ -1030,10 +1031,10 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 		r.mu.Unlock()
 
 		entry, err := r.buildEntry(ctx, HarnessSourceScope{
-			SessionID:             id,
-			Principal:             principal.Clone(),
-			Profile:               profile,
-			AcquireExecutionFiles: acquire,
+			SessionID:                 id,
+			Principal:                 principal.Clone(),
+			Profile:                   profile,
+			AcquireExecutionWorkspace: acquire,
 		})
 
 		r.mu.Lock()
@@ -1101,8 +1102,8 @@ func (r *harnessCommandResolver) buildEntry(ctx context.Context, scope HarnessSo
 				reg := r.regs[sourceID]
 				registrationScope := scope
 				registrationScope.Principal = principal.Clone()
-				if !reg.ExecutionFiles {
-					registrationScope.AcquireExecutionFiles = nil
+				if !reg.UsesExecutionWorkspace {
+					registrationScope.AcquireExecutionWorkspace = nil
 				}
 				lazy.bind = func(bindCtx context.Context) (server.CommandSourceBinding, func() error, error) {
 					binding, cleanup, err := reg.Bind(bindCtx, registrationScope)
@@ -1334,7 +1335,7 @@ func resolveProcessHarnessInstructions(ctx context.Context, cfg *Config) error {
 		if reg.Scope == HarnessSourceScopePrincipal && cfg.harnessScope == nil {
 			continue
 		}
-		assembler, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.ExecutionFiles))
+		assembler, cleanup, bindErr := reg.Bind(ctx, harnessBindingScope(*cfg, reg.UsesExecutionWorkspace))
 		if bindErr != nil || assembler == nil {
 			if cleanup != nil {
 				_ = cleanup()

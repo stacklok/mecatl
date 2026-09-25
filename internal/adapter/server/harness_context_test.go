@@ -44,7 +44,7 @@ func TestHarnessContextGeneratedIDCollisionAfterClose(t *testing.T) {
 			t.Fatal("legacy factory called")
 			return SessionEngineResult{}, nil
 		},
-		SessionContextEngine: func(context.Context, session.SessionID, *session.Principal, ExecutionFilesAcquirer, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		SessionContextEngine: func(context.Context, session.SessionID, *session.Principal, ExecutionWorkspaceAcquirer, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
 			builds++
 			return SessionEngineResult{Engine: eng, Close: func() error { closes++; return nil }}, nil
 		},
@@ -100,7 +100,7 @@ func TestHarnessContextUnpublishedCreateRetiresBinding(t *testing.T) {
 			t.Fatal("legacy factory called")
 			return SessionEngineResult{}, nil
 		},
-		SessionContextEngine: func(_ context.Context, id session.SessionID, _ *session.Principal, _ ExecutionFilesAcquirer, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+		SessionContextEngine: func(_ context.Context, id session.SessionID, _ *session.Principal, _ ExecutionWorkspaceAcquirer, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
 			bound = id
 			return SessionEngineResult{Engine: eng, Close: func() error { closed = true; return nil }}, nil
 		},

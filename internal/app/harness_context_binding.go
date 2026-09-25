@@ -160,7 +160,7 @@ func harnessBindingScope(cfg Config, executionFiles bool) HarnessSourceScope {
 		Profile:   cfg.harnessScope.Profile,
 	}
 	if executionFiles {
-		scope.AcquireExecutionFiles = cfg.harnessScope.AcquireExecutionFiles
+		scope.AcquireExecutionWorkspace = cfg.harnessScope.AcquireExecutionWorkspace
 	}
 	return scope
 }
