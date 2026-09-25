@@ -47,6 +47,7 @@ the bidi Converse stream that drives one agent run.
 | **RPC:** `ForkSession`<br />**Request:** `ForkSessionRequest`<br />**Response:** `ForkSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ForkSession">ForkSession creates a history-carrying successor with optional placement and model-routing overrides.</GrpcDescription> |
 | **RPC:** `Converse`<br />**Request:** `ConverseRequest`<br />**Response:** `ConverseResponse` | <span className="grpc-mobile-label">Client streaming</span>Yes | <span className="grpc-mobile-label">Server streaming</span>Yes | <span className="grpc-mobile-label">Description</span><GrpcDescription name="Converse">Converse drives one run. The first frame MUST be `prompt` or `retry`; later frames may carry controls. A received second `prompt` or `retry` is rejected with INVALID_ARGUMENT. The server streams `Event` envelopes until either a terminal `result` or a pending `authorization.required` park, then closes the stream; controls still in transit may instead observe normal stream completion. A context cancel from the client aborts the run.</GrpcDescription> |
 | **RPC:** `ResolveRunAsk`<br />**Request:** `ResolveRunAskRequest`<br />**Response:** `ResolveRunAskResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ResolveRunAsk">ResolveRunAsk resolves one ordinary permission ask on the exact addressed run without opening or owning its event stream.</GrpcDescription> |
+| **RPC:** `ResolvePlanAsk`<br />**Request:** `ResolvePlanAskRequest`<br />**Response:** `ResolvePlanAskResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="ResolvePlanAsk">ResolvePlanAsk acknowledges a verdict for one exact plan-originated ask.</GrpcDescription> |
 | **RPC:** `CancelRun`<br />**Request:** `CancelRunRequest`<br />**Response:** `CancelRunResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="CancelRun">CancelRun cancels the exact addressed live run without opening Converse.</GrpcDescription> |
 | **RPC:** `SteerRun`<br />**Request:** `SteerRunRequest`<br />**Response:** `SteerRunResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="SteerRun">SteerRun injects an instruction into the exact addressed live run. Unlike the legacy Converse control, it never promotes a late steer to a successor.</GrpcDescription> |
 | **RPC:** `CancelRunSteer`<br />**Request:** `CancelRunSteerRequest`<br />**Response:** `CancelRunSteerResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="CancelRunSteer">CancelRunSteer retracts the pending steer on the exact addressed live run.</GrpcDescription> |
@@ -984,6 +985,7 @@ event kind; the structured submessages are populated per kind.
 | `title` | `SessionTitle` |  |  | title is set on session.title events. It is the authoritative, source-free title lifecycle projection after a persisted title state change. |
 | `authorization` | `Authorization` |  |  | authorization is set on authorization.required and authorization.resolved events. It is safe durable correlation only; the live presentation URL and private continuation state never enter this payload. |
 | `control_refused` | `ControlRefused` |  |  | control_refused is set on control.refused events. It identifies the exact approval ask whose submitted control was rejected and carries only a stable machine category; raw arguments and refusal rationale never enter it. |
+| `plan_continuation_failure` | `PlanContinuationFailure` |  |  | plan_continuation_failure is a session-scoped, content-safe indication that an accepted plan allow could not start its proceed run. |
 
 
 
@@ -2370,6 +2372,7 @@ Mirrors session.PendingAsk.
 | `args` | `string` |  |  | args is the proposed tool-call argument payload (raw JSON). |
 | `reason` | `string` |  |  | reason explains why approval is required. |
 | `guardrail` | `GuardrailApprovalScope` |  |  |  |
+| `call_id` | `string` | optional |  | call_id is the exact durable tool-call ID for presentation correlation. Absence means no tool-row attachment can be proven. |
 
 
 
@@ -2385,6 +2388,19 @@ backend locator, exact EnvironmentRef, or reusable selector.
 | `label` | `string` |  |  |  |
 | `branch` | `string` |  |  |  |
 | `revision` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.PlanContinuationFailure`
+
+PlanContinuationFailure correlates a known failed server-owned proceed start.
+No execution run exists, so Event.run_id is empty.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `plan_run_id` | `string` |  |  |  |
+| `ask_id` | `string` |  |  |  |
 
 
 
@@ -2454,6 +2470,7 @@ min_len — it is optional when parts is set.
 | `session_id` | `string` |  |  | session_id is the session this run belongs to. |
 | `text` | `string` |  |  | text is the flattened user prompt text; optional when parts is set. |
 | `parts` | `Content` | repeated |  | parts carries non-text media (image/audio) alongside the text. |
+| `server_owned_plan_continuation` | `bool` |  |  | server_owned_plan_continuation opts this run into exact plan-ask controls and makes the daemon responsible for starting its approved proceed run. |
 
 
 
@@ -2616,6 +2633,32 @@ RefreshMcpSourcesResponse identifies the request-pinned runtime snapshot.
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
 | `session` | `Session` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ResolvePlanAskRequest`
+
+ResolvePlanAskRequest addresses one plan-originated ask on one exact run.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `session_id` | `string` |  |  |  |
+| `expected_run_id` | `string` |  |  |  |
+| `ask_id` | `string` |  |  |  |
+| `verdict` | `ApprovalVerdict` |  |  |  |
+
+
+
+
+#### `mecatl.v1.ResolvePlanAskResponse`
+
+ResolvePlanAskResponse acknowledges only the accepted run/ask correlation.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `run_id` | `string` |  |  |  |
+| `ask_id` | `string` |  |  |  |
 
 
 
