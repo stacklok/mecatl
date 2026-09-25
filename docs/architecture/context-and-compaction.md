@@ -56,7 +56,7 @@ terminal-state reopening/history repair and session-lifetime lease retention sti
 apply. Cancellation ends the caller's wait, not the owner's fetch. Another request
 can recover after cooldown without opening the picker. The before-execution boundary
 is recorded in [ADR 0342](../adr/0342-context-window-admission.md); provider-local
-ownership and policy are described in [ADR 0360](../adr/0360-provider-scoped-model-discovery.md).
+ownership and policy are described in [ADR 0362](../adr/0362-provider-scoped-model-discovery.md).
 
 The engine resolver always returns a positive scalar, using 128000 defensively.
 The server echo resolver returns 0 when admission is blocked; a wired zero replaces
