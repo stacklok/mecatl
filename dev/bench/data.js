@@ -271489,6 +271489,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790287527560,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a06b863184e54c98a7a6ce3ceda9288cd1fc0dd9",
+          "message": "feat(models): replace alpha model discovery contract (#1876)\n\nReplace the alpha DiscoverModels contract in place with selectable-provider facets, bounded literal search, value-owned snapshots, and stateless inventory-bound continuation. All 17 acceptance criteria, aggregate gates, CI, and panel review pass.",
+          "timestamp": "2026-09-25T08:51:03+03:00",
+          "tree_id": "8cd2a6e39470a73fe948a85ee74a32e8b6afb4ea",
+          "url": "https://github.com/stacklok/mecatl/commit/a06b863184e54c98a7a6ce3ceda9288cd1fc0dd9"
+        },
+        "date": 1790316145399,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3317,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 109,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -356001,6 +356040,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790316142681,
+  "lastUpdate": 1790316146069,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
