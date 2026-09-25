@@ -8,8 +8,8 @@ import {
   getSessionWorktreesOptions,
   getSoulInspectionOptions,
 } from "@mecatl-studio/contracts/query";
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../components/ui/dialog";
 
@@ -71,6 +71,11 @@ export function SessionInspection({
   const [selectedSelector, setSelectedSelector] = useState<string>();
   const [action, setAction] = useState<"fork" | "clear">();
   const [error, setError] = useState<string>();
+  const queryClient = useQueryClient();
+  const worktreeOptions = useMemo(
+    () => getSessionWorktreesOptions({ path: { sessionId: session.id } }),
+    [session.id],
+  );
   const online = runtime?.connection === "online";
   const canInspect = session.capabilities.inspect && online;
   const canReadTranscript = canInspect && session.capabilities.viewTranscript;
@@ -86,9 +91,21 @@ export function SessionInspection({
   });
   const soul = useQuery({ ...getSoulInspectionOptions(), enabled: view === "soul" && canReadSoul });
   const worktrees = useQuery({
-    ...getSessionWorktreesOptions({ path: { sessionId: session.id } }),
+    ...worktreeOptions,
     enabled: view === "worktrees" && canReadWorktrees,
   });
+  // Discovery returns source-scoped selectors. Evict them when the picker is
+  // hidden or unmounted, so a later opening must discover fresh choices.
+  useEffect(() => {
+    if (view !== "worktrees") {
+      queryClient.removeQueries({ exact: true, queryKey: worktreeOptions.queryKey });
+    }
+    return () => {
+      if (view === "worktrees") {
+        queryClient.removeQueries({ exact: true, queryKey: worktreeOptions.queryKey });
+      }
+    };
+  }, [queryClient, view, worktreeOptions]);
 
   function changeView(next: InspectionView) {
     setView(next);

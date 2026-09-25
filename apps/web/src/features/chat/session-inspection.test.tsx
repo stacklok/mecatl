@@ -3,7 +3,10 @@
 
 import type { SessionSummaryResponse } from "@mecatl-studio/contracts";
 import { client } from "@mecatl-studio/contracts/client";
-import { getSessionTranscriptOptions } from "@mecatl-studio/contracts/query";
+import {
+  getSessionTranscriptOptions,
+  getSessionWorktreesOptions,
+} from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -405,7 +408,15 @@ describe("session inspection", () => {
     fireEvent.click(await within(first).findByRole("radio", { name: /Feature/ }));
     expect(within(first).getByRole("radio", { name: /Feature/ })).toHaveProperty("checked", true);
     fireEvent.click(within(first).getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(
+        mounted.queryClient.getQueryData(
+          getSessionWorktreesOptions({ path: { sessionId: "child" } }).queryKey,
+        ),
+      ).toBeUndefined(),
+    );
     const reopened = await openPicker();
+    await waitFor(() => expect(bff.worktreeCalls).toBe(2));
     expect(within(reopened).getByRole("radio", { name: /Feature/ })).toHaveProperty(
       "checked",
       false,
@@ -415,11 +426,16 @@ describe("session inspection", () => {
       mounted.router.navigate({ search: { sessionId: "successor" }, to: "/workspace/chat" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      mounted.queryClient.getQueryData(
+        getSessionWorktreesOptions({ path: { sessionId: "child" } }).queryKey,
+      ),
+    ).toBeUndefined();
     await act(async () =>
       mounted.router.navigate({ search: { sessionId: "child" }, to: "/workspace/chat" }),
     );
     const afterSwitch = await openPicker();
-    expect(within(afterSwitch).getByRole("radio", { name: /Feature/ })).toHaveProperty(
+    expect(await within(afterSwitch).findByRole("radio", { name: /Feature/ })).toHaveProperty(
       "checked",
       false,
     );
