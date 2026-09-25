@@ -1,10 +1,10 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 )
 
 func TestQuietBenignGuardrailNotices_Scenario3_ClientSetting(t *testing.T) {
@@ -30,7 +30,12 @@ func TestQuietBenignGuardrailNotices_Scenario3_ClientSetting(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !settings.HookNotices.ShowBenign {
-		t.Fatal("show_benign: true was not applied")
+		t.Fatal("show_benign: true was not parsed")
+	}
+	var deps ui.Deps
+	applyClientPresentationSettings(settings, &deps)
+	if !deps.ShowBenignHookNotices {
+		t.Fatal("show_benign: true was not applied to ui dependencies")
 	}
 }
 
@@ -51,20 +56,21 @@ func TestQuietBenignGuardrailNotices_Scenario3_StrictConfigOwnership(t *testing.
 			}
 		})
 	}
+}
 
+func TestQuietBenignGuardrailNotices_Scenario3_DeprecatedMecatlSettingsIgnored(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	serverDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "mecatl")
-	if err := os.MkdirAll(serverDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(serverDir, "settings.yaml"), []byte("hook_notices:\n  show_benign: true\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeSettings(t, "mecatl", "hook_notices:\n  show_benign: true\n")
 	settings, err := readClientSettings()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if settings.HookNotices.ShowBenign {
-		t.Fatal("server settings enabled client hook notice policy")
+		t.Fatal("deprecated mecatl settings enabled client hook notice policy")
+	}
+	var deps ui.Deps
+	applyClientPresentationSettings(settings, &deps)
+	if deps.ShowBenignHookNotices {
+		t.Fatal("deprecated mecatl settings reached ui dependencies")
 	}
 }
