@@ -29,6 +29,8 @@ type nativeRunProvider struct {
 	released        chan struct{}
 	renewed         chan struct{}
 	renewErr        error
+	renewHook       func(context.Context) error
+	releaseHook     func(context.Context) error
 	renewalDeadline time.Time
 	acquires        atomic.Int64
 	releases        atomic.Int64
@@ -69,7 +71,12 @@ type nativeRunHandle struct {
 
 func (h *nativeRunHandle) Environment() tool.Environment { return h.env }
 func (*nativeRunHandle) Renew(context.Context) error     { return nil }
-func (h *nativeRunHandle) Release(context.Context) error {
+func (h *nativeRunHandle) Release(ctx context.Context) error {
+	if h.provider.releaseHook != nil {
+		if err := h.provider.releaseHook(ctx); err != nil {
+			return err
+		}
+	}
 	if h.provider.exclusive {
 		h.provider.held.Store(false)
 	}
@@ -86,9 +93,12 @@ type renewingNativeRunHandle struct {
 }
 
 func (h *renewingNativeRunHandle) RenewalDeadline() time.Time { return h.deadline }
-func (h *renewingNativeRunHandle) Renew(context.Context) error {
+func (h *renewingNativeRunHandle) Renew(ctx context.Context) error {
 	if h.provider.renewed != nil {
 		h.provider.renewed <- struct{}{}
+	}
+	if h.provider.renewHook != nil {
+		return h.provider.renewHook(ctx)
 	}
 	return h.provider.renewErr
 }

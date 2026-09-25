@@ -196,6 +196,10 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 	if !leaseHeld() {
 		return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
+	env, err = s.acquireExecution(requestLeaseCtx, st, sess, sess.RunID(), env)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
 	ownedCtx, stopOwned := s.detachedControlContext(ctx)
 	ownedLeaseCtx, stopOwnedLease, _ := s.mutationLeaseContext(ownedCtx, id)
 	stopRun := func() { stopOwnedLease(); stopOwned(); stopRequestLease() }
@@ -236,6 +240,7 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 	st.planContinuation = continuation
 	s.mu.Unlock()
 	continuationReserved = false
+	s.startExecutionRenewal(id, st, run)
 	go func() {
 		defer s.detachedControlWG.Done()
 		s.relayDetachedControlRun(ownedLeaseCtx, id, run)
@@ -268,6 +273,10 @@ func (s *Service) finishExactPlanRun(ctx context.Context, id session.SessionID, 
 	s.mu.Unlock()
 	s.completeRelay(ctx, id, run)
 	stop, stopped := st.sess.RecordedStopReason()
+	// The old relay has drained. Join native renewal and release its claim before
+	// retiring the operation pin or admitting the reserved continuation. Keep the
+	// entry lock across provider I/O, but never the global registry mutex.
+	s.teardownExecution(st)
 	s.removeRunState(id, st)
 	if !stopped || stop != session.StopPlanApproved {
 		continuation.release(s)
