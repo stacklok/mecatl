@@ -16,6 +16,8 @@ export interface OfflineBff {
   on(method: string, pathname: string, handler: BffHandler): void;
   json(method: string, pathname: string, body: unknown, status?: number): void;
   fail(method: string, pathname: string): void;
+  /** Proxy a BFF route to an explicit loopback server for a live offline SSE stream. */
+  proxyLoopback(method: string, pathname: string, target: string): void;
   /** Serve the one explicit offline cross-origin issuer used by popup journeys. */
   onIssuer(pathname: string, handler: BffHandler): void;
   requestsFor(method: string, pathname: string): readonly Request[];
@@ -37,7 +39,7 @@ export const test = base.extend<TestFixtures>({
     async ({ baseURL, context }, use) => {
       if (baseURL === undefined) throw new Error("offline BFF fixture requires a baseURL");
       const appOrigin = new URL(baseURL).origin;
-      const handlers = new Map<string, BffHandler | "fail">();
+      const handlers = new Map<string, BffHandler | "fail" | { proxy: string }>();
       const issuerHandlers = new Map<string, BffHandler>();
       const requests: Request[] = [];
       const unexpected: string[] = [];
@@ -56,6 +58,13 @@ export const test = base.extend<TestFixtures>({
         },
         fail(method, pathname) {
           handlers.set(key(method, pathname), "fail");
+        },
+        proxyLoopback(method, pathname, target) {
+          const url = new URL(target);
+          if (url.protocol !== "http:" || url.hostname !== "127.0.0.1") {
+            throw new Error("offline BFF proxy target must be IPv4 loopback HTTP");
+          }
+          handlers.set(key(method, pathname), { proxy: url.href });
         },
         onIssuer(pathname, handler) {
           issuerHandlers.set(key("GET", pathname), handler);
@@ -106,6 +115,8 @@ export const test = base.extend<TestFixtures>({
           await route.abort("blockedbyclient");
         } else if (handler === "fail") {
           await route.abort("failed");
+        } else if ("proxy" in handler) {
+          await route.continue({ url: handler.proxy });
         } else {
           await route.fulfill(await handler(request));
         }
