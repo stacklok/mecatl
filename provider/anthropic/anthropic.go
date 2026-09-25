@@ -460,10 +460,8 @@ func parseRetryAfter(header http.Header, received time.Time) (time.Time, bool) {
 	value := values[0]
 	if value != "" && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
 		seconds, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return time.Time{}, false
-		}
-		if seconds > uint64(math.MaxInt64/int64(time.Second)) {
+		// The digit check above leaves only overflow as a parse failure.
+		if err != nil || seconds > uint64(math.MaxInt64/int64(time.Second)) {
 			return retryAfterHorizon, true
 		}
 		at := received.Add(time.Duration(seconds) * time.Second)
