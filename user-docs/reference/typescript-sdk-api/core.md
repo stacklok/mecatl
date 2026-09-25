@@ -118,6 +118,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class) | Class |
 | [`PlanApprovalResponder`](#api-planapprovalresponder-typealias) | Type alias |
 | [`PlanApprovalVerdict`](#api-planapprovalverdict-typealias) | Type alias |
+| [`PlanContinuationFailureEventPayload`](#api-plancontinuationfailureeventpayload-interface) | Interface |
 | [`PlanContinuationStartError`](#api-plancontinuationstarterror-class) | Class |
 | [`PlanResolution`](#api-planresolution-interface) | Interface |
 | [`PlanResolutionResult`](#api-planresolutionresult-interface) | Interface |
@@ -1875,6 +1876,12 @@ readonly "permission.ask": PermissionAskEventPayload;
 readonly "permission.retract": PermissionAskEventPayload;
 ```
 
+<Heading as="h4" id="api-eventpayloads-plan-continuation-failed-propertysignature"><code>EventPayloads["plan.continuation_failed"]</code></Heading>
+
+```ts
+readonly "plan.continuation_failed": PlanContinuationFailureEventPayload;
+```
+
 <Heading as="h4" id="api-eventpayloads-provider-route-propertysignature"><code>EventPayloads["provider.route"]</code></Heading>
 
 ```ts
@@ -3273,6 +3280,14 @@ readonly args: string;
 readonly askId: string;
 ```
 
+<Heading as="h4" id="api-permissionaskeventpayload-callid-propertysignature"><code>PermissionAskEventPayload.callId</code></Heading>
+
+Exact tool-call ID when supplied by the server; presentation correlation only.
+
+```ts
+readonly callId?: string;
+```
+
 <Heading as="h4" id="api-permissionaskeventpayload-guardrail-propertysignature"><code>PermissionAskEventPayload.guardrail</code></Heading>
 
 ```ts
@@ -3289,6 +3304,26 @@ readonly reason: string;
 
 ```ts
 readonly tool: string;
+```
+
+<Heading as="h3" id="api-plancontinuationfailureeventpayload-interface"><code>PlanContinuationFailureEventPayload</code></Heading>
+
+Safe correlation for a known failure to start the approved plan's proceed run. The session-scoped event has an empty envelope run ID.
+
+```ts
+export interface PlanContinuationFailureEventPayload
+```
+
+<Heading as="h4" id="api-plancontinuationfailureeventpayload-askid-propertysignature"><code>PlanContinuationFailureEventPayload.askId</code></Heading>
+
+```ts
+readonly askId: string;
+```
+
+<Heading as="h4" id="api-plancontinuationfailureeventpayload-planrunid-propertysignature"><code>PlanContinuationFailureEventPayload.planRunId</code></Heading>
+
+```ts
+readonly planRunId: string;
 ```
 
 <Heading as="h3" id="api-planresolution-interface"><code>PlanResolution</code></Heading>
@@ -3607,7 +3642,7 @@ Returns: `Promise<void>`: A promise that resolves after the verdict frame is han
 
 Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
-Throws: `InvalidStateError` when used for a plan-approval ask.
+Throws: `InvalidStateError` when used for a plan-approval ask. An opted-in server-owned run uses `Session.controls(runId).resolvePlanAsk()` instead.
 
 <Heading as="h4" id="api-run-result-methodsignature"><code>Run.result</code></Heading>
 
@@ -3697,13 +3732,13 @@ readonly result: RunResult;
 
 <Heading as="h3" id="api-runcontrols-interface"><code>RunControls</code></Heading>
 
-Prompt-free controls bound to one exact session run. Construct this resource with `Session.controls`. It does not attach, subscribe, or keep a run alive. Every method requires the server's `prompt_free_controls` feature, addresses `runId` exactly, performs one unary request without automatic retry, and accepts ordinary `RequestOptions`. A server that lacks the feature raises `UnsupportedFeatureError` before a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs fail with the server's typed `stale_run_control` error. A transport failure, caller cancellation, or deadline after dispatch can reject the promise after the server accepted the operation. Reconcile that ambiguous case from the authoritative session or activity state before deciding whether to retry.
+Prompt-free controls bound to one exact session run. Construct this resource with `Session.controls`. It does not attach, subscribe, or keep a run alive. Ordinary controls require the server's `prompt_free_controls` feature; plan review requires `exact_plan_ask_control`. Every method addresses `runId` exactly, performs one unary request without automatic retry, and accepts ordinary `RequestOptions`. A server that lacks the feature raises `UnsupportedFeatureError` before a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs fail with the server's typed `stale_run_control` error. A transport failure, caller cancellation, or deadline after dispatch can reject the promise after the server accepted the operation. Reconcile that ambiguous case from the authoritative session or activity state before deciding whether to retry.
 
 ```ts
 export interface RunControls
 ```
 
-Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
+Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`resolvePlanAsk()`](#api-runcontrols-resolveplanask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
 
 <Heading as="h4" id="api-runcontrols-cancel-methodsignature"><code>RunControls.cancel</code></Heading>
 
@@ -3736,7 +3771,7 @@ Returns: `Promise<RunSteerCancellationAcknowledgement>`: Whether the server retr
 
 <Heading as="h4" id="api-runcontrols-resolveask-methodsignature"><code>RunControls.resolveAsk</code></Heading>
 
-Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `Session.resolvePlan()` and fail with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`. Unlike the stream-local `Run.resolveAsk()` send-only operation, this control returns only after the server acknowledges acceptance.
+Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `resolvePlanAsk()` or `Session.resolvePlan()` and fail here with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`. Unlike the stream-local `Run.resolveAsk()` send-only operation, this control returns only after the server acknowledges acceptance.
 
 ```ts
 resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
@@ -3746,6 +3781,22 @@ Parameters:
 
 - `askId` (`string`): Exact permission ask ID.
 - `verdict` (`PermissionVerdict`): Ordinary permission verdict to apply.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`
+
+<Heading as="h4" id="api-runcontrols-resolveplanask-methodsignature"><code>RunControls.resolvePlanAsk</code></Heading>
+
+Resolves one plan-originated ask on this exact run and ask ID. Requires `exact_plan_ask_control`; a stale run or ask fails at the daemon. The acknowledgement must echo both IDs before this promise resolves.
+
+```ts
+resolvePlanAsk(askId: string, verdict: PlanApprovalVerdict, requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `askId` (`string`): Exact plan ask ID.
+- `verdict` (`PlanApprovalVerdict`): Approve once, accept edits, or iterate.
 - `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<void>`
@@ -3804,6 +3855,14 @@ Automatically answers only plan-originated PresentPlan asks.
 
 ```ts
 onPlanApproval?: PlanApprovalResponder;
+```
+
+<Heading as="h4" id="api-runoptions-serverownedplancontinuation-propertysignature"><code>RunOptions.serverOwnedPlanContinuation</code></Heading>
+
+Lets the server start the proceed run after an exact plan-ask approval. Defaults to false. True requires `exact_plan_ask_control`, excludes `onPlanApproval`, and is rejected by `Session.retry()`.
+
+```ts
+serverOwnedPlanContinuation?: boolean;
 ```
 
 <Heading as="h3" id="api-runresult-interface"><code>RunResult</code></Heading>
@@ -7192,7 +7251,7 @@ MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant
 Stable event kinds, kept in parity with the Go server vocabulary.
 
 ```ts
-MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
+MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "plan.continuation_failed", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
 ```
 
 <Heading as="h3" id="api-mecatl-watch-phases-variable"><code>MECATL_WATCH_PHASES</code></Heading>

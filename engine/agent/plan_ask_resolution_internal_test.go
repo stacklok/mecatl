@@ -6,7 +6,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0362_RootPlanAskResolution(t *testing.T) {
+func TestADR_0366_RootPlanAskResolution(t *testing.T) {
 	run := &Run{asks: newAskRegistry(), childAsks: newChildAskRouter()}
 	plan := run.asks.registerAsk(session.PendingAsk{AskID: "plan", Origin: session.ApprovalOriginPlan})
 	ordinary := run.asks.registerAsk(session.PendingAsk{AskID: "ordinary", Origin: session.ApprovalOriginPermission})

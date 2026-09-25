@@ -7,10 +7,10 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// TestADR_0362_NilEventLogNeverPublishesFailure pins the durable-append
+// TestADR_0366_NilEventLogNeverPublishesFailure pins the durable-append
 // precondition at the failure recorder itself, even if a future caller bypasses
 // the exact control's admission guard.
-func TestADR_0362_NilEventLogNeverPublishesFailure(t *testing.T) {
+func TestADR_0366_NilEventLogNeverPublishesFailure(t *testing.T) {
 	id := session.SessionID("plan-without-log")
 	observed := make(chan session.Event, 1)
 	svc := &Service{

@@ -9,7 +9,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestADR_0362_PlanContinuationFailureWire(t *testing.T) {
+func TestADR_0366_PlanContinuationFailureWire(t *testing.T) {
 	prompt := (&mecatlv1.Prompt{}).ProtoReflect().Descriptor()
 	optIn := prompt.Fields().ByName("server_owned_plan_continuation")
 	if optIn == nil || optIn.Number() != 4 || optIn.Kind() != protoreflect.BoolKind {
