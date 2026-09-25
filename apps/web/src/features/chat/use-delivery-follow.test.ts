@@ -123,6 +123,75 @@ describe("delivery follow", () => {
     expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
   });
 
+  it("keeps another client's image before a matching live image-only prompt", () => {
+    const live: ChatMessage = {
+      content: "",
+      id: "live-b",
+      images: [{ data: "aW1hZ2UgQg==", id: "upload-b", mimeType: "image/png", name: "b.png" }],
+      role: "user",
+    };
+    const saved: ChatMessage[] = [
+      {
+        content: "",
+        id: "transcript-a",
+        images: [
+          {
+            data: "aW1hZ2UgQQ==",
+            id: "transcript-a-image",
+            mimeType: "image/png",
+            name: "Image 1",
+          },
+        ],
+        role: "user",
+      },
+      {
+        content: "",
+        id: "transcript-b",
+        images: [
+          {
+            data: "aW1hZ2UgQg==",
+            id: "transcript-b-image",
+            mimeType: "image/png",
+            name: "Image 1",
+          },
+        ],
+        role: "user",
+      },
+    ];
+
+    const merged = reconcileRecordedMessages([live], saved);
+    expect(merged).toEqual([saved[0], live]);
+    expect(merged[1]).toBe(live);
+    expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
+  });
+
+  it("matches URL-only saved images without treating a different URL as the live image", () => {
+    const live: ChatMessage = {
+      content: "",
+      id: "live-b",
+      images: [
+        { id: "upload-b", mimeType: "image/png", name: "b.png", url: "https://example.test/b.png" },
+      ],
+      role: "user",
+    };
+    const saved: ChatMessage[] = [
+      {
+        content: "",
+        id: "transcript-a",
+        images: [{ mimeType: "image/png", name: "Image 1", url: "https://example.test/a.png" }],
+        role: "user",
+      },
+      {
+        content: "",
+        id: "transcript-b",
+        images: [{ mimeType: "image/png", name: "Image 1", url: "https://example.test/b.png" }],
+        role: "user",
+      },
+    ];
+
+    expect(reconcileRecordedMessages([live], saved)).toEqual([saved[0], live]);
+  });
+
   it("fills a matched live row with its recorded tool result", () => {
     const live: ChatMessage = {
       content: "Answer",

@@ -715,7 +715,7 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.getAllByText("File contents")).toHaveLength(1);
   });
 
-  it("reconciles an uploaded image with its saved transcript name after run and idle refresh", async () => {
+  it("keeps another client's image before an uploaded image-only prompt after refresh", async () => {
     const user = userEvent.setup();
     const bff = new BffFixture(session("chat-a"));
     bff.nextReplies.set("/api/v1/sessions/chat-a", [
@@ -734,23 +734,31 @@ describe("mounted chat workspace BFF boundary", () => {
       new File(["image data"], "picture.png", { type: "image/png" }),
     );
     await waitFor(() => expect(screen.getByText("picture.png")).toBeTruthy());
-    typePrompt("Describe this image");
     expect(
       (screen.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled,
     ).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    expect(
-      screen.getAllByText("Describe this image").filter((node) => node.closest("article")),
-    ).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview picture.png" })).toHaveLength(2);
 
     bff.transcripts.set("chat-a", {
       complete: true,
       messages: [
         {
+          images: [
+            {
+              data: "aW1hZ2UgZnJvbSBhbm90aGVyIGNsaWVudA==",
+              mimeType: "image/png",
+              name: "Image 1",
+            },
+          ],
+          role: "user",
+          text: "",
+          toolCalls: [],
+        },
+        {
           images: [{ data: "aW1hZ2UgZGF0YQ==", mimeType: "image/png", name: "Image 1" }],
           role: "user",
-          text: "Describe this image",
+          text: "",
           toolCalls: [],
         },
         { images: [], role: "assistant", text: "A picture", toolCalls: [] },
@@ -768,22 +776,38 @@ describe("mounted chat workspace BFF boundary", () => {
     );
     expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs")[0]?.body).toEqual({
       images: [{ data: "aW1hZ2UgZGF0YQ==", mimeType: "image/png", name: "picture.png" }],
-      prompt: "Describe this image",
+      prompt: "",
     });
     await waitFor(() =>
       expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2),
     );
-    await waitFor(() => expect(screen.getAllByText("Describe this image")).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getAllByRole("article", { name: "You message" })).toHaveLength(2),
+    );
     expect(screen.getAllByText("A picture")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview picture.png" })).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: "Preview Image 1" })).toBeNull();
+    const userRows = screen.getAllByRole("article", { name: "You message" });
+    expect(userRows).toHaveLength(2);
+    expect(
+      within(userRows[0] as HTMLElement).getByRole("button", { name: "Preview Image 1" }),
+    ).toBeTruthy();
+    expect(
+      within(userRows[1] as HTMLElement).getByRole("button", { name: "Preview picture.png" }),
+    ).toBeTruthy();
 
     bff.rows.set("chat-a", { ...session("chat-a"), updatedAt: "2026-09-24T12:00:20.000Z" });
     await advanceClock(20_000);
     expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(3);
-    expect(screen.getAllByText("Describe this image")).toHaveLength(1);
     expect(screen.getAllByText("A picture")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Preview picture.png" })).toHaveLength(1);
+    const refreshedRows = screen.getAllByRole("article", { name: "You message" });
+    expect(refreshedRows).toHaveLength(2);
+    expect(
+      within(refreshedRows[0] as HTMLElement).getByRole("button", { name: "Preview Image 1" }),
+    ).toBeTruthy();
+    expect(
+      within(refreshedRows[1] as HTMLElement).getByRole("button", { name: "Preview picture.png" }),
+    ).toBeTruthy();
   });
 
   it("parks a queued prompt and reports missing history after a durable gap", async () => {

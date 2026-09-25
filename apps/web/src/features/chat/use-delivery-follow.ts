@@ -46,14 +46,37 @@ function deliveryKey(message: ChatMessage): string | undefined {
 function matchKey(message: ChatMessage): string {
   const delivery = deliveryKey(message);
   if (delivery) return `delivery:${delivery}`;
-  // This is an occurrence match, not a durable identity. Render-local IDs,
-  // tool output, reasoning, and image data can differ from saved projections.
-  // The BFF also renames uploaded files to "Image 1", etc. on transcript reads.
+  // This groups occurrence candidates, not durable identities. Render-local IDs,
+  // tool output, reasoning, and image names can differ from saved projections.
   return `ordinary:${JSON.stringify([
     message.role,
     message.content,
     message.images?.map(({ mimeType }) => mimeType) ?? [],
   ])}`;
+}
+
+function matchesImageContent(live: ChatMessage, saved: ChatMessage): boolean {
+  const liveImages = live.images ?? [];
+  const savedImages = saved.images ?? [];
+  if (liveImages.length !== savedImages.length) return false;
+  return liveImages.every((image, index) => {
+    const recorded = savedImages[index];
+    if (!recorded || image.mimeType !== recorded.mimeType) return false;
+    if (image.data !== undefined && recorded.data !== undefined) {
+      return image.data === recorded.data;
+    }
+    if (image.url !== undefined && recorded.url !== undefined) {
+      return image.url === recorded.url;
+    }
+    // With no common source, occurrence is safe only when neither projection
+    // carries content to distinguish it from another image in the same group.
+    return (
+      image.data === undefined &&
+      recorded.data === undefined &&
+      image.url === undefined &&
+      recorded.url === undefined
+    );
+  });
 }
 
 function keepLiveWithRecordedTools(live: ChatMessage, saved: ChatMessage): ChatMessage {
@@ -112,8 +135,11 @@ export function reconcileRecordedMessages(
       seenDeliveries.add(delivery);
     }
     const exact = liveByKey.get(matchKey(saved));
-    let live = exact?.shift();
-    while (live && consumedIndexes.has(live.index)) live = exact?.shift();
+    const matchIndex = exact?.findIndex(
+      ({ index, message }) => !consumedIndexes.has(index) && matchesImageContent(message, saved),
+    );
+    let live =
+      matchIndex !== undefined && matchIndex >= 0 ? exact?.splice(matchIndex, 1)[0] : undefined;
     if (!live && saved.role === "assistant" && saved.content) {
       const prior = recorded.at(-1)?.live;
       const candidate = prior?.message.role === "user" ? current[prior.index + 1] : undefined;
