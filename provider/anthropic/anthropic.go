@@ -77,6 +77,9 @@ type Provider struct {
 	// (zero-value) intersection is distinguishable from "unset". A tool result with
 	// no Parts always takes the legacy single-string path regardless.
 	caps *port.ProviderCapabilities
+	// pdfInput is an explicit native-Anthropic opt-in. This adapter also serves
+	// OpenRouter's Messages skin and other compatible endpoints.
+	pdfInput bool
 	// conversationCaching gates the three NEW conversation cache_control
 	// breakpoints (ADR 0100): the two conditional conversation anchors (the
 	// leading-turn-0-fragment boundary and the previous-turn boundary) plus the
@@ -108,6 +111,7 @@ type config struct {
 	thinkingBudget             int64
 	effort                     string
 	caps                       *port.ProviderCapabilities
+	pdfInput                   bool
 	extra                      []option.RequestOption
 	disableConversationCaching bool
 	cacheTTL                   string
@@ -195,6 +199,13 @@ func WithProviderCapabilities(caps port.ProviderCapabilities) Option {
 	}
 }
 
+// WithNativePDFInput enables native Anthropic Messages document input for this
+// provider entry. Compatible endpoints remain PDF-false. Each model call also
+// needs the exact selected session's positive PDF capability.
+func WithNativePDFInput() Option {
+	return func(c *config) { c.pdfInput = true }
+}
+
 // WithConversationCaching toggles the three NEW conversation cache_control
 // breakpoints (ADR 0100): the two conditional conversation anchors — the
 // leading-turn-0-fragment boundary and the previous-turn boundary — plus the
@@ -268,6 +279,7 @@ func New(opts ...Option) *Provider {
 		thinkingBudget:      budget,
 		effort:              c.effort,
 		caps:                c.caps,
+		pdfInput:            c.pdfInput,
 		conversationCaching: !c.disableConversationCaching,
 		cacheTTL:            c.cacheTTL,
 	}
@@ -365,8 +377,8 @@ func (p *Provider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[p
 // authority so modelCapability's AND stays honest (the composition-layer
 // intersection then yields Image:false for any text-only Claude model with no
 // adapter change).
-func (*Provider) Capabilities() port.ProviderCapabilities {
-	return port.ProviderCapabilities{Image: true, Audio: false, EmbeddedContext: true}
+func (p *Provider) Capabilities() port.ProviderCapabilities {
+	return withPDFCapability(port.ProviderCapabilities{Image: true, Audio: false, EmbeddedContext: true}, p.pdfInput)
 }
 
 // sessionCaps returns the per-session capability intersection the request
@@ -375,9 +387,10 @@ func (*Provider) Capabilities() port.ProviderCapabilities {
 // Capabilities() (the byte-identical pre-T7 default).
 func (p *Provider) sessionCaps() port.ProviderCapabilities {
 	if p.caps != nil {
-		return *p.caps
+		return withPDFCapability(*p.caps, hasPDFCapability(*p.caps) && p.pdfInput)
 	}
-	return p.Capabilities()
+	// Static transmit support alone does not qualify an exact selected model.
+	return withPDFCapability(p.Capabilities(), false)
 }
 
 // anthropicStreamError carries typed retry disposition for terminal stream errors so

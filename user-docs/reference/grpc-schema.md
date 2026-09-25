@@ -37,6 +37,8 @@ the bidi Converse stream that drives one agent run.
 | **RPC:** `GetSession`<br />**Request:** `GetSessionRequest`<br />**Response:** `GetSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSession">GetSession returns a snapshot of an existing session.</GrpcDescription> |
 | **RPC:** `ListGuardrailCoverage`<br />**Request:** `ListGuardrailCoverageRequest`<br />**Response:** `ListGuardrailCoverageResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `GetGuardrailReviewDetail`<br />**Request:** `GetGuardrailReviewDetailRequest`<br />**Response:** `GetGuardrailReviewDetailResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
+| **RPC:** `UploadArtifact`<br />**Request:** `UploadArtifactRequest`<br />**Response:** `UploadArtifactResponse` | <span className="grpc-mobile-label">Client streaming</span>Yes | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="UploadArtifact">UploadArtifact stages a session-owned artifact from one metadata frame followed by bounded nonempty byte chunks. Only PDF is supported in v1.</GrpcDescription> |
+| **RPC:** `DownloadArtifact`<br />**Request:** `DownloadArtifactRequest`<br />**Response:** `DownloadArtifactResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>Yes | <span className="grpc-mobile-label">Description</span><GrpcDescription name="DownloadArtifact">DownloadArtifact streams one previously published, owned artifact.</GrpcDescription> |
 | **RPC:** `GetSessionTranscript`<br />**Request:** `GetSessionTranscriptRequest`<br />**Response:** `GetSessionTranscriptResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSessionTranscript">GetSessionTranscript returns the authoritative, snapshot-derived human transcript for one owned session. It is read-only and does not use EventLog.</GrpcDescription> |
 | **RPC:** `SetMode`<br />**Request:** `SetModeRequest`<br />**Response:** `SetModeResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="SetMode">SetMode changes an existing session&#39;s permission posture. The session aggregate remains authoritative: a mid-turn change is rejected with InvalidArgument, so clients that want &#34;next prompt&#34; semantics must defer and retry once idle.</GrpcDescription> |
 | **RPC:** `CloseSession`<br />**Request:** `CloseSessionRequest`<br />**Response:** `CloseSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="CloseSession">CloseSession ends a session and releases its server-side resources (learned permission rules, bound placement, and any per-session engine). Idempotent: closing an unknown or already-closed session via the wire returns NotFound only for a never-created id; an already-released session succeeds.</GrpcDescription> |
@@ -609,6 +611,10 @@ malformed part), not at the wire layer.
 | `mime_type` | `string` |  |  | mime_type is the IANA media type of the part. |
 | `data` | `bytes` |  |  | data is the inline content bytes; empty when url-sourced. |
 | `url` | `string` |  |  | url is the remote reference; empty when inline. |
+| `artifact_id` | `string` |  |  | artifact_id is required for PDF parts; data/url must be empty. |
+| `name` | `string` |  |  | Server-filled metadata on transcript/event projections, never client input. |
+| `size` | `int64` |  |  |  |
+| `sha256` | `string` |  |  |  |
 
 
 
@@ -632,6 +638,8 @@ session.Content for tool-result Parts). A sum-type over Kind.
 | `audience` | `string` | repeated |  | audience is advisory display routing only (CWE-345: untrusted). |
 | `priority` | `double` |  |  | priority is the advisory display priority. |
 | `last_modified` | `string` |  |  | last_modified is the resource-link last-modified timestamp (RFC 3339). |
+| `artifact_id` | `string` |  |  |  |
+| `sha256` | `string` |  |  |  |
 
 
 
@@ -862,6 +870,29 @@ This message has no fields.
 | `skill_id` | `string` |  |  |  |
 | `from_version` | `string` |  |  |  |
 | `to_version` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.DownloadArtifactRequest`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `session_id` | `string` |  |  |  |
+| `artifact_id` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.DownloadArtifactResponse`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `chunk` | `bytes` |  |  |  |
 
 
 
@@ -2912,6 +2943,7 @@ old clients ignore and new clients reading an old server see as false.
 | `workspace_enrollment` | `bool` |  |  | workspace_enrollment is true when protected workspace services must be admitted as one complete bundle before the first prompt. |
 | `mcp_connector_status` | `bool` |  |  | mcp_connector_status requires a wired broker inspector, enforced ownership and a verified caller. It does not enable direct MCP resources or prompts. |
 | `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
+| `artifacts` | `bool` |  |  | artifacts is true when this deployment can store and serve private artifacts. |
 
 
 
@@ -2969,6 +3001,7 @@ the catalog ∩ adapter intersection computed in composition. (Phase 0, S5.)
 |---|---|---|---|---|
 | `image` | `bool` |  |  | image is true when the resolved provider+model can consume image prompt parts. |
 | `audio` | `bool` |  |  | audio is true when the resolved provider+model can consume audio prompt parts. |
+| `pdf` | `bool` |  |  | pdf is true only when the selected model and native provider accept PDFs and this deployment has PDF artifact storage enabled. |
 
 
 
@@ -3657,6 +3690,46 @@ overloading the shared Event fields.
 
 
 
+#### `mecatl.v1.UploadArtifactMetadata`
+
+UploadArtifactMetadata is the first frame of an artifact upload.
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `session_id` | `string` |  |  |  |
+| `name` | `string` |  |  |  |
+| `mime_type` | `string` |  |  |  |
+
+
+
+
+#### `mecatl.v1.UploadArtifactRequest`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `metadata` | `UploadArtifactMetadata` |  | `payload` |  |
+| `chunk` | `bytes` |  | `payload` |  |
+
+
+
+
+#### `mecatl.v1.UploadArtifactResponse`
+
+
+
+| Field | Type | Label | Oneof | Description |
+|---|---|---|---|---|
+| `artifact_id` | `string` |  |  |  |
+| `name` | `string` |  |  |  |
+| `size` | `int64` |  |  |  |
+| `sha256` | `string` |  |  |  |
+| `mime_type` | `string` |  |  |  |
+
+
+
+
 #### `mecatl.v1.Usage`
 
 Usage accounts for the token cost of a model call (or an aggregate).
@@ -3843,6 +3916,7 @@ Kind discriminates the media kind of the part.
 | `KIND_UNSPECIFIED` | `0` | KIND_UNSPECIFIED is rejected by the server: every part must name its kind. |
 | `KIND_IMAGE` | `1` | KIND_IMAGE is an image part. |
 | `KIND_AUDIO` | `2` | KIND_AUDIO is an audio part. |
+| `KIND_PDF` | `3` | KIND_PDF is a session-owned PDF artifact reference. |
 
 #### `mecatl.v1.ContentBlock.Kind`
 
@@ -3857,6 +3931,7 @@ Kind discriminates the block kind.
 | `KIND_RESOURCE_LINK` | `4` | KIND_RESOURCE_LINK is a reference to an MCP resource by URI. |
 | `KIND_EMBEDDED_RESOURCE` | `5` | KIND_EMBEDDED_RESOURCE is an embedded MCP resource (text or blob). |
 | `KIND_STRUCTURED_CONTENT` | `6` | KIND_STRUCTURED_CONTENT is a JSON structured-content block. |
+| `KIND_ARTIFACT` | `7` | KIND_ARTIFACT is a reference to a session-owned result artifact. |
 
 #### `mecatl.v1.GuardrailApprovalKind`
 

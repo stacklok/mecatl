@@ -61,6 +61,13 @@ mounted
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- define "mecak8s.validateArtifacts" -}}
+{{- $s3 := .Values.artifacts.s3 -}}
+{{- if or $s3.bucket $s3.region $s3.endpoint -}}
+{{- if or (not $s3.bucket) (not $s3.region) -}}{{ fail "artifacts.s3.bucket and artifacts.s3.region must be set together" }}{{- end -}}
+{{- if and $s3.endpoint (not (regexMatch "^https://[^@/?#[:space:]]+/?$" $s3.endpoint)) -}}{{ fail "artifacts.s3.endpoint must be HTTPS without credentials" }}{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- define "mecak8s.validateOIDC" -}}
 {{- $profileSet := or .Values.oidc.resource .Values.oidc.clientID (gt (len .Values.oidc.scopes) 0) -}}
 {{- if $profileSet -}}

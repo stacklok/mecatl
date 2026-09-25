@@ -87,6 +87,12 @@ type recordingLogger struct {
 	results []session.ToolResult
 }
 
+type toolResultProcessorFunc func(context.Context, session.SessionID, session.ToolResult) (session.ToolResult, error)
+
+func (f toolResultProcessorFunc) ProcessToolResult(ctx context.Context, id session.SessionID, result session.ToolResult) (session.ToolResult, error) {
+	return f(ctx, id, result)
+}
+
 func (l *recordingLogger) ToolCall(_ session.SessionID, _ session.ToolCall, result session.ToolResult, _, _ time.Duration) {
 	l.mu.Lock()
 	l.calls++
@@ -1180,6 +1186,42 @@ func TestPostToolUseHookMutatesResult(t *testing.T) {
 	}
 	if !rewriteEv {
 		t.Fatalf("expected a hook event noting the result rewrite")
+	}
+}
+
+func TestToolResultProcessorRunsAfterHookAndFailsClosed(t *testing.T) {
+	const secret = "PDF-BYTES-SECRET"
+	tl := &fakeTool{name: "Read", readOnly: true,
+		exec: func(_ context.Context, in session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			return session.NewToolResult(in.ID, "before-hook"), nil
+		}}
+	hooks := &mutatingHooks{mutate: map[governance.HookPhase]json.RawMessage{
+		governance.PhasePostToolUse: json.RawMessage(`{"content":"PDF-BYTES-SECRET"}`),
+	}}
+	seen := false
+	processor := toolResultProcessorFunc(func(_ context.Context, id session.SessionID, result session.ToolResult) (session.ToolResult, error) {
+		if id != "s1" || result.Content != secret {
+			t.Errorf("processor input = %q %+v, want effective post-hook result", id, result)
+		}
+		seen = true
+		return session.ToolResult{}, fmt.Errorf("private storage failure: %s", secret)
+	})
+	llm := mockllm.New(mockllm.ToolCallTurn(toolCall("c1", "Read", `{}`)), mockllm.TextTurn("done"))
+	sess := newSession(t, session.Limits{})
+	logger := &recordingLogger{}
+	e := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, tl), Hooks: hooks, ToolResultProcessor: processor, ToolCallRecorder: logger})
+	evs := drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
+	if !seen {
+		t.Fatal("processor was not called")
+	}
+	for name, got := range map[string]*session.ToolResult{"event": toolResultEvent(evs), "snapshot": recordedToolResult(sess)} {
+		if got == nil || got.CallID != "c1" || !got.IsError || strings.Contains(got.Content, secret) || len(got.Parts) != 0 {
+			t.Fatalf("%s result = %+v, want bounded error with original call ID", name, got)
+		}
+	}
+	logged, ok := logger.lastResult()
+	if !ok || logged.CallID != "c1" || !logged.IsError || strings.Contains(logged.Content, secret) || len(logged.Parts) != 0 {
+		t.Fatalf("audit result = %+v, want bounded error with original call ID", logged)
 	}
 }
 

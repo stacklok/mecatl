@@ -11,6 +11,8 @@ import (
 // their respective status codes (codes.InvalidArgument / NotFound, HTTP 400 /
 // 404).
 var (
+	// ErrArtifactsUnavailable reports that private artifact storage is not enabled.
+	ErrArtifactsUnavailable = errors.New("server: artifacts are unavailable")
 	// ErrManagementUnauthorized is deliberately resource-free: an unauthorized
 	// caller learns neither backend support nor aggregate storage scope.
 	ErrManagementUnauthorized = errors.New("server: management authorization required")

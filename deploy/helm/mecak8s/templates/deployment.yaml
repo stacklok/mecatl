@@ -1,5 +1,6 @@
 {{- include "mecak8s.validateImage" . -}}
 {{- include "mecak8s.validateRedis" . -}}
+{{- include "mecak8s.validateArtifacts" . -}}
 {{- include "mecak8s.validateOIDC" . -}}
 {{- include "mecak8s.validateTLS" . -}}
 {{- include "mecak8s.validateLearningStore" . -}}
@@ -103,6 +104,13 @@ spec:
             - {{ printf "--redis-url=%s" .Values.redis.endpoint | quote }}
             - {{ printf "--redis-follow-pool-size=%d" (int64 .Values.redis.follow.poolSize) | quote }}
             - {{ printf "--redis-max-followers=%d" (int64 .Values.redis.follow.maxFollowers) | quote }}
+            {{- if .Values.artifacts.s3.bucket }}
+            - {{ printf "--artifact-s3-bucket=%s" .Values.artifacts.s3.bucket | quote }}
+            - {{ printf "--artifact-s3-region=%s" .Values.artifacts.s3.region | quote }}
+            {{- if .Values.artifacts.s3.endpoint }}
+            - {{ printf "--artifact-s3-endpoint=%s" .Values.artifacts.s3.endpoint | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.redis.filesystem.enabled }}
             - --redis-filesystem
             {{- end }}

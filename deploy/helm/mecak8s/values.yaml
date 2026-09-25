@@ -187,6 +187,15 @@ redis:
   local:
     enabled: false
 
+# PDF artifacts use a dedicated private S3-compatible bucket. Empty values
+# disable PDF input and download. Credentials come from workload identity or
+# Secret-backed AWS-compatible extraEnv entries; never put them in chart values.
+artifacts:
+  s3:
+    bucket: ""
+    region: ""
+    endpoint: ""
+
 oidc:
   # Caller identity (ADR 0204/0205). Off for mock and explicit unsafe-bypass
   # profiles; required for a real provider under the secure default.

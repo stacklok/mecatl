@@ -42,7 +42,13 @@ import {
   projectWorkspaceEnrollment,
   type WorkspaceEnrollment,
 } from "./mcp-workspace-enrollment.js";
-import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
+import {
+  assertArtifactCapability,
+  encodePrompt,
+  type PromptCapabilities,
+  type PromptInput,
+  validateArtifactId,
+} from "./media.js";
 import {
   type Agents,
   type Commands,
@@ -65,6 +71,13 @@ import {
   type Storage,
   type UserModel,
 } from "./namespaces-ops.js";
+import {
+  PDF_CHUNK_BYTES,
+  PDF_MAX_BYTES,
+  type PdfSource,
+  pdfUploadFrames,
+  validatePdfUpload,
+} from "./pdf-upload.js";
 import { createPlanResolution, type PlanApprovalVerdict, type PlanResolution } from "./plan.js";
 import {
   createRawClient,
@@ -88,6 +101,7 @@ import {
 import {
   projectSessionSnapshot,
   projectSessionTranscript,
+  type SessionCapabilities,
   type SessionMode,
   type SessionSnapshot,
   type SessionTranscript,
@@ -196,6 +210,15 @@ export interface ForkSessionOptions {
 export interface ClearSessionOptions {
   /** Opaque source-scoped selector for an existing worktree. */
   worktreeSelector?: string;
+}
+
+/** Bounded metadata for one session-owned uploaded artifact. @public */
+export interface UploadedArtifact {
+  readonly artifactId: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly size: bigint;
+  readonly sha256: string;
 }
 
 /** A durable Mecatl session handle. @public */
@@ -361,9 +384,36 @@ export interface Session {
    */
   clear(options?: ClearSessionOptions, requestOptions?: RequestOptions): Promise<Session>;
   /**
+   * Streams one PDF into a session-owned artifact for later prompts or steers.
+   *
+   * @param source - Browser Blob or async source of PDF bytes.
+   * @param options - A safe basename and the PDF MIME type.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns An opaque artifact ID and validated metadata for a later prompt.
+   * @throws `UnsupportedFeatureError` when artifact storage is unavailable.
+   * @throws `PromptValidationError` for invalid upload metadata or source bytes.
+   */
+  uploadArtifact(
+    source: Blob | AsyncIterable<Uint8Array>,
+    options: { name: string; mimeType: "application/pdf" },
+    requestOptions?: RequestOptions,
+  ): Promise<UploadedArtifact>;
+  /**
+   * Streams a session-owned PDF artifact in ordered byte chunks.
+   *
+   * The stream starts on first consumption. Returning from its iterator closes
+   * the transport response and cancels any unfinished download.
+   *
+   * @param artifactId - Opaque ID from a PDF tool-result block.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   * @returns An async byte stream with no whole-file buffer.
+   * @throws `UnsupportedFeatureError` when artifact storage is unavailable.
+   */
+  downloadArtifact(artifactId: string, requestOptions?: RequestOptions): AsyncIterable<Uint8Array>;
+  /**
    * Starts a run and resolves once its first run-ID-bearing event arrives.
    *
-   * @param prompt - Text or ordered text, image, and audio parts for the run.
+   * @param prompt - Text or ordered text, image, audio, and PDF parts for the run.
    * @param options - Automatic permission and plan-approval responders.
    * @param requestOptions - Request headers, cancellation signal, and deadline.
    * @returns A single-consumption handle for the accepted run.
@@ -522,6 +572,7 @@ interface SessionOperations {
   cancelRun(sessionId: string, runId: string): Promise<void>;
   readonly clientSignal: AbortSignal;
   features(options?: RequestOptions): Promise<ReadonlySet<string>>;
+  getSessionHandle(sessionId: string, options?: RequestOptions): Promise<Session>;
   invalidateCompatibility(): void;
   registerAttachment(close: () => Promise<void>): () => void;
   registerRun(cancel: () => Promise<void>): () => void;
@@ -555,11 +606,23 @@ function createSessionAffinity(
 }
 
 function promptCapabilities(
-  sessionCapabilities: PromptCapabilities | undefined,
-  serverCapabilities?: PromptCapabilities,
+  sessionCapabilities: SessionCapabilities | undefined,
+  serverCapabilities?: {
+    readonly audio: boolean;
+    readonly image: boolean;
+    readonly pdf?: boolean;
+    readonly artifacts?: boolean;
+  },
 ): PromptCapabilities | undefined {
   const value = sessionCapabilities ?? serverCapabilities;
-  return value === undefined ? undefined : { audio: value.audio, image: value.image };
+  return value === undefined
+    ? undefined
+    : {
+        audio: value.audio,
+        image: value.image,
+        pdf: sessionCapabilities?.pdf ?? serverCapabilities?.pdf === true,
+        artifacts: serverCapabilities?.artifacts === true,
+      };
 }
 
 function sessionAffinityOperations(
@@ -821,7 +884,131 @@ class SessionImpl implements Session {
         transport: this.#operations.transportKind,
       });
     }
-    return new SessionImpl(response.sessionId, this.#baseOperations, undefined);
+    return this.#baseOperations.getSessionHandle(response.sessionId, requestOptions);
+  }
+
+  async uploadArtifact(
+    source: PdfSource,
+    options: { name: string; mimeType: "application/pdf" },
+    requestOptions?: RequestOptions,
+  ): Promise<UploadedArtifact> {
+    this.#operations.assertOpen();
+    assertRequestNotAborted(requestOptions, this.#operations.transportKind);
+    validatePdfUpload(source, options?.name, options?.mimeType);
+    assertArtifactCapability(this.#promptCapabilities);
+    const signals = [this.#operations.clientSignal];
+    if (requestOptions?.signal !== undefined) signals.push(requestOptions.signal);
+    if (requestOptions?.timeoutMs !== undefined && requestOptions.timeoutMs > 0) {
+      signals.push(AbortSignal.timeout(requestOptions.timeoutMs));
+    }
+    const signal = AbortSignal.any(signals);
+    let localFailure: unknown;
+    let failedLocally = false;
+    let response: UploadedArtifact | undefined;
+    try {
+      for await (const frame of this.#operations.stream(
+        HarnessService.method.uploadArtifact,
+        pdfUploadFrames(
+          source,
+          this.id,
+          options.name,
+          signal,
+          this.#operations.transportKind,
+          (cause) => {
+            localFailure = cause;
+            failedLocally = true;
+          },
+        ),
+        { ...requestOptions, signal },
+      )) {
+        if (response !== undefined) {
+          throw new ProtocolError("UploadArtifact returned more than one response", {
+            transport: this.#operations.transportKind,
+          });
+        }
+        response = frame;
+      }
+    } catch (cause) {
+      if (failedLocally) throw normalizeError(localFailure, this.#operations.transportKind);
+      throw cause;
+    }
+    if (
+      response === undefined ||
+      typeof response.artifactId !== "string" ||
+      response.artifactId.trim() === "" ||
+      response.artifactId !== response.artifactId.trim() ||
+      /[\p{Cc}\p{Cf}]/u.test(response.artifactId) ||
+      response.name !== options.name ||
+      response.mimeType !== options.mimeType ||
+      typeof response.size !== "bigint" ||
+      response.size < 1n ||
+      response.size > BigInt(PDF_MAX_BYTES) ||
+      typeof response.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(response.sha256)
+    ) {
+      throw new ProtocolError("UploadArtifact returned invalid artifact metadata", {
+        transport: this.#operations.transportKind,
+      });
+    }
+    return {
+      artifactId: response.artifactId,
+      name: response.name,
+      mimeType: response.mimeType,
+      size: response.size,
+      sha256: response.sha256,
+    };
+  }
+
+  async *downloadArtifact(
+    artifactId: string,
+    requestOptions?: RequestOptions,
+  ): AsyncIterable<Uint8Array> {
+    this.#operations.assertOpen();
+    assertRequestNotAborted(requestOptions, this.#operations.transportKind);
+    validateArtifactId(artifactId);
+    assertArtifactCapability(this.#promptCapabilities);
+    const cancel = new AbortController();
+    const signals = [this.#operations.clientSignal, cancel.signal];
+    if (requestOptions?.signal !== undefined) signals.push(requestOptions.signal);
+    const signal = AbortSignal.any(signals);
+    const sessionId = this.id;
+    let total = 0;
+    const frames = this.#operations
+      .stream(
+        HarnessService.method.downloadArtifact,
+        (async function* () {
+          yield { sessionId, artifactId };
+        })(),
+        { ...requestOptions, signal },
+      )
+      [Symbol.asyncIterator]();
+    try {
+      for (;;) {
+        const next = await frames.next();
+        if (next.done) break;
+        const frame = next.value;
+        const chunk = frame.chunk;
+        if (
+          !(chunk instanceof Uint8Array) ||
+          chunk.byteLength === 0 ||
+          chunk.byteLength > PDF_CHUNK_BYTES
+        ) {
+          throw new ProtocolError("DownloadArtifact returned an invalid chunk", {
+            transport: this.#operations.transportKind,
+          });
+        }
+        total += chunk.byteLength;
+        if (total > PDF_MAX_BYTES) {
+          throw new ProtocolError("DownloadArtifact exceeds the PDF size limit", {
+            transport: this.#operations.transportKind,
+          });
+        }
+        yield chunk;
+      }
+    } finally {
+      cancel.abort();
+      await frames.return?.();
+    }
   }
 
   async run(
@@ -859,10 +1046,14 @@ class SessionImpl implements Session {
           value: {
             parts: encoded.media.map((part) =>
               create(ContentSchema, {
-                ...(part.bytes === undefined ? {} : { data: part.bytes }),
-                kind: part.kind === "image" ? 1 : 2,
-                mimeType: part.mimeType,
-                ...(part.url === undefined ? {} : { url: part.url }),
+                ...(part.kind === "pdf"
+                  ? { artifactId: part.artifactId }
+                  : {
+                      ...(part.bytes === undefined ? {} : { data: part.bytes }),
+                      ...(part.url === undefined ? {} : { url: part.url }),
+                    }),
+                kind: part.kind === "image" ? 1 : part.kind === "audio" ? 2 : 3,
+                mimeType: part.kind === "pdf" ? "application/pdf" : part.mimeType,
               }),
             ),
             sessionId: this.id,
@@ -1096,6 +1287,7 @@ class ClientImpl implements Client {
       cancelRun: (sessionId, runId) => this.#cancelRun(sessionId, runId),
       clientSignal: this.#abort.signal,
       features: (options) => this.#features(options),
+      getSessionHandle: (sessionId, options) => this.sessions.get(sessionId, options),
       invalidateCompatibility: () => invalidateRawCompatibility(this.#raw),
       registerAttachment: (close) => this.#register(this.#attachments, close),
       registerRun: (cancel) => this.#register(this.#runs, cancel),
@@ -1200,7 +1392,12 @@ class ClientImpl implements Client {
           },
           sessionAffinityIfRepresentable(sourceSessionId, requestOptions),
         );
-        return this.#session(response.sessionId, "ForkSession", undefined);
+        if (response.sessionId === "") {
+          throw new ProtocolError("ForkSession returned no session id", {
+            transport: this.#transportKind,
+          });
+        }
+        return this.sessions.get(response.sessionId, requestOptions);
       },
       get: async (sessionId, options) => {
         const compatibility = await this.#compatibility(options, false);

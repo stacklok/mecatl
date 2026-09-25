@@ -101,6 +101,9 @@ independently according to the application's retention policy.
 `clear()` accepts an optional opaque `worktreeSelector`. `fork()` also accepts
 `providerId`, `modelId`, `reasoningEffort`, `title`, and `worktreeSelector`.
 The SDK passes worktree selectors to the server without interpreting them.
+When the source history contains a PDF prompt, the server copies its PDF
+artifacts into the fork and requires the successor's model to accept PDF input.
+`clear()` starts without the source's artifacts.
 
 ## Retry a failed model step
 
@@ -235,8 +238,8 @@ advertises `prompt_free_controls`, then makes one unary request:
 - `resolveAsk(askId, verdict, requestOptions?)` resolves an ordinary root or
   surfaced-child permission ask.
 - `cancel(requestOptions?)` requests cancellation of the exact live run.
-- `steer(prompt, options?, requestOptions?)` sends text or structured image and
-  audio input.
+- `steer(prompt, options?, requestOptions?)` sends text or structured image,
+  audio, and PDF input.
 - `cancelSteer(options?, requestOptions?)` retracts the pending steer bundle.
 
 All four methods accept the same request headers, cancellation signal, response
@@ -250,11 +253,11 @@ steer cannot become a new run. Plan asks remain under the separate
 `session.resolvePlan()` workflow.
 
 Structured steer prompts use the same `PromptInput` and media validation as a
-new run. Text fragments join with one newline, while image and audio parts keep
-their order relative to other media. `messageId` is an optional application
-correlation of up to 64 Unicode code points. The acknowledgement echoes the
-exact run and message IDs. A steer reports `accepted` when it creates a pending
-bundle or `appended` when it joins an existing bundle. Retraction reports
+new run. Text fragments join with one newline, while image, audio, and PDF
+parts keep their order relative to other media. The optional `messageId` is an
+application correlation of up to 64 Unicode code points. The acknowledgement
+echoes both IDs. A steer reports `accepted` for a new pending bundle or
+`appended` for an existing one. Retraction reports
 `retracted` or `none_pending`.
 
 Treat a lost unary acknowledgement as ambiguous. The server can accept a
@@ -284,6 +287,91 @@ Browser applications use `imagePartFromBlob()` or `audioPartFromBlob()`. Both
 entry points also accept an absolute HTTPS media URL. The SDK validates the
 source, MIME type, size, and advertised session capability before sending the
 prompt; the server remains authoritative.
+
+## Send and receive PDF artifacts
+
+Upload a PDF to the session, then include the returned artifact ID in a
+structured prompt. In Node.js, pass a file stream so the SDK can upload without
+reading the entire PDF into memory:
+
+```ts
+import { createReadStream } from 'node:fs';
+import { pdfPart, textPart } from '@stacklok-oss/mecatl-sdk';
+
+const uploaded = await session.uploadArtifact(
+  createReadStream(new URL('./report.pdf', import.meta.url)),
+  { name: 'report.pdf', mimeType: 'application/pdf' }
+);
+const run = await session.run([
+  textPart('Summarize the attached report'),
+  pdfPart(uploaded.artifactId),
+]);
+
+console.log((await run.result()).text);
+```
+
+In a browser, pass a `Blob` or `File` to `uploadArtifact()` with a safe filename
+and `mimeType: 'application/pdf'`. It returns `UploadedArtifact` metadata:
+`artifactId`, `name`, `mimeType`, `size`, and `sha256`. Pass its ID to
+`pdfPart(id)` to create a prompt part for the same session. An upload that has
+not been used in a saved prompt becomes unusable after 24 hours. PDF parts use
+artifact IDs instead of inline bytes or remote URLs. Each PDF is limited to
+20 MiB; other MIME types are rejected.
+
+PDF prompts require the session's selected model to advertise PDF input and a
+native provider adapter that sends it. Native OpenAI Responses and Anthropic
+Messages support this path for qualified models. The SDK checks the server's
+artifact capability for transfers and the session's PDF capability for prompt
+use; the server validates the artifact and model again before calling the
+provider. You can also send a PDF part through
+`session.controls(runId).steer()`. The live `run.steer()` method accepts text
+only. A provider can impose a limit below 20 MiB and reject the model call
+after a successful upload. ACP and scheduled prompts do not accept PDF parts.
+
+When a tool returns PDF bytes as an `application/pdf` embedded resource, its
+`tool.result` event contains an artifact block with `artifactId`, `name`,
+`mimeType`, `size`, and `sha256`. Use that ID with
+`session.downloadArtifact()` to stream the bytes. For example, a Node.js
+application can write the first PDF block from a separate run to a file when
+the session has a PDF-producing tool:
+
+```ts
+import { createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+
+const downloadRun = await session.run(
+  'Use the configured tool to produce a PDF report'
+);
+let saved = false;
+for await (const event of downloadRun) {
+  if (event.kind !== 'tool.result') continue;
+  if (saved) continue;
+  const pdf = event.payload.blocks.find(
+    (block) => block.kind === 7 && block.mimeType === 'application/pdf'
+  );
+  if (pdf === undefined) continue;
+
+  await pipeline(
+    Readable.from(session.downloadArtifact(pdf.artifactId)),
+    createWriteStream('./tool-output.pdf', { flags: 'wx' })
+  );
+  console.log(pdf.name, pdf.size, pdf.sha256);
+  saved = true;
+}
+```
+
+Each `Run` can be consumed only once, by event iteration or `result()`.
+`downloadArtifact()` starts its request when you consume the iterator. Pass an
+`AbortSignal` in its request options to cancel an active download; ending
+iteration early also closes the response body. HTTP and gRPC both stream PDF
+uploads and downloads. You can compare the saved file with the block's `size`
+and `sha256` when you need to verify it. Artifact IDs are scoped to the
+owning session; another session cannot use them. On `mecak8s`, an operator must
+[configure artifact storage](/building/deployment/mecak8s.md#store-session-artifacts)
+before the server advertises this capability. Local `mecated` does not provide
+PDF artifact storage in this release. An older server returns a typed
+`UnsupportedFeatureError` for these SDK methods.
 
 ## Next steps
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "redis", "learning"],
+  "required": ["image", "redis", "learning", "artifacts"],
   "properties": {
     "image": {
       "type": "object",
@@ -37,6 +37,23 @@
         "filesystem": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "readLedger": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}},
         "local": {"type": "object", "additionalProperties": false, "required": ["enabled"], "properties": {"enabled": {"type": "boolean"}}}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["s3"],
+      "properties": {
+        "s3": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bucket", "region", "endpoint"],
+          "properties": {
+            "bucket": {"type": "string"},
+            "region": {"type": "string"},
+            "endpoint": {"type": "string", "pattern": "^(|https://[^@/?#\\s]+/?)$"}
+          }
+        }
       }
     },
     "oidc": {

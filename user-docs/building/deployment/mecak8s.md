@@ -52,6 +52,8 @@ You need:
 - A TLS certificate and key for the `mecak8s` Service, unless an
   operator-controlled gateway terminates TLS.
 - Credentials for an LLM provider.
+- For SDK artifact transfers (`application/pdf` only), a private S3-compatible
+  bucket accessible from every agent pod.
 
 The chart creates the ServiceAccount and namespace-scoped permissions for
 Kubernetes Leases. It does not create production Redis, TLS Secrets, provider
@@ -126,6 +128,10 @@ endpoints and filenames with values for your environment.
 The default Deployment name is `<RELEASE>-mecak8s`. Set `fullnameOverride` in
 the values file if you need a fixed name.
 
+Artifact upload and download are optional and accept only PDFs. To enable them,
+follow [Store session artifacts](#store-session-artifacts) after the base
+deployment works.
+
 ## Deployment defaults
 
 `mecak8s` starts with unattended, Kubernetes-oriented defaults:
@@ -136,6 +142,7 @@ the values file if you need a fixed name.
 |Posture|Headless with `auto` permissions|
 |Session state|Redis|
 |Session ownership|Kubernetes Leases|
+|Session artifacts (PDF only)|Disabled until an S3-compatible store is configured|
 |Filesystem|No filesystem access|
 |Network binds|Pod network on `0.0.0.0`|
 |Metrics and OpenTelemetry|Opt-in|
@@ -206,6 +213,8 @@ API:
 |-|-|
 |Session snapshots, retention, and cleanup|Redis|
 |Durable event log and resume cursors|Redis Streams|
+|Artifact metadata, upload staging, and deletion outbox (when enabled)|Redis|
+|Artifact bytes (`application/pdf` only, when enabled)|Private S3-compatible object store|
 |Single-writer session lease|Kubernetes `coordination.k8s.io` Lease|
 
 ### Inspect the event log
@@ -272,6 +281,54 @@ security postures:
 
 The chart reserves its security-posture annotations; `podAnnotations` cannot
 override them.
+
+### Store session artifacts
+
+Configure a private S3-compatible bucket dedicated to this `mecak8s`
+installation when SDK clients upload PDFs for prompts or download PDFs from
+tool results. Only `application/pdf` is accepted. Every replica uses the same
+bucket. Add the following values to your deployment file:
+
+```yaml
+artifacts:
+  s3:
+    bucket: <PRIVATE_BUCKET>
+    region: <S3_REGION>
+```
+
+For a TLS-enabled MinIO service, also set
+`artifacts.s3.endpoint: https://minio.example.com`. Custom endpoints must use
+HTTPS; `mecak8s` uses path-style S3 requests for them. The chart passes these
+settings as the `--artifact-s3-bucket`, `--artifact-s3-region`, and optional
+`--artifact-s3-endpoint` flags. Supply both bucket and region. A partial
+configuration fails startup.
+
+Give the workload identity for the chart's ServiceAccount access to this
+bucket. If you use AWS-compatible environment credentials instead, add
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` to the existing `extraEnv` list
+through Kubernetes Secret `valueFrom.secretKeyRef` entries. Project
+`AWS_SESSION_TOKEN` too when your credential source provides one. Keep
+credential values in the Secret, outside Helm values. Configure the bucket's
+backup, retention, and access policy for your session retention requirements.
+
+When rotating Secret-backed environment credentials, keep the old credentials
+valid while you update the Secret and roll the `mecak8s` Deployment. Revoke the
+old credentials after the new pods are ready. Kubernetes does not refresh
+environment variables in running pods when a Secret changes.
+
+With the store enabled, PDF uploads and recognized PDF tool results keep their
+bytes in the object store. Redis holds artifact IDs, bounded metadata, staging
+markers, and a deletion outbox. An uploaded PDF that is never used in a saved
+prompt becomes unusable after 24 hours. Fork copies the referenced PDFs into
+the successor session; Clear starts without them. Session deletion and
+retention pruning block new downloads immediately, then remove objects through
+restart-safe cleanup.
+
+Without a configured store, the server advertises no artifact capability
+and rejects PDF prompt input. Existing embedded PDF tool results keep their
+legacy inline limit and handling, which can store their bytes in Redis. The
+[TypeScript SDK session guide](/building/typescript-sdk/sessions-and-runs.md#send-and-receive-pdf-artifacts)
+shows upload, prompt, and download calls.
 
 ### Installation telemetry identity
 

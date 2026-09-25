@@ -105,6 +105,7 @@ const AuthorizationFailed AuthorizationStatus = "failed"
 const AuthorizationGranted AuthorizationStatus = "granted"
 const AuthorizationInterrupted AuthorizationStatus = "interrupted"
 const AuthorizationPending AuthorizationStatus = "pending"
+const BlockArtifact BlockKind = "artifact"
 const BlockAudio BlockKind = "audio"
 const BlockEmbeddedResource BlockKind = "embedded_resource"
 const BlockImage BlockKind = "image"
@@ -166,12 +167,14 @@ const HookBlocked HookDecision = "blocked"
 const HookInfo HookDecision = "info"
 const HookModified HookDecision = "modified"
 const MaxMediaBytes untyped int = 10485760
+const MaxPDFBytes untyped int = 20971520
 const MaxPromptMediaBytes untyped int = 20971520
 const MaxPromptMediaParts untyped int = 16
 const MaxToolResultBytes untyped int = 20971520
 const MaxToolResultTextBytes untyped int = 25600
 const MediaAudio MediaKind = "audio"
 const MediaImage MediaKind = "image"
+const MediaPDF MediaKind = "pdf"
 const ModeAccept PermissionMode = "acceptEdits"
 const ModeDefault PermissionMode = "default"
 const ModePlan PermissionMode = "plan"
@@ -283,6 +286,7 @@ func IsSynthesisedSummary(text string) bool
 func LegacyIncarnationID(id SessionID, createdAtUnixNano int64, owner *Principal) IncarnationID
 func NetworkCorrelationDigest(kind string, value string) (string, bool)
 func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time) *Session
+func NewArtifactBlock(id string, name string, mimeType string, size int64, sha256 string) (Content, error)
 func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Message
 func NewAudioContent(mime string, data []byte) (Content, error)
 func NewAudioURLContent(mime string, rawURL string) (Content, error)
@@ -293,6 +297,7 @@ func NewEmbeddedResourceBlock(uri string, mimeType string, text string, blob []b
 func NewImageContent(mime string, data []byte) (Content, error)
 func NewImageURLContent(mime string, rawURL string) (Content, error)
 func NewIncarnationID() IncarnationID
+func NewPDFContent(id string, name string, size int64, sha256 string) (Content, error)
 func NewParallelBranch(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID, branchIndex int) (*Session, error)
 func NewResourceLinkBlock(uri string, name string, title string, description string, mimeType string, size int64, audience []string) Content
 func NewScheduled(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, scheduleName string, origin SessionID, originIncarnation IncarnationID) (*Session, error)
@@ -340,7 +345,7 @@ type AuthorizationResolution struct{}
 type AuthorizationStatus string
 type BlockKind string
 type CompactionArchivePayload struct{Replaced []Message}
-type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
+type Content struct{BlockKind BlockKind "json:\"block_kind,omitempty\""; Kind MediaKind; MIMEType string; Data []byte; URL string; Text string "json:\"Text,omitempty\""; Name string "json:\"Name,omitempty\""; Title string "json:\"Title,omitempty\""; Description string "json:\"Description,omitempty\""; Size int64 "json:\"Size,omitempty\""; ArtifactID string "json:\"ArtifactID,omitempty\""; SHA256 string "json:\"SHA256,omitempty\""; Audience []string "json:\"Audience,omitempty\""; Priority float64 "json:\"Priority,omitempty\""; LastModified string "json:\"LastModified,omitempty\""}
 type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string

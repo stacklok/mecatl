@@ -73,6 +73,7 @@
     ifacemethod func (SessionStore).Save(ctx context.Context, s *session.Session) error
     ifacemethod func (StreamProgressError).StreamProgress() session.StreamProgress
     ifacemethod func (ToolCallRecorder).ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)
+    ifacemethod func (ToolResultProcessor).ProcessToolResult(context.Context, session.SessionID, session.ToolResult) (session.ToolResult, error)
     ifacemethod func (error).Error() string
     method func (*SessionLoadFailureError).Class() SessionLoadFailureClass
     method func (*SessionLoadFailureError).Error() string
@@ -175,7 +176,7 @@ type NopDeliveryQueue struct{}
 type NopDiagnostics struct{}
 type PermissionPolicy interface{Evaluate(ctx context.Context, sessionID session.SessionID, mode session.PermissionMode, c session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision; Learn(sessionID session.SessionID, c session.ToolCall)}
 type PermissionStore interface{Record(sessionID session.SessionID, rule governance.Rule); Rules(sessionID session.SessionID) []governance.Rule}
-type ProviderCapabilities struct{Image bool; Audio bool; EmbeddedContext bool}
+type ProviderCapabilities struct{Image bool; Audio bool; PDF bool; EmbeddedContext bool}
 type ProviderErrorMetadataError interface{ProviderErrorCode() string; ProviderErrorCorrelationID() string; ProviderErrorCorrelationKind() string; ProviderHTTPStatus() int; ProviderInBandStatus() int; error}
 type PrunableStore interface{Delete(ctx context.Context, id session.SessionID) error; List(ctx context.Context) ([]StoredSession, error)}
 type ReadOptions struct{Limit int; Follow bool}
@@ -215,6 +216,7 @@ type SessionStore interface{Load(ctx context.Context, id session.SessionID) (*se
 type StoredSession struct{ID session.SessionID; ModifiedAt time.Time}
 type StreamProgressError interface{StreamProgress() session.StreamProgress; error}
 type ToolCallRecorder interface{ToolCall(id session.SessionID, call session.ToolCall, result session.ToolResult, queued time.Duration, took time.Duration)}
+type ToolResultProcessor interface{ProcessToolResult(context.Context, session.SessionID, session.ToolResult) (session.ToolResult, error)}
 type TriggerKind int
 type TriggerSpec struct{Cron string; OneShot time.Time}
 var ErrCursorExpired error

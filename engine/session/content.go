@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // MediaKind discriminates a non-text content Part of a user Message.
@@ -16,6 +18,8 @@ const (
 	MediaImage MediaKind = "image"
 	// MediaAudio is an audio part (e.g. audio/wav, audio/mp3).
 	MediaAudio MediaKind = "audio"
+	// MediaPDF is a session-owned PDF artifact reference in a user prompt.
+	MediaPDF MediaKind = "pdf"
 )
 
 // Media size caps. They bound the memory/persistence/per-turn-resend cost of a
@@ -27,13 +31,14 @@ const (
 	// comfortably holds a high-resolution screenshot or photo while bounding the
 	// cost of statelessly re-sending it every turn and persisting it on disk.
 	MaxMediaBytes = 10 << 20 // 10 MiB
-	// MaxPromptMediaBytes is the cap on the SUM of all inline part bytes in one
-	// prompt, so many parts cannot collectively blow memory even when each is
-	// under MaxMediaBytes.
+	// MaxPromptMediaBytes caps the sum of inline bytes and server-resolved PDF
+	// artifact sizes in one prompt, so references do not bypass the prompt budget.
 	MaxPromptMediaBytes = 20 << 20 // 20 MiB
 	// MaxPromptMediaParts is the cap on the number of parts in one prompt, so a
 	// flood of tiny parts cannot exhaust memory either.
 	MaxPromptMediaParts = 16
+	// MaxPDFBytes is the maximum size of a stored PDF artifact.
+	MaxPDFBytes = 20 << 20
 )
 
 // MaxToolResultTextBytes caps the byte length of a single TEXT tool-result block.
@@ -48,11 +53,11 @@ const (
 // module), and toolkit lives under the host repo's internal/adapter tree.
 const MaxToolResultTextBytes = 25 << 10 // 25 KiB (25,600 bytes)
 
-// MaxToolResultBytes is the cap on the SUM of all block bytes in one tool
-// result, mirroring MaxPromptMediaBytes so a tool result cannot collectively
-// blow memory even when each block is under its per-block cap. It counts inline
-// text + blob bytes (URL-sourced resource links contribute none — the provider
-// fetches those).
+// MaxToolResultBytes caps both the SUM of inline binary bytes and the SUM of
+// non-PDF text + blob bytes in one tool result. This lets a 20 MiB PDF reach
+// the artifact processor alongside bounded text without admitting extra binary
+// data. Multiple PDFs share the binary budget. URL-sourced resource links
+// contribute none — the provider fetches those.
 const MaxToolResultBytes = 20 << 20 // 20 MiB
 
 // BlockKind discriminates a Content block variant. The zero value ("")
@@ -79,6 +84,8 @@ const (
 	// BlockStructuredContent carries a JSON-stringified structured payload as a
 	// text block — the backward-compat mirror of the legacy TextContent path.
 	BlockStructuredContent BlockKind = "structured"
+	// BlockArtifact is a downloadable session-owned artifact reference.
+	BlockArtifact BlockKind = "artifact"
 )
 
 // Content is an immutable value object. It serves TWO roles, distinguished by
@@ -132,6 +139,10 @@ type Content struct {
 	Description string `json:"Description,omitempty"`
 	// Size is the resource byte size for a BlockResourceLink (advisory).
 	Size int64 `json:"Size,omitempty"`
+	// ArtifactID identifies a private session-owned artifact; it grants no access by itself.
+	ArtifactID string `json:"ArtifactID,omitempty"`
+	// SHA256 is the lowercase hexadecimal digest of the stored PDF bytes.
+	SHA256 string `json:"SHA256,omitempty"`
 	// Audience is the advisory intended-audience list for a resource block.
 	//
 	// SECURITY: this is UNTRUSTED SERVER SELF-ATTESTATION (CWE-345). An MCP
@@ -211,12 +222,85 @@ func NewAudioURLContent(mime, rawURL string) (Content, error) {
 	return NewContent(MediaAudio, mime, nil, rawURL)
 }
 
+// NewPDFContent builds a server-resolved, reference-only PDF prompt part.
+func NewPDFContent(id, name string, size int64, sha256 string) (Content, error) {
+	if err := validatePDFMetadata(id, name, size, sha256); err != nil {
+		return Content{}, err
+	}
+	return Content{Kind: MediaPDF, MIMEType: "application/pdf", ArtifactID: id, Name: name, Size: size, SHA256: sha256}, nil
+}
+
+// NewArtifactBlock builds a downloadable, reference-only tool-result block.
+// PDF is the only supported artifact MIME type in this release.
+func NewArtifactBlock(id, name, mimeType string, size int64, sha256 string) (Content, error) {
+	if mimeType != "application/pdf" {
+		return Content{}, fmt.Errorf("%w: artifact MIME type is unsupported", ErrInvalidContent)
+	}
+	if err := validatePDFMetadata(id, name, size, sha256); err != nil {
+		return Content{}, err
+	}
+	return Content{BlockKind: BlockArtifact, MIMEType: mimeType, ArtifactID: id, Name: name, Size: size, SHA256: sha256}, nil
+}
+
+func validatePDFMetadata(id, name string, size int64, sha256 string) error {
+	if !validPDFID(id) {
+		return fmt.Errorf("%w: PDF artifact ID is invalid", ErrInvalidContent)
+	}
+	if !validPDFName(name) {
+		return fmt.Errorf("%w: PDF name is invalid", ErrInvalidContent)
+	}
+	if size <= 0 || size > MaxPDFBytes {
+		return fmt.Errorf("%w: PDF size is invalid", ErrInvalidContent)
+	}
+	if !validPDFSHA256(sha256) {
+		return fmt.Errorf("%w: PDF SHA-256 is invalid", ErrInvalidContent)
+	}
+	return nil
+}
+
+func validPDFID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validPDFName(name string) bool {
+	if !utf8.ValidString(name) || name == "." || name == ".." || utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 255 {
+		return false
+	}
+	for _, r := range name {
+		if r == '/' || r == '\\' || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func validPDFSHA256(sha256 string) bool {
+	if len(sha256) != 64 {
+		return false
+	}
+	for _, ch := range sha256 {
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // ValidateMediaParts enforces the per-prompt media caps (CWE-770) on an already
 // constructed slice of parts: at most MaxPromptMediaParts parts, each inline
-// part at most MaxMediaBytes, and the SUM of inline bytes at most
-// MaxPromptMediaBytes. URL-sourced parts contribute no bytes (the provider
-// fetches those). It is called at the wire→domain choke point after the parts
-// are built via NewContent. A nil/empty slice passes.
+// part at most MaxMediaBytes, and the sum of inline bytes and resolved PDF sizes
+// at most MaxPromptMediaBytes. URL-sourced image/audio parts contribute no bytes
+// (the provider fetches those). A nil/empty slice passes.
 func ValidateMediaParts(parts []Content) error {
 	if len(parts) > MaxPromptMediaParts {
 		return fmt.Errorf("%w: too many media parts (%d > %d)", ErrInvalidContent, len(parts), MaxPromptMediaParts)
@@ -228,8 +312,16 @@ func ValidateMediaParts(parts []Content) error {
 			return fmt.Errorf("%w: part[%d] inline data %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
 		}
 		total += n
+		if p.Kind == MediaPDF {
+			// A reference consumes no inline bytes but still spends the prompt's
+			// total PDF budget after server-side metadata resolution.
+			if p.Size < 0 || p.Size > MaxPDFBytes {
+				return fmt.Errorf("%w: part[%d] PDF size is invalid", ErrInvalidContent, i)
+			}
+			total += int(p.Size)
+		}
 		if total > MaxPromptMediaBytes {
-			return fmt.Errorf("%w: total inline media exceeds the %d-byte cap", ErrInvalidContent, MaxPromptMediaBytes)
+			return fmt.Errorf("%w: total prompt media exceeds the %d-byte cap", ErrInvalidContent, MaxPromptMediaBytes)
 		}
 	}
 	return nil
@@ -295,14 +387,17 @@ func NewStructuredContentBlock(structuredJSON string) Content {
 
 // ValidateToolResultParts enforces the per-result byte caps (CWE-770) on an
 // already-constructed slice of tool-result blocks: each text block at most
-// MaxToolResultTextBytes, each blob block at most MaxMediaBytes, and the SUM of
-// inline text+blob bytes at most MaxToolResultBytes. URL-sourced resource links
-// contribute no bytes. It is called at the wire→domain choke point after the
+// MaxToolResultTextBytes, each blob block at most MaxMediaBytes except a PDF
+// embedded resource (MaxPDFBytes), the SUM of inline binary bytes at most
+// MaxToolResultBytes, and the SUM of non-PDF text+blob bytes at most
+// MaxToolResultBytes. URL-sourced resource links contribute no bytes. It is
+// called at the wire→domain choke point after the
 // blocks are built via the constructors. A nil/empty slice passes. It is
 // DISTINCT from ValidateMediaParts (which caps user-message media) — the two
 // paths are read separately by providers and must not be collapsed.
 func ValidateToolResultParts(parts []Content) error {
-	total := 0
+	nonPDFTotal := 0
+	binaryTotal := 0
 	for i, p := range parts {
 		switch p.BlockKind {
 		case BlockText, BlockStructuredContent:
@@ -310,20 +405,30 @@ func ValidateToolResultParts(parts []Content) error {
 			if n > MaxToolResultTextBytes {
 				return fmt.Errorf("%w: block[%d] text %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxToolResultTextBytes)
 			}
-			total += n
+			nonPDFTotal += n
 		case BlockEmbeddedResource:
 			n := len(p.Data)
-			if n > MaxMediaBytes {
-				return fmt.Errorf("%w: block[%d] blob %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
+			limit := MaxMediaBytes
+			pdfBlob := strings.EqualFold(p.MIMEType, "application/pdf") && n > 0
+			if pdfBlob {
+				limit = MaxPDFBytes
 			}
-			total += n + len(p.Text)
+			if n > limit {
+				return fmt.Errorf("%w: block[%d] blob %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, limit)
+			}
+			binaryTotal += n
+			nonPDFTotal += len(p.Text)
+			if !pdfBlob {
+				nonPDFTotal += n
+			}
 		case BlockImage, BlockAudio:
 			n := len(p.Data)
 			if n > MaxMediaBytes {
 				return fmt.Errorf("%w: block[%d] inline data %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
 			}
-			total += n
-		case BlockResourceLink:
+			binaryTotal += n
+			nonPDFTotal += n
+		case BlockResourceLink, BlockArtifact:
 			// Reference only — no inline bytes.
 		case "":
 			// A legacy media part on a tool result is unexpected but harmless
@@ -332,12 +437,16 @@ func ValidateToolResultParts(parts []Content) error {
 			if n > MaxMediaBytes {
 				return fmt.Errorf("%w: block[%d] inline data %d bytes exceeds the %d-byte cap", ErrInvalidContent, i, n, MaxMediaBytes)
 			}
-			total += n
+			binaryTotal += n
+			nonPDFTotal += n
 		default:
 			return fmt.Errorf("%w: block[%d] unknown block kind %q", ErrInvalidContent, i, p.BlockKind)
 		}
-		if total > MaxToolResultBytes {
+		if nonPDFTotal > MaxToolResultBytes {
 			return fmt.Errorf("%w: total tool-result bytes exceeds the %d-byte cap", ErrInvalidContent, MaxToolResultBytes)
+		}
+		if binaryTotal > MaxToolResultBytes {
+			return fmt.Errorf("%w: total tool-result binary bytes exceeds the %d-byte cap", ErrInvalidContent, MaxToolResultBytes)
 		}
 	}
 	return nil
@@ -351,6 +460,8 @@ func ValidateToolResultParts(parts []Content) error {
 // tool-result rendering cannot drift.
 func ToolBlockText(b Content) string {
 	switch b.BlockKind {
+	case BlockArtifact:
+		return fmt.Sprintf("PDF artifact: %s (%d bytes)", b.Name, b.Size)
 	case BlockResourceLink:
 		if b.Title != "" {
 			return b.Title + " (" + b.URL + ")"

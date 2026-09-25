@@ -234,6 +234,23 @@ func TestRequestManifestGatePropagatesToEveryEngineShape(t *testing.T) {
 	}
 }
 
+func TestPDFResultProcessorPropagatesToEveryEngineShape(t *testing.T) {
+	provider, store, policy, hooks, mcpP, instr := depsTestFixture(t)
+	processor := artifactResultProcessorFixture{}
+	cfg := Config{Model: "model", artifactResultProcessor: processor}
+	reg := regForTest(provider, providerOpenAI, cfg.Model)
+	for name, deps := range map[string]agent.Deps{
+		"main":           baseEngineDeps(cfg, reg, provider, store, policy, hooks, mcpP, instr),
+		"per-session":    engineDepsForProvider(cfg, provider, cfg.Model, fixedDefaultWindow, store, policy, hooks, mcpP, instr),
+		"child/provider": childEngineDepsForProvider(cfg, "member:lead", provider, cfg.Model, fixedDefaultWindow, tool.NewCatalog(), promptConfig(cfg, ""), nil),
+		"child/default":  childEngineDeps(cfg, "task", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil),
+	} {
+		if deps.ToolResultProcessor != processor {
+			t.Errorf("%s lost PDF result processor", name)
+		}
+	}
+}
+
 // --- validateDefaultModel fail-fast posture (issue #21) -------------------------
 //
 // The server-configured deployment-wide default (--default-provider /

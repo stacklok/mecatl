@@ -50,6 +50,7 @@ export interface SessionResolvedModel {
 export interface SessionCapabilities {
   readonly image: boolean;
   readonly audio: boolean;
+  readonly pdf: boolean;
 }
 
 /** Bounded display metadata for a session placement. @public */
@@ -108,6 +109,7 @@ export interface ManualDreamCapabilities {
 
 /** Optional server features captured with a session snapshot. @public */
 export interface ServerCapabilities {
+  readonly artifacts: boolean;
   readonly mcp: boolean;
   readonly slashCommands: boolean;
   readonly memory: boolean;
@@ -238,6 +240,7 @@ function manualDream(value: ProtoManualDreamCapabilities): ManualDreamCapabiliti
 /** Internal shared projection for server- and session-scoped capability responses. */
 export function projectServerCapabilities(value: ProtoServerCapabilities): ServerCapabilities {
   return {
+    artifacts: value.artifacts,
     agents: value.agents,
     audio: value.audio,
     shell: value.shell,
@@ -283,6 +286,7 @@ function toolCall(value: ToolCall): ToolCallEventPayload {
 
 function contentBlock(value: ContentBlock): EventContentBlock {
   return {
+    artifactId: value.artifactId,
     audience: [...value.audience],
     data: value.data.slice(),
     description: value.description,
@@ -292,6 +296,7 @@ function contentBlock(value: ContentBlock): EventContentBlock {
     name: value.name,
     priority: value.priority,
     size: value.size,
+    sha256: value.sha256,
     text: value.text,
     title: value.title,
     url: value.url,
@@ -310,9 +315,13 @@ function toolResult(value: ToolResult): ToolResultEventPayload {
 
 function content(value: Content): EventContent {
   return {
+    artifactId: value.artifactId,
     data: value.data.slice(),
     kind: value.kind,
     mimeType: value.mimeType,
+    name: value.name,
+    size: value.size,
+    sha256: value.sha256,
     url: value.url,
   };
 }
@@ -412,6 +421,7 @@ export function projectSessionSnapshot(
           sessionCapabilities: {
             audio: value.sessionCapabilities.audio,
             image: value.sessionCapabilities.image,
+            pdf: value.sessionCapabilities.pdf,
           },
         }),
     sessionId: value.sessionId,

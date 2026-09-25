@@ -291,6 +291,12 @@ type Config struct {
 	// SessionCleared drops process-local state tied to a source session after a
 	// successful ClearSession successor publication. nil is inert.
 	SessionCleared func(session.SessionID)
+	// Artifacts owns private session-scoped PDF objects. Nil disables uploads.
+	Artifacts ArtifactLifecycle
+	// ArtifactUploadReceiveTimeout bounds a gRPC upload from its first receive,
+	// including an idle authenticated stream before metadata arrives.
+	// Zero selects the default receive lifetime.
+	ArtifactUploadReceiveTimeout time.Duration
 	// StorageManagementAuthorized gates process-wide storage health. A nil
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.
@@ -2689,6 +2695,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Skills:            has(skills.ToolName),
 		Shell:             has(tool.ShellToolName),
 		Image:             pcaps.Image,
+		Artifacts:         s.cfg.Artifacts != nil,
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,
 		Worktrees:         s.placementDiscoveryAvailable(),
@@ -4753,6 +4760,13 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	if serverOwnedPlanContinuation && s.cfg.EventLog == nil {
 		return nil, ErrNoEventLog
 	}
+	if purpose == runPurposeScheduler && hasPDFPromptPart(parts) {
+		return nil, fmt.Errorf("%w: scheduled PDF prompts are unsupported", ErrInvalidArgument)
+	}
+	parts, err = s.resolvePDFPromptParts(ctx, sess, parts)
+	if err != nil {
+		return nil, err
+	}
 	if _, pending := sess.FailedStepRetryPending(); pending {
 		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)
 	}
@@ -5357,7 +5371,12 @@ func (s *Service) SteerRun(ctx context.Context, id session.SessionID, expectedRu
 	if err := validateSteerMessageID(messageID); err != nil {
 		return RunSteerAcknowledgement{}, err
 	}
-	if _, err := s.GetSession(ctx, id); err != nil {
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return RunSteerAcknowledgement{}, err
+	}
+	parts, err = s.resolvePDFPromptParts(ctx, sess, parts)
+	if err != nil {
 		return RunSteerAcknowledgement{}, err
 	}
 	generation := s.captureRunEntryGeneration(id)
@@ -5457,7 +5476,12 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 	// Authorize before touching the in-memory registry or the run-entry funnel:
 	// a steer injects caller input into a run / drives a follow-up, so a foreign
 	// request must be absence-equivalent (ErrNotFound), mirroring Cancel/Approve.
-	if _, err := s.GetSession(ctx, id); err != nil {
+	sess, err := s.GetSession(ctx, id)
+	if err != nil {
+		return agent.SteerTooLate, false, nil, err
+	}
+	parts, err = s.resolvePDFPromptParts(ctx, sess, parts)
+	if err != nil {
 		return agent.SteerTooLate, false, nil, err
 	}
 	if err := validateSteerMessageID(messageID); err != nil {

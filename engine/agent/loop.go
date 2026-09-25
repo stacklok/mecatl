@@ -184,6 +184,9 @@ type Deps struct {
 	ReviewTaskWindow int
 	// PlanApprovals owns process-local, single-use plan approval receipts.
 	PlanApprovals PlanApprovalStore
+	// ToolResultProcessor transforms the effective post-hook result before any
+	// audit, event, or session record. A nil processor keeps legacy behavior.
+	ToolResultProcessor port.ToolResultProcessor
 	// Store persists session state (optional; nil disables persistence).
 	Store port.SessionStore
 	// SessionLiveness is the optional lifecycle-exclusion seam for engine-owned

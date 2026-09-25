@@ -48,6 +48,8 @@ const (
 	HarnessService_GetSession_FullMethodName                      = "/mecatl.v1.HarnessService/GetSession"
 	HarnessService_ListGuardrailCoverage_FullMethodName           = "/mecatl.v1.HarnessService/ListGuardrailCoverage"
 	HarnessService_GetGuardrailReviewDetail_FullMethodName        = "/mecatl.v1.HarnessService/GetGuardrailReviewDetail"
+	HarnessService_UploadArtifact_FullMethodName                  = "/mecatl.v1.HarnessService/UploadArtifact"
+	HarnessService_DownloadArtifact_FullMethodName                = "/mecatl.v1.HarnessService/DownloadArtifact"
 	HarnessService_GetSessionTranscript_FullMethodName            = "/mecatl.v1.HarnessService/GetSessionTranscript"
 	HarnessService_SetMode_FullMethodName                         = "/mecatl.v1.HarnessService/SetMode"
 	HarnessService_CloseSession_FullMethodName                    = "/mecatl.v1.HarnessService/CloseSession"
@@ -157,6 +159,11 @@ type HarnessServiceClient interface {
 	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error)
 	ListGuardrailCoverage(ctx context.Context, in *ListGuardrailCoverageRequest, opts ...grpc.CallOption) (*ListGuardrailCoverageResponse, error)
 	GetGuardrailReviewDetail(ctx context.Context, in *GetGuardrailReviewDetailRequest, opts ...grpc.CallOption) (*GetGuardrailReviewDetailResponse, error)
+	// UploadArtifact stages a session-owned artifact from one metadata frame
+	// followed by bounded nonempty byte chunks. Only PDF is supported in v1.
+	UploadArtifact(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadArtifactRequest, UploadArtifactResponse], error)
+	// DownloadArtifact streams one previously published, owned artifact.
+	DownloadArtifact(ctx context.Context, in *DownloadArtifactRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DownloadArtifactResponse], error)
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
 	// transcript for one owned session. It is read-only and does not use EventLog.
 	GetSessionTranscript(ctx context.Context, in *GetSessionTranscriptRequest, opts ...grpc.CallOption) (*GetSessionTranscriptResponse, error)
@@ -591,6 +598,38 @@ func (c *harnessServiceClient) GetGuardrailReviewDetail(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *harnessServiceClient) UploadArtifact(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[UploadArtifactRequest, UploadArtifactResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[0], HarnessService_UploadArtifact_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[UploadArtifactRequest, UploadArtifactResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_UploadArtifactClient = grpc.ClientStreamingClient[UploadArtifactRequest, UploadArtifactResponse]
+
+func (c *harnessServiceClient) DownloadArtifact(ctx context.Context, in *DownloadArtifactRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DownloadArtifactResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[1], HarnessService_DownloadArtifact_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DownloadArtifactRequest, DownloadArtifactResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_DownloadArtifactClient = grpc.ServerStreamingClient[DownloadArtifactResponse]
+
 func (c *harnessServiceClient) GetSessionTranscript(ctx context.Context, in *GetSessionTranscriptRequest, opts ...grpc.CallOption) (*GetSessionTranscriptResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetSessionTranscriptResponse)
@@ -673,7 +712,7 @@ func (c *harnessServiceClient) ForkSession(ctx context.Context, in *ForkSessionR
 
 func (c *harnessServiceClient) Converse(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConverseRequest, ConverseResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[0], HarnessService_Converse_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[2], HarnessService_Converse_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -846,7 +885,7 @@ func (c *harnessServiceClient) ListWorktrees(ctx context.Context, in *ListWorktr
 
 func (c *harnessServiceClient) StreamSessionEvents(ctx context.Context, in *StreamSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[1], HarnessService_StreamSessionEvents_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[3], HarnessService_StreamSessionEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -865,7 +904,7 @@ type HarnessService_StreamSessionEventsClient = grpc.ServerStreamingClient[Event
 
 func (c *harnessServiceClient) StreamSessionLive(ctx context.Context, in *StreamSessionLiveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[2], HarnessService_StreamSessionLive_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[4], HarnessService_StreamSessionLive_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -884,7 +923,7 @@ type HarnessService_StreamSessionLiveClient = grpc.ServerStreamingClient[Event]
 
 func (c *harnessServiceClient) WatchSessionEvents(ctx context.Context, in *WatchSessionEventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WatchSessionEventsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[3], HarnessService_WatchSessionEvents_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[5], HarnessService_WatchSessionEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -913,7 +952,7 @@ func (c *harnessServiceClient) GetMcpAuthorizationPresentation(ctx context.Conte
 
 func (c *harnessServiceClient) RecheckMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RecheckMcpAuthorizationRequest, RecheckMcpAuthorizationResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[4], HarnessService_RecheckMcpAuthorization_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[6], HarnessService_RecheckMcpAuthorization_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -926,7 +965,7 @@ type HarnessService_RecheckMcpAuthorizationClient = grpc.BidiStreamingClient[Rec
 
 func (c *harnessServiceClient) CancelMcpAuthorization(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CancelMcpAuthorizationRequest, CancelMcpAuthorizationResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[5], HarnessService_CancelMcpAuthorization_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[7], HarnessService_CancelMcpAuthorization_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1269,7 +1308,7 @@ func (c *harnessServiceClient) CancelTeammate(ctx context.Context, in *CancelTea
 
 func (c *harnessServiceClient) RunTeam(ctx context.Context, in *RunTeamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TeamEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[6], HarnessService_RunTeam_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[8], HarnessService_RunTeam_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1308,7 +1347,7 @@ func (c *harnessServiceClient) CleanupTeam(ctx context.Context, in *CleanupTeamR
 
 func (c *harnessServiceClient) ApprovePlan(ctx context.Context, in *ApprovePlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[7], HarnessService_ApprovePlan_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &HarnessService_ServiceDesc.Streams[9], HarnessService_ApprovePlan_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1391,6 +1430,11 @@ type HarnessServiceServer interface {
 	GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error)
 	ListGuardrailCoverage(context.Context, *ListGuardrailCoverageRequest) (*ListGuardrailCoverageResponse, error)
 	GetGuardrailReviewDetail(context.Context, *GetGuardrailReviewDetailRequest) (*GetGuardrailReviewDetailResponse, error)
+	// UploadArtifact stages a session-owned artifact from one metadata frame
+	// followed by bounded nonempty byte chunks. Only PDF is supported in v1.
+	UploadArtifact(grpc.ClientStreamingServer[UploadArtifactRequest, UploadArtifactResponse]) error
+	// DownloadArtifact streams one previously published, owned artifact.
+	DownloadArtifact(*DownloadArtifactRequest, grpc.ServerStreamingServer[DownloadArtifactResponse]) error
 	// GetSessionTranscript returns the authoritative, snapshot-derived human
 	// transcript for one owned session. It is read-only and does not use EventLog.
 	GetSessionTranscript(context.Context, *GetSessionTranscriptRequest) (*GetSessionTranscriptResponse, error)
@@ -1783,6 +1827,12 @@ func (UnimplementedHarnessServiceServer) ListGuardrailCoverage(context.Context, 
 func (UnimplementedHarnessServiceServer) GetGuardrailReviewDetail(context.Context, *GetGuardrailReviewDetailRequest) (*GetGuardrailReviewDetailResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGuardrailReviewDetail not implemented")
 }
+func (UnimplementedHarnessServiceServer) UploadArtifact(grpc.ClientStreamingServer[UploadArtifactRequest, UploadArtifactResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method UploadArtifact not implemented")
+}
+func (UnimplementedHarnessServiceServer) DownloadArtifact(*DownloadArtifactRequest, grpc.ServerStreamingServer[DownloadArtifactResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method DownloadArtifact not implemented")
+}
 func (UnimplementedHarnessServiceServer) GetSessionTranscript(context.Context, *GetSessionTranscriptRequest) (*GetSessionTranscriptResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSessionTranscript not implemented")
 }
@@ -2124,6 +2174,24 @@ func _HarnessService_GetGuardrailReviewDetail_Handler(srv interface{}, ctx conte
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _HarnessService_UploadArtifact_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(HarnessServiceServer).UploadArtifact(&grpc.GenericServerStream[UploadArtifactRequest, UploadArtifactResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_UploadArtifactServer = grpc.ClientStreamingServer[UploadArtifactRequest, UploadArtifactResponse]
+
+func _HarnessService_DownloadArtifact_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(DownloadArtifactRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(HarnessServiceServer).DownloadArtifact(m, &grpc.GenericServerStream[DownloadArtifactRequest, DownloadArtifactResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type HarnessService_DownloadArtifactServer = grpc.ServerStreamingServer[DownloadArtifactResponse]
 
 func _HarnessService_GetSessionTranscript_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetSessionTranscriptRequest)
@@ -3620,6 +3688,16 @@ var HarnessService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "UploadArtifact",
+			Handler:       _HarnessService_UploadArtifact_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "DownloadArtifact",
+			Handler:       _HarnessService_DownloadArtifact_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "Converse",
 			Handler:       _HarnessService_Converse_Handler,

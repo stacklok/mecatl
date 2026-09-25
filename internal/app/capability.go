@@ -146,6 +146,27 @@ func hasAudioModality(modalities []string) bool {
 	return false
 }
 
+func hasPDFModality(modalities []string) bool {
+	for _, mod := range modalities {
+		if mod == "pdf" {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogPDFModality(providerID, modelID string) bool {
+	if providerID == "" || modelID == "" {
+		return false
+	}
+	p, ok := providercatalog.Default().Provider(metadataCatalogProviderID(providerID))
+	if !ok {
+		return false
+	}
+	m, ok := p.Model(modelID)
+	return ok && hasPDFModality(m.InputModalities())
+}
+
 // catalogModalities reports the catalog's per-model input modalities (image,
 // audio) for (providerID, modelID) and whether the (provider, model) pair was
 // found in the catalog at all. A miss (unknown provider, uncatalogued model, or an

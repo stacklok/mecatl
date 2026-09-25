@@ -2,7 +2,9 @@ package openai
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 
@@ -250,7 +252,7 @@ func buildInput(msgs []session.Message, caps port.ProviderCapabilities, breakpoi
 			}
 			// Multimodal, or the marked message: build a content-list message
 			// (input_text + per-part media).
-			content, perr := userContentList(m)
+			content, perr := userContentList(m, caps)
 			if perr != nil {
 				return nil, perr
 			}
@@ -337,7 +339,7 @@ func toolOutputItem(tr session.ToolResult, caps port.ProviderCapabilities) respo
 // (openai-go v3.37.0), and the provider declares Audio:false, so a surface
 // adapter rejects audio upstream — this is the belt-and-suspenders guard for a
 // part that slips through.
-func userContentList(m session.Message) (responses.ResponseInputMessageContentListParam, error) {
+func userContentList(m session.Message, caps port.ProviderCapabilities) (responses.ResponseInputMessageContentListParam, error) {
 	content := responses.ResponseInputMessageContentListParam{}
 	if m.Text != "" {
 		content = append(content, responses.ResponseInputContentUnionParam{
@@ -356,11 +358,45 @@ func userContentList(m session.Message) (responses.ResponseInputMessageContentLi
 			})
 		case session.MediaAudio:
 			return nil, fmt.Errorf("openai: audio input not supported by Responses API")
+		case pdfMediaKind:
+			if !hasPDFCapability(caps) {
+				return nil, fmt.Errorf("openai: PDF input not supported by selected model")
+			}
+			if err := validateHydratedPDF(p); err != nil {
+				return nil, err
+			}
+			content = append(content, responses.ResponseInputContentUnionParam{
+				OfInputFile: &responses.ResponseInputFileParam{
+					FileData: oai.String(dataURL("application/pdf", p.Data)),
+					Filename: oai.String(p.Name),
+				},
+			})
 		default:
 			return nil, fmt.Errorf("openai: unsupported media kind %q", p.Kind)
 		}
 	}
 	return content, nil
+}
+
+// validateHydratedPDF accepts only a temporary, session-resolved PDF part. The
+// provider never dereferences a caller URL or treats an artifact ID as a public
+// file ID. The digest binds the transient bytes to the server-resolved metadata.
+func validateHydratedPDF(p session.Content) error {
+	if p.BlockKind != "" || p.MIMEType != "application/pdf" || p.URL != "" {
+		return fmt.Errorf("openai: invalid PDF input")
+	}
+	digest, valid := pdfMetadata(p)
+	if !valid {
+		return fmt.Errorf("openai: invalid PDF input metadata")
+	}
+	if len(p.Data) == 0 || int64(len(p.Data)) != p.Size {
+		return fmt.Errorf("openai: PDF input bytes not resolved")
+	}
+	sum := sha256.Sum256(p.Data)
+	if hex.EncodeToString(sum[:]) != digest {
+		return fmt.Errorf("openai: PDF input digest mismatch")
+	}
+	return nil
 }
 
 // dataURL renders inline media bytes as an RFC 2397 base64 data URL

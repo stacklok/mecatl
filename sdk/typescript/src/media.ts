@@ -1,4 +1,8 @@
-import { PromptValidationError, type PromptValidationReason } from "./errors.js";
+import {
+  PromptValidationError,
+  type PromptValidationReason,
+  UnsupportedFeatureError,
+} from "./errors.js";
 
 /** Maximum inline bytes in one image or audio part. @public */
 export const MAX_MEDIA_PART_BYTES = 10 << 20;
@@ -45,8 +49,16 @@ export interface AudioPromptPart {
   readonly url?: string;
 }
 
+/** A reference to a session-owned PDF uploaded with Session.uploadArtifact(). @public */
+export interface PdfPromptPart {
+  /** PDF part discriminator. */
+  readonly kind: "pdf";
+  /** Opaque ID of a PDF owned by the current session. */
+  readonly artifactId: string;
+}
+
 /** One segment accepted by Session.run(). @public */
-export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart;
+export type PromptPart = TextPromptPart | ImagePromptPart | AudioPromptPart | PdfPromptPart;
 
 /** A backwards-compatible string prompt or structured text/media parts. @public */
 export type PromptInput = string | readonly PromptPart[];
@@ -84,6 +96,33 @@ export function imagePart(options: MediaPartOptions): ImagePromptPart {
  */
 export function audioPart(options: MediaPartOptions): AudioPromptPart {
   return mediaPart("audio", options);
+}
+
+/**
+ * Constructs a reference to a PDF already uploaded to this session.
+ *
+ * The server checks that the selected session owns the artifact ID.
+ *
+ * @param artifactId - Opaque ID from Session.uploadArtifact() or a PDF result block.
+ * @returns A PDF prompt part containing only the artifact ID.
+ * @throws `PromptValidationError` when the ID is empty or malformed.
+ * @public
+ */
+export function pdfPart(artifactId: string): PdfPromptPart {
+  validateArtifactId(artifactId);
+  return { kind: "pdf", artifactId };
+}
+
+/** Rejects malformed opaque artifact IDs before a transfer or prompt. */
+export function validateArtifactId(artifactId: string): void {
+  if (
+    typeof artifactId !== "string" ||
+    artifactId.trim() === "" ||
+    artifactId !== artifactId.trim() ||
+    /[\p{Cc}\p{Cf}]/u.test(artifactId)
+  ) {
+    invalid("prompt", "artifact ID must be a non-empty opaque ID");
+  }
 }
 
 /**
@@ -169,13 +208,32 @@ function validateHTTPS(rawURL: unknown): asserts rawURL is string {
 }
 
 export interface EncodedPrompt {
-  readonly media: readonly MediaPromptPart[];
+  readonly media: readonly (MediaPromptPart | PdfPromptPart)[];
   readonly text: string;
 }
 
 export interface PromptCapabilities {
   readonly audio: boolean;
   readonly image: boolean;
+  /** Echoed capability for this session's selected provider and model. */
+  readonly pdf?: boolean;
+  /** Deployment capability advertised in server compatibility. */
+  readonly artifacts?: boolean;
+}
+
+/** Artifact transfers need the deployment capability, independent of model input. */
+export function assertArtifactCapability(capabilities: PromptCapabilities | undefined): void {
+  if (capabilities?.artifacts !== true) {
+    throw new UnsupportedFeatureError("artifacts_unavailable", { transport: "local" });
+  }
+}
+
+/** PDF prompt use also needs the selected session model's PDF input capability. */
+export function assertPdfCapability(capabilities: PromptCapabilities | undefined): void {
+  assertArtifactCapability(capabilities);
+  if (capabilities?.pdf !== true) {
+    invalid("capability", "session capability rejects PDF input");
+  }
 }
 
 export function encodePrompt(
@@ -186,12 +244,18 @@ export function encodePrompt(
   if (!Array.isArray(prompt)) invalid("prompt", "prompt must be a string or an array of parts");
 
   const text: string[] = [];
-  const media: MediaPromptPart[] = [];
+  const media: (MediaPromptPart | PdfPromptPart)[] = [];
   let totalBytes = 0;
   for (const part of prompt as readonly PromptPart[]) {
     if (part?.kind === "text") {
       if (typeof part.text !== "string") invalid("prompt", "text part must contain text");
       text.push(part.text);
+      continue;
+    }
+    if (part?.kind === "pdf") {
+      const checked = pdfPart(part.artifactId);
+      assertPdfCapability(capabilities);
+      media.push(checked);
       continue;
     }
     if (part?.kind !== "image" && part?.kind !== "audio") {

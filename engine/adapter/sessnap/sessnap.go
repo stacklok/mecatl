@@ -179,10 +179,14 @@ type messageDTO struct {
 // contentDTO mirrors session.Content with JSON tags. Data []byte marshals as
 // base64 automatically. Exactly one of data/url is set on a well-formed part.
 type contentDTO struct {
-	Kind     session.MediaKind `json:"kind"`
-	MIMEType string            `json:"mime_type,omitempty"`
-	Data     []byte            `json:"data,omitempty"`
-	URL      string            `json:"url,omitempty"`
+	Kind       session.MediaKind `json:"kind"`
+	MIMEType   string            `json:"mime_type,omitempty"`
+	Data       []byte            `json:"data,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	ArtifactID string            `json:"artifact_id,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	Size       int64             `json:"size,omitempty"`
+	SHA256     string            `json:"sha256,omitempty"`
 }
 
 // pendingAuthorizationDTO keeps the private continuation's effective argument
@@ -643,7 +647,7 @@ func contentToDTO(parts []session.Content) []contentDTO {
 	}
 	out := make([]contentDTO, len(parts))
 	for i, p := range parts {
-		out[i] = contentDTO{Kind: p.Kind, MIMEType: p.MIMEType, Data: p.Data, URL: p.URL}
+		out[i] = contentDTO{Kind: p.Kind, MIMEType: p.MIMEType, Data: p.Data, URL: p.URL, ArtifactID: p.ArtifactID, Name: p.Name, Size: p.Size, SHA256: p.SHA256}
 	}
 	return out
 }
@@ -654,7 +658,7 @@ func contentFromDTO(parts []contentDTO) []session.Content {
 	}
 	out := make([]session.Content, len(parts))
 	for i, p := range parts {
-		out[i] = session.Content{Kind: p.Kind, MIMEType: p.MIMEType, Data: p.Data, URL: p.URL}
+		out[i] = session.Content{Kind: p.Kind, MIMEType: p.MIMEType, Data: p.Data, URL: p.URL, ArtifactID: p.ArtifactID, Name: p.Name, Size: p.Size, SHA256: p.SHA256}
 	}
 	return out
 }

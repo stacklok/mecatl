@@ -75,6 +75,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/openaicodex"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
+	"github.com/stacklok/mecatl/internal/adapter/pdfartifact"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/providercatalog"
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
@@ -193,8 +194,12 @@ type Config struct {
 	RedisAllowPlaintext bool
 	// RedisFollowPoolSize and RedisMaxFollowers bound the isolated blocking
 	// event-follow path. Zero retains redisstore's defaults for non-CLI callers.
-	RedisFollowPoolSize        int
-	RedisMaxFollowers          int
+	RedisFollowPoolSize int
+	RedisMaxFollowers   int
+	// ArtifactS3 enables private PDFs with Redis metadata and S3-compatible objects.
+	ArtifactS3                 pdfartifact.S3Config
+	artifacts                  server.ArtifactLifecycle
+	artifactResultProcessor    port.ToolResultProcessor
 	Shell                      string
 	NoShell                    bool
 	commandEnvironmentInherit  []string
@@ -2045,6 +2050,21 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, err
 	}
+	artifactStore, err := buildArtifactStore(ctx, cfg, store, sessionLease)
+	if err != nil {
+		storeClose()
+		commandConnClose()
+		return nil, err
+	}
+	if artifactStore != nil {
+		cfg.artifacts = artifactStore
+		cfg.artifactResultProcessor = pdfartifact.ResultProcessor{Artifacts: artifactStore}
+	}
+	if cfg.artifacts != nil && cfg.artifactResultProcessor == nil {
+		storeClose()
+		commandConnClose()
+		return nil, errors.New("PDF artifact storage requires a tool-result processor")
+	}
 	// Request manifests exist solely as retained debugger evidence. Derive the
 	// engine gate from the EventLog selected by composition, never from the live
 	// EventSink, and do it before building main, per-session, and child engines.
@@ -2076,6 +2096,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// The gate covers operation admission; backend calls already admitted may
 	// complete after a declared loss.
 	engineStore := mutationCapability.GuardStore(store)
+	if cfg.artifacts != nil {
+		engineStore = artifactPromptCommitStore{SessionStore: engineStore, artifacts: cfg.artifacts}
+		if provider != nil {
+			provider = pdfReferenceProvider{inner: provider, artifacts: cfg.artifacts}
+		}
+	}
 	cfg.ToolCallRecorder = mutationCapability.GuardToolCallRecorder(cfg.ToolCallRecorder)
 	var brokerDeclaration mcpauthority.BrokerConfig
 	brokerSelected := false
@@ -2332,7 +2358,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return 0, false
 		},
 		SharedEngineRevision: assets.sharedEngineRevision,
-		Store:                store,
+		Store:                artifactServiceStore(store, cfg.artifacts),
+		Artifacts:            cfg.artifacts,
 		SessionCleared: func(id session.SessionID) {
 			if assets.guardrailGrants != nil {
 				assets.guardrailGrants.ClearSession(string(id))
@@ -2413,7 +2440,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		// input is the CATALOG SEED, not the live feed — fine for the default/ACP path,
 		// which has no per-session selector in P0. A per-session SELECTOR session (see
 		// the modelCapability call below, evaluated post-Swap) DOES get the live value.
-		DefaultCapabilities: modelCapability(reg, reg.Default(), cfg.Model),
+		DefaultCapabilities: configuredPDFModelCapability(cfg, reg, reg.Default(), cfg.Model),
 		ResolveCapabilities: func(providerID, modelID string, mode session.PermissionMode) port.ProviderCapabilities {
 			if providerID == "" {
 				providerID = reg.Default()
@@ -2424,7 +2451,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 					modelID = planModel
 				}
 			}
-			return modelCapability(reg, providerID, modelID)
+			return configuredPDFModelCapability(cfg, reg, providerID, modelID)
 		},
 		ResolveSessionModel: func(sel server.ProviderSelector, mode session.PermissionMode) server.ResolvedModel {
 			return resolvedSessionProjection(cfg, reg, sel, mode)
@@ -2815,6 +2842,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
+	pdfReconcileClose := startArtifactReconcile(ctx, artifactStore, svc, sessionLease, leaseOwner, cfg.diag())
 
 	// Bootstrap, one-shot startup, picker demand and run admission share the
 	// same owner. Startup skips completed attempts and native authentication;
@@ -2834,6 +2862,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// complexity stays under the lint cap.
 	schedClose, err := startScheduler(ctx, cfg, store, sessionLease, leaseOwner, svc, assets.deliveryQueue)
 	if err != nil {
+		pdfReconcileClose()
 		refreshClose()
 		svc.Close()
 		childLiveness.Close()
@@ -2870,6 +2899,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// connection (LAST — everything before it may still persist; a no-op for the
 	// local stores, and once-guarded if the memory driver shares the conn).
 	closeAll := sync.OnceFunc(func() {
+		pdfReconcileClose()
 		if assets.reflectionLifecycle != nil {
 			assets.reflectionLifecycle.close()
 		}
@@ -3173,7 +3203,7 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 			mountedNames = append(mountedNames, candidate.Spec().Name)
 		}
 		return server.SessionEngineResult{
-			Engine: agent.NewEngine(deps), Capabilities: modelCapability(reg, providerID, model),
+			Engine: agent.NewEngine(deps), Capabilities: configuredPDFModelCapability(cfg, reg, providerID, model),
 			ProviderID: providerID, ModelID: model, BuiltForMode: mode, RuntimeRevision: runtimeRevision, DebugMCPTools: mountedNames, Close: func() error { return nil },
 		}, nil
 	}
@@ -3314,7 +3344,7 @@ func sessionEngineFactoryWithTools(
 		// the server adapter. It is ALSO the intersection the provider adapter's
 		// request builder consults to project a tool result's typed Parts (T7) —
 		// threaded into the adapter via the re-mint below.
-		sessionCaps := modelCapability(reg, resolvedProviderID, resolvedModel)
+		sessionCaps := configuredPDFModelCapability(cfg, reg, resolvedProviderID, resolvedModel)
 		// Re-mint ONLY when the resolved session effort OR capability intersection
 		// differs from the OPERATOR-DEFAULT the entry's shared .provider was built
 		// with (the SAME normalise+clamp the registry applied at build, and the
@@ -3329,6 +3359,9 @@ func sessionEngineFactoryWithTools(
 			if resolvedEffort != entryEffort || capsDiff {
 				resolvedProvider = entry.remint(resolvedEffort, sessionCaps)
 			}
+		}
+		if cfg.artifacts != nil {
+			resolvedProvider = pdfReferenceProvider{inner: resolvedProvider, artifacts: cfg.artifacts}
 		}
 		// The compaction window is the LIVE-FIRST resolver over the resolved
 		// (provider, model) — the SAME reg.windowResolver the shared and child engines
@@ -3359,6 +3392,7 @@ func sessionEngineFactoryWithTools(
 		}
 		var mgr *mcp.Manager
 		if len(specs) > 0 {
+			specs = withArtifactResults(specs, cfg.artifacts != nil)
 			m, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
 			if err != nil {
 				// Best-effort HERE, by design: every server failed and the session still
@@ -3446,6 +3480,7 @@ func sessionEngineFactoryWithTools(
 		// has no tool, so the note is withheld (the model is never told about a
 		// tool it cannot call).
 		deps.PromptConfig = applySchedulePosture(deps.PromptConfig, scheduleManagerPresent(runtimeAssets))
+		deps.PromptConfig = applyPDFAttachmentPosture(deps.PromptConfig, sessionCaps.PDF)
 		deps.PromptConfig = applyAgentModelDiscoveryPosture(deps.PromptConfig, deps.Catalog)
 		deps.PromptConfig = applyTemporaryStoragePosture(deps.PromptConfig, shellAvailable(cfg))
 		deps.PromptConfig = applyDiagnosticsPosture(deps.PromptConfig)
@@ -4078,15 +4113,16 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 
 func redisStoreConfig(cfg Config) redisstore.Config {
 	return redisstore.Config{
-		Addr:           cfg.RedisURL,
-		UsernameFile:   cfg.RedisUsernameFile,
-		PasswordFile:   cfg.RedisPasswordFile,
-		CAFile:         cfg.RedisTLSCAFile,
-		TLS:            cfg.RedisTLS,
-		AllowPlaintext: cfg.RedisAllowPlaintext,
-		FollowPoolSize: cfg.RedisFollowPoolSize,
-		MaxFollowers:   cfg.RedisMaxFollowers,
-		Diagnostics:    cfg.diag(),
+		Addr:             cfg.RedisURL,
+		UsernameFile:     cfg.RedisUsernameFile,
+		PasswordFile:     cfg.RedisPasswordFile,
+		CAFile:           cfg.RedisTLSCAFile,
+		TLS:              cfg.RedisTLS,
+		AllowPlaintext:   cfg.RedisAllowPlaintext,
+		FollowPoolSize:   cfg.RedisFollowPoolSize,
+		MaxFollowers:     cfg.RedisMaxFollowers,
+		ArtifactsEnabled: cfg.ArtifactS3.Bucket != "",
+		Diagnostics:      cfg.diag(),
 	}
 }
 
@@ -4789,11 +4825,12 @@ func engineDepsForProvider(
 		compactorCounter = buildTokenCounter(compactorCfg)
 	}
 	return agent.Deps{
-		LLM:                provider,
-		Policy:             policy,
-		AuthorityEvaluator: cfg.authorityEvaluator,
-		Hooks:              hooks,
-		Instructions:       instructions,
+		LLM:                 provider,
+		Policy:              policy,
+		AuthorityEvaluator:  cfg.authorityEvaluator,
+		Hooks:               hooks,
+		ToolResultProcessor: cfg.artifactResultProcessor,
+		Instructions:        instructions,
 		// Persist mid-run transitions (tool results, terminal state) so a durable
 		// store (StoreDir) holds current state. The Service additionally persists on
 		// entering awaiting and at run end; both share this store, so the latest
@@ -6836,11 +6873,12 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		// AudienceSubagent pin + the workspace-pinned config resolver (issue #32)
 		// so `subagent:`-block rules bind children; with no config it is the
 		// historical allow-all shape.
-		Policy:             childPermPolicy(cfg),
-		AuthorityEvaluator: cfg.authorityEvaluator,
-		Hooks:              hooks,
-		PromptConfig:       pc,
-		Model:              model,
+		Policy:              childPermPolicy(cfg),
+		AuthorityEvaluator:  cfg.authorityEvaluator,
+		Hooks:               hooks,
+		ToolResultProcessor: cfg.artifactResultProcessor,
+		PromptConfig:        pc,
+		Model:               model,
 		// Diagnostics is LIVE for child engines (correlated by session + the agent
 		// role below) so interleaved child diagnostics are readable on the operator
 		// channel — this is DISTINCT from Sink/ToolCallRecorder (telemetry/audit),
@@ -8547,6 +8585,19 @@ func applyPlanModePosture(pc prompt.Config, mode session.PermissionMode) prompt.
 }
 
 const agentModelDiscoveryPostureNote = "You have a DiscoverModels tool for bounded inspection of the currently resolved model inventory. When the provider is unknown, call DiscoverModels without provider_id; omission searches all selectable providers, and the unfiltered result lists their exact selectable provider IDs. Only use a returned exact (provider_id, model_id) pair with an existing surface that explicitly accepts both, or return it to the caller for selection. DiscoverModels itself cannot switch the session."
+
+const pdfAttachmentPostureNote = "The user may attach a PDF to a chat message. Read the attached PDF as part of that message when answering; a PDF artifact reference belongs to this session and is not a public URL."
+
+func applyPDFAttachmentPosture(pc prompt.Config, enabled bool) prompt.Config {
+	if !enabled {
+		return pc
+	}
+	if pc.Role == "" {
+		pc.Role = prompt.DefaultRole()
+	}
+	pc.Role += "\n\n" + pdfAttachmentPostureNote
+	return pc
+}
 
 func applyAgentModelDiscoveryPosture(pc prompt.Config, catalog *tool.Catalog) prompt.Config {
 	if catalog == nil {

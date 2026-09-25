@@ -30,6 +30,19 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
   Added (minor).
 
+- **Effective tool-result processing seam** — adds `port.ToolResultProcessor`
+  and `agent.Deps.ToolResultProcessor` so hosts can rewrite a post-hook tool
+  result before audit, event emission, and session recording. A processing
+  failure becomes a bounded tool error with the original call ID. Added (minor).
+
+- **Session-owned artifact references with PDF input** — adds
+  `session.MediaPDF`, `session.BlockArtifact`, `session.NewPDFContent`, and
+  `session.NewArtifactBlock` with a MIME type argument. Artifact blocks accept
+  only `application/pdf` in this release. Reference metadata lives on
+  `session.Content`, and `port.ProviderCapabilities.PDF` gates PDF input.
+  Artifact tool-result blocks retain a model-visible filename and size summary.
+  Added (minor).
+
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
   snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).

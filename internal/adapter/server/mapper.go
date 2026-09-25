@@ -55,6 +55,12 @@ func contentFromProto(parts []*mecatlv1.Content) ([]session.Content, error) {
 			kind = session.MediaImage
 		case mecatlv1.Content_KIND_AUDIO:
 			kind = session.MediaAudio
+		case mecatlv1.Content_KIND_PDF:
+			if p.GetMimeType() != pdfMIMEType || len(p.GetData()) != 0 || p.GetUrl() != "" || p.GetName() != "" || p.GetSize() != 0 || p.GetSha256() != "" || !validArtifactID(p.GetArtifactId()) {
+				return nil, fmt.Errorf("prompt parts[%d]: invalid PDF artifact reference", i)
+			}
+			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: pdfMIMEType, ArtifactID: p.GetArtifactId()})
+			continue
 		case mecatlv1.Content_KIND_UNSPECIFIED:
 			return nil, fmt.Errorf("prompt parts[%d]: kind is required (KIND_UNSPECIFIED)", i)
 		default:
@@ -87,15 +93,34 @@ func contentToProto(parts []session.Content) []*mecatlv1.Content {
 			kind = mecatlv1.Content_KIND_IMAGE
 		case session.MediaAudio:
 			kind = mecatlv1.Content_KIND_AUDIO
+		case session.MediaPDF:
+			kind = mecatlv1.Content_KIND_PDF
 		}
 		out = append(out, &mecatlv1.Content{
-			Kind:     kind,
-			MimeType: p.MIMEType,
-			Data:     p.Data,
-			Url:      valid(p.URL),
+			Kind:       kind,
+			MimeType:   p.MIMEType,
+			Data:       p.Data,
+			Url:        valid(p.URL),
+			ArtifactId: valid(p.ArtifactID),
+			Name:       valid(p.Name),
+			Size:       p.Size,
+			Sha256:     valid(p.SHA256),
 		})
 	}
 	return out
+}
+
+func validArtifactID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		allowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
+		if !allowed {
+			return false
+		}
+	}
+	return true
 }
 
 // ClampInt32 narrows a Go int (counter/index/count) to the proto int32 wire
@@ -683,6 +708,8 @@ func blocksToProto(parts []session.Content) []*mecatlv1.ContentBlock {
 			Audience:     aud,
 			Priority:     p.Priority,
 			LastModified: valid(p.LastModified),
+			ArtifactId:   valid(p.ArtifactID),
+			Sha256:       valid(p.SHA256),
 		})
 	}
 	return out
@@ -716,6 +743,8 @@ func blocksFromProto(pb []*mecatlv1.ContentBlock) []session.Content {
 			Audience:     b.GetAudience(),
 			Priority:     b.GetPriority(),
 			LastModified: b.GetLastModified(),
+			ArtifactID:   b.GetArtifactId(),
+			SHA256:       b.GetSha256(),
 		})
 	}
 	return out
@@ -738,6 +767,8 @@ func blockKindToProto(k session.BlockKind) mecatlv1.ContentBlock_Kind {
 		return mecatlv1.ContentBlock_KIND_EMBEDDED_RESOURCE
 	case session.BlockStructuredContent:
 		return mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT
+	case session.BlockArtifact:
+		return mecatlv1.ContentBlock_KIND_ARTIFACT
 	default:
 		return mecatlv1.ContentBlock_KIND_UNSPECIFIED
 	}
@@ -758,6 +789,8 @@ func blockKindFromProto(k mecatlv1.ContentBlock_Kind) session.BlockKind {
 		return session.BlockEmbeddedResource
 	case mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT:
 		return session.BlockStructuredContent
+	case mecatlv1.ContentBlock_KIND_ARTIFACT:
+		return session.BlockArtifact
 	default:
 		return ""
 	}
@@ -994,6 +1027,7 @@ func toProtoSession(s *session.Session, rm ResolvedModel, _ *mecatlv1.ServerCapa
 		SessionCapabilities: &mecatlv1.SessionCapabilities{
 			Image: sessionCaps.Image,
 			Audio: sessionCaps.Audio,
+			Pdf:   sessionCaps.PDF,
 		},
 		Kind:            string(s.Kind),
 		Relationship:    toProtoSessionRelationship(s.Relationship),

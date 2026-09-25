@@ -52,6 +52,8 @@ const HIGH_LEVEL_SURFACE = {
     kind: "session",
     operation: "Session.guardrailReviewDetail",
   },
+  "HarnessService.UploadArtifact": { kind: "session", operation: "Session.uploadArtifact" },
+  "HarnessService.DownloadArtifact": { kind: "session", operation: "Session.downloadArtifact" },
   "HarnessService.GetSessionTranscript": { kind: "session", operation: "Session.transcript" },
   "HarnessService.SetMode": { kind: "session", operation: "Session.setMode" },
   "HarnessService.CloseSession": { kind: "session", operation: "Session.close" },

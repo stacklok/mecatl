@@ -51,7 +51,7 @@ func TestSDKTypescriptRelease_Scenario2_HTTPRouteParity(t *testing.T) {
 	httpCount := 0
 	for _, row := range rows {
 		switch row.httpFactory {
-		case "http":
+		case "http", "httpBinary":
 			httpCount++
 			review, ok := reviews[row.key]
 			if !ok {
@@ -61,11 +61,20 @@ func TestSDKTypescriptRelease_Scenario2_HTTPRouteParity(t *testing.T) {
 			if _, ok := byRoute[review.method+" "+review.pathTemplate]; !ok {
 				t.Errorf("catalog row %q has stale HTTP route %s %s", row.key, review.method, review.pathTemplate)
 			}
-			if review.requestBody != "none" && review.requestBody != "json" && review.requestBody != "optional-json" {
-				t.Errorf("catalog row %q has unreviewed request-body class %q", row.key, review.requestBody)
-			}
-			if review.response != "json" && review.response != "sse" {
-				t.Errorf("catalog row %q has unreviewed response class %q", row.key, review.response)
+			if row.httpFactory == "httpBinary" {
+				if review.requestBody != "none" && review.requestBody != "binary" {
+					t.Errorf("catalog row %q has unreviewed binary request-body class %q", row.key, review.requestBody)
+				}
+				if review.response != "json" && review.response != "binary" {
+					t.Errorf("catalog row %q has unreviewed binary response class %q", row.key, review.response)
+				}
+			} else {
+				if review.requestBody != "none" && review.requestBody != "json" && review.requestBody != "optional-json" {
+					t.Errorf("catalog row %q has unreviewed request-body class %q", row.key, review.requestBody)
+				}
+				if review.response != "json" && review.response != "sse" {
+					t.Errorf("catalog row %q has unreviewed response class %q", row.key, review.response)
+				}
 			}
 			if review.method == "" || review.pathTemplate == "" {
 				t.Errorf("catalog row %q has an incomplete method/path review", row.key)
@@ -94,7 +103,7 @@ func TestSDKTypescriptRelease_Scenario2_HTTPCodecParity(t *testing.T) {
 	descriptors, _ := mecatlV1ServiceDescriptors(t)
 
 	for _, row := range rows {
-		if row.httpFactory != "http" {
+		if row.httpFactory != "http" && row.httpFactory != "httpBinary" {
 			continue
 		}
 		review := reviews[row.key]
@@ -110,6 +119,12 @@ func TestSDKTypescriptRelease_Scenario2_HTTPCodecParity(t *testing.T) {
 		facts := analysis.handlerFacts(route.handler)
 		assertSDKHTTPPathCodec(t, row.key, review, route, facts, method.Input())
 		assertSDKHTTPQueryCodec(t, row.key, review, facts, method.Input())
+		if row.httpFactory == "httpBinary" {
+			if (review.requestBody == "binary") != facts.body {
+				t.Errorf("catalog row %q binary request body = %q, handler body read = %t", row.key, review.requestBody, facts.body)
+			}
+			continue
+		}
 		assertSDKHTTPBodyCodec(t, row.key, review, facts, method.Input())
 
 		wantResponse := "json"
@@ -161,7 +176,7 @@ func TestSDKTypescriptRelease_Scenario2_RouteToServiceInjectivity(t *testing.T) 
 	claimed := make(map[string]string, len(reviews))
 
 	for _, row := range rows {
-		if row.httpFactory != "http" {
+		if row.httpFactory != "http" && row.httpFactory != "httpBinary" {
 			continue
 		}
 		review := reviews[row.key]
@@ -193,7 +208,7 @@ func TestSDKTypescriptRelease_Scenario2_HTTPRoutePartition(t *testing.T) {
 
 	rpcRoutes := make(map[string]struct{}, len(reviews))
 	for _, row := range rows {
-		if row.httpFactory != "http" {
+		if row.httpFactory != "http" && row.httpFactory != "httpBinary" {
 			continue
 		}
 		review := reviews[row.key]
@@ -236,12 +251,16 @@ func assertSDKHTTPQueryCodec(t *testing.T, key string, review sdkHTTPReview, fac
 	for _, mapping := range review.queryParameters {
 		wantSource := mapping.target
 		if input.Fields().ByName(protoreflect.Name(wantSource)) == nil {
-			candidate := mapping.target + "_version"
-			if input.Fields().ByName(protoreflect.Name(candidate)) == nil {
-				t.Errorf("catalog row %q query %q does not derive from its request descriptor", key, mapping.target)
-				continue
+			if metadata := input.Fields().ByName("metadata"); metadata != nil && metadata.Message() != nil && metadata.Message().Fields().ByName(protoreflect.Name(wantSource)) != nil {
+				wantSource = "metadata." + wantSource
+			} else {
+				candidate := mapping.target + "_version"
+				if input.Fields().ByName(protoreflect.Name(candidate)) == nil {
+					t.Errorf("catalog row %q query %q does not derive from its request descriptor", key, mapping.target)
+					continue
+				}
+				wantSource = candidate
 			}
-			wantSource = candidate
 		}
 		if mapping.source != wantSource {
 			t.Errorf("catalog row %q query %q source = %q, want %q", key, mapping.target, mapping.source, wantSource)
@@ -357,6 +376,9 @@ func expectedSDKHTTPPathSource(t *testing.T, key, target string, facts sdkHTTPHa
 		}
 	}
 	if target == "id" {
+		if metadata := input.Fields().ByName("metadata"); metadata != nil && metadata.Message() != nil && metadata.Message().Fields().ByName("session_id") != nil {
+			return "metadata.session_id"
+		}
 		for _, candidate := range []string{"session_id", "source_session_id", "team_id", "job_id", "fire_id"} {
 			if input.Fields().ByName(protoreflect.Name(candidate)) != nil {
 				return candidate
@@ -371,7 +393,7 @@ func parseSDKHTTPReviews(t *testing.T, source string, rows []sdkRPCCatalogRow) m
 	t.Helper()
 	reviews := make(map[string]sdkHTTPReview)
 	for _, row := range rows {
-		if row.httpFactory != "http" {
+		if row.httpFactory != "http" && row.httpFactory != "httpBinary" {
 			continue
 		}
 		rowStart := strings.Index(source, `key: "`+row.key+`"`)
@@ -383,7 +405,7 @@ func parseSDKHTTPReviews(t *testing.T, source string, rows []sdkRPCCatalogRow) m
 			rowEnd = len(source) - rowStart
 		}
 		body := source[rowStart : rowStart+rowEnd]
-		marker := regexp.MustCompile(`http:\s*http\(`).FindStringIndex(body)
+		marker := regexp.MustCompile(`http:\s*http(?:Binary)?\(`).FindStringIndex(body)
 		if marker == nil {
 			t.Fatalf("locate HTTP review for catalog row %q", row.key)
 		}
@@ -535,20 +557,29 @@ func parseSDKServerHTTP(t *testing.T) ([]sdkServerHTTPRoute, *sdkHTTPSourceAnaly
 	t.Helper()
 	path := sdkServerHTTPSourcePath(t)
 	fileset := token.NewFileSet()
-	file, err := parser.ParseFile(fileset, path, nil, 0)
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*http.go"))
 	if err != nil {
-		t.Fatalf("parse HTTP server source: %v", err)
+		t.Fatalf("find HTTP server sources: %v", err)
 	}
 	analysis := &sdkHTTPSourceAnalysis{funcs: make(map[string]*ast.FuncDecl)}
 	var constructor *ast.FuncDecl
-	for _, declaration := range file.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok {
+	for _, sourcePath := range paths {
+		if strings.HasSuffix(sourcePath, "_test.go") {
 			continue
 		}
-		analysis.funcs[function.Name.Name] = function
-		if function.Name.Name == "NewHTTPHandler" {
-			constructor = function
+		file, err := parser.ParseFile(fileset, sourcePath, nil, 0)
+		if err != nil {
+			t.Fatalf("parse HTTP server source %s: %v", sourcePath, err)
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			analysis.funcs[function.Name.Name] = function
+			if function.Name.Name == "NewHTTPHandler" {
+				constructor = function
+			}
 		}
 	}
 	if constructor == nil {
@@ -642,7 +673,7 @@ func (a *sdkHTTPSourceAnalysis) handlerFacts(handler string) sdkHTTPHandlerFacts
 				if name, ok := sdkStringCallArgument(value, "PathValue"); ok {
 					facts.pathParameters[name] = struct{}{}
 				}
-				if name, ok := sdkStringCallArgument(value, "Get"); ok {
+				if name, ok := sdkStringCallArgument(value, "Get"); ok && !sdkIsHeaderGetCall(value) {
 					facts.queryParameters[name] = struct{}{}
 				}
 				called := sdkLocalCallName(value.Fun)
@@ -789,6 +820,15 @@ func sdkStringCallArgument(call *ast.CallExpr, name string) (string, bool) {
 		return "", false
 	}
 	return sdkGoString(call.Args[0])
+}
+
+func sdkIsHeaderGetCall(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Get" {
+		return false
+	}
+	receiver, ok := selector.X.(*ast.SelectorExpr)
+	return ok && receiver.Sel.Name == "Header"
 }
 
 func sdkGoString(expression ast.Expr) (string, bool) {

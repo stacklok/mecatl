@@ -979,6 +979,13 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 			opts = append(opts, openai.WithReasoningEffort(effort))
 		}
 		opts = append(opts, openai.WithProviderCapabilities(caps))
+		// Native PDF input is qualified by BOTH the built-in identity and its
+		// canonical endpoint. Operator base-URL overrides may be compatible
+		// Responses servers without supporting the native input_file member.
+		// Keep this in construct so default, session, and heal re-mints agree.
+		if id == providerOpenAI && baseURL == "" {
+			opts = append(opts, openai.WithNativePDFInput())
+		}
 		// Prompt caching (ADR 0100): the dialect is a PURE (id, baseURL) gate,
 		// never id alone — an operator can point "openai" at a non-canonical
 		// compatible endpoint (vLLM/LiteLLM via --openai-base-url) that would
@@ -1163,6 +1170,12 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 			// uniform TTL across every marker the adapter emits. INSIDE the closure
 			// so every per-session/heal re-mint carries both.
 			anthropic.WithConversationCaching(!cfg.PromptCacheDisabled),
+		}
+		// A compatible Messages endpoint under the built-in provider ID is
+		// not qualified for Anthropic's native document input. The closure
+		// preserves this exact identity/endpoint decision on every re-mint.
+		if id == providerAnthropic && baseURL == "" {
+			opts = append(opts, anthropic.WithNativePDFInput())
 		}
 		if key != "" {
 			opts = append([]anthropic.Option{anthropic.WithAPIKey(key)}, opts...)

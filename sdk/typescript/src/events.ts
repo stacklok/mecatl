@@ -74,15 +74,17 @@ export interface ToolCallEventPayload {
 
 /** One raw protobuf content block carried by a tool result. @public */
 export interface EventContentBlock {
+  readonly artifactId: string;
   readonly audience: readonly string[];
   readonly data: Uint8Array;
   readonly description: string;
-  readonly kind: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  readonly kind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
   readonly lastModified: string;
   readonly mimeType: string;
   readonly name: string;
   readonly priority: number;
   readonly size: bigint;
+  readonly sha256: string;
   readonly text: string;
   readonly title: string;
   readonly url: string;
@@ -200,9 +202,13 @@ export interface AuthorizationEventPayload {
 
 /** One media part as represented on the protobuf event payloads. @public */
 export interface EventContent {
+  readonly artifactId: string;
   readonly data: Uint8Array;
-  readonly kind: 0 | 1 | 2;
+  readonly kind: 0 | 1 | 2 | 3;
   readonly mimeType: string;
+  readonly name: string;
+  readonly size: bigint;
+  readonly sha256: string;
   readonly url: string;
 }
 

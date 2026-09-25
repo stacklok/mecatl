@@ -1581,6 +1581,17 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	}
 	res, postEvents := e.postHook(ctx, sess, turnIdx, c, res)
 	res = session.RepairToolResult(res)
+	if e.deps.ToolResultProcessor != nil {
+		processed, err := e.deps.ToolResultProcessor.ProcessToolResult(ctx, sess.ID, res)
+		if err != nil {
+			// The processor can fail after observing a raw blob. Never expose its
+			// error text or the original result through any downstream consumer.
+			res = session.NewToolError(c.ID, "tool result processing failed")
+		} else {
+			res = session.RepairToolResult(processed)
+			res.CallID = c.ID
+		}
+	}
 	var assessment inboundAssessment
 	if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
 		assessment = e.prepareInboundAssessment(r, sess, env, c, res)

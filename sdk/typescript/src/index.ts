@@ -19,6 +19,7 @@ export type {
   SessionLimits,
   SessionMcpServer,
   Sessions,
+  UploadedArtifact,
 } from "./client.js";
 export { connect } from "./client.js";
 export type { CredentialOptions, CredentialProvider } from "./credentials.js";
@@ -127,6 +128,7 @@ export type {
   ImagePromptPart,
   MediaPartOptions,
   MediaPartSource,
+  PdfPromptPart,
   PromptInput,
   PromptPart,
   TextPromptPart,
@@ -139,6 +141,7 @@ export {
   MAX_MEDIA_PART_BYTES,
   MAX_PROMPT_MEDIA_BYTES,
   MAX_PROMPT_MEDIA_PARTS,
+  pdfPart,
   textPart,
 } from "./media.js";
 export type {
