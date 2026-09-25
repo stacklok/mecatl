@@ -36,9 +36,10 @@ func (g *ownershipTestGuest) Unregister(context.Context, RepositoryVMRecord, con
 }
 
 type ownershipFixture struct {
-	daemon  *Daemon
-	binding control.Binding
-	guest   *ownershipTestGuest
+	daemon   *Daemon
+	binding  control.Binding
+	guest    *ownershipTestGuest
+	checkout string
 }
 
 func newOwnershipFixture(t *testing.T) ownershipFixture {
@@ -79,9 +80,13 @@ func acquireTestOwner(t *testing.T, fixture ownershipFixture) retainedTestOwner 
 		_ = server.Close()
 	}()
 	codec := control.NewCodec(control.DefaultMaxMessageBytes)
+	checkout := fixture.checkout
+	if checkout == "" {
+		checkout = "/repository"
+	}
 	request := LifecycleRequest{
 		Version: LifecycleProtocolVersion, Operation: LifecycleResolve, Binding: fixture.binding,
-		Provision: &ProvisionRequest{Owner: fixture.binding.Owner, SessionID: fixture.binding.SessionID, Profile: "microvm-local", SourceCheckout: "/repository"},
+		Provision: &ProvisionRequest{Owner: fixture.binding.Owner, SessionID: fixture.binding.SessionID, Profile: "microvm-local", SourceCheckout: checkout},
 	}
 	if err := codec.Write(client, request); err != nil {
 		t.Fatal(err)
@@ -418,48 +423,66 @@ func TestMicroVMOwnershipRestartPreservesExactWorktree(t *testing.T) {
 	}
 }
 
-type failingOwnershipGuest struct{ calls atomic.Int32 }
-
-func (*failingOwnershipGuest) Register(context.Context, RepositoryVMRecord, control.Binding, RepositoryGuestMount) (*guestagent.Services, error) {
-	return nil, errors.New("unexpected registration")
-}
-func (g *failingOwnershipGuest) Unregister(context.Context, RepositoryVMRecord, control.Binding) error {
-	g.calls.Add(1)
-	return errors.New("final detach failed")
-}
-
 func TestMicroVMFinalDetachFailureCannotCloseReplacement(t *testing.T) {
-	fixture := newOwnershipFixture(t)
-	failedGuest := &failingOwnershipGuest{}
-	ref := session.EnvironmentRef{Kind: session.EnvironmentKind(Kind), ID: fixture.binding.Ref}
-	fixture.daemon.repositoryAttachments.lookup(ref).Logical.guest = failedGuest
-	owner := acquireTestOwner(t, fixture)
-	response := closeTestOwner(t, fixture, owner)
-	if response.ErrorCode == "" || failedGuest.calls.Load() != 1 {
-		t.Fatalf("failed final detach response=%+v calls=%d", response, failedGuest.calls.Load())
+	fixture := newRepositoryAttachmentFixture(t)
+	attachment := fixture.attachPersisted(t)
+	binding := fixture.composition.Attachments.records[attachment.Environment.Ref().ID].binding
+	marker := filepath.Join(attachment.Logical.WorktreePath, "pending-teardown-marker")
+	if err := os.WriteFile(marker, []byte("replacement-usable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := control.NewService(control.ServiceConfig{AccountUID: 1000, PeerAuthenticator: controltest.StaticPeerAuthenticator{UID: 1000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := NewDaemon(DaemonConfig{Control: auth, RepositoryAttachments: fixture.composition.Attachments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon.repositoryBindings[binding.Ref] = repositoryDaemonBinding{binding: binding}
+	owned := ownershipFixture{daemon: daemon, binding: binding, checkout: fixture.repository}
+	owner := acquireTestOwner(t, owned)
+
+	fixture.backend.mu.Lock()
+	fixture.backend.dropNextControlResponse = true
+	fixture.backend.mu.Unlock()
+	if response := closeTestOwner(t, owned, owner); response.ErrorCode == "" {
+		t.Fatalf("lost final unregister acknowledgement reported success: %+v", response)
 	}
 
-	server, client := net.Pipe()
+	// The first replacement resolve reconciles the pending teardown before it can
+	// publish a new owner. The guest replay cache makes the retry authoritative.
+	replacement := acquireTestOwner(t, owned)
+	payload, err := json.Marshal(struct {
+		Operation string `json:"operation"`
+		Path      string `json:"path"`
+	}{Operation: "read", Path: "pending-teardown-marker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverConn, clientConn := net.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- fixture.daemon.ServeConn(t.Context(), server) }()
+	go func() { done <- daemon.ServeConn(t.Context(), serverConn) }()
 	codec := control.NewCodec(control.DefaultMaxMessageBytes)
-	request := LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleResolve, Binding: fixture.binding, Provision: &ProvisionRequest{Owner: fixture.binding.Owner, SessionID: fixture.binding.SessionID, SourceCheckout: "/repository"}}
-	if err := codec.Write(client, request); err != nil {
+	if err := codec.Write(clientConn, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleWorkspace, Binding: binding, AcquisitionID: replacement.id, Payload: payload}); err != nil {
 		t.Fatal(err)
 	}
-	var replacement LifecycleResponse
-	if err := codec.Read(client, &replacement); err != nil {
+	var response LifecycleResponse
+	if err := codec.Read(clientConn, &response); err != nil {
 		t.Fatal(err)
 	}
-	_ = client.Close()
-	if replacement.ErrorCode == "" {
-		t.Fatalf("replacement published across pending teardown: %+v", replacement)
+	_ = clientConn.Close()
+	if err := <-done; err != nil || response.ErrorCode != "" {
+		t.Fatalf("replacement workspace operation = %+v, %v", response, err)
 	}
-	if err := <-done; err == nil {
-		t.Fatal("replacement acquisition unexpectedly succeeded")
+	var read struct {
+		Data []byte `json:"data"`
 	}
-	if failedGuest.calls.Load() != 2 {
-		t.Fatalf("pending teardown reconciliation calls = %d, want 2", failedGuest.calls.Load())
+	if err := json.Unmarshal(response.Payload, &read); err != nil || string(read.Data) != "replacement-usable" {
+		t.Fatalf("replacement workspace payload = %q, %v", read.Data, err)
+	}
+	if response := closeTestOwner(t, owned, replacement); response.ErrorCode != "" {
+		t.Fatalf("replacement final close = %+v", response)
 	}
 }
 
