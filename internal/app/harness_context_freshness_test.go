@@ -44,6 +44,7 @@ func TestHarnessContext_ProjectInstructionsSessionRetention(t *testing.T) {
 	cfg := hcConfiguredFiles(t, source)
 	cfg.NoSoul = true
 	cfg.AllowAllTools = true
+	cfg.GuardrailsDisabled = true
 	if err := os.WriteFile(filepath.Join(cfg.Workspace, "data.txt"), []byte("execution"), 0o600); err != nil {
 		t.Fatal(err)
 	}
