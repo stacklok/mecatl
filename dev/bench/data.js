@@ -278575,6 +278575,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790364059703,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b1132929dd9a3d881dbf059fb2b508bd1964b862",
+          "message": "docs: include user-docs in matlatl and use local documentation links (#1934)\n\nCo-authored-by: mecatl <mecatl@users.noreply.github.com>",
+          "timestamp": "2026-09-25T22:44:16+03:00",
+          "tree_id": "f25d36c06820d26e9fb9ec2d2222f6c03930acc9",
+          "url": "https://github.com/stacklok/mecatl/commit/b1132929dd9a3d881dbf059fb2b508bd1964b862"
+        },
+        "date": 1790366177056,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3319.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -365139,6 +365178,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790366174053,
+  "lastUpdate": 1790366178320,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
