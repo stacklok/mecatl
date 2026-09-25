@@ -3547,12 +3547,11 @@ func catalogContextWindow(providerID, modelID string) int {
 	if !ok {
 		return 0
 	}
-	for _, m := range p.Models() {
-		if m.ID() == modelID {
-			return m.ContextLimit()
-		}
+	m, ok := p.Model(modelID)
+	if !ok {
+		return 0
 	}
-	return 0
+	return m.ContextLimit()
 }
 
 // buildProvider builds the N-provider registry (multi-provider S1) and returns the

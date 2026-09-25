@@ -161,25 +161,23 @@ func catalogModalities(providerID, modelID string) (image, audio, found bool) {
 	if !ok {
 		return false, false, false
 	}
-	for _, m := range p.Models() {
-		if m.ID() != modelID {
-			continue
-		}
-		// Image derives from the SHARED hasImageModality predicate over the catalog's
-		// raw modality list — the SAME function liveModelSnapshot (the picker) uses —
-		// so the session echo and ListModels provably agree on a model's image-ness
-		// (the anti-divergence guarantee rests on ONE function, not two copies of the
-		// "is image among inputModalities" test, for BOTH the live and embedded paths).
-		// Audio derives from the same raw list for forward-compatibility; it is false
-		// in the P0 data, so the AND in modelCapability is false regardless.
-		mods := m.InputModalities()
-		image = hasImageModality(mods)
-		for _, mod := range mods {
-			if mod == "audio" {
-				audio = true
-			}
-		}
-		return image, audio, true
+	m, ok := p.Model(modelID)
+	if !ok {
+		return false, false, false
 	}
-	return false, false, false
+	// Image derives from the SHARED hasImageModality predicate over the catalog's
+	// raw modality list — the SAME function liveModelSnapshot (the picker) uses —
+	// so the session echo and ListModels provably agree on a model's image-ness
+	// (the anti-divergence guarantee rests on ONE function, not two copies of the
+	// "is image among inputModalities" test, for BOTH the live and embedded paths).
+	// Audio derives from the same raw list for forward-compatibility; it is false
+	// in the P0 data, so the AND in modelCapability is false regardless.
+	mods := m.InputModalities()
+	image = hasImageModality(mods)
+	for _, mod := range mods {
+		if mod == "audio" {
+			audio = true
+		}
+	}
+	return image, audio, true
 }
