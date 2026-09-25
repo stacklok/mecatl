@@ -249954,6 +249954,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790345408813,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b09f573ac9fc64a2df79c0db52f13ba83dc26d56",
+          "message": "feat(studio): add exact plan control and authorization review prerequisite (#1909)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T17:10:24+02:00",
+          "tree_id": "41ce38658c7f69ef8de6dd5e0228adfe0ea2bbc5",
+          "url": "https://github.com/stacklok/mecatl/commit/b09f573ac9fc64a2df79c0db52f13ba83dc26d56"
+        },
+        "date": 1790349703384,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -363061,6 +363095,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790349700577,
+  "lastUpdate": 1790349704297,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
