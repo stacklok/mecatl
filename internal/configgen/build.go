@@ -28,6 +28,7 @@ func BuildModel(docs Docs) *Model {
 	return &Model{Subtrees: []*Subtree{
 		permissionsSubtree(docs),
 		guardrailsSubtree(docs),
+		permissionModeSubtree(docs),
 		postureSubtree(docs),
 		reasoningEffortSubtree(docs),
 		planModeAutoApproveSubtree(docs),
@@ -364,11 +365,34 @@ func learningSubtree(docs Docs) *Subtree {
 	}
 }
 
+func permissionModeSubtree(docs Docs) *Subtree {
+	return &Subtree{
+		Key:  "permissionMode",
+		Tier: TierOperator,
+		Doc: "OPERATOR-TIER named permission mode (ADR 0365): plan, default, accept-edits, trusted, " +
+			"trusted-accept-edits, auto, or yolo. Each token sets two things: the process-wide posture, " +
+			"fixed at startup, and the mode new sessions start in, which each session may change. auto " +
+			"and yolo refuse to start without a guardrails checker unless guardrails are explicitly off. " +
+			"An explicit --permission-mode out-ranks this key, and it out-ranks the deprecated posture: " +
+			"key. A project-tier permissionMode: is IGNORED with a WARN. Empty = keep the CLI/default.",
+		CommentedOut: true,
+		Scalar:       true,
+		Fields: []*Field{{
+			Key:          "permissionMode",
+			Type:         "string",
+			Default:      "(empty)",
+			Doc:          docFor(docs, "Config.PermissionMode", "the named permission-mode token"),
+			ExampleValue: "trusted-accept-edits",
+		}},
+	}
+}
+
 func postureSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "posture",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER posture-ladder scalar: strict < trusted < auto < yolo (the graduated " +
+		Doc: "DEPRECATED: use permissionMode: instead (ADR 0365); still honoured with a WARN for one release. " +
+			"OPERATOR-TIER posture-ladder scalar: strict < trusted < auto < yolo (the graduated " +
 			"trust/automation tier). A project-tier posture: is IGNORED with a WARN (a project " +
 			"cannot raise the automation posture). Empty = keep the CLI/default.",
 		CommentedOut: true,
