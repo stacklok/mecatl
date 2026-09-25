@@ -148,7 +148,7 @@ commit the tag points at. See [ADR 0028](./0028-mecatequi.md).
 
 ## See also
 
-- [Install Mecatl](https://mecatl.dev/docs/install) — the canonical user-facing install page.
+- [Install Mecatl](../../user-docs/install.md) — the canonical user-facing install page.
 - [Prerequisites and build reference](../usage/install.md) — the from-source path.
 - [ADR 0028](./0028-mecatequi.md) — why the reusable workflow's action pins are literal tags.
 - [ADR 0002](./0002-documentation-lifecycle.md) — the documentation lifecycle this record follows.

@@ -4,4 +4,4 @@ matlatl: orphan-intentional
 
 # Installation documentation moved
 
-See [Install Mecatl](https://mecatl.dev/docs/install).
+See [Install Mecatl](../../user-docs/install.md).

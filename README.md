@@ -40,12 +40,12 @@ Read the [Mecatl documentation](https://mecatl.dev/docs) to get started.
 
 | Goal | Start with |
 | --- | --- |
-| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) |
-| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](https://mecatl.dev/docs/building/deployment/mecak8s) |
+| Run an agent service | [`mecated`](./cmd/mecated) and the [deployment guide](./user-docs/building/deployment/mecated.md) |
+| Run agents on Kubernetes | [`mecak8s`](./cmd/mecak8s) and the [Kubernetes deployment guide](./user-docs/building/deployment/mecak8s.md) |
 | Use an agent locally | [Install](#install), then use [`mecatui`](./cmd/mecatui) — or [run the offline demo](#try-it-locally) from a checkout |
-| Connect an application | The [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) or the [gRPC and HTTP/SSE integration guide](https://mecatl.dev/docs/building/deployment/grpc-http) |
+| Connect an application | The [TypeScript SDK guides](./user-docs/building/typescript-sdk/index.md) or the [gRPC and HTTP/SSE integration guide](./user-docs/building/deployment/grpc-http.md) |
 | Build unattended automation | [`mecatequi`](./cmd/mecatequi) for one prompt, a patch, and a machine-readable result |
-| Embed the runtime | [`engine`](./engine) and the [embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine) |
+| Embed the runtime | [`engine`](./engine) and the [embedding guide](./user-docs/building/deployment/embed-engine.md) |
 
 ## Install
 
@@ -56,7 +56,7 @@ Homebrew:
 brew install stacklok/tap/mecatl
 ```
 
-[Install and verify Mecatl](https://mecatl.dev/docs/install) covers Conda-forge,
+[Install and verify Mecatl](./user-docs/install.md) covers Conda-forge,
 release archives, verification, and source builds. Build `mecademo`,
 `mecatequi`, and `mecak8s` from a checkout with `task build`.
 
@@ -72,7 +72,7 @@ The supplied `mecak8s` runtime demonstrates this deployment model. It uses
 Redis for session state and event logs, Kubernetes leases to ensure one writer
 per session, and a drain path for replacing pods. You can also embed the engine
 and provide the backing services and execution environment yourself. See
-[What is a cloud-native harness?](https://mecatl.dev/docs/building/cloud-native-harness)
+[What is a cloud-native harness?](./user-docs/building/cloud-native-harness.md)
 for the runtime guarantees and boundaries.
 
 ## Open and modular by design
@@ -126,28 +126,28 @@ task build
 
 For an embedded deployment, see the
 [engine compatibility contract](./engine/COMPATIBILITY.md) and the
-[embedding guide](https://mecatl.dev/docs/building/deployment/embed-engine).
+[embedding guide](./user-docs/building/deployment/embed-engine.md).
 
 > **Security:** `mecated` is unauthenticated by default and intended for
 > loopback, single-user use. Configure authentication and transport protection
 > before binding it off-loopback. The
-> [deployment guide](https://mecatl.dev/docs/building/deployment/mecated) covers
+> [deployment guide](./user-docs/building/deployment/mecated.md) covers
 > bearer auth, TLS/mTLS, OIDC, rate limits, and deployment posture.
 
 ## User documentation
 
-- [Mecatl documentation](https://mecatl.dev/docs/intro) for user guides and
+- [Mecatl documentation](./user-docs/intro.md) for user guides and
   deployment information.
-- [Client integration guide](https://mecatl.dev/docs/building/deployment/grpc-http)
+- [Client integration guide](./user-docs/building/deployment/grpc-http.md)
   for gRPC and HTTP/SSE clients.
-- [TypeScript SDK guides](https://mecatl.dev/docs/building/typescript-sdk/) for
+- [TypeScript SDK guides](./user-docs/building/typescript-sdk/index.md) for
   Node.js, Bun, and browser applications.
 
 ## Architecture and engineering documentation
 
 - [Repository documentation index](./docs/README.md)
 - [Architecture guide](./docs/architecture.md)
-- [User documentation](https://mecatl.dev/docs/)
+- [User documentation](./user-docs/intro.md)
 - [Engine compatibility contract](./engine/COMPATIBILITY.md)
 
 ## Contributing, security, and license

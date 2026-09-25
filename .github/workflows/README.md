@@ -7,7 +7,7 @@ release behavior. This page is only a stable index to operational guidance.
 - [Live end-to-end testing](../../e2e/README.md)
 - [Performance tracking rationale](../../docs/adr/0019-perf-tracking.md)
 - [Deslop advisory duplication analysis](deslop.yml) (not a required CI gate)
-- [Mecatequi CI adoption](https://mecatl.dev/docs/building/deployment/mecatequi) and its
+- [Mecatequi CI adoption](../../user-docs/building/deployment/mecatequi.md) and its
   [design rationale](../../docs/adr/0028-mecatequi.md)
 
 ## Cutting a root release

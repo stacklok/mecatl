@@ -115,3 +115,4 @@ interface.
 - [Implement session storage](session-store.md).
 - [Implement a permission policy](permission-policy.md).
 - [Implement a session lease](session-lease.md).
+- [Supply project rules](project-rules.md).

@@ -1,6 +1,10 @@
 # matlatl configuration. https://github.com/stacklok/matlatl
 version: 1
 
+# Docusaurus resolves /... links inside user-docs from its content root.
+contentRoots:
+  - "user-docs"
+
 # Exclude git-ignored working files from the corpus (ADR 0024, matlatl v0.0.8):
 # union the repo's effective git ignore set (tracked + nested .gitignore rules,
 # .git/info/exclude, global excludes) with .matlatlignore. Local-only files
@@ -41,3 +45,5 @@ emitExclude:
   # notice that an excluded root won't render on the consumption surfaces —
   # that's expected and does not affect reachability or the gate.
   - ".claude/skills/"
+  # Site authoring guidance is linked from user-docs, but is not product docs.
+  - "website/AGENTS.md"
