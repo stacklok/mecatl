@@ -36,7 +36,7 @@ func recoveryConfig(attempts int, budget time.Duration) Config {
 	return Config{MaxAttempts: attempts, RecoveryBudget: budget}
 }
 
-func recoveryDrain(t *testing.T, p port.LLMProvider, ctx context.Context) ([]port.Chunk, error) {
+func recoveryDrain(ctx context.Context, t *testing.T, p port.LLMProvider) ([]port.Chunk, error) {
 	t.Helper()
 	seq, err := p.Stream(ctx, port.LLMRequest{})
 	if err != nil {
@@ -55,7 +55,7 @@ func requirePrecommitRetryable(t *testing.T, err error) {
 
 func TestServerProviderRecovery_Scenario1_VisibleFailureNeverReplays(t *testing.T) {
 	f := &fakeProvider{steps: []step{{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "visible"}}, midErr: apiErr(503)}}}
-	got, err := recoveryDrain(t, Wrap(f, recoveryConfig(5, time.Second)), context.Background())
+	got, err := recoveryDrain(context.Background(), t, Wrap(f, recoveryConfig(5, time.Second)))
 	if err == nil || len(got) != 1 || f.Calls() != 1 {
 		t.Fatalf("chunks=%v err=%v calls=%d", got, err, f.Calls())
 	}
@@ -64,39 +64,52 @@ func TestServerProviderRecovery_Scenario1_VisibleFailureNeverReplays(t *testing.
 
 func TestServerProviderRecovery_Scenario1_TentativeAssemblyAndDiscardedUsageExactlyOnce(t *testing.T) {
 	t.Run("idle timeout drains final usage", func(t *testing.T) {
-		usage := session.Usage{InputTokens: 7, OutputTokens: 3}
-		var calls atomic.Int32
-		inner := recoveryProviderFunc(func(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
-			if calls.Add(1) > 1 {
-				return func(yield func(port.Chunk, error) bool) {
-					yield(port.Chunk{Kind: port.ChunkText, Text: "ok"}, nil)
-					yield(port.Chunk{Kind: port.ChunkDone}, nil)
-				}, nil
-			}
-			return func(yield func(port.Chunk, error) bool) {
-				if !yield(port.Chunk{Kind: port.ChunkReasoning, Text: "discard me"}, nil) {
-					return
+		synctest.Test(t, func(t *testing.T) {
+			usage := session.Usage{InputTokens: 7, OutputTokens: 3}
+			var calls atomic.Int32
+			firstWaiting := make(chan struct{})
+			inner := recoveryProviderFunc(func(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+				if calls.Add(1) > 1 {
+					return func(yield func(port.Chunk, error) bool) {
+						yield(port.Chunk{Kind: port.ChunkText, Text: "ok"}, nil)
+						yield(port.Chunk{Kind: port.ChunkDone}, nil)
+					}, nil
 				}
-				<-ctx.Done()
-				yield(port.Chunk{Kind: port.ChunkUsage, Usage: &usage}, nil)
-			}, nil
-		})
-		cfg := recoveryConfig(2, time.Second)
-		cfg.StreamIdleTimeout = time.Millisecond
-		got, err := recoveryDrain(t, Wrap(inner, cfg), context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		total := session.Usage{}
-		for _, chunk := range got {
-			total = total.Add(discardedChunkUsage(chunk))
-			if chunk.Kind == port.ChunkReasoning {
-				t.Fatalf("discarded reasoning escaped: %+v", chunk)
+				return func(yield func(port.Chunk, error) bool) {
+					if !yield(port.Chunk{Kind: port.ChunkReasoning, Text: "discard me"}, nil) {
+						return
+					}
+					close(firstWaiting)
+					<-ctx.Done()
+					yield(port.Chunk{Kind: port.ChunkUsage, Usage: &usage}, nil)
+				}, nil
+			})
+			cfg := recoveryConfig(2, time.Second)
+			cfg.StreamIdleTimeout = time.Millisecond
+			gotCh := make(chan []port.Chunk, 1)
+			errCh := make(chan error, 1)
+			go func() {
+				got, err := recoveryDrain(context.Background(), t, Wrap(inner, cfg))
+				gotCh <- got
+				errCh <- err
+			}()
+			<-firstWaiting
+			time.Sleep(time.Millisecond)
+			got, err := <-gotCh, <-errCh
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		if total != usage || calls.Load() != 2 {
-			t.Fatalf("usage=%+v calls=%d, want usage=%+v calls=2", total, calls.Load(), usage)
-		}
+			total := session.Usage{}
+			for _, chunk := range got {
+				total = total.Add(discardedChunkUsage(chunk))
+				if chunk.Kind == port.ChunkReasoning {
+					t.Fatalf("discarded reasoning escaped: %+v", chunk)
+				}
+			}
+			if total != usage || calls.Load() != 2 {
+				t.Fatalf("usage=%+v calls=%d, want usage=%+v calls=2", total, calls.Load(), usage)
+			}
+		})
 	})
 
 	for _, outcome := range []string{"success", "exhaustion", "cancellation"} {
@@ -117,16 +130,17 @@ func TestServerProviderRecovery_Scenario1_TentativeAssemblyAndDiscardedUsageExac
 				}}
 			}
 			f := &fakeProvider{steps: []step{{chunks: tentative, midErr: apiErr(503)}, second}}
-			got, err := recoveryDrain(t, Wrap(f, recoveryConfig(2, time.Second)), ctx)
+			got, err := recoveryDrain(ctx, t, Wrap(f, recoveryConfig(2, time.Second)))
 			if (err == nil) != (outcome == "success") {
 				t.Fatalf("err=%v", err)
 			}
 			total := session.Usage{}
 			for _, c := range got {
 				total = total.Add(discardedChunkUsage(c))
-				if c.Kind != port.ChunkUsage && c.Kind != port.ChunkDone && !(c.Kind == port.ChunkText && c.Text == "ok") {
-					t.Fatalf("tentative chunk escaped: %+v", c)
+				if c.Kind == port.ChunkUsage || c.Kind == port.ChunkDone || c.Kind == port.ChunkText && c.Text == "ok" {
+					continue
 				}
+				t.Fatalf("tentative chunk escaped: %+v", c)
 			}
 			want := usage
 			if outcome != "success" {
@@ -156,7 +170,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly(t *tes
 			cfg := recoveryConfig(2, time.Second)
 			cfg.BreakerThreshold = 1
 			cfg.BreakerCooldown = breakerDelay
-			_, err := recoveryDrain(t, Wrap(f, cfg), context.Background())
+			_, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
 			if err != nil || f.Calls() != 2 {
 				t.Fatalf("err=%v calls=%d", err, f.Calls())
 			}
@@ -183,7 +197,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly(t *tes
 		var observed []session.NetworkAttemptPayload
 		ctx := port.WithAttemptObserver(context.Background(), func(o session.NetworkAttemptPayload) { observed = append(observed, o) })
 		f := &fakeProvider{steps: []step{{outerErr: failure}}}
-		_, err := recoveryDrain(t, Wrap(f, cfg), ctx)
+		_, err := recoveryDrain(ctx, t, Wrap(f, cfg))
 		requirePrecommitRetryable(t, err)
 		if !errors.Is(err, raw) || !strings.Contains(err.Error(), "target: https://api.example/v1/responses") {
 			t.Fatalf("lost safe cause/display: %v", err)
@@ -200,7 +214,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly(t *tes
 				t.Error("retry before provider eligibility")
 			}
 		}}
-		_, err := recoveryDrain(t, Wrap(f, recoveryConfig(2, time.Second)), context.Background())
+		_, err := recoveryDrain(context.Background(), t, Wrap(f, recoveryConfig(2, time.Second)))
 		if err != nil || f.Calls() != 2 {
 			t.Fatalf("err=%v calls=%d", err, f.Calls())
 		}
@@ -208,7 +222,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly(t *tes
 	for _, at := range []time.Time{time.Now().Add(time.Hour), time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)} {
 		t.Run(at.String(), func(t *testing.T) {
 			f := &fakeProvider{steps: []step{{outerErr: recoveryHintError{apiErr(429), at}}, {chunks: textTurn("early")}}}
-			_, err := recoveryDrain(t, Wrap(f, recoveryConfig(2, time.Second)), context.Background())
+			_, err := recoveryDrain(context.Background(), t, Wrap(f, recoveryConfig(2, time.Second)))
 			requirePrecommitRetryable(t, err)
 			if f.Calls() != 1 {
 				t.Fatalf("calls=%d", f.Calls())
@@ -220,7 +234,7 @@ func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly(t *tes
 func TestServerProviderRecovery_Scenario4_NonSlidingBudgetAndActualCallCap(t *testing.T) {
 	t.Run("initial call has no recovery deadline", func(t *testing.T) {
 		f := &fakeProvider{steps: []step{{chunks: []port.Chunk{{Kind: port.ChunkReasoning, Text: "thinking"}, {Kind: port.ChunkText, Text: "visible"}, {Kind: port.ChunkDone}}, chunkInterval: 15 * time.Millisecond}}}
-		_, err := recoveryDrain(t, Wrap(f, recoveryConfig(2, time.Millisecond)), context.Background())
+		_, err := recoveryDrain(context.Background(), t, Wrap(f, recoveryConfig(2, time.Millisecond)))
 		if err != nil || f.Calls() != 1 {
 			t.Fatalf("err=%v calls=%d", err, f.Calls())
 		}
@@ -234,7 +248,7 @@ func TestServerProviderRecovery_Scenario4_NonSlidingBudgetAndActualCallCap(t *te
 		}}
 		cfg := recoveryConfig(10, time.Second)
 		cfg.Clock = clock.Now
-		_, err := recoveryDrain(t, Wrap(f, cfg), context.Background())
+		_, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
 		requirePrecommitRetryable(t, err)
 		if f.Calls() != 4 {
 			t.Fatalf("calls=%d, budget slid", f.Calls())
@@ -249,7 +263,7 @@ func TestServerProviderRecovery_Scenario4_NonSlidingBudgetAndActualCallCap(t *te
 		}
 		f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: reasoning, chunkInterval: 2 * time.Millisecond, stallAfterChunks: true}}}
 		start := time.Now()
-		_, err := recoveryDrain(t, Wrap(f, recoveryConfig(10, 25*time.Millisecond)), ctx)
+		_, err := recoveryDrain(ctx, t, Wrap(f, recoveryConfig(10, 25*time.Millisecond)))
 		requirePrecommitRetryable(t, err)
 		if f.Calls() != 2 || time.Since(start) > 500*time.Millisecond {
 			t.Fatalf("calls=%d elapsed=%s", f.Calls(), time.Since(start))
@@ -257,7 +271,7 @@ func TestServerProviderRecovery_Scenario4_NonSlidingBudgetAndActualCallCap(t *te
 	})
 	t.Run("actual call cap", func(t *testing.T) {
 		f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}}}
-		_, err := recoveryDrain(t, Wrap(f, recoveryConfig(3, time.Second)), context.Background())
+		_, err := recoveryDrain(context.Background(), t, Wrap(f, recoveryConfig(3, time.Second)))
 		requirePrecommitRetryable(t, err)
 		if f.Calls() != 3 {
 			t.Fatalf("calls=%d", f.Calls())
@@ -284,7 +298,7 @@ func TestServerProviderRecovery_Scenario4_RecoveryDeadlineCannotCancelVisibleStr
 							}
 						}, nil
 					})
-					got, err := recoveryDrain(t, Wrap(inner, recoveryConfig(2, time.Second)), context.Background())
+					got, err := recoveryDrain(context.Background(), t, Wrap(inner, recoveryConfig(2, time.Second)))
 					if err == nil {
 						if len(got) != 1 || got[0].Kind != kind {
 							t.Fatalf("winning commit duplicated or lost output: %+v", got)
@@ -307,7 +321,7 @@ func TestServerProviderRecovery_Scenario4_RecoveryDeadlineCannotCancelVisibleStr
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: []port.Chunk{{Kind: kind, Text: "too late"}}, firstChunkAfterCancel: true}}}
-			got, err := recoveryDrain(t, Wrap(f, recoveryConfig(3, 20*time.Millisecond)), ctx)
+			got, err := recoveryDrain(ctx, t, Wrap(f, recoveryConfig(3, 20*time.Millisecond)))
 			requirePrecommitRetryable(t, err)
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("lost provider cause to local cancellation: %v", err)
@@ -319,7 +333,7 @@ func TestServerProviderRecovery_Scenario4_RecoveryDeadlineCannotCancelVisibleStr
 	}
 	t.Run("commit wins", func(t *testing.T) {
 		f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: textTurn("visible"), chunkInterval: 70 * time.Millisecond}}}
-		got, err := recoveryDrain(t, Wrap(f, recoveryConfig(3, 30*time.Millisecond)), context.Background())
+		got, err := recoveryDrain(context.Background(), t, Wrap(f, recoveryConfig(3, 30*time.Millisecond)))
 		if err != nil || len(got) != 3 || got[2].Kind != port.ChunkDone {
 			t.Fatalf("got=%v err=%v", got, err)
 		}
@@ -338,9 +352,9 @@ func TestServerProviderRecovery_Scenario4_ZeroBudgetHonorsNotBeforeWithoutEarlyC
 	t.Run("manual action starts fresh", func(t *testing.T) {
 		f := &fakeProvider{steps: []step{{outerErr: recoveryHintError{apiErr(429), unschedulableRetry}}, {chunks: textTurn("manual success")}}}
 		p := Wrap(f, recoveryConfig(2, 0))
-		_, err := recoveryDrain(t, p, context.Background())
+		_, err := recoveryDrain(context.Background(), t, p)
 		requirePrecommitRetryable(t, err)
-		_, err = recoveryDrain(t, p, context.Background())
+		_, err = recoveryDrain(context.Background(), t, p)
 		if err != nil || f.Calls() != 2 {
 			t.Fatalf("err=%v calls=%d", err, f.Calls())
 		}
@@ -351,7 +365,7 @@ func TestServerProviderRecovery_Scenario4_ZeroBudgetHonorsNotBeforeWithoutEarlyC
 			at = time.Now().Add(time.Hour)
 		}
 		f := &fakeProvider{steps: []step{{outerErr: recoveryHintError{apiErr(429), at}}, {chunks: textTurn("ok")}}}
-		_, err := recoveryDrain(t, Wrap(f, recoveryConfig(2, 0)), context.Background())
+		_, err := recoveryDrain(context.Background(), t, Wrap(f, recoveryConfig(2, 0)))
 		if future {
 			requirePrecommitRetryable(t, err)
 			if f.Calls() != 1 {
@@ -389,11 +403,11 @@ func TestServerProviderRecovery_Scenario3_ExclusiveHalfOpenProbeAndNotifiedWaite
 	cfg.BreakerThreshold = 1
 	cfg.BreakerCooldown = 10 * time.Millisecond
 	p := Wrap(inner, cfg)
-	_, _ = recoveryDrain(t, p, ctx)
+	_, _ = recoveryDrain(ctx, t, p)
 	var wg sync.WaitGroup
 	errs := make(chan error, 5)
 	for range 5 {
-		wg.Go(func() { _, err := recoveryDrain(t, p, ctx); errs <- err })
+		wg.Go(func() { _, err := recoveryDrain(ctx, t, p); errs <- err })
 	}
 	select {
 	case <-entered:

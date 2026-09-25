@@ -52,14 +52,18 @@ func testBlockedRecoveryCallback(t *testing.T, diagnostics bool) {
 		t.Fatal("attempt observer was not called")
 	}
 
-	mutexFree := make(chan struct{})
+	mutexState := make(chan bool)
 	go func() {
 		provider.breaker.mu.Lock()
+		opened := provider.breaker.open
 		provider.breaker.mu.Unlock()
-		close(mutexFree)
+		mutexState <- opened
 	}()
 	select {
-	case <-mutexFree:
+	case opened := <-mutexState:
+		if !opened {
+			t.Fatal("blocked callback ran before breaker state was published")
+		}
 	case <-time.After(time.Second):
 		close(release)
 		t.Fatal("blocked observer held breaker admission mutex")
@@ -130,7 +134,7 @@ func TestRecoveryCancellationAfterAdmission(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() {
-				_, err := recoveryDrain(t, provider, ctx)
+				_, err := recoveryDrain(ctx, t, provider)
 				done <- err
 			}()
 			select {

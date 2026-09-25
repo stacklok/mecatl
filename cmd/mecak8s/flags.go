@@ -413,7 +413,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
 	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "Maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "Timeout for connecting to an LLM stream and receiving its first chunk. Does not stop an active stream; zero disables the timeout")
-	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. A longer gap ends the turn; zero disables the timeout")
+	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. The watchdog bounds each chunk gap; before semantic output a timed-out attempt may recover, while visible stalls are terminal. Zero disables the timeout")
 	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "Consecutive LLM failures that open the circuit breaker. Zero disables it")
 	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "How long the LLM circuit breaker remains open before retrying")
 	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens per agent run. Runs exceeding it end with stop=budget; zero is unlimited")

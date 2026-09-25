@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/stacklok/mecatl/internal/testutil/recoveryhost"
 	"testing"
+
+	"github.com/stacklok/mecatl/internal/testutil/recoveryhost"
 )
 
 func TestServerProviderRecovery_Scenario7_HostLogDeliveryPolicy(t *testing.T) {

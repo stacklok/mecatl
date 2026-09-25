@@ -63,7 +63,7 @@ func (d recoverySignals) Log(_ context.Context, _ port.Level, msg string, args .
 	}
 }
 
-func awaitRecovery(t *testing.T, ctx context.Context, ch <-chan struct{}, what string) {
+func awaitRecovery(ctx context.Context, t *testing.T, ch <-chan struct{}, what string) {
 	t.Helper()
 	select {
 	case <-ch:
@@ -72,7 +72,7 @@ func awaitRecovery(t *testing.T, ctx context.Context, ch <-chan struct{}, what s
 	}
 }
 
-func awaitRecoveryRunEnd(t *testing.T, ctx context.Context, svc *server.Service, id session.SessionID) {
+func awaitRecoveryRunEnd(ctx context.Context, t *testing.T, svc *server.Service, id session.SessionID) {
 	t.Helper()
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
@@ -171,18 +171,18 @@ func TestServerProviderRecovery_Scenario6_DisconnectAndShutdownCancelRecovery(t 
 						disconnect = built.Close
 					}
 				}
-				awaitRecovery(t, ctx, signals.wait, "breaker cooldown")
+				awaitRecovery(ctx, t, signals.wait, "breaker cooldown")
 				if phase == "half-open probe" {
-					awaitRecovery(t, ctx, probe, "real half-open HTTP call")
+					awaitRecovery(ctx, t, probe, "real half-open HTTP call")
 				}
 				if _, ok := built.Service.LookupRun(sess.ID); !ok {
 					t.Fatal("run ended before disconnection")
 				}
 				disconnect()
 				if phase == "half-open probe" {
-					awaitRecovery(t, ctx, stopped, "provider request cancellation")
+					awaitRecovery(ctx, t, stopped, "provider request cancellation")
 				}
-				awaitRecoveryRunEnd(t, ctx, built.Service, sess.ID)
+				awaitRecoveryRunEnd(ctx, t, built.Service, sess.ID)
 				want := int32(1)
 				if phase == "half-open probe" {
 					want = 2
@@ -260,9 +260,9 @@ func testRecoveryChildParentCancellation(t *testing.T) {
 		}
 		done <- stop
 	}()
-	awaitRecovery(t, ctx, probe, "child recovery after prior write")
+	awaitRecovery(ctx, t, probe, "child recovery after prior write")
 	stopParent()
-	awaitRecovery(t, ctx, stopped, "child probe joined after parent cancellation")
+	awaitRecovery(ctx, t, stopped, "child probe joined after parent cancellation")
 	select {
 	case stop := <-done:
 		if stop != session.StopCancelled {
@@ -313,9 +313,9 @@ func TestServerProviderRecovery_Scenario6_NoDetachedOrRestartContinuation(t *tes
 	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(sess.ID), Text: "original prompt"}}}); err != nil {
 		t.Fatal(err)
 	}
-	awaitRecovery(t, ctx, signals.wait, "live recovery before detach")
+	awaitRecovery(ctx, t, signals.wait, "live recovery before detach")
 	disconnect()
-	awaitRecoveryRunEnd(t, ctx, first.Service, sess.ID)
+	awaitRecoveryRunEnd(ctx, t, first.Service, sess.ID)
 	before, err := first.Service.GetSession(ctx, sess.ID)
 	if err != nil {
 		t.Fatal(err)

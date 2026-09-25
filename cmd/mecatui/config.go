@@ -908,11 +908,8 @@ func (c config) validate() error {
 	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
 	// 1); the predicate + its rationale live once on config.mayEmbed.
 	if c.mayEmbed() {
-		if c.llmRecoveryBudget < 0 {
-			return errors.New("--llm-recovery-budget must be nonnegative")
-		}
-		if c.llmMaxAttemptsSet && c.llmMaxAttempts <= 0 {
-			return errors.New("--llm-max-attempts must be positive")
+		if err := validateEmbeddedRecovery(c); err != nil {
+			return err
 		}
 		if err := validateEmbeddedProvider(c); err != nil {
 			return err
@@ -925,6 +922,16 @@ func (c config) validate() error {
 		if err := app.PostureRefusalReason(embeddedAuthoritativePosture(c), embeddedPrivileged()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateEmbeddedRecovery(c config) error {
+	if c.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if c.llmMaxAttemptsSet && c.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
 	}
 	return nil
 }
