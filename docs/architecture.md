@@ -1467,7 +1467,7 @@ idempotent readiness immediately before each actual default MicroVM provision at
 startup and no-FS creation do not run readiness or allocate a validation attachment. The live
 `microvm-local` support boundary is the signed Linux-amd64 `mecatui` release binary:
 ordinary source builds have no authenticated release defaults and fail closed. For source
-development only, [ADR 0350](adr/0350-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
+development only, [ADR 0364](adr/0364-microvm-execution-environments.md#6-keep-source-build-release-activation-developer-only) defines a
 separately tagged `microvm_dev` mecated and embedded-local mecatui binaries whose
 development activation requires explicit
 acknowledgement and a strict owner-only local release descriptor. Untagged and published
@@ -1491,7 +1491,7 @@ exact logical attachment across fires. Before the first claim, deleting an indep
 placed schedule cleans its attachment while preserving dirty state. After the first claim,
 the attachment is retained for historical and resumable fire sessions when the schedule is deleted.
 See the [microVM architecture](architecture/microvm-environments.md) and
-[operator guide](usage/microvm-environments.md) (ADR 0350).
+[operator guide](usage/microvm-environments.md) (ADR 0364).
 
 Discovery is source-session scoped. `ListCommands(session_id)` and
 `ListWorktrees(session_id)` first authorize the owner and exactly reattach that source.

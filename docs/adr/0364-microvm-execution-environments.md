@@ -1,4 +1,4 @@
-# ADR 0350 — Repository-scoped local microVM execution environments
+# ADR 0364 — Repository-scoped local microVM execution environments
 
 - Status: Accepted
 - Date: 2026-08-19
@@ -98,7 +98,29 @@ session or child detaches process-local handles; it does not destroy the reposit
 rootfs, shared caches, or sibling logical environments. Mecated retains one exact attached
 binding per live placement generation and shares it across session runs, discovery, ACP, and
 team borrowers. `CloseSession`/`EndSession`, team cleanup, or service shutdown releases that
-Service-owned binding only after the final borrower exits, so no borrower can detach another.
+Service-owned binding only after the final borrower exits.
+
+Local single-user operation supports multiple simultaneous harness processes. Each successful
+MicroVM binding acquisition owns one authenticated local lifecycle connection and a
+daemon-issued ephemeral acquisition ID bound to its complete logical placement. Shared
+execution, source, schedule, and discovery consumers release only their own acquisition.
+A logical guest registration remains live while an acquisition or operation still uses it.
+Explicit release or connection loss retires that acquisition; final cleanup never deletes
+the repository VM, rootfs, or durable worktree. Existing SessionLease still serializes
+conversation mutation, independently of attachment ownership. Acquisition state is not
+persisted and is recreated by exact authorized reattachment after restart. Ambiguous
+publication or cleanup never grants destructive authority over retained state.
+
+This approved attachment-lifetime amendment remains to be implemented and verified under
+[Scenario 5 and the private lifecycle v4 contract](../acceptance/microvm-execution-environments.md).
+The retained lifecycle socket supplies liveness without heartbeat, TTL, durable owner state,
+new configuration, or a single-instance limit. v4 rejects v3 ownership requests; compatibility
+failure never automatically replaces a serving daemon. After daemon loss, cached bindings
+fail visibly and recovery uses explicit teardown/load/reattach or harness restart, without
+replay. Per-ref operation pins protect admitted calls without adding acquisition-owned
+cancellation, and destructive deletion requires atomic zero-pin/sole-owner (or unowned)
+admission. Ambiguous outcomes retain durable state.
+
 A placement provisioned for a session that fails before its first durable snapshot is instead
 rolled back by exact generation deletion; dirty or failed cleanup remains in durable daemon
 inventory for explicit recovery and never broadens deletion to the repository VM, rootfs, or
@@ -250,3 +272,4 @@ and the static rootfs primitive. Tasks 62–65 implement only the MVP above.
 - [Acceptance plan](../acceptance/microvm-execution-environments.md)
 - [MicroVM architecture](../architecture/microvm-environments.md)
 - [Operator guide](../usage/microvm-environments.md)
+- [ADR 0359 - Harness context source authority](./0359-harness-context-source-authority.md)

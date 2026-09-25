@@ -158,8 +158,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0208 — Execution environments and version-aware file mutation](./0208-execution-environment.md) *(runtime-seam deferral superseded by 0211; version protocol authoritative)*
 - [0211 — Execution-environment runtime seam](./0211-execution-environment-runtime-seam.md) *(supersedes 0208 decisions 1–3; phase-3 persistence deferral superseded by 0214)*
 - [0214 — Execution-environment persistence and reattachment](./0214-environment-persistence.md) *(supersedes 0211 decision 6 only)*
-- [0350 — Local microVM execution environments and developer-only release activation](./0350-microvm-execution-environments.md)
-- [0351 — Prepare Darwin VirtioFS ownership and supervise the direct runner](./0351-microvm-darwin-xattr-ownership.md) *(proposed; partially supersedes ADR 0350's macOS platform deferral if accepted; Linux amd64 remains authoritative)*
+- [0364 — Local microVM execution environments and developer-only release activation](./0364-microvm-execution-environments.md)
+- [0365 — Prepare Darwin VirtioFS ownership and supervise the direct runner](./0365-microvm-darwin-xattr-ownership.md) *(proposed; partially supersedes ADR 0364's macOS platform deferral if accepted; Linux amd64 remains authoritative)*
 
 ### Agents, teams & delegation
 - [0283 — Managed delegation-fork lifecycle](./0283-managed-delegation-fork-lifecycle.md) *(proposed; depends on 0281)*

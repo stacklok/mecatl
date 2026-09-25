@@ -1,14 +1,14 @@
-# ADR 0351 - Prepare Darwin VirtioFS ownership and supervise the direct runner
+# ADR 0365 - Prepare Darwin VirtioFS ownership and supervise the direct runner
 
 - Status: Proposed
 - Date: 2026-09-23
 - Scope: Darwin arm64 VirtioFS ownership preparation and exact launch ownership
-- Supersedes on acceptance: ADR 0350 section 4 only for the macOS platform deferral; the Linux amd64 mechanism remains authoritative
+- Supersedes on acceptance: ADR 0364 section 4 only for the macOS platform deferral; the Linux amd64 mechanism remains authoritative
 - Superseded by: none
 
 ## Context
 
-ADR 0350 fixes the guest workload identity at UID/GID `65532:65532`. Linux maps
+ADR 0364 fixes the guest workload identity at UID/GID `65532:65532`. Linux maps
 that identity to the daemon account with an unprivileged user namespace. Darwin
 arm64 has no equivalent namespace mapping in this integration, but go-microvm
 v0.0.41 can project a prepared VirtioFS ownership xattr as the fixed guest
@@ -123,7 +123,6 @@ uses the inherited flock instead.
 
 ## See also
 
-- [ADR 0350](./0350-microvm-execution-environments.md)
+- [ADR 0364](./0364-microvm-execution-environments.md)
 - [MicroVM execution-environment acceptance plan](../acceptance/microvm-execution-environments.md)
 - [MicroVM architecture](../architecture/microvm-environments.md)
-- [Production readiness tracker](../design/PRODUCTION-READINESS.md)

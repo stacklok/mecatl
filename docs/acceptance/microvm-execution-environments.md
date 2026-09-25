@@ -1,12 +1,16 @@
 # MicroVM execution environments — acceptance plan
 
+**Contract:** human-reviewed/v2
+**Work classification:** Architectural — this amendment adds connection-owned, daemon-local MicroVM acquisitions across local harness processes while preserving the independently approved Environment and HarnessContext contracts.
+**Decision record:** [ADR 0364](../adr/0364-microvm-execution-environments.md)
+
 **Phase:** Repository-scoped local microVM execution, including the experimental Darwin arm64 path
 **Status:** in-progress
-**Qualification:** Linux amd64 qualification landed. Darwin arm64 implementation is present in PR 580 and awaits native and release qualification.
+**Qualification:** Prior Linux amd64 qualification landed; it does not qualify the amended cross-process acquisition contract in AC5.2 and AC5.7–AC5.10, whose implementation and proofs remain pending. Darwin arm64 implementation is present in PR 580 and awaits native and release qualification.
 **Evidence:** Tasks 59–65 and deterministic offline Linux coverage are complete. `task e2e:microvm` is the automated Linux amd64 KVM gate and uses the deterministic in-process mock provider; it does not contact OpenRouter and is not the evidence for the live-provider claim. A separate manual qualification trace was executed on 2026-09-10 with Linux amd64 KVM and OpenRouter `openai/gpt-5-mini` through the public HTTP create and prompt APIs. Normal Write, Read, and Bash ran in the Wolfi guest as UID 65532; the proof marker existed only in the MicroVM logical worktree. The same session reattached after mecated restarted while microvmd remained alive, and `microvm doctor` and `microvm status` both reported healthy. This does not claim recovery after a microvmd restart. No credential, exact private placement ref, socket, or host path from that trace is retained in this document. Darwin unit, ownership-xattr, and lifecycle tests have only been cross-compiled locally on Linux; the unpushed macOS CI change has no result, and no physical Apple Silicon VM journey has run.
 **Issue:** [stacklok/mecatl#526](https://github.com/stacklok/mecatl/issues/526)
-**Delivery:** PR 580 is the sole delivery. The operator waived the separate plan checkpoint for this same-PR completion; tests, security review, and human merge authority remain required.
-**ADR:** [ADR 0350](../adr/0350-microvm-execution-environments.md), with the proposed Darwin decision in [ADR 0351](../adr/0351-microvm-darwin-xattr-ownership.md)
+**Delivery:** Split. PR 580 is the sole delivery. The operator explicitly authorized direct same-PR amendment of this plan and unmerged ADR 0364 for connection-owned acquisitions, overriding the separate amendment-PR/superseding-ADR route. The amendment is committed separately before implementation; tests, security review, and human merge authority remain required.
+**ADR:** [ADR 0364](../adr/0364-microvm-execution-environments.md), with the proposed Darwin decision in [ADR 0365](../adr/0365-microvm-darwin-xattr-ownership.md)
 **Accumulator branch:** `acc/microvm-execution-environments`
 
 The MVP uses one mutable microVM and one rootfs for one local operator and one canonical
@@ -16,16 +20,95 @@ created from a session borrows its exact worktree; an independent schedule owns 
 worktree reused by every fire. This is a
 small local, single-user, Git-only capability: it deliberately does not solve fleet
 management, comprehensive lifecycle automation, or cross-process merge coordination.
+Harness context follows the independently approved
+[harness-context source contract](harness-context.md): MicroVM placement registers an opt-in
+`repository` instruction and command source, while operator policy alone enables it. The
+backend evidence for exact guest-source acquisition belongs to that contract's Scenario 6;
+the placement, schedule, delegation, and platform criteria remain unchanged except for
+AC5.2 and AC5.7–AC5.10 below. Connection-owned acquisitions support multiple local coding
+terminals without extra configuration or a one-harness-per-daemon restriction.
 
 Tasks 59–65 preserve their completed behavior and acceptance criteria and replace
 all earlier superseded redesign tasks.
+
+## Human decisions
+
+- [x] HarnessContext alignment. — Decision: The directing human authorized AC5.6 for PR 580 in [the HarnessContext direction](https://github.com/stacklok/mecatl/pull/580#issuecomment-5814249136), limiting it to alignment with merged 1875/1878; it preserves the approved MicroVM criteria and adds no architectural decision.
+
+- [x] Local multi-instance baseline. — Decision: Multiple mecatui/embedded-mecated instances on one repository are normal coding use; no one-harness-per-daemon restriction is acceptable.
+- [x] Connection-owned acquisitions. — Decision: The directing human approved the reviewed connection-owned, daemon-local acquisition proposal on 2026-09-25. One retained authenticated Unix socket per independently acquired binding provides process-death cleanup without heartbeat, TTL, database, or new configuration. The exact private v4 exchange below governs release, operation pins, rollback and restart.
+- [x] Cleanup and compatibility. — Decision: Ambiguous outcomes retain durable worktrees, live ownership/pins block destructive deletion, and private v4 rejects v3 rather than allowing ref-global detach. A compatibility mismatch does not automatically replace a daemon serving other local harnesses.
+- [x] Direct same-PR amendment. — Decision: The directing human authorized this plan's AC5.2 replacement and AC5.7–AC5.10 additions, the narrow in-place attachment-lifetime amendment to unmerged ADR 0364, and ADR 0027's maintained inventories. This explicitly overrides the separate amendment-PR/superseding-ADR route; all other criteria and the shared HarnessContext contract remain intact. Verbatim approval and source are recorded in the existing run's `run.md`.
+
+## Interface contract
+
+- **gRPC / protobuf:** None — no public RPC, session field, inventory selector, client SDK, or HarnessContext API change. The private Unix JSON lifecycle delta is specified below.
+- **Exported Go APIs / interfaces:** No `engine` API change. In the opt-in `environment/microvm` module, `LifecycleProtocolVersion` becomes `4`; `LifecycleRequest` and `LifecycleResponse` gain `AcquisitionID string` with `json:"acquisition_id,omitempty"`; `ChildMergePayload` gains `ChildAcquisitionID string` with `json:"child_acquisition_id"`. Mirror these fields in the root adapter's private wire structs and set its `DaemonProtocolVersion` to `4`. Existing `PlacementBinding`, `ExecutionWorkspaceAcquirer`, and `tool.Environment` signatures remain unchanged. `Daemon.ServeConn` acquires the connection-lifetime semantics below; its stateless `Handle` entry must reject ownership-creating v4 requests rather than fabricate a connection owner. Tests exercising acquisition go through ServeConn.
+- **Tool schemas:** None — no new tool, argument, model-visible handle, or source selector. Existing instruction/source tools discover exactly the same content under the same policy.
+- **CLI / config:** None — no opt-in flag, lease timeout, owner ID, maintenance command, or one-instance limit. Existing readiness compatibility checks reject mixed protocol versions with the existing actionable mismatch path; a new client does not kill a daemon serving older clients. Existing `harness_context` operator policy may select the registered `repository` instruction and command sources; MicroVM placement alone does not enable them.
+- **Events / persistence:** No session/schedule/placement schema migration. Acquisition IDs, sockets, operation pins and pending teardown are daemon memory, never persisted or emitted in model/client/durable event projections. Existing exact refs, dirty retention and attachment inventory remain the durable truth.
+- **Security / authority:** Kernel Unix-peer authentication and complete authorized Binding/ref/generation checks remain mandatory on every request. An acquisition ID scopes lifetime; knowing it alone does not authorize a different principal/ref or bypass project ingestion, permissions, configured Ask/Deny, credentials, or no-FS restrictions. No virtual root is reopened on the host. Do not log acquisition IDs or add them to status output. Source views remain read-only, runner-less and execution-ledger-free. A selected repository source requires independent project trust and ingestion admission and reads only its exact guest workspace.
+- **Compatibility / migration:** Exact private protocol break v3→v4 for this unreleased feature; no unsafe legacy detach shim. No durable data migration. Upgrade/restart the daemon only through existing safe manager behavior; old handles are unusable after daemon restart, while durable worktrees and refs remain reattachable. This is not automatic replay or transparent recovery of in-flight commands. Unselected and independently registered sources retain their existing behavior.
+
+### Private lifecycle v4: exact exchange rules
+
+The added `acquisition_id` is 32 lowercase hexadecimal characters from 16 cryptographically random bytes, minted by microvmd and checked against active IDs before publication. It identifies one live acquisition, not the placement. The daemon stores its complete Binding and owning connection; clients cannot choose it. Cryptographic freshness plus active-collision rejection suffices: do not promise mathematically impossible collision-free randomness or retain released-ID tombstones. Existing durable inventory `attachment_id` and the operator's `--attachment-id` remain unchanged.
+
+| Operation | Request | Response / connection lifetime |
+|---|---|---|
+| `create` | Existing Provision/Binding; `acquisition_id` absent | Existing Created and allocated Binding plus new ID. The same socket stays open and owns this new binding. |
+| `resolve` | Existing exact Binding and Provision; ID absent | Exact Binding plus a **new** ID even if another client already holds the ref. Same socket stays open. No replacement placement or SessionStore lookup is implied. |
+| `fork` | Parent Binding and its live `acquisition_id`; existing label payload | Existing newly allocated child Binding plus a new child ID. The fork request's socket becomes the child owner; the parent owner/socket remains unchanged. Parent is pinned for the operation. |
+| `workspace`, `exec` | Complete Binding and live matching ID | Existing unary/streamed response. The one-shot request connection remains separate from the retained owner socket; operation pins protect registration until its call finishes. |
+| `merge` | Parent Binding/ID; payload contains existing Child binding and `child_acquisition_id` | Validate and pin both owners before using either environment; preserve existing merge/conflict behavior. No cross-process Git transaction claim. |
+| `detach` | Sent **on the acquisition's retained socket**, with that exact Binding and ID, empty Provision/Payload | Retire only that acquisition, return exact Binding/ID and cleanup result, then close socket. It is never a fresh one-shot global detach by ref. |
+| `delete`, `child-delete` | Existing exact deletion authorization. Owned rollback/child cleanup uses the retained socket and matching AcquisitionID; ordinary management/schedule deletion carries no ID | Owned admission requires the requesting acquisition to be the sole owner and the ref to have **zero operation pins**; no-ID deletion requires zero owners and pins. Admission, a per-ref deleting gate, and consumption of the requesting acquisition are atomic. The gate excludes new acquisitions until deletion completes or uncertain teardown is reconciled. Every admitted terminal outcome—clean deletion, dirty retention, cleanup error, or lost reply—retires the requesting ID and closes its socket. `in_use` performs no destructive mutation but also retires the requesting owner by ordinary release; the client always closes its socket, since its rollback callback is discarded. Other owners/pins survive. No `force` override or later implicit delete on EOF/error. |
+| `info`, `metrics`, `inventory`, `inspect`, manager `shutdown` | Existing checks; ID absent | Remain bounded one-shot operations. Inspect does not acquire or release a registration. Explicit manager shutdown retains its existing authenticated daemon-wide meaning, not a release shortcut. |
+
+Successful `create`/`resolve`/`fork` publish their acquisition in the daemon before replying. The client returns a binding only after validating the response and atomically transferring the socket from attempt-context cancellation to the returned owner's lifetime. Cancellation winning that transfer runs the safely attributable cleanup below; later completion/cancellation of the creation request cannot close a transferred binding. A resolve retry opens a fresh socket and gets a fresh owner; no request-ID deduplication store is required. Create/fork are not blindly retried after an unknown outcome.
+
+**Response validation is separate from rollback authority:**
+- A fully validated new create/fork result failing before session publication retains exact rollback authority: close attempt-owned source borrows, then perform bounded ownership-consuming deletion. Do not reduce ADR 0364's known unpublished-failure cleanup to detach-only.
+- Malformed non-authority metadata (for example Created profile/root/egress fields) does not erase safe attribution. For create, preserve the existing check at `internal/adapter/microvm/client.go:244-255`: expected owner, the unpredictable fresh request placement/session ID, and a complete canonical logical ref/generation. A matching well-formed AcquisitionID additionally permits terminal deletion on its originating socket; the daemon verifies that ID and tuple are precisely the new result created by that connection. If create's existing exact attribution is safe but its ID is absent/invalid, close the socket and attempt the existing bounded exact-ref rollback under the new zero-owner/zero-pin deletion gate. Cleanup refusal/error is reported as retained or uncertain, never as successful deletion.
+- Fork labels are reusable: parent/owner/label similarity alone never authorizes deleting a returned sibling. Fork rollback requires a complete validated child tuple, distinct from the parent, and a well-formed AcquisitionID whose originating connection the daemon verifies created that exact child. A malformed result lacking that proof is not destructively cleaned up.
+- Unknown, untrustworthy, truncated, or ambiguous transport outcomes without the above safe attribution close the connection and retain durable state. Resolve failure only releases its borrow; it never deletes the pre-existing placement. A syntactically valid ID alone grants no deletion authority. Preserve existing actionable retained/unknown-cleanup diagnostics and clean-delete/dirty-retention results; no extra cleanup service is introduced.
+
+Only the acquisition connection accepts its `detach` or ownership-consuming deletion. Wrong connection, mismatched Binding, unknown/released ID, and old-daemon ID fail closed before touching another ref. Repeated local Close is `sync.Once`-idempotent with the first result cached. Release validates the live ID **and its originating connection**, never decrements ownership by ref alone, and does not replay a stale release against a replacement. The daemon removes released IDs; cryptographic freshness replaces any growing release-history cache. Wrong/stale ownership maps to existing `binding_mismatch`; an in-use delete is the sole new private error code. No new public error enum is necessary.
+
+### Retained-socket framing
+
+`ServeConn` currently starts a one-byte EOF probe (`environment/microvm/daemon.go:281-285`). **That probe must not run on retained acquisition sockets:** it would consume release framing. After authentication, one reader parses the initial acquisition frame and then reads only a terminal frame or EOF through the same bounded codec. Acquisition work may run while that reader waits, but no second goroutine reads this socket. This is one acquisition plus one terminal exchange, not multiplexing; ordinary one-shot workspace/exec/management sockets keep their existing framing and cancellation behavior.
+
+- **Acquiring:** before the daemon has a validated result ready to reply, EOF cancels the attempt. Any second frame is a protocol violation, not an early delete: cancel the attempt, release any acquisition it created, and perform only safely attributable unpublished cleanup. Never dispatch that premature frame against a ref.
+- **Replying:** publish the connection-owned acquisition and enter this state immediately before writing its success response. The sole reader may queue at most one terminal frame while that write completes, avoiding a race with a fast client that has already read the reply. Only after a successful response write may a fully matching terminal request run. Failed reply write/EOF retires the acquisition non-destructively unless independent safe unpublished attribution warrants rollback; the queued frame itself grants no authority after write failure.
+- **Owned:** accept only matching `detach`, `delete`, or `child-delete`, then enter terminal processing and close after its result. Malformed/mismatched frames close and retire only this connection's acquisition without executing their requested mutation. EOF means ordinary release, never delete. A second acquisition/request stream is not accepted on this socket. The reader and worker terminate on socket close or daemon shutdown; no unbounded queue or extra cancellation graph is introduced.
+
+### Ordering, cancellation and cleanup
+
+1. Acquisition, owner retirement, destructive-delete admission, and final detach are serialized for the **exact ref**. Concurrent first resolves converge on one runtime registration but distinct acquisition IDs. Do not hold a daemon-wide lock across guest execution, source capture, or waiting for callers; unrelated PRs must progress independently.
+2. A request with a live ID obtains an operation pin before exposing the Workspace/Runner. Retirement rejects new operations for that ID and waits for its existing pins before final unregister; it does **not** cancel them. Each one-shot operation connection already owns its cancellation. Owner-socket loss alone need not stop a still-live bounded operation; process death closes both sockets. Do not add acquisition-owned cancel functions, an operation-cancellation registry, or a second cancellation graph.
+3. Ordinary Close sends detach with the existing bounded cleanup timeout, reads its result, and always closes the owner socket. Lost release replies still lead to EOF cleanup. Errors are returned, not logged as success; duplicated local Close cannot repeat a ref-global teardown.
+4. Ctrl-C, SIGKILL, or an abandoned failed acquisition closes its sockets automatically. EOF retires the owner; operation pins drain through their existing operation-socket cancellation and completion. Final registration cleanup retains durable worktrees. The single framed reader above detects EOF during a slow acquisition and after success; no concurrent byte probe is permitted.
+5. Known unpublished failure follows the rollback-authority boundary above. Owned deletion is terminal even on `in_use`: no destructive mutation occurs, but the caller always releases/closes its acquisition and reports the refusal; it cannot rely on a later Close callback after rollback is discarded. Admitted deletion keeps new acquisitions excluded through its outcome, retires the requesting acquisition on every result, and preserves existing dirty-retention/error state. Socket loss never retries deletion implicitly. Ambiguous outcomes retain durable state; no orphan-worktree collector is added.
+6. Failed final guest unregister uses the runtime's existing registration-incarnation/pending-teardown mechanism (`repository_runtime.go:353-386,389-424`). The ref cannot publish a new live acquisition until teardown is reconciled; old cleanup cannot unregister a replacement incarnation. Report the failure. No new background reaper/lease timer is introduced. Normal EOF cleanup is automatic; a genuinely broken guest may require existing recovery, not silent success.
+7. Daemon-wide shutdown keeps its existing cancellation and bounded runtime cleanup; it closes and joins retained connection handlers, without adding per-acquisition operation cancellation. **Harness restart:** a fresh Build has no cached binding; existing authorized load/use reattaches the exact durable ref and obtains a new acquisition. **Daemon restart while a harness remains alive:** owner sockets and IDs become invalid, cached bindings/current calls fail visibly, and no automatic reconnect, binding replacement or command replay occurs. Recovery uses existing explicit teardown and load/reattach paths, not a new reload seam. `CloseSession` drops that session's environment/source ownership (`service.go:2998-3063`); `LoadSession` authorizes and activates sources (`service.go:4112,4276-4313`), and subsequent placement use reattaches when no retained attachment remains (`placement.go:519-567`). Load alone does not evict an active cached binding shared with other sessions. If retained owners keep a dead binding cached, restart the affected harness to clear them; do not promise an unimplemented in-place refresh. Reattachment still requires the exact daemon to be ready and current authorization; failure never selects a substitute ref.
+
+The daemon's connection handler, not a caller-supplied session ID or host PID, is the acquisition owner. `net.Conn` and exact-ref state suffice; no generic lease port is added.
+
+The client acquired-binding value owns the socket, ID and idempotent Close. Replace
+`Client.ownershipMu`/ownership counters and per-client final-detach arbitration; remove the
+unused ref-only `Client.Detach(ctx, sess)` rather than retaining a global-detach API. Keep
+Service and source-generation reference counts, which own separate resources. Explicit
+administrative Delete retains its distinct semantics with in-use refusal. Reuse the existing
+manager maps and runtime registration-incarnation cleanup, without a parallel repository
+registry or new manager orchestration.
 
 ## In scope — 8 scenarios
 
 ### Scenario 1 — ordinary deployment-default selection converges on a ready local backend
 
 This completed scenario follows
-[ADR 0350 — readiness](../adr/0350-microvm-execution-environments.md#5-make-readiness-part-of-ordinary-use).
+[ADR 0364 — readiness](../adr/0364-microvm-execution-environments.md#5-make-readiness-part-of-ordinary-use).
 
 **Acceptance:**
 
@@ -42,7 +125,7 @@ This completed scenario follows
 
 ### Scenario 2 — canonical repository identity owns one durable VM generation
 
-This follows [ADR 0350 — singleton lifecycle](../adr/0350-microvm-execution-environments.md#2-use-one-durable-vmrootfs-record-per-operator-and-canonical-git-repository).
+This follows [ADR 0364 — singleton lifecycle](../adr/0364-microvm-execution-environments.md#2-use-one-durable-vmrootfs-record-per-operator-and-canonical-git-repository).
 
 The daemon uses `(operator, canonical Git common directory)` as the only repository VM
 key. This scenario establishes lifecycle identity and the rootfs singleton; it does not add
@@ -77,7 +160,7 @@ repository guest. Filesystem and exec remain bound to one `EnvironmentRef` and o
 
 ### Scenario 4 — immutable Brood bytes and one explicit repository rootfs
 
-This follows [ADR 0350 — direct Brood consumption](../adr/0350-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
+This follows [ADR 0364 — direct Brood consumption](../adr/0364-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
 
 The artifact and static guest-contract work in tasks 60–61 remains complete. The remaining
 MVP step attaches that primitive to the repository generation.
@@ -106,8 +189,8 @@ cross-process merge coordinator or crash-durable merge journal is required.
 
 - AC5.1: Sessions in one repository attach to the same repository VM with distinct logical refs and worktrees; a direct-write child reuses its parent's logical Environment, while a read-only Subagent, Parallel branch, or Team member receives a distinct logical ref and worktree in that VM.
   - verify: `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`, `TestMicroVMMVP_Scenario5_SessionsAndChildrenReuseRepositoryVM`
-- AC5.2: Mecated owns one exact attached binding per live placement generation and shares it across runs, discovery, ACP, and team borrowers. Closing a session or child releases that ownership only after the final borrower exits and detaches its process-local handles exactly once, without destroying the repository VM, rootfs, shared cache, or another attached logical environment. Repeated runs do not mint attachment owners; service shutdown drains the same ownership registry.
-  - verify: `TestMicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession`, `TestPlacementRepeatedRunsAndShutdownShareOneOwner`, `TestPlacementBorrowersDelayDetachUntilLastRelease`, `TestMicroVMMVP_Scenario5_CloseDetachesWithoutDestroyingRepositoryVM`
+- AC5.2: A Service retains and shares its exact binding across its consumers; microvmd separately retains the logical guest registration across all live acquisition connections from all local harness processes. Closing a session, source, fire, child, reader, or whole harness releases only its owned acquisitions. Final cleanup detaches guest/process handles exactly once without destroying durable worktrees, the repository VM/rootfs, or sibling registrations. Same-session writer lease semantics are unchanged.
+  - verify: `TestMicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession`, `TestPlacementRepeatedRunsAndShutdownShareOneOwner`, `TestPlacementBorrowersDelayDetachUntilLastRelease`, `TestMicroVMMVP_Scenario5_CloseDetachesWithoutDestroyingRepositoryVM`, `TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose`, `TestMicroVMCrossBuildScheduleClosePreservesOrigin`
 - AC5.2a: A logical placement provisioned for an unpublished session is exact-generation deleted when validation, factory construction, capacity admission, collision handling, or persistence fails. Successful persistence transfers ownership and disables rollback. Dirty or failed cleanup remains durably discoverable for retry; rollback never deletes the repository VM, rootfs, or sibling placements and does not change EndSession or DeleteSession policy.
   - verify: `TestFailedCreateRollsBackUnpublishedPlacement`, `TestFailedFactoryCreateRollsBackUnpublishedPlacement`, `TestCapacityFailurePrecedesPlacementProvisioning`, `TestCollisionAfterProvisioningRollsBackUnpublishedPlacement`, `TestRollbackFailureRetainsExplicitRecoveryDiagnostic`, `TestSuccessfulCreateNeverRollsBack`
 - AC5.3: The existing isolated-child merge path applies a non-conflicting child change and preserves the child on conflict; the MVP makes no cross-process serialization or crash-recovery claim.
@@ -116,10 +199,35 @@ cross-process merge coordinator or crash-durable merge journal is required.
   - verify: `TestRepositoryProductionInventoryPaginationAndLogicalDelete`
 - AC5.5: Schedule creation durably pins one exact placement: an origin-backed schedule borrows its session's logical worktree, while an independent MicroVM schedule provisions and owns one logical worktree. Updates cannot change placement or ownership, and every fire exactly reauthorizes the persisted ref without following the current default, including after a harness restart while microvmd remains live. Before the first claim, deletion atomically disables the schedule and cleans only its owned placement, retaining dirty state; cleanup or completion failure leaves a restart-safe tombstone retried against the same ref. The first atomic claim hands placement lifetime to the persisted fire-session lineage, so later deletion removes only the schedule record and retains the worktree for historical or resumable fires. Active fires block deletion, and borrowed, no-FS, host-local, and legacy-ambiguous placements are never destructively cleaned up; no path deletes the repository VM, rootfs, origin session, or sibling worktrees.
   - verify: `TestADR_0291_ScheduleResolvesSelectorBeforePersistingExactEnvironmentRef`, `TestInvariant_scheduled_placement_is_reauthorized_at_fire`, `TestScheduleIndependentPlacementAllocatedOnceAndCleaned`, `TestScheduleClaimHandsPlacementToFireSession`, `TestScheduleCleanupFailureRetainsDisabledExactPlacement`, `TestScheduleLegacyAndNoFSPlacementsAreNeverDeleted`, `TestScheduleDeleteDisablesBeforeActiveFireCleanup`, `TestScheduleDeleteUsesAtomicBeginRecordForClaimHandoff`, `TestScheduleDeleteCompletionFailureLeavesRetryableTombstone`, `TestScheduleCreatePersistenceFailureRollsBackOwnedPlacement`
+- AC5.6: MicroVM composition registers, but does not select, a `repository` instruction and command source. A selected, independently trusted and admitted source borrows only its session's exact guest workspace as a read-only, runner-less, mutation-less, and execution-read-ledger-free view. It retains that source binding across delegated children and successors, releases only its own borrow on cancellation or retirement, and reauthorizes the persisted exact ref after schedule or harness restart. Independent sources acquire no guest workspace, and a required repository source fails rather than using a host checkout, another session, or no-FS placement.
+  - verify: `TestMicroVMIndependentContextIgnoresGuestAndSurvivesUnavailableExecution`, `TestMicroVMCancelledUnpublishedSourceReleasesOnlyAttempt`, `TestMicroVMChildRetainsParentSourceAfterRetirement`, `TestMicroVMSuccessorRetainsPlacementAndContext`, `TestMicroVMSelectedScheduleAndRestartReauthorizeContext`, `TestMicroVMRepositorySelectionDoesNotGrantProjectAdmission`, `TestMicroVMRequiredRepositorySourceFailsForNoFS`, `TestMicroVMSelectedContextFreshnessAndReadEvidence`
+
+- AC5.7: Independent Builds on the same checkout and on different linked host Git worktrees create distinct logical refs sharing one repository VM; their conflicting dirty files/instruction markers remain distinct. Closing either Build leaves the other's model-visible selected context, workspace and command runner usable. Cross-instance shared-ref schedule/command-discovery cleanup cannot revoke the originating execution owner.
+  - verify: `TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose` (same-checkout/linked-worktree table, including the cross-Build command-reader release subcase); `TestMicroVMCrossBuildScheduleClosePreservesOrigin`
+- AC5.8: Duplicate local release, stale/wrong-owner/wrong-ref IDs, simultaneous acquire/final-release, and failed/cancelled acquisition do not release a different holder or replacement. Safe attribution preserves known unpublished rollback despite malformed non-authority metadata; ambiguous outcomes retain durable state. Destructive deletion requires atomic sole-owner/zero-pin admission, excludes new acquisitions until completion, and retires the caller on every terminal result, including `in_use`, dirty retention and errors, without deleting another live holder's work.
+  - verify: `TestMicroVMAcquisitionOwnershipIsExactAndIdempotent` (table and deterministic interleavings); `TestMicroVMAcquisitionCancellationAndLostRepliesReleaseOnlyOwner`; `TestMicroVMDeleteRejectsLiveOtherAcquisitions`
+- AC5.9: Normal close/owner-socket loss retires acquisition ownership; existing operation pins drain under operation-socket cancellation, then final registration/handler resources are reclaimed. Harness crash retains durable worktrees; a fresh harness's authorized load/use reattaches the exact ref. Daemon restart invalidates cached bindings and current calls fail; recovery requires existing explicit teardown/load/reattach or harness restart, never transparent replacement or replay. Pending final teardown cannot unregister a newly acquired replacement.
+  - verify: `TestMicroVMOwnerDisconnectReclaimsRegistration`; `TestMicroVMOwnershipRestartPreservesExactWorktree`; `TestMicroVMFinalDetachFailureCannotCloseReplacement`
+- AC5.10: v3 and malformed ownership requests are rejected without performing the requested mutation or releasing another acquisition. A malformed retained connection retires only its own acquisition through ordinary release. Multiple local harnesses require no new flags/configuration, while a daemon compatibility mismatch does not automatically stop a serving peer's runtime.
+  - verify: `TestMicroVMLifecycleV4RejectsUnsafeLegacyOwnership`, `TestEnsureReadyReusesOnlyCompatibleDaemonWithoutRestart`, `TestEnsureReadyRecoversCompatibleStoppedDaemonAndRefusesUnsafeRuntimeBranches`, `TestEnsureReadyPreservesExistingConfigurationOnMismatch`, `TestMicroVMRedesign_Scenario1_EnsureReadyConvergesUnderManagerLock`, `TestMicroVMRedesign_Scenario1_ReadinessNeverRewritesDesiredConfig`
+
+**Proof boundary and implementation order:**
+
+1. Add the **two-Build distinct-placement** and **cross-instance origin-backed schedule** failing regressions first. Both Builds use separate production MicroVM Clients, a shared real JSONL store/lease directory where appropriate, and the same real `RuntimeDaemon`/`RepositoryAttachmentManager`/guest registration path. Substitute only VM/rootfs/network launch with test-owned offline fixtures. The fake must not implement Resolve/Detach/owner counts itself. Reuse exported production composition and existing `repository_composition_test.go` fixture patterns; keep host runtime dependencies out of root production imports/default binaries.
+2. In the schedule proof, A is the elected scheduler leader; B creates the origin-backed schedule through the real service. The read-only fire completes and its session is closed before B performs another workspace operation and model request containing its selected instruction/command marker. Controlled clocks/channels, not sleeps, establish the ordering. Closing B must eventually release the final registration too; retaining everything is not a passing implementation.
+3. Add command-reader safety as a subcase of the two-Build fixture: drive actual listing/expansion, retire B's source, then verify A's execution remains usable. Reuse existing shared child/direct-write/Parallel/Team, successor, no-FS, admission, ledger and adversarial-model proofs unchanged. No optional successor matrix or duplicated delegation suite.
+4. Use table/subcases of the named daemon tests for single-reader framing (premature frame and fast release during reply), EOF/lost acquire/release reply, safe-vs-unsafe malformed-result rollback, atomic deletion/admission, `in_use` retirement, dirty/error outcomes and overlapping teardown. An operation-socket subcase proves owner retirement drains rather than cancels a still-live call. A small subprocess socket owner proves actual process-exit cleanup. Reuse test-owned offline composition; no new production fixture package, operator state, live VM/provider or broader matrix.
+5. Then replace the private client/daemon exchange and wire all existing acquisitions through it. Public tools, schedule claims and SessionLease remain unchanged. Run focused module/client/app proofs and targeted race tests while iterating.
+
+The new test names are required proofs, not claims that they exist or pass. Retained AC5.2
+and AC5.6 proofs do not qualify cross-client ownership. Offline production composition is
+not Linux KVM/Darwin HVF qualification; the separate platform requirements remain.
+The [Environment and HarnessContext domain contracts](../architecture/mecatl.modelith.yaml)
+and [shared source-lifetime criteria](harness-context.md) remain unchanged.
 
 ### Scenario 6 — platform ownership and useful networking are honest
 
-This follows [ADR 0350's Linux guest decision](../adr/0350-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest) and the proposed [Darwin xattr decision](../adr/0351-microvm-darwin-xattr-ownership.md#prepare-fixed-guest-ownership-with-virtiofs-xattrs).
+This follows [ADR 0364's Linux guest decision](../adr/0364-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest) and the proposed [Darwin xattr decision](../adr/0365-microvm-darwin-xattr-ownership.md#prepare-fixed-guest-ownership-with-virtiofs-xattrs).
 
 Linux amd64 keeps its qualified namespace mechanism. Darwin arm64 keeps the same fixed guest identity through strict VirtioFS ownership preparation, but remains experimental until Scenario 8. The default network is useful rather than presented as containment; tightening remains optional and fail-closed when selected.
 
@@ -173,6 +281,8 @@ automated gate and is not evidence for microvmd restart recovery.
   - verify: inspection — `task docs` and `task site:build` prove the linked documentation surfaces build
 
 ### Scenario 8 — Darwin arm64 is implemented but not yet qualified
+
+This follows the proposed [Darwin ownership decision](../adr/0365-microvm-darwin-xattr-ownership.md).
 
 The Darwin code path uses go-microvm v0.0.41 runtime and firmware artifacts pinned by SHA-256, repository registry version 1, fixed guest UID/GID 65532 ownership xattrs, and a direct-child launch supervisor. Normal admission requires Apple Silicon, macOS 15 or newer, and Hypervisor.framework. Linux arm64 remains rejected.
 
@@ -259,7 +369,11 @@ automatic-restart claim.
 - released macOS support and native Apple Silicon plus signed-candidate qualification;
 - Linux arm64 live support;
 - upstream Brood signing and independent artifact/config refresh channels;
-- per-session fairness, quotas, dashboards, and exhaustive cache-poisoning controls.
+- per-session fairness, quotas, dashboards, and exhaustive cache-poisoning controls;
+- durable acquisition leases, heartbeats, TTLs, PID watchers, or new storage fencing;
+- a one-harness-per-daemon limit, per-terminal VMs, or registrations retained until daemon exit;
+- crash-orphan worktree collection, new cleanup commands/configuration, or transparent command replay;
+- new source-selection policy, trust tiers, public placement selectors, or engine abstractions.
 
 Non-Git environments, remote/multi-user microvmd, cross-principal VM sharing,
 unified host+guest egress containment, and moving provider/MCP credentials into the guest
@@ -271,7 +385,13 @@ also remain out of scope.
 - The durable registry fails closed on inconsistent restart state; it does not silently
   recreate, delete, or reconcile an orphan.
 - Default, no-fs, and engine-standalone gates preserve the opt-in module boundary.
-- Every numbered AC is quoted with its exact `verify:` line in exactly one of tasks 62–65.
+- Every amended AC and its exact `verify:` line must be covered by the regenerated run-local
+  brief before fresh implementation dispatch; historical task completion does not qualify it.
+- After implementation, update only the owning operator guide
+  (`user-docs/building/deployment/microvm-environments.md`) and architecture page for the
+  supported multi-terminal workflow, non-transactional shared-worktree writes and unchanged
+  same-conversation SessionLease contention. Until then, those pages describe current
+  behavior and preserve the source-selection documentation; approval is not implementation.
 
 ## Definition of done
 
