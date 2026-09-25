@@ -4,12 +4,12 @@
 **Work classification:** Bounded — changes the client-local tool-card presentation and adds one strict user-global mecatui setting, without changing wire, engine, persistence, authority, or public Go contracts.
 **Decision record:** None — compact-card presentation, its local configuration key, and compatibility treatment are bounded mecatui product decisions rather than durable system architecture.
 **Phase:** mecatui conversation readability
-**Status:** proposed, 2026-09-25. User-directed Plan / Interface candidate.
+**Status:** in-progress, 2026-09-25. Implementation authorized by the directing human with an explicit waiver of the Plan / Interface PR merge gate.
 **Delivery:** Split. The new client configuration surface and intentional default presentation change require review before implementation.
 **Expected tasks:** deferred to orchestration after Plan / Interface review.
 **Issue:** None — initiated directly by the user.
 **Plan PR:** [#1913](https://github.com/stacklok/mecatl/pull/1913)
-**Approved baseline:** absent until the Plan / Interface PR merges.
+**Approved baseline:** `69bbb5ef8962998bac3538a56a3cc4049bb503c5` under the directing human's explicit 2026-09-25 waiver of the Plan / Interface PR merge gate.
 
 Mecatui will make collapsed tool calls in the active conversation scannable by moving a bounded argument summary into the status/name header and limiting resolved output previews to three display rows by default. The complete arguments and output remain available there through the existing `ExpandTools` action (`ctrl+t` by default).
 

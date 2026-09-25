@@ -52,11 +52,24 @@ func TestMecatuiCompactToolCards_Scenario2_ConfiguredRowsSurviveRendererRebuild(
 	stored := newSessionsPanelState()
 	stored.deps = surfaceDeps{theme: aztec(), marks: defaultHelpKeys()}
 	stored.view = sessionsTranscript
+	stored.loading = false
 	stored.transcript.addTool("call-1", "Read", `{}`)
-	stored.transcript.resolveTool("call-1", "one\ntwo\nthree\nfour", false)
-	stored.Render(80, 24)
-	if stored.transcriptRend.collapsedToolResultRows != defaultCollapsedToolResultRows {
-		t.Fatalf("stored transcript rows = %d, want independent default %d", stored.transcriptRend.collapsedToolResultRows, defaultCollapsedToolResultRows)
+	stored.transcript.resolveTool("call-1", strings.Join([]string{
+		"stored-row-01", "stored-row-02", "stored-row-03", "stored-row-04",
+		"stored-row-05", "stored-row-06", "stored-row-07", "stored-row-08",
+		"stored-row-09", "stored-row-10", "stored-row-11", "stored-row-12",
+		"stored-row-13", "stored-row-14",
+	}, "\n"), false)
+	storedView, _ := stored.Render(80, 100)
+	storedPlain := stripANSIstr(storedView)
+	if got := strings.Count(storedPlain, "stored-row-"); got != maxToolResultLines {
+		t.Errorf("stored transcript rendered %d result body rows, want legacy %d:\n%s", got, maxToolResultLines, storedPlain)
+	}
+	if !strings.Contains(storedPlain, "stored-row-12") || !strings.Contains(storedPlain, "expand") {
+		t.Errorf("stored transcript did not render 12 body rows plus expansion marker:\n%s", storedPlain)
+	}
+	if strings.Contains(storedPlain, "stored-row-13") || strings.Contains(storedPlain, "stored-row-14") {
+		t.Errorf("stored transcript rendered content beyond its legacy 12-row preview:\n%s", storedPlain)
 	}
 
 	diff := &block{kind: blockTool, toolName: "Write", toolArgs: `{"path":"out.txt","content":"one\ntwo\nthree"}`}

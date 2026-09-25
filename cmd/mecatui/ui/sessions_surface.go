@@ -355,7 +355,7 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 	vpContent := ""
 	if s.view == sessionsTranscript {
 		if s.transcriptRend == nil {
-			s.transcriptRend = newRenderer(s.deps.theme, s.deps.marks)
+			s.transcriptRend = newRenderer(s.deps.theme, s.deps.marks, maxToolResultLines)
 		}
 		s.transcriptRend.setWidth(width)
 		s.transcriptVP.SetWidth(width)

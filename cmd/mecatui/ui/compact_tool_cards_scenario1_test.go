@@ -177,6 +177,28 @@ func TestMecatuiCompactToolCards_Scenario1_HeaderWidthSafetyAndSpecializedCards(
 		t.Errorf("two-cell header must preserve status and a tool-name omission marker: %q", tinyHeader)
 	}
 
+	const exactHeader = "✓ Read"
+	exactFit := newTestRenderer()
+	exactFit.indent = 0
+	exactFit.setWidth(lipgloss.Width(exactHeader) + exactFit.th.Style("toolCard").GetHorizontalFrameSize() + 2)
+	_, exactOuterWidth, exactBodyWidth := exactFit.toolCardLayout()
+	if exactBodyWidth != lipgloss.Width(exactHeader) {
+		t.Fatalf("exact-fit body width = %d, want %d", exactBodyWidth, lipgloss.Width(exactHeader))
+	}
+	exactCard := exactFit.prepareToolCard(&block{kind: blockTool, toolName: "Read", toolArgs: `{"path":"file.txt"}`, resolved: true}, false)
+	exactRows := preparedChromeContentRows(exactCard)
+	if len(exactRows) != 1 {
+		t.Fatalf("exact-fit collapsed header has %d content rows, want one: %q", len(exactRows), exactRows)
+	}
+	if got := strings.Trim(exactRows[0], " │"); got != exactHeader {
+		t.Errorf("exact-fit collapsed header = %q, want %q with no argument omission marker", got, exactHeader)
+	}
+	for i, line := range exactCard.Lines {
+		if got := lipgloss.Width(line); got > exactOuterWidth {
+			t.Errorf("exact-fit row %d occupies %d cells, want at most %d: %q", i, got, exactOuterWidth, ansi.Strip(line))
+		}
+	}
+
 	r := newTestRenderer()
 	r.setWidth(80)
 	mcp := &block{kind: blockTool, toolName: "mcp__github__issue_write", toolArgs: args, resolved: true, resultBody: "\x1b[2Jfailure", resultError: true}
@@ -202,10 +224,24 @@ func TestMecatuiCompactToolCards_Scenario1_HeaderWidthSafetyAndSpecializedCards(
 		t.Errorf("Edit diff was subjected to the generic three-row/body removal: %q", editBody)
 	}
 
+	write := &block{kind: blockTool, toolName: "Write", toolArgs: mustJSON(t, map[string]any{
+		"path": "file.txt", "content": "a\nb\nc\nd",
+	})}
+	writeBody := strings.Join(preparedRegionText(r.prepareToolCard(write, false), blocks.RegionArguments), "\n")
+	if !strings.Contains(writeBody, "+ a") || !strings.Contains(writeBody, "+ d") {
+		t.Errorf("Write diff was subjected to the generic three-row/body removal: %q", writeBody)
+	}
+
 	subagent := &block{kind: blockTool, toolName: "Subagent", subagent: true, subGoal: "preserve specialized body", subDone: true, subStop: "end_turn"}
 	subBody := strings.Join(preparedRegionText(r.prepareToolCard(subagent, false), blocks.RegionArguments), "\n")
 	if !strings.Contains(subBody, "preserve specialized body") || !strings.Contains(subBody, "subagent") {
 		t.Errorf("Subagent specialized body changed: %q", subBody)
+	}
+
+	team := &block{kind: blockTool, toolName: "Team", team: true, teamLanes: []teamLane{{name: "specialist", current: "Review", lead: true}}}
+	teamBody := strings.Join(preparedRegionText(r.prepareToolCard(team, false), blocks.RegionArguments), "\n")
+	if !strings.Contains(teamBody, "team") || !strings.Contains(teamBody, "specialist") {
+		t.Errorf("Team specialized body changed: %q", teamBody)
 	}
 }
 
