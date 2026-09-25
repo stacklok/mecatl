@@ -1,4 +1,4 @@
-# ADR 0362 — Resolve plan asks by exact run and ask
+# ADR 0366 — Resolve plan asks by exact run and ask
 
 - Status: Proposed
 - Date: 2026-09-24

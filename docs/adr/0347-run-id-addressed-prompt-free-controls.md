@@ -4,7 +4,7 @@
 - Date: 2026-09-16
 - Scope: `engine/agent.Run` ask resolution, `HarnessService`, the HTTP session-control routes, and the TypeScript SDK's session/run-control surface
 - Supersedes: ADR 0288 Decision 6; ADR 0304 Decision 3 only for its teams-alone ergonomic-resource constraint
-- Superseded by: ADR 0362 Decision 1 for Decision 8's exclusion of plan-originated asks from run-addressed controls
+- Superseded by: ADR 0366 Decision 1 for Decision 8's exclusion of plan-originated asks from run-addressed controls
 
 ## Context
 
