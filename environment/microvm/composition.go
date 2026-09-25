@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/stacklok/mecatl/environment/microvm/control"
@@ -47,7 +48,6 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 		return errors.New("repository microvmd server is not configured")
 	}
 	serveCtx, cancelServe := context.WithCancel(ctx)
-	defer cancelServe()
 	go func() {
 		select {
 		case <-d.Daemon.shutdown:
@@ -60,9 +60,19 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 		defer cancel()
 		retErr = errors.Join(retErr, d.Repository.Runtime.Shutdown(shutdownCtx))
 	}()
+	var handlers sync.WaitGroup
+	var connections sync.Map
+	defer func() {
+		cancelServe()
+		handlers.Wait()
+	}()
 	go func() {
 		<-serveCtx.Done()
 		_ = listener.Close()
+		connections.Range(func(key, _ any) bool {
+			_ = key.(net.Conn).Close()
+			return true
+		})
 	}()
 	for {
 		conn, err := listener.Accept()
@@ -72,7 +82,11 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 			}
 			return err
 		}
+		connections.Store(conn, struct{}{})
+		handlers.Add(1)
 		go func() {
+			defer handlers.Done()
+			defer connections.Delete(conn)
 			defer func() { _ = conn.Close() }()
 			if err := d.Daemon.ServeConn(serveCtx, conn); err != nil && d.observer != nil {
 				d.observer.LifecycleRequestFailed(err)

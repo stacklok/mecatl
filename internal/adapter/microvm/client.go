@@ -31,7 +31,7 @@ import (
 
 const (
 	// DaemonProtocolVersion is the exact local management protocol spoken by this client.
-	DaemonProtocolVersion                    uint16 = 3
+	DaemonProtocolVersion                    uint16 = 4
 	protocolVersion                                 = DaemonProtocolVersion
 	maxMessageBytes                                 = 1 << 20
 	maxInventoryPageSize                            = 64
@@ -76,11 +76,12 @@ type provisionRequest struct {
 }
 
 type lifecycleRequest struct {
-	Version   uint16            `json:"version"`
-	Operation string            `json:"operation"`
-	Binding   binding           `json:"binding"`
-	Provision *provisionRequest `json:"provision,omitempty"`
-	Payload   json.RawMessage   `json:"payload,omitempty"`
+	Version       uint16            `json:"version"`
+	Operation     string            `json:"operation"`
+	Binding       binding           `json:"binding"`
+	AcquisitionID string            `json:"acquisition_id,omitempty"`
+	Provision     *provisionRequest `json:"provision,omitempty"`
+	Payload       json.RawMessage   `json:"payload,omitempty"`
 }
 
 type environmentRef struct {
@@ -102,12 +103,13 @@ type execStreamFrame struct {
 }
 
 type lifecycleResponse struct {
-	Binding   binding          `json:"binding,omitempty"`
-	Created   *created         `json:"created,omitempty"`
-	Stream    *execStreamFrame `json:"stream,omitempty"`
-	Payload   json.RawMessage  `json:"payload,omitempty"`
-	ErrorCode string           `json:"error_code,omitempty"`
-	ErrorText string           `json:"error,omitempty"`
+	Binding       binding          `json:"binding,omitempty"`
+	AcquisitionID string           `json:"acquisition_id,omitempty"`
+	Created       *created         `json:"created,omitempty"`
+	Stream        *execStreamFrame `json:"stream,omitempty"`
+	Payload       json.RawMessage  `json:"payload,omitempty"`
+	ErrorCode     string           `json:"error_code,omitempty"`
+	ErrorText     string           `json:"error,omitempty"`
 }
 
 // Client speaks the authenticated local management protocol. Authentication is
@@ -119,8 +121,48 @@ type Client struct {
 	scope          server.PlacementScope
 	readiness      func(context.Context) error
 	cleanupTimeout time.Duration
-	ownershipMu    sync.Mutex
-	ownership      map[session.EnvironmentRef]int
+}
+
+type acquisition struct {
+	client  *Client
+	conn    net.Conn
+	binding binding
+	id      string
+	once    sync.Once
+	err     error
+}
+
+func (a *acquisition) terminal(operation string) error {
+	if a == nil {
+		return nil
+	}
+	a.once.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), a.client.cleanupTimeout)
+		defer cancel()
+		stop := context.AfterFunc(ctx, func() { _ = a.conn.Close() })
+		defer stop()
+		request := lifecycleRequest{Version: protocolVersion, Operation: operation, Binding: a.binding, AcquisitionID: a.id}
+		if err := writeFrame(a.conn, request); err != nil {
+			a.err = err
+			_ = a.conn.Close()
+			return
+		}
+		var response lifecycleResponse
+		if err := readFrame(a.conn, &response); err != nil {
+			a.err = err
+			_ = a.conn.Close()
+			return
+		}
+		_ = a.conn.Close()
+		if response.ErrorCode != "" {
+			a.err = fmt.Errorf("microvmd %s: %s", response.ErrorCode, response.ErrorText)
+			return
+		}
+		if response.Binding != a.binding || response.AcquisitionID != a.id {
+			a.err = errors.New("microvmd terminal response changed acquisition")
+		}
+	})
+	return a.err
 }
 
 // New validates endpoint and constructs a thin lifecycle client.
@@ -129,7 +171,7 @@ func New(endpoint string) (*Client, error) {
 	if err != nil || u.Scheme != "unix" || u.Host != "" || u.Path == "" {
 		return nil, errors.New("microvmd endpoint must be an absolute unix:// path")
 	}
-	return &Client{endpoint: u.Path, cleanupTimeout: cleanupPhaseTimeout, ownership: make(map[session.EnvironmentRef]int)}, nil
+	return &Client{endpoint: u.Path, cleanupTimeout: cleanupPhaseTimeout}, nil
 }
 
 // NewPlacementProvider constructs a deployment-owned microVM default placement.
@@ -189,16 +231,12 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 	if c.sourceCheckout == "" {
 		return server.PlacementBinding{}, server.ErrInvalidPlacementBinding
 	}
-	// Resolve and final detach are one client-local ownership transaction. A new
-	// owner cannot publish between backend resolution and a previous last detach.
-	c.ownershipMu.Lock()
-	defer c.ownershipMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return server.PlacementBinding{}, err
 	}
 	resolveCtx, cancelResolve := context.WithTimeoutCause(ctx, resolvePhaseTimeout, errors.New("microvmd resolve phase timed out"))
 	defer cancelResolve()
-	response, err := c.call(resolveCtx, lifecycleRequest{
+	response, owner, err := c.acquire(resolveCtx, lifecycleRequest{
 		Version: protocolVersion, Operation: "resolve", Binding: claim,
 		Provision: &provisionRequest{Owner: claim.Owner, SessionID: claim.SessionID, Profile: c.profile, SourceCheckout: c.sourceCheckout},
 	})
@@ -206,16 +244,13 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 		return server.PlacementBinding{}, fmt.Errorf("microvmd resolve phase failed: %w", err)
 	}
 	if response.Binding != claim {
+		_ = owner.terminal("detach")
 		return server.PlacementBinding{}, errors.New("microvmd resolved a different environment generation")
 	}
-	closePlacement := func() error { return c.boundedOperate(ctx, "detach", claim) }
 	if err := ctx.Err(); err != nil {
-		if c.ownership[request.Ref] == 0 {
-			return server.PlacementBinding{}, errors.Join(err, closePlacement())
-		}
-		return server.PlacementBinding{}, err
+		return server.PlacementBinding{}, errors.Join(err, owner.terminal("detach"))
 	}
-	return c.placementBindingLocked(request.Ref, claim, closePlacement, nil), nil
+	return c.placementBinding(request.Ref, claim, owner, nil), nil
 }
 
 func noFSBinding() (server.PlacementBinding, error) {
@@ -234,12 +269,17 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 	}
 	placementID := hex.EncodeToString(entropy[:])
 	owner := ownerName(principal)
-	response, err := c.call(ctx, lifecycleRequest{
+	response, ownerConn, err := c.acquire(ctx, lifecycleRequest{
 		Version: protocolVersion, Operation: "create", Binding: binding{Owner: owner, SessionID: placementID},
 		Provision: &provisionRequest{Owner: owner, SessionID: placementID, Profile: c.profile, SourceCheckout: c.sourceCheckout},
 	})
 	if err != nil {
-		return server.PlacementBinding{}, err
+		safeCleanupTarget := response.Binding.Owner == owner && response.Binding.SessionID == placementID &&
+			strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding)
+		if safeCleanupTarget {
+			return server.PlacementBinding{}, invalidPlacementResponseError(err, c.boundedRollbackPlacement(ctx, response.Binding))
+		}
+		return server.PlacementBinding{}, unsafePlacementResponseError(err)
 	}
 	safeCleanupTarget := response.Binding.Owner == owner && response.Binding.SessionID == placementID &&
 		strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding)
@@ -248,17 +288,17 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 		response.Created.Generation != response.Binding.Generation || response.Created.HostWorktree == "" || response.Created.GuestRoot != publicGuestRoot ||
 		response.Created.Profile != c.profile || response.Created.GuestEgress == "" || response.Created.HostEgress == "" {
 		if safeCleanupTarget {
-			return server.PlacementBinding{}, invalidPlacementResponseError(primary, c.boundedRollbackPlacement(ctx, response.Binding))
+			return server.PlacementBinding{}, invalidPlacementResponseError(primary, ownerConn.terminal("delete"))
 		}
+		_ = ownerConn.terminal("detach")
 		return server.PlacementBinding{}, unsafePlacementResponseError(primary)
 	}
 	if !safeCleanupTarget {
+		_ = ownerConn.terminal("detach")
 		return server.PlacementBinding{}, unsafePlacementResponseError(errors.New("microvmd create binding mismatch"))
 	}
 	ref := refForBinding(response.Binding)
-	closePlacement := func() error { return c.boundedOperate(ctx, "detach", response.Binding) }
-	rollbackPlacement := func() error { return c.boundedRollbackPlacement(ctx, response.Binding) }
-	return c.placementBinding(ref, response.Binding, closePlacement, rollbackPlacement), nil
+	return c.placementBinding(ref, response.Binding, ownerConn, ownerConn), nil
 }
 
 func (c *Client) rollbackPlacement(ctx context.Context, claim binding) error {
@@ -277,12 +317,6 @@ func (c *Client) rollbackPlacement(ctx context.Context, claim binding) error {
 		return errRollbackRetained
 	}
 	return nil
-}
-
-func (c *Client) boundedOperate(parent context.Context, operation string, claim binding) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), c.cleanupTimeout)
-	defer cancel()
-	return c.operate(ctx, operation, claim)
 }
 
 func (c *Client) boundedRollbackPlacement(parent context.Context, claim binding) error {
@@ -315,45 +349,14 @@ func canonicalBinding(claim binding) bool {
 		claim.Ref == claim.EnvironmentID+"@"+strconv.FormatUint(uint64(claim.Generation), 10) && claim.Generation != 0
 }
 
-func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, detach, rollback func() error) server.PlacementBinding {
-	c.ownershipMu.Lock()
-	defer c.ownershipMu.Unlock()
-	return c.placementBindingLocked(ref, claim, detach, rollback)
-}
-
-func (c *Client) placementBindingLocked(ref session.EnvironmentRef, claim binding, detach, rollback func() error) server.PlacementBinding {
-	c.ownership[ref]++
-	var releaseOnce sync.Once
-	var releaseErr error
-	release := func(remove bool) error {
-		releaseOnce.Do(func() {
-			c.ownershipMu.Lock()
-			defer c.ownershipMu.Unlock()
-			remaining := c.ownership[ref] - 1
-			if remaining == 0 {
-				delete(c.ownership, ref)
-			} else {
-				c.ownership[ref] = remaining
-			}
-			if remove && rollback != nil {
-				if remaining != 0 {
-					releaseErr = errors.New("microvm rollback refused: placement still has live owners")
-				} else {
-					releaseErr = rollback()
-				}
-			} else if remaining == 0 && detach != nil {
-				releaseErr = detach()
-			}
-		})
-		return releaseErr
-	}
+func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, owner, rollback *acquisition) server.PlacementBinding {
 	binding := server.PlacementBinding{
-		Ref: ref, Environment: c.environment(ref, claim), Close: func() error { return release(false) },
+		Ref: ref, Environment: c.environment(ref, claim, owner), Close: func() error { return owner.terminal("detach") },
 		GovernanceRoot: c.sourceCheckout,
 		Metadata:       server.PlacementMetadata{Kind: string(kindMicroVM), Label: "Local microVM", Revision: ref.Revision},
 	}
 	if rollback != nil {
-		binding.Rollback = func() error { return release(true) }
+		binding.Rollback = func() error { return rollback.terminal("delete") }
 	}
 	return binding
 }
@@ -599,11 +602,6 @@ func (c *Client) LifecycleMetrics(ctx context.Context) (LifecycleMetrics, error)
 	return metrics, nil
 }
 
-// Detach drops daemon process-local handles while retaining the generation.
-func (c *Client) Detach(ctx context.Context, sess *session.Session) error {
-	return c.sessionOperation(ctx, "detach", sess)
-}
-
 // Delete permanently destroys the exact persisted generation.
 func (c *Client) Delete(ctx context.Context, sess *session.Session) error {
 	return c.sessionOperation(ctx, "delete", sess)
@@ -644,7 +642,7 @@ func (c *Client) DeletePlacement(ctx context.Context, request server.PlacementDe
 
 // Fork asks microvmd to create a complete isolated child generation.
 func (c *Client) Fork(ctx context.Context, base tool.Environment, label string) (tool.Environment, func() error, string, error) {
-	claim, err := bindingFromEnvironment(c, base)
+	claim, parentOwner, err := bindingFromEnvironment(c, base)
 	if err != nil {
 		return tool.Environment{}, nil, "", err
 	}
@@ -654,7 +652,7 @@ func (c *Client) Fork(ctx context.Context, base tool.Environment, label string) 
 	if err != nil {
 		return tool.Environment{}, nil, "", err
 	}
-	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "fork", Binding: claim, Payload: payload})
+	response, childOwner, err := c.acquire(ctx, lifecycleRequest{Version: protocolVersion, Operation: "fork", Binding: claim, AcquisitionID: parentOwner.id, Payload: payload})
 	if err != nil {
 		return tool.Environment{}, nil, "", err
 	}
@@ -663,36 +661,33 @@ func (c *Client) Fork(ctx context.Context, base tool.Environment, label string) 
 		strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding) &&
 		response.Created == nil && response.Stream == nil && len(response.Payload) == 0
 	if !validChild {
-		// The protocol has no request-scoped creation proof. A malformed response can
-		// name a pre-existing sibling (labels are reusable), so its tuple grants no
-		// destructive rollback authority.
+		_ = childOwner.terminal("detach")
 		return tool.Environment{}, nil, "", unsafePlacementResponseError(errors.New("microvmd fork returned an invalid child binding"))
 	}
 	childRef := refForBinding(response.Binding)
-	child := c.environment(childRef, response.Binding)
-	cleanup := func() error {
-		return c.boundedOperate(ctx, "child-delete", response.Binding)
-	}
+	child := c.environment(childRef, response.Binding, childOwner)
+	cleanup := func() error { return childOwner.terminal("child-delete") }
 	return child, cleanup, "", nil
 }
 
 // Merge asks microvmd to conflict-check and atomically apply child changes.
 func (c *Client) Merge(ctx context.Context, child, parent tool.Environment) error {
-	parentClaim, err := bindingFromEnvironment(c, parent)
+	parentClaim, parentOwner, err := bindingFromEnvironment(c, parent)
 	if err != nil {
 		return err
 	}
-	childClaim, err := bindingFromEnvironment(c, child)
+	childClaim, childOwner, err := bindingFromEnvironment(c, child)
 	if err != nil {
 		return err
 	}
 	payload, err := json.Marshal(struct {
-		Child binding `json:"child"`
-	}{Child: childClaim})
+		Child              binding `json:"child"`
+		ChildAcquisitionID string  `json:"child_acquisition_id"`
+	}{Child: childClaim, ChildAcquisitionID: childOwner.id})
 	if err != nil {
 		return err
 	}
-	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "merge", Binding: parentClaim, Payload: payload})
+	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "merge", Binding: parentClaim, AcquisitionID: parentOwner.id, Payload: payload})
 	if err != nil {
 		return err
 	}
@@ -702,12 +697,12 @@ func (c *Client) Merge(ctx context.Context, child, parent tool.Environment) erro
 	return nil
 }
 
-func bindingFromEnvironment(client *Client, env tool.Environment) (binding, error) {
+func bindingFromEnvironment(client *Client, env tool.Environment) (binding, *acquisition, error) {
 	workspace, ok := env.Workspace().(*workspace)
-	if !ok || workspace.client != client || env.Ref().Kind != kindMicroVM || refForBinding(workspace.binding) != env.Ref() {
-		return binding{}, errors.New("environment is not owned by this microvmd client")
+	if !ok || workspace.client != client || workspace.owner == nil || env.Ref().Kind != kindMicroVM || refForBinding(workspace.binding) != env.Ref() {
+		return binding{}, nil, errors.New("environment is not owned by this microvmd client")
 	}
-	return workspace.binding, nil
+	return workspace.binding, workspace.owner, nil
 }
 
 func (c *Client) sessionOperation(ctx context.Context, operation string, sess *session.Session) error {
@@ -728,9 +723,66 @@ func (c *Client) operate(ctx context.Context, operation string, claim binding) e
 	return nil
 }
 
-func (c *Client) environment(ref session.EnvironmentRef, claim binding) tool.Environment {
-	ws := &workspace{client: c, binding: claim, ledger: make(map[string]tool.FileVersion)}
-	return tool.MustEnvironment(ref, ws, memledger.New(), &runner{client: c, binding: claim})
+func (c *Client) environment(ref session.EnvironmentRef, claim binding, owners ...*acquisition) tool.Environment {
+	owner := &acquisition{client: c, binding: claim, id: "00000000000000000000000000000000"}
+	if len(owners) != 0 && owners[0] != nil {
+		owner = owners[0]
+	}
+	ws := &workspace{client: c, binding: claim, owner: owner, ledger: make(map[string]tool.FileVersion)}
+	return tool.MustEnvironment(ref, ws, memledger.New(), &runner{client: c, binding: claim, owner: owner})
+}
+
+func acquisitionID(owner *acquisition) string {
+	if owner == nil {
+		return ""
+	}
+	return owner.id
+}
+
+func (c *Client) acquire(ctx context.Context, request lifecycleRequest) (lifecycleResponse, *acquisition, error) {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", c.endpoint)
+	if err != nil {
+		return lifecycleResponse{}, nil, fmt.Errorf("dial microvmd: %w", err)
+	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	if err := writeFrame(conn, request); err != nil {
+		stopCancel()
+		_ = conn.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return lifecycleResponse{}, nil, ctxErr
+		}
+		return lifecycleResponse{}, nil, err
+	}
+	var response lifecycleResponse
+	if err := readFrame(conn, &response); err != nil {
+		stopCancel()
+		_ = conn.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return lifecycleResponse{}, nil, ctxErr
+		}
+		return lifecycleResponse{}, nil, err
+	}
+	if response.ErrorCode != "" {
+		stopCancel()
+		_ = conn.Close()
+		return lifecycleResponse{}, nil, fmt.Errorf("microvmd %s: %s", response.ErrorCode, response.ErrorText)
+	}
+	if len(response.AcquisitionID) != 32 || response.AcquisitionID != strings.ToLower(response.AcquisitionID) {
+		stopCancel()
+		_ = conn.Close()
+		return response, nil, errors.New("microvmd returned an invalid acquisition ID")
+	}
+	if _, err := hex.DecodeString(response.AcquisitionID); err != nil {
+		stopCancel()
+		_ = conn.Close()
+		return response, nil, errors.New("microvmd returned an invalid acquisition ID")
+	}
+	if !stopCancel() {
+		_ = conn.Close()
+		return lifecycleResponse{}, nil, ctx.Err()
+	}
+	return response, &acquisition{client: c, conn: conn, binding: response.Binding, id: response.AcquisitionID}, nil
 }
 
 func (c *Client) call(ctx context.Context, request lifecycleRequest) (lifecycleResponse, error) {
@@ -829,6 +881,7 @@ func bindingForSession(sess *session.Session) (binding, error) {
 type workspace struct {
 	client  *Client
 	binding binding
+	owner   *acquisition
 	mu      sync.Mutex
 	ledger  map[string]tool.FileVersion
 }
@@ -865,7 +918,7 @@ type workspaceResponse struct {
 
 func (w *workspace) rpc(ctx context.Context, req workspaceRequest) (workspaceResponse, error) {
 	payload, _ := json.Marshal(req)
-	response, err := w.client.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "workspace", Binding: w.binding, Payload: payload})
+	response, err := w.client.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "workspace", Binding: w.binding, AcquisitionID: acquisitionID(w.owner), Payload: payload})
 	if err != nil {
 		return workspaceResponse{}, err
 	}
@@ -955,6 +1008,7 @@ func (w *workspace) RecordedVersion(path string) (tool.FileVersion, bool) {
 type runner struct {
 	client  *Client
 	binding binding
+	owner   *acquisition
 }
 
 func (*runner) BoundWorkspaceRoot() string { return publicGuestRoot }
@@ -1023,7 +1077,7 @@ func (r *runner) exec(ctx context.Context, command string, scope tool.TemporaryS
 	if err != nil {
 		return 0, err
 	}
-	response, err := r.client.stream(ctx, lifecycleRequest{Version: protocolVersion, Operation: "exec", Binding: r.binding, Payload: payload}, receive)
+	response, err := r.client.stream(ctx, lifecycleRequest{Version: protocolVersion, Operation: "exec", Binding: r.binding, AcquisitionID: acquisitionID(r.owner), Payload: payload}, receive)
 	if err != nil {
 		return 0, err
 	}

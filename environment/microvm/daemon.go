@@ -13,12 +13,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/stacklok/mecatl/environment/microvm/control"
 )
 
 // LifecycleProtocolVersion is the local microvmd management protocol version.
-const LifecycleProtocolVersion uint16 = 3
+const LifecycleProtocolVersion uint16 = 4
 
 // LifecycleOperation is one closed management operation.
 type LifecycleOperation string
@@ -61,11 +62,12 @@ var errLifecycleProtocol = errors.New("invalid microvmd lifecycle protocol reque
 // Create binds the requested owner/session and returns the allocated ref/generation;
 // every operation on an existing environment requires the complete Binding.
 type LifecycleRequest struct {
-	Version   uint16             `json:"version"`
-	Operation LifecycleOperation `json:"operation"`
-	Binding   control.Binding    `json:"binding"`
-	Provision *ProvisionRequest  `json:"provision,omitempty"`
-	Payload   json.RawMessage    `json:"payload,omitempty"`
+	Version       uint16             `json:"version"`
+	Operation     LifecycleOperation `json:"operation"`
+	Binding       control.Binding    `json:"binding"`
+	AcquisitionID string             `json:"acquisition_id,omitempty"`
+	Provision     *ProvisionRequest  `json:"provision,omitempty"`
+	Payload       json.RawMessage    `json:"payload,omitempty"`
 }
 
 // ProvisionRequest is the thin root-module create shape. The daemon expands
@@ -120,13 +122,14 @@ type LifecycleExecStream struct {
 
 // LifecycleResponse reports the exact durable generation observed after an operation.
 type LifecycleResponse struct {
-	Binding   control.Binding      `json:"binding,omitempty"`
-	Created   *LifecycleCreated    `json:"created,omitempty"`
-	Stream    *LifecycleExecStream `json:"stream,omitempty"`
-	Payload   json.RawMessage      `json:"payload,omitempty"`
-	ErrorCode string               `json:"error_code,omitempty"`
-	ErrorText string               `json:"error,omitempty"`
-	Err       error                `json:"-"`
+	Binding       control.Binding      `json:"binding,omitempty"`
+	AcquisitionID string               `json:"acquisition_id,omitempty"`
+	Created       *LifecycleCreated    `json:"created,omitempty"`
+	Stream        *LifecycleExecStream `json:"stream,omitempty"`
+	Payload       json.RawMessage      `json:"payload,omitempty"`
+	ErrorCode     string               `json:"error_code,omitempty"`
+	ErrorText     string               `json:"error,omitempty"`
+	Err           error                `json:"-"`
 }
 
 // LifecycleGenerationHealth is the operator-facing health of one exact generation.
@@ -185,7 +188,8 @@ type ChildForkPayload struct {
 
 // ChildMergePayload identifies the exact child generation merged into Binding.
 type ChildMergePayload struct {
-	Child control.Binding `json:"child"`
+	Child              control.Binding `json:"child"`
+	ChildAcquisitionID string          `json:"child_acquisition_id"`
 }
 
 // RepositoryPlacement contains one repository-scoped logical attachment request.
@@ -214,6 +218,21 @@ type repositoryDaemonBinding struct {
 	status  EnforcedProfileStatus
 }
 
+type lifecycleAcquisition struct {
+	binding control.Binding
+	conn    net.Conn
+}
+
+type lifecycleRefOwnership struct {
+	owners      map[string]struct{}
+	pins        int
+	closing     bool
+	reconciling bool
+	drained     chan struct{}
+}
+
+var errAcquisitionInUse = errors.New("microvmd acquisition is in use")
+
 // Daemon owns the local management protocol. Hypervisor creation remains
 // exclusively behind Lifecycle -> VMRuntime.
 type Daemon struct {
@@ -225,6 +244,9 @@ type Daemon struct {
 	repositoryStartupErr  error
 	repositoryMu          sync.Mutex
 	repositoryBindings    map[string]repositoryDaemonBinding
+	ownershipMu           sync.Mutex
+	acquisitions          map[string]lifecycleAcquisition
+	refOwnership          map[string]*lifecycleRefOwnership
 	inventoryKey          [sha256.Size]byte
 	shutdown              chan struct{}
 	shutdownOnce          sync.Once
@@ -240,6 +262,8 @@ func NewDaemon(cfg DaemonConfig) (*Daemon, error) {
 		repositoryAttachments: cfg.RepositoryAttachments, repositoryProvisioner: cfg.RepositoryProvisioner,
 		repositoryStartupErr: cfg.RepositoryStartupError,
 		repositoryBindings:   make(map[string]repositoryDaemonBinding),
+		acquisitions:         make(map[string]lifecycleAcquisition),
+		refOwnership:         make(map[string]*lifecycleRefOwnership),
 		shutdown:             make(chan struct{}),
 	}
 	if _, err := rand.Read(daemon.inventoryKey[:]); err != nil {
@@ -261,9 +285,8 @@ func newLifecycleServeError(operation LifecycleOperation, code string, cause err
 	return &lifecycleServeError{operation: operation, code: code, cause: cause}
 }
 
-// ServeConn authenticates the peer, then reads and writes one bounded lifecycle
-// exchange on a local socket. Exec responses are ordered stream frames followed by
-// one final exit response.
+// ServeConn authenticates the peer and serves either one bounded operation or
+// one retained acquisition followed by its terminal release frame.
 func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	if d == nil || d.control == nil {
 		return errors.New("microvmd lifecycle service is not configured")
@@ -276,6 +299,45 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	if err := codec.Read(conn, &request); err != nil {
 		return newLifecycleServeError("connection", "transport", err)
 	}
+	if request.Version != LifecycleProtocolVersion {
+		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(errLifecycleProtocol))
+	}
+	if request.Operation == LifecycleCreate || request.Operation == LifecycleResolve || request.Operation == LifecycleFork {
+		return d.serveAcquisition(ctx, conn, codec, request)
+	}
+	if request.Operation == LifecycleDetach || request.Operation == LifecycleChildDelete || (request.Operation == LifecycleDelete && request.AcquisitionID != "") {
+		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(control.ErrBindingMismatch))
+	}
+
+	var unpin func()
+	deleteGate := false
+	if request.AcquisitionID != "" {
+		var err error
+		unpin, err = d.pinAcquisition(request.Binding, request.AcquisitionID)
+		if err != nil {
+			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
+		}
+		defer unpin()
+		if request.Operation == LifecycleMerge {
+			var payload ChildMergePayload
+			if json.Unmarshal(request.Payload, &payload) != nil || payload.ChildAcquisitionID == "" {
+				return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(errLifecycleProtocol))
+			}
+			unpinChild, pinErr := d.pinAcquisition(payload.Child, payload.ChildAcquisitionID)
+			if pinErr != nil {
+				return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(pinErr))
+			}
+			defer unpinChild()
+		}
+	} else if operationRequiresAcquisition(request.Operation) {
+		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(control.ErrBindingMismatch))
+	} else if request.Operation == LifecycleDelete {
+		if err := d.beginUnownedDeletion(request.Binding); err != nil {
+			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
+		}
+		deleteGate = true
+	}
+
 	requestCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -292,6 +354,9 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	} else {
 		response = d.handleAuthenticated(requestCtx, request)
 	}
+	if deleteGate {
+		d.finishUnownedDeletion(request.Binding)
+	}
 	if err := write(response); err != nil {
 		return newLifecycleServeError(request.Operation, "transport", err)
 	}
@@ -304,6 +369,274 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	return nil
 }
 
+func operationRequiresAcquisition(operation LifecycleOperation) bool {
+	switch operation {
+	case LifecycleWorkspace, LifecycleExec, LifecycleMerge:
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *Daemon) writeServeResponse(codec control.Codec, conn net.Conn, operation LifecycleOperation, response LifecycleResponse) error {
+	if err := codec.Write(conn, response); err != nil {
+		return newLifecycleServeError(operation, "transport", err)
+	}
+	if response.Err != nil {
+		return newLifecycleServeError(operation, response.ErrorCode, response.Err)
+	}
+	return nil
+}
+
+func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec control.Codec, request LifecycleRequest) error {
+	if (request.Operation == LifecycleCreate || request.Operation == LifecycleResolve) && request.AcquisitionID != "" {
+		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(control.ErrBindingMismatch))
+	}
+	var unpin func()
+	if request.Operation == LifecycleFork {
+		var err error
+		unpin, err = d.pinAcquisition(request.Binding, request.AcquisitionID)
+		if err != nil {
+			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
+		}
+		defer unpin()
+	}
+	if request.Operation == LifecycleResolve {
+		if err := d.reconcilePendingDetach(ctx, request.Binding); err != nil {
+			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
+		}
+	}
+
+	acquireCtx, cancelAcquire := context.WithCancel(ctx)
+	defer cancelAcquire()
+	type readResult struct {
+		request LifecycleRequest
+		err     error
+	}
+	read := make(chan readResult, 1)
+	var replying atomic.Bool
+	go func() {
+		var terminal LifecycleRequest
+		err := codec.Read(conn, &terminal)
+		read <- readResult{request: terminal, err: err}
+		if !replying.Load() {
+			cancelAcquire()
+		}
+	}()
+
+	response := d.handleAuthenticated(acquireCtx, request)
+	if response.Err != nil {
+		return d.writeServeResponse(codec, conn, request.Operation, response)
+	}
+	select {
+	case early := <-read:
+		if request.Operation == LifecycleCreate || request.Operation == LifecycleFork {
+			_, _ = d.repositoryOperation(context.WithoutCancel(ctx), LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDelete, Binding: response.Binding})
+		}
+		if early.err != nil {
+			return newLifecycleServeError(request.Operation, "transport", early.err)
+		}
+		return d.writeServeResponse(codec, conn, early.request.Operation, lifecycleFailure(errLifecycleProtocol))
+	default:
+	}
+
+	replying.Store(true)
+	id, err := d.publishAcquisition(conn, response.Binding)
+	if err != nil {
+		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
+	}
+	response.AcquisitionID = id
+	if err := codec.Write(conn, response); err != nil {
+		destroy := request.Operation == LifecycleCreate || request.Operation == LifecycleFork
+		_, _ = d.releaseAcquisition(ctx, conn, response.Binding, id, destroy)
+		return newLifecycleServeError(request.Operation, "transport", err)
+	}
+
+	terminalResult := <-read
+	if terminalResult.err != nil {
+		_, releaseErr := d.releaseAcquisition(ctx, conn, response.Binding, id, false)
+		if releaseErr != nil {
+			return newLifecycleServeError(request.Operation, lifecycleErrorCode(releaseErr), releaseErr)
+		}
+		return nil
+	}
+	terminal := terminalResult.request
+	if terminal.Version != LifecycleProtocolVersion || terminal.Binding != response.Binding || terminal.AcquisitionID != id ||
+		(terminal.Operation != LifecycleDetach && terminal.Operation != LifecycleDelete && terminal.Operation != LifecycleChildDelete) || terminal.Provision != nil || len(terminal.Payload) != 0 {
+		_, _ = d.releaseAcquisition(ctx, conn, response.Binding, id, false)
+		return d.writeServeResponse(codec, conn, terminal.Operation, lifecycleFailure(control.ErrBindingMismatch))
+	}
+	terminalResponse, releaseErr := d.releaseAcquisition(ctx, conn, response.Binding, id, terminal.Operation != LifecycleDetach)
+	if releaseErr != nil {
+		terminalResponse = lifecycleFailure(releaseErr)
+	}
+	terminalResponse.Binding = response.Binding
+	terminalResponse.AcquisitionID = id
+	return d.writeServeResponse(codec, conn, terminal.Operation, terminalResponse)
+}
+
+func (d *Daemon) reconcilePendingDetach(ctx context.Context, binding control.Binding) error {
+	d.ownershipMu.Lock()
+	state := d.refOwnership[binding.Ref]
+	if state == nil || !state.closing {
+		d.ownershipMu.Unlock()
+		return nil
+	}
+	if state.reconciling || len(state.owners) != 0 || state.pins != 0 {
+		d.ownershipMu.Unlock()
+		return control.ErrBindingMismatch
+	}
+	state.reconciling = true
+	d.ownershipMu.Unlock()
+
+	_, err := d.repositoryOperation(ctx, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDetach, Binding: binding})
+	d.ownershipMu.Lock()
+	if err == nil {
+		delete(d.refOwnership, binding.Ref)
+	} else {
+		state.reconciling = false
+	}
+	d.ownershipMu.Unlock()
+	return err
+}
+
+func (d *Daemon) publishAcquisition(conn net.Conn, binding control.Binding) (string, error) {
+	if err := claimValidate(binding); err != nil {
+		return "", control.ErrBindingMismatch
+	}
+	var raw [16]byte
+	for {
+		if _, err := rand.Read(raw[:]); err != nil {
+			return "", err
+		}
+		id := fmt.Sprintf("%x", raw[:])
+		d.ownershipMu.Lock()
+		if _, exists := d.acquisitions[id]; exists {
+			d.ownershipMu.Unlock()
+			continue
+		}
+		state := d.refOwnership[binding.Ref]
+		if state != nil && state.closing {
+			d.ownershipMu.Unlock()
+			return "", control.ErrBindingMismatch
+		}
+		if state == nil {
+			state = &lifecycleRefOwnership{owners: make(map[string]struct{})}
+			d.refOwnership[binding.Ref] = state
+		}
+		state.owners[id] = struct{}{}
+		d.acquisitions[id] = lifecycleAcquisition{binding: binding, conn: conn}
+		d.ownershipMu.Unlock()
+		return id, nil
+	}
+}
+
+func (d *Daemon) pinAcquisition(binding control.Binding, id string) (func(), error) {
+	if id == "" {
+		return nil, control.ErrBindingMismatch
+	}
+	d.ownershipMu.Lock()
+	acquisition, ok := d.acquisitions[id]
+	state := d.refOwnership[binding.Ref]
+	if !ok || acquisition.binding != binding || state == nil || state.closing {
+		d.ownershipMu.Unlock()
+		return nil, control.ErrBindingMismatch
+	}
+	state.pins++
+	d.ownershipMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			d.ownershipMu.Lock()
+			state.pins--
+			if state.pins == 0 && state.drained != nil {
+				close(state.drained)
+				state.drained = nil
+			}
+			d.ownershipMu.Unlock()
+		})
+	}, nil
+}
+
+func (d *Daemon) beginUnownedDeletion(binding control.Binding) error {
+	d.ownershipMu.Lock()
+	defer d.ownershipMu.Unlock()
+	state := d.refOwnership[binding.Ref]
+	if state != nil && (len(state.owners) != 0 || state.pins != 0 || state.closing) {
+		return errAcquisitionInUse
+	}
+	if state == nil {
+		state = &lifecycleRefOwnership{owners: make(map[string]struct{})}
+		d.refOwnership[binding.Ref] = state
+	}
+	state.closing = true
+	return nil
+}
+
+func (d *Daemon) finishUnownedDeletion(binding control.Binding) {
+	d.ownershipMu.Lock()
+	state := d.refOwnership[binding.Ref]
+	if state != nil && len(state.owners) == 0 && state.pins == 0 {
+		delete(d.refOwnership, binding.Ref)
+	}
+	d.ownershipMu.Unlock()
+}
+
+func (d *Daemon) releaseAcquisition(ctx context.Context, conn net.Conn, binding control.Binding, id string, destroy bool) (LifecycleResponse, error) {
+	d.ownershipMu.Lock()
+	acquisition, ok := d.acquisitions[id]
+	state := d.refOwnership[binding.Ref]
+	if !ok || acquisition.binding != binding || acquisition.conn != conn || state == nil {
+		d.ownershipMu.Unlock()
+		return LifecycleResponse{}, control.ErrBindingMismatch
+	}
+	delete(d.acquisitions, id)
+	delete(state.owners, id)
+	inUse := false
+	if destroy && len(state.owners) != 0 {
+		d.ownershipMu.Unlock()
+		return LifecycleResponse{}, errAcquisitionInUse
+	}
+	if destroy && state.pins != 0 {
+		destroy = false
+		inUse = true
+	}
+	if len(state.owners) != 0 {
+		d.ownershipMu.Unlock()
+		return LifecycleResponse{}, nil
+	}
+	state.closing = true
+	if state.pins != 0 {
+		state.drained = make(chan struct{})
+		drained := state.drained
+		d.ownershipMu.Unlock()
+		select {
+		case <-drained:
+		case <-ctx.Done():
+			return LifecycleResponse{}, ctx.Err()
+		}
+	} else {
+		d.ownershipMu.Unlock()
+	}
+
+	request := LifecycleRequest{Version: LifecycleProtocolVersion, Binding: binding, Operation: LifecycleDetach}
+	if destroy {
+		request.Operation = LifecycleDelete
+	}
+	response, err := d.repositoryOperation(ctx, request)
+	d.ownershipMu.Lock()
+	if err == nil {
+		delete(d.refOwnership, binding.Ref)
+	} else {
+		state.closing = true
+	}
+	d.ownershipMu.Unlock()
+	if err == nil && inUse {
+		return response, errAcquisitionInUse
+	}
+	return response, err
+}
+
 // Handle authenticates the peer before examining any caller-controlled identity,
 // then binds the operation to the authoritative durable registry record.
 func (d *Daemon) Handle(ctx context.Context, conn net.Conn, request LifecycleRequest) LifecycleResponse {
@@ -312,6 +645,9 @@ func (d *Daemon) Handle(ctx context.Context, conn net.Conn, request LifecycleReq
 	}
 	if err := d.control.Authenticate(conn); err != nil {
 		return lifecycleFailure(err)
+	}
+	if request.Version == LifecycleProtocolVersion && (request.Operation == LifecycleCreate || request.Operation == LifecycleResolve || request.Operation == LifecycleFork) {
+		return lifecycleFailure(errLifecycleProtocol)
 	}
 	return d.handleAuthenticated(ctx, request)
 }
@@ -583,6 +919,8 @@ func lifecycleErrorCode(err error) string {
 		return "unavailable"
 	case errors.Is(err, ErrRepositoryLogicalRootUnavailable):
 		return "repository_logical_root_unavailable"
+	case errors.Is(err, errAcquisitionInUse):
+		return "in_use"
 	default:
 		return "failed_precondition"
 	}

@@ -47,16 +47,14 @@ func TestForkMalformedResponseNeverDeletesUnprovenChild(t *testing.T) {
 				_ = readFrame(conn, &request)
 				requests <- request
 				child := binding{Owner: request.Binding.Owner, SessionID: request.Binding.SessionID + ":branch", EnvironmentID: "logical-existing-sibling", Ref: "logical-existing-sibling@7", Generation: 7}
-				response := lifecycleResponse{Binding: child}
+				response := lifecycleResponse{Binding: child, AcquisitionID: "0123456789abcdef0123456789abcdef"}
 				tc.mutate(&response.Binding, &response)
 				_ = writeFrame(conn, response)
-				_ = conn.Close()
-				conn, acceptErr = listener.Accept()
-				if acceptErr == nil {
-					_ = readFrame(conn, &request)
+				if readFrame(conn, &request) == nil {
 					requests <- request
-					_ = conn.Close()
+					_ = writeFrame(conn, lifecycleResponse{Binding: response.Binding, AcquisitionID: request.AcquisitionID})
 				}
+				_ = conn.Close()
 			}()
 			client, err := New("unix://" + socket)
 			if err != nil {
@@ -74,8 +72,11 @@ func TestForkMalformedResponseNeverDeletesUnprovenChild(t *testing.T) {
 			}
 			select {
 			case request := <-requests:
-				t.Fatalf("malformed response triggered destructive %q of existing sibling %+v", request.Operation, request.Binding)
+				if request.Operation != "detach" {
+					t.Fatalf("malformed response triggered destructive %q of existing sibling %+v", request.Operation, request.Binding)
+				}
 			case <-time.After(100 * time.Millisecond):
+				t.Fatal("malformed retained acquisition was not released")
 			}
 		})
 	}
@@ -94,12 +95,10 @@ func TestForkCleanupDetachesFromCancelledParent(t *testing.T) {
 		var request lifecycleRequest
 		_ = readFrame(conn, &request)
 		child := binding{Owner: request.Binding.Owner, SessionID: request.Binding.SessionID + ":branch", EnvironmentID: "logical-child", Ref: "logical-child@7", Generation: 7}
-		_ = writeFrame(conn, lifecycleResponse{Binding: child})
-		_ = conn.Close()
-		conn, _ = listener.Accept()
+		_ = writeFrame(conn, lifecycleResponse{Binding: child, AcquisitionID: "0123456789abcdef0123456789abcdef"})
 		_ = readFrame(conn, &request)
 		cleaned <- request.Binding
-		_ = writeFrame(conn, lifecycleResponse{Binding: request.Binding})
+		_ = writeFrame(conn, lifecycleResponse{Binding: request.Binding, AcquisitionID: request.AcquisitionID})
 		_ = conn.Close()
 	}()
 	client, _ := New("unix://" + socket)
@@ -136,13 +135,11 @@ func TestCreateRejectsInconsistentTupleAndRollsBackExactOwnedPlacement(t *testin
 		var request lifecycleRequest
 		_ = readFrame(conn, &request)
 		claim := binding{Owner: request.Binding.Owner, SessionID: request.Binding.SessionID, EnvironmentID: "logical-created", Ref: "logical-created@7", Generation: 7}
-		_ = writeFrame(conn, lifecycleResponse{Binding: claim, Created: &created{Ref: environmentRef{Kind: "microvm", ID: "logical-other@7"}, Generation: 7, HostWorktree: "/private/worktree", GuestRoot: publicGuestRoot, Profile: "microvm-local", GuestEgress: "deny-all", HostEgress: "not constrained"}})
-		_ = conn.Close()
-		conn, _ = listener.Accept()
+		_ = writeFrame(conn, lifecycleResponse{Binding: claim, AcquisitionID: "0123456789abcdef0123456789abcdef", Created: &created{Ref: environmentRef{Kind: "microvm", ID: "logical-other@7"}, Generation: 7, HostWorktree: "/private/worktree", GuestRoot: publicGuestRoot, Profile: "microvm-local", GuestEgress: "deny-all", HostEgress: "not constrained"}})
 		_ = readFrame(conn, &request)
 		rolledBack <- request.Binding
 		payload, _ := json.Marshal(DeleteResult{})
-		_ = writeFrame(conn, lifecycleResponse{Payload: payload})
+		_ = writeFrame(conn, lifecycleResponse{Binding: claim, AcquisitionID: request.AcquisitionID, Payload: payload})
 		_ = conn.Close()
 	}()
 	client, err := NewPlacementProvider("unix://"+socket, "/source", "microvm-local", "deployment", nil)

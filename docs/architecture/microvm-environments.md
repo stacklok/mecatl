@@ -99,10 +99,13 @@ them. Selection also requires separate project trust and ingestion admission. Ea
 principal-scoped binding lazily borrows the exact authorized guest workspace through the
 placement reattachment capability. The source
 view supports reads and command discovery without a runner or execution `ReadLedger`,
-and refuses mutations; its cleanup releases only that source borrow. The MicroVM client
-serializes exact-ref acquisition with final detach within that Client and retains the backend
-until that Client's source and execution owners release it. This does not protect owners held
-by another Client or harness process. The guest root string
+and refuses mutations; its cleanup releases only that source borrow. Each successful create,
+reattach, or isolated-child fork keeps one authenticated lifecycle socket and one daemon-issued
+acquisition ID. Microvmd retains a logical guest registration until every harness process has
+released its acquisition and all in-flight operations have drained. Closing one source, session,
+schedule fire, or whole harness therefore cannot detach another local process that still uses the
+same ref. Acquisition IDs remain private daemon memory and never enter session state, logs, or
+model-visible content. The guest root string
 `/workspace` is never reopened on the host or used as an identity. Independent `local`,
 `driver`, `mcp`, and `skills` sources attach no guest placement. A required selected
 repository source fails when its exact guest files are unavailable instead of using the host
@@ -143,9 +146,10 @@ the same repository VM. All four delegation paths retain the parent's admitted h
 source binding and its source borrow for as long as the child reference needs it. A child
 worktree never replaces that source anchor.
 
-Closing a session or child releases process-local handles and unregisters the attachment;
-it does not stop the repository VM or remove its rootfs, caches, or another logical
-worktree. The MVP uses the existing isolated-child merge path: a non-conflicting change
+Closing a session or child releases that caller's acquisition. Microvmd unregisters the
+logical attachment only after all local harness processes and in-flight operations release it.
+Final cleanup preserves the durable worktree, repository VM, rootfs, caches, and sibling logical
+environments. The MVP uses the existing isolated-child merge path: a non-conflicting change
 applies and a conflict preserves the child. Daemon-wide multi-client merge serialization
 and crash-durable merge recovery are explicitly not claimed.
 

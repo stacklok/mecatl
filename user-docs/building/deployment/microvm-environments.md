@@ -228,7 +228,14 @@ mecatui --resume SESSION_ID
 ```
 
 A microVM session remains on its exact server-owned placement for its lifetime; it is
-never moved to host execution. Harness context follows the separately configured source
+never moved to host execution. You can run multiple local `mecatui` or `mecated` processes
+against the same checkout without extra configuration. Each process receives its own logical
+worktree for a newly created session. When processes intentionally use the same persisted ref,
+closing one process releases only its own attachment; the other process can continue reading,
+writing, and running commands. The repository VM, rootfs, and durable worktrees remain shared
+at the repository boundary described above.
+
+Harness context follows the separately configured source
 policy. Independent `local`, `driver`, `skills`, and `mcp` sources remain available without
 a guest attachment, including for no-filesystem sessions. A selected `repository` source
 requires the session's exact guest files and reports an error if they cannot be acquired.

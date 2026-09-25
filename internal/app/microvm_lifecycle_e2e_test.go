@@ -36,6 +36,8 @@ type placementTestDaemon struct {
 	guests        map[string]string
 	claims        map[string]string
 	attached      map[string]bool
+	acquisitions  map[string]string
+	nextAcquire   uint64
 	rejectResolve bool
 	seed          func(string) error
 	execBindings  []string
@@ -59,7 +61,7 @@ func startPlacementTestDaemon(t *testing.T) *placementTestDaemon {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &placementTestDaemon{listener: listener, root: t.TempDir(), guests: make(map[string]string), claims: make(map[string]string), attached: make(map[string]bool)}
+	d := &placementTestDaemon{listener: listener, root: t.TempDir(), guests: make(map[string]string), claims: make(map[string]string), attached: make(map[string]bool), acquisitions: make(map[string]string)}
 	t.Cleanup(func() { _ = listener.Close() })
 	go d.serve()
 	return d
@@ -198,6 +200,7 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 		d.attached[childID] = true
 		d.mu.Unlock()
 		response["binding"] = childBinding
+		binding = childBinding
 	case "workspace":
 		guestRoot, ok := d.guestRoot(binding)
 		if !ok {
@@ -300,7 +303,73 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 		payloadOut, _ := json.Marshal(map[string]any{"exit_code": exitCode})
 		response = map[string]any{"binding": binding, "payload": json.RawMessage(payloadOut)}
 	}
+	if (op == "create" || op == "resolve" || op == "fork") && response["error_code"] == nil {
+		environmentID, _ := binding["environment_id"].(string)
+		d.mu.Lock()
+		d.nextAcquire++
+		acquisitionID := fmt.Sprintf("%032x", d.nextAcquire)
+		d.acquisitions[acquisitionID] = environmentID
+		d.mu.Unlock()
+		response["acquisition_id"] = acquisitionID
+		if writePlacementFrame(conn, response) != nil {
+			d.releaseTestAcquisition(acquisitionID, environmentID)
+			return
+		}
+		var terminal map[string]any
+		if readPlacementFrame(conn, &terminal) != nil {
+			d.releaseTestAcquisition(acquisitionID, environmentID)
+			return
+		}
+		terminalID, _ := terminal["acquisition_id"].(string)
+		terminalBinding, _ := terminal["binding"].(map[string]any)
+		terminalOp, _ := terminal["operation"].(string)
+		if terminalID != acquisitionID || placementClaimKey(terminalBinding) != placementClaimKey(binding) || (terminalOp != "detach" && terminalOp != "delete" && terminalOp != "child-delete") {
+			d.releaseTestAcquisition(acquisitionID, environmentID)
+			_ = writePlacementFrame(conn, map[string]any{"error_code": "binding_mismatch", "error": "binding mismatch"})
+			return
+		}
+		d.mu.Lock()
+		d.ops = append(d.ops, terminalOp)
+		otherOwners := 0
+		for ownerID, heldEnvironment := range d.acquisitions {
+			if ownerID != acquisitionID && heldEnvironment == environmentID {
+				otherOwners++
+			}
+		}
+		d.mu.Unlock()
+		terminalResponse := map[string]any{"binding": binding, "acquisition_id": acquisitionID}
+		if terminalOp == "delete" || terminalOp == "child-delete" {
+			if otherOwners != 0 {
+				terminalResponse = map[string]any{"binding": binding, "acquisition_id": acquisitionID, "error_code": "in_use", "error": "acquisition is in use"}
+			} else {
+				d.mu.Lock()
+				guestRoot := d.guests[environmentID]
+				delete(d.guests, environmentID)
+				delete(d.claims, environmentID)
+				d.deleteClaims = append(d.deleteClaims, fmt.Sprintf("%s/%s/%s/%s/%v", binding["owner"], binding["session_id"], environmentID, binding["ref"], binding["generation"]))
+				d.mu.Unlock()
+				_ = os.RemoveAll(guestRoot)
+				payload, _ := json.Marshal(map[string]bool{"worktree_retained": false})
+				terminalResponse["payload"] = json.RawMessage(payload)
+			}
+		}
+		d.releaseTestAcquisition(acquisitionID, environmentID)
+		_ = writePlacementFrame(conn, terminalResponse)
+		return
+	}
 	_ = writePlacementFrame(conn, response)
+}
+
+func (d *placementTestDaemon) releaseTestAcquisition(id, environmentID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.acquisitions, id)
+	for _, heldEnvironment := range d.acquisitions {
+		if heldEnvironment == environmentID {
+			return
+		}
+	}
+	delete(d.attached, environmentID)
 }
 
 func placementClaimKey(binding map[string]any) string {

@@ -33,10 +33,16 @@ func TestPlacementProviderUsesOpaqueDaemonProfileAndExactRef(t *testing.T) {
 			return
 		}
 		requestSeen <- request
-		_ = writeFrame(conn, lifecycleResponse{
-			Binding: binding{Owner: "local", SessionID: request.Provision.SessionID, EnvironmentID: "logical-1", Ref: "logical-1@7", Generation: 7},
+		claim := binding{Owner: "local", SessionID: request.Provision.SessionID, EnvironmentID: "logical-1", Ref: "logical-1@7", Generation: 7}
+		if writeFrame(conn, lifecycleResponse{
+			Binding: claim, AcquisitionID: "0123456789abcdef0123456789abcdef",
 			Created: &created{Ref: environmentRef{Kind: "microvm", ID: "logical-1@7"}, Generation: 7, HostWorktree: "/private/worktree", GuestRoot: "/workspace", Profile: "microvm-local", GuestEgress: "deny-all", HostEgress: "not constrained"},
-		})
+		}) != nil {
+			return
+		}
+		if readFrame(conn, &request) == nil {
+			_ = writeFrame(conn, lifecycleResponse{Binding: claim, AcquisitionID: request.AcquisitionID})
+		}
 	}()
 
 	client, err := NewPlacementProvider("unix://"+socket, "/source", "microvm-local", "deployment", nil)
@@ -47,6 +53,11 @@ func TestPlacementProviderUsesOpaqueDaemonProfileAndExactRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
+	defer func() {
+		if err := placed.Close(); err != nil {
+			t.Errorf("close placement: %v", err)
+		}
+	}()
 	request := <-requestSeen
 	if request.Provision == nil || request.Provision.Profile != "microvm-local" || request.Provision.SourceCheckout != "/source" || request.Provision.SessionID == "" {
 		t.Fatalf("opaque provision request = %+v", request.Provision)
