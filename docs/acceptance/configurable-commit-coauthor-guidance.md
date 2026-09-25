@@ -8,7 +8,7 @@
 **Delivery:** Split. The operator configuration, prompt-composition, and delegated-agent inheritance contract need review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1595](https://github.com/stacklok/mecatl/issues/1595).
-**Plan PR:** pending
+**Plan PR:** [#1947](https://github.com/stacklok/mecatl/pull/1947)
 **Approved baseline:** absent until approved
 
 Mecatl's standard system prompt will direct an agent that creates a commit to append the canonical Mecatl trailer. The direction is enabled unless the operator globally opts out. The implementation must deliver the same standard guidance to root and delegated engines through their shared prompt composition path.
