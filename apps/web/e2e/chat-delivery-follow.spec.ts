@@ -30,10 +30,26 @@ test("an idle open chat picks up a short recorded delivery and its reply", async
       complete: true,
       items: [
         {
-          capabilities: { delete: false, deleteReason: "", rename: false, renameReason: "" },
+          capabilities: {
+            copyId: true,
+            copyIdReason: "",
+            delete: false,
+            deleteReason: "",
+            fork: true,
+            forkReason: "",
+            inspect: true,
+            inspectReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: false,
+            renameReason: "",
+            viewTranscript: true,
+            viewTranscriptReason: "",
+          },
           createdAt: "2026-09-24T12:00:00Z",
           debugTargetSessionId: "",
           id: "chat-a",
+          kind: "main",
           modelId: "offline",
           state: "idle",
           title: "Scheduled chat",
@@ -49,6 +65,7 @@ test("an idle open chat picks up a short recorded delivery and its reply", async
   offlineBff.json("GET", "/api/v1/sessions/chat-a", {
     capabilities: { image: false, manualCompaction: false, modelSelection: false },
     id: "chat-a",
+    kind: "main",
     mode: "default",
     state: "idle",
     usage: {

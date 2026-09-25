@@ -942,6 +942,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     if (
       !sessionId ||
+      !provenChat ||
       !settled ||
       isRunning ||
       activeRun.current ||
@@ -1033,7 +1034,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         if (!activeRun.current) interruptedSettledSession.current = sessionId;
       }
     };
-  }, [sessionId, settled, isRunning, pendingAuthorization, uncertainAuthorization]);
+  }, [sessionId, provenChat, settled, isRunning, pendingAuthorization, uncertainAuthorization]);
 
   async function selectSession(id: string) {
     setSidebarOpen(false);
