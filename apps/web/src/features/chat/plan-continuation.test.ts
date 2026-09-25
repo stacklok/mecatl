@@ -55,6 +55,7 @@ it("follows durable plan continuation across the old terminal and a cursor reatt
   const wait = vi.fn(async () => {});
   await expect(followPlanContinuation(target, open, { maxReads: 3, wait })).resolves.toEqual({
     kind: "started",
+    resumeFrom: "other-failure",
     runId: "run-execution",
   });
   expect(open.mock.calls.map(([cursor]) => cursor)).toEqual([undefined, "approved-terminal"]);

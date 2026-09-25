@@ -509,6 +509,11 @@ function useSideThreadRun(sessionId: string) {
   const [controlPending, setControlPending] = useState(false);
   const runAbort = useRef<AbortController | undefined>(undefined);
   const planFollowAbort = useRef<AbortController | undefined>(undefined);
+  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
+    undefined,
+  );
+  const [reattachEpoch, setReattachEpoch] = useState(0);
+  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const runIdRef = useRef<string | undefined>(undefined);
   const verdictInFlight = useRef(new Set<string>());
   const uncertainVerdicts = useRef(new Set<string>());
@@ -526,6 +531,8 @@ function useSideThreadRun(sessionId: string) {
   useEffect(() => {
     runAbort.current?.abort();
     planFollowAbort.current?.abort();
+    planReattach.current = undefined;
+    setPlanContinuationActive(false);
     runAbort.current = undefined;
     setError(undefined);
     setNotice(undefined);
@@ -541,31 +548,52 @@ function useSideThreadRun(sessionId: string) {
 
   const selected = sessions.data?.items.find((session) => session.id === sessionId);
   const watchable = isActiveSessionState(selected?.state);
+  const shouldWatch = watchable || planContinuationActive;
 
-  // Reattachment is keyed only to session identity and its watchable state,
-  // mirroring the parent chat's own reattach effect.
+  // A proven plan continuation can reattach before the inventory catches up.
   // biome-ignore lint/correctness/useExhaustiveDependencies: consume/refresh are stable for this lifetime
   useEffect(() => {
-    if (!sessionId || !watchable || runAbort.current || protectedRequestsPaused()) return;
+    const planRefresh = planReattach.current;
+    if (
+      !sessionId ||
+      (!shouldWatch && planRefresh?.sessionId !== sessionId) ||
+      runAbort.current ||
+      protectedRequestsPaused()
+    )
+      return;
+    planReattach.current = undefined;
     const controller = new AbortController();
     runAbort.current = controller;
     setIsRunning(true);
     setError(undefined);
     setNotice(undefined);
     setApprovals((current) => retainUncertainApprovals(current));
-    setMessages([]);
+    if (!planRefresh?.cursor) setMessages([]);
+    if (planRefresh?.sessionId === sessionId) {
+      runIdRef.current = planRefresh.runId;
+      setRunId(planRefresh.runId);
+    }
 
     void (async () => {
       const streamFailure: StreamFailure = {};
       try {
-        const stream = await watchActivity(controller, streamFailure);
-        await consume(stream, controller, streamFailure, crypto.randomUUID(), "", true);
+        const stream = await watchActivity(controller, streamFailure, planRefresh?.cursor);
+        await consume(
+          stream,
+          controller,
+          streamFailure,
+          crypto.randomUUID(),
+          "",
+          !planRefresh?.cursor,
+          planRefresh?.cursor ? messages : [],
+        );
         if (streamFailure.error && !controller.signal.aborted) throw streamFailure.error;
       } catch (caught) {
         if (!controller.signal.aborted) setError(errorMessage(caught));
       } finally {
         if (runAbort.current === controller) {
           runAbort.current = undefined;
+          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
           setRunId(undefined);
           runIdRef.current = undefined;
           setApprovals((current) => retainUncertainApprovals(current));
@@ -582,7 +610,7 @@ function useSideThreadRun(sessionId: string) {
         setIsRunning(false);
       }
     };
-  }, [sessionId, watchable]);
+  }, [reattachEpoch, sessionId, shouldWatch]);
 
   async function refresh() {
     await Promise.all([
@@ -840,8 +868,19 @@ function useSideThreadRun(sessionId: string) {
           controller.signal,
         );
         if (!controller.signal.aborted) {
-          if (evidence.kind === "started") setNotice("Plan approved; execution started.");
-          else if (evidence.kind === "failed") {
+          if (evidence.kind === "started") {
+            planReattach.current = {
+              cursor: evidence.resumeFrom,
+              runId: evidence.runId,
+              sessionId: target.sessionId,
+            };
+            setPlanContinuationActive(true);
+            runAbort.current?.abort();
+            runAbort.current = undefined;
+            runIdRef.current = evidence.runId;
+            setRunId(evidence.runId);
+            setReattachEpoch((current) => current + 1);
+          } else if (evidence.kind === "failed") {
             setNotice(undefined);
             setError("Plan approval was recorded, but execution could not start.");
           } else {

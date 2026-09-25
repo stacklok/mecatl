@@ -361,6 +361,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const [reattached, setReattached] = useState(false);
   const [reattachEpoch, setReattachEpoch] = useState(0);
+  const [planContinuationActive, setPlanContinuationActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
@@ -370,6 +371,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const activityRefresh = useRef<
     { authorizationId: string; callId: string; cursor: string; sessionId: string } | undefined
   >(undefined);
+  const planReattach = useRef<{ cursor?: string; runId: string; sessionId: string } | undefined>(
+    undefined,
+  );
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
@@ -515,6 +519,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     planFollowController.current?.abort();
     planFollowController.current = undefined;
     activityRefresh.current = undefined;
+    planReattach.current = undefined;
+    setPlanContinuationActive(false);
     authorizationActivityCursor.current = undefined;
     activityFollowedSession.current = undefined;
     interruptedSettledSession.current = undefined;
@@ -772,6 +778,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         providerId: model.providerId,
       })) ?? [];
   const watchable = isActiveSessionState(selectedSession?.state);
+  const shouldWatch = watchable || planContinuationActive;
   const settledState = selectedSession?.state ?? sessionDetail.data?.state;
   const settled =
     settledState === "idle" ||
@@ -838,21 +845,28 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         : "No filesystem",
   };
 
-  // Attachment lifetime follows session identity and watchable state; an explicit
-  // authorization refresh can also attach while the session is idle.
+  // A proven server-owned continuation may need a new reader even before the
+  // session inventory reflects its execution run.
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
   useEffect(() => {
     const refresh = activityRefresh.current;
+    const planRefresh = planReattach.current;
     if (
       !sessionId ||
-      (!watchable && refresh?.sessionId !== sessionId) ||
+      (!shouldWatch && refresh?.sessionId !== sessionId && planRefresh?.sessionId !== sessionId) ||
       activeRun.current ||
       protectedRequestsPaused()
     )
       return;
 
-    const resumeFrom = refresh?.sessionId === sessionId ? refresh.cursor : undefined;
+    const resumeFrom =
+      planRefresh?.sessionId === sessionId
+        ? planRefresh.cursor
+        : refresh?.sessionId === sessionId
+          ? refresh.cursor
+          : undefined;
     activityRefresh.current = undefined;
+    planReattach.current = undefined;
     const uncertain = refresh
       ? authorizationUncertain.current.get(`${sessionId}\u0000${refresh.authorizationId}`)
       : undefined;
@@ -864,6 +878,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setIsRunning(true);
     setReattached(true);
     setStatusFacts({ phase: "following" });
+    if (planRefresh?.sessionId === sessionId) setRunTarget({ runId: planRefresh.runId, sessionId });
     setError(undefined);
     setNotice(undefined);
     setApprovals((current) => retainUncertainApprovals(current));
@@ -935,6 +950,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (end.kind === "settled") end = { kind: "uncertain" };
           }
           activeRun.current = undefined;
+          if (planRefresh?.sessionId === sessionId) setPlanContinuationActive(false);
           if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
           setApprovals((current) => retainUncertainApprovals(current));
           setIsRunning(false);
@@ -967,7 +983,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         setReattached(false);
       }
     };
-  }, [reconnectGeneration, reattachEpoch, sessionId, watchable]);
+  }, [reconnectGeneration, reattachEpoch, sessionId, shouldWatch]);
 
   // Finished chats keep their saved transcript. Rebuild only the delegation
   // projection from the bounded activity replay, with no live run owner or
@@ -2268,7 +2284,19 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       );
       if (controller.signal.aborted || viewedSessionId.current !== target.sessionId) return;
       if (evidence.kind === "started") {
-        setNotice("Plan approved; execution started.");
+        // The verdict watcher establishes the new run and a durable replay
+        // checkpoint. Transfer this view's one reader to that run so its
+        // transcript and controls follow the same evidence.
+        planReattach.current = {
+          cursor: evidence.resumeFrom,
+          runId: evidence.runId,
+          sessionId: target.sessionId,
+        };
+        setPlanContinuationActive(true);
+        activeRun.current?.controller.abort();
+        activeRun.current = undefined;
+        setRunTarget({ runId: evidence.runId, sessionId: target.sessionId });
+        setReattachEpoch((current) => current + 1);
       } else if (evidence.kind === "failed") {
         setNotice(undefined);
         setError("Plan approval was recorded, but execution could not start.");

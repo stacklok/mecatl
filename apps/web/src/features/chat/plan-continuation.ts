@@ -10,7 +10,7 @@ export interface PlanContinuationTarget {
 }
 
 export type PlanContinuationEvidence =
-  | { kind: "started"; runId: string }
+  | { kind: "started"; runId: string; resumeFrom?: string }
   | { kind: "failed" }
   | { kind: "uncertain" };
 
@@ -63,6 +63,7 @@ export async function followPlanContinuation(
     try {
       const stream = await open(resumeFrom);
       for await (const { cursor, delivery } of stream) {
+        const beforeDelivery = resumeFrom;
         if (cursor) resumeFrom = cursor;
         if (delivery.type === "run.truncated") {
           if (delivery.reason === "gap" || !delivery.cursor) return { kind: "uncertain" };
@@ -76,7 +77,7 @@ export async function followPlanContinuation(
             delivery.runId !== target.planRunId &&
             delivery.sessionId === target.sessionId
           )
-            return { kind: "started", runId: delivery.runId };
+            return { kind: "started", runId: delivery.runId, resumeFrom: beforeDelivery };
           continue;
         }
         const event = delivery.event;
@@ -98,7 +99,7 @@ export async function followPlanContinuation(
           continue;
         }
         if (approvedTerminal && event.runId && event.runId !== target.planRunId)
-          return { kind: "started", runId: event.runId };
+          return { kind: "started", runId: event.runId, resumeFrom: beforeDelivery };
       }
     } catch {
       // The acknowledgement may already have committed; only activity can settle it.

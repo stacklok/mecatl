@@ -3,6 +3,7 @@
 
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import { client } from "@mecatl-studio/contracts/client";
+import { listSessionsQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -56,9 +57,15 @@ function ask(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   };
 }
 
-function event(kind: string, seq: string, runId: string, payload?: unknown): RunStreamEvent {
+function event(
+  kind: string,
+  seq: string,
+  runId: string,
+  payload?: unknown,
+  text = "",
+): RunStreamEvent {
   return {
-    event: { kind, payload, runId, seq, text: "", turn: 1, unknown: false },
+    event: { kind, payload, runId, seq, text, turn: 1, unknown: false },
     type: "run.event",
   } as RunStreamEvent;
 }
@@ -70,8 +77,12 @@ function heldStream() {
       new ReadableStream<Uint8Array>({ start: (controller) => (writer = controller) }),
       { headers: { "Content-Type": "text/event-stream" } },
     ),
-    send: (delivery: RunStreamEvent) =>
-      writer.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(delivery)}\n\n`)),
+    send: (delivery: RunStreamEvent, cursor?: string) =>
+      writer.enqueue(
+        new TextEncoder().encode(
+          `${cursor ? `id: ${cursor}\n` : ""}data: ${JSON.stringify(delivery)}\n\n`,
+        ),
+      ),
     close: () => writer.close(),
   };
 }
@@ -82,6 +93,8 @@ function json(body: unknown): Response {
 
 class Fixture {
   readonly stream = heldStream();
+  readonly activityResponses: Response[] = [];
+  readonly activityRequests: Array<{ search: string; signal: AbortSignal }> = [];
   readonly requests: Array<{ body: unknown; method: string; pathname: string }> = [];
   readonly verdicts: Array<Promise<Response>> = [];
   runtimeFeatures: string[] = [];
@@ -122,7 +135,10 @@ class Fixture {
       });
     if (pathname.endsWith("/transcript"))
       return json({ complete: true, messages: [], sessionId: pathname.split("/")[4] });
-    if (pathname.endsWith("/activity")) return this.stream.response;
+    if (pathname.endsWith("/activity")) {
+      this.activityRequests.push({ search: url.search, signal: request.signal });
+      return this.activityResponses.shift() ?? this.stream.response;
+    }
     if (/^\/api\/v1\/sessions\/[^/]+$/u.test(pathname))
       return json({
         capabilities: { image: false, manualCompaction: false, modelSelection: false },
@@ -203,6 +219,7 @@ async function mount(fixture: Fixture, side = false) {
   await waitFor(() =>
     expect(fixture.requests.some((request) => request.pathname.endsWith("/activity"))).toBe(true),
   );
+  return queryClient;
 }
 
 afterEach(() => {
@@ -606,6 +623,82 @@ describe("ordinary approval interactions", () => {
 });
 
 describe("side-thread plan review", () => {
+  it("reattaches each chat surface to the observed execution run after plan approval", async () => {
+    for (const side of [false, true]) {
+      const fixture = new Fixture();
+      fixture.runtimeFeatures = ["exact_plan_ask_control"];
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      const follow = heldStream();
+      const execution = heldStream();
+      fixture.activityResponses.push(fixture.stream.response, follow.response, execution.response);
+      const queryClient = await mount(fixture, side);
+      const sessionId = side ? "thread-a" : "chat-a";
+      await act(async () => {
+        fixture.stream.send({ runId: "run-plan", sessionId, type: "run.started" });
+        fixture.stream.send(
+          event("permission.ask", "1", "run-plan", {
+            args: '{"plan":"Execute this"}',
+            askId: "ask-plan",
+            reason: "Review",
+            tool: "PresentPlan",
+          }),
+        );
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Approve & run" }));
+      await waitFor(() =>
+        expect(
+          fixture.requests.filter((request) => request.pathname.endsWith("/activity")),
+        ).toHaveLength(2),
+      );
+      await act(async () => {
+        follow.send(event("result", "2", "run-plan", { stop: "plan_approved" }), "plan-terminal");
+        follow.send({ runId: "run-execution", sessionId, type: "run.started" });
+      });
+      await waitFor(() =>
+        expect(
+          fixture.requests.filter((request) => request.pathname.endsWith("/activity")),
+        ).toHaveLength(3),
+      );
+      expect(
+        fixture.requests.filter((request) => request.pathname.endsWith("/activity"))[2]?.pathname,
+      ).toBe(`/api/v1/sessions/${sessionId}/activity`);
+      expect(fixture.activityRequests[2]?.search).toBe("?resumeFrom=plan-terminal");
+      expect(fixture.activityRequests[0]?.signal.aborted).toBe(true);
+      fixture.sessionState = "idle";
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+      });
+      expect(fixture.activityRequests[2]?.signal.aborted).toBe(false);
+      await act(async () => {
+        execution.send({ runId: "run-execution", sessionId, type: "run.started" });
+        execution.send(event("message.delta", "1", "run-execution", undefined, "Execution output"));
+        execution.send(
+          event("permission.ask", "2", "run-execution", {
+            askId: "ask-execution",
+            args: editArgs,
+            reason: "Execution permission",
+            tool: "Edit",
+          }),
+        );
+      });
+      expect(await screen.findByText("Execution output")).toBeTruthy();
+      const card = screen.getByText("Execution permission").closest("section") as HTMLElement;
+      expect(within(card).getByRole("button", { name: "Allow once" })).toBeTruthy();
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      fireEvent.click(within(card).getByRole("button", { name: "Allow once" }));
+      await waitFor(() =>
+        expect(
+          fixture.requests.some(
+            (request) =>
+              request.pathname ===
+              `/api/v1/sessions/${sessionId}/runs/run-execution/permissions/ask-execution`,
+          ),
+        ).toBe(true),
+      );
+      cleanup();
+    }
+  });
+
   it("iterates the exact plan ask in its independent transcript", async () => {
     const fixture = new Fixture();
     fixture.runtimeFeatures = ["exact_plan_ask_control"];
