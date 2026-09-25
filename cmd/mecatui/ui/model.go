@@ -535,6 +535,9 @@ type Model struct {
 	sessionsTranscriptRequestToken uint64
 	sessionsPageRequestToken       uint64
 	sessionsActionRequestToken     uint64
+	// agentsInvRequestToken identifies ListAgents work across inventory lifetimes.
+	// It is retained after close so a delayed result cannot update a later open.
+	agentsInvRequestToken uint64
 	// mcpRequestToken identifies broker inventory work across MCP panel lifetimes.
 	// A panel-local refresh generation alone restarts at one after reopen.
 	mcpRequestToken        uint64

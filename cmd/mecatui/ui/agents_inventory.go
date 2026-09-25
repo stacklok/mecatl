@@ -65,26 +65,39 @@ const (
 // snapshots are still replaced wholesale so Model's value-copy semantics remain
 // unchanged.
 type agentsInvState struct {
-	view     agentsInvView
-	loading  bool  // the ListAgents RPC is in flight
-	err      error // the ListAgents error, rendered distinctly (nil on success)
-	agents   []client.Agent
-	viewport *bounded.Viewport
+	view       agentsInvView
+	generation uint64
+	loading    bool  // the ListAgents RPC is in flight
+	err        error // the ListAgents error, rendered distinctly (nil on success)
+	agents     []client.Agent
+	viewport   *bounded.Viewport
+}
+
+// agentsInvResultMsg binds a ListAgents result to the open that issued it.
+// It remains UI-private because the protocol's result carries no request identity.
+type agentsInvResultMsg struct {
+	generation uint64
+	result     client.AgentsMsg
 }
 
 func newAgentsInvViewport() *bounded.Viewport { return new(bounded.Viewport) }
 
 // openAgentsInv opens the inventory panel and fires the ListAgents RPC. Only
 // callable while idle and when an agents lister is wired; returns the model
-// unchanged otherwise. The result arrives as a client.AgentsMsg handled in
+// unchanged otherwise. The UI-private result wrapper is handled in
 // updateAgentsInvMsg.
 func (m Model) openAgentsInv() (tea.Model, tea.Cmd) {
 	if m.phase != phaseIdle || m.deps.Agents == nil {
 		return m, nil
 	}
 	m.prompt.Blur() // overlay owns the keyboard while open
-	m.agentsInv = agentsInvState{view: agentsInvPanel, loading: true}
-	return m, client.ListAgentsCmd(m.deps.Ctx, m.deps.Agents)
+	m.agentsInvRequestToken++
+	generation := m.agentsInvRequestToken
+	m.agentsInv = agentsInvState{view: agentsInvPanel, generation: generation, loading: true}
+	list := client.ListAgentsCmd(m.deps.Ctx, m.deps.Agents)
+	return m, func() tea.Msg {
+		return agentsInvResultMsg{generation: generation, result: list().(client.AgentsMsg)}
+	}
 }
 
 // closeAgentsInv dismisses the overlay and returns focus to the prompt input.
@@ -148,8 +161,18 @@ func (m *Model) configureAgentsInvViewport() []string {
 // model + handled flag; handled=false for any other message so Update can fall
 // through.
 func (m Model) updateAgentsInvMsg(msg tea.Msg) (tea.Model, bool) {
-	am, ok := msg.(client.AgentsMsg)
-	if !ok {
+	var am client.AgentsMsg
+	switch result := msg.(type) {
+	case agentsInvResultMsg:
+		if m.agentsInv.view != agentsInvPanel || result.generation != m.agentsInv.generation {
+			return m, true
+		}
+		am = result.result
+	case client.AgentsMsg:
+		// Direct messages keep focused reducer tests concise. Production requests
+		// always arrive through agentsInvResultMsg above.
+		am = result
+	default:
 		return m, false
 	}
 	m.agentsInv.loading = false
