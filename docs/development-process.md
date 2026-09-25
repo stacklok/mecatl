@@ -193,20 +193,33 @@ navigation, not a second maintained package inventory.
 
 ## Verification gates
 
-Use focused package tests while iterating. After an integrated change set, run
-`task test` once to exercise the complete offline suite and standalone module proofs
-without the race detector. Do not run it after every edit or worker attempt. Before
-any implementation PR is ready for review, run `task test:race`, including for Routine
-and Cleanup work outside the plan workflow. `task ci` and its `task all` alias include
-the race suite. For applicable Go changes, CI runs non-race coverage on draft PRs and
-sharded race coverage on ready PRs and main. CI independently verifies the submitted
-branch; it does not replace focused local verification or the final gates.
+Use focused package tests while iterating. Implementation, retry, and repair workers
+run their named AC proofs, the smallest affected package tests and direct integration
+boundaries, applicable scoped lint, and targeted race tests for concurrency changes.
+Their reports include the exact commands, owning modules, and exit codes; aggregate
+verification remains pending until integration.
+
+The integration owner (the orchestrator, or the sole implementer for direct work) runs
+`task test` once after assembling the change set, then `task lint` and `task test:race`
+before the implementation PR is ready. These aggregate gates belong to the assembled
+candidate, not each worker attempt. Routine and Cleanup implementation work still needs
+final verification. Conditional docs, generation, API, and trace checks remain required.
+
+Record the candidate commit and any uncommitted changes alongside gate results. After
+integrating a repair round, rerun gates whose inputs changed once on the repaired candidate;
+results from earlier inputs are not proof of the repair. Reviewers consume the recorded
+results and run focused reproductions when needed, rather than repeat aggregate gates.
+
+`task ci` and its `task all` alias include the race suite. For applicable Go changes, CI
+runs non-race coverage on draft PRs and sharded race coverage on ready PRs and main. CI
+independently verifies the submitted branch; it does not replace focused local verification
+or the final gates.
 
 | Gate | What it pins |
 |---|---|
 | bundled acceptance-plan checker | plan shape, human-decision/status consistency, interface declaration, AC proofs, citations, scope |
 | focused package tests | the changed behavior during iteration |
-| `task test` | worker fast gate: complete offline suite and standalone module proofs |
+| `task test` | integrated non-race suite and standalone module proofs |
 | `task test:race` | integrated/pre-PR complete suite with the race detector |
 | `task lint` | golangci-lint (including govet), layering rules |
 | `task api:check` | guarded engine API compatibility |

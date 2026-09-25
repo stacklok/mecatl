@@ -138,20 +138,22 @@ step before you trust a green result:
 Every test carries at least one assertion that can fail on a real
 regression. `_ = err` is not verification.
 
-### Step 5: Verify with the Taskfile
+### Step 5: Verify the affected behavior
 
-Use three verification stages:
+Run the named regression tests, then the smallest affected package tests and their direct
+integration boundaries. Run each command from its owning module; for example:
 
-```bash
-(cd engine && go test ./agent/ -run TestYourNewTest) # focused iteration
-# For concurrency changes, add -race to the targeted package command.
-task test                                            # complete fast worker gate
-task test:race                                       # integrated/pre-PR aggregate gate
+```sh
+(cd engine && go test ./agent/ -run TestYourNewTest)
+(cd engine && go test ./agent/)
+# For concurrency changes, also run the affected package with -race.
 ```
 
-`task test` and `task test:race` cover the root, engine, authn, and provider modules plus
-all standalone hygiene proofs. The only difference is whether the shared module suite uses
-the race detector.
+Follow [verification ownership](../../../docs/development-process.md#verification-gates):
+implementation, retry, and repair workers report task-local commands and exit codes.
+The integration owner runs `task test`, `task lint`, and `task test:race` on the assembled
+candidate. When working without an orchestrator, the sole implementer owns those final
+checks. Do not repeat aggregate gates after each test edit or worker attempt.
 
 Then check whether the implementation contradicts its declared work classification or
 introduces an unplanned durable decision. Stop as contract drift rather than silently
