@@ -141,7 +141,11 @@ import {
 } from "./chat-state";
 import { ChatStatus, type ChatStatusFacts, deriveChatStatus } from "./chat-status";
 import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
-import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
+import {
+  type ContentPreview,
+  ContentPreviewPanel,
+  restoreActivityOpenerFocus,
+} from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
 import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
 import { DelegationCardRow, type DelegationFocus } from "./delegation-card";
@@ -398,7 +402,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const awayTracker = useRef(new AwayNoticeTracker());
   const awayFacts = useRef<AwayFacts | undefined>(undefined);
   const returnNoticeTimer = useRef<number | undefined>(undefined);
-  const lastInventoryRow = useRef<SessionSummaryResponse | undefined>(undefined);
   const activityFollowedSession = useRef<string | undefined>(undefined);
   const interruptedSettledSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
@@ -2278,8 +2281,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       setSelectionAction(undefined);
     } else if (approval) {
       if (!controlPending) void respondToApproval("deny");
-    } else if (contentPreview) setContentPreview(undefined);
-    else if (sidebarOpen) setSidebarOpen(false);
+    } else if (contentPreview) {
+      setContentPreview(undefined);
+      if (contentPreview.kind === "activity") {
+        restoreActivityOpenerFocus({
+          fallbackOpener: sessionActivityControl.current,
+          opener: activityOpener.current,
+          openerFocus: activityOpenerFocus.current,
+        });
+      }
+    } else if (sidebarOpen) setSidebarOpen(false);
     else if (isRunning) void stopRun();
   });
 

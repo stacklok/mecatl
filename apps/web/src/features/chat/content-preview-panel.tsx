@@ -48,6 +48,21 @@ interface ActivityPreviewState {
   openerFocus?: DelegationFocus;
 }
 
+/** Find the live card again if a transcript refresh replaced the original opener. */
+export function restoreActivityOpenerFocus({
+  fallbackOpener,
+  opener,
+  openerFocus,
+}: Pick<ActivityPreviewState, "fallbackOpener" | "opener" | "openerFocus">) {
+  const replacement = openerFocus
+    ? [...document.querySelectorAll<HTMLButtonElement>("button[data-delegation-focus]")].find(
+        (button) => button.dataset.delegationFocus === JSON.stringify(openerFocus),
+      )
+    : undefined;
+  const target = (opener?.isConnected ? opener : undefined) ?? replacement ?? fallbackOpener;
+  target?.focus();
+}
+
 export function ContentPreviewPanel({
   activity,
   authorizationDisabled = false,
@@ -135,21 +150,12 @@ function GenericPreviewPanel({
 
   function close() {
     onClose();
-    if (preview.kind !== "activity") return;
-    const replacement = activity?.openerFocus
-      ? [...document.querySelectorAll<HTMLButtonElement>("button[data-delegation-focus]")].find(
-          (button) => button.dataset.delegationFocus === JSON.stringify(activity.openerFocus),
-        )
-      : undefined;
-    const target =
-      (activity?.opener?.isConnected ? activity.opener : undefined) ??
-      replacement ??
-      activity?.fallbackOpener;
-    target?.focus();
+    if (preview.kind === "activity" && activity) restoreActivityOpenerFocus(activity);
   }
 
   return (
     <SidePanelShell
+      autoFocusClose={preview.kind !== "activity"}
       icon={
         preview.kind === "authorization" ? (
           <ShieldCheck aria-hidden="true" className="size-4 text-brand-ink" />
@@ -164,6 +170,7 @@ function GenericPreviewPanel({
         )
       }
       onClose={close}
+      restoreFocusOnClose={preview.kind !== "activity"}
       title={previewTitle(preview)}
       titleRef={title}
       titleTabIndex={preview.kind === "activity" ? -1 : undefined}

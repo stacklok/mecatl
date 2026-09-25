@@ -161,10 +161,18 @@ function arrangeChat(offlineBff: OfflineBff) {
       complete: true,
       items: [
         {
-          capabilities: { delete: false, deleteReason: "", rename: false, renameReason: "" },
+          capabilities: {
+            delete: false,
+            deleteReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: false,
+            renameReason: "",
+          },
           createdAt: "2026-09-24T00:00:00Z",
           debugTargetSessionId: "",
           id: "s1",
+          kind: "main",
           modelId: "offline",
           state: running ? "running" : "idle",
           title: "Delegation journey",
@@ -314,6 +322,6 @@ test("session activity remains reachable at mobile and desktop widths", async ({
   await page.keyboard.press("Enter");
   const panel = page.getByRole("complementary", { name: "Session activity" });
   await expect(panel.getByRole("heading", { name: "Session activity" })).toBeFocused();
-  await panel.getByRole("button", { name: "Close preview" }).click();
+  await panel.getByRole("button", { name: "Close panel" }).click();
   await expect(sessionControl).toBeFocused();
 });

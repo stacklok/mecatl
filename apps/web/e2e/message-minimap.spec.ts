@@ -80,6 +80,10 @@ test("an early minimap marker reaches its own row without moving the page", asyn
     })),
     sessionId: "long-chat",
   });
+  offlineBff.on("GET", "/api/v1/sessions/long-chat/activity", () => ({
+    body: "",
+    contentType: "text/event-stream",
+  }));
 
   await page.goto("/workspace/chat?sessionId=long-chat");
   const transcript = page.getByRole("region", { name: "Conversation transcript" });
