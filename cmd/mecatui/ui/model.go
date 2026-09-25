@@ -136,6 +136,9 @@ type Deps struct {
 	MCP        client.MCP             // MCP/ToolHive inventory + resources/prompts; nil disables the overlay
 	Cmds       client.Commander       // slash-command discovery for the input palette; nil disables it
 	Guardrails client.GuardrailClient // contextual coverage and live-only review detail; nil disables /guardrails
+	// ShowBenignHookNotices keeps exact known-benign contextual guardrail hook
+	// cards and correlated live detail notices visible while details are collapsed.
+	ShowBenignHookNotices bool
 	// ServerInfo reads the safe build and composition identities when /diagnostics is invoked against a remote server.
 	ServerInfo ServerInfoGetter
 	// ServerImpl is the locally-known embedded server family. It is used without
@@ -585,6 +588,8 @@ type Model struct {
 	conv             conversation
 	vp               viewport.Model
 	conversationView conversationView
+	// guardrailBenign correlates live detail responses with their retained hook.
+	guardrailBenign map[string]bool
 
 	// authorization is separate from permission approval: MCP browser authorization
 	// has no allow/always/deny verdict and never carries tool arguments or a URL.
@@ -1056,6 +1061,8 @@ func New(deps Deps) Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(th.Style("spinner")))
 
 	vp := viewport.New()
+	rend := newRenderer(th, hk)
+	rend.showBenignGuardrails = deps.ShowBenignHookNotices
 	// In-app text-selection highlight is rendered by the APP (styleSelection splices
 	// the "selection" theme style into the content lines inside refreshView), NOT the
 	// viewport's native SetHighlights/HighlightStyle. The native highlighter mis-placed
@@ -1070,7 +1077,7 @@ func New(deps Deps) Model {
 	m := Model{
 		deps:             deps,
 		keys:             keys,
-		rend:             newRenderer(th, hk),
+		rend:             rend,
 		hits:             &hitRegions{},
 		metrics:          &renderedSurfaceMetrics{},
 		phase:            phaseConnecting,
@@ -1201,6 +1208,7 @@ func (m Model) resetSessionDerived() Model {
 	m.workspaceEnrollmentNotice = ""
 	m.promptRecovery = nil
 	m.providerRoute = ""
+	m.guardrailBenign = nil
 	m.statusContextRoot = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
 	// / adopted from the stored session), so a /clear or fresh /models restart

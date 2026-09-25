@@ -34,8 +34,9 @@ type GuardrailReviewDetail struct{ ReviewID, Concern, SourceDisplay, NextAction 
 
 // GuardrailReviewDetailMsg carries an asynchronous detail response.
 type GuardrailReviewDetailMsg struct {
-	Detail GuardrailReviewDetail
-	Err    error
+	ReviewID string
+	Detail   GuardrailReviewDetail
+	Err      error
 }
 
 // ListGuardrailCoverage returns effective coverage for one session.
@@ -82,7 +83,7 @@ func GetGuardrailReviewDetailCmd(ctx context.Context, c interface {
 }, sessionID, reviewID string) tea.Cmd {
 	return func() tea.Msg {
 		detail, err := c.GetGuardrailReviewDetail(ctx, sessionID, reviewID)
-		return GuardrailReviewDetailMsg{Detail: detail, Err: err}
+		return GuardrailReviewDetailMsg{ReviewID: reviewID, Detail: detail, Err: err}
 	}
 }
 

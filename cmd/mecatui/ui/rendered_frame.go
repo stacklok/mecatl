@@ -204,13 +204,27 @@ func (r *renderer) rebuildFramePrefix(c *conversation, renderedBlocks []string, 
 }
 
 func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, renderedBlocks []string, index int, expand bool) {
-	if index > 0 {
-		for n := 0; n < blockBlankLinesAfter(c.blocks, index); n++ {
+	rendered := renderedBlocks[index]
+	if rendered == "" {
+		return
+	}
+	previous := -1
+	for i := index - 1; i >= 0; i-- {
+		if renderedBlocks[i] != "" {
+			previous = i
+			break
+		}
+	}
+	if previous >= 0 {
+		blankLines := interBlockBlankLinesCompact
+		if c.blocks[previous].kind == blockTool || (c.blocks[previous].kind == blockAssistant && c.blocks[index].kind == blockTurnStat) {
+			blankLines = interBlockBlankLinesNone
+		}
+		for n := 0; n < blankLines; n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}
 	}
-	rendered := renderedBlocks[index]
 	rows := r.blockFrameRows(index, &c.blocks[index], rendered, expand)
 	for row, line := range strings.Split(rendered, "\n") {
 		frame.lines = append(frame.lines, line)

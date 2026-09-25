@@ -405,6 +405,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	deps.MCPAuthorization = cl
 	deps.WorkspaceEnrollment = cl
 	deps.OpenURL = openBrowserURL
+	deps.ShowBenignHookNotices = settings.HookNotices.ShowBenign
 
 	// Apply keymap overrides (CLI for now).
 	if err := applyKeyOverridesToDeps(cfg, settings, &deps); err != nil {

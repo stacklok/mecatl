@@ -254,6 +254,7 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 		}
 	case client.HookMsg:
 		c.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+		c.blocks[len(c.blocks)-1].benignGuardrail = benignGuardrailReview(msg.Guardrail)
 	case client.ResultMsg:
 		if msg.Stop == stopError && msg.Error != "" {
 			if msg.Permanent {
@@ -334,6 +335,8 @@ type sessionsState struct {
 	transcriptVP                  viewport.Model
 	transcriptRend                *renderer
 	transcriptStuck               bool
+	transcriptExpand              bool
+	showBenignHookNotices         bool
 	transcriptRequestToken        uint64
 	transcriptSurfaceRequestToken uint64
 	pager                         client.SessionPager
@@ -356,11 +359,12 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 	if s.view == sessionsTranscript {
 		if s.transcriptRend == nil {
 			s.transcriptRend = newRenderer(s.deps.theme, s.deps.marks)
+			s.transcriptRend.showBenignGuardrails = s.showBenignHookNotices
 		}
 		s.transcriptRend.setWidth(width)
 		s.transcriptVP.SetWidth(width)
 		s.transcriptVP.SetHeight(height)
-		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript, false))
+		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript, s.transcriptExpand))
 		if s.transcriptStuck {
 			s.transcriptVP.GotoBottom()
 		}
@@ -371,6 +375,10 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	if s.view == sessionsTranscript {
+		if key.Matches(msg, s.deps.keys.ExpandTools) {
+			s.transcriptExpand = !s.transcriptExpand
+			return nil, true, false
+		}
 		if key.Matches(msg, s.deps.keys.Close) {
 			s.closeTranscript()
 			s.intent = sessionsPhaseIntent{phase: sessionsIntentPhaseIdle}
@@ -846,6 +854,7 @@ func (s *sessionsState) closeTranscript() {
 	s.loadErr = nil
 	s.transcript = conversation{}
 	s.transcriptRend = nil
+	s.transcriptExpand = false
 	s.view = sessionsPanel
 }
 

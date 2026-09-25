@@ -340,6 +340,9 @@ type block struct {
 	hookPhase    string
 	hookTool     string
 	hookDecision string // "info" | "blocked" | "modified"
+	// benignGuardrail marks retained evidence hidden only by the client presentation
+	// policy while details are collapsed.
+	benignGuardrail bool
 }
 
 // subagentLane is the flat, fleet-level projection of ONE Subagent child run, keyed by

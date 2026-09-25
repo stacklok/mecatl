@@ -113,6 +113,10 @@ type renderer struct {
 	// bare renderer (team/fleet focus panes) leaves it 0.
 	indent int
 
+	// showBenignGuardrails is immutable per renderer and overrides the collapsed
+	// default for exact known-benign contextual guardrail evidence.
+	showBenignGuardrails bool
+
 	mu    sync.Mutex
 	cache map[int]*glamour.TermRenderer
 
@@ -692,6 +696,9 @@ func blockBlankLinesAfter(conversationBlocks []block, i int) int {
 // render-visible field bumps rev through a conversation gateway, so a cache hit
 // can never be stale. Update-goroutine-only.
 func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
+	if b.benignGuardrail && !expand && !r.showBenignGuardrails {
+		return ""
+	}
 	key := r.blockRenderKey(b, expand)
 	if entry, ok := r.blocks.renderedBlock(idx, key); ok {
 		return entry.out
