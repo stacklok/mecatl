@@ -113,7 +113,7 @@ func TestWorkspaceEnrollmentResultShapes(t *testing.T) {
 	}
 }
 
-func TestWorkspaceCatalogueIsImmutableFrozenSnapshot(t *testing.T) {
+func TestWorkspaceCatalogueFreezesRegistrationKeysAndToolSpecs(t *testing.T) {
 	ref := enrollmentRef()
 	schema := json.RawMessage(`{"type":"object"}`)
 	source := &enrollmentTool{

@@ -416,7 +416,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 // authenticated snapshot and compensates a failed handoff by restoring its claim.
 func (s *Service) rebuildGrantedAuthorizationEngine(ctx context.Context, sess *session.Session, claimed session.PendingAuthorization, exactTools []tool.Tool) error {
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
-	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
+	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, nil, true); err != nil {
 		if errors.Is(err, ErrInvalidArgument) {
 			// Some OTHER run raced onto this session's slot between the parked run's
 			// admission and this rebuild — the same race registerAndStartGrantedAuthorization

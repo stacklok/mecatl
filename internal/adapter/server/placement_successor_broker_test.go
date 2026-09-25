@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -42,15 +43,20 @@ func newBrokerSuccessorService(t *testing.T, store port.SessionStore, ids ...ses
 			return id
 		},
 		MCPBroker: runtime,
+		RootAuthority: func(session.SessionKind) session.Authority {
+			return session.Authority{CapabilitySet: governance.CapabilitySet{Tools: []string{"broker-old"}}, Provenance: "test"}
+		},
 		SessionEngine: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
 			t.Fatal("broker successor used ordinary SessionEngine")
 			return SessionEngineResult{}, nil
 		},
-		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+		SessionEngineWithTools: func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 			if tools == nil {
 				t.Fatal("broker successor received nil broker tools")
 			}
-			return brokerEngineResult(), nil
+			res := brokerEngineResult()
+			res.BrokerRegistrationKeys = []string{"broker-old"}
+			return res, nil
 		},
 	})
 	if err != nil {
@@ -60,7 +66,95 @@ func newBrokerSuccessorService(t *testing.T, store port.SessionStore, ids ...ses
 	return service
 }
 
-func TestBrokerSuccessorsPersistDistinctExternalBindings(t *testing.T) {
+func TestWorkspaceEnrollmentAuthority_Scenario2_PersistsAcrossResumeAndFork(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		clear bool
+	}{
+		{name: "fork"},
+		{name: "clear", clear: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			svc := newBrokerSuccessorService(t, store, "source", "successor")
+			source, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Save(context.Background(), source); err != nil {
+				t.Fatal(err)
+			}
+			var successorID session.SessionID
+			if tc.clear {
+				successorID, err = svc.ClearSessionSuccessor(context.Background(), source.ID, SuccessorPlacement{})
+			} else {
+				successorID, err = svc.ForkSessionSuccessor(context.Background(), ForkSuccessorRequest{Source: source.ID})
+			}
+			if err != nil {
+				t.Fatalf("successor: %v", err)
+			}
+			successor, err := store.Load(context.Background(), successorID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys, present := successor.WorkspaceEnrollmentBrokerKeys()
+			if !present || len(keys) != 1 || keys[0] != "broker-old" {
+				t.Fatalf("successor ledger = %q, %t", keys, present)
+			}
+		})
+	}
+}
+
+func TestBrokerSuccessorsRejectPriorBrokerKeyOwnedByNonBroker(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		clear bool
+	}{
+		{name: "fork"},
+		{name: "clear", clear: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			svc := newBrokerSuccessorService(t, store, "source", "successor")
+			source, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Save(context.Background(), source); err != nil {
+				t.Fatal(err)
+			}
+			var closed bool
+			svc.cfg.SessionEngineWithTools = func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool, []string) (SessionEngineResult, error) {
+				return SessionEngineResult{
+					Engine:                    brokerEngineResult().Engine,
+					NonBrokerRegistrationKeys: []string{"broker-old"},
+					Close:                     func() error { closed = true; return nil },
+				}, nil
+			}
+
+			if tc.clear {
+				_, err = svc.ClearSessionSuccessor(context.Background(), source.ID, SuccessorPlacement{})
+			} else {
+				_, err = svc.ForkSessionSuccessor(context.Background(), ForkSuccessorRequest{Source: source.ID})
+			}
+			var collision *WorkspaceEnrollmentCollisionError
+			if !errors.As(err, &collision) || collision.Key != "broker-old" {
+				t.Fatalf("successor collision = %v, want safe prior registration key", err)
+			}
+			if !closed {
+				t.Fatal("successor left the unpublished conflicting candidate open")
+			}
+			svc.mu.Lock()
+			published := svc.sessionEngines["successor"]
+			svc.mu.Unlock()
+			if published != nil {
+				t.Fatal("successor published a non-broker implementation under a prior broker key")
+			}
+		})
+	}
+}
+
+func TestWorkspaceEnrollmentAuthority_Scenario2_SuccessorsStartFreshBrokerEnrollment(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		clear bool

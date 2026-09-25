@@ -236,7 +236,7 @@ func TestMCPAuthorizationGRPCStaleApprovalRefusesThenAcceptsCorrectRetry(t *test
 	followup := session.NewToolCall("followup-stale", "protected", nil)
 	f := newLifecycleFixtureWithTurns(t, session.AuthorizationGranted, nil, time.Now, nil,
 		mockllm.ToolCallTurn(followup), mockllm.TextTurn("continued after stale retry"))
-	f.svc.cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool) (SessionEngineResult, error) {
+	f.svc.cfg.SessionEngineWithTools = func(_ context.Context, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, mode session.PermissionMode, tools []tool.Tool, _ []string) (SessionEngineResult, error) {
 		catalog := tool.NewCatalog()
 		for _, candidate := range tools {
 			catalog.MustRegister(candidate)

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -171,8 +172,39 @@ type SessionEngineResult struct {
 	// publication. Engines do not hold runtime pins; run admission compares this
 	// tag with the operation pin and rebuilds before use.
 	RuntimeRevision uint64
+	// BrokerRegistrationKeys are the exact registration keys successfully mounted
+	// from the candidate broker bundle. NonBrokerRegistrationKeys is the complete
+	// final-catalog partition excluding that bundle. Both are Catalog.Names metadata.
+	BrokerRegistrationKeys    []string
+	NonBrokerRegistrationKeys []string
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
+}
+
+func workspaceEnrollmentRegistrationOverlap(priorBrokerKeys, authorityTools, nonBrokerRegistrationKeys []string) (string, bool) {
+	for _, key := range nonBrokerRegistrationKeys {
+		if slices.Contains(priorBrokerKeys, key) && slices.Contains(authorityTools, key) {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+func sameWorkspaceEnrollmentToolKeys(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	keys := make(map[string]struct{}, len(left))
+	for _, key := range left {
+		keys[key] = struct{}{}
+	}
+	for _, key := range right {
+		if _, ok := keys[key]; !ok {
+			return false
+		}
+		delete(keys, key)
+	}
+	return len(keys) == 0
 }
 
 // ResolvedModel is the per-session EFFECTIVE model echoed on the wire: the
@@ -249,10 +281,23 @@ type ModelInventory interface {
 	CurrentModelSnapshot() ModelSnapshot
 }
 
+// WorkspaceEnrollmentCollisionError is the presentation-safe collision result
+// exchanged only between root-internal composition and server seams.
+type WorkspaceEnrollmentCollisionError struct{ Key string }
+
+func (e *WorkspaceEnrollmentCollisionError) Error() string {
+	if e == nil || e.Key == "" {
+		return "workspace enrollment registration collision; correct the broker configuration and retry"
+	}
+	return fmt.Sprintf("workspace tool %q conflicts with an existing registration; correct the broker configuration and retry", e.Key)
+}
+
+func (*WorkspaceEnrollmentCollisionError) Unwrap() error { return ErrFailedPrecondition }
+
 // SessionEngineWithToolsFactory is the explicit per-session catalogue seam used
 // for host-owned wrapper tools. Tools are ordinary arguments: catalogue assembly
 // must not recover them from context values or a process-global fallback.
-type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error)
+type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (SessionEngineResult, error)
 
 // ExecutionWorkspaceAcquirer lazily borrows the exact server-authorized session
 // workspace as a source-only capability. The caller owns the returned release.
@@ -2005,13 +2050,23 @@ func (s *Service) createSessionWithOptions(ctx context.Context, mode session.Per
 // empty-selector default profile this writes the zero values, so a default
 // session's snapshot is byte-identical to a pre-Phase-1 one (the labels omitempty
 // out of the JSON).
-func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, authority session.Authority) error {
+type carriedAuthority struct {
+	authority         session.Authority
+	bound             bool
+	brokerKeys        []string
+	brokerKeysPresent bool
+}
+
+func setSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, authority session.Authority, brokerKeys []string, brokerKeysPresent bool) error {
 	sess.Profile = string(profile)
 	sess.ProviderID = sel.ProviderID
 	sess.ModelID = sel.ModelID
 	sess.ReasoningEffort = sel.ReasoningEffort
 	// Owner and authority are independently stamped at the same root seam.
-	return sess.RestoreLabels(owner, authority)
+	if err := sess.RestoreLabels(owner, authority); err != nil {
+		return err
+	}
+	return sess.RestoreWorkspaceEnrollmentBrokerKeys(brokerKeys, brokerKeysPresent)
 }
 
 func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel ProviderSelector) {
@@ -2020,45 +2075,48 @@ func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel Provi
 	}
 }
 
-func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, broker []tool.Tool, carried session.Authority, carriedBound bool) error {
-	authority := s.rootAuthority(sess.Kind, carried, carriedBound)
+func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, carried carriedAuthority) error {
+	authority := s.rootAuthority(sess.Kind, carried)
+	brokerKeys, brokerKeysPresent := carried.brokerKeys, carried.brokerKeysPresent
 	// Broker wrappers and client-mounted MCP tools are both resolved only after
 	// the process root authority was minted (they are per-SESSION, not known at
 	// build time). Include this session's exact set in a fresh root without
 	// widening authority carried from another session.
-	if !carriedBound && (len(broker) != 0 || len(res.MountedClientMCPTools) != 0) {
-		seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker)+len(res.MountedClientMCPTools))
-		for _, name := range authority.CapabilitySet.Tools {
-			seen[name] = struct{}{}
-		}
-		for _, candidate := range broker {
-			name := candidate.Spec().Name
-			if _, ok := seen[name]; ok {
-				continue
+	if !carried.bound {
+		brokerKeys, brokerKeysPresent = res.BrokerRegistrationKeys, true
+		if len(res.BrokerRegistrationKeys) != 0 || len(res.MountedClientMCPTools) != 0 {
+			seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(res.BrokerRegistrationKeys)+len(res.MountedClientMCPTools))
+			for _, name := range authority.CapabilitySet.Tools {
+				seen[name] = struct{}{}
 			}
-			seen[name] = struct{}{}
-			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
-		}
-		for _, name := range res.MountedClientMCPTools {
-			if _, ok := seen[name]; ok {
-				continue
+			for _, name := range res.BrokerRegistrationKeys {
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
 			}
-			seen[name] = struct{}{}
-			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+			for _, name := range res.MountedClientMCPTools {
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+			}
+			sort.Strings(authority.CapabilitySet.Tools)
 		}
-		sort.Strings(authority.CapabilitySet.Tools)
 	}
 	if sess.Kind == session.SessionKindDebug {
 		authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, res.DebugMCPTools...)
 		sess.DebugMCPServers = append([]string(nil), opts.debugMCPServers...)
 		sess.DebugMCPTools = append([]string(nil), res.DebugMCPTools...)
 	}
-	return setSessionLabels(sess, sel, profile, owner, authority)
+	return setSessionLabels(sess, sel, profile, owner, authority, brokerKeys, brokerKeysPresent)
 }
 
-func (s *Service) rootAuthority(kind session.SessionKind, carried session.Authority, carriedBound bool) session.Authority {
-	if carriedBound {
-		return carried
+func (s *Service) rootAuthority(kind session.SessionKind, carried carriedAuthority) session.Authority {
+	if carried.bound {
+		return carried.authority
 	}
 	if s.cfg.RootAuthority == nil {
 		return session.Authority{}
@@ -2393,15 +2451,14 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	// A carryover fork replaces the context owner with the source's owner below.
 
 	var carrySnap []session.Message
-	var carriedAuthority session.Authority
-	carriedAuthorityBound := false
+	var carried carriedAuthority
 	if opts.sourceSessionID != "" {
-		snap, srcOwner, sourceAuthority, sourceAuthorityBound, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
+		snap, srcOwner, sourceCarried, err := s.validateCarryover(ctx, opts.sourceSessionID, sel.ProviderID)
 		if err != nil {
 			return nil, err
 		}
 		carrySnap = snap
-		carriedAuthority, carriedAuthorityBound = sourceAuthority, sourceAuthorityBound
+		carried = sourceCarried
 		// A fork inherits the SOURCE's owner, overriding the context principal
 		// (and any WithOwner) — see validateCarryover.
 		owner = srcOwner
@@ -2417,7 +2474,11 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		if err != nil {
 			return nil, fmt.Errorf("server: create session metadata: %w", err)
 		}
-		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carriedAuthority, carriedAuthorityBound)); err != nil {
+		brokerKeysPresent := true
+		if carried.bound {
+			brokerKeysPresent = carried.brokerKeysPresent
+		}
+		if err := setSessionLabels(sess, sel, profile, owner, s.rootAuthority(sess.Kind, carried), carried.brokerKeys, brokerKeysPresent); err != nil {
 			return nil, err
 		}
 		s.setTitleGenerationEligibility(sess, sel)
@@ -2427,7 +2488,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		return s.persistPlacedCreatedSession(ctx, sess, owner, retryRequest, placement)
 	}
 
-	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carriedAuthority, carriedAuthorityBound, retryRequest, placement)
+	return s.createPerSessionEngine(ctx, mintID, mode, workspace, limits, sel, specs, profile, carrySnap, owner, opts, carried, retryRequest, placement)
 }
 
 // createPerSessionEngine is the per-session-engine create branch, factored out
@@ -2440,7 +2501,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 // profile-aware workspace rule and the carryover snapshot semantics.
 //
 //nolint:gocyclo // Creation keeps factory, authorization, broker ownership, registration, and teardown in one transaction.
-func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding) (*session.Session, error) {
+func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carried carriedAuthority, retryRequest *createRequest, placement *PlacementBinding) (*session.Session, error) {
 	if opts.debugTargetID != "" {
 		if s.cfg.DebugSessionEngine == nil {
 			return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
@@ -2500,7 +2561,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			defer s.finalizeBrokerAttachment(broker, &committed)
 		}
 		acquire := s.executionWorkspaceAcquirer(owner, placement.Ref)
-		res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker), nil)
 		// Only this reserved, unpublished create may retry a retired attempt.
 		// Ordinary rehydration must wait for explicit owner-authorized Load.
 		if errors.Is(err, ErrCommandBindingRetired) && s.cfg.SessionContextEngine != nil {
@@ -2510,7 +2571,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 				err = s.cfg.Commands.Activate(ctx, id, owner.Clone(), string(profile))
 			}
 			if err == nil {
-				res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker))
+				res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker), nil)
 			}
 		}
 	}
@@ -2548,7 +2609,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	// creation labels on the aggregate, so a restarted process re-derives the SAME
 	// per-session engine via the factory (rehydrateSession) instead of falling to the
 	// default-provider floor / inferring the profile from the empty-workspace pun.
-	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, brokerTools(broker), carriedAuthority, carriedAuthorityBound); err != nil {
+	if err := s.setPerSessionLabels(sess, sel, profile, owner, opts, res, carried); err != nil {
 		if closeFn != nil {
 			_ = closeFn()
 		}
@@ -4064,13 +4125,13 @@ func (s *Service) LoadSession(ctx context.Context, id session.SessionID) (*sessi
 // default). The model is intentionally NOT compared: a model mismatch within a
 // provider is the point of the /models picker switch, so a same-provider
 // model change is permitted; a cross-provider model change strips and replays.
-func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, *session.Principal, session.Authority, bool, error) {
+func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID, newProviderID string) ([]session.Message, *session.Principal, carriedAuthority, error) {
 	src, err := s.loadAndReopen(ctx, srcID)
 	if err != nil {
-		return nil, nil, session.Authority{}, false, err
+		return nil, nil, carriedAuthority{}, err
 	}
 	if src.State == session.StateRunning || src.State == session.StateAwaiting || src.State == session.StateAuthorizing {
-		return nil, nil, session.Authority{}, false, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
+		return nil, nil, carriedAuthority{}, fmt.Errorf("%w: carryover requires a session at a turn boundary; source %q is %s", ErrFailedPrecondition, srcID, src.State)
 	}
 	// The SOURCE's owner travels with the carried history (ADR 0204 decision 4):
 	// a fork is attributed to whoever owned the session it copied, never to the
@@ -4079,7 +4140,13 @@ func (s *Service) validateCarryover(ctx context.Context, srcID session.SessionID
 	// yields an ownerless fork, never a fabricated one.
 	srcOwner := src.Owner
 	srcAuthority, srcAuthorityBound := src.BoundAuthority()
-	return s.providerCarryoverSnapshot(src, newProviderID), srcOwner, srcAuthority, srcAuthorityBound, nil
+	brokerKeys, brokerKeysPresent := src.WorkspaceEnrollmentBrokerKeys()
+	return s.providerCarryoverSnapshot(src, newProviderID), srcOwner, carriedAuthority{
+		authority:         srcAuthority,
+		bound:             srcAuthorityBound,
+		brokerKeys:        brokerKeys,
+		brokerKeysPresent: brokerKeysPresent,
+	}, nil
 }
 
 func (s *Service) providerCarryoverSnapshot(src *session.Session, newProviderID string) []session.Message {
@@ -4405,7 +4472,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, sess.Mode, nil)
+	res, err := s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, sess.Mode, nil, nil)
 	if err != nil {
 		// The session was loaded + (if needed) reopened and re-persisted, but the
 		// per-session engine could not be built. We deliberately do NOT roll that
@@ -5861,7 +5928,7 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 	// upper-bound capability record until the owner explicitly starts a new
 	// enrollment. Exact-tool mode with no tools keeps ordinary prompts usable while
 	// making persisted broker names non-executable.
-	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, sess.Mode, false, nil, true)
+	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, sess.Mode, false, nil, nil, true)
 }
 
 // buildAndRegisterSessionEngine is the ONE shared build+cap-check+register+teardown
@@ -5889,11 +5956,11 @@ func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (
 //
 //nolint:gocyclo // Explicit validation, rebuild, broker, capacity, and rollback gates stay ordered.
 func (s *Service) buildAndRegisterSessionEngine(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool) (*sessionEngine, error) {
-	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, false)
+	return s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profile, mode, replace, nil, nil, false)
 }
 
 //nolint:gocyclo // rehydration keeps validation, factory selection, broker, capacity, and rollback gates ordered; inherent.
-func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, useExactTools bool) (*sessionEngine, error) {
+func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Context, sess *session.Session, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, replace bool, exactTools []tool.Tool, exactToolNames []string, useExactTools bool) (*sessionEngine, error) {
 	id := sess.ID
 	unlockBroker := s.brokerMu.lock(id)
 	defer unlockBroker()
@@ -5905,6 +5972,11 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		s.mu.Unlock()
 		if full {
 			return nil, fmt.Errorf("%w: %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
+		}
+	}
+	if useExactTools && exactToolNames != nil {
+		if _, present := sess.WorkspaceEnrollmentBrokerKeys(); !present {
+			return nil, fmt.Errorf("%w: workspace enrollment provenance is unavailable", ErrFailedPrecondition)
 		}
 	}
 	var res SessionEngineResult
@@ -5932,7 +6004,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...), exactToolNames)
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 		if err != nil {
@@ -5943,10 +6015,27 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionWorkspaceAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, brokerTools(broker), nil)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
+	}
+	closeCandidate := func() {
+		if res.Close != nil {
+			_ = res.Close()
+		}
+	}
+	if useExactTools && exactToolNames != nil {
+		if !sameWorkspaceEnrollmentToolKeys(exactToolNames, res.BrokerRegistrationKeys) {
+			closeCandidate()
+			return nil, fmt.Errorf("%w: workspace enrollment catalogue registration metadata is inconsistent", ErrFailedPrecondition)
+		}
+	}
+	if priorBrokerKeys, present := sess.WorkspaceEnrollmentBrokerKeys(); present {
+		if key, overlaps := workspaceEnrollmentRegistrationOverlap(priorBrokerKeys, sess.Authority.CapabilitySet.Tools, res.NonBrokerRegistrationKeys); overlaps {
+			closeCandidate()
+			return nil, &WorkspaceEnrollmentCollisionError{Key: key}
+		}
 	}
 	se := &sessionEngine{
 		engine:          res.Engine,
@@ -5964,16 +6053,12 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		// FIRST-REGISTRATION-WINS: a concurrent rehydration (or load) won the race;
 		// keep its engine, tear ours down so the loser leaks no MCP manager.
 		s.mu.Unlock()
-		if se.close != nil {
-			_ = se.close()
-		}
+		closeCandidate()
 		return prior, nil
 	}
 	if !replace && len(s.sessionEngines) >= s.cfg.MaxSessionEngines {
 		s.mu.Unlock()
-		if se.close != nil {
-			_ = se.close()
-		}
+		closeCandidate()
 		return nil, fmt.Errorf("%w: %d", ErrTooManySessionEngines, s.cfg.MaxSessionEngines)
 	}
 	if replace {

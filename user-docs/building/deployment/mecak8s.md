@@ -414,6 +414,16 @@ placeholders with a frozen per-session catalog. Failure exposes no partial
 catalog. Keep preregistered client secrets in `SecretKeyRef`; broker metadata
 and profiles remain non-secret ConfigMap data.
 
+:::caution[Older snapshots need a fresh session]
+
+A binary from before durable broker provenance was introduced can re-save a
+session without its broker-key ledger. The current server treats that snapshot
+as legacy and will not infer which broker tools were previously installed or
+repair its authority. Replace the session with a fresh one before running
+`/tools-connect`.
+
+:::
+
 :::caution[Broker mode is single-replica]
 
 Broker sessions and OAuth state are process-local. The chart requires

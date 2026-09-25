@@ -1491,6 +1491,15 @@ func validateMCPAuthority(cfg Config) error {
 	return nil
 }
 
+// clearGlobalMCPForBroker enforces the broker authority boundary before the
+// candidate catalog is built: broker tools are supplied explicitly by the session
+// attachment, so neither the static MCP servers nor ToolHive may add a global
+// fallback (including a second CallMcpWithQuery).
+func clearGlobalMCPForBroker(cfg *Config) {
+	cfg.MCPServers = nil
+	cfg.ToolHiveEnabled = false
+}
+
 // Build assembles the provider registry, catalog, policy, and engine into a
 // server.Service per the given Config. It is the single composition root every
 // cmd/ main calls.
@@ -2085,8 +2094,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if brokerSelected {
 		// Authority is exclusive: broker sessions receive only their explicit
 		// attachment wrappers, never the process-global MCP manager as a fallback.
-		cfg.MCPServers = nil
-		cfg.ToolHiveEnabled = false
+		clearGlobalMCPForBroker(&cfg)
 	}
 	cfg.guardrailDetails = server.NewReviewDetailRegistry()
 	cfg.guardrailHealth = &guardrailRouteHealth{}
@@ -3200,6 +3208,24 @@ func mountedClientMCPNames(mgr *mcp.Manager) []string {
 	}
 	return names
 }
+func sessionClientMCPManager(ctx context.Context, cfg Config, specs []mcp.ServerConfig) *mcp.Manager {
+	if len(specs) == 0 {
+		return nil
+	}
+	onError := func(sc mcp.ServerConfig, err error) {
+		cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
+			"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
+	}
+	mgr, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
+	if err != nil {
+		// Client MCP is best-effort for ACP: retain a usable core-tools session
+		// when every requested server fails. Wire callers enforce their own
+		// all-or-nothing policy from the mounted-server report.
+		cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only",
+			"err", mcp.RedactError(err))
+	}
+	return mgr
+}
 
 func sessionEngineFactory(
 	cfg Config,
@@ -3215,7 +3241,7 @@ func sessionEngineFactory(
 ) server.SessionEngineFactory {
 	withTools := sessionEngineFactoryWithTools(cfg, reg, provider, store, policy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	return func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
-		return withTools(ctx, sel, specs, profile, workspace, mode, nil)
+		return withTools(ctx, sel, specs, profile, workspace, mode, nil, nil)
 	}
 }
 
@@ -3231,7 +3257,7 @@ func sessionEngineFactoryWithTools(
 	assets catalogAssets,
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.SessionEngineWithToolsFactory {
-	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (server.SessionEngineResult, error) {
+	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool, sessionToolKeys []string) (server.SessionEngineResult, error) {
 		runtimeAssets := mcpCatalogAssets(ctx, assets)
 		runtimeRevision := mcpRuntimeRevision(ctx)
 		// Pin the CHILD permission resolver to THIS session's base root (issue
@@ -3339,46 +3365,7 @@ func sessionEngineFactoryWithTools(
 		// resolves to the 128k floor (inside the resolver). Override still wins.
 		windowFn := reg.windowResolver(cfg, resolvedProviderID, resolvedModel)
 
-		onError := func(sc mcp.ServerConfig, err error) {
-			// REDACTED url (CWE-532). The header map is secret-shaped and never logged,
-			// but a credential can also ride the URL itself — "?access_token=..." — and
-			// logging sc.URL verbatim put it in the operator's diagnostics. userinfo is
-			// now rejected outright by ValidateClientURL; a query-string token cannot be
-			// (it is indistinguishable from an ordinary parameter), so the URL is
-			// redacted at the log site instead of trusted to be clean. mcp.RedactURL is
-			// the SAME policy the validator's own messages use — one redactor, so the
-			// log and the error cannot drift.
-			// BOTH the url AND the err must be redacted, and the err is the one that
-			// was missed: net/http embeds the complete request URL in a connection
-			// error, and the MCP SDK formats it into its own message text, so a
-			// query-string token reached the operator log through `err` even though
-			// `url` beside it was clean. Redacting one of two channels is not
-			// redacting.
-			cfg.diag().Log(ctx, port.LevelWarn, "client MCP server unreachable; skipping for this session",
-				"server", sc.Name, "url", mcp.RedactURL(sc.URL), "err", mcp.RedactError(err))
-		}
-		var mgr *mcp.Manager
-		if len(specs) > 0 {
-			m, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
-			if err != nil {
-				// Best-effort HERE, by design: every server failed and the session still
-				// gets a usable engine (core tools only) rather than failing outright.
-				// This is the ACP contract — an editor's flaky MCP server should not cost
-				// the user their session, and ACP has its own channel to say so.
-				//
-				// It is NOT the wire contract. A gRPC/HTTP CreateSession caller cannot
-				// see this WARN, so the Service enforces all-or-nothing on that path
-				// using MountedClientMCP below. Reporting which servers connected is
-				// this factory's job; deciding whether a partial mount is acceptable
-				// belongs to the caller, and the two callers disagree.
-				// Same redaction as onError above: this error is NewManager's lastErr,
-				// so it is one of the per-server transport errors and carries that
-				// server's full URL.
-				cfg.diag().Log(ctx, port.LevelWarn, "client MCP: no servers connected for this session; mounting core tools only",
-					"err", mcp.RedactError(err))
-			}
-			mgr = m
-		}
+		mgr := sessionClientMCPManager(ctx, cfg, specs)
 		mountedClientMCP := mountedClientMCPNames(mgr)
 
 		// Assemble the per-session catalog through the SAME assembleCatalog the
@@ -3397,7 +3384,7 @@ func sessionEngineFactoryWithTools(
 		// Skill tool. A failed authoritative read clears only these partitions.
 		skillPartitions := hydrateLearnedSkillPartitions(ctx, cfg, runtimeAssets, workspace)
 
-		cat, closeFn, clientToolNames := assembleCatalog(ctx, cfg, reg, store, hooks, &runtimeAssets, catalogSession{
+		cat, closeFn, clientToolNames, brokerRegistrationKeys, nonBrokerRegistrationKeys, err := assembleCatalogDetailed(ctx, cfg, reg, store, hooks, &runtimeAssets, catalogSession{
 			provider:        resolvedProvider,
 			providerID:      resolvedProviderID,
 			model:           resolvedModel,
@@ -3407,7 +3394,11 @@ func sessionEngineFactoryWithTools(
 			mode:            mode,
 			skillPartitions: skillPartitions,
 			sessionTools:    sessionTools,
+			sessionToolKeys: sessionToolKeys,
 		})
+		if err != nil {
+			return server.SessionEngineResult{}, err
+		}
 
 		// Identical to the main engine in every NON-provider Deps field except the
 		// catalog (which carries the extra client MCP + per-session sub-agent tools):
@@ -3522,9 +3513,11 @@ func sessionEngineFactoryWithTools(
 			// requested). The factory REPORTS; the Service decides whether a partial
 			// mount is acceptable, because its two callers disagree — see the
 			// best-effort comment on the NewManager error above.
-			MountedClientMCP:      mountedClientMCP,
-			MountedClientMCPTools: clientToolNames,
-			Close:                 closeFn,
+			MountedClientMCP:          mountedClientMCP,
+			MountedClientMCPTools:     clientToolNames,
+			BrokerRegistrationKeys:    brokerRegistrationKeys,
+			NonBrokerRegistrationKeys: nonBrokerRegistrationKeys,
+			Close:                     closeFn,
 		}, nil
 	}
 	return pinMCPRuntimeFactory(assets, build)
@@ -4452,7 +4445,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 			}
 			sessionCfg.skillCommandInputs = skillCommandInputs{metas: seam.metas, source: seam.source}
 			factory := sessionEngineFactoryWithTools(sessionCfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, replaceHarnessInstructions(instructions, sessionCfg), sessionAssets, guardrailWaiver)
-			result, err := factory(ctx, selector, specs, profile, workspace, mode, extra)
+			result, err := factory(ctx, selector, specs, profile, workspace, mode, extra, nil)
 			if err != nil {
 				release()
 				return result, err
