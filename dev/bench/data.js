@@ -273414,6 +273414,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790329652067,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4acc5959d66e213c5ced5c04bef95542f43b9901",
+          "message": "test(mecatui): eliminate real polling waits with virtual time (#1919)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T13:21:19+03:00",
+          "tree_id": "76c3c1472964d818f8706dd4a6088703200ded73",
+          "url": "https://github.com/stacklok/mecatl/commit/4acc5959d66e213c5ced5c04bef95542f43b9901"
+        },
+        "date": 1790332403847,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3322,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -358496,6 +358535,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790332400630,
+  "lastUpdate": 1790332405027,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
