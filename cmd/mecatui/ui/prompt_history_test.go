@@ -182,6 +182,7 @@ func TestMecatuiPromptHistory_Scenario1_EditDetachesWithoutLosingDraft(t *testin
 		m := historyModel(t, "inspect @ol")
 		m = historyKey(t, m, tea.KeyUp)
 		m.mention = mentionState{open: true, matches: []string{"old.txt"}}
+		m.mention.syncList()
 		assertDetachedOnNext(t, m.mentionComplete())
 	})
 	t.Run("byte-identical host rewrite", func(t *testing.T) {
@@ -507,6 +508,7 @@ func TestMecatuiPromptHistory_Scenario3_VisibleOwnersConsumeArrows(t *testing.T)
 		}},
 		{name: "mention", entry: "@", own: func(m *Model) {
 			m.mention = mentionState{open: true, matches: []string{"file.txt"}}
+			m.mention.syncList()
 		}},
 		{name: "help", entry: "history", own: func(m *Model) { m.showHelp = true; m.prompt.Blur() }},
 		{name: "approval", entry: "history", own: func(m *Model) { m.phase = phaseAwaitingApproval }},
