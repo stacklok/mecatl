@@ -190,6 +190,12 @@ import {
   type SessionTitleRevision,
   sessionTitleFromEvent,
 } from "./session-title";
+import {
+  appendSteerTrace,
+  observedSteerTrace,
+  SteerTrace,
+  type SteerTraceEntry,
+} from "./steer-trace";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
 import {
@@ -378,6 +384,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
   const [reconnectGeneration, setReconnectGeneration] = useState(0);
   const [liveUsage, setLiveUsage] = useState<SessionUsageResponse>();
+  const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
+  const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
   const viewedSessionId = useRef(sessionId);
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
@@ -493,6 +501,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setApprovals([]);
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
+    setSteerTrace([]);
+    setShowSteerTrace(false);
     setContentPreview(undefined);
     setSelectionAction(undefined);
     if (!activeRun.current || activeRun.current.sessionId !== sessionId)
@@ -1617,6 +1627,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           continue;
         }
         const event = delivery.event;
+        const observedSteer = observedSteerTrace(delivery);
+        if (observedSteer) setSteerTrace((current) => appendSteerTrace(current, observedSteer));
         if (sawAuthorizationStatus && event.runId) {
           continuationStarted = true;
           sawAuthorizationPark = false;
@@ -2301,6 +2313,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   <ListTree aria-hidden="true" />
                   {expandDetails ? "Collapse details" : "Expand details"}
                 </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShowSteerTrace(!showSteerTrace)}>
+                  <Bug aria-hidden="true" />
+                  {showSteerTrace ? "Hide developer steer trace" : "Show developer steer trace"}
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(sessionId)}>
                   <Copy aria-hidden="true" />
@@ -2424,6 +2440,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           ref={transcriptScroll}
         >
           <div className="mx-auto flex min-h-full max-w-3xl flex-col px-4 py-8 sm:px-6">
+            {showSteerTrace && <SteerTrace entries={steerTrace} />}
             {transcript.isPending && sessionId && !isRunning ? (
               <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
             ) : messages.length === 0 ? (
