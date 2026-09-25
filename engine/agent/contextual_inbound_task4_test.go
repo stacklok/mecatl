@@ -34,7 +34,7 @@ func (r *inboundReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _
 	return job == agent.ReviewJobInbound, enforce
 }
 
-func (r *inboundReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *inboundReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.calls++
 	r.mu.Unlock()
@@ -48,7 +48,7 @@ func (r *inboundReviewer) Review(_ context.Context, req agent.ToolReviewRequest,
 	if assessment == "" {
 		assessment = agent.ReviewProhibited
 	}
-	return agent.ToolReviewResult{Assessment: assessment, Concerns: []agent.ReviewConcern{{Ref: "c1", Category: "prompt_injection", Rationale: "attempted redirection", SourceRef: "tool-result"}}, Missing: []agent.ReviewMissingEvidence{{Ref: "actual-source", Kind: "tool_result", Reason: "source was incomplete"}}}, nil
+	return agent.ToolReviewResult{Assessment: assessment, Concerns: []agent.ReviewConcern{{Ref: "c1", Category: "prompt_injection", Rationale: "attempted redirection", SourceRef: "tool-result"}}, Missing: []agent.ReviewMissingEvidence{{Ref: "actual-source", Kind: "tool_result", Reason: "source was incomplete"}}}, session.AuxiliaryUsage{}, nil
 }
 
 type countingPostHook struct {

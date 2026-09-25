@@ -397,7 +397,7 @@ func (e *Engine) authorizeReviewEvidenceRead(ctx context.Context, r *Run, sess *
 	if err != nil {
 		return err
 	}
-	decision := e.permissionDecision(ctx, sess, env, session.NewToolCall(callID, "Read", args))
+	decision := e.permissionDecision(ctx, r, sess, env, session.NewToolCall(callID, "Read", args))
 	if decision.Effect != governance.Allow {
 		return errors.New("review evidence Read is not allowed by the originating session permission policy")
 	}
@@ -621,10 +621,12 @@ func (r *Run) publishActionDetail(ctx context.Context, sessionID session.Session
 }
 
 type actionReviewAssessment struct {
-	action   actionReview
-	result   ToolReviewResult
-	err      error
-	grantHit bool
+	action        actionReview
+	result        ToolReviewResult
+	usage         session.AuxiliaryUsage
+	usageConsumed bool
+	err           error
+	grantHit      bool
 }
 
 func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall) actionReviewAssessment {
@@ -660,7 +662,8 @@ func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *ses
 		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
-	result, err := r.reviewRoot.reviewer.Review(ctx, req, nil)
+	result, usage, err := r.reviewRoot.reviewer.Review(ctx, req, nil)
+	r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, usage)
 	if err == nil && !validReviewAssessment(result.Assessment) {
 		result.Assessment = ReviewUnresolved
 		err = reviewFailure(ReviewFailureInvalidAssessment)
@@ -702,7 +705,7 @@ func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessmen
 	if assessment.grantHit {
 		return
 	}
-	assessment.result, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.action.request, assessment.action.source)
+	assessment.result, assessment.usage, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.action.request, assessment.action.source)
 	if assessment.err == nil && !validReviewAssessment(assessment.result.Assessment) {
 		assessment.result.Assessment = ReviewUnresolved
 		assessment.err = reviewFailure(ReviewFailureInvalidAssessment)
@@ -710,6 +713,7 @@ func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessmen
 }
 
 func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment) (session.ToolResult, bool, bool, bool) {
+	r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
 	if assessment.action.close != nil {
 		defer assessment.action.close()
 	}
@@ -811,7 +815,7 @@ func (e *Engine) reauthorizeAction(ctx context.Context, r *Run, sess *session.Se
 	if !auth.authorityStillValid(sess, call, env) {
 		return false, false, "contextual guardrail authority binding became stale before execution"
 	}
-	current := e.permissionDecision(ctx, sess, env, call)
+	current := e.permissionDecision(ctx, r, sess, env, call)
 	if current == auth.decision {
 		return true, false, ""
 	}
@@ -831,7 +835,7 @@ func (e *Engine) reauthorizeAction(ctx context.Context, r *Run, sess *session.Se
 	if decision.Effect != governance.Allow {
 		return false, false, decision.Reason
 	}
-	postApproval := e.permissionDecision(ctx, sess, env, call)
+	postApproval := e.permissionDecision(ctx, r, sess, env, call)
 	if postApproval == current || postApproval.Effect == governance.Allow {
 		auth.decision = postApproval
 		return true, false, ""
@@ -860,6 +864,7 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 	assessment := e.prepareActionAssessment(ctx, r, sess, env, call)
 	assessAction(ctx, r, &assessment)
 	if ctx.Err() != nil {
+		r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
 		if assessment.action.close != nil {
 			assessment.action.close()
 		}

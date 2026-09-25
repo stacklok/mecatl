@@ -227,6 +227,17 @@ func closeActionAssessments(prepared []readBatchPending) {
 	}
 }
 
+func (r *Run) recordCompletedActionUsage(ctx context.Context, sess *session.Session, prepared []readBatchPending) {
+	for i := range prepared {
+		assessment := prepared[i].assessment
+		if assessment == nil || assessment.usageConsumed {
+			continue
+		}
+		r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
+		assessment.usageConsumed = true
+	}
+}
+
 func closePreparedOnCancel(prepared *[]readBatchPending, cancelled *bool) {
 	if *cancelled {
 		closeActionAssessments(*prepared)
@@ -337,16 +348,20 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	}
 	reviewWG.Wait()
 	if ctx.Err() != nil {
+		r.recordCompletedActionUsage(ctx, sess, prepared)
 		return nil, true
 	}
 
 	// Drain private assessments in original call order. This is the only phase that
 	// records trajectory/details or surfaces action asks, so at most one ask is live.
 	toRun := make([]readBatchPending, 0, len(prepared))
-	for _, p := range prepared {
+	for i := range prepared {
+		p := &prepared[i]
 		if p.assessment != nil {
 			res, cancelled, proceed, armGrant := e.resolveActionAssessment(ctx, r, sess, env, turnIdx, p.call, &p.auth, *p.assessment)
+			p.assessment.usageConsumed = true
 			if cancelled {
+				r.recordCompletedActionUsage(ctx, sess, prepared[i+1:])
 				return nil, true
 			}
 			if !proceed {
@@ -355,7 +370,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 			}
 			p.armGrant = armGrant
 		}
-		toRun = append(toRun, p)
+		toRun = append(toRun, *p)
 	}
 
 	cleared := toRun[:0]
@@ -402,6 +417,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 		var result session.ToolResult
 		if cancelled || ctx.Err() != nil {
 			cancelled = true
+			r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, p.record.assessment.usage)
 			closeInboundAssessment(p.record.assessment)
 			if p.record.assessment.request.ReviewID != "" {
 				key := heldResultKey{reviewID: p.record.assessment.request.ReviewID, session: sess.ID, call: p.call.ID, env: env.Ref()}
@@ -1076,7 +1092,18 @@ func recordValidatedApproval(r *Run, sessionID session.SessionID, ask session.Pe
 // permissionDecision evaluates normal Shell authority and, only for the declared
 // system temporary scope, the independent tool-wide escape capability. The
 // synthetic capability is never dispatched or registered as a tool.
-func (e *Engine) permissionDecision(ctx context.Context, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
+	if r == nil {
+		return e.permissionDecisionOwned(ctx, sess, env, c)
+	}
+	ctx, deactivate := port.WithAuxiliaryUsageReporter(ctx, func(usage session.AuxiliaryUsage) {
+		r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, usage)
+	})
+	defer deactivate()
+	return e.permissionDecisionOwned(ctx, sess, env, c)
+}
+
+func (e *Engine) permissionDecisionOwned(ctx context.Context, sess *session.Session, env tool.Environment, c session.ToolCall) governance.PermissionDecision {
 	ordinary := e.deps.Policy.Evaluate(ctx, sess.ID, sess.Mode, c, env.Workspace())
 	if !shellSystemScope(c) || ordinary.Effect == governance.Deny {
 		return ordinary
@@ -1124,7 +1151,7 @@ func systemScopeApprovalArgs(c session.ToolCall) []byte {
 }
 
 func (e *Engine) reauthorizeApprovedCall(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, acceptAsk bool) (permissionAuthorization, session.ToolResult, bool) {
-	decision := e.permissionDecision(ctx, sess, env, call)
+	decision := e.permissionDecision(ctx, r, sess, env, call)
 	auth := permissionAuthorization{call: call, env: env.Ref(), decision: decision}
 	if decision.Effect == governance.Deny || (!acceptAsk && decision.Effect != governance.Allow) {
 		reason := decision.Reason
@@ -1143,7 +1170,7 @@ func (e *Engine) reauthorizeApprovedCall(ctx context.Context, r *Run, sess *sess
 }
 
 func (e *Engine) authorizeBound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall) (governance.PermissionDecision, permissionAuthorization, bool) {
-	decision := e.permissionDecision(ctx, sess, env, c)
+	decision := e.permissionDecision(ctx, r, sess, env, c)
 	auth := permissionAuthorization{call: c, env: env.Ref(), decision: decision}
 	effective, cancelled := e.authorizeDecision(ctx, r, sess, env, turnIdx, c, decision, &auth)
 	if cancelled || effective.Effect != governance.Allow {
@@ -1579,7 +1606,7 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	} else {
 		res, dur = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
 	}
-	res, postEvents := e.postHook(ctx, sess, turnIdx, c, res)
+	res, postEvents := e.postHook(ctx, r, sess, turnIdx, c, res)
 	res = session.RepairToolResult(res)
 	var assessment inboundAssessment
 	if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
@@ -2263,7 +2290,7 @@ func postHookContent(res session.ToolResult) string {
 // what the model sees the tool returned (e.g. redact secrets from output). Because
 // execute emits the EFFECTIVE result, the client stream shows the rewritten result
 // too — there is no hidden divergence between the client and model views.
-func (e *Engine) postHook(ctx context.Context, sess *session.Session, turnIdx int, c session.ToolCall, res session.ToolResult) (session.ToolResult, []session.Event) {
+func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, res session.ToolResult) (session.ToolResult, []session.Event) {
 	if e.deps.Hooks == nil || ctx.Err() != nil {
 		return res, nil
 	}

@@ -125,12 +125,12 @@ type rootCaptureCompactor struct {
 	roots  []session.SessionID
 }
 
-func (c *rootCaptureCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, error) {
+func (c *rootCaptureCompactor) Compact(ctx context.Context, conv *session.Conversation) ([]session.Message, string, session.AuxiliaryUsage, error) {
 	active, _ := port.SessionIDFromContext(ctx)
 	root, _ := port.RootSessionIDFromContext(ctx)
 	c.active = append(c.active, active)
 	c.roots = append(c.roots, root)
-	return session.CloneMessages(conv.Messages), "compacted", nil
+	return session.CloneMessages(conv.Messages), "compacted", session.AuxiliaryUsage{}, nil
 }
 
 func TestRootSessionProviderCorrelation_Scenario1_ResumeUsesCurrentCausalRoot(t *testing.T) {
@@ -244,7 +244,7 @@ func TestRootSessionProviderCorrelation_Scenario1_EveryChildFamilyInheritsRoot(t
 				agent.NewTeamTool(factory, agent.WithTeamToolReadOnlyForker(&recordingSubagentForker{})))
 		}},
 		{"guardrail-checker", "guardrail-checker-", root, func(_ *testing.T, llm port.LLMProvider) {
-			_, _ = agent.RunGuardrailCheck(rooted, newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}), "check this")
+			_, _, _ = agent.RunGuardrailCheck(rooted, newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}), "check this")
 		}},
 		{"model-router", "model-router-", root, func(_ *testing.T, llm port.LLMProvider) {
 			_, _, _, _ = agent.RunModelRouter(rooted, newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}), agent.ModelRouteRequest{
@@ -260,7 +260,7 @@ func TestRootSessionProviderCorrelation_Scenario1_EveryChildFamilyInheritsRoot(t
 		}},
 		{"ask-reviewer", "ask-reviewer-", root, func(_ *testing.T, llm port.LLMProvider) {
 			reviewer := agent.NewEngineAskReviewer(newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}))
-			_, _ = reviewer.Review(rooted, agent.ChildAskReviewRequest{Ask: session.PendingAsk{AskID: "ask-1", Tool: "Shell", Reason: "review"}})
+			_, _, _ = reviewer.Review(rooted, agent.ChildAskReviewRequest{Ask: session.PendingAsk{AskID: "ask-1", Tool: "Shell", Reason: "review"}})
 		}},
 	}
 	for _, tc := range families {
