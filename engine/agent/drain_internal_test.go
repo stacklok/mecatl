@@ -120,10 +120,13 @@ func TestStudioChatApprovals_Scenario1_ChildApprovalSinkPrecedesTerminal(t *test
 	case <-time.After(time.Second):
 		t.Fatal("parent drain never began sealing")
 	}
-	var early session.Event
+	// A mirror moved outside emitMu lets drain finish and publish the result
+	// while the approval sink is still blocked. Wait for that completion, not
+	// merely a snapshot of sink output: the latter can miss a delayed parent.
 	select {
-	case early = <-sink.seen:
-	case <-time.After(100 * time.Millisecond):
+	case <-parentDone:
+		t.Fatal("parent terminal completed while the approval sink was blocked")
+	case <-time.After(time.Second):
 	}
 	releaseApproval()
 	select {
@@ -135,9 +138,6 @@ func TestStudioChatApprovals_Scenario1_ChildApprovalSinkPrecedesTerminal(t *test
 	case <-parentDone:
 	case <-time.After(time.Second):
 		t.Fatal("parent terminal did not finish")
-	}
-	if early.Type != "" {
-		t.Fatalf("sink observed %s before the accepted child approval", early.Type)
 	}
 	readEvent := func(ch <-chan session.Event, source string) session.Event {
 		t.Helper()

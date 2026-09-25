@@ -3173,7 +3173,8 @@ func (r *Run) emitOrAbort(ev session.Event, abort <-chan struct{}) bool {
 
 // emitOrAbortSequenced returns the exact stamped event handed to the parent
 // channel so a delivered child approval can be mirrored byte-for-byte to the
-// EventSink after the child registry's emit mutex is released.
+// EventSink while the child registry's emit mutex is held. This preserves
+// approval-before-terminal order in both the stream and sink.
 func (r *Run) emitOrAbortSequenced(ev session.Event, abort <-chan struct{}) (session.Event, bool) {
 	ev.Seq = r.seq.Add(1)
 	// Same stamp as emit — see the note there. These two are the ONLY sites a run
