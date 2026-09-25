@@ -278972,6 +278972,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790366177056,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "851b437b13087d4f6ec4933c4e62fe917de9af99",
+          "message": "feat(mecatui): restore session status metrics (#1891)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T13:43:58-07:00",
+          "tree_id": "99709c0a6c1e9dbb1c2db6075b8dce0689fa66a6",
+          "url": "https://github.com/stacklok/mecatl/commit/851b437b13087d4f6ec4933c4e62fe917de9af99"
+        },
+        "date": 1790369736388,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3328,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 121.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -365650,6 +365689,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790369733089,
+  "lastUpdate": 1790369737416,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
