@@ -165,14 +165,16 @@ func TestBreakerCooldownStartsAtInitialOpening(t *testing.T) {
 	p := &resilientProvider{cfg: Config{
 		BreakerThreshold: 1,
 		BreakerCooldown:  30 * time.Second,
+		Clock:            func() time.Time { return openedAt },
 	}}
 
-	p.recordFailure(openedAt)
-	// Model an attempt that was already in flight when the breaker opened and
-	// fails later. It must not extend the existing cooldown.
-	p.recordFailure(openedAt.Add(10 * time.Second))
+	p.recordOutcome(0, false, breakerFailure)
+	// Model an attempt from the original closed generation. Its late failure
+	// must not extend the existing cooldown.
+	openedAt = openedAt.Add(10 * time.Second)
+	p.recordOutcome(0, false, breakerFailure)
 
-	err := p.allow(openedAt.Add(29 * time.Second))
+	_, err, _ := p.allow(context.Background(), openedAt.Add(19*time.Second))
 	var breakerErr *BreakerError
 	if !errors.As(err, &breakerErr) {
 		t.Fatalf("allow() error = %v, want a *BreakerError", err)
