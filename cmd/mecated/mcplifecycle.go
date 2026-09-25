@@ -26,13 +26,15 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
-const mcpLifecycleUsage = "mecated mcp {add NAME URL [--file PATH] [--credential-store auto|keyring|file] | list [--file PATH] | remove NAME [--file PATH]}"
+const mcpLifecycleUsage = "mecated mcp {add NAME URL [--file PATH] [--credential-store auto|keyring|file] | list [--file PATH] | remove NAME [--force] [--file PATH]}"
 
 var discoverMCPDirectIssuer = mcp.DiscoverDirectIssuer
 var removeMCPOAuthDCR = mcp.RemoveOAuthDCR
+var lookupMCPEnvironment = os.LookupEnv
 
 type mcpLifecycleArgs struct {
 	name, url, file, custody string
+	force                    bool
 }
 
 type mcpSettingsSource struct {
@@ -64,6 +66,13 @@ func parseMCPLifecycleArgs(command string, args []string) (mcpLifecycleArgs, err
 
 func parseMCPOption(args []string, index int, result *mcpLifecycleArgs) (int, bool, error) {
 	arg := args[index]
+	if arg == "--force" {
+		if result.force {
+			return 0, false, errors.New(mcpLifecycleUsage)
+		}
+		result.force = true
+		return 0, true, nil
+	}
 	if arg == mcpFileFlag || arg == "--credential-store" {
 		if index+1 == len(args) || args[index+1] == "" || strings.HasPrefix(args[index+1], "-") {
 			return 0, false, errors.New(mcpLifecycleUsage)
@@ -115,6 +124,9 @@ func parseMCPPositional(command, arg string, result *mcpLifecycleArgs) bool {
 }
 
 func validMCPLifecycleArgs(command string, result mcpLifecycleArgs) bool {
+	if result.force && command != "remove" {
+		return false
+	}
 	if command == mcpAddCommand && (result.name == "" || result.url == "") {
 		return false
 	}
@@ -643,10 +655,67 @@ func mcpCredentialStatus(server permconfig.MCPServerProfile) string {
 	}
 }
 
+func legacyMCPAbandonEligible(data []byte, name string) error {
+	var settings permconfig.Config
+	if err := yaml.Unmarshal(data, &settings); err != nil {
+		return errors.New("MCP profile is not eligible for forced removal")
+	}
+	if settings.MCP == nil || settings.MCP.Mode == "broker" {
+		return errors.New("MCP profile is not eligible for forced removal")
+	}
+	var selected *permconfig.MCPServerProfile
+	for i := range settings.MCP.Servers {
+		if strings.EqualFold(settings.MCP.Servers[i].Name, name) {
+			if selected != nil {
+				return errors.New("MCP profile is not eligible for forced removal")
+			}
+			selected = &settings.MCP.Servers[i]
+		}
+	}
+	if selected == nil || selected.Auth.Mode != "oauth" || selected.Auth.OAuth == nil {
+		return errors.New("MCP profile is not eligible for forced removal")
+	}
+	oauth := selected.Auth.OAuth
+	if oauth.Client.Mode != "dcr" || oauth.Client.DCR == nil || oauth.Client.DCR.DiscoveryURL != "" || oauth.Credentials.Mode != "local" || oauth.Credentials.Local == nil || oauth.Credentials.Local.Key != nil || oauth.Credentials.Local.KeyEnv == "" {
+		return errors.New("MCP profile is not eligible for forced removal")
+	}
+	if value, present := lookupMCPEnvironment(oauth.Credentials.Local.KeyEnv); present && value != "" {
+		return errors.New("MCP profile is not eligible for forced removal")
+	}
+	return nil
+}
+
 func runMCPRemove(args []string, stdout io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runMCPRemoveContext(ctx, args, stdout)
+}
+
+// runMCPForceRemove abandons an eligible legacy direct-DCR profile locally. The
+// caller holds the settings lock for the whole call, so before.data cannot change
+// underneath it; the eligibility recheck immediately before publication exists to
+// catch a custody environment variable that became available in the meantime, not
+// a settings-file race (writeMCPSettings independently re-verifies that against
+// before before publishing).
+func runMCPForceRemove(ctx context.Context, path string, before mcpSettingsSnapshot, name string, stdout io.Writer) error {
+	if err := legacyMCPAbandonEligible(before.data, name); err != nil {
+		return err
+	}
+	after, err := mcplifecycle.Remove(before.data, name)
+	if err != nil {
+		return err
+	}
+	if err := legacyMCPAbandonEligible(before.data, name); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := writeMCPSettings(path, before, after); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(stdout, "MCP profile abandoned locally; encrypted records were retained, no upstream client was revoked, and later re-enrollment may create a new registration.")
+	return nil
 }
 
 func runMCPRemoveContext(ctx context.Context, args []string, stdout io.Writer) error {
@@ -670,6 +739,9 @@ func runMCPRemoveContext(ctx context.Context, args []string, stdout io.Writer) e
 	before, err := mcpMutationTarget(path)
 	if err != nil {
 		return err
+	}
+	if parsed.force {
+		return runMCPForceRemove(ctx, path, before, parsed.name, stdout)
 	}
 	profiles, profileErr := loadMCPLoginProfilesSelected([]string{path}, parsed.name)
 	if profileErr != nil {
