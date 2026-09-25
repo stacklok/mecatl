@@ -4,12 +4,12 @@
 **Work classification:** Architectural — an exact plan-ask verdict crosses the engine, daemon, public protocol, published SDK, and Studio BFF, replacing session-only authority for this browser path.
 **Decision record:** [ADR 0366](../adr/0366-exact-plan-ask-control.md)
 **Phase:** Studio design alignment
-**Status:** in-progress, 2026-09-24. The directing human waived the Plan / Interface merge gate for implementation on the #1886 stack and authorized the call-ID projection amendment in #1888.
+**Status:** in-progress, 2026-09-25. The Plan / Interface PR merged into `main`; implementation continues after the directing human's earlier plan-gate waiver.
 **Delivery:** Split. Review this public control and the Studio interaction contract in an independent Plan / Interface PR before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1848](https://github.com/stacklok/mecatl/issues/1848).
-**Plan PR:** added when opened
-**Approved baseline:** absent until this Plan / Interface PR merges
+**Plan PR:** [#1888](https://github.com/stacklok/mecatl/pull/1888)
+**Approved baseline:** `98dfad2e1bed66809f68b104c4f207df2d2b1dda` (merge commit on `main`)
 
 Studio shows each actionable permission and plan review beside the transcript event that raised it, with enough arguments or a bounded diff to inspect before deciding. An external MCP authorization handoff has its own panel and lifecycle. Escape consumes one visible layer per key press. The [agent loop](../architecture/agent-loop.md#permission-pause--resume), [original Studio chat contract](studio-chat.md), and [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) supply the current engine and browser boundaries.
 
