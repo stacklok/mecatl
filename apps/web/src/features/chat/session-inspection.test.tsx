@@ -249,18 +249,45 @@ describe("session inspection", () => {
       expect(composer).toHaveProperty("disabled", true);
       expect(screen.queryByText("This session is unavailable as a chat.")).toBeNull();
       expect(bff.calls("/api/v1/sessions/child/transcript")).toHaveLength(1);
+      await userEvent.setup().click(screen.getByRole("button", { name: "Chat options" }));
+      expect(
+        screen.getByRole("menuitem", { name: "Fork chat" }).getAttribute("data-disabled"),
+      ).not.toBeNull();
+      expect(
+        screen.getByRole("menuitem", { name: "Clear conversation" }).getAttribute("data-disabled"),
+      ).not.toBeNull();
+      expect(bff.calls("/api/v1/sessions/child/fork")).toHaveLength(0);
+      expect(bff.calls("/api/v1/sessions/child/clear")).toHaveLength(0);
     },
   );
 
   it("opens inspect only session without a composer", async () => {
     const bff = new Bff();
+    window.localStorage.setItem(
+      "studio.chat.folders",
+      JSON.stringify({
+        assignments: { child: "pinned" },
+        folders: [{ id: "pinned", name: "Pinned" }],
+      }),
+    );
+    window.localStorage.setItem(
+      "studio.chat.queue.child",
+      JSON.stringify([{ createdAt: 1, id: "queued", text: "Queued from an old chat" }]),
+    );
     await mount(bff);
     const details = await screen.findByRole("dialog", { name: "Session details" });
     expect(
       screen.getByRole("heading", { name: "Inspect-only sessions", hidden: true }),
     ).toBeTruthy();
+    const folder = screen.getByRole("heading", { name: "Pinned", hidden: true }).closest("section");
+    const inspectGroup = screen
+      .getByRole("heading", { name: "Inspect-only sessions", hidden: true })
+      .closest("section");
+    expect(folder && within(folder).getByText("No chats in this folder")).toBeTruthy();
+    expect(inspectGroup && within(inspectGroup).getByText("Child inspection")).toBeTruthy();
     expect(within(details).getAllByText("child").length).toBeGreaterThan(0);
     expect(screen.queryByRole("textbox", { name: "Message Mecatl", hidden: true })).toBeNull();
+    expect(screen.queryByText("Queued from an old chat", { exact: true })).toBeNull();
     for (const name of [
       "Send",
       "Retry",
@@ -357,6 +384,49 @@ describe("session inspection", () => {
     ).toHaveProperty("disabled", true);
     expect(bff.calls("/api/v1/sessions/child/fork")).toHaveLength(1);
     expect(mounted.router.state.location.search).toMatchObject({ sessionId: "child" });
+  });
+
+  it("discards a worktree choice after close and a source-session switch", async () => {
+    const bff = new Bff();
+    bff.rows = [row("child", false), row("successor", false)];
+    const mounted = await mount(bff);
+    const user = userEvent.setup();
+    const openPicker = async () => {
+      await user.click(await screen.findByRole("button", { name: "Chat options" }));
+      await user.click(screen.getByRole("menuitem", { name: "Inspect session" }));
+      fireEvent.click(
+        within(await screen.findByRole("dialog", { name: "Session details" })).getByRole("button", {
+          name: "Choose worktree",
+        }),
+      );
+      return await screen.findByRole("dialog", { name: "Choose successor worktree" });
+    };
+    const first = await openPicker();
+    fireEvent.click(await within(first).findByRole("radio", { name: /Feature/ }));
+    expect(within(first).getByRole("radio", { name: /Feature/ })).toHaveProperty("checked", true);
+    fireEvent.click(within(first).getByRole("button", { name: "Close" }));
+    const reopened = await openPicker();
+    expect(within(reopened).getByRole("radio", { name: /Feature/ })).toHaveProperty(
+      "checked",
+      false,
+    );
+    fireEvent.click(within(reopened).getByRole("radio", { name: /Feature/ }));
+    await act(async () =>
+      mounted.router.navigate({ search: { sessionId: "successor" }, to: "/workspace/chat" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await act(async () =>
+      mounted.router.navigate({ search: { sessionId: "child" }, to: "/workspace/chat" }),
+    );
+    const afterSwitch = await openPicker();
+    expect(within(afterSwitch).getByRole("radio", { name: /Feature/ })).toHaveProperty(
+      "checked",
+      false,
+    );
+    expect(
+      within(afterSwitch).getByRole("button", { name: "Fork in selected worktree" }),
+    ).toHaveProperty("disabled", true);
+    expect(bff.calls("/api/v1/sessions/child/fork")).toHaveLength(0);
   });
 
   it("opens a confirmed successor without changing its source", async () => {
