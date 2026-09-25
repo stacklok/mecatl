@@ -245658,6 +245658,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790323857609,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17e315f0bdc10d8fd014eec8f8367d760af8f2eb",
+          "message": "docs: centralize aggregate verification ownership (#1915)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T11:52:07+03:00",
+          "tree_id": "f33bcab7c79a2ca97e9759ebdbc7844831dfaac2",
+          "url": "https://github.com/stacklok/mecatl/commit/17e315f0bdc10d8fd014eec8f8367d760af8f2eb"
+        },
+        "date": 1790327004745,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -356929,6 +356963,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790327001813,
+  "lastUpdate": 1790327005853,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
