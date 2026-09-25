@@ -655,18 +655,20 @@ const (
 	interBlockBlankLinesNone = 0 // == strings.Count(trailing-"\n" + interBlockSepNone, "\n") - 1
 )
 
+// blockBlankLinesBetween is the single spacing policy for two visible blocks.
+// Hidden blocks are skipped before callers select previous and next.
+func blockBlankLinesBetween(previous, next blockKind) int {
+	if previous == blockTool || (previous == blockAssistant && next == blockTurnStat) {
+		return interBlockBlankLinesNone
+	}
+	return interBlockBlankLinesCompact
+}
+
 // blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
 // before block i+1).
 func blockSepAfter(conversationBlocks []block, i int) string {
-	switch conversationBlocks[i].kind {
-	case blockTool:
+	if blockBlankLinesBetween(conversationBlocks[i].kind, conversationBlocks[i+1].kind) == 0 {
 		return interBlockSepNone
-	case blockTurnStat:
-		return interBlockSepCompact
-	case blockAssistant:
-		if i+1 < len(conversationBlocks) && conversationBlocks[i+1].kind == blockTurnStat {
-			return interBlockSepNone
-		}
 	}
 	return interBlockSepCompact
 }
@@ -674,17 +676,7 @@ func blockSepAfter(conversationBlocks []block, i int) string {
 // blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
 // number of blank "" lines to insert before block i (i.e. after block i-1).
 func blockBlankLinesAfter(conversationBlocks []block, i int) int {
-	switch conversationBlocks[i-1].kind {
-	case blockTool:
-		return interBlockBlankLinesNone
-	case blockTurnStat:
-		return interBlockBlankLinesCompact
-	case blockAssistant:
-		if i < len(conversationBlocks) && conversationBlocks[i].kind == blockTurnStat {
-			return interBlockBlankLinesNone
-		}
-	}
-	return interBlockBlankLinesCompact
+	return blockBlankLinesBetween(conversationBlocks[i-1].kind, conversationBlocks[i].kind)
 }
 
 // renderBlock is the CACHED per-block entry point: it returns the memoized

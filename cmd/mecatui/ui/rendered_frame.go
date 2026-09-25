@@ -216,11 +216,7 @@ func (r *renderer) appendFrameSegment(frame *renderedFrame, c *conversation, ren
 		}
 	}
 	if previous >= 0 {
-		blankLines := interBlockBlankLinesCompact
-		if c.blocks[previous].kind == blockTool || (c.blocks[previous].kind == blockAssistant && c.blocks[index].kind == blockTurnStat) {
-			blankLines = interBlockBlankLinesNone
-		}
-		for n := 0; n < blankLines; n++ {
+		for n := 0; n < blockBlankLinesBetween(c.blocks[previous].kind, c.blocks[index].kind); n++ {
 			frame.lines = append(frame.lines, "")
 			frame.provenance = append(frame.provenance, renderedRow{region: conversationRegionChrome, separator: true})
 		}

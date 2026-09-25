@@ -19,7 +19,8 @@ func (m Model) runGuardrails() (tea.Model, tea.Cmd) {
 }
 
 func benignGuardrailReview(review *client.GuardrailReview) bool {
-	if review == nil || review.Inspection != "complete" || review.Assessment != "acceptable" {
+	if review == nil || review.ReviewID == "" || (review.Job != "action" && review.Job != "inbound") ||
+		review.Inspection != "complete" || review.Assessment != "acceptable" {
 		return false
 	}
 	return review.Disposition == "execute" || review.Disposition == "release_result"

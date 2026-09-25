@@ -32,11 +32,15 @@ type GuardrailCoverageMsg struct {
 // GuardrailReviewDetail is bounded owner-authorized live display detail.
 type GuardrailReviewDetail struct{ ReviewID, Concern, SourceDisplay, NextAction string }
 
-// GuardrailReviewDetailMsg carries an asynchronous detail response.
+// GuardrailReviewDetailMsg carries an asynchronous detail response together with
+// the request identity and client-only presentation classification.
 type GuardrailReviewDetailMsg struct {
-	ReviewID string
-	Detail   GuardrailReviewDetail
-	Err      error
+	SessionID    string
+	ReviewID     string
+	Detail       GuardrailReviewDetail
+	Err          error
+	Conversation bool
+	Benign       bool
 }
 
 // ListGuardrailCoverage returns effective coverage for one session.
@@ -80,10 +84,13 @@ func ListGuardrailCoverageCmd(ctx context.Context, c interface {
 // GetGuardrailReviewDetailCmd loads detail without blocking the TUI update loop.
 func GetGuardrailReviewDetailCmd(ctx context.Context, c interface {
 	GetGuardrailReviewDetail(context.Context, string, string) (GuardrailReviewDetail, error)
-}, sessionID, reviewID string) tea.Cmd {
+}, sessionID, reviewID string, conversation, benign bool) tea.Cmd {
 	return func() tea.Msg {
 		detail, err := c.GetGuardrailReviewDetail(ctx, sessionID, reviewID)
-		return GuardrailReviewDetailMsg{ReviewID: reviewID, Detail: detail, Err: err}
+		return GuardrailReviewDetailMsg{
+			SessionID: sessionID, ReviewID: reviewID, Detail: detail, Err: err,
+			Conversation: conversation, Benign: benign,
+		}
 	}
 }
 

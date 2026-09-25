@@ -588,8 +588,6 @@ type Model struct {
 	conv             conversation
 	vp               viewport.Model
 	conversationView conversationView
-	// guardrailBenign correlates live detail responses with their retained hook.
-	guardrailBenign map[string]bool
 
 	// authorization is separate from permission approval: MCP browser authorization
 	// has no allow/always/deny verdict and never carries tool arguments or a URL.
@@ -1208,7 +1206,6 @@ func (m Model) resetSessionDerived() Model {
 	m.workspaceEnrollmentNotice = ""
 	m.promptRecovery = nil
 	m.providerRoute = ""
-	m.guardrailBenign = nil
 	m.statusContextRoot = ""
 	// Drop the session title: it is session-derived (seeded from the first prompt
 	// / adopted from the stored session), so a /clear or fresh /models restart

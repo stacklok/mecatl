@@ -238,7 +238,7 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 	model, cmd := m.afterEvent()
 	if msg.Guardrail != nil && m.deps.Guardrails != nil {
 		detailSessionID := guardrailReviewSessionID(msg.AskID, m.sessionID)
-		detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, detailSessionID, msg.Guardrail.ReviewID)
+		detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, detailSessionID, msg.Guardrail.ReviewID, false, false)
 		return model, tea.Batch(cmd, detailCmd)
 	}
 	return model, cmd
