@@ -1016,6 +1016,27 @@ type Config struct {
 	// (CLI out-ranks YAML) and resolvePosture WARNs if an alias raised above the
 	// explicit value. Set by the cmd mains alongside Posture.
 	PostureFlagSet bool
+	// PermissionMode is the raw --permission-mode token (ADR 0365), meaningful only
+	// when PermissionModeFlagSet. foldPermissionMode resolves it (or the
+	// operator-tier permissionMode: key) into Posture + DefaultSessionMode; an
+	// unknown token is a Build error naming the valid set.
+	PermissionMode string
+	// PermissionModeFlagSet records an explicit --permission-mode. It out-ranks
+	// the operator-tier permissionMode: and the deprecated posture: keys.
+	PermissionModeFlagSet bool
+	// DefaultSessionMode is the session half of a permission-mode token: the mode
+	// a CreateSession request that leaves mode unspecified starts in
+	// (server.Config.DefaultMode). Empty means session.ModeDefault. It is only a
+	// starting point; a session may later change its own mode.
+	DefaultSessionMode session.PermissionMode
+	// permissionModeName is the token the operator chose, for messages. Set by
+	// foldPermissionMode; empty when only the deprecated surface was used.
+	permissionModeName string
+	// askReviewerDefaultOn is set by resolveAskReviewerDefault when the headless
+	// allow-all default engages the subagent ask reviewer (ADR 0365 decision 6).
+	askReviewerDefaultOn bool
+	// askReviewerOptOut records an explicit --subagent-ask-reviewer off.
+	askReviewerOptOut bool
 	// ReasoningEffort is the OPERATOR-TIER reasoning-effort default (ADR 0055): the
 	// neutral vocabulary "" / "auto" (unset — provider default) / "low" / "medium" /
 	// "high" / "xhigh" / "max". It is folded from the operator-YAML reasoning-effort:
@@ -1594,7 +1615,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// MAX-fold; applyPosture then derives AllowAllTools / LooseChildSubstitution /
 	// the TrustProject floor.
 	cfg.permResolver = buildPermResolver(cfg)
-	cfg = foldOperatorPosture(cfg)
+	var modeErr error
+	if cfg, modeErr = foldPermissionMode(cfg); modeErr != nil {
+		return nil, modeErr
+	}
 	cfg = foldOperatorReasoningEffort(cfg)
 	cfg = foldOperatorPlanModeAutoApprove(cfg)
 	cfg = foldOperatorSteer(cfg)
@@ -1618,6 +1642,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.TrustProject = trust.Trusted
 	narratePosture(cfg.diag(), cfg.Posture, cfg.TrustProject)
 	narrateTrust(cfg.diag(), trust, cfg.Workspace)
+	// Headless admission gate (ADR 0365): after the trust fold, so every
+	// legitimate trust source satisfies it.
+	if err := headlessTrustRefusal(cfg); err != nil {
+		return nil, err
+	}
+	narrateWithheldTrust(cfg)
 
 	// File-based permission config (issues #13/#32): construct the resolver
 	// EXACTLY ONCE here, right after the trust fold (it consumes the effective
@@ -1943,6 +1973,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.SubagentModel = subagentModel
 	// SubagentAskReviewerModel (issue #31): the same fail-fast normalization
 	// posture as SubagentModel — validate the alias once here; empty = reviewer off.
+	cfg.askReviewerOptOut = isAskReviewerOptOut(cfg.SubagentAskReviewerModel)
 	reviewerModel, err := normalizeAskReviewerModel(cfg)
 	if err != nil {
 		return nil, err
@@ -1965,6 +1996,17 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg.guardrailModel = guardrailModel
 	cfg.guardrailSource = guardrailSrc
 	cfg.guardrailConfigured = guardrailConfigured
+	// Allow-all admission gate (ADR 0365): the checker truth is the SAME the
+	// posture line and the live checker use (the binding, else the resolver).
+	checkerConfigured := guardrailConfigured
+	if !checkerConfigured {
+		_, _, checkerConfigured = resolveGuardrailsCheckerModel(cfg)
+	}
+	if err := checkerRefusal(cfg, checkerConfigured); err != nil {
+		return nil, err
+	}
+	cfg = resolveAskReviewerDefault(cfg)
+	narratePermissionMode(cfg, checkerConfigured)
 	// Emit the build-once composition facts (token counter / compaction strategy /
 	// slash commands) EXACTLY ONCE here, through the injected Diagnostics — keyed to
 	// the resolved MAIN model. The per-derivation builders no longer log these (they
@@ -2303,6 +2345,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		mcpStatus = assets.mcpReconciler.statusSnapshot
 	}
 	svcCfg := server.Config{
+		// The session half of the permission-mode token (ADR 0365): the mode a
+		// CreateSession that leaves mode unspecified starts in. Empty keeps the
+		// server's own ModeDefault.
+		DefaultMode:          cfg.DefaultSessionMode,
 		BuildID:              buildinfo.BuildID,
 		ServerImplementation: cfg.ServerImplementation,
 		// GetServerInfo looks up only a caller-selected, already-known provider
@@ -5116,8 +5162,8 @@ func normalizeSubagentModel(cfg Config) (string, error) {
 // the build-once ACTIVE fact.
 func normalizeAskReviewerModel(cfg Config) (string, error) {
 	sel := strings.TrimSpace(cfg.SubagentAskReviewerModel)
-	if sel == "" {
-		return sel, nil
+	if sel == "" || isAskReviewerOptOut(sel) {
+		return "", nil
 	}
 	// FAIL-FAST validation runs FIRST, regardless of reachability: the alias
 	// lookup is free and catches a typo'd --subagent-ask-reviewer at config time
@@ -5280,7 +5326,7 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 	// operator sees it in the log, not only in the docs — `mode=` already reflects the
 	// demoted specs for explicit rules; the note states WHY it is advisory.
 	if cfg.Posture >= PostureYolo {
-		out += " — DEMOTED to advisory by posture yolo (no block, no ask)"
+		out += " — DEMOTED to advisory by posture yolo. " + yoloCheckerAdvisoryNote
 	}
 	return out
 }
@@ -7299,10 +7345,12 @@ func buildAskAdjudicator(cfg Config, provReg *providerRegistry, provider port.LL
 // reviewer is not configured.
 func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string) (agent.Deps, bool) {
 	sel := strings.TrimSpace(cfg.SubagentAskReviewerModel)
-	if sel == "" {
+	if sel == "" && !cfg.askReviewerDefaultOn {
 		// The --subagent-ask-reviewer flag STAYS the enable gate: a slot alone does
 		// NOT turn the reviewer on (a slot only chooses the model for a reviewer the
-		// operator already enabled). Empty flag ⇒ reviewer off, byte-identical.
+		// operator already enabled). Empty flag ⇒ reviewer off, byte-identical —
+		// except the ADR 0365 headless allow-all default (askReviewerDefaultOn),
+		// which resolves through the slot, then the parent model, below.
 		return agent.Deps{}, false
 	}
 	// ASK-REVIEWER SLOT (ADR 0030, Phase 2): a configured `ask-reviewer` slot
@@ -7311,7 +7359,7 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 	var model string
 	if sm, ok := resolveSlotModel(cfg, slotAskReviewer, parentModel); ok {
 		model = sm
-	} else {
+	} else if sel != "" {
 		model, _ = lookupModelAlias(cfg, sel)
 	}
 	if model == "" {

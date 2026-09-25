@@ -46,12 +46,13 @@ func TestADR_0233_AuthorityEvaluator_VerticalSlice(t *testing.T) {
 		mockllm.TextTurn("parent complete"),
 	)
 	cfg := Config{
-		Workspace:     workspace,
-		StoreDir:      storeDir,
-		AgentsDirs:    []string{agentsDir},
-		MockProvider:  provider,
-		NoSoul:        true,
-		AllowAllTools: true,
+		Workspace:          workspace,
+		StoreDir:           storeDir,
+		AgentsDirs:         []string{agentsDir},
+		MockProvider:       provider,
+		NoSoul:             true,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
 	}
 	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {
@@ -197,6 +198,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 		MockProvider:         provider,
 		NoSoul:               true,
 		AllowAllTools:        true,
+		GuardrailsDisabled:   true,
 		AuthorityEvaluator:   "cedar",
 		CedarAuthorityPolicy: policyPath,
 	})
@@ -263,6 +265,7 @@ forbid(principal, action, resource) when { resource.path like "` + filepath.ToSl
 		MockProvider:         mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("read", "Read", []byte(`{"path":"review/blocked.go"}`))), mockllm.TextTurn("complete")),
 		NoSoul:               true,
 		AllowAllTools:        true,
+		GuardrailsDisabled:   true,
 		AuthorityEvaluator:   "cedar",
 		CedarAuthorityPolicy: policyPath,
 	})
@@ -305,11 +308,12 @@ func TestADR_0233_AuthorityEvaluator_OwnerlessCompositionUsesLocalEvaluator(t *t
 		t.Fatalf("write workspace file: %v", err)
 	}
 	built, err := buildIsolated(t, context.Background(), Config{
-		Workspace:     workspace,
-		StoreDir:      filepath.Join(t.TempDir(), "sessions"),
-		MockProvider:  mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("read", "Read", []byte(`{"path":"README.md"}`))), mockllm.TextTurn("done")),
-		NoSoul:        true,
-		AllowAllTools: true,
+		Workspace:          workspace,
+		StoreDir:           filepath.Join(t.TempDir(), "sessions"),
+		MockProvider:       mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("read", "Read", []byte(`{"path":"README.md"}`))), mockllm.TextTurn("done")),
+		NoSoul:             true,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -360,6 +364,7 @@ func TestADR_0233_AuthorityEvaluator_OwnerlessCedarSessionFailsClosed(t *testing
 		MockProvider:         mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("read", "Read", []byte(`{"path":"README.md"}`))), mockllm.TextTurn("done")),
 		NoSoul:               true,
 		AllowAllTools:        true,
+		GuardrailsDisabled:   true,
 		AuthorityEvaluator:   "cedar",
 		CedarAuthorityPolicy: policyPath,
 	})
@@ -411,12 +416,13 @@ func assertAuthorityVerticalMetaTarget(ctx context.Context, t *testing.T, worksp
 
 	storeDir := t.TempDir()
 	cfg := Config{
-		Workspace:     workspace,
-		StoreDir:      storeDir,
-		MCPServers:    []mcp.ServerConfig{{Name: "slack", URL: mcpURL}},
-		MockProvider:  mockllm.New(mockllm.TextTurn("unused")),
-		NoSoul:        true,
-		AllowAllTools: true,
+		Workspace:          workspace,
+		StoreDir:           storeDir,
+		MCPServers:         []mcp.ServerConfig{{Name: "slack", URL: mcpURL}},
+		MockProvider:       mockllm.New(mockllm.TextTurn("unused")),
+		NoSoul:             true,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
 	}
 	built, err := buildIsolated(t, ctx, cfg)
 	if err != nil {

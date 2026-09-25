@@ -132,6 +132,7 @@ func TestADR_0359_HarnessContext_Scenario1_ExplicitExecutionFileSource(t *testin
 	cfg := hcConfiguredFiles(t, ws)
 	cfg.PlacementProvider = harnessVirtualPlacement(ws)
 	cfg.AllowAllTools = true
+	cfg.GuardrailsDisabled = true
 	var requests []port.LLMRequest
 	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })}, mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"data.txt"}`)}), mockllm.TextTurn("done"))
 	b, err := buildIsolated(t, t.Context(), cfg)
@@ -197,6 +198,7 @@ func TestADR_0359_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits(t *tes
 	cfg := hcConfiguredFiles(t, ws)
 	cfg.PlacementProvider = harnessVirtualPlacement(ws)
 	cfg.AllowAllTools = true
+	cfg.GuardrailsDisabled = true
 	cfg.MockProvider = mockllm.New(
 		mockllm.ToolCallTurn(session.ToolCall{ID: "source-only", Name: "Edit", Args: json.RawMessage(`{"path":"AGENTS.md","old_string":"original","new_string":"changed"}`)}),
 		mockllm.ToolCallTurn(session.ToolCall{ID: "read", Name: "Read", Args: json.RawMessage(`{"path":"AGENTS.md"}`)}),
