@@ -468,7 +468,7 @@ func seedStartupResumeSession(ctx context.Context, t *testing.T, target, _ strin
 	}
 }
 
-func TestNativePendingApprovalStartupRecovery(t *testing.T) {
+func TestPendingApprovalStartupRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		verdict   client.Verdict

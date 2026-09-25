@@ -244,7 +244,10 @@ func (m Model) updatePendingApproval(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m = mm.(Model)
 			return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
 		}
-		if msg.event.Kind == client.PendingApprovalEventOther && msg.event.Message == nil {
+		// After an explicit choice, follow EventToMsg's nil/skip convention for
+		// incidental telemetry (for example request.manifest). Before a choice,
+		// an unknown event still makes the pending permission state uncertain.
+		if msg.event.Kind == client.PendingApprovalEventOther && msg.event.Message == nil && !recovery.resolving && !recovery.resolved {
 			mm, cmd := m.refusePendingApprovalRecovery("the pending approval watch returned an unknown event; no control was sent")
 			return mm, cmd, true
 		}

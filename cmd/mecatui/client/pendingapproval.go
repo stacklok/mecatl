@@ -202,6 +202,10 @@ func (w *PendingApprovalWatch) Recv() (PendingApprovalEvent, error) {
 			}
 			return PendingApprovalEvent{Kind: PendingApprovalEventBoundary, Cursor: frame.GetCursor()}, nil
 		}
+		if frame.GetCursor() == "" || ev.GetRunId() == "" {
+			w.Close()
+			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
+		}
 		if ev.GetRunId() != w.runID {
 			continue
 		}
@@ -215,7 +219,7 @@ func (w *PendingApprovalWatch) Recv() (PendingApprovalEvent, error) {
 }
 
 func projectPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event) (PendingApprovalEvent, error) {
-	out := PendingApprovalEvent{Kind: PendingApprovalEventOther, Cursor: cursor, RunID: ev.GetRunId(), Message: EventToMsg(ev)}
+	out := PendingApprovalEvent{Kind: PendingApprovalEventOther, Cursor: cursor, RunID: ev.GetRunId()}
 	switch ev.GetType() {
 	case "permission.ask":
 		approval, supported, err := approvalFromEvent(sessionID, cursor, ev)
@@ -242,6 +246,7 @@ func projectPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event) (
 		}
 		out.Kind = PendingApprovalEventTerminal
 	}
+	out.Message = EventToMsg(ev)
 	return out, nil
 }
 

@@ -252,6 +252,57 @@ func TestPendingApprovalRecoveryReconcilesSnapshotToolCalls(t *testing.T) {
 	}
 }
 
+func TestPendingApprovalRecoverySkipsUnmappedTelemetryOnlyAfterChoice(t *testing.T) {
+	for _, state := range []string{"before-choice", "resolving", "resolved", "later-ask"} {
+		t.Run(state, func(t *testing.T) {
+			controller := &pendingApprovalFixtureController{watch: &pendingApprovalFixtureWatch{}}
+			m := pendingRecoveryModel(t, controller, "draft only")
+			t.Cleanup(m.pendingRecovery.cancel)
+			t.Cleanup(controller.watch.Close)
+			if state != "before-choice" {
+				next, cmd := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+				m = next.(Model)
+				if state != "resolving" {
+					m = applyPendingCommand(t, m, cmd)
+				}
+			}
+			if state == "later-ask" {
+				later := m.pendingRecovery.approval
+				later.AskID = "later"
+				next, _ := m.Update(pendingApprovalWatchMsg{generation: m.pendingRecovery.generation, event: client.PendingApprovalEvent{
+					Kind: client.PendingApprovalEventAsk, Approval: &later,
+				}})
+				m = next.(Model)
+			}
+			beforePhase := m.phase
+			resolves, cancels, _ := controller.counts()
+			next, cmd := m.Update(pendingApprovalWatchMsg{generation: m.pendingRecovery.generation, event: client.PendingApprovalEvent{
+				Kind: client.PendingApprovalEventOther, RunID: "run", Cursor: "next",
+			}})
+			m = next.(Model)
+			if state == "before-choice" || state == "later-ask" {
+				if m.phase != phaseFatal || m.pendingRecovery != nil || !controller.watch.isClosed() || cmd != nil {
+					t.Fatal("uncertain pending permission state did not fail closed")
+				}
+			} else {
+				if m.phase != beforePhase || m.pendingRecovery == nil || controller.watch.isClosed() || cmd == nil {
+					t.Fatal("incidental telemetry changed run state or failed to rearm watch")
+				}
+				next, _ = m.Update(pendingApprovalWatchMsg{generation: m.pendingRecovery.generation, event: client.PendingApprovalEvent{
+					Kind: client.PendingApprovalEventTerminal, RunID: "run", Message: client.ResultMsg{Stop: "end_turn"},
+				}})
+				m = next.(Model)
+				if m.phase != phaseIdle || m.pendingRecovery != nil || !controller.watch.isClosed() {
+					t.Fatal("terminal continuation did not settle recovery")
+				}
+			}
+			if gotResolves, gotCancels, _ := controller.counts(); gotResolves != resolves || gotCancels != cancels || m.prompt.Value() != "draft only" {
+				t.Fatal("telemetry changed controls or draft")
+			}
+		})
+	}
+}
+
 func TestPendingApprovalRecoveryMalformedOpenReleasesWatch(t *testing.T) {
 	for _, result := range []pendingApprovalWatchResult{
 		{event: client.PendingApprovalEvent{}},

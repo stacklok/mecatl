@@ -37,12 +37,26 @@ import (
 type recordingExecutor struct {
 	mu         sync.Mutex
 	operations []executionenv.Operation
+	executed   chan executionenv.ExecutorRequest
+	release    <-chan struct{}
 }
 
-func (e *recordingExecutor) Execute(_ context.Context, _ string, req executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
+func (e *recordingExecutor) Execute(ctx context.Context, _ string, req executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
 	e.mu.Lock()
 	e.operations = append(e.operations, req.Operation)
 	e.mu.Unlock()
+	if e.executed != nil {
+		select {
+		case e.executed <- req:
+		case <-ctx.Done():
+			return executionenv.ExecutorResponse{}, ctx.Err()
+		}
+		select {
+		case <-e.release:
+		case <-ctx.Done():
+			return executionenv.ExecutorResponse{}, ctx.Err()
+		}
+	}
 	switch req.Operation {
 	case executionenv.OpFileResolveAuthority:
 		return executionenv.ExecutorResponse{FileResponse: executionenv.FileResponse{AuthorityTarget: "/workspace/main.go", AuthorityWorkspace: "/workspace"}}, nil

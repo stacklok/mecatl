@@ -243,6 +243,14 @@ func TestPendingApprovalContinuationFailsClosed(t *testing.T) {
 		{"gap", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "gap", nil)}, PendingApprovalIncomplete},
 		{"unknown phase", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "future", ordinaryAsk("run-1", "ask-2"))}, PendingApprovalIncomplete},
 		{"unknown stop", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", &mecatlv1.Event{Type: "result", RunId: "run-1", Result: &mecatlv1.Result{Stop: "future_stop"}})}, PendingApprovalMalformed},
+		{"missing cursor", []*mecatlv1.WatchSessionEventsResponse{watchFrame("", "live", &mecatlv1.Event{Type: "request.manifest", RunId: "run-1"})}, PendingApprovalMalformed},
+		{"missing run", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", ordinaryAsk("", "ask-2"))}, PendingApprovalMalformed},
+		{"missing ask", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", ordinaryAsk("run-1", ""))}, PendingApprovalMalformed},
+		{"malformed approval", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", &mecatlv1.Event{Type: "approval", RunId: "run-1"})}, PendingApprovalMalformed},
+		{"malformed retraction", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", &mecatlv1.Event{Type: "permission.retract", RunId: "run-1"})}, PendingApprovalMalformed},
+		{"missing result", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", &mecatlv1.Event{Type: "result", RunId: "run-1"})}, PendingApprovalMalformed},
+		{"plan ask", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", &mecatlv1.Event{Type: "permission.ask", RunId: "run-1", Ask: &mecatlv1.PermissionAsk{AskId: "ask-2", Tool: "PresentPlan", Args: `{}`}})}, PendingApprovalUnsupportedAsk},
+		{"guardrail ask", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", &mecatlv1.Event{Type: "permission.ask", RunId: "run-1", Ask: &mecatlv1.PermissionAsk{AskId: "ask-2", Tool: "Shell", Args: `{}`, Guardrail: &mecatlv1.GuardrailApprovalScope{}}})}, PendingApprovalUnsupportedAsk},
 		{"premature eof", nil, PendingApprovalIncomplete},
 	}
 	for _, tt := range tests {
@@ -254,6 +262,34 @@ func TestPendingApprovalContinuationFailsClosed(t *testing.T) {
 			defer watch.Close()
 			if _, err = watch.Recv(); !IsPendingApprovalFailure(err, tt.kind) {
 				t.Fatalf("error = %v, want kind %q", err, tt.kind)
+			}
+		})
+	}
+}
+
+func TestPendingApprovalContinuationKeepsCanonicalTelemetryProjection(t *testing.T) {
+	for _, kind := range []string{"request.manifest", "network.attempt", "future.telemetry"} {
+		t.Run(kind, func(t *testing.T) {
+			telemetry := &mecatlv1.Event{Type: kind, RunId: "run-1"}
+			if EventToMsg(telemetry) != nil {
+				t.Fatal("fixture must exercise canonical nil/skip projection")
+			}
+			service := &pendingApprovalWireServer{frames: []*mecatlv1.WatchSessionEventsResponse{
+				watchFrame("c2", "live", telemetry),
+				watchFrame("c3", "live", &mecatlv1.Event{Type: "result", RunId: "run-1", Result: &mecatlv1.Result{Stop: "end_turn"}}),
+			}}
+			watch, err := newPendingApprovalWireClient(t, service).WatchPendingApprovalRun(t.Context(), PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1", Cursor: "c1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer watch.Close()
+			event, err := watch.Recv()
+			if err != nil || event.Kind != PendingApprovalEventOther || event.Message != nil || event.Cursor != "c2" || event.RunID != "run-1" {
+				t.Fatalf("telemetry projection = %+v, %v", event, err)
+			}
+			event, err = watch.Recv()
+			if err != nil || event.Kind != PendingApprovalEventTerminal {
+				t.Fatalf("terminal projection = %+v, %v", event, err)
 			}
 		})
 	}
