@@ -15,6 +15,7 @@ import (
 	"time"
 
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	openaichatoption "github.com/openai/openai-go/v3/option"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
@@ -1005,6 +1006,7 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		// already refuse redirects and additionally inject a bearer) still wins.
 		opts = append(opts, openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))
 		opts = append(opts, extra...)
+		opts = append(opts, openai.WithMaxRetries(0))
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -1078,6 +1080,7 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		// per-session/heal re-mint.
 		opts = append(opts, openaichat.WithCacheDialect(openaichatCacheDialectFor(id, baseURL, cfg)))
 		opts = append(opts, extra...)
+		opts = append(opts, openaichat.WithRequestOption(openaichatoption.WithMaxRetries(0)))
 		var llm port.LLMProvider = openaichat.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
@@ -1197,6 +1200,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		opts = append(opts, anthropic.WithRequestOption(
 			anthropicoption.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
+		opts = append(opts, anthropic.WithRequestOption(anthropicoption.WithMaxRetries(0)))
 		var llm port.LLMProvider = anthropic.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
