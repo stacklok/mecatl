@@ -167,6 +167,7 @@ import {
   drainsQueue,
   isActiveSessionState,
   isStaleRunControl,
+  MAX_ACTIVITY_REATTACHES,
   ownsChatView,
   type RunOwnership,
   type RunStreamEnd,
@@ -213,6 +214,19 @@ interface RunOwner extends RunOwnership {
 /** Collects an SSE transport failure for any of a run's streams, including reattached ones. */
 interface StreamFailure {
   error?: unknown;
+}
+
+interface AuthorizationContinuation {
+  activeAssistantId: string;
+  activePrompt: string;
+  followedRunId?: string;
+  shouldApply: (delivery: RunStreamEvent) => boolean;
+}
+
+interface UncertainAuthorization {
+  beforeCursor: string;
+  callId: string;
+  continuation: AuthorizationContinuation;
 }
 
 /** A pending single-line text prompt, rendered as one shared Dialog. */
@@ -267,13 +281,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
   const authorizationFlows = useRef(new Set<string>());
-  const authorizationUncertain = useRef(
-    new Map<string, { callId: string; beforeCursor?: string }>(),
-  );
+  const authorizationUncertain = useRef(new Map<string, UncertainAuthorization>());
   const latestActivityCursor = useRef<{ cursor: string; sessionId: string } | undefined>(undefined);
-  const activityRefreshCursor = useRef<{ cursor: string; sessionId: string } | undefined>(
-    undefined,
-  );
+  const activityRefresh = useRef<
+    { authorizationId: string; callId: string; cursor: string; sessionId: string } | undefined
+  >(undefined);
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
@@ -374,7 +386,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
-    activityRefreshCursor.current = undefined;
+    activityRefresh.current = undefined;
     latestActivityCursor.current = undefined;
     // A run belongs to one session: leaving it stops its stream here, so its
     // asks, controls, and queue can never act on the chat the user opened.
@@ -648,16 +660,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         : "No filesystem",
   };
 
-  // Attachment lifetime is deliberately keyed only to session identity and its watchable state.
+  // Attachment lifetime follows session identity and watchable state; an explicit
+  // authorization refresh can also attach while the session is idle.
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
   useEffect(() => {
-    if (!sessionId || !watchable || activeRun.current || protectedRequestsPaused()) return;
+    const refresh = activityRefresh.current;
+    if (
+      !sessionId ||
+      (!watchable && refresh?.sessionId !== sessionId) ||
+      activeRun.current ||
+      protectedRequestsPaused()
+    )
+      return;
 
-    const resumeFrom =
-      activityRefreshCursor.current?.sessionId === sessionId
-        ? activityRefreshCursor.current.cursor
-        : undefined;
-    activityRefreshCursor.current = undefined;
+    const resumeFrom = refresh?.sessionId === sessionId ? refresh.cursor : undefined;
+    activityRefresh.current = undefined;
+    const uncertain = refresh
+      ? authorizationUncertain.current.get(`${sessionId}\u0000${refresh.authorizationId}`)
+      : undefined;
+    const continuation =
+      uncertain && uncertain.callId === refresh?.callId ? uncertain.continuation : undefined;
     const controller = new AbortController();
     const owner: RunOwner = { controller, sessionId };
     activeRun.current = owner;
@@ -678,26 +700,28 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           owner,
           stream,
           streamFailure,
-          crypto.randomUUID(),
-          "",
+          continuation?.activeAssistantId ?? crypto.randomUUID(),
+          continuation?.activePrompt ?? "",
           !resumeFrom,
           undefined,
-          resumeFrom
+          refresh
             ? (kind, payload) => {
                 if (kind !== "authorization.required") return;
                 const candidate = payloadRecord(payload);
                 if (
-                  typeof candidate?.authorizationId !== "string" ||
-                  typeof candidate.callId !== "string" ||
+                  candidate?.authorizationId !== refresh.authorizationId ||
+                  candidate.callId !== refresh.callId ||
                   candidate.status !== "pending"
                 )
                   return;
                 const key = `${sessionId}\u0000${candidate.authorizationId}`;
-                if (authorizationUncertain.current.get(key)?.callId !== candidate.callId) return;
+                if (authorizationUncertain.current.get(key) !== uncertain) return;
                 authorizationUncertain.current.delete(key);
                 setAuthorizationUncertainEpoch((current) => current + 1);
               }
             : undefined,
+          undefined,
+          continuation,
         );
         if (streamFailure.error && !controller.signal.aborted) throw streamFailure.error;
       } catch (caught) {
@@ -1178,6 +1202,57 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     return response.stream;
   }
 
+  /** Find the displayed handoff's durable position before sending a control. */
+  async function authorizationCheckpoint(authorization: AuthorizationHandoff) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5_000);
+    let resumeFrom: string | undefined;
+    try {
+      for (let page = 0; page <= MAX_ACTIVITY_REATTACHES; page += 1) {
+        let checkpoint: string | undefined;
+        const streamFailure: StreamFailure = {};
+        const response = await watchSessionActivity({
+          onSseError: captureSseFailure(streamFailure),
+          onSseEvent: ({ data, id }) => {
+            if (!id || data?.type !== "run.event") return;
+            const event = data.event;
+            const payload = payloadRecord(event.payload);
+            if (
+              event.kind === "authorization.required" &&
+              event.runId === authorization.runId &&
+              payload?.authorizationId === authorization.authorizationId &&
+              payload.callId === authorization.callId &&
+              payload.status === "pending"
+            )
+              checkpoint = id;
+          },
+          path: { sessionId: authorization.sessionId },
+          query: resumeFrom ? { resumeFrom } : undefined,
+          signal: controller.signal,
+          sseMaxRetryAttempts: 1,
+        });
+        let nextCursor: string | undefined;
+        for await (const delivery of response.stream) {
+          if (checkpoint) return checkpoint;
+          if (delivery.type === "run.error") return undefined;
+          if (delivery.type === "run.truncated") {
+            if (delivery.reason !== "bound" || !delivery.cursor) return undefined;
+            nextCursor = delivery.cursor;
+            break;
+          }
+        }
+        if (streamFailure.error || !nextCursor) return undefined;
+        resumeFrom = nextCursor;
+      }
+    } catch {
+      // No control is sent without a durable before-position.
+    } finally {
+      controller.abort();
+      window.clearTimeout(timeout);
+    }
+    return undefined;
+  }
+
   /**
    * Applies one run's deliveries to the view while `owner` still owns it. A
    * bounded replay (`run.truncated` "bound") is followed by reattaching from
@@ -1194,20 +1269,27 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     onAccepted?: () => void,
     onAuthorizationStatus?: (kind: string, payload: unknown) => void,
     onRunError?: () => void,
+    continuation?: AuthorizationContinuation,
   ): Promise<RunStreamEnd> {
     let failure: RunFailure | undefined;
     let sawResult = false;
     let sawAuthorizationPark = false;
     let sawAuthorizationStatus = false;
     let continuationStarted = false;
-    let activeAssistantId = assistantId;
-    let activePrompt = prompt;
+    let activeAssistantId = continuation?.activeAssistantId ?? assistantId;
+    let activePrompt = continuation?.activePrompt ?? prompt;
     let turnStartedAt = Date.now();
-    let followedRunId: string | undefined;
+    let followedRunId: string | undefined = continuation?.followedRunId;
     let reattaches = 0;
     let unfollowed = false;
-    const shouldApply = createActivityDeduplicator();
+    const shouldApply = continuation?.shouldApply ?? createActivityDeduplicator();
     const owns = () => ownsChatView(owner, activeRun.current, viewedSessionId.current);
+    const persistContinuation = () => {
+      if (!continuation) return;
+      continuation.activeAssistantId = activeAssistantId;
+      continuation.activePrompt = activePrompt;
+      continuation.followedRunId = followedRunId;
+    };
 
     if (replay && owns()) setMessages([]);
 
@@ -1276,6 +1358,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             activeAssistantId = crypto.randomUUID();
             activePrompt = "";
           }
+          persistContinuation();
           continue;
         }
         const event = delivery.event;
@@ -1296,6 +1379,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           setStatusFacts({ phase: "following", runId: event.runId });
           failure = undefined;
           sawResult = false;
+          persistContinuation();
         }
         if (event.usage && !replay) setLiveUsage(event.usage);
         if (event.kind === "session.title" && owner.sessionId) {
@@ -1307,6 +1391,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           activePrompt = promptText;
           const images = payloadImages(event.payload);
           activeAssistantId = crypto.randomUUID();
+          persistContinuation();
           setMessages((current) => [
             ...current,
             {
@@ -1437,6 +1522,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         stream = await watchActivity(owner, streamFailure, resumeFrom);
       }
     }
+    persistContinuation();
 
     // Once the replay has caught up and the stream ended on its own, the
     // catch-up notice no longer describes anything.
@@ -1472,10 +1558,25 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (authorizationFlows.current.size > 0) return;
     authorizationFlows.current.add(key);
     setAuthorizationBusy(key);
-    const beforeCursor =
+    let beforeCursor =
       latestActivityCursor.current?.sessionId === authorization.sessionId
         ? latestActivityCursor.current.cursor
         : undefined;
+    if (!beforeCursor) {
+      const checkpoint = await authorizationCheckpoint(authorization);
+      beforeCursor =
+        latestActivityCursor.current?.sessionId === authorization.sessionId
+          ? latestActivityCursor.current.cursor
+          : checkpoint;
+      if (!beforeCursor) {
+        authorizationFlows.current.delete(key);
+        setAuthorizationBusy((current) => (current === key ? undefined : current));
+        setError(
+          "Could not locate this handoff in durable activity. Refresh the chat and try again.",
+        );
+        return;
+      }
+    }
 
     // The previous activity reader only follows this view. Aborting it does
     // not cancel the server-owned authorization; the SDK control is separate.
@@ -1490,6 +1591,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     let end: RunStreamEnd = { kind: "uncertain" };
     let sawMatchingStatus = false;
     let sawStreamError = false;
+    const continuation: AuthorizationContinuation = {
+      activeAssistantId: crypto.randomUUID(),
+      activePrompt: "",
+      shouldApply: createActivityDeduplicator(),
+    };
     try {
       const streamFailure: StreamFailure = {};
       const request = {
@@ -1509,7 +1615,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         owner,
         response.stream,
         streamFailure,
-        crypto.randomUUID(),
+        continuation.activeAssistantId,
         "",
         false,
         undefined,
@@ -1529,6 +1635,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         () => {
           sawStreamError = true;
         },
+        continuation,
       );
       if (streamFailure.error && !owner.controller.signal.aborted) throw streamFailure.error;
       if (
@@ -1544,6 +1651,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         authorizationUncertain.current.set(key, {
           beforeCursor,
           callId: authorization.callId,
+          continuation,
         });
         setAuthorizationUncertainEpoch((current) => current + 1);
         setError(`Could not confirm authorization outcome: ${errorMessage(caught)}`);
@@ -1567,9 +1675,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       return;
     // Resume after the last observed event before the control. An opaque cursor
     // establishes ordering without comparing run-local event sequence numbers.
-    activityRefreshCursor.current = uncertain.beforeCursor
-      ? { cursor: uncertain.beforeCursor, sessionId: authorization.sessionId }
-      : undefined;
+    activityRefresh.current = {
+      authorizationId: authorization.authorizationId,
+      callId: authorization.callId,
+      cursor: uncertain.beforeCursor,
+      sessionId: authorization.sessionId,
+    };
     setReconnectGeneration((current) => current + 1);
   }
 
