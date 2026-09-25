@@ -337,6 +337,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   provider/model rather than a fabricated `unknown/<model>` identity. Changed
   (breaking, pre-v1 minor).
 
+- **Contextual reviewer usage results** — `agent.ToolReviewer.Review` now returns
+  `session.AuxiliaryUsage`, including partial usage returned with an error. The engine
+  remaps and records completed review usage on the reviewed session while it retains
+  run ownership. `port.AuxiliaryUsageReporter`, `WithAuxiliaryUsageReporter`, and
+  `AuxiliaryUsageReporterFromContext` provide the synchronous request-scoped adapter
+  seam used by the main-session path-escape check. Changed (breaking, pre-v1 minor).
+
 - **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
   `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
   `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and

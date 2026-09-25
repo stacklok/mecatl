@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/session"
 )
 
 // CheckRequest is the narrow input used by the independent path-escape checker.
@@ -20,9 +21,15 @@ type CheckRequest struct {
 	Prompt  string
 }
 
+// CheckResult carries the verdict and every model usage incurred while producing it.
+type CheckResult struct {
+	Verdict Verdict
+	Usage   session.AuxiliaryUsage
+}
+
 // VerdictChecker judges one path-escape policy request.
 type VerdictChecker interface {
-	Check(context.Context, CheckRequest) (Verdict, error)
+	Check(context.Context, CheckRequest) (CheckResult, error)
 }
 
 func shellCmdFromArgs(raw string) (string, bool) {

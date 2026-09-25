@@ -14,9 +14,9 @@ import (
 
 type taskWindowReviewer struct{ requests []agent.ToolReviewRequest }
 
-func (r *taskWindowReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *taskWindowReviewer) Review(_ context.Context, req agent.ToolReviewRequest, _ agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.requests = append(r.requests, req)
-	return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
+	return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
 func TestChildPromptIsPersistedAndEmittedNonPrincipal(t *testing.T) {

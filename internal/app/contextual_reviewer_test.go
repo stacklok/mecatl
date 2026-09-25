@@ -50,7 +50,7 @@ func TestADR_0363_ContextualGuardrails_Scenario6_RubricContract(t *testing.T) {
 	}
 
 	source := &boundedEvidenceSource{size: 4, value: agent.ReviewEvidence{Handle: "ev_opaque_1", Kind: "text_file", Version: "v1", Complete: true, Content: "data"}}
-	res, err := reviewer.Review(context.Background(), completeReviewRequest(), source)
+	res, _, err := reviewer.Review(context.Background(), completeReviewRequest(), source)
 	if err != nil {
 		t.Fatalf("Review: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestADR_0363_ContextualGuardrails_Scenario6_RubricContract(t *testing.T) {
 	req := reviewRequestWithoutEvidence()
 	req.PrincipalFacts = []agent.ReviewPrincipalFact{{Ref: "P3", Kind: "user_task", Statement: "Second task"}}
 	req.Trajectory = []agent.ReviewTrajectoryFact{{Ref: "T1"}}
-	if _, err := reviewer.Review(context.Background(), req, nil); err != nil {
+	if _, _, err := reviewer.Review(context.Background(), req, nil); err != nil {
 		t.Fatalf("second Review: %v", err)
 	}
 	if len(got.Tools) != 2 || got.Tools[1].Name != submitReviewAssessmentToolName || !strings.Contains(string(got.Tools[1].Schema), `"source_ref":{"type":"string","enum":["P3","T1","call"]}`) {
@@ -125,7 +125,7 @@ func TestContextualReviewerFactoryPromptAndJobSeparation(t *testing.T) {
 	req.Job = agent.ReviewJobAction
 	incoming := strings.Repeat("incoming-result-is-not-evidence-capped-", 1_000)
 	req.Event.Input = []byte(incoming)
-	if _, err := reviewer.Review(context.Background(), req, nil); err != nil {
+	if _, _, err := reviewer.Review(context.Background(), req, nil); err != nil {
 		t.Fatalf("Review: %v", err)
 	}
 	if !strings.Contains(got.System.StablePrefix, "fixed harness security contract") || !strings.Contains(got.Messages[len(got.Messages)-1].Text, "Apply the ACTION rubric") || !strings.Contains(got.Messages[len(got.Messages)-1].Text, incoming) {
@@ -145,10 +145,10 @@ func TestADR_0363_ContextualGuardrails_Scenario6_AdditiveRulePrompt(t *testing.T
 		mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`))
 	pc := promptConfig(Config{Model: "review-model"}, "")
 	pc.Role = contextualReviewerSystemPrompt
-	deps := childEngineDepsForProvider(Config{UseMock: true}, "guardrail-reviewer", provider, "review-model", func() int { return 128000 }, tool.NewCatalog(), pc, nil)
+	deps := childEngineDepsForProvider(Config{UseMock: true}, "guardrail-reviewer", provider, session.ProviderModelID{ProviderID: "mock", ModelID: "review-model"}, func() int { return 128000 }, tool.NewCatalog(), pc, nil)
 	deps.MaxNoProgressNudges = -1
 	source := &boundedEvidenceSource{size: 4, value: agent.ReviewEvidence{Handle: "ev_opaque_1", Kind: "text_file", Version: "v1", Complete: true, Content: "data"}}
-	_, err := newContextualToolReviewer(agent.NewEngine(deps), "mock", "review-model").Review(context.Background(), completeReviewRequest(), source)
+	_, _, err := newContextualToolReviewer(agent.NewEngine(deps), "mock", "review-model").Review(context.Background(), completeReviewRequest(), source)
 	if err != nil {
 		t.Fatalf("Review: %v", err)
 	}

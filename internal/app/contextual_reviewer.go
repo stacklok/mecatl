@@ -362,7 +362,7 @@ func (r *contextualToolReviewer) GuardrailCheckerRoute() (string, string) {
 	return r.checkerProviderID, r.checkerModelID
 }
 
-func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	deadline := r.deadline
 	if deadline <= 0 {
 		deadline = reviewTotalDeadline
@@ -370,24 +370,26 @@ func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolRevie
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	if err := validateReviewRequest(req); err != nil {
-		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, classifyEvidenceFailure(err)
+		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, session.AuxiliaryUsage{}, classifyEvidenceFailure(err)
 	}
 	if len(req.Evidence) > 0 {
 		bound, ok := source.(boundReviewEvidenceSource)
 		if !ok {
-			return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, newReviewFailure(agent.ReviewFailureEvidenceFailure, true)
+			return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, session.AuxiliaryUsage{}, newReviewFailure(agent.ReviewFailureEvidenceFailure, true)
 		}
 		if err := bound.ValidateReviewBinding(req, r.checkerProviderID, r.checkerModelID); err != nil {
-			return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, classifyEvidenceFailure(err)
+			return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, session.AuxiliaryUsage{}, classifyEvidenceFailure(err)
 		}
 	}
 
 	var last error
+	var usage session.AuxiliaryUsage
 	budget := &reviewEvidenceBudget{}
 	for attempt := 0; attempt < maxReviewAttempts; attempt++ {
-		result, completed, recoverable, err := r.reviewAttempt(ctx, req, source, budget)
+		result, completed, recoverable, attemptUsage, err := r.reviewAttempt(ctx, req, source, budget)
+		usage = usage.Merge(attemptUsage)
 		if completed {
-			return result, nil
+			return result, usage, nil
 		}
 		last = err
 		r.logAttemptFailure(ctx, attempt+1, err)
@@ -402,7 +404,7 @@ func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolRevie
 	if !errors.As(last, &classified) {
 		last = newReviewFailure(agent.ReviewFailureProviderFailure, false)
 	}
-	return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, last
+	return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, usage, last
 }
 
 func (r *contextualToolReviewer) logAttemptFailure(ctx context.Context, attempt int, err error) {
@@ -421,7 +423,7 @@ func (r *contextualToolReviewer) logAttemptFailure(ctx context.Context, attempt 
 	r.diagnostics.Log(ctx, port.LevelWarn, "guardrails: reviewer assessment rejected", args...)
 }
 
-func (r *contextualToolReviewer) reviewAttempt(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource, budget *reviewEvidenceBudget) (agent.ToolReviewResult, bool, bool, error) {
+func (r *contextualToolReviewer) reviewAttempt(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource, budget *reviewEvidenceBudget) (agent.ToolReviewResult, bool, bool, session.AuxiliaryUsage, error) {
 	state := newReviewToolState(req, source, budget)
 	readTool := &readReviewEvidenceTool{state: state}
 	submitTool := &submitReviewAssessmentTool{state: state}
@@ -445,35 +447,55 @@ func (r *contextualToolReviewer) reviewAttempt(ctx context.Context, req agent.To
 			disposition = ev.Result.Disposition
 		}
 	}
+	usage := agent.RemapAuxiliaryUsage(ctx, r.diagnostics, session.UsageKindGuardrail,
+		guardrailAttemptUsage(r.checkerProviderID, r.checkerModelID, sess))
 	if err := state.err(); err != nil {
 		var classified agent.GuardrailReviewFailure
 		if errors.As(err, &classified) {
-			return agent.ToolReviewResult{}, false, reviewFailureRecoverable(err), err
+			return agent.ToolReviewResult{}, false, reviewFailureRecoverable(err), usage, err
 		}
-		return agent.ToolReviewResult{}, false, false, classifyEvidenceFailure(err)
+		return agent.ToolReviewResult{}, false, false, usage, classifyEvidenceFailure(err)
 	}
 	if result, ok := state.result(); ok {
-		return result, true, false, nil
+		return result, true, false, usage, nil
 	}
 	if stop == session.StopError {
-		return agent.ToolReviewResult{}, false, disposition == session.RetryDispositionRetryable, newReviewFailure(agent.ReviewFailureProviderFailure, false)
+		return agent.ToolReviewResult{}, false, disposition == session.RetryDispositionRetryable, usage, newReviewFailure(agent.ReviewFailureProviderFailure, false)
 	}
 	if stop == session.StopCancelled || ctx.Err() != nil {
 		code := agent.ReviewFailureProviderFailure
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
 			code = agent.ReviewFailureTimeout
 		}
-		return agent.ToolReviewResult{}, false, false, newReviewFailure(code, false)
+		return agent.ToolReviewResult{}, false, false, usage, newReviewFailure(code, false)
 	}
 	if state.usedTool() {
-		return agent.ToolReviewResult{}, false, true, newReviewFailure(agent.ReviewFailureMissingSubmit, false)
+		return agent.ToolReviewResult{}, false, true, usage, newReviewFailure(agent.ReviewFailureMissingSubmit, false)
 	}
 	text := lastAssistantText(sess)
 	result, err := parseReviewAssessment(text, req, state)
 	if err != nil {
-		return agent.ToolReviewResult{}, false, reviewFailureRecoverable(err), err
+		return agent.ToolReviewResult{}, false, reviewFailureRecoverable(err), usage, err
 	}
-	return result, true, false, nil
+	return result, true, false, usage, nil
+}
+
+func guardrailAttemptUsage(providerID, modelID string, sess *session.Session) session.AuxiliaryUsage {
+	var out session.AuxiliaryUsage
+	for kind, bucket := range sess.TokenUsageSnapshot() {
+		if kind == session.UsageKindMain {
+			attribution := strings.TrimSpace(providerID) + "/" + strings.TrimSpace(modelID)
+			if strings.Trim(attribution, "/") == "" {
+				attribution = "unknown"
+			}
+			out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+				session.UsageKindGuardrail: {Total: bucket.Total, Models: map[string]session.Usage{attribution: bucket.Total}},
+			}})
+			continue
+		}
+		out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{kind: bucket}})
+	}
+	return out
 }
 
 func lastAssistantText(sess *session.Session) string {

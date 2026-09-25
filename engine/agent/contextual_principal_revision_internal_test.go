@@ -22,13 +22,13 @@ type revisionBlockingReviewer struct {
 	requests []ToolReviewRequest
 }
 
-func (r *revisionBlockingReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *revisionBlockingReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.requests = append(r.requests, req)
 	r.mu.Unlock()
 	r.entered <- req
 	<-r.release
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
 type revisionReadTool struct{ executions *int }
@@ -113,8 +113,8 @@ type revisionGrantReviewer struct {
 	armed int
 }
 
-func (*revisionGrantReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error) {
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+func (*revisionGrantReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 func (*revisionGrantReviewer) GrantDigest(ToolReviewRequest) (string, bool) { return "digest", true }
 func (*revisionGrantReviewer) AllowsGrant(string) bool                      { return false }

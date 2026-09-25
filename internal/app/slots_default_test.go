@@ -30,7 +30,7 @@ func checkerModel(t *testing.T, cfg Config, parentModel string) string {
 func TestGuardrailCompositionReturnsExactProviderModelIdentity(t *testing.T) {
 	usage := session.Usage{InputTokens: 9, OutputTokens: 3}
 	provider := mockllm.New(mockllm.ChunksTurn(
-		mockllm.TextChunk(`{"safe":true}`),
+		mockllm.TextChunk(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`),
 		mockllm.UsageChunk(usage),
 		mockllm.DoneChunk(session.StopEndTurn),
 	))

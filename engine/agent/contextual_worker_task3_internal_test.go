@@ -24,9 +24,9 @@ func (workerAuthorityTool) Execute(_ context.Context, call session.ToolCall, _ t
 
 type workerAuthorityReviewer struct{ requests []ToolReviewRequest }
 
-func (r *workerAuthorityReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *workerAuthorityReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.requests = append(r.requests, req)
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 
 type workerAuthorityPolicy struct{}

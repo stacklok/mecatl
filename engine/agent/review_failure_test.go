@@ -63,9 +63,9 @@ type terminalFailureReviewer struct {
 	recorded error
 }
 
-func (r *terminalFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *terminalFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.reviews++
-	return ToolReviewResult{Assessment: ReviewAcceptable}, nil
+	return ToolReviewResult{Assessment: ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 }
 func (r *terminalFailureReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, operationalFailure bool) (bool, bool) {
 	return job == r.job, !operationalFailure
@@ -146,8 +146,8 @@ type consumerFailureReviewer struct {
 	err error
 }
 
-func (r consumerFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error) {
-	return ToolReviewResult{Assessment: ReviewUnresolved}, r.err
+func (r consumerFailureReviewer) Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
+	return ToolReviewResult{Assessment: ReviewUnresolved}, session.AuxiliaryUsage{}, r.err
 }
 func (r consumerFailureReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, _ bool) (bool, bool) {
 	return job == r.job, true

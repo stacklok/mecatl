@@ -244,6 +244,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0241 — Canonical untrusted-content fences live in governance](./0241-governance-fence-ownership.md)
 - [0021 — Guardrails](./0021-guardrails.md) *(its one-payload/tool-less classifier architecture is drafted for supersession by 0363)*
 - [0363 — Contextual investigative guardrails](./0363-contextual-investigative-guardrails.md) *(proposed; product direction approved, implementation calibration/measurement required, separately authorized real-model validation required before any production-readiness claim)*
+- [0367 — Contextual guardrail usage ownership and ordered drain](./0367-contextual-guardrail-usage-accounting.md) *(proposed; supersedes ADR 0354’s contextual-review and path-escape usage decisions only)*
 - [0049 — Remove the guardrails per-session checker call-count cap](./0049-guardrails-remove-maxchecks.md)
 - [0050 — Remove the guardrails oversized-content inspection skip](./0050-guardrails-remove-maxcontentbytes.md)
 - [0051 — Surface advisory guardrail findings to the TUI](./0051-guardrails-advisory-tui-visibility.md)

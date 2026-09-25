@@ -23,10 +23,10 @@ func (e typedHealthFailure) GuardrailReviewFailureCode() agent.ReviewFailureCode
 	return agent.ReviewFailureCode(e)
 }
 
-func (r *healthSequenceReviewer) Review(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *healthSequenceReviewer) Review(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	i := r.calls
 	r.calls++
-	return r.results[i], r.errs[i]
+	return r.results[i], session.AuxiliaryUsage{}, r.errs[i]
 }
 
 func TestPermissionReviewEligibilityRequiresEnforcingMatchingCoverage(t *testing.T) {
@@ -79,7 +79,7 @@ func TestGuardrailRouteHealthTracksClosedFailureCodes(t *testing.T) {
 				t.Fatal("compile rules")
 			}
 			reviewer := &guardrailActionReviewer{base: base, rules: rules, health: health}
-			_, _ = reviewer.Review(context.Background(), agent.ToolReviewRequest{Job: agent.ReviewJobAction, EffectiveCall: session.NewToolCall("c", "Shell", []byte(`{"command":"write"}`))}, nil)
+			_, _, _ = reviewer.Review(context.Background(), agent.ToolReviewRequest{Job: agent.ReviewJobAction, EffectiveCall: session.NewToolCall("c", "Shell", []byte(`{"command":"write"}`))}, nil)
 			if seen, inspection, _, got := health.snapshot(); !seen || inspection != "operational_failure" || got != code {
 				t.Fatalf("health = seen:%t inspection:%q code:%q, want %q", seen, inspection, got, code)
 			}
@@ -103,15 +103,15 @@ func TestGuardrailRouteHealthTracksActualReviewsNotRuleSkips(t *testing.T) {
 	}
 
 	req := agent.ToolReviewRequest{Job: agent.ReviewJobAction, EffectiveCall: session.NewToolCall("c1", "Shell", []byte(`{"command":"write"}`))}
-	_, _ = reviewer.Review(context.Background(), req, nil)
+	_, _, _ = reviewer.Review(context.Background(), req, nil)
 	if seen, inspection, assessment, code := health.snapshot(); !seen || inspection != "operational_failure" || assessment != "" || code != agent.ReviewFailureProviderFailure {
 		t.Fatalf("outage health = %v %q %q %q", seen, inspection, assessment, code)
 	}
-	_, _ = reviewer.Review(context.Background(), req, nil)
+	_, _, _ = reviewer.Review(context.Background(), req, nil)
 	if _, inspection, assessment, code := health.snapshot(); inspection != "complete" || assessment != "unresolved" || code != "" {
 		t.Fatalf("completed unresolved health = %q %q", inspection, assessment)
 	}
-	_, _ = reviewer.Review(context.Background(), req, nil)
+	_, _, _ = reviewer.Review(context.Background(), req, nil)
 	if _, inspection, assessment, code := health.snapshot(); inspection != "complete" || assessment != "acceptable" || code != "" {
 		t.Fatalf("healthy assessment = %q %q", inspection, assessment)
 	}

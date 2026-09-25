@@ -6801,11 +6801,10 @@ func childOperatorProfileSource(cfg Config, role string) prompt.OperatorProfileS
 // an allow-all (non-interactive) permission policy, an inert hook runner, and the
 // standard context-window / compaction-trigger settings. Call sites supply only
 // what actually varies between them — the scoped catalog, the resolved model, and
-// the prompt config. It is the single source of truth for that boilerplate so the
-// five child-engine builders (Subagent explorer, Fork branch, Fork judge, per-def Subagent
-// engine, team member) cannot drift apart.
-func newChildEngine(cfg Config, role string, provider port.LLMProvider, providerModel session.ProviderModelID, cat *tool.Catalog, windowFn func() int, pc prompt.Config) *agent.Engine {
-	return newChildEngineWithHooks(cfg, role, provider, providerModel, cat, windowFn, pc, hookexec.New(nil))
+// the prompt config. This convenience builds the main-role test shape; named child
+// roles use newChildEngineWithHooks.
+func newChildEngine(cfg Config, provider port.LLMProvider, providerModel session.ProviderModelID, cat *tool.Catalog, windowFn func() int, pc prompt.Config) *agent.Engine {
+	return newChildEngineWithHooks(cfg, "", provider, providerModel, cat, windowFn, pc, hookexec.New(nil))
 }
 
 // newChildEngineWithHooks is newChildEngine with an explicit HookRunner, so a

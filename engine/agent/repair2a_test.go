@@ -35,11 +35,11 @@ type repairReviewer struct {
 func (*repairReviewer) GuardrailReviewPolicy(_ string, job agent.ReviewJob, _ bool) (bool, bool) {
 	return job == agent.ReviewJobAction, true
 }
-func (r *repairReviewer) Review(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *repairReviewer) Review(context.Context, agent.ToolReviewRequest, agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.calls++
 	r.mu.Unlock()
-	return agent.ToolReviewResult{Assessment: r.assessment}, nil
+	return agent.ToolReviewResult{Assessment: r.assessment}, session.AuxiliaryUsage{}, nil
 }
 func (r *repairReviewer) count() int { r.mu.Lock(); defer r.mu.Unlock(); return r.calls }
 

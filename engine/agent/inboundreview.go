@@ -34,6 +34,7 @@ type heldResult struct {
 type inboundAssessment struct {
 	request           ToolReviewRequest
 	result            ToolReviewResult
+	usage             session.AuxiliaryUsage
 	source            ReviewEvidenceSource
 	close             func()
 	err               error
@@ -100,7 +101,7 @@ func assessInbound(ctx context.Context, r *Run, assessment *inboundAssessment) {
 		}
 		return
 	}
-	assessment.result, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.request, assessment.source)
+	assessment.result, assessment.usage, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.request, assessment.source)
 	if assessment.err == nil && !validReviewAssessment(assessment.result.Assessment) {
 		assessment.result.Assessment = ReviewUnresolved
 		assessment.err = reviewFailure(ReviewFailureInvalidAssessment)
@@ -234,6 +235,7 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 }
 
 func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, result session.ToolResult, assessment inboundAssessment) (session.ToolResult, bool) {
+	r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
 	if assessment.close != nil {
 		defer assessment.close()
 	}
