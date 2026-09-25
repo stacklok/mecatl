@@ -43,6 +43,20 @@ func candidateFromConfigs(configs []mcp.ServerConfig, generation uint64) *mcpRec
 	return &mcpReconcileCandidate{configs: cloneMCPConfigs(configs), generation: generation}
 }
 
+// elapsedMCPReconcileCooldown supplies already-fired timers for tests of reconciliation
+// results. Cooldown enforcement tests keep their manually controlled timers.
+func elapsedMCPReconcileCooldown(t *testing.T) func(time.Duration) <-chan time.Time {
+	t.Helper()
+	return func(d time.Duration) <-chan time.Time {
+		if d != minMCPReconcileCooldown {
+			t.Errorf("reconcile cooldown = %v, want %v", d, minMCPReconcileCooldown)
+		}
+		tick := make(chan time.Time, 1)
+		tick <- time.Time{}
+		return tick
+	}
+}
+
 func TestMCPSourceReconcilerCloseOwnership(t *testing.T) {
 	t.Run("accepted-publication-transfers-ownership", func(t *testing.T) {
 		runtimes := newMCPRuntimeSet(nil)
@@ -91,6 +105,7 @@ func TestMCPSourceReconciliation_Scenario1_OrderedSourcesLKGAndEmpty(t *testing.
 	var generation atomic.Uint64
 	r := newMCPSourceReconciler(mcpReconcilerOptions{
 		sources: []mcpsource.Source{static, toolhive},
+		after:   elapsedMCPReconcileCooldown(t),
 		build: func(_ context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
 			return candidateFromConfigs(configs, generation.Add(1)), nil
 		},
@@ -140,6 +155,7 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 		release := make(chan struct{})
 		r := newMCPSourceReconciler(mcpReconcilerOptions{
 			sources: []mcpsource.Source{static},
+			after:   elapsedMCPReconcileCooldown(t),
 			build: func(ctx context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
 				builds.Add(1)
 				select {
@@ -182,12 +198,13 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 			Name: "a", URL: "http://a/mcp", OAuth: &mcp.OAuthOptions{Presenter: mcp.OAuthPresenterFunc(func(context.Context, string) (*auth.AuthorizationResult, error) { return nil, nil })},
 		}}}
 		ticks := make(chan time.Time, 4)
+		cooldown := elapsedMCPReconcileCooldown(t)
 		var builds atomic.Int64
 		r := newMCPSourceReconciler(mcpReconcilerOptions{
 			sources: []mcpsource.Source{th}, toolHive: true,
 			after: func(d time.Duration) <-chan time.Time {
-				if d == time.Second {
-					return time.After(d)
+				if d == minMCPReconcileCooldown {
+					return cooldown(d)
 				}
 				if d < minMCPPollInterval || d > maxMCPPollInterval {
 					t.Errorf("poll interval outside jitter bounds: %v", d)
@@ -217,6 +234,7 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 		var notify func()
 		r := newMCPSourceReconciler(mcpReconcilerOptions{
 			sources: []mcpsource.Source{&reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "live", URL: "http://live/mcp"}}}},
+			after:   elapsedMCPReconcileCooldown(t),
 			build: func(_ context.Context, configs []mcp.ServerConfig, changed func()) (*mcpReconcileCandidate, error) {
 				notify = changed
 				g := uint64(builds.Add(1))
@@ -243,6 +261,7 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 		var builds atomic.Int64
 		r := newMCPSourceReconciler(mcpReconcilerOptions{
 			sources: []mcpsource.Source{&reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "a", URL: "http://a/mcp"}}}},
+			after:   elapsedMCPReconcileCooldown(t),
 			build: func(_ context.Context, configs []mcp.ServerConfig, changed func()) (*mcpReconcileCandidate, error) {
 				n := builds.Add(1)
 				if n == 1 {
@@ -268,7 +287,7 @@ func TestMCPSourceReconciliation_Scenario1_ProductionTriggerMatrix(t *testing.T)
 		})
 		httpServer := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return remote }, nil))
 		src := &reconciliationSource{name: "static", cfgs: []mcp.ServerConfig{{Name: "live", URL: httpServer.URL}}}
-		r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{src}, build: buildMCPReconcileCandidate(Config{})})
+		r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{src}, build: buildMCPReconcileCandidate(Config{}), after: elapsedMCPReconcileCooldown(t)})
 		t.Cleanup(httpServer.Close)
 		t.Cleanup(r.Close)
 		first, err := r.Reconcile(context.Background())
@@ -481,7 +500,7 @@ func TestMCPSourceReconciliation_StatusPublishesOnlyActiveCandidateInventory(t *
 			build := func(_ context.Context, configs []mcp.ServerConfig, _ func()) (*mcpReconcileCandidate, error) {
 				return candidateFromConfigs(configs, 0), nil
 			}
-			r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{source}, build: build})
+			r := newMCPSourceReconciler(mcpReconcilerOptions{sources: []mcpsource.Source{source}, build: build, after: elapsedMCPReconcileCooldown(t)})
 			t.Cleanup(r.Close)
 			if _, err := r.Reconcile(context.Background()); err != nil {
 				t.Fatalf("initial reconcile: %v", err)

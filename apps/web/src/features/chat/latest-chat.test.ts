@@ -13,6 +13,8 @@ function row(id: string, over: Partial<SessionSummaryResponse> = {}): SessionSum
     modelId: "test-model",
     state: "completed",
     title: `Chat ${id}`,
+    titleProvenance: "",
+    titleRevision: "0",
     turns: 1,
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...over,

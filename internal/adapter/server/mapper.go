@@ -160,6 +160,12 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.Authorization != nil {
 		out.Authorization = toProtoAuthorization(*ev.Authorization)
 	}
+	if ev.PlanContinuationFailure != nil {
+		out.PlanContinuationFailure = &mecatlv1.PlanContinuationFailure{
+			PlanRunId: valid(ev.PlanContinuationFailure.PlanRunID),
+			AskId:     valid(ev.PlanContinuationFailure.AskID),
+		}
+	}
 	if ev.Result != nil {
 		out.Result = toProtoResult(*ev.Result)
 	}
@@ -325,6 +331,7 @@ func toProtoApproval(p session.ApprovalPayload) *mecatlv1.Approval {
 		Verdict: approvalVerdictToProto(p.Verdict),
 		Tool:    valid(p.Tool),
 		CallId:  string(p.Call),
+		Origin:  string(p.Origin),
 	}
 }
 
@@ -772,12 +779,103 @@ func mediaKindFromBlock(k mecatlv1.ContentBlock_Kind) session.MediaKind {
 
 // toProtoAsk maps a session.PendingAsk to its proto PermissionAsk form.
 func toProtoAsk(a session.PendingAsk) *mecatlv1.PermissionAsk {
-	return &mecatlv1.PermissionAsk{
-		AskId:  a.AskID,
-		Tool:   valid(a.Tool),
-		Args:   valid(string(a.Args)),
-		Reason: valid(a.Reason),
+	out := &mecatlv1.PermissionAsk{
+		AskId:     a.AskID,
+		Tool:      valid(a.Tool),
+		Args:      valid(string(a.Args)),
+		Reason:    valid(a.Reason),
+		Guardrail: toProtoGuardrailApprovalScope(a.Guardrail),
 	}
+	if a.Call != "" {
+		callID := valid(string(a.Call))
+		out.CallId = &callID
+	}
+	return out
+}
+
+func toProtoGuardrailApprovalScope(scope *session.GuardrailPendingScope) *mecatlv1.GuardrailApprovalScope {
+	if scope == nil {
+		return nil
+	}
+	kind := mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_UNSPECIFIED
+	switch scope.Kind {
+	case session.GuardrailApprovalAction:
+		kind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION
+	case session.GuardrailApprovalResultRelease:
+		kind = mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE
+	}
+	return &mecatlv1.GuardrailApprovalScope{ReviewId: valid(scope.ReviewID), Kind: kind, GrantDigest: valid(scope.GrantDigest), SessionOnly: scope.SessionOnly, RepeatAvailable: scope.RepeatAvailable}
+}
+
+func toProtoGuardrailReview(review *session.GuardrailReviewPayload) *mecatlv1.GuardrailReview {
+	if review == nil {
+		return nil
+	}
+	refs := func(in []session.GuardrailRef) []*mecatlv1.GuardrailRef {
+		out := make([]*mecatlv1.GuardrailRef, 0, len(in))
+		for _, ref := range in {
+			out = append(out, &mecatlv1.GuardrailRef{Ref: valid(ref.Ref), Category: valid(ref.Category)})
+		}
+		return out
+	}
+	return &mecatlv1.GuardrailReview{
+		ReviewId: valid(review.ReviewID), Job: guardrailJobToProto(review.Job), Assessment: guardrailAssessmentToProto(review.Assessment),
+		Inspection: guardrailInspectionToProto(review.Inspection), Disposition: guardrailDispositionToProto(review.Disposition), ReasonCode: valid(review.ReasonCode),
+		RuleId: valid(review.RuleID), RuleOrigin: valid(review.RuleOrigin), CheckerProviderId: valid(review.CheckerProviderID), CheckerModelId: valid(review.CheckerModelID),
+		Concerns: refs(review.Concerns), Sources: refs(review.Sources),
+	}
+}
+
+func guardrailJobToProto(v string) mecatlv1.GuardrailJob {
+	if v == "action" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_ACTION
+	}
+	if v == "inbound" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_INBOUND
+	}
+	if v == "permission" {
+		return mecatlv1.GuardrailJob_GUARDRAIL_JOB_PERMISSION
+	}
+	return mecatlv1.GuardrailJob_GUARDRAIL_JOB_UNSPECIFIED
+}
+func guardrailAssessmentToProto(v string) mecatlv1.GuardrailAssessment {
+	switch v {
+	case "acceptable":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_ACCEPTABLE
+	case "prohibited":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_PROHIBITED
+	case "unresolved":
+		return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_UNRESOLVED
+	}
+	return mecatlv1.GuardrailAssessment_GUARDRAIL_ASSESSMENT_UNSPECIFIED
+}
+func guardrailInspectionToProto(v string) mecatlv1.GuardrailInspection {
+	if v == "complete" {
+		return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_COMPLETE
+	}
+	if v == "operational_failure" {
+		return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_OPERATIONAL_FAILURE
+	}
+	return mecatlv1.GuardrailInspection_GUARDRAIL_INSPECTION_UNSPECIFIED
+}
+func guardrailDispositionToProto(v string) mecatlv1.GuardrailDisposition {
+	switch v {
+	case "execute":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_EXECUTE
+	case "ask_action":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_ASK_ACTION
+	case "withhold_result":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_WITHHOLD_RESULT
+	case "release_result":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_RELEASE_RESULT
+	case "deny":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_DENY
+	case "pass_advisory":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_PASS_ADVISORY
+	case "continue_warning":
+		return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_CONTINUE_WARNING
+	}
+	return mecatlv1.GuardrailDisposition_GUARDRAIL_DISPOSITION_UNSPECIFIED
 }
 
 // toProtoResult maps a session.ResultPayload to its proto Result form.
@@ -823,16 +921,18 @@ func toProtoTurnEnd(p session.TurnEndPayload) *mecatlv1.TurnEnd {
 	return &mecatlv1.TurnEnd{
 		Usage:      toProtoUsage(p.Usage),
 		DurationMs: p.DurationMs,
+		Estimated:  p.Estimated,
 	}
 }
 
 // toProtoHook maps a session.HookPayload to its proto Hook form.
 func toProtoHook(h session.HookPayload) *mecatlv1.Hook {
 	return &mecatlv1.Hook{
-		Phase:    valid(h.Phase),
-		Tool:     valid(h.Tool),
-		Decision: hookDecisionToProto(h.Decision),
-		CallId:   string(h.CallID),
+		Phase:     valid(h.Phase),
+		Tool:      valid(h.Tool),
+		Decision:  hookDecisionToProto(h.Decision),
+		CallId:    string(h.CallID),
+		Guardrail: toProtoGuardrailReview(h.Guardrail),
 	}
 }
 
@@ -896,12 +996,21 @@ func toProtoSession(s *session.Session, rm ResolvedModel, _ *mecatlv1.ServerCapa
 			Image: sessionCaps.Image,
 			Audio: sessionCaps.Audio,
 		},
-		Kind:            string(s.Kind),
-		Relationship:    toProtoSessionRelationship(s.Relationship),
-		DebugMcpServers: validStrings(s.DebugMCPServers),
-		DebugMcpTools:   validStrings(s.DebugMCPTools),
-		Placement:       placementMetadataToProto(s.Placement),
+		Kind:                   string(s.Kind),
+		Relationship:           toProtoSessionRelationship(s.Relationship),
+		DebugMcpServers:        validStrings(s.DebugMCPServers),
+		DebugMcpTools:          validStrings(s.DebugMCPTools),
+		Placement:              placementMetadataToProto(s.Placement),
+		LatestContextOccupancy: toProtoContextOccupancy(s),
 	}
+}
+
+func toProtoContextOccupancy(s *session.Session) *mecatlv1.ContextOccupancy {
+	occupancy, ok := s.LatestContextOccupancy()
+	if !ok {
+		return nil
+	}
+	return &mecatlv1.ContextOccupancy{InputTokens: int64(occupancy.InputTokens), Estimated: occupancy.Estimated}
 }
 
 func titlePayload(s *session.Session) session.TitlePayload {
@@ -1262,8 +1371,32 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	}
 }
 
+func guardrailApprovalKindFromProto(kind mecatlv1.GuardrailApprovalKind) session.GuardrailApprovalKind {
+	switch kind {
+	case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION:
+		return session.GuardrailApprovalAction
+	case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE:
+		return session.GuardrailApprovalResultRelease
+	default:
+		return ""
+	}
+}
+
+func approvalResolutionFromProto(approval *mecatlv1.ResumeApproval) agent.ApprovalResolution {
+	if approval == nil {
+		return agent.ApprovalResolution{}
+	}
+	return agent.ApprovalResolution{
+		AskID:    approval.GetAskId(),
+		ReviewID: approval.GetReviewId(),
+		Kind:     guardrailApprovalKindFromProto(approval.GetGuardrailKind()),
+		Verdict:  verdictFromResumeApproval(approval.GetVerdict()),
+	}
+}
+
 // verdictFromResumeApproval maps the required wire verdict to its domain value.
-// Unknown values fail safe to deny.
+// Unknown values map to a guaranteed-invalid sentinel so shared validation refuses
+// them without consuming the pending ask.
 func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict) session.ApprovalVerdict {
 	switch verdict {
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
@@ -1273,6 +1406,8 @@ func verdictFromResumeApproval(verdict mecatlv1.ApprovalVerdict) session.Approva
 	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY:
 		return session.VerdictDeny
 	default:
-		return session.VerdictDeny
+		return invalidTransportApprovalVerdict
 	}
 }
+
+const invalidTransportApprovalVerdict session.ApprovalVerdict = -1

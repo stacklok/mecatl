@@ -70,7 +70,7 @@ async function* singleValue<T>(value: T): AsyncIterable<T> {
 }
 
 describe("RPC transport catalog", () => {
-  it("all 83 raw RPCs are callable through the public raw seam", async () => {
+  it("all catalogued raw RPCs are callable through the public raw seam", async () => {
     const transport = new CatalogTransport();
     const raw = createRawClient({ transport });
 
@@ -88,7 +88,9 @@ describe("RPC transport catalog", () => {
       }
     }
 
-    expect(transport.calls).toHaveLength(84);
+    expect(transport.calls).toHaveLength(Object.keys(RPC_CATALOG).length);
+    expect(transport.calls).toContain("ListGuardrailCoverage");
+    expect(transport.calls).toContain("GetGuardrailReviewDetail");
     expect(transport.calls.sort()).toEqual(
       Object.values(RPC_CATALOG)
         .map(({ method }) => method)
@@ -97,11 +99,25 @@ describe("RPC transport catalog", () => {
   });
 
   it("HTTP-only controls do not satisfy RPC coverage", () => {
+    expect(RPC_CATALOG["HarnessService.ListGuardrailCoverage"].grpc.descriptor).toBe(
+      HarnessService.method.listGuardrailCoverage,
+    );
+    expect(RPC_CATALOG["HarnessService.GetGuardrailReviewDetail"].grpc.descriptor).toBe(
+      HarnessService.method.getGuardrailReviewDetail,
+    );
+    expect(RPC_CATALOG["HarnessService.ListGuardrailCoverage"].http).toMatchObject({
+      kind: "grpc",
+      rationale: "No HTTP route is defined for this guardrail RPC.",
+    });
+    expect(RPC_CATALOG["HarnessService.GetGuardrailReviewDetail"].http).toMatchObject({
+      kind: "grpc",
+      rationale: "No HTTP route is defined for this guardrail RPC.",
+    });
+
     const descriptorKeys = [
       ...Object.values(HarnessService.method).map((method) => `HarnessService.${method.name}`),
       ...Object.values(ScheduleService.method).map((method) => `ScheduleService.${method.name}`),
     ];
-    expect(descriptorKeys).toHaveLength(84);
     expect(Object.keys(RPC_CATALOG).sort()).toEqual(descriptorKeys.sort());
 
     const omitted = "HarnessService.GetSession";

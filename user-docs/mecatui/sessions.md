@@ -29,8 +29,11 @@ no chat qualifies, `mecatui` starts a new one. Storage and listing failures
 still return an error. You can combine either resume option with `--prompt` to
 send a task after the transcript loads.
 
-A resumed chat is the stored chat, not a copy. It keeps its model and exact
-server-owned placement. See [Session continuity](/features/session-continuity.md)
+A resumed chat is the stored chat, not a copy. It keeps its model, exact
+server-owned placement, cumulative token totals, and latest saved context meter.
+The meter includes an estimate marker when the server used display-only fallback
+accounting. A chat with no saved context measurement shows an unknown value until
+a completed turn establishes one. See [Session continuity](/features/session-continuity.md)
 for the storage and recovery behavior behind resume.
 
 To get the active session ID, run `/session` and press `c` to copy it. On a

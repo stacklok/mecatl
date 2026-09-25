@@ -25,6 +25,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	engineprompt "github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/acp"
@@ -177,9 +178,23 @@ type fakeLister struct {
 	cmds []server.Command
 }
 
-func (f fakeLister) List(_ context.Context, _ tool.Workspace) ([]server.Command, error) {
-	return f.cmds, nil
+func (f fakeLister) List(context.Context) ([]engineprompt.Command, error) {
+	out := make([]engineprompt.Command, 0, len(f.cmds))
+	for _, command := range f.cmds {
+		out = append(out, engineprompt.Command{Name: command.Name, Description: command.Description})
+	}
+	return out, nil
 }
+func (fakeLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (f fakeLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (server.CommandSourceBinding, func(), error) {
+	return f, func() {}, nil
+}
+func (fakeLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (fakeLister) Retire(session.SessionID) {}
 
 // editor is the scripted ACP CLIENT side of the test: it owns the agent's stdin
 // (it writes requests/responses there) and reads the agent's stdout (the agent's
@@ -994,8 +1009,8 @@ func TestADR_0291_ACPBindAndLoadAssertConfiguredPlacement(t *testing.T) {
 	if got := binds.Load(); got != 3 { // startup validation + both session/new calls
 		t.Fatalf("Bind calls = %d, want 3", got)
 	}
-	if got := reattaches.Load(); got != 4 { // create/load discovery plus both load attempts
-		t.Fatalf("Reattach calls = %d, want 4", got)
+	if got := reattaches.Load(); got != 2 { // only the two load attempts; source discovery is execution-independent
+		t.Fatalf("Reattach calls = %d, want 2", got)
 	}
 }
 

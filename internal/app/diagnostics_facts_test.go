@@ -214,3 +214,12 @@ func TestBuildNarratesFamilyFactsExactlyOnceAcrossSessions(t *testing.T) {
 		}
 	}
 }
+
+func TestLogGuardrailsPostureAutoWithoutCheckerIsUnsupervised(t *testing.T) {
+	diag := newCapturingDiagnostics()
+	logGuardrailsPosture(Config{Posture: PostureAuto, Diagnostics: diag})
+	records := strings.Join(diag.capturedStrings(), "\n")
+	if !strings.Contains(records, "UNSUPERVISED") || !strings.Contains(records, "does not enable") {
+		t.Fatalf("auto/no-checker posture diagnostic = %q", records)
+	}
+}

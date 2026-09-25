@@ -21,7 +21,7 @@ func TestRootAssemblerMatchesDiscoverInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiscoverInstructions: %v", err)
 	}
-	got, err := prompt.RootAssembler{}.Assemble(context.Background(), ws)
+	got, err := prompt.RootAssembler{Source: ws}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestRootAssemblerMatchesDiscoverInstructions(t *testing.T) {
 // instruction files are present.
 func TestRootAssemblerEmptyWorkspace(t *testing.T) {
 	ws := memfs.NewWorkspace("/proj")
-	got, err := prompt.RootAssembler{}.Assemble(context.Background(), ws)
+	got, err := prompt.RootAssembler{Source: ws}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -53,12 +53,12 @@ func TestAssembleWithManifestPreservesMessagesAndReportsBuiltInProvenance(t *tes
 	if err := ws.Write(context.Background(), "AGENTS.md", []byte("byte-stable instructions")); err != nil {
 		t.Fatal(err)
 	}
-	assembler := prompt.NewMultiAssembler(prompt.RootAssembler{})
-	want, err := assembler.Assemble(context.Background(), ws)
+	assembler := prompt.NewMultiAssembler(prompt.RootAssembler{Source: ws})
+	want, err := assembler.Assemble(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, manifest, err := prompt.AssembleWithManifest(context.Background(), ws, assembler)
+	got, manifest, err := prompt.AssembleWithManifest(context.Background(), assembler)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -129,42 +129,31 @@ write implementation before its test.
   - A **fake that stands in for the real seam and is never exercised
     against it** — see "Offline fakes + conformance suites" below.
 
-## mecatl gates — Taskfile ONLY
+## Worker verification
 
-Run every gate through the Taskfile. **Never** a bare `go build` in the
-repo root (drops stray binaries), and remember `engine/` is its OWN Go
-module: `go test ./...` from the repo root does NOT cross the boundary —
-engine tests are a second invocation from `engine/` (`task test` handles
-both).
+Follow [verification ownership](../../docs/development-process.md#verification-gates).
+Before reporting done, run the named AC proofs and the smallest affected package tests,
+including their direct integration boundaries. For concurrency changes, also run targeted
+`go test -race` commands. Run the applicable scoped lint commands from the task brief;
+report a missing scoped command rather than substituting repository-wide lint.
 
-Before reporting done, all of these must pass:
+The orchestrator owns `task test`, `task lint`, and `task test:race` on the assembled
+candidate. Do not run those aggregate gates in implementation, retry, or repair workers.
+Worker success means the task-local proofs passed; it does not mean the candidate passed
+final verification.
 
-- `task lint` — golangci-lint v2 + go vet, both modules (the depguard
-  allowlist + the DAG test enforce the layering rule; a stray
-  engine→internal import fails here).
-- `task test` — the complete fast offline suite (root module + engine module +
-  authn/provider modules + GOWORK=off standalone hygiene proofs), without the race
-  detector. This is the worker completion gate.
-- For concurrency changes, run targeted `go test -race` commands for the affected
-  package while iterating. The orchestrator runs the full `task test:race` gate after
-  integration and before the PR is ready.
-- **If you touched any markdown:** `task docs` — configuration-reference regeneration +
-  the matlatl strict link gate.
-- **If you touched the engine's exported API:** `task api:update` (commit
-  the changed `engine/api/*.txt` + a `engine/CHANGELOG.md` note) — the
-  `api-compat` gate fails the PR otherwise.
-- **If your task lands or extends a `landed` acceptance plan:**
-  `task ac-trace-strict` — every `verify:` test you named must resolve.
+Use Taskfile targets for builds and generation; a bare root `go build` leaves stray
+binaries. Focused `go test` commands are appropriate here. Run them from the owning
+module: root `go test ./...` does not cross into `engine/`, `authn/oidc/`, or providers.
 
-**Capture exit codes correctly.** A piped tail swallows the real exit
-code (`tail`'s exit overrides `task`'s). Use:
+- **If you touched any markdown:** run `task docs` before committing it.
+- **If you touched the engine's exported API:** run `task api:update` and include
+  the changed `engine/api/*.txt` plus an `engine/CHANGELOG.md` note.
+- **If your task extends a `landed` acceptance plan:** run `task ac-trace-strict`.
+  Workers never change the shared plan's status.
 
-```bash
-task lint;  LINT_RC=$?
-task test;  TEST_RC=$?
-```
-
-and gate "done" on those `$?` values — never on `task test 2>&1 | tail -3`.
+Capture each command's exit code directly. A successful trailing `tail` command does
+not prove the test command passed.
 
 ## Offline fakes + conformance suites
 
@@ -223,9 +212,9 @@ worktree). So:
   `impl-<plan>/<id>-attempt-<attempt>` in that worktree.
 - **Paste the literal output** of
   `git -C <worktree> log <accumulator>..HEAD --oneline`.
-- State the gate results: `task lint`, `task test` pass (with `$?` == 0),
-  plus `task docs` / `task api:update` / `task ac-trace-strict` if your
-  task touched markdown, the engine API, or a landed plan.
+- State the exact task-local verification commands, owning modules, and exit codes,
+  including targeted race/scoped lint and applicable docs/API/trace checks. Identify
+  aggregate verification as pending with the orchestrator; do not claim it passed.
 - List the `AC<n.n>` ids you satisfied and the named test that pins each.
 - State whether every implemented interface matches the approved contract; if not,
   report `contract-drift` and do not present the task as complete.

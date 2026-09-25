@@ -16,6 +16,7 @@ import {
   type Event,
   type EventUsage,
   imagePart,
+  type McpAuthorizationOperation,
   MecatlError,
   type PermissionVerdict,
   type Run,
@@ -23,6 +24,7 @@ import {
   textPart,
 } from "@stacklok-oss/mecatl-sdk";
 import { sanitizeUpstreamDetail } from "../http/problem.js";
+import { projectDeliveryNote } from "./delivery-note.js";
 
 const maximumInventoryPages = 20;
 const inventoryPageSize = 100;
@@ -51,6 +53,17 @@ export interface ActivityDelivery {
 
 export interface ChatService {
   activity(sessionId: string, request: ActivityRequest): AsyncIterable<ActivityDelivery>;
+  authorizationPresentation(
+    sessionId: string,
+    authorizationId: string,
+    signal?: AbortSignal,
+  ): Promise<string>;
+  authorizationFlow(
+    sessionId: string,
+    authorizationId: string,
+    operation: McpAuthorizationOperation,
+    signal: AbortSignal,
+  ): AsyncIterable<RunStreamEvent>;
   cancelRun(sessionId: string, runId: string): Promise<boolean>;
   /**
    * Creates an empty-history successor session, replacing this one's
@@ -65,7 +78,10 @@ export interface ChatService {
   detail(sessionId: string, signal?: AbortSignal): Promise<SessionDetailResponse>;
   forkSession(sessionId: string, request: ForkSessionRequest): Promise<{ id: string }>;
   listSessions(): Promise<ListSessionsResponse>;
-  renameSession(sessionId: string, title: string): Promise<{ title: string }>;
+  renameSession(
+    sessionId: string,
+    title: string,
+  ): Promise<{ title: string; titleProvenance: string; titleRevision: string }>;
   retry(sessionId: string, signal: AbortSignal): AsyncIterable<RunStreamEvent>;
   resolvePermission(
     sessionId: string,
@@ -168,6 +184,32 @@ export function createMecatlChatService(client: Client): ChatService {
         throw error;
       } finally {
         await activity.close().catch(() => undefined);
+      }
+    },
+
+    async authorizationPresentation(sessionId, authorizationId, signal) {
+      const session = await client.sessions.get(sessionId, { signal });
+      // The SDK validates the fresh absolute HTTP(S) URL. Do not keep it in a
+      // BFF cache or turn it into an embedded browser resource.
+      return session.mcpAuthorization(authorizationId).presentation({ signal });
+    },
+
+    async *authorizationFlow(sessionId, authorizationId, operation, signal) {
+      const session = await client.sessions.get(sessionId, { signal });
+      const authorization = session.mcpAuthorization(authorizationId);
+      const flow =
+        operation === "recheck"
+          ? authorization.recheck({}, { signal })
+          : authorization.cancel({}, { signal });
+      let continuationRunId = "";
+      for await (const event of flow) {
+        // The first status event has no run ID. A later non-empty ID belongs
+        // to the continuation, and is the exact run ordinary asks can target.
+        if (event.runId && event.runId !== continuationRunId) {
+          continuationRunId = event.runId;
+          yield { runId: event.runId, sessionId, type: "run.started" };
+        }
+        yield { event: serializeEvent(event), type: "run.event" };
       }
     },
 
@@ -301,6 +343,8 @@ export function createMecatlChatService(client: Client): ChatService {
             modelId: session.modelId,
             state: session.state,
             title: session.titleMetadata?.title || session.title || "Untitled chat",
+            titleProvenance: session.titleMetadata?.provenance ?? "",
+            titleRevision: session.titleMetadata?.revision?.toString() ?? "0",
             turns: session.turns,
             updatedAt: unixSecondsToIso(session.modifiedAtUnix),
           });
@@ -323,7 +367,11 @@ export function createMecatlChatService(client: Client): ChatService {
     async renameSession(sessionId, title) {
       const session = await client.sessions.get(sessionId);
       const snapshot = await session.rename(title);
-      return { title: snapshot.title?.value || title };
+      return {
+        title: snapshot.title?.value || title,
+        titleProvenance: snapshot.title?.provenance ?? "",
+        titleRevision: snapshot.title?.revision?.toString() ?? "0",
+      };
     },
 
     async *retry(sessionId, signal) {
@@ -371,39 +419,43 @@ export function createMecatlChatService(client: Client): ChatService {
       const transcript = await session.transcript({ signal });
       return {
         complete: transcript.complete,
-        messages: transcript.messages.map((message) => ({
-          images: message.parts.flatMap((part, index) => {
-            if (part.kind !== 1) return [];
-            const data = part.data.byteLength
-              ? Buffer.from(part.data).toString("base64")
-              : undefined;
-            if (data === undefined && !part.url) return [];
-            return [
-              {
-                ...(data === undefined ? {} : { data }),
-                mimeType: part.mimeType,
-                name: `Image ${index + 1}`,
-                ...(part.url ? { url: part.url } : {}),
-              },
-            ];
-          }),
-          role: message.role,
-          text: message.text,
-          toolCalls: message.toolCalls.map((call) => ({
-            args: call.args,
-            id: call.id,
-            name: call.name,
-          })),
-          ...(message.toolResult === undefined
-            ? {}
-            : {
-                toolResult: {
-                  callId: message.toolResult.callId,
-                  content: message.toolResult.content,
-                  isError: message.toolResult.isError,
+        messages: transcript.messages.map((message) => {
+          const note = message.role === "user" ? projectDeliveryNote(message.text) : undefined;
+          return {
+            ...(note === undefined ? {} : { delivery: note.delivery }),
+            images: message.parts.flatMap((part, index) => {
+              if (part.kind !== 1) return [];
+              const data = part.data.byteLength
+                ? Buffer.from(part.data).toString("base64")
+                : undefined;
+              if (data === undefined && !part.url) return [];
+              return [
+                {
+                  ...(data === undefined ? {} : { data }),
+                  mimeType: part.mimeType,
+                  name: `Image ${index + 1}`,
+                  ...(part.url ? { url: part.url } : {}),
                 },
-              }),
-        })),
+              ];
+            }),
+            role: message.role,
+            text: note?.text ?? message.text,
+            toolCalls: message.toolCalls.map((call) => ({
+              args: call.args,
+              id: call.id,
+              name: call.name,
+            })),
+            ...(message.toolResult === undefined
+              ? {}
+              : {
+                  toolResult: {
+                    callId: message.toolResult.callId,
+                    content: message.toolResult.content,
+                    isError: message.toolResult.isError,
+                  },
+                }),
+          };
+        }),
         sessionId: transcript.sessionId,
       };
     },
@@ -518,6 +570,7 @@ function unixSecondsToIso(seconds: bigint): string {
 export function serializeEvent(
   event: Event,
 ): Extract<RunStreamEvent, { type: "run.event" }>["event"] {
+  const note = event.kind === "user_prompt" ? projectDeliveryNote(event.text) : undefined;
   const usage =
     event.usage === undefined
       ? undefined
@@ -543,11 +596,12 @@ export function serializeEvent(
   }
 
   return {
+    ...(note === undefined ? {} : { delivery: note.delivery }),
     kind: event.kind,
     ...(event.payload === undefined ? {} : { payload: jsonSafe(event.payload) }),
     runId: event.runId,
     seq: event.seq.toString(),
-    text: event.text,
+    text: note?.text ?? event.text,
     turn: event.turn,
     unknown: false,
     ...(usage === undefined ? {} : { usage }),

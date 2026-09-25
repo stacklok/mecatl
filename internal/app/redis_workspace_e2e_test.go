@@ -21,7 +21,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-func TestRedisWorkspaceSlashCommandDiscoveryUsesReattachedWorkspace(t *testing.T) {
+func TestRedisWorkspaceSlashCommandDiscoveryDoesNotImplicitlyUseExecutionWorkspace(t *testing.T) {
 	mr := miniredis.RunT(t)
 	built, err := buildIsolated(t, t.Context(), Config{
 		RedisURL:            mr.Addr(),
@@ -87,11 +87,8 @@ func TestRedisWorkspaceSlashCommandDiscoveryUsesReattachedWorkspace(t *testing.T
 		t.Fatalf("Redis command discovery status = %d, want 200", status)
 	}
 	commands := got.GetCommands()
-	if len(commands) != 2 || commands[0].GetName() != "alpha" || commands[1].GetName() != "zeta" {
-		t.Fatalf("Redis commands = %+v, want sorted [alpha zeta]", commands)
-	}
-	if commands[1].GetDescription() != "native zeta" {
-		t.Fatalf("zeta description = %q, want higher-precedence .mecatl command", commands[1].GetDescription())
+	if len(commands) != 0 {
+		t.Fatalf("Redis execution files implicitly entered command discovery: %+v", commands)
 	}
 }
 

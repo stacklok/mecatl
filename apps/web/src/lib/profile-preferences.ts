@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useState } from "react";
+import { readUserScopedItem, writeUserScopedItem } from "./account-storage";
 
 const agentNameKey = "studio.profile.agent-name";
 const agentAvatarKey = "studio.profile.agent-avatar";
@@ -140,18 +141,9 @@ function applyUiScale(value: number) {
 }
 
 function readPreference(key: string): string | undefined {
-  try {
-    return window.localStorage.getItem(key) ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return readUserScopedItem(key) ?? undefined;
 }
 
 function writePreference(key: string, value?: string) {
-  try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
-  } catch {
-    // Browser storage is an enhancement; keep the in-memory value for this page.
-  }
+  writeUserScopedItem(key, value ?? null);
 }

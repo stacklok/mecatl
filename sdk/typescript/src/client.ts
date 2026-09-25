@@ -26,7 +26,9 @@ import {
   ContentSchema,
   type ConverseResponse,
   type Event,
+  type GetGuardrailReviewDetailResponse,
   HarnessService,
+  type ListGuardrailCoverageResponse,
   type ListSessionsRequest,
   type ListSessionsResponse,
   type Session as ProtoSession,
@@ -81,6 +83,7 @@ import {
   projectServerCompatibility,
   type Server,
   type ServerCompatibility,
+  ServerFeature,
 } from "./server.js";
 import {
   projectSessionSnapshot,
@@ -219,6 +222,30 @@ export interface Session {
    * @returns A detached SDK-owned connector inventory projection.
    */
   listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
+  /**
+   * Reads the effective guardrail coverage for this session.
+   *
+   * The server authorizes this diagnostic for the session owner. This RPC is
+   * available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The effective checker configuration and rule coverage.
+   */
+  guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse>;
+  /**
+   * Reads bounded live detail for one guardrail review in this session.
+   *
+   * The server authorizes this diagnostic for the session owner. This RPC is
+   * available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+   *
+   * @param reviewId - Review ID from the session's guardrail event.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The review concern, source display, and next action.
+   */
+  guardrailReviewDetail(
+    reviewId: string,
+    options?: RequestOptions,
+  ): Promise<GetGuardrailReviewDetailResponse>;
   /**
    * Starts or observes this session's whole-bundle workspace enrollment.
    *
@@ -624,6 +651,27 @@ class SessionImpl implements Session {
     return projectMcpConnectorInventory(response);
   }
 
+  async guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse> {
+    this.#operations.assertOpen();
+    return this.#operations.unary(
+      HarnessService.method.listGuardrailCoverage,
+      { sessionId: this.id },
+      options,
+    );
+  }
+
+  async guardrailReviewDetail(
+    reviewId: string,
+    options?: RequestOptions,
+  ): Promise<GetGuardrailReviewDetailResponse> {
+    this.#operations.assertOpen();
+    return this.#operations.unary(
+      HarnessService.method.getGuardrailReviewDetail,
+      { reviewId, sessionId: this.id },
+      options,
+    );
+  }
+
   async connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment> {
     this.#operations.assertOpen();
     assertRequestNotAborted(options, this.#operations.transportKind);
@@ -783,6 +831,27 @@ class SessionImpl implements Session {
   ): Promise<Run> {
     this.#assertRunAvailable();
     const encoded = encodePrompt(prompt, this.#promptCapabilities);
+    if (options.serverOwnedPlanContinuation === true) {
+      if (options.onPlanApproval !== undefined) {
+        throw new InvalidStateError("Server-owned plan continuation cannot use onPlanApproval", {
+          transport: this.#operations.transportKind,
+        });
+      }
+      // Reserve admission before awaiting compatibility; another run must not
+      // pass the local busy check while this one is still preflighting.
+      this.#busy = true;
+      try {
+        const features = await this.#operations.features(requestOptions);
+        if (!features.has(ServerFeature.ExactPlanAskControl)) {
+          throw new UnsupportedFeatureError(ServerFeature.ExactPlanAskControl, {
+            transport: this.#operations.transportKind,
+          });
+        }
+      } catch (error) {
+        this.#busy = false;
+        throw error;
+      }
+    }
     return this.#startRun(
       {
         kind: {
@@ -798,6 +867,9 @@ class SessionImpl implements Session {
             ),
             sessionId: this.id,
             text: encoded.text,
+            ...(options.serverOwnedPlanContinuation === true
+              ? { serverOwnedPlanContinuation: true }
+              : {}),
           },
         },
       },
@@ -808,6 +880,11 @@ class SessionImpl implements Session {
 
   async retry(options: RunOptions = {}, requestOptions?: RequestOptions): Promise<Run> {
     this.#assertRunAvailable();
+    if (options.serverOwnedPlanContinuation === true) {
+      throw new InvalidStateError("retry() cannot opt into server-owned plan continuation", {
+        transport: this.#operations.transportKind,
+      });
+    }
     return this.#startRun(
       { kind: { case: "retry", value: { sessionId: this.id } } },
       options,
@@ -1646,7 +1723,9 @@ function unwrapEvents(
             transport,
           });
         }
-        if (event.runId !== runId) {
+        const correlatedControlEvent =
+          event.type === "permission.ask" || event.type === "control.refused";
+        if (event.runId !== runId && !correlatedControlEvent) {
           throw new ProtocolError("The Converse stream changed run id", { transport });
         }
         if (event.type === "result") release();

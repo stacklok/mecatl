@@ -34,6 +34,7 @@ func BuildModel(docs Docs) *Model {
 		providersSubtree(docs),
 		credentialStoreSubtree(docs),
 		providerOverridesSubtree(docs),
+		harnessContextSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
 		commandRunnerSubtree(docs),
@@ -108,6 +109,47 @@ func renderType(t reflect.Type) string {
 	}
 }
 
+func harnessContextSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("HarnessContextSection", permconfig.HarnessContextSection{}, docs)
+	kindFields := fieldsOf("HarnessContextKind", permconfig.HarnessContextKind{}, docs)
+	for _, field := range kindFields {
+		switch field.Key {
+		case "mode":
+			field.ExampleValue = "combine"
+		case "exclude":
+			field.Nested = fieldsOf("HarnessContextExclude", permconfig.HarnessContextExclude{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
+		case "overrides":
+			field.Nested = fieldsOf("HarnessContextOverride", permconfig.HarnessContextOverride{}, docs)
+			field.SkeletonCollapse = true
+			field.ExampleValue = "[]"
+		}
+	}
+	for _, field := range fields {
+		if field.Key != "kinds" {
+			continue
+		}
+		for _, key := range []string{"instructions", "commands", "rules", "skills", "agent_defs"} {
+			field.Nested = append(field.Nested, &Field{Key: key, Type: "HarnessContextKind", Default: "(absent)", Nested: kindFields})
+		}
+	}
+	return &Subtree{
+		Key: "harness_context", Tier: TierOperator, CommentedOut: true,
+		Doc:    "Selects trusted deployment-registered instruction and customization source IDs independently from execution placement. Unknown configured IDs fail startup; registration support is deployment-specific.",
+		Fields: fields,
+		Example: []string{
+			"enabled_sources: [local]",
+			"kinds:",
+			"  instructions: {sources: [local], mode: combine}",
+			"  commands: {sources: [local], mode: combine}",
+			"  rules: {sources: [local], mode: combine}",
+			"  skills: {sources: [local], mode: combine}",
+			"  agent_defs: {sources: [local], mode: combine}",
+		},
+	}
+}
+
 func permissionsSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("Permissions", permconfig.Permissions{}, docs)
 	for _, f := range fields {
@@ -140,11 +182,12 @@ func guardrailsSubtree(docs Docs) *Subtree {
 	for _, f := range fields {
 		switch f.Key {
 		case "model":
-			f.EnableNote = "Setting a model here ENABLES guardrails (the guardrails-parity " +
-				"enable model). A configured model with no rules runs the default BLOCK set " +
-				"(WebSearch/WebFetch/mcp__*/Shell, enforcing; downgrade via defaultMode: advisory). " +
+			f.EnableNote = "Setting a model here ENABLES contextual guardrails. " +
+				"A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. " +
 				"Leave empty (and pass no --guardrails-model) to keep guardrails OFF."
 			f.ExampleValue = "claude-haiku-4-6"
+		case "taskWindow":
+			f.Default, f.ExampleValue = "1", "1"
 		case "rules":
 			f.Nested = fieldsOf("GuardrailRuleSpec", permconfig.GuardrailRuleSpec{}, docs)
 		}

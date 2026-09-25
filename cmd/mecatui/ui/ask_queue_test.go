@@ -369,6 +369,24 @@ func TestLateDuplicateOfAnsweredAskIgnored(t *testing.T) {
 	}
 }
 
+func TestSequentialSameCallApprovalOccurrencesRemainVisible(t *testing.T) {
+	for _, order := range []string{"ordinary_to_guardrail", "guardrail_to_reauthorization"} {
+		t.Run(order, func(t *testing.T) {
+			first := "sess-test-0001:1:call-1.a1:host"
+			second := "sess-test-0001:1:call-1.a2:host"
+			m := approvalModel(t, pendingAsk{AskID: first, Tool: "Read"})
+			m, _ = pressKey(m, tea.KeyPressMsg{Code: 'a', Text: "a"})
+			if m.phase != phaseRunning {
+				t.Fatalf("first approval did not resolve: %v", m.phase)
+			}
+			m = applyAll(m, client.PermissionAskMsg{AskID: second, Tool: "Read"})
+			if m.phase != phaseAwaitingApproval || approvalSurfaceOf(t, m).ask.AskID != second {
+				t.Fatalf("second occurrence was suppressed after resolving first: phase=%v ask=%+v", m.phase, approvalSurfaceOf(t, m).ask)
+			}
+		})
+	}
+}
+
 // TestConcurrentAsksWireRoundTrip crosses the client-layer seam end-to-end:
 // fakeRecver → the production Stream.ReadLoop → EventToMsg → Update, with a
 // scripted stream that surfaces TWO permission.ask events back-to-back before

@@ -36,7 +36,7 @@ func TestSkillCommandSourceExpansionIsLogicalAndPathFree(t *testing.T) {
 		}},
 	}
 	src := NewSkillCommandSource([]tool.SkillMeta{{Name: "deploy", Description: "deploy"}}, source)
-	out, expanded, err := prompt.NewSourceExpander(src).Expand(context.Background(), nil, "/deploy staging production")
+	out, expanded, err := prompt.NewSourceExpander(src).Expand(context.Background(), "/deploy staging production")
 	if err != nil || !expanded {
 		t.Fatalf("Expand = (%q, %v, %v)", out, expanded, err)
 	}

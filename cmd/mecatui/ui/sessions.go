@@ -89,6 +89,7 @@ func sessionsSurface(m *Model) *sessionsState {
 
 func (m Model) bindSessionID(id string) Model {
 	if id != m.sessionID {
+		m.admissionSubmission = nil
 		m.freshSessionBinding = false
 		m.compactPending = false
 		m.compactRequestToken++
@@ -293,11 +294,21 @@ func (m Model) loadSessionTranscript(row client.SessionListItem, inspect bool) (
 	return m, cmd, true
 }
 
-func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded conversation) (tea.Model, tea.Cmd, bool) {
+func (m Model) adoptAuthoritativeTranscript(row client.SessionListItem, loaded conversation, snapshot client.SessionSnapshot) (tea.Model, tea.Cmd, bool) {
 	m = m.endRun("")
 	m = m.resetSession()
 	m = m.bindSessionID(row.ID)
 	m.freshSessionBinding = false
+	m.caps = snapshot.Capabilities
+	(&m).setResolvedSessionModel(snapshot.ResolvedModel)
+	m.activeMode = client.ModeString(client.ModeFromString(snapshot.Mode))
+	m.usage = snapshot.Usage
+	if occupancy := snapshot.ContextOccupancy; occupancy != nil {
+		m.contextTokens = occupancy.InputTokens
+		m.contextEstimated = occupancy.Estimated
+	} else {
+		m.contextUnknown = true
+	}
 	m.sessionTitle = row.Title
 	m.sessionTitleProvenance = row.TitleProvenance
 	m.sessionTitleRevision = row.TitleRevision

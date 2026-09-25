@@ -322,3 +322,111 @@ func TestParseFailureSurfaced(t *testing.T) {
 		t.Fatal("parse(garbage) returned nil error, want a parse error")
 	}
 }
+
+func TestProviderModel(t *testing.T) {
+	const fixture = `{
+		"test": {
+			"id": "test",
+			"models": {
+				"middle": {"id": "middle", "name": "Middle", "family": "beta", "reasoning": true, "tool_call": true, "attachment": true, "modalities": {"input": ["text", "image"], "output": ["text"]}, "limit": {"context": 200, "input": 150, "output": 100}},
+				"last": {"id": "last", "name": "Last", "family": "gamma", "modalities": {"input": ["text"], "output": ["text"]}, "limit": {"context": 300, "input": 250, "output": 200}},
+				"first": {"id": "first", "name": "First", "family": "alpha", "modalities": {"input": ["text"], "output": ["text"]}, "limit": {"context": 100, "input": 75, "output": 50}}
+			}
+		}
+	}`
+	c, err := parse([]byte(fixture))
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	p, ok := c.Provider("test")
+	if !ok {
+		t.Fatal("test provider missing")
+	}
+
+	for _, want := range []struct {
+		id, name, family                string
+		context, input, output          int
+		reasoning, toolCall, attachment bool
+		modalities                      []string
+	}{
+		{"first", "First", "alpha", 100, 75, 50, false, false, false, []string{"text"}},
+		{"middle", "Middle", "beta", 200, 150, 100, true, true, true, []string{"text", "image"}},
+		{"last", "Last", "gamma", 300, 250, 200, false, false, false, []string{"text"}},
+	} {
+		got, ok := p.Model(want.id)
+		if !ok {
+			t.Errorf("Model(%q) = miss", want.id)
+			continue
+		}
+		if got.ID() != want.id || got.Name() != want.name || got.Family() != want.family ||
+			got.ContextLimit() != want.context || got.InputLimit() != want.input || got.OutputLimit() != want.output ||
+			got.SupportsReasoning() != want.reasoning || got.SupportsToolCall() != want.toolCall || got.SupportsAttachment() != want.attachment ||
+			!reflect.DeepEqual(got.InputModalities(), want.modalities) {
+			t.Errorf("Model(%q) = %+v, want complete metadata", want.id, got)
+		}
+	}
+	for _, id := range []string{"", "before", "first-middle", "zzzz"} {
+		if got, ok := p.Model(id); ok || !reflect.DeepEqual(got, Model{}) {
+			t.Errorf("Model(%q) = (%+v, %v), want (zero, false)", id, got, ok)
+		}
+	}
+	if got, ok := (Provider{}).Model("anything"); ok || !reflect.DeepEqual(got, Model{}) {
+		t.Errorf("zero Provider Model = (%+v, %v), want (zero, false)", got, ok)
+	}
+}
+
+func TestProviderModelMatchesEnumerationAndPreservesImmutability(t *testing.T) {
+	p, ok := Default().Provider("openrouter")
+	if !ok {
+		t.Fatal("openrouter missing")
+	}
+	models := p.Models()
+	if len(models) == 0 {
+		t.Fatal("openrouter models empty")
+	}
+	for _, want := range models {
+		got, ok := p.Model(want.ID())
+		if !ok || !reflect.DeepEqual(got, want) {
+			t.Errorf("Model(%q) = (%+v, %v), want (%+v, true)", want.ID(), got, ok, want)
+		}
+	}
+
+	id := models[0].ID()
+	models[0] = Model{}
+	if got, ok := p.Model(id); !ok || got.ID() != id {
+		t.Errorf("Model(%q) changed after Models() slice mutation: (%+v, %v)", id, got, ok)
+	}
+	model, ok := p.Model(id)
+	if !ok {
+		t.Fatalf("Model(%q) missing", id)
+	}
+	modalities := model.InputModalities()
+	if len(modalities) > 0 {
+		modalities[0] = "tampered"
+		if again := model.InputModalities(); again[0] == "tampered" {
+			t.Error("mutating InputModalities() result corrupted the model")
+		}
+	}
+}
+
+func TestProviderModelAllocs(t *testing.T) {
+	p, ok := Default().Provider("openrouter")
+	if !ok {
+		t.Fatal("openrouter missing")
+	}
+	models := p.Models()
+	if len(models) == 0 {
+		t.Fatal("openrouter models missing")
+	}
+	id := models[len(models)/2].ID()
+	if _, ok := p.Model(id); !ok {
+		t.Fatalf("Model(%q) missing", id)
+	}
+	if allocs := testing.AllocsPerRun(1000, func() {
+		if _, ok := p.Model(id); !ok {
+			t.Fatal("Model lookup missed")
+		}
+	}); allocs != 0 {
+		t.Errorf("Model(%q) allocations = %v, want 0", id, allocs)
+	}
+}

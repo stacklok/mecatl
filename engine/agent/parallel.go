@@ -1123,7 +1123,7 @@ func (t *ParallelTool) runBranch(ctx context.Context, callID session.ToolCallID,
 		return res, session.StopError
 	}
 
-	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt})
+	run := branchEngine.Run(ctx, childSess, childEnv, RunRequest{Text: prompt, reviewRoot: caps.reviewRoot, reviewIsolated: true})
 	// A Parallel branch always runs in its OWN isolated fork, so its Shell asks are eligible
 	// for the A2 worktree-safe auto-approve; the parent caps carry surface/headless
 	// posture (threaded from Execute → runBranches → runBranch). We REUSE

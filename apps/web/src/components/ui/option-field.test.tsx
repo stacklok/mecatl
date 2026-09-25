@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

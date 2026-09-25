@@ -29,6 +29,8 @@ export const sessionSummarySchema = z.object({
   modelId: z.string(),
   state: z.string(),
   title: z.string(),
+  titleProvenance: z.string(),
+  titleRevision: z.string().regex(/^(0|[1-9]\d*)$/),
   turns: z.number().int().nonnegative(),
   updatedAt: z.string(),
 });
@@ -111,6 +113,8 @@ export const renameSessionRequestSchema = z.object({
 
 export const renameSessionResponseSchema = z.object({
   title: z.string(),
+  titleProvenance: z.string(),
+  titleRevision: z.string().regex(/^(0|[1-9]\d*)$/),
 });
 
 export const transcriptToolCallSchema = z.object({
@@ -158,13 +162,24 @@ export function isPaddedBase64(value: string): boolean {
   return padding <= 2;
 }
 
+const maximumImageBytes = 10 * 1024 * 1024;
+const maximumPromptImageBytes = 20 * 1024 * 1024;
+
+/** The base64 alphabet and padding are checked separately before this size is used. */
+function decodedBase64Bytes(value: string): number {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
+}
+
 const base64Schema = z
   .string()
   .min(4)
-  // 10 MiB, encoded as padded base64. The SDK remains authoritative for
-  // decoded per-part and aggregate prompt limits.
+  // The encoded cap bounds work before checking the exact decoded 10 MiB limit.
   .max(13_981_016)
-  .refine(isPaddedBase64, { message: "Must be padded standard base64" });
+  .refine(isPaddedBase64, { message: "Must be padded standard base64" })
+  .refine((value) => decodedBase64Bytes(value) <= maximumImageBytes, {
+    message: "Image exceeds the 10 MiB decoded-size limit.",
+  });
 
 export const imageAttachmentSchema = z.object({
   data: base64Schema,
@@ -179,7 +194,15 @@ export const transcriptImageSchema = z.object({
   url: z.string().url().max(2_048).optional(),
 });
 
+export const deliveryNoteSchema = z.object({
+  fireId: z.string(),
+  kind: z.enum(["started", "completed"]),
+  scheduleName: z.string(),
+  stop: z.string().optional(),
+});
+
 export const transcriptMessageSchema = z.object({
+  delivery: deliveryNoteSchema.optional(),
   images: z.array(transcriptImageSchema),
   role: z.string(),
   text: z.string(),
@@ -199,9 +222,9 @@ export const startRunRequestSchema = z
     prompt: z.string().trim().max(1_000_000),
   })
   .refine(
-    // Includes one base64-padding quantum per allowed part. The SDK checks
-    // the exact decoded 20 MiB aggregate limit after this JSON-size bound.
-    (request) => request.images.reduce((size, image) => size + image.data.length, 0) <= 27_962_096,
+    (request) =>
+      request.images.reduce((size, image) => size + decodedBase64Bytes(image.data), 0) <=
+      maximumPromptImageBytes,
     { message: "Prompt images exceed the 20 MiB aggregate limit." },
   )
   .refine((request) => request.prompt.length > 0 || request.images.length > 0, {
@@ -221,6 +244,7 @@ export const steerRunRequestSchema = z.object({
 export const eventUsageSchema = sessionUsageSchema;
 
 export const serializedMecatlEventSchema = z.object({
+  delivery: deliveryNoteSchema.optional(),
   kind: z.string(),
   payload: z.unknown().optional(),
   raw: z.unknown().optional(),

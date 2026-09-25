@@ -117,6 +117,9 @@ type SessionMeta struct {
 	TitleAttempts      []session.TitleAttempt
 	// TokenUsage is the canonical durable accounting ledger supplied by snapshot metadata.
 	TokenUsage map[session.UsageKind]session.TokenUsage
+	// LatestContextOccupancy is the optional display-only context meter supplied by
+	// the event-log host's stored snapshot metadata, never reconstructed from events.
+	LatestContextOccupancy *session.ContextOccupancy
 	// Kind and Relationship are the trusted producer taxonomy supplied alongside
 	// the event stream. An empty kind is legacy and folds to unknown.
 	Kind         session.SessionKind
@@ -211,6 +214,9 @@ func Fold(meta SessionMeta, events iter.Seq2[session.Event, error]) (*session.Se
 	s.DebugMCPTools = append([]string(nil), meta.DebugMCPTools...)
 	s.DebugTargetFingerprint = meta.DebugTargetFingerprint
 	s.RestoreTitleMetadata(meta.Title, meta.TitleProvenance, meta.TitleRevision, meta.TitleGeneration, meta.TitleSourcePrompts, meta.TitleAttempts)
+	if meta.LatestContextOccupancy != nil {
+		s.RecordLatestContextOccupancy(*meta.LatestContextOccupancy)
+	}
 	if f.pending != nil {
 		// AWAITING: the live session at pause time holds the assistant message WITH its
 		// not-yet-answered tool call (RecordAssistant runs before dispatch; the ask
@@ -568,6 +574,10 @@ func (f *folder) consumeHistoryEvent(ev session.Event) {
 			return
 		}
 		msg := session.NewUserMessageWithParts(ev.UserPrompt.Text, ev.UserPrompt.Parts)
+		msg.UserPromptProvenance = ev.UserPrompt.Provenance
+		if msg.UserPromptProvenance == session.UserPromptProvenanceUnknown && ev.UserPrompt.Synthetic {
+			msg.UserPromptProvenance = session.UserPromptProvenanceHarness
+		}
 		f.messages = append(f.messages, msg)
 		if f.firstGenuineText == "" && session.IsGenuineUserPrompt(msg) && strings.TrimSpace(msg.Text) != "" {
 			f.firstGenuineText = msg.Text

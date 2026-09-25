@@ -85,6 +85,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
 		{"POST /v1/sessions/{id}/controls/resolve-ask", h.resolveRunAsk},
+		{"POST /v1/sessions/{id}/controls/resolve-plan-ask", h.resolvePlanAsk},
 		{"POST /v1/sessions/{id}/controls/cancel", h.cancelRun},
 		{"POST /v1/sessions/{id}/controls/steer", h.steerRun},
 		{"POST /v1/sessions/{id}/controls/cancel-steer", h.cancelRunSteer},
@@ -347,6 +348,11 @@ func resolvedModelToJSON(rm ResolvedModel) *resolvedModelJSON {
 	return &resolvedModelJSON{ProviderID: rm.ProviderID, ModelID: rm.ModelID, ContextWindow: rm.ContextWindow, ReasoningEffort: rm.ReasoningEffort}
 }
 
+type contextOccupancyJSON struct {
+	InputTokens int  `json:"input_tokens"`
+	Estimated   bool `json:"estimated"`
+}
+
 type sessionResp struct {
 	SessionID string                 `json:"session_id"`
 	State     string                 `json:"state"`
@@ -365,9 +371,10 @@ type sessionResp struct {
 	// read surface is consistent with gRPC GetSession: the EFFECTIVE provider+model
 	// this session resolved to (from Service.ResolvedModel, the composition single
 	// source). Omitted (nil) when no model resolved (older-server-equivalent).
-	ResolvedModel *resolvedModelJSON            `json:"resolved_model,omitempty"`
-	Kind          string                        `json:"kind,omitempty"`
-	Relationship  *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
+	ResolvedModel          *resolvedModelJSON            `json:"resolved_model,omitempty"`
+	LatestContextOccupancy *contextOccupancyJSON         `json:"latest_context_occupancy,omitempty"`
+	Kind                   string                        `json:"kind,omitempty"`
+	Relationship           *mecatlv1.SessionRelationship `json:"relationship,omitempty"`
 }
 
 type sessionTitleJSON struct {
@@ -417,7 +424,8 @@ type modeBody struct {
 }
 
 type promptBody struct {
-	Text string `json:"text"`
+	Text                        string `json:"text"`
+	ServerOwnedPlanContinuation bool   `json:"server_owned_plan_continuation,omitempty"`
 	// Parts carries non-text media (image/audio) alongside the text. Each part
 	// names its kind ("image"/"audio"), mime type, and EITHER base64 data OR a url.
 	Parts []promptContentBody `json:"parts,omitempty"`
@@ -667,19 +675,28 @@ func (h *HTTPHandler) writeSuccessor(ctx context.Context, w http.ResponseWriter,
 func (h *HTTPHandler) writeSession(w http.ResponseWriter, status int, sess *session.Session) {
 	scaps := h.svc.sessionCapabilitiesFor(sess)
 	writeJSON(w, status, sessionResp{
-		SessionID:           string(sess.ID),
-		State:               string(sess.State),
-		Mode:                string(sess.Mode),
-		Placement:           placementMetadataToJSON(sess.Placement),
-		Turns:               sess.Counters.Turns,
-		ToolCalls:           sess.Counters.ToolCalls,
-		SessionCapabilities: &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
-		TitleMetadata:       sessionTitleToJSON(titlePayload(sess)),
-		TokenUsage:          tokenUsageToJSON(sess.TokenUsageSnapshot()),
-		ResolvedModel:       resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
-		Kind:                string(sess.Kind),
-		Relationship:        toProtoSessionRelationship(sess.Relationship),
+		SessionID:              string(sess.ID),
+		State:                  string(sess.State),
+		Mode:                   string(sess.Mode),
+		Placement:              placementMetadataToJSON(sess.Placement),
+		Turns:                  sess.Counters.Turns,
+		ToolCalls:              sess.Counters.ToolCalls,
+		SessionCapabilities:    &sessionCapabilitiesJSON{Image: scaps.Image, Audio: scaps.Audio},
+		TitleMetadata:          sessionTitleToJSON(titlePayload(sess)),
+		TokenUsage:             tokenUsageToJSON(sess.TokenUsageSnapshot()),
+		ResolvedModel:          resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
+		LatestContextOccupancy: contextOccupancyToJSON(sess),
+		Kind:                   string(sess.Kind),
+		Relationship:           toProtoSessionRelationship(sess.Relationship),
 	})
+}
+
+func contextOccupancyToJSON(sess *session.Session) *contextOccupancyJSON {
+	occupancy, ok := sess.LatestContextOccupancy()
+	if !ok {
+		return nil
+	}
+	return &contextOccupancyJSON{InputTokens: occupancy.InputTokens, Estimated: occupancy.Estimated}
 }
 
 func tokenUsageToJSON(in map[session.UsageKind]session.TokenUsage) map[string]tokenUsageJSON {
@@ -952,7 +969,13 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	var run *agent.Run
+	var err error
+	if body.ServerOwnedPlanContinuation {
+		run, err = h.svc.StartInteractiveRunContentWithPlanContinuation(r.Context(), id, body.Text, parts)
+	} else {
+		run, err = h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1333,6 +1356,8 @@ type resolveRunAskBody struct {
 	ExpectedRunID string `json:"expected_run_id"`
 	AskID         string `json:"ask_id"`
 	Verdict       string `json:"verdict"`
+	ReviewID      string `json:"review_id,omitempty"`
+	GuardrailKind string `json:"guardrail_kind,omitempty"`
 }
 
 type cancelRunBody struct {
@@ -1394,7 +1419,34 @@ func (h *HTTPHandler) resolveRunAsk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
 		return
 	}
-	ack, err := h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
+	var ack RunAskAcknowledgement
+	var err error
+	if body.ReviewID != "" || body.GuardrailKind != "" {
+		ack, err = h.svc.ResolveScopedRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, agent.ApprovalResolution{
+			AskID: body.AskID, ReviewID: body.ReviewID, Kind: session.GuardrailApprovalKind(body.GuardrailKind), Verdict: verdict,
+		})
+	} else {
+		ack, err = h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
+	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resolveRunAskResponse(ack))
+}
+
+// resolvePlanAsk is the strict acknowledgement-only HTTP mirror of ResolvePlanAsk.
+func (h *HTTPHandler) resolvePlanAsk(w http.ResponseWriter, r *http.Request) {
+	var body resolveRunAskBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	verdict, ok := strictRunAskVerdict(body.Verdict)
+	if body.ExpectedRunID == "" || body.AskID == "" || !ok {
+		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
+		return
+	}
+	ack, err := h.svc.ResolvePlanAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -2115,13 +2167,10 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-// listModels handles GET /v1/models. Threads (issue #262) the per-provider
-// live-listing status alongside the model list; ListModels itself triggers
-// the on-demand refresh (when installed), so ProviderStatuses is read AFTER
-// it to reflect the just-completed refresh.
+// listModels handles GET /v1/models from one captured model/status publication.
 func (h *HTTPHandler) listModels(w http.ResponseWriter, r *http.Request) {
-	models := h.svc.ListModels(r.Context())
-	writeJSON(w, http.StatusOK, &mecatlv1.ListModelsResponse{Models: models, ProviderStatus: h.svc.ProviderStatuses()})
+	view := h.svc.ListModelSnapshot(r.Context())
+	writeJSON(w, http.StatusOK, &mecatlv1.ListModelsResponse{Models: view.Models, ProviderStatus: view.ProviderStatus})
 }
 
 // getSoul handles GET /v1/soul.

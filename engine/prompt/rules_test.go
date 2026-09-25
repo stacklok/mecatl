@@ -21,7 +21,7 @@ func (f fakeRulesSource) ListRules(context.Context) ([]prompt.Rule, error) {
 }
 
 func TestRulesAssemblerNilSource(t *testing.T) {
-	got, err := prompt.RulesAssembler{Src: nil}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: nil}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestRulesAssemblerNilSource(t *testing.T) {
 }
 
 func TestRulesAssemblerErrorSource(t *testing.T) {
-	got, err := prompt.RulesAssembler{Src: fakeRulesSource{err: errors.New("disk on fire")}}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: fakeRulesSource{err: errors.New("disk on fire")}}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble must fail soft on source error, got err=%v", err)
 	}
@@ -41,7 +41,7 @@ func TestRulesAssemblerErrorSource(t *testing.T) {
 }
 
 func TestRulesAssemblerEmpty(t *testing.T) {
-	got, err := prompt.RulesAssembler{Src: fakeRulesSource{}}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: fakeRulesSource{}}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestRulesAssemblerOneRuleUnconditional(t *testing.T) {
 	src := fakeRulesSource{rules: []prompt.Rule{
 		{Name: "testing", Body: "always use t.Run for subtests\n", Origin: prompt.RuleOriginProject},
 	}}
-	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestRulesAssemblerSanitizesFenceName(t *testing.T) {
 	src := fakeRulesSource{rules: []prompt.Rule{
 		{Name: "evil\"<x>\nsafety", Body: "body\n", Origin: prompt.RuleOriginProject},
 	}}
-	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestRulesAssemblerPathScoped(t *testing.T) {
 	src := fakeRulesSource{rules: []prompt.Rule{
 		{Name: "api", Body: "use the v2 API\n", Paths: []string{"**/*_test.go", "**/*.go"}, Origin: prompt.RuleOriginProject},
 	}}
-	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestRulesAssemblerByteCap(t *testing.T) {
 	src := fakeRulesSource{rules: rules}
 
 	// Render with a very large cap to see all rules, then measure the header.
-	all, err := prompt.RulesAssembler{Src: src, MaxBytes: 100000, MaxCount: 100}.Assemble(context.Background(), nil)
+	all, err := prompt.RulesAssembler{Src: src, MaxBytes: 100000, MaxCount: 100}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRulesAssemblerByteCap(t *testing.T) {
 	}
 	capAtFirst := firstCloseIdx + len("</rule>")
 
-	got, err := prompt.RulesAssembler{Src: src, MaxBytes: capAtFirst}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: src, MaxBytes: capAtFirst}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestRulesAssemblerCountCap(t *testing.T) {
 	}
 	src := fakeRulesSource{rules: rules}
 
-	got, err := prompt.RulesAssembler{Src: src, MaxCount: 2}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: src, MaxCount: 2}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestRulesAssemblerRecognisedByIsInjectedTurn0Fragment(t *testing.T) {
 	src := fakeRulesSource{rules: []prompt.Rule{
 		{Name: "rule1", Body: "body\n", Origin: prompt.RuleOriginProject},
 	}}
-	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background(), nil)
+	got, err := prompt.RulesAssembler{Src: src}.Assemble(context.Background())
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}

@@ -57,6 +57,7 @@ type TurnEndMsg struct {
 	Turn       int32
 	Usage      Usage
 	DurationMs int64
+	Estimated  bool
 }
 
 // ToolCallMsg announces a tool invocation (status: running until its result).
@@ -148,11 +149,20 @@ type MCPAuthorizationMsg struct {
 // echoed back in ResumeApproval. RunID is the opaque exact-run identity used by
 // out-of-band run controls.
 type PermissionAskMsg struct {
-	RunID  string
-	AskID  string
-	Tool   string
-	Args   string // raw JSON
-	Reason string
+	RunID         string
+	AskID         string
+	Tool          string
+	Args          string // raw JSON
+	Reason        string
+	ExpectedRunID string
+	Guardrail     *GuardrailApprovalScope
+}
+
+// GuardrailApprovalScope distinguishes an outbound action approval from release
+// of an already-produced, privately-held result.
+type GuardrailApprovalScope struct {
+	ReviewID, Kind, GrantDigest  string
+	SessionOnly, RepeatAvailable bool
 }
 
 // PermissionRetractMsg withdraws a previously surfaced permission ask: the
@@ -186,10 +196,19 @@ const (
 // per-tool phases), and the Decision (info/blocked/modified/advisory) so the ui can
 // render it distinctly from a compaction notice and colour a blocked or advisory hook.
 type HookMsg struct {
-	Text     string
-	Phase    string
-	Tool     string
-	Decision HookDecision
+	Text      string
+	Phase     string
+	Tool      string
+	Decision  HookDecision
+	Guardrail *GuardrailReview
+}
+
+// GuardrailReview is the machine-only durable review projection. Human rationale
+// is fetched separately from the live detail RPC.
+type GuardrailReview struct {
+	ReviewID, Job, Assessment, Inspection, Disposition, ReasonCode string
+	RuleID, RuleOrigin, CheckerProviderID, CheckerModelID          string
+	ConcernRefs, SourceRefs                                        []string
 }
 
 // SubagentKind discriminates the three subagent.* event kinds carried by a
@@ -520,6 +539,15 @@ type NoProgressMsg struct{ Text string }
 // a transient status line (like NoProgressMsg); it is ABSENT on a cache hit
 // (OpenRouter strips the metadata) — the footer simply doesn't move.
 type ProviderRouteMsg struct{ Text string }
+
+// ControlRefusedMsg identifies the exact submitted approval control the server
+// rejected. Category is a stable machine code; Text is display-only.
+type ControlRefusedMsg struct {
+	AskID    string
+	Category string
+	RunID    string
+	Text     string
+}
 
 // RecoverNoticeMsg is an advisory notice emitted at run start when a session that
 // failed on a PERMANENT provider error is recovered for re-entry. It is rendered as
@@ -1138,7 +1166,7 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 		return TurnStartMsg{Turn: ev.GetTurn()}
 	case "turn.end":
 		te := ev.GetTurnEnd()
-		return TurnEndMsg{Turn: ev.GetTurn(), Usage: usageFrom(te.GetUsage()), DurationMs: te.GetDurationMs()}
+		return TurnEndMsg{Turn: ev.GetTurn(), Usage: usageFrom(te.GetUsage()), DurationMs: te.GetDurationMs(), Estimated: te.GetEstimated()}
 	case "message.delta":
 		return AssistantDeltaMsg{Turn: ev.GetTurn(), Text: ev.GetText()}
 	case "reasoning.delta":
@@ -1158,20 +1186,13 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "tool.progress":
 		return ToolProgressMsg{Text: ev.GetText()}
 	case "permission.ask":
-		a := ev.GetAsk()
-		return PermissionAskMsg{RunID: ev.GetRunId(), AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason()}
+		return permissionAskMsg(ev)
 	case "permission.retract":
 		// The retraction payload rides the same ask field, carrying the AskID only
 		// (server-authored; no tool/args/reason).
 		return PermissionRetractMsg{AskID: ev.GetAsk().GetAskId()}
 	case "hook":
-		h := ev.GetHook()
-		return HookMsg{
-			Text:     ev.GetText(),
-			Phase:    h.GetPhase(),
-			Tool:     h.GetTool(),
-			Decision: hookDecisionFrom(h.GetDecision()),
-		}
+		return hookMsg(ev)
 	case "result":
 		return resultMsg(ev.GetResult())
 	case "approval":
@@ -1206,6 +1227,38 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	}
 }
 
+func permissionAskMsg(ev *mecatlv1.Event) PermissionAskMsg {
+	a := ev.GetAsk()
+	msg := PermissionAskMsg{RunID: ev.GetRunId(), AskID: a.GetAskId(), Tool: a.GetTool(), Args: a.GetArgs(), Reason: a.GetReason(), ExpectedRunID: ev.GetRunId()}
+	if scope := a.GetGuardrail(); scope != nil {
+		kind := string(SessionKindUnknown)
+		switch scope.GetKind() {
+		case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION:
+			kind = "action"
+		case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE:
+			kind = "result_release"
+		}
+		msg.Guardrail = &GuardrailApprovalScope{ReviewID: scope.GetReviewId(), Kind: kind, GrantDigest: scope.GetGrantDigest(), SessionOnly: scope.GetSessionOnly(), RepeatAvailable: scope.GetRepeatAvailable()}
+	}
+	return msg
+}
+
+func hookMsg(ev *mecatlv1.Event) HookMsg {
+	h := ev.GetHook()
+	msg := HookMsg{Text: ev.GetText(), Phase: h.GetPhase(), Tool: h.GetTool(), Decision: hookDecisionFrom(h.GetDecision())}
+	if review := h.GetGuardrail(); review != nil {
+		machine := &GuardrailReview{ReviewID: review.GetReviewId(), Job: guardrailJob(review.GetJob()), Assessment: guardrailAssessment(review.GetAssessment()), Inspection: guardrailInspection(review.GetInspection()), Disposition: guardrailDisposition(review.GetDisposition()), ReasonCode: review.GetReasonCode(), RuleID: review.GetRuleId(), RuleOrigin: review.GetRuleOrigin(), CheckerProviderID: review.GetCheckerProviderId(), CheckerModelID: review.GetCheckerModelId()}
+		for _, ref := range review.GetConcerns() {
+			machine.ConcernRefs = append(machine.ConcernRefs, ref.GetRef())
+		}
+		for _, ref := range review.GetSources() {
+			machine.SourceRefs = append(machine.SourceRefs, ref.GetRef())
+		}
+		msg.Guardrail = machine
+	}
+	return msg
+}
+
 func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 	if title == nil {
 		return SessionTitleMsg{}
@@ -1225,6 +1278,9 @@ func sessionTitleMsg(title *mecatlv1.SessionTitle) SessionTitleMsg {
 // the caller falls through to the delegation switch.
 func advisoryEventToMsg(ev *mecatlv1.Event) tea.Msg {
 	switch ev.GetType() {
+	case "control.refused":
+		refused := ev.GetControlRefused()
+		return ControlRefusedMsg{AskID: refused.GetAskId(), Category: refused.GetCategory(), RunID: ev.GetRunId(), Text: ev.GetText()}
 	case "model.retry":
 		return ModelRetryMsg{Text: ev.GetText()}
 	case "compaction":

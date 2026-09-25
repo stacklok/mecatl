@@ -44,7 +44,7 @@ func NewPermissionPolicy(base port.PermissionPolicy, store port.SessionStore, ta
 func (p *PermissionPolicy) Evaluate(ctx context.Context, id session.SessionID, mode session.PermissionMode, call session.ToolCall, ws tool.WorkspaceReader) governance.PermissionDecision {
 	decision := p.base.Evaluate(ctx, id, mode, call, ws)
 	if call.Name == ToolName {
-		if decision.Effect == governance.Deny || decision.Effect == governance.Ask && decision.ConfiguredAsk {
+		if decision.Effect == governance.Deny || decision.Effect == governance.Ask && decision.AskProvenance == governance.AskProvenanceConfigured {
 			return decision
 		}
 		return governance.PermissionDecision{Effect: governance.Allow, Reason: "target-bound debug evidence is read-only"}
@@ -52,7 +52,7 @@ func (p *PermissionPolicy) Evaluate(ctx context.Context, id session.SessionID, m
 	if !p.selected[call.Name] {
 		return decision
 	}
-	if decision.Effect == governance.Deny || decision.Effect == governance.Ask && decision.ConfiguredAsk {
+	if decision.Effect == governance.Deny || decision.Effect == governance.Ask && decision.AskProvenance == governance.AskProvenanceConfigured {
 		return decision
 	}
 	target, err := p.store.Load(ctx, p.target)

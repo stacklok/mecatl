@@ -21,16 +21,24 @@ type ctxMarkerKey struct{}
 type recordingSink struct {
 	mu        sync.Mutex
 	ctxs      []context.Context
+	events    []session.Event
 	sawMarker atomic.Bool
 }
 
-func (s *recordingSink) Emit(ctx context.Context, _ session.Event) {
+func (s *recordingSink) Emit(ctx context.Context, ev session.Event) {
 	if v, _ := ctx.Value(ctxMarkerKey{}).(string); v == "from-request" {
 		s.sawMarker.Store(true)
 	}
 	s.mu.Lock()
 	s.ctxs = append(s.ctxs, ctx)
+	s.events = append(s.events, ev)
 	s.mu.Unlock()
+}
+
+func (s *recordingSink) snapshotEvents() []session.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]session.Event(nil), s.events...)
 }
 
 func (s *recordingSink) snapshot() []context.Context {

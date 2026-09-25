@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
+// @vitest-environment happy-dom
 
-import { describe, expect, it } from "vitest";
-import { chatImageDisplay, imagePreview, imageSource, localFileKind } from "./local-file-preview";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  acceptImageAttachments,
+  chatImageDisplay,
+  imagePreview,
+  imageSource,
+  localFileKind,
+  maxImageAttachmentBytes,
+  maxImagePromptBytes,
+  readImageAttachment,
+} from "./local-file-preview";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("local file previews", () => {
   it("classifies supported browser previews", () => {
@@ -53,5 +65,49 @@ describe("local file previews", () => {
         kind: "name",
       });
     }
+  });
+
+  it("rejects unsupported, empty, oversize, and unreadable image selections", async () => {
+    await expect(
+      readImageAttachment(new File(["text"], "notes.txt", { type: "text/plain" })),
+    ).rejects.toThrow("is not an image");
+    await expect(
+      readImageAttachment(new File([], "empty.png", { type: "image/png" })),
+    ).rejects.toThrow("is empty");
+    await expect(
+      readImageAttachment(
+        new File([new Uint8Array(maxImageAttachmentBytes + 1)], "huge.png", {
+          type: "image/png",
+        }),
+      ),
+    ).rejects.toThrow("10 MB image limit");
+
+    class BrokenFileReader {
+      error = new Error("File read failed");
+      onerror: (() => void) | null = null;
+      readAsDataURL() {
+        this.onerror?.();
+      }
+    }
+    vi.stubGlobal("FileReader", BrokenFileReader);
+    await expect(
+      readImageAttachment(new File(["data"], "broken.png", { type: "image/png" })),
+    ).rejects.toThrow("File read failed");
+  });
+
+  it("accepts exactly twenty MiB of images and explains an aggregate overflow", () => {
+    const image = (id: string, size: number) => ({
+      data: "YQ==",
+      id,
+      mimeType: "image/png",
+      name: `${id}.png`,
+      size,
+    });
+    const selected = acceptImageAttachments(
+      [image("first", maxImagePromptBytes / 2)],
+      [image("second", maxImagePromptBytes / 2), image("overflow", 1)],
+    );
+    expect(selected.accepted.map((item) => item.id)).toEqual(["second"]);
+    expect(selected.errors).toEqual(["overflow.png exceeds the 20 MB total image limit."]);
   });
 });

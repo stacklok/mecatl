@@ -35,7 +35,7 @@ func countingSessionEngineFactory(inner server.SessionEngineFactory, calls *int)
 // the embedded catalog, whose build-time baked window WOULD be the 128k compaction
 // floor under the old freeze-at-construction scheme.
 func liveWindowReg(provider *mockllm.Provider, id, model string) *providerRegistry {
-	meta := newLiveMetaStore()
+	meta := newMetadataFixture()
 	return &providerRegistry{
 		entries:      map[string]providerEntry{id: {id: id, provider: provider, available: true}},
 		defaultID:    id,
@@ -133,7 +133,7 @@ func TestDefaultLiveOnlyModelSelfCorrectsAtUse(t *testing.T) {
 	}
 
 	// THE LIVE SWAP: the background refresh populates the live window for the model.
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: liveModel, ContextLimit: liveWindow}},
 	})
 	if got := reg.meta.contextWindowFor(providerOpenAI, liveModel); got != liveWindow {
@@ -179,7 +179,7 @@ func TestCataloguedDefaultModelEchoesCatalogWindow(t *testing.T) {
 	provider := mockllm.New(mockllm.TextTurn("SHARED-A"))
 	reg := liveWindowReg(provider, providerOpenAI, model)
 	// Seed the live store so contextWindowFor returns the catalogued window.
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: model, ContextLimit: bakedWindow}},
 	})
 
@@ -232,7 +232,7 @@ func TestContextWindowOverrideReachesEcho(t *testing.T) {
 	reg := liveWindowReg(provider, providerOpenAI, model)
 	// Seed the live store with a window DISTINCT from the override, so a passing test
 	// can only mean the override won (not a coincidental match).
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: model, ContextLimit: liveWin}},
 	})
 	if got := reg.meta.contextWindowFor(providerOpenAI, model); got != liveWin {

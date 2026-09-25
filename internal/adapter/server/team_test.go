@@ -899,16 +899,71 @@ func wantFailedPrecondition(t *testing.T, err error, what string) {
 	}
 }
 
+type providerRequestBarrier struct {
+	provider *mockllm.Provider
+	entered  <-chan struct{}
+	release  func()
+}
+
+func newProviderRequestBarrier() providerRequestBarrier {
+	entered := make(chan struct{}, 1)
+	released := make(chan struct{})
+	return providerRequestBarrier{
+		provider: mockllm.NewWith([]mockllm.Option{
+			mockllm.WithRequestObserver(func(port.LLMRequest) {
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				<-released
+			}),
+		}, mockllm.TextTurn("done")),
+		entered: entered,
+		release: sync.OnceFunc(func() { close(released) }),
+	}
+}
+
+// startBlockedTeamRun waits until a member's provider request has entered the
+// barrier, which proves the team is running. Its returned cleanup is safe to
+// defer and always releases the provider before joining the run.
+func startBlockedTeamRun(t *testing.T, svc *server.Service, teamID string, barrier providerRequestBarrier) func() {
+	t.Helper()
+	runCtx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		_, err := svc.RunTeam(runCtx, teamID, func(agent.TeamEvent) {})
+		runDone <- err
+	}()
+
+	finish := sync.OnceFunc(func() {
+		cancel()
+		barrier.release()
+		select {
+		case err := <-runDone:
+			if err != nil {
+				t.Errorf("RunTeam: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("timed out waiting for the cancelled team run to return")
+		}
+	})
+
+	select {
+	case <-barrier.entered:
+	case <-time.After(5 * time.Second):
+		finish()
+		t.Fatal("timed out waiting for the team member provider request")
+	}
+
+	return finish
+}
+
 // TestTeamRunStateMachineRejectsConcurrent asserts Fix B at the gRPC boundary: once
 // a team is running, a second RunTeam and a SpawnTeammate are both rejected with
-// FailedPrecondition. The first RunTeam is held busy by a member whose mock blocks
-// on ctx (blockingChunks); the test observes the busy stream, probes the
-// rejections, then cancels to let the run finish.
+// FailedPrecondition.
 func TestTeamRunStateMachineRejectsConcurrent(t *testing.T) {
-	// The member's single turn streams text then blocks until ctx is cancelled, so
-	// RunTeam stays in the running phase for the duration of the probes.
-	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
-	svc := teamService(t, llm)
+	barrier := newProviderRequestBarrier()
+	svc := teamService(t, barrier.provider)
 	h := server.NewHarnessServer(svc)
 
 	ctx := context.Background()
@@ -922,27 +977,9 @@ func TestTeamRunStateMachineRejectsConcurrent(t *testing.T) {
 		t.Fatalf("SpawnTeammate(lead): %v", err)
 	}
 
-	// Drive RunTeam on a goroutine via the Service (no stream plumbing needed). The
-	// first member event tells us the run is live and in the running phase.
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	firstEvent := make(chan struct{}, 1)
-	runDone := make(chan struct{})
-	go func() {
-		defer close(runDone)
-		_, _ = svc.RunTeam(runCtx, teamID, func(agent.TeamEvent) {
-			select {
-			case firstEvent <- struct{}{}:
-			default:
-			}
-		})
-	}()
-
-	select {
-	case <-firstEvent:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the team run to start emitting events")
-	}
+	// The provider barrier confirms a member is actually running before probing.
+	finishRun := startBlockedTeamRun(t, svc, teamID, barrier)
+	defer finishRun()
 
 	// Concurrent second RunTeam is rejected (Service-level sentinel).
 	_, err = svc.RunTeam(context.Background(), teamID, func(agent.TeamEvent) {})
@@ -953,12 +990,7 @@ func TestTeamRunStateMachineRejectsConcurrent(t *testing.T) {
 	_, err = h.SpawnTeammate(ctx, newSpawn(teamID, "late", false, ""))
 	wantFailedPrecondition(t, err, "SpawnTeammate after run")
 
-	cancelRun()
-	select {
-	case <-runDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the cancelled run to return")
-	}
+	finishRun()
 
 	// After the run is done, a second RunTeam is still rejected (created→running is
 	// one-shot; the team is now done).
@@ -1118,10 +1150,8 @@ func TestCreateTeamMaxTeams(t *testing.T) {
 // rejected with FailedPrecondition (deleting it would orphan the live supervisor),
 // while a created or done team can be cleaned up and frees its slot.
 func TestCleanupTeamRejectsRunning(t *testing.T) {
-	// A member whose single turn blocks until ctx is cancelled keeps the team in the
-	// running phase for the duration of the probe.
-	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
-	svc := teamService(t, llm)
+	barrier := newProviderRequestBarrier()
+	svc := teamService(t, barrier.provider)
 	h := server.NewHarnessServer(svc)
 	ctx := context.Background()
 
@@ -1144,25 +1174,9 @@ func TestCleanupTeamRejectsRunning(t *testing.T) {
 		t.Fatalf("SpawnTeammate: %v", err)
 	}
 
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	firstEvent := make(chan struct{}, 1)
-	runDone := make(chan struct{})
-	go func() {
-		defer close(runDone)
-		_, _ = svc.RunTeam(runCtx, teamID, func(agent.TeamEvent) {
-			select {
-			case firstEvent <- struct{}{}:
-			default:
-			}
-		})
-	}()
-
-	select {
-	case <-firstEvent:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the team run to start")
-	}
+	// The provider barrier confirms the member has entered its running work.
+	finishRun := startBlockedTeamRun(t, svc, teamID, barrier)
+	defer finishRun()
 
 	// CleanupTeam on the running team is rejected (FailedPrecondition).
 	_, err = h.CleanupTeam(ctx, &mecatlv1.CleanupTeamRequest{TeamId: teamID})
@@ -1172,12 +1186,7 @@ func TestCleanupTeamRejectsRunning(t *testing.T) {
 		t.Fatalf("Service.CleanupTeam(running): err = %v, want ErrTeamRunning", serr)
 	}
 
-	cancelRun()
-	select {
-	case <-runDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the cancelled run to return")
-	}
+	finishRun()
 
 	// Once done, the team can be cleaned up.
 	if _, err := h.CleanupTeam(ctx, &mecatlv1.CleanupTeamRequest{TeamId: teamID}); err != nil {
@@ -1192,7 +1201,8 @@ func TestCleanupTeamRejectsRunning(t *testing.T) {
 
 func TestDirectRunTeamProtectsMembersWithIndependentLiveness(t *testing.T) {
 	tracker := &teamLivenessTracker{}
-	llm := mockllm.New(mockllm.ChunksTurn(blockingChunks()...))
+	barrier := newProviderRequestBarrier()
+	llm := barrier.provider
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
 		cat := tool.NewCatalog()
@@ -1216,32 +1226,12 @@ func TestDirectRunTeamProtectsMembersWithIndependentLiveness(t *testing.T) {
 	}
 	memberID := agent.MemberSessionID(teamID, "lead")
 
-	runCtx, cancel := context.WithCancel(ctx)
-	started := make(chan struct{}, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = svc.RunTeam(runCtx, teamID, func(agent.TeamEvent) {
-			select {
-			case started <- struct{}{}:
-			default:
-			}
-		})
-	}()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for direct team member to run")
-	}
+	finishRun := startBlockedTeamRun(t, svc, teamID, barrier)
+	defer finishRun()
 	if !tracker.IsLive(memberID) {
 		t.Fatalf("direct team member %q was not protected while running", memberID)
 	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for direct team cleanup")
-	}
+	finishRun()
 	if tracker.IsLive(memberID) {
 		t.Fatalf("direct team member %q leaked liveness after cleanup", memberID)
 	}

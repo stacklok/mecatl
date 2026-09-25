@@ -21,6 +21,7 @@ import {
   requestContext,
   type SecurityOptions,
   sameOriginMutations,
+  sameOriginPresentation,
   securityHeaders,
   statusRateLimiter,
 } from "./http/security.js";
@@ -131,6 +132,10 @@ export function createApp(dependencies: AppDependencies = {}) {
   app.use("/api/v1/auth/*", authLimiter);
   app.use("/oauth/callback", authLimiter);
   app.use("/api/v1/*", sameOriginMutations(security));
+  app.use(
+    "/api/v1/sessions/:sessionId/authorizations/:authorizationId/presentation",
+    sameOriginPresentation(security),
+  );
   app.use("/api/v1/*", requestBodyLimit());
 
   registerAuthRoutes(app, authentication, runtime);

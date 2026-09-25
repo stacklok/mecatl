@@ -310,12 +310,8 @@ type providerRegistry struct {
 	unavailableNative map[string]struct{}
 	defaultID         string // resolved default provider (precedence: resolveDefaultModel)
 	defaultModel      string // resolved default model for defaultID ("" => adapter/endpoint default)
-	// meta is the composition-owned live-metadata store the request-path resolvers
-	// read (output ceiling / context window / modalities / thinking). It is seeded
-	// from the catalog at build BEFORE any network call and atomically swapped by the
-	// background live refresh, so a resolver is always live-first with a catalog
-	// floor. Never nil for a registry built by buildProviderRegistry; nil-tolerant
-	// reads (liveMetaStore.lookup) keep a hand-built test registry safe.
+	// meta is a read-only view bound to discovery before bootstrap. Catalog
+	// fallback is computed at read time, never stored as a live observation.
 	meta *liveMetaStore
 	// contextWindows is the operator-tier exact provider/model override map. It is
 	// immutable after Build and read by the picker projection as well as resolvers.
@@ -330,63 +326,16 @@ type providerRegistry struct {
 	// Keeping it beside contextWindows lets model-list projection use the same resolver
 	// as engines and echoes instead of growing a second precedence implementation.
 	contextWindowOverride int
-	// outcomes is the composition-owned live-LISTING outcome store (issue #262,
-	// D3 + surfacing): last-known-good snapshots (process-lifetime) plus the
-	// per-provider status (ok/unreachable/unauthorized/empty) the v1
-	// provider_status wire message projects. Seeded by the Build-time
-	// probeToolhive call and kept current by every subsequent
-	// resolveProviderModels call (the background refresh + the on-demand
-	// /models-open refresh). nil-tolerant like meta (a hand-built test
-	// registry that never sets it behaves as a permanently-empty store).
-	outcomes *liveOutcomeStore
-	// bootstrapModels carries a synchronous default-discovery result into the
-	// one-shot initial live publish. It is immutable after construction and is
-	// consumed only by liveModelSnapshot; on-demand refreshes still hit the
-	// entitlement endpoint normally.
-	bootstrapModels map[string][]modelEntry
-	// defaultModelAutoSelected is true when defaultModel was AUTO-SELECTED (a
-	// first-listed heal/probe pick, issue #262 review finding 7/R2.4) rather
-	// than operator-configured (--model/--default-model). Set ONLY at the two
-	// sites that fill an EMPTY defaultModel from a live listing —
-	// probeToolhive's Build-time auto-pick and healDefaultModel's runtime
-	// heal — both already gated on `defaultModel == ""`, which a configured
-	// model precludes (resolveDefaultModel would have taken tier (1) or (2)
-	// instead), so this can never be true alongside an operator choice. Guarded
-	// by defaultModelMu like defaultModel itself; read via the locked
-	// DefaultModelAutoSelected accessor.
+	// discovery is the sole Build-local owner of attempts and observations.
+	discovery *providerDiscovery
+	// defaultModelAutoSelected distinguishes first-listed healing from an
+	// operator pin. All reads and writes use defaultModelMu.
 	defaultModelAutoSelected bool
-	// defaultModelMu guards EVERY post-construction access to defaultModel:
-	// healDefaultModel's check-and-set (the async live-refresh goroutine and
-	// the on-demand refreshStaleModels — reached off the ListModels request
-	// path — can both run concurrently after Build returns) AND
-	// ResolvedDefaultModel's read (any request-handling goroutine may call it
-	// at any time post-Build). Construction-time reads/writes
-	// (resolveDefaultModel, the T7 caps-fixup loop, probeToolhive, all inside
-	// buildProviderRegistry) run BEFORE any goroutine or request handler holds
-	// a reference to the registry, so they stay unlocked — this mutex exists
-	// only for the concurrent post-Build window.
+	// defaultModelMu protects selection facts; discovery's completion tail
+	// serializes healing and captures both facts before public projection.
 	defaultModelMu sync.Mutex
-	// publishMu serializes every post-Build snapshot publish (publishSnapshot,
-	// issue #262 review finding 2): the merge-then-swap-then-heal-then-project
-	// sequence must not interleave between the one-shot background refresh and
-	// the on-demand refreshStaleModels, or two concurrent merges could each read
-	// the same pre-merge snapshot and one publish's result would be lost. Fetches
-	// (the network calls) stay OUTSIDE this mutex — only the cheap, no-network
-	// publish tail is serialized. Lock order: publishMu may acquire
-	// defaultModelMu/entriesMu (inside healDefaultModel/remintEntry); NEVER the
-	// reverse — nothing holding defaultModelMu or entriesMu may acquire publishMu.
-	publishMu sync.Mutex
-	// entriesMu guards EVERY post-construction access to entries (issue #262
-	// review finding 4): healDefaultModel's re-mint (remintEntry) mutates a
-	// SINGLE entry's .provider/.defaultCaps post-Build, concurrently with
-	// Lookup/Available reads from any request-handling goroutine. Lookup and
-	// Available take an RLock (cheap, concurrent-reader-friendly); remintEntry's
-	// write takes the write lock ONLY around the map mutation itself (the
-	// re-mint construction runs BEFORE the lock — see remintEntry). Construction-
-	// time reads/writes (buildProviderRegistry, probeToolhive) run BEFORE any
-	// goroutine or request handler holds a reference to the registry, so they
-	// stay unlocked — mirroring defaultModelMu's discipline. Lock order: this
-	// mutex is a LEAF (never acquires publishMu/defaultModelMu while held).
+	// entriesMu guards reminted provider entries. It is a leaf lock: remint
+	// construction and capability resolution run before acquiring it.
 	entriesMu sync.RWMutex
 }
 
@@ -463,91 +412,11 @@ func (r *providerRegistry) DefaultModelFor(id string) string {
 	return BuiltinDefaultModelFor(id)
 }
 
-// healDefaultModel fills a still-empty defaultModel for an INTENT-DRIVEN
-// default provider (issue #262 §1 accepted deviation: toolhive registered
-// sole+probe-down boots with defaultModel="" so Build never bricks) from a
-// freshly-swapped live snapshot. It is called after EVERY live-model swap —
-// startLiveModelRefresh's sync AND async paths, and refreshStaleModels'
-// on-demand /models-open path — so the model heals the instant the proxy
-// comes up, with NO restart (R1.4).
-//
-// It is a no-op when defaultModel is already non-empty (NEVER overwrites an
-// operator/session choice), when the default provider isn't intentDriven, or
-// when byProvider has nothing for it. The check-and-set itself runs under
-// defaultModelMu (issue found by review: an unlocked fast-path read raced
-// against a concurrent writer once this could be reached from BOTH the async
-// live-refresh goroutine AND refreshStaleModels, itself reachable off the
-// ListModels request path) — no unlocked pre-check. The re-mint (issue #262
-// review finding 4: the runtime auto-select was skipping the caps/effort
-// re-mint the Build-time auto-select performs, leaving the per-session
-// factory comparing against a stale defaultCaps baseline) runs via the
-// SHARED remintEntry helper AFTER defaultModelMu is released — remintEntry
-// takes its own entriesMu write lock for the map mutation, and nesting that
-// under defaultModelMu would add a lock-ordering constraint nothing else
-// needs (only the ONE winning filler ever reaches this branch, since a
-// subsequent call sees defaultModel already set and returns above). Logs ONE
-// "(auto-selected)" INFO the first time it fills.
-func (r *providerRegistry) healDefaultModel(d port.Diagnostics, byProvider map[string][]modelEntry) {
-	if r == nil {
-		return
-	}
-	entry, ok := r.Lookup(r.defaultID)
-	if !ok || !entry.intentDriven {
-		return
-	}
-	live := byProvider[r.defaultID]
-	if len(live) == 0 {
-		return
-	}
-	r.defaultModelMu.Lock()
-	if r.defaultModel != "" {
-		r.defaultModelMu.Unlock()
-		return // already set (a prior heal, or an operator/session pin)
-	}
-	model := live[0].ID
-	r.defaultModel = model
-	r.defaultModelAutoSelected = true // issue #262 review finding 7
-	r.defaultModelMu.Unlock()
-
-	r.remintEntry(r.defaultID, model)
-	d.Log(context.Background(), port.LevelInfo,
-		"provider default model (auto-selected) after live refresh",
-		// R2.6: name the proxy base URL + upstream gateway_url on the SAME
-		// event that makes toolhive the default model, not only via the
-		// separate "registered and reachable" line (which may have logged an
-		// unreachable/empty outcome at Build time, before this heal fires).
-		"provider", r.defaultID, "model", model,
-		"base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL)
-}
-
-// remintEntry RE-MINTS pid's shared .provider/.defaultCaps for model — the ONE
-// re-mint path shared by the build-time T7 fixup, probeToolhive's auto-pick,
-// and healDefaultModel (issue #262 review finding 4: the third re-mint site,
-// extracted so the three cannot drift on the caps/effort computation). It
-// reads entry.defaultEffort (stamped by buildProviderRegistry BEFORE the
-// registry is handed out) rather than taking a cfg parameter, so a caller
-// reached long after Build (healDefaultModel, off the request path, with no
-// cfg in scope) can share it byte-for-byte with the two build-time sites. A
-// missing entry or one with no remint closure (mock / a providerConstructor
-// test seam) is a silent no-op. The write is entriesMu-guarded (a concurrent
-// Lookup/Available must never observe a torn entry); the (Lookup + caps
-// compute) that PRECEDE the write happen WITHOUT the write lock held, so a
-// concurrent reader is never blocked behind a live-listing round-trip — there
-// is none here, but the discipline matters because modelCapability may itself
-// Lookup.
+// remintEntry applies the initial capability fixup from one accepted snapshot.
+// Discovery healing calls remintEntryCandidate with its unpublished candidate;
+// both paths use the same remint implementation outside the publication lock.
 func (r *providerRegistry) remintEntry(pid, model string) {
-	entry, ok := r.Lookup(pid) // RLock — never nested under the write lock below
-	if !ok || entry.remint == nil {
-		return
-	}
-	defCaps := modelCapability(r, pid, model) // may Lookup internally — compute BEFORE the write lock
-	p := entry.remint(entry.defaultEffort, defCaps)
-	r.entriesMu.Lock()
-	e := r.entries[pid]
-	e.provider = p
-	e.defaultCaps = defCaps
-	r.entries[pid] = e
-	r.entriesMu.Unlock()
+	r.remintEntryCandidate(pid, model, r.meta.current())
 }
 
 // errNoProvider is the named, actionable zero-keys error: when no provider's
@@ -605,21 +474,15 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 
 		// The mock is intentionally left UNWRAPPED by resilience: it never fails over
 		// the network, so retries/breaker would be inert.
-		return &providerRegistry{
-			entries:   map[string]providerEntry{providerMock: {id: providerMock, provider: mock, available: true}},
-			defaultID: providerMock,
-			// The mock ignores the model entirely; preserve an explicit --model and
-			// otherwise use its synthetic provider id as a stable non-empty default.
+		reg := &providerRegistry{
+			entries:      map[string]providerEntry{providerMock: {id: providerMock, provider: mock, available: true}},
+			defaultID:    providerMock,
 			defaultModel: defaultModel,
-			// An EMPTY (non-nil) meta store: the mock has no lister and no catalog rows,
-			// so it stays empty, but an explicit store keeps the resolver helpers'
-			// invariant uniform (every production registry carries one) and future-proofs
-			// a mock-with-metadata path. The helpers are nil-tolerant regardless.
-			meta: newLiveMetaStore(),
-			// An empty outcomes store mirrors meta: the mock has no lister, so it
-			// never records anything, but every production registry carries one.
-			outcomes: newLiveOutcomeStore(),
-		}, nil
+			meta:         newLiveMetaStore(),
+		}
+		reg.discovery = newProviderDiscovery(reg, cfg)
+		reg.meta.owner = reg.discovery
+		return reg, nil
 	}
 
 	openAIKey := providerKey(cfg.OpenAIKey, providerOpenAI, detect)
@@ -632,12 +495,8 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 
 	entries := make(map[string]providerEntry)
 
-	// The live-metadata store the request-path resolvers read. Construct it FIRST so
-	// the per-provider entries' resolver closures (notably anthropic's max-tokens +
-	// thinking resolvers) capture it; it is seeded from the catalog (seedFromCatalog)
-	// AFTER the entries are built (we need reg.Available()) and BEFORE any network
-	// call, then atomically swapped by the background refresh. Live-first, catalog
-	// floor — see liveMetaStore.
+	// Resolver closures capture this read view before entries exist. Bind it
+	// to the owner after registration and before any bootstrap request.
 	meta := newLiveMetaStore()
 
 	// openai: AVAILABLE iff an API key resolves or a bearer-token file is
@@ -652,7 +511,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 			return nil, fmt.Errorf("configure OpenAI bearer token file: %w", err)
 		}
 		entries[providerOpenAI] = newOpenAICompatEntry(cfg, providerOpenAI, "", baseURL,
-			openai.WithHTTPClient(client), openai.WithMaxRetries(0))
+			openai.WithHTTPClient(withRootSessionCorrelation(client)), openai.WithMaxRetries(0))
 	}
 
 	if entry, err := newOpenAICodexEntry(cfg); err != nil {
@@ -783,11 +642,8 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		entries[id] = entry
 	}
 
-	outcomes := newLiveOutcomeStore()
-	for id := range unavailableNative {
-		outcomes.recordFailure(id, statusNotEnrolled, "run `mecatui providers login "+id+"`")
-	}
-	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta, outcomes: outcomes}
+	reg := &providerRegistry{entries: entries, unavailableNative: unavailableNative, meta: meta,
+		contextWindows: cfg.contextWindows, contextWindowOverride: cfg.ContextWindowOverride}
 	// Bind the prompt-cache projection AFTER entries exist (it looks an entry up)
 	// and over THIS build's cfg, so --no-prompt-cache and the ADR 0100 dialect
 	// precedence are read once, in one place.
@@ -802,10 +658,14 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 		cfg.diag().Log(context.Background(), port.LevelInfo, line)
 	}
 	reg.defaultID, reg.defaultModel = resolveDefaultModel(cfg, reg)
-	// Seed the live-metadata store from the embedded catalog for every available
-	// provider — the t=0 floor every resolver reads before the background live swap.
-	meta.seedFromCatalog(reg.Available())
-	meta.seedCustomProviderFloors(reg)
+	reg.discovery = newProviderDiscovery(reg, cfg)
+	meta.owner = reg.discovery
+	ready := false
+	defer func() {
+		if !ready {
+			reg.discovery.Close()
+		}
+	}()
 	if !cfg.skipProviderNetworkDiscovery {
 		if err := bootstrapOpenAICodexDefault(ctx, reg, cfg); err != nil {
 			return nil, err
@@ -842,6 +702,7 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 			return nil, err
 		}
 	}
+	ready = true
 	return reg, nil
 }
 
@@ -937,7 +798,7 @@ func newNativeProviderEntry(cfg Config, definition permconfig.ProviderDefinition
 		return providerEntry{}, fmt.Errorf("configure OIDC provider %q: %w", definition.ID, err)
 	}
 	entry := newOpenAICompatEntry(cfg, definition.ID, "transport-owned", definition.BaseURL,
-		openai.WithHTTPClient(client), openai.WithMaxRetries(0))
+		openai.WithHTTPClient(withRootSessionCorrelation(client)), openai.WithMaxRetries(0))
 	entry.nativeEndpoint = true
 	entry.defaultModel = definition.DefaultModel
 	entry.lister = gatewayLister{inner: openaicompat.NewLister(definition.BaseURL, "", client)}
@@ -972,7 +833,7 @@ func newCustomProviderEntry(cfg Config, definition permconfig.ProviderDefinition
 }
 
 func customProviderInferenceHTTPClient() *http.Client {
-	return &http.Client{CheckRedirect: openaicompat.RefuseRedirects}
+	return withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})
 }
 
 func customProviderListingHTTPClient(client *http.Client) *http.Client {
@@ -1020,7 +881,7 @@ func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
 		providerOpenAICodex,
 		"policy-owned",
 		openaicodex.BaseURL,
-		openai.WithHTTPClient(policy.HTTPClient()),
+		openai.WithHTTPClient(policy.HTTPClientWithFinalTransport(withCodexSessionCorrelationTransport)),
 		openai.WithMaxRetries(0),
 	)
 	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy)}
@@ -1034,36 +895,29 @@ const openAICodexBootstrapTimeout = 5 * time.Second
 // Explicit models and a different preferred provider bypass it entirely. The
 // selected row is written through the same outcome/meta facts later background
 // refreshes use, before the registry remints the default provider.
-func bootstrapOpenAICodexDefault(parent context.Context, reg *providerRegistry, cfg Config) error {
-	if reg == nil || reg.defaultID != providerOpenAICodex || reg.defaultModel != "" {
+func bootstrapOpenAICodexDefault(parent context.Context, reg *providerRegistry, _ Config) error {
+	if reg == nil || reg.Default() != providerOpenAICodex || reg.ResolvedDefaultModel() != "" {
 		return nil
 	}
 	entry, ok := reg.Lookup(providerOpenAICodex)
 	if !ok || entry.lister == nil {
 		return errors.New("openai-codex: default model discovery is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(parent, openAICodexBootstrapTimeout)
-	defer cancel()
-	models, err := entry.lister.ListModels(ctx)
+	view, err := reg.discovery.request(parent, providerOpenAICodex, discoveryBootstrap)
 	if err != nil {
-		state := classifyLiveListError(err)
-		reg.outcomes.recordFailure(providerOpenAICodex, state, "")
-		if state == statusUnauthorized {
-			return fmt.Errorf("openai-codex: default model discovery unauthorized: %w", err)
-		}
-		return fmt.Errorf("openai-codex: default model discovery unreachable: %w", err)
+		return err
 	}
-	reg.outcomes.recordSuccess(entry, models)
-	if len(models) == 0 {
+	state := view.providers[providerOpenAICodex]
+	switch state.outcome.State {
+	case statusOK:
+		return nil
+	case statusEmpty:
 		return errors.New("openai-codex: account returned no picker-visible models; replace the manual token or choose an explicit model")
+	case statusUnauthorized:
+		return errors.New("openai-codex: default model discovery unauthorized")
+	default:
+		return errors.New("openai-codex: default model discovery unreachable")
 	}
-	reg.defaultModel = models[0].ID
-	reg.defaultModelAutoSelected = true
-	reg.bootstrapModels = map[string][]modelEntry{providerOpenAICodex: models}
-	reg.meta.mergeSwap(map[string][]modelEntry{providerOpenAICodex: models})
-	cfg.diag().Log(ctx, port.LevelInfo, "openai-codex default model auto-selected from account entitlements",
-		"provider", providerOpenAICodex, "model", reg.defaultModel)
-	return nil
 }
 
 // providerKey resolves the credential for a provider: an explicit cfg-supplied key
@@ -1149,7 +1003,7 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		// prompt, file contents and tool results do. Prepended BEFORE extra, so a
 		// caller that passes its own WithHTTPClient (the gateway entries, which
 		// already refuse redirects and additionally inject a bearer) still wins.
-		opts = append(opts, openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))
+		opts = append(opts, openai.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -1223,6 +1077,7 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		// OpenAI-over-Chat-Completions entry gets it for free on every
 		// per-session/heal re-mint.
 		opts = append(opts, openaichat.WithCacheDialect(openaichatCacheDialectFor(id, baseURL, cfg)))
+		opts = append(opts, openaichat.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = openaichat.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -1341,7 +1196,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		// own client (the gateway entries, which already refuse redirects and
 		// additionally inject a bearer) still wins.
 		opts = append(opts, anthropic.WithRequestOption(
-			anthropicoption.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
+			anthropicoption.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))))
 		opts = append(opts, extra...)
 		var llm port.LLMProvider = anthropic.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
@@ -1808,7 +1663,7 @@ func ToolhiveAvailable(cfg Config) bool {
 // following a redirect is ordinary and expected.
 func newGatewayEntry(cfg Config, id, baseURL, gatewayURL string, explicit bool, lister modelLister) providerEntry {
 	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, baseURL,
-		openai.WithHTTPClient(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}))
+		openai.WithHTTPClient(withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects})))
 	entry.lister = lister
 	entry.intentDriven = true
 	entry.intentGatewayURL = gatewayURL
@@ -1851,7 +1706,7 @@ func newToolhiveAnthropicEntry(cfg Config, intent toolhiveIntent, meta *liveMeta
 	baseURL := toolhiveAnthropicBaseURL(intent.baseURL)
 	entry := newAnthropicEntryFor(cfg, providerToolhiveAnthropic, "", baseURL, meta, false,
 		anthropic.WithRequestOption(
-			anthropicoption.WithHTTPClient(client),
+			anthropicoption.WithHTTPClient(withRootSessionCorrelation(client)),
 			anthropicoption.WithMaxRetries(0),
 		))
 	entry.lister = anthropicLister{inner: anthropic.NewLister("", baseURL, client)}
@@ -1917,7 +1772,7 @@ func newDirectGatewayClient(cfg Config, intent toolhiveIntent, configPath string
 
 func newDirectGatewayEntry(cfg Config, id string, intent toolhiveIntent, client *http.Client) providerEntry {
 	entry := newOpenAICompatEntry(cfg, id, toolhivellm.PlaceholderToken, intent.baseURL,
-		openai.WithHTTPClient(client),
+		openai.WithHTTPClient(withRootSessionCorrelation(client)),
 		openai.WithMaxRetries(0))
 	// The direct-mode lister shares the SAME bearer-authenticated client so
 	// the Build-time probe (probeToolhive) and the live refresh authenticate
@@ -2120,7 +1975,7 @@ func classifyLiveListError(err error) string {
 // against a registered toolhive entry. Registration itself NEVER depends on
 // this (resolveToolhiveIntent already ran unconditionally) — the probe drives
 // ONLY: the startup diagnostic, the initial provider_status + last-known-good
-// seed (via reg.outcomes), and default-model eligibility (D2). A nil/missing
+// snapshot (via the discovery owner), and default-model eligibility (D2). A nil/missing
 // toolhive entry is a no-op (every non-ToolHive Build pays one map lookup).
 //
 // Returns errToolhiveNoModels ONLY when the probe succeeded, returned zero
@@ -2128,91 +1983,38 @@ func classifyLiveListError(err error) string {
 // every other outcome is diagnosed, never fatal (the §1 accepted deviation: a
 // down/unauthorized proxy must never brick Build when toolhive is sole).
 func probeToolhive(reg *providerRegistry, cfg Config) error {
-	type probeResult struct {
-		pid    string
-		entry  providerEntry
-		models []modelEntry
-		err    error
-	}
-
-	var targets []probeResult
+	var waits sync.WaitGroup
 	for _, pid := range []string{providerToolhive, providerToolhiveAnthropic} {
 		if entry, ok := reg.Lookup(pid); ok && entry.lister != nil {
-			targets = append(targets, probeResult{pid: pid, entry: entry})
+			waits.Go(func() { _, _ = reg.discovery.request(context.Background(), pid, discoveryBootstrap) })
 		}
 	}
-	if len(targets) == 0 {
-		return nil
-	}
-
-	diag := cfg.diag()
-	ctx, cancel := context.WithTimeout(context.Background(), toolhiveProbeTimeout)
-	defer cancel()
-	results := make(chan probeResult, len(targets))
-	for _, target := range targets {
-		go func(target probeResult) {
-			target.models, target.err = target.entry.lister.ListModels(ctx)
-			results <- target
-		}(target)
-	}
-	byID := make(map[string]probeResult, len(targets))
-	for range targets {
-		result := <-results
-		byID[result.pid] = result
-	}
-
-	// Publish every successful protocol result before selecting or re-minting a
-	// default. The startup probe has already paid for this authoritative metadata,
-	// so an immediate session must not fall back to a guessed output limit,
-	// thinking mode, or input capability while the later background refresh is
-	// still pending. A present empty slice deliberately removes only that
-	// protocol's row; failed protocols are omitted and retain their existing floor.
-	successful := make(map[string][]modelEntry, len(targets))
-	for _, target := range targets {
-		result := byID[target.pid]
-		if result.err == nil {
-			successful[result.pid] = result.models
+	waits.Wait()
+	view := reg.discovery.snapshot()
+	for _, pid := range []string{providerToolhive, providerToolhiveAnthropic} {
+		state := view.providers[pid]
+		if state.outcome.State == "" {
+			continue
 		}
-	}
-	reg.meta.mergeSwap(successful)
-
-	defaultEmpty := false
-	// Process in stable family order even though the fetches complete concurrently.
-	for _, target := range targets {
-		result := byID[target.pid]
-		pid, entry, models, err := result.pid, result.entry, result.models, result.err
-		switch {
-		case err != nil:
-			state := classifyLiveListError(err)
-			hint := statusHintFor(entry, state)
-			reg.outcomes.recordFailure(pid, state, hint)
+		entry, _ := reg.Lookup(pid)
+		if state.outcome.State == statusOK {
+			cfg.diag().Log(context.Background(), port.LevelInfo, "toolhive LLM gateway: registered and reachable",
+				"provider", pid, "base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL, "models", len(state.observations))
+		} else {
 			level := port.LevelInfo
-			if entry.intentExplicit || state == statusUnauthorized {
+			if entry.intentExplicit || state.outcome.State == statusUnauthorized || state.outcome.State == statusEmpty {
 				level = port.LevelWarn
 			}
-			diag.Log(ctx, level, "toolhive LLM gateway: probe failed — "+hint,
-				"provider", pid, "base_url", entry.baseURL, "state", state)
-		case len(models) == 0:
-			reg.outcomes.recordSuccess(entry, nil)
-			diag.Log(ctx, port.LevelWarn, "toolhive LLM gateway: "+statusHintFor(entry, statusEmpty),
-				"provider", pid, "base_url", entry.baseURL)
-			defaultEmpty = defaultEmpty || reg.defaultID == pid
-		default:
-			reg.outcomes.recordSuccess(entry, models)
-			diag.Log(ctx, port.LevelInfo, "toolhive LLM gateway: registered and reachable",
-				"provider", pid, "base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL, "models", len(models))
-			if reg.defaultID == pid && reg.defaultModel == "" {
-				reg.defaultModel = models[0].ID
-				reg.defaultModelAutoSelected = true
-				reg.remintEntry(pid, reg.defaultModel)
-				diag.Log(ctx, port.LevelInfo, "toolhive LLM gateway: default model (auto-selected)",
-					"provider", pid, "model", reg.defaultModel,
-					"base_url", entry.baseURL, "gateway_url", entry.intentGatewayURL)
+			hint := state.outcome.Hint
+			if state.outcome.State != statusEmpty {
+				hint = "probe failed — " + hint
 			}
+			cfg.diag().Log(context.Background(), level, "toolhive LLM gateway: "+hint,
+				"provider", pid, "base_url", entry.baseURL, "state", state.outcome.State)
 		}
-	}
-	if defaultEmpty {
-		return errToolhiveNoModels
+		if pid == reg.Default() && state.outcome.State == statusEmpty {
+			return errToolhiveNoModels
+		}
 	}
 	return nil
 }

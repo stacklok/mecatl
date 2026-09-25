@@ -495,13 +495,34 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
+const (
+	startupResumeRefreshDelay   = 100 * time.Millisecond
+	startupResumeRefreshRetries = 10
+)
+
+type startupResumeRefreshRetryMsg struct {
+	sessionID string
+	attempt   int
+}
+
+func (m Model) startupResumeRefreshRetryCmd(attempt int) tea.Cmd {
+	id := m.sessionID
+	return tea.Tick(startupResumeRefreshDelay, func(time.Time) tea.Msg {
+		return startupResumeRefreshRetryMsg{sessionID: id, attempt: attempt}
+	})
+}
+
 func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
+	m.submitStatusLine()
 	cmd := (&m).maybeKittyTransmit()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)
 	}
 	if liveCmd := (&m).armLiveFeed(); liveCmd != nil {
 		cmd = tea.Batch(cmd, liveCmd)
+	}
+	if m.sessionID != "" && m.deps.Session != nil {
+		cmd = tea.Batch(cmd, client.RefreshStartupResumeCmd(m.deps.Ctx, m.deps.Session, m.sessionID))
 	}
 	if m.workspaceEnrollmentActive() {
 		m.enrollment = workspaceEnrollmentState{}
@@ -660,6 +681,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case startupResumeReadyMsg:
 		mm, cmd := m.finishStartupResume()
 		return mm, cmd, true
+	case startupResumeRefreshRetryMsg:
+		if msg.sessionID != m.sessionID || !m.startupAdopted || m.deps.Session == nil {
+			return m, nil, true
+		}
+		return m, client.RefreshStartupResumeRetryCmd(m.deps.Ctx, m.deps.Session, msg.sessionID, msg.attempt), true
 	case reconnectMsg:
 		// Live-feed reconnect loop msgs (issue #387): degraded-state markers and
 		// the catch-up event msgs ride the reconnect channel. Handled here (a
@@ -902,6 +928,9 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.StreamErrMsg:
+		if m.restoreRefusedApproval(msg.Err) {
+			return m, nil, true
+		}
 		if m.phase == phaseAuthorizing && m.authorization.authorizationID != "" && client.IsMCPAuthorizationPending(msg.Err) {
 			// The parked authorization remains authoritative. The original Converse
 			// stream is done, but its card and automatic polling remain active.
@@ -929,6 +958,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			}
 			return m, m.refreshCmd(), true
 		}
+		if m.ownsAdmission() && client.IsContextWindowUnavailable(msg.Err) {
+			m = m.rejectAdmission()
+			return m, nil, true
+		}
+		m.admissionSubmission = nil
 		if msg.AuthReason != "" {
 			mm, cmd := m.reduceLiveAuthRecovery(msg.AuthReason)
 			return mm, cmd, true
@@ -1031,6 +1065,29 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.palette.commands = msg.Commands
 		mm, cmd := m.syncPalette()
 		return mm, cmd, true
+	case client.GuardrailCoverageMsg:
+		if !guardrailCoverageCurrent(msg, m.sessionID, m.guardrailStatusRequest) {
+			return m, nil, true
+		}
+		if msg.Posture {
+			checker := "checker unknown (status unavailable; do not infer off or healthy)"
+			if msg.Err == nil {
+				checker = guardrailPostureSummary(msg.Coverage)
+			}
+			m.statusMsg = m.deps.Theme.Style("muted").Render(postureSummary(m.caps.Posture) + "; " + checker)
+		} else if msg.Err != nil {
+			m.conv.addNotice("Guardrails status unavailable; checker state is unknown, not off or healthy.")
+		} else {
+			m.conv.addNotice(guardrailCoverageNotice(msg.Coverage))
+		}
+		m.refreshView()
+		return m, nil, true
+	case client.GuardrailReviewDetailMsg:
+		if msg.Err == nil {
+			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
+			m.refreshView()
+		}
+		return m, nil, true
 	case client.ResolvedModelMsg:
 		return m.onResolvedModelMsg(msg)
 	default:
@@ -1098,8 +1155,16 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	m.sessionCreatedAt = msg.CreatedAt
 	m.activePlacement = msg.Placement
+	if occupancy := msg.ContextOccupancy; msg.AdoptContextOccupancy && m.startupAdopted && occupancy != nil {
+		m.contextTokens = occupancy.InputTokens
+		m.contextUnknown = false
+		m.contextEstimated = occupancy.Estimated
+	}
 	if (&m).setResolvedSessionModel(msg.Resolved) {
 		m.refreshView()
+	}
+	if msg.AdoptContextOccupancy && m.startupAdopted && m.resolvedSessionModel.ContextWindow == 0 && msg.StartupResumeRefreshAttempt < startupResumeRefreshRetries {
+		return m, m.startupResumeRefreshRetryCmd(msg.StartupResumeRefreshAttempt + 1), true
 	}
 	return m, nil, true
 }
@@ -1141,9 +1206,17 @@ func mcpAuthorizationNotice(msg client.MCPAuthorizationMsg) string {
 // updateStreamEvent reduces the per-event stream msgs into the conversation. It
 // is the back half of Update, split out so the cyclomatic complexity of each
 // stays manageable. Unknown msgs are a no-op.
+//
+//nolint:gocyclo // the explicit event reducer preserves refusal-before-settlement ordering.
 func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if refused, ok := msg.(client.ControlRefusedMsg); ok {
+		(&m).restoreControlRefused(refused)
+		return m, nil
+	}
+	m.settleApprovalOnEvent(msg)
 	switch msg := msg.(type) {
 	case client.SessionInitMsg:
+		m.admissionSubmission = nil
 		if m.startupFirstPromptPending {
 			m.startupFirstPromptPending = false
 			m.startupAdopted = false
@@ -1178,6 +1251,8 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// where even the estimate is zero.
 		if msg.Usage.InputTokens > 0 {
 			m.contextTokens = msg.Usage.InputTokens
+			m.contextUnknown = false
+			m.contextEstimated = msg.Estimated
 		}
 		m.conv.endReasoningStream()
 		if !trivialTurn(msg) {
@@ -1231,8 +1306,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case client.PermissionAskMsg:
 		return m.applyPermissionAsk(msg)
 	case client.HookMsg:
-		m.conv.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
-		return m.afterEvent()
+		return m.applyHookMsg(msg)
 	case client.DeliveryNoteMsg:
 		return m.applyDeliveryNote(msg)
 	case client.ResultMsg:
@@ -1246,6 +1320,16 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// be added there, not here. Unknown msgs are a no-op.
 		return m.updateStreamSecondary(msg)
 	}
+}
+
+func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
+	m.conv.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+	model, cmd := m.afterEvent()
+	if msg.Guardrail == nil || m.deps.Guardrails == nil {
+		return model, cmd
+	}
+	detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID)
+	return model, tea.Batch(cmd, detailCmd)
 }
 
 // applyDeliveryNote reduces a DeliveryNoteMsg, extracted from updateStreamEvent
@@ -2290,6 +2374,10 @@ func (m Model) dispatchPhaseKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // /models picker is the only SELECTING one (cursor + enter); the rest are read-only
 // / esc-only. Returns handled=false when no overlay is open so onKey falls through.
 func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if s, ok := m.modal.(*admissionRecoveryState); ok {
+		mm, cmd := m.onAdmissionKey(msg, s)
+		return mm, cmd, true
+	}
 	if m.startupRunEntryFailed {
 		mm, cmd := m.onStartupRunEntryKey(msg)
 		return mm, cmd, true
@@ -2427,10 +2515,7 @@ func (m Model) applySessionsSurfaceIntent(intent surfaceIntent) (model tea.Model
 		m.maintenanceCleanupJobID = intent.jobID
 		return m, nil, true, false
 	case sessionsTranscriptAdoptionIntent:
-		m.caps = intent.capabilities
-		(&m).setResolvedSessionModel(intent.model)
-		m.activeMode = intent.mode
-		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript)
+		mm, cmd, stopSurfaceDispatch := m.adoptAuthoritativeTranscript(intent.row, intent.transcript, intent.snapshot)
 		return mm, cmd, true, stopSurfaceDispatch
 	case sessionsStartupQuitIntent:
 		if sessions, ok := m.modal.(*sessionsState); ok && sessions.pageCancel != nil {
@@ -2545,6 +2630,7 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // staged input clears it (no arm); a first press on an empty prompt arms the guard,
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
+	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
@@ -3454,6 +3540,9 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.refreshView()
 		return m, nil
 	}
+	if text != "" || len(media.Parts) > 0 {
+		m.retainAdmission(text, media)
+	}
 	if hadStaged {
 		m.stagedMedia = nil
 		m.nextMediaN = 0
@@ -4021,6 +4110,7 @@ func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
 func (m Model) endRun(stop string) Model {
+	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()
 		m.cancelRun = nil
@@ -4821,6 +4911,10 @@ func sumUsage(a, b client.Usage) client.Usage {
 
 func (m Model) handleOpenError(err error, cancel context.CancelFunc, retry bool) (Model, tea.Cmd) {
 	cancel()
+	if m.ownsAdmission() && client.IsContextWindowUnavailable(err) {
+		return m.rejectAdmission(), nil
+	}
+	m.admissionSubmission = nil
 	streamErr := authStreamErr(m, err)
 	if streamErr.AuthReason != "" {
 		mm, connectCmd := m.reduceLiveAuthRecovery(streamErr.AuthReason)

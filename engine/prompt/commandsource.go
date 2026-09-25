@@ -3,8 +3,6 @@ package prompt
 import (
 	"context"
 	"unicode/utf8"
-
-	"github.com/stacklok/mecatl/engine/tool"
 )
 
 // MaxCommandDescriptionRunes caps a command description (in RUNES) so a long
@@ -80,7 +78,7 @@ func NewSourceExpander(src CommandSource) *SourceExpander {
 // normal); a backend fault is returned as an error; otherwise the body is
 // frontmatter-stripped and placeholder-substituted exactly like a file-backed
 // command.
-func (e *SourceExpander) Expand(ctx context.Context, _ tool.Workspace, input string) (string, bool, error) {
+func (e *SourceExpander) Expand(ctx context.Context, input string) (string, bool, error) {
 	name, args, ok := parseCommand(input)
 	if !ok {
 		return input, false, nil
@@ -106,7 +104,7 @@ func (e *SourceExpander) Expand(ctx context.Context, _ tool.Workspace, input str
 }
 
 // List implements CommandLister as a passthrough to the source's live listing.
-func (e *SourceExpander) List(ctx context.Context, _ tool.Workspace) ([]Command, error) {
+func (e *SourceExpander) List(ctx context.Context) ([]Command, error) {
 	return e.src.ListCommands(ctx)
 }
 

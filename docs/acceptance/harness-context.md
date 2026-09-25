@@ -3,13 +3,13 @@
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — separates harness source authority from execution across composition, trust, and public engine interfaces.
 **Decision record:** [ADR 0359](../adr/0359-harness-context-source-authority.md)
-**Phase:** harness context model and shared source binding
-**Status:** proposed, 2026-09-23. Model and exact interface contract ready for human Plan / Interface review; runtime behavior is not implemented.
-**Delivery:** Split docs → shared implementation → PR #580 / Redis siblings. The operator explicitly authorizes the shared implementation to proceed as a draft stacked PR from the exact proposed-docs commit before this plan merges. This narrow exception does not mark the plan approved, authorize any merge, relax contract-drift stops, or remove either human merge gate.
+**Phase:** shared source binding for MicroVM and native Kubernetes execution
+**Status:** proposed, 2026-09-24. Downscoped amendment to the contract approved in #1814; exact source-acquisition interfaces still require approval by merge, and runtime behavior is not implemented.
+**Delivery:** Split. Merge this Plan / Interface amendment before bringing #1875 into conformance. MicroVM #580 and the native Kubernetes #1579 / #1614 work then consume the shared binding; Redis #1811 remains a separate sibling and is not a blocker.
 **Expected tasks:** deferred to orchestration
-**Issue:** Relates to [#1811](https://github.com/stacklok/mecatl/issues/1811) and [PR #580](https://github.com/stacklok/mecatl/pull/580). Neither is closed here.
-**Plan PR:** [#1814](https://github.com/stacklok/mecatl/pull/1814) (draft)
-**Approved baseline:** absent until contract approval by merge
+**Issue:** Relates to [#580](https://github.com/stacklok/mecatl/pull/580), [#1579](https://github.com/stacklok/mecatl/pull/1579), [#1614](https://github.com/stacklok/mecatl/pull/1614), and [#1811](https://github.com/stacklok/mecatl/issues/1811). This contract closes none of them.
+**Plan PR:** [#1878](https://github.com/stacklok/mecatl/pull/1878), amending merged [#1814](https://github.com/stacklok/mecatl/pull/1814).
+**Approved baseline:** #1814 merged as `2329ae936fefd72df667e5b8c56d3ded5d53578a`; this amendment requires approval by merge.
 
 `HarnessContext` names the deployment-configured composition of admitted instruction and
 customization sources supplied to a session. Sources may use APIs, host files, databases, or
@@ -17,15 +17,20 @@ explicitly selected execution files. Separate responsibilities do not require se
 Composition defines enabled sources, ordering, and per-kind combination, collision, override,
 and exclusion behavior. Transport and storage location do not select precedence or trust.
 
-This PR changes the [domain model](../architecture/mecatl.modelith.md) and proposes the shared
-interface correction. The next PR implements that contract. MicroVM and Redis integrations then
-consume it in sibling changes, rather than introducing backend-specific source rules.
+The approved #1814 contract defines the five independent source kinds and their policy,
+trust, freshness, no-FS, restart, and lifecycle behavior. This amendment adds only the exact
+session authority needed when an admitted source intentionally reads execution files. MicroVM
+and native Kubernetes integrations consume that shared binding rather than introducing
+backend-specific source rules. The formal domain model already defines `HarnessContext` and
+requires no extension for this amendment.
 
 ## Human decisions
 
 - [x] Independent, flexible sources — Decision: deployment composition selects harness sources independently from execution. APIs, host files, and explicitly selected execution files are valid source implementations; execution placement never implicitly chooses them.
 - [x] Layered composition and overrides — Decision: the operator can combine deployment, API/service, and repository contributions, including multiple sources of the same content kind. Resolution is per-kind, deterministic, and provenance-preserving. Repository context can be disabled without disabling execution; content overrides cannot change authorization.
-- [x] Integration stack — Decision: model/contract first, shared implementation second, then PR #580 and a separate Redis #1811 integration.
+- [x] Integration stack — Decision: retain the approved #1814 contract, add the narrow exact execution-file acquisition seam, then bring #1875 into conformance. MicroVM #580 and native Kubernetes #1579 / #1614 consume it; Redis #1811 is a separate sibling and does not block either backend.
+- [x] Session-bound execution-file sources — Decision: a selected principal-scoped source receives authoritative session identity and may opt in to lazy, exact-authorized, read-only execution-file acquisition. Owner and profile alone cannot distinguish two worktrees belonging to the same principal. Process and unselected sources receive no acquisition capability.
+- [x] Downscope — Decision: the directing user limited this amendment to what MicroVM and native Kubernetes need. Preserve existing inventory APIs, persistence, `SessionLease`, ADR 0294 behavior, resume semantics, and child lifecycle machinery; do not add inventory callbacks, durable recovery recipes, history transfer, `SessionAccess`, or new storage-locking and fencing protocols.
 - [x] Composition configuration and resolution schema — Decision: trusted composition registers source IDs, and operator-only configuration names enabled IDs plus a highest-precedence-first source order for each content kind. Instructions combine in that order or select the first nonempty source in `replace` mode. Commands, rules, skills, and agent definitions resolve exact-name collisions by order, with exact operator-declared exclusions and named lower-source overrides. Resolution performs no recursive merge and assigns no transport-derived precedence.
 - [x] Public API transition — Decision: make the workspace-free `engine/prompt` API break directly, with source-bound filesystem adapters. The implementation PR updates API snapshots and `engine/CHANGELOG.md`; it does not retain workspace-taking compatibility overloads or adapters.
 - [x] Binding-generation retirement — Decision: the operator explicitly authorizes close to retire a binding generation, not a session ID forever. Explicit owner-authorized supported reload activates a fresh generation under current authorization; retired generations never reopen, stale borrows do not reactivate them, old releases cannot affect replacements, and Build shutdown prevents activation. This clarification is authorized for the draft stack; it does not claim approval by plan merge.
@@ -33,15 +38,14 @@ consume it in sibling changes, rather than introducing backend-specific source r
 
 ## Interface contract
 
-The contract below records operator-selected direction for human review. It is not merged approval.
-The operator's narrow delivery exception permits a draft stacked shared-implementation PR to start
-from this exact proposed-docs commit before plan merge; that draft must stop on contract drift and
-cannot merge before the Plan / Interface contract. Human merge gates remain for both PRs, and the
-stack remains docs → shared implementation → PR #580 / Redis sibling integrations.
+This amendment retains the approved #1814 contract and proposes only the exact
+session-bound execution-file acquisition needed by MicroVM and native Kubernetes.
+It does not authorize runtime changes before merge.
 
 - **gRPC / protobuf:** No public API field, source selector, backend kind, path, or durable context
-  reference is added. Command listing keeps its existing response shape. Public clients cannot select
-  source IDs or composition policy.
+  reference is added. Preserve the existing `ListSkills`, `ListAgents`, and command-listing request
+  and response shapes; this amendment adds no `session_id` to inventory RPCs or clients. Public
+  clients cannot select source IDs, roots, environment references, or composition policy.
 - **Exported Go APIs / interfaces:** Make these clean breaks in `engine/prompt`:
   `InstructionAssembler.Assemble(context.Context) ([]session.Message, error)`,
   `CommandExpander.Expand(context.Context, string) (string, bool, error)`, and
@@ -62,8 +66,10 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
   type HarnessSourceID string
 
   type HarnessSourceScope struct {
-      Principal *session.Principal
-      Profile   string
+      SessionID             session.SessionID
+      Principal             *session.Principal
+      Profile               string
+      AcquireExecutionWorkspace func(context.Context) (tool.Workspace, func() error, error)
   }
 
   type HarnessSourceScopeKind uint8
@@ -79,10 +85,12 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
   }
 
   type HarnessSourceRegistration[T any] struct {
-      ID         HarnessSourceID
-      Scope      HarnessSourceScopeKind
-      Provenance HarnessProvenancePolicy
-      Bind       func(context.Context, HarnessSourceScope) (T, func() error, error)
+      ID             HarnessSourceID
+      Scope          HarnessSourceScopeKind
+      Provenance     HarnessProvenancePolicy
+      // UsesExecutionWorkspace declares this source's workspace dependency; it neither enables it nor grants authority.
+      UsesExecutionWorkspace bool
+      Bind           func(context.Context, HarnessSourceScope) (T, func() error, error)
   }
 
   type CommandSourceBinding interface {
@@ -108,11 +116,31 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
   engine bundle, or a requirement that one backend implement all five kinds. A command binding
   supplies List and Expand from one resolved object.
 
-  Each registration declares process or principal scope. Process scope is valid only for an adapter
-  explicitly documented as caller-neutral and concurrency-safe. Principal-scoped `Bind` receives the
-  authoritative stored session owner and `Session.Profile`; its result is never cached or reused
-  across principals. A nil cleanup function is valid for a source with nothing to close; non-nil
-  cleanup must be idempotent.
+  Each registration declares process or principal scope. Process scope receives a zero
+  `HarnessSourceScope` and is valid only for a caller-neutral, concurrency-safe adapter.
+  Principal-scoped `Bind` receives the authoritative session ID, cloned authorized owner, and
+  `Session.Profile`; owner/profile alone never identifies a session. Independent sessions do not
+  reuse each other's binding results. Explicitly inherited child references may retain the parent's
+  bound source and acquisition anchor within the child's existing restrictions; the child's execution
+  placement does not replace that anchor. A nil cleanup is valid when there is nothing to close;
+  non-nil cleanup must be idempotent.
+
+  `UsesExecutionWorkspace` defaults to false. It declares a source workspace dependency; it is a
+  trusted registration property, not operator enablement, an authority grant, a public or YAML
+  selector, and is valid only for principal scope with fixed `project` provenance; incompatible
+  registrations fail startup. Only a selected, admitted registration with this property receives
+  `AcquireExecutionWorkspace`; process, disabled,
+  unselected, and other registrations receive nil. The callback accepts no session, root, or
+  environment selector. It lazily acquires the exact server-authorized source workspace as a
+  read-only view, with no runner and no execution `ReadLedger`, and returns a source-owned release.
+  The source cleanup retains that borrow for its own lifetime and releases only that borrow.
+
+  Source acquisition must work for a newly reserved root or scheduled-fire ID before session
+  publication; it cannot require `SessionStore.Load` for that unpublished ID. Binding, cancellation,
+  engine-construction, or publication failure releases resources acquired by that attempt without
+  closing the execution owner's binding or deleting retained placement. A source read is not edit
+  evidence. Independent sources do not attach unrelated execution and remain usable for no-FS
+  sessions; a selected execution-file source reports unavailable storage rather than inventing it.
 
   `HarnessProvenancePolicy` has exactly one mode. `Fixed` stamps one validated existing tier on every
   contribution. `PreserveAllowed` is available only to trusted compatibility adapters whose one
@@ -224,7 +252,10 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
   from a session `Environment`. Existing source flags and URLs continue to register those compatibility
   bindings. An explicit policy can instead layer operator-registered deployment, service, and
   repository IDs. No `microvm` or `redis` switch, backend type, or discovery time chooses priority.
-- **Events / persistence:** Add no event or snapshot field. Commands remain live per List/Expand;
+- **Events / persistence:** Add no event, snapshot, durable source identity, recovery recipe,
+  session label, or store protocol. Preserve `SessionLease`, ADR 0294 behavior, existing session
+  lifecycle serialization, and existing resume semantics; this amendment adds no `SessionAccess`,
+  session lock, fencing token, or store mutation protocol. Commands remain live per List/Expand;
   instructions observe their configured sources once per run; rules, skills, and agent definitions
   preserve their snapshot semantics. Policy and process-scoped snapshot sources resolve once in
   `app.Build`. A principal-scoped snapshot source resolves once when that session context binding is
@@ -285,10 +316,13 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
   separate project-ingestion gate; naming or overriding `repository` never grants project trust.
   Harness-context registration and source roots do not retarget the separately constructed
   permission resolver or its session-base project governance root. Context resolution cannot
-  weaken a permission deny, add an allow, grant a tool, alter hooks or credentials, or widen a child. Children inherit only the parent's admitted context subject to the
-  named specialist's configured prompt, skills, tools, profile, project admission, and delegation
-  attenuation. Source-only command listing owner-authorizes the session and resolves its current
-  principal-scoped context without reattaching unrelated execution. In unauthenticated local mode,
+  weaken a permission deny, add an allow, grant a tool, alter hooks or credentials, or widen a child.
+  Fresh isolated, direct-write, Parallel, and Team children retain the parent's admitted source under
+  their existing restrictions and existing binding references; they do not select the child's
+  execution files. This amendment adds no child-binding callback framework and makes no new promise
+  of cold specialist reconstruction or original-anchor recovery. Source-only command listing
+  owner-authorizes the session and resolves its current principal-scoped context without reattaching
+  unrelated execution. In unauthenticated local mode,
   the existing local/system-principal behavior remains valid rather than treating a nil external
   principal as failure. A source explicitly backed by execution files still requires and authorizes
   that source backend. Existing sessions and schedules reauthorize under current policy on restart;
@@ -296,14 +330,15 @@ stack remains docs → shared implementation → PR #580 / Redis sibling integra
 - **Compatibility / migration:** The workspace-free signatures are an intentional exported-engine
   break. The shared implementation PR updates `engine/api/*.txt` with `task api:update` and records
   the break in `engine/CHANGELOG.md` under `engine/COMPATIBILITY.md`; callers update atomically, with
-  no compatibility-adapter window. Existing persisted sessions and schedules require no destructive
-  migration. Root discovery remains root-only: nonempty AGENTS.md wins; absent or whitespace-only
+  no compatibility-adapter window. Existing tool schemas, inventory APIs and clients, persistence,
+  resume behavior, `SessionLease`, and ADR 0294 behavior remain unchanged. Existing persisted
+  sessions and schedules require no destructive migration. Root discovery remains root-only: nonempty AGENTS.md wins; absent or whitespace-only
   AGENTS.md falls through to CLAUDE.md; both absent/empty means no project fragment; other read errors
   follow existing assembly policy. Preserve trimming, framing, provenance manifests, freshness,
   admission, source-specific failure behavior, and current caps. Do not add ancestor traversal or
   trusted content roles.
 
-## In scope - 5 scenarios, in implementation order
+## In scope - 6 scenarios, in implementation order
 
 ### Scenario 1 - Source selection and execution vary independently
 
@@ -353,7 +388,7 @@ The source boundaries build on [ADR 0081](../adr/0081-rules-source-port.md),
   - verify: `TestADR_0359_HarnessContext_Scenario3_ProvenanceAndSourceContracts`
 - AC3.4: Source reads never update the execution ReadLedger, including when both capabilities reference the same files. Sharing a context source does not share session read evidence.
   - verify: `TestADR_0359_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits`
-- AC3.5: Inherited sources do not widen a child's existing specialist catalog, profile, trust admission, or delegation capabilities; an isolated execution fork alone does not retarget its context sources.
+- AC3.5: Fresh isolated, direct-write, Parallel, and Team children retain the parent's admitted source through the existing binding references until their context use ends, without widening the child's specialist catalog, profile, trust admission, tools, or delegation capabilities. Conflicting child execution files remain unselected, and retiring the parent binding does not invalidate a source still held by a child reference.
   - verify: `TestADR_0359_HarnessContext_Scenario3_ChildAttenuationPreserved`
 
 ### Scenario 4 - Source failure does not change authority
@@ -392,38 +427,64 @@ these proofs.
 - AC5.5: A lower-admission contribution claiming deployment origin or requesting changed override policy cannot promote itself, bypass project admission, weaken a permission deny, or expand a child's tool catalog.
   - verify: `TestADR_0359_HarnessContext_Scenario5_ContextOverridesCannotGrantAuthority`
 
+### Scenario 6 - Selected execution-file sources acquire exact session authority
+
+The acquisition seam is internal and capability-based. It distinguishes real sessions rather than
+reconstructing authority from public roots, owner/profile pairs, or backend kinds, as required by
+[ADR 0359](../adr/0359-harness-context-source-authority.md#acquire-selected-execution-files-by-exact-session-authority).
+Proofs exercise the actual session-creation and command-discovery factories with distinct reference
+backend workspaces; a registration closure pre-bound to one workspace does not prove dynamic acquisition.
+
+**Acceptance:**
+- AC6.1: Two independent same-owner/profile sessions with conflicting instructions and commands in different worktrees bind and consume their own exact selected execution-file source; neither session can acquire or observe the other's source.
+  - verify: `TestADR_0359_HarnessContext_Scenario6_SameOwnerSessionsStayDistinct`
+- AC6.2: A selected source lazily acquires the exact authorized workspace both before publication of a newly reserved root or scheduled-fire ID and after restart, without requiring the unpublished ID to be loadable from the store or accepting a public root/ref selector.
+  - verify: `TestADR_0359_HarnessContext_Scenario6_DynamicExactSourceAcquisition`
+- AC6.3: Binding failure, cancellation, engine-construction failure, and publication failure release only that attempt's source borrow; retained placement and another caller's successful binding remain usable, and later creation can retry.
+  - verify: `TestADR_0359_HarnessContext_Scenario6_AcquisitionFailureIsolation`
+- AC6.4: Process-scoped, disabled, and unselected registrations receive no acquisition callback. Independent selected sources perform no execution attachment and remain usable with no-FS execution, while a required selected execution-file source fails if its files are unavailable.
+  - verify: `TestADR_0359_HarnessContext_Scenario6_NonselectedSourcesDoNotAttachExecution`
+
 ## Dependency stack
 
-1. **This PR:** proposed model, ADR, and exact interface/acceptance contract for human review.
-2. **Shared implementation PR:** source-bound interfaces; exact operator-only per-kind policy;
-   real local `app.Build` and server discovery wiring; offline conformance over independent source
-   bindings; API snapshots and changelog; and current-policy restart rebinding. Inactive types or
-   test-only composition do not satisfy this task.
-3. **PR #580:** consume the shared contract for MicroVM. Qualify configured host/API/execution-file sources independently from guest tools; preserve actual VM lifecycle and isolation proofs.
-4. **Issue #1811 sibling PR:** consume the same contract with Redis execution. Retain exact Redis file access and shell-less semantics; prove independent and explicitly Redis-file-backed context selection.
+1. **PR #1878:** this downscoped ADR and exact interface/acceptance amendment for human review.
+2. **PR #1875:** retain the approved source composition, generation, `Activate`, `Retire`, and borrow
+   machinery; add authoritative session scope and exact selected guest-file acquisition. Bring the
+   existing implementation into conformance without inventory migration, recovery recipes, history
+   transfer, or a new session-store protocol.
+3. **PR #580:** consume shared independent sources and exact selected guest-file acquisition for
+   MicroVM execution. Permission and governance roots remain separate from source roots.
+4. **PR #1579 amendment and PR #1614:** update native-plan AC6.1/6.2 to use source policy and remove
+   execution-kind blanket suppression in favor of admitted configured sources. The first native slice
+   selects independent deployment/operator/API sources and leaves PVC context unselected. Preserve
+   the native plan's delegation and schedule exclusions plus placement and fencing obligations.
+5. **Issue #1811:** Redis remains a separate sibling integration and does not block MicroVM or native
+   Kubernetes delivery.
 
-The sibling integrations must not independently invent shared interfaces. Their concrete backend
-proofs supplement the shared reference proofs rather than being prerequisites for PR 2.
+The #1579 amendment may proceed in parallel with #1875. Shared reference completion proves neither
+live backend qualified; each integration owns its concrete backend evidence. Sibling integrations
+must not invent alternate shared interfaces.
 
 ## Out of scope
 
 | Item | Defer-to | Decision |
 |---|---|---|
-| Runtime implementation in this PR | Shared implementation PR | Model and contract only. |
-| Concrete MicroVM integration and live journey | PR #580 | Dependent on the shared contract. |
-| Concrete Redis correction | Issue #1811 | Separate sibling implementation. |
+| Runtime implementation in this PR | PR #1875 and backend integrations | Contract only. |
+| Concrete MicroVM qualification | PR #580 | Consumes the shared contract. |
+| Concrete native Kubernetes qualification | PR #1579 / #1614 | Consumes the shared contract while preserving native placement and fencing obligations. |
+| Concrete Redis correction | Issue #1811 | Separate sibling; not a blocker. |
+| Session-effective inventory API/client migration | Existing inventory contracts | Not part of this amendment; preserve current schemas and behavior. |
+| Cold child reconstruction, durable recipes, or history transfer | Existing resume contract | Not part of this amendment; do not add recovery labels/factories or change existing same-parent or cross-parent resume semantics. |
+| Session-access locks, fencing, or store mutation redesign | Existing `SessionLease`, ADR 0294, and persistence contracts | Not part of this amendment. |
 | Generic registry or one new transport per source noun | Future demonstrated need | Existing ports and APIs already support independent sources. |
 | Ancestor-directory traversal within a file source or changed caps | Separate decision | Preserve root-only discovery within each file source; composing multiple configured sources is in scope. |
 | Automatic deletion or rejection of legacy state | None | Current-policy rebinding requires no destructive migration. |
 
 ## Definition of done
 
-This proposed contract is complete for human Plan / Interface review. Run the acceptance-plan
-checker and its fixtures plus `task docs`; render model Markdown from YAML, never by hand. Record
-environment or baseline failures honestly rather than claiming these gates passed.
+Run the acceptance-plan checker and its fixtures plus `task docs` for this amendment.
 
-The later implementation requires `task test`, `task lint`, `task test:race`, `task api:check`,
-`task docs`, applicable strict AC tracing, the offline demo, and independent panel review. The exact
-proposed docs commit is the authorized baseline for a draft stacked implementation PR only. The plan
-remains proposed until merged; no implementation PR may merge ahead of it, and neither draft status
-nor this exception claims release behavior or waives either human merge gate.
+The later implementation must pass the [development process implementation gates](../development-process.md#split-path-the-default)
+and supply backend-owned evidence. The `verify:` names above are implementation obligations,
+not claims that tests already exist or pass. This plan remains proposed until merged; it authorizes
+no runtime implementation or merge and does not claim either live backend is qualified.

@@ -59,7 +59,7 @@ func TestIdleSessionBrokerRefresh_Scenario3_EligibilityAndRecoveryUX(t *testing.
 			case "snapshot-running":
 				m.sessionState = "running"
 			case "resumed":
-				mm, _, _ := m.adoptAuthoritativeTranscript(client.SessionListItem{ID: m.sessionID, State: "idle"}, conversation{})
+				mm, _, _ := m.adoptAuthoritativeTranscript(client.SessionListItem{ID: m.sessionID, State: "idle"}, conversation{}, client.SessionSnapshot{Capabilities: m.caps, ResolvedModel: m.resolvedSessionModel, Mode: m.activeMode})
 				m = mm.(Model)
 			case "completed":
 				m.enrollment.ID = "bundle"

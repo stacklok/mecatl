@@ -10,8 +10,9 @@ import {
 } from "../../components/shell/connection-status-banner-state";
 import { GlobalStatusSlot } from "../../components/shell/global-status-slot";
 import { Button } from "../../components/ui/button";
-import { accountStorageKey } from "../../lib/account-storage";
+import { accountStorageKey, sharedMarkerIsAbsent } from "../../lib/account-storage";
 import { onAuthenticationRequired, setRequestRecoveryState } from "../../lib/api-client";
+import { initializeProfilePreferences } from "../../lib/profile-preferences";
 import { AuthRecoveryContext, useAuthRecovery } from "./auth-recovery-context";
 import {
   acceptsPopupResult,
@@ -34,9 +35,19 @@ function currentLoginUrl(popup: boolean): string {
   return authLoginUrl(returnTo, popup);
 }
 
-/** Keep the full requested browser URL through the interactive sign-in round trip. */
+/** Keep the route while the arrival seed stays in the initiating tab. */
 export function authLoginUrl(returnTo: string, popup = false) {
-  const query = new URLSearchParams({ return_to: returnTo });
+  // The arrival prompt belongs to the initiating tab. A login popup or new
+  // tab returns to the chat route without carrying the seed through the
+  // server's bounded return_to parameter.
+  const target = new URL(returnTo, "https://studio.invalid");
+  if (target.pathname === "/workspace/chat") {
+    target.searchParams.delete("prompt");
+    target.searchParams.delete("send");
+  }
+  const query = new URLSearchParams({
+    return_to: `${target.pathname}${target.search}${target.hash}`,
+  });
   if (popup) query.set("flow", "popup");
   return `/api/v1/auth/login?${query}`;
 }
@@ -68,6 +79,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const applyCheck = useCallback(
     (check: SessionCheck) => {
       const transition = commitRecoveryCheck(recoveryRef.current, check, queryClient);
+      // Apply account-scoped scale only after storage reconciliation, before
+      // this identity's workspace renders. A sign-out resets it to default.
+      if (transition.state.phase === "ready" || transition.clearAccount) {
+        initializeProfilePreferences();
+      }
       recoveryRef.current = transition.state;
       setRequestRecoveryState(transition.state);
       setRecovery(transition.state);
@@ -82,7 +98,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (session.isPending) return;
-    const observation = `${session.status}:${session.dataUpdatedAt}:${session.errorUpdatedAt}`;
+    // Query updates can share a millisecond; include the identity facts.
+    const account = session.data?.status === "authenticated" ? session.data.account : "";
+    const observation = `${session.status}:${session.dataUpdatedAt}:${session.errorUpdatedAt}:${session.data?.mode}:${session.data?.status}:${account}`;
     if (processedSession.current === observation) return;
     processedSession.current = observation;
     if (session.isError || !session.data) {
@@ -118,9 +136,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== accountStorageKey || event.newValue === recoveryRef.current.account) return;
-      // A peer tab explicitly signed out or changed account. Unlike an
-      // expired session, its old workspace must disappear immediately.
-      applyCheck({ kind: "signed-out" });
+      // A peer may already have written the new account's shared data.
+      // A confirmed absent marker is an unmarked sign-out that needs cleanup.
+      applyCheck(
+        event.newValue === null && sharedMarkerIsAbsent()
+          ? { kind: "signed-out" }
+          : { kind: "peer-account-changed" },
+      );
       void session.refetch();
       void status.refetch();
     };

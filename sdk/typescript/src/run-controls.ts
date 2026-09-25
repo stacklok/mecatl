@@ -18,12 +18,14 @@ import {
   type CancelRunSteerResponse,
   ContentSchema,
   HarnessService,
+  type ResolvePlanAskResponse,
   type ResolveRunAskResponse,
   SteerOutcome,
   type SteerRunResponse,
 } from "./gen/mecatl/v1/harness_pb.js";
 import { encodePrompt, type PromptCapabilities, type PromptInput } from "./media.js";
 import type { RequestOptions } from "./namespaces-core.js";
+import { type PlanApprovalVerdict, planPermissionVerdict } from "./plan.js";
 import { getRawJson } from "./raw.js";
 import type { PermissionVerdict } from "./run.js";
 import { ServerFeature } from "./server.js";
@@ -83,8 +85,9 @@ export interface RunSteerCancellationAcknowledgement {
  * Prompt-free controls bound to one exact session run.
  *
  * Construct this resource with {@link Session.controls}. It does not attach,
- * subscribe, or keep a run alive. Every method requires the server's
- * `prompt_free_controls` feature, addresses `runId` exactly, performs one unary
+ * subscribe, or keep a run alive. Ordinary controls require the server's
+ * `prompt_free_controls` feature; plan review requires
+ * `exact_plan_ask_control`. Every method addresses `runId` exactly, performs one unary
  * request without automatic retry, and accepts ordinary {@link RequestOptions}.
  * A server that lacks the feature raises {@link UnsupportedFeatureError} before
  * a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs
@@ -107,7 +110,8 @@ export interface RunControls {
    *
    * Root and surfaced-child permission asks are supported, including an
    * ordinary ask restored from a persisted awaiting run. Plan-originated asks
-   * require `Session.resolvePlan()` and fail with `plan_resolution_required`.
+   * require `resolvePlanAsk()` or `Session.resolvePlan()` and fail here with
+   * `plan_resolution_required`.
    * Unknown or already resolved asks fail with `ask_not_pending`. Unlike the
    * stream-local `Run.resolveAsk()` send-only operation, this control returns
    * only after the server acknowledges acceptance.
@@ -119,6 +123,20 @@ export interface RunControls {
   resolveAsk(
     askId: string,
     verdict: PermissionVerdict,
+    requestOptions?: RequestOptions,
+  ): Promise<void>;
+  /**
+   * Resolves one plan-originated ask on this exact run and ask ID. Requires
+   * `exact_plan_ask_control`; a stale run or ask fails at the daemon. The
+   * acknowledgement must echo both IDs before this promise resolves.
+   *
+   * @param askId - Exact plan ask ID.
+   * @param verdict - Approve once, accept edits, or iterate.
+   * @param requestOptions - Request headers, cancellation signal, and deadline.
+   */
+  resolvePlanAsk(
+    askId: string,
+    verdict: PlanApprovalVerdict,
     requestOptions?: RequestOptions,
   ): Promise<void>;
   /**
@@ -301,6 +319,45 @@ class RunControlsImpl implements RunControls {
     if (echoedAskId !== askId) {
       protocol(
         "ResolveRunAsk response changed the ask correlation ID",
+        this.#operations.transportKind,
+      );
+    }
+  }
+
+  async resolvePlanAsk(
+    askId: string,
+    verdict: PlanApprovalVerdict,
+    requestOptions?: RequestOptions,
+  ): Promise<void> {
+    this.#operations.assertOpen();
+    const features = await this.#operations.features(requestOptions);
+    if (!features.has(ServerFeature.ExactPlanAskControl)) {
+      throw new UnsupportedFeatureError(ServerFeature.ExactPlanAskControl, {
+        transport: this.#operations.transportKind,
+      });
+    }
+    const response = (await this.#operations.unary(
+      HarnessService.method.resolvePlanAsk,
+      {
+        askId,
+        expectedRunId: this.runId,
+        sessionId: this.sessionId,
+        verdict: permissionVerdict(planPermissionVerdict(verdict), this.#operations.transportKind),
+      },
+      requestOptions,
+    )) as ResolvePlanAskResponse;
+    const raw = rawResponse(response, this.#operations.transportKind);
+    validateCorrelation(response, raw, this.runId, undefined, this.#operations.transportKind);
+    const echoedAskId = validateStringField(
+      response,
+      raw,
+      "askId",
+      "ask_id",
+      this.#operations.transportKind,
+    );
+    if (echoedAskId !== askId) {
+      protocol(
+        "ResolvePlanAsk response changed the ask correlation ID",
         this.#operations.transportKind,
       );
     }

@@ -1,15 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
+// @vitest-environment happy-dom
 
 import type { SessionSummaryResponse } from "@mecatl-studio/contracts";
-import { describe, expect, it } from "vitest";
+import { act, cleanup, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearUserScopedStorage } from "../../lib/account-storage";
 import {
   assignChatFolder,
   deleteChatFolder,
   groupSessions,
   parseChatFolders,
+  useChatFolders,
 } from "./chat-folders";
 
+beforeEach(() => clearUserScopedStorage());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  clearUserScopedStorage();
+});
+
 describe("chat folders", () => {
+  it("keeps folder edits available in memory when browser storage is full", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Quota exceeded");
+    });
+    const { result, unmount } = renderHook(() => useChatFolders());
+    act(() => result.current.create("Planning", "chat-a"));
+    const folderId = result.current.state.folders[0]?.id;
+    expect(folderId).toBeTruthy();
+    expect(result.current.state.assignments["chat-a"]).toBe(folderId);
+
+    act(() => result.current.rename(folderId ?? "", "Reviews"));
+    act(() => result.current.move("chat-b", folderId));
+    expect(result.current.state.folders[0]?.name).toBe("Reviews");
+    expect(result.current.state.assignments["chat-b"]).toBe(folderId);
+    expect(window.localStorage.getItem("studio.chat.folders")).toBeNull();
+
+    unmount();
+    const reopened = renderHook(() => useChatFolders());
+    expect(reopened.result.current.state.folders[0]?.name).toBe("Reviews");
+    expect(reopened.result.current.state.assignments["chat-b"]).toBe(folderId);
+  });
+
   it("validates persisted folders and drops orphan assignments", () => {
     expect(
       parseChatFolders(
@@ -68,6 +101,8 @@ describe("chat folders", () => {
       modelId: "",
       state: "idle",
       title: id,
+      titleProvenance: "",
+      titleRevision: "0",
       turns: 0,
       updatedAt,
     });

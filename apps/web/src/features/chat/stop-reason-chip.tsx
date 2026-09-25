@@ -60,6 +60,11 @@ export function hasVisibleStopReason(stopReason: string): boolean {
   return resolveStopReasonLabel(stopReason) !== undefined;
 }
 
+/** The text equivalent used by the run status line and the visual chip. */
+export function stopReasonDescription(stopReason: string): string | undefined {
+  return resolveStopReasonLabel(stopReason)?.text;
+}
+
 /**
  * The durable chip marking a run that ended on something other than a clean
  * finish: a limit or budget stop (warning tint), or a muted cue such as a

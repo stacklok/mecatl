@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
+	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -279,12 +281,26 @@ func foldOperatorModelSlots(cfg Config) Config {
 				continue
 			}
 			if _, cliSet := cfg.ModelSlots[k]; cliSet {
-				continue // CLI --model-slot wins.
+				continue // CLI --model-slot wins, including over an object.
 			}
-			cfg.ModelSlots[k] = strings.TrimSpace(v)
+			if v.ExplicitProvider {
+				cfg.GuardrailSlot = &ModelTargetSelector{ProviderID: strings.TrimSpace(v.Provider), Model: strings.TrimSpace(v.Model)}
+				continue
+			}
+			cfg.ModelSlots[k] = strings.TrimSpace(v.Model)
 		}
 	}
 	return cfg
+}
+
+func scalarModelSlots(slots permconfig.ModelSlots) map[string]string {
+	out := make(map[string]string, len(slots))
+	for name, value := range slots {
+		if !value.ExplicitProvider {
+			out[name] = value.Model
+		}
+	}
+	return out
 }
 
 // cliModelKeys is the snapshot of which model bindings the OPERATOR set on the CLI
@@ -521,7 +537,7 @@ func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
 	cfg.ModelAliases = capMergeProjectBindings(cfg, "aliases", proj.Aliases, cfg.ModelAliases, cliKeys.aliases, allowed, false)
 	// slots: re-bind each slot key within the cap (CLI --model-slot key wins; the slot
 	// NAME is validated against knownSlotNames, the slot VALUE is capped resolve-then-check).
-	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", proj.Slots, cfg.ModelSlots, cliKeys.slots, allowed, true)
+	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", scalarModelSlots(proj.Slots), cfg.ModelSlots, cliKeys.slots, allowed, true)
 	return cfg
 }
 
@@ -712,6 +728,7 @@ func prepareJevRouter(cfg *Config) error {
 			BaseURL: cfg.RouterJevBaseURL, DefaultCategory: cfg.RouterDefaultCategory,
 			MinimumConfidence: cfg.RouterJevMinimumConfidence,
 			MaximumInputBytes: cfg.RouterJevMaximumInputBytes,
+			HTTPClient:        withRootSessionCorrelation(&http.Client{CheckRedirect: openaicompat.RefuseRedirects}),
 		})
 		if err != nil {
 			return fmt.Errorf("configure Jev model router: %w", err)

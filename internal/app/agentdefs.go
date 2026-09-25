@@ -1273,6 +1273,14 @@ func skillSnapshot(discovered []skills.Skill) []*mecatlv1.SkillInfo {
 // these per session (e.g. against a CreateSession-supplied root), it MUST re-apply the
 // trust decision for that root or the project-tier injection gap silently reopens.
 func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
+	if cfg.harnessAgentDefs != nil {
+		defs, err := cfg.harnessAgentDefs.ListAgentDefs(ctx)
+		if err != nil {
+			cfg.diag().Log(ctx, port.LevelWarn, "resolving configured agent definitions failed; none registered", "err", err)
+			return agents.NewRegistry(nil)
+		}
+		return agents.NewRegistry(defs)
+	}
 	// Project-tier agent defs are withheld when the project tier is not admitted
 	// (Phase 2a): untrusted, or the ingestion grant withheld
 	// (projectIngestionAdmitted). The user-tier + explicit defs stay active

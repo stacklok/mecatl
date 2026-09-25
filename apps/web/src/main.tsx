@@ -7,15 +7,12 @@ import { createRoot } from "react-dom/client";
 import { RootErrorBoundary, studioRouterOptions } from "./components/error-page/error-routes";
 import { AuthGate } from "./features/auth/auth-gate";
 import { installCsrfInterceptor, installRecoveryInterceptor } from "./lib/api-client";
-import { initializeProfilePreferences } from "./lib/profile-preferences";
 import { stringSearchParams } from "./lib/search-params";
 import { initializeTheme } from "./lib/theme";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 
 initializeTheme();
-// Apply the stored UI scale before the first paint, not when Settings mounts.
-initializeProfilePreferences();
 installCsrfInterceptor();
 installRecoveryInterceptor();
 

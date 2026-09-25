@@ -30,6 +30,30 @@ func TestSessionIDContext(t *testing.T) {
 	}
 }
 
+func TestRootSessionIDContext(t *testing.T) {
+	if id, ok := port.RootSessionIDFromContext(context.Background()); ok || id != "" {
+		t.Fatalf("absent RootSessionIDFromContext = (%q, %v), want (empty, false)", id, ok)
+	}
+	ctx := port.WithRootSessionID(context.Background(), "root")
+	if id, ok := port.RootSessionIDFromContext(ctx); !ok || id != "root" {
+		t.Fatalf("RootSessionIDFromContext = (%q, %v), want (root, true)", id, ok)
+	}
+	child := port.WithRootSessionID(ctx, "replacement")
+	if id, _ := port.RootSessionIDFromContext(child); id != "replacement" {
+		t.Fatalf("replacement root = %q", id)
+	}
+	if id, _ := port.RootSessionIDFromContext(ctx); id != "root" {
+		t.Fatalf("parent root changed to %q", id)
+	}
+	attempt := port.WithRunAttemptContext(ctx, "child", 1)
+	if active, _ := port.SessionIDFromContext(attempt); active != "child" {
+		t.Fatalf("attempt active session = %q, want child", active)
+	}
+	if root, _ := port.RootSessionIDFromContext(attempt); root != "root" {
+		t.Fatalf("attempt root session = %q, want root", root)
+	}
+}
+
 func TestAttemptCorrelationContext(t *testing.T) {
 	base := port.WithSessionID(context.Background(), "session")
 	run := port.WithRunSerial(base, 42)

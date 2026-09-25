@@ -4,13 +4,13 @@
 **Work classification:** Bounded — this changes one model-facing tool contract and its composition-owned projection, but preserves provider identity, selection, trust, persistence, transport, and module boundaries.
 **Decision record:** None — provider facets, bounded literal search, and stateless continuation replace the alpha tool contract without changing the durable provider identity or selection architecture.
 **Phase:** alpha contract replacement
-**Status:** proposed, 2026-09-24 — the operator explicitly chose in-place replacement over a v2 or compatibility layer; ready for amendment Plan / Interface review.
+**Status:** landed, 2026-09-24 — implementation candidate passed aggregate gates, strict AC tracing, and panel review against the merged amendment baseline; this transition becomes authoritative only after human merge of the implementation PR.
 **Delivery:** Split. The replacement model-facing schema, disclosure boundary, search semantics, and stale-continuation behavior require amended contract review before implementation resumes.
 **Expected tasks:** deferred to orchestration
 **Issue:** [#1064](https://github.com/stacklok/mecatl/issues/1064)
 **Plan PR:** [#1864](https://github.com/stacklok/mecatl/pull/1864)
 **Prior approval:** Plan / Interface PR [#1857](https://github.com/stacklok/mecatl/pull/1857), merged as `dd77497c10071be17b1a3c302ac18eec3aadca8f`, is superseded by this amendment.
-**Approved baseline:** absent until the amendment Plan / Interface PR merges
+**Approved baseline:** `8d418c563a984693d0f43ced8904c8d2cd20d8dd` — merged amendment PR #1864
 
 `DiscoverModels` will let an agent find an exact selectable `(provider_id, model_id)` without
 already knowing the provider or scanning only the first bounded page of a provider with hundreds

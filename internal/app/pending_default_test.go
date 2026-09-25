@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -132,8 +133,10 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 	workspace := t.TempDir()
 	cfgPath := writeToolhiveConfig(t, "https://upstream.example/gw")
 	transport := &toggleTransport{body: toolhiveFixtureJSON} // starts DOWN (up=false)
+	var discoveryOffset atomic.Int64
 
 	built, err := buildIsolated(t, ctx, Config{
+		modelDiscoveryNow:   func() time.Time { return time.Now().Add(time.Duration(discoveryOffset.Load())) },
 		Workspace:           workspace,
 		NoSoul:              true,
 		ToolhiveLLM:         true,
@@ -158,6 +161,7 @@ func TestToolhiveSole_ProbeDown_HealedDefaultReachesZeroSelectorSession(t *testi
 
 	// "The proxy comes up."
 	transport.up.Store(true)
+	discoveryOffset.Add(int64(discoveryCooldown))
 
 	// Drive the heal through the REAL on-demand mechanism production uses:
 	// Service.ListModels invokes the wired refreshStaleModels refresher, which

@@ -56,7 +56,7 @@ func TestDebugMCPPermissionPolicy(t *testing.T) {
 		want governance.PermissionDecision
 	}{
 		{"inspect preserves deny", governance.PermissionDecision{Effect: governance.Deny, Reason: "managed deny"}, governance.PermissionDecision{Effect: governance.Deny, Reason: "managed deny"}},
-		{"inspect preserves configured ask", governance.PermissionDecision{Effect: governance.Ask, Reason: "operator ask", ConfiguredAsk: true}, governance.PermissionDecision{Effect: governance.Ask, Reason: "operator ask", ConfiguredAsk: true}},
+		{"inspect preserves configured ask", governance.PermissionDecision{Effect: governance.Ask, Reason: "operator ask", AskProvenance: governance.AskProvenanceConfigured}, governance.PermissionDecision{Effect: governance.Ask, Reason: "operator ask", AskProvenance: governance.AskProvenanceConfigured}},
 		{"inspect floors default ask", governance.PermissionDecision{Effect: governance.Ask, Reason: "default ask"}, governance.PermissionDecision{Effect: governance.Allow, Reason: "target-bound debug evidence is read-only"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,10 +87,10 @@ func TestDebugMCPPermissionPolicy(t *testing.T) {
 		})
 	}
 
-	configuredBase := &policyStub{decision: governance.PermissionDecision{Effect: governance.Ask, ConfiguredAsk: true, Reason: "configured"}}
+	configuredBase := &policyStub{decision: governance.PermissionDecision{Effect: governance.Ask, AskProvenance: governance.AskProvenanceConfigured, Reason: "configured"}}
 	configured := newPolicy(configuredBase, false, []tool.Tool{write})
 	configuredDecision := configured.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil)
-	if !configuredDecision.ConfiguredAsk || configuredDecision.Reason != "configured" {
+	if configuredDecision.AskProvenance != governance.AskProvenanceConfigured || configuredDecision.Reason != "configured" {
 		t.Fatalf("debug policy did not preserve the configured ask: %+v", configuredDecision)
 	}
 	if again := configured.Evaluate(t.Context(), "debug", session.ModeDefault, call(write.name), nil); again.Effect != governance.Ask {

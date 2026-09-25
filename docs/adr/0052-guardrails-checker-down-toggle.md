@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-24
-- Scope: the guardrails checker-error path — `internal/adapter/modelhook/modelhook.go` (`onCheckerError`), `internal/adapter/modelhook/matcher.go` (`CompiledRule`), `internal/adapter/permconfig/schema.go` (`GuardrailsSection.OnCheckerDown`, `GuardrailRuleSpec.FailClosedPresent`), `internal/app/guardrails.go` + `internal/app/build.go` (Config wiring). Adds a new operator-tier YAML key `guardrails.onCheckerDown`; no engine/`port`/proto/wire change.
+- Scope: the guardrails checker-error path — `internal/app/guardrails.go` (`GuardrailReviewPolicy`), `internal/adapter/modelhook/matcher.go` (`CompiledRule`), `internal/adapter/permconfig/schema.go` (`GuardrailsSection.OnCheckerDown`, `GuardrailRuleSpec.FailClosedPresent`), `internal/app/guardrails.go` + `internal/app/build.go` (Config wiring). Adds a new operator-tier YAML key `guardrails.onCheckerDown`; no engine/`port`/proto/wire change.
 - Supersedes: none (additive — extends the fail-open/closed decision in [ADR 0021](./0021-guardrails.md) without replacing it)
 - Superseded by: none
 

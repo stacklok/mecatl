@@ -69,6 +69,28 @@ func TestSessionsTranscriptEscapeReturnsToPickerAndHintsIdleOnce(t *testing.T) {
 	}
 }
 
+func TestSessionsRenderFillsOfferedBodyAndKeepsFooterBottomJustified(t *testing.T) {
+	m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background(), NoAltScreen: true})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	st := m.newSessionsSurface(false)
+	setSessionsInventoryRows(st, []client.SessionListItem{{ID: "one", Title: "one", Kind: client.SessionKindMain}})
+	m.modal = st
+
+	body, _ := st.Render(m.width, m.vp.Height())
+	if got, want := len(strings.Split(body, "\n")), m.vp.Height(); got != want {
+		t.Fatalf("sessions body height = %d, want offered height %d", got, want)
+	}
+
+	frame := strings.Split(m.View().Content, "\n")
+	if got, want := len(frame), m.height; got != want {
+		t.Fatalf("frame height = %d, want terminal height %d", got, want)
+	}
+	footer := strings.Split(m.renderFooter(), "\n")
+	if got := frame[len(frame)-len(footer):]; strings.Join(got, "\n") != strings.Join(footer, "\n") {
+		t.Fatalf("footer displaced by sessions body:\n got: %q\nwant: %q", got, footer)
+	}
+}
+
 func TestSessionsTranscriptEscapeResetsRendererForNextSession(t *testing.T) {
 	st := newSessionsPanelState()
 	st.deps = surfaceDeps{theme: testTheme(), marks: defaultHelpKeys()}

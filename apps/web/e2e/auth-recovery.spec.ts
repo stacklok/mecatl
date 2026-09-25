@@ -125,6 +125,10 @@ function setup(offlineBff: OfflineBff, initial: Partial<OfflineState> = {}): Off
     messages: [],
     sessionId: "s1",
   });
+  offlineBff.on("GET", "/api/v1/sessions/s1/activity", () => ({
+    body: "",
+    contentType: "text/event-stream",
+  }));
   offlineBff.on("POST", "/api/v1/sessions/s1/runs", () => {
     state.runWrites += 1;
     if (state.expireNextWrite) {
@@ -172,6 +176,188 @@ function setup(offlineBff: OfflineBff, initial: Partial<OfflineState> = {}): Off
 }
 
 const draftRoute = "/workspace/chat?sessionId=s1#draft";
+
+async function saveAccountArtifacts(page: import("@playwright/test").Page, owner: "Alice" | "Bob") {
+  await page.evaluate((name) => {
+    const folderId = `${name.toLowerCase()}-folder`;
+    localStorage.setItem(
+      "studio.chat.folders",
+      JSON.stringify({
+        assignments: { s1: folderId },
+        folders: [{ id: folderId, name: `${name} folder` }],
+      }),
+    );
+    localStorage.setItem(
+      "studio.chat.queue.s1",
+      JSON.stringify([
+        { createdAt: 1, id: `${name.toLowerCase()}-queued`, text: `${name} queued prompt` },
+      ]),
+    );
+    sessionStorage.setItem(
+      "studio.chat.failedRun.s1",
+      JSON.stringify({
+        message: `${name} failed run`,
+        permanent: false,
+        prompt: `${name} failed prompt`,
+      }),
+    );
+    localStorage.setItem("mecatl-studio-theme", "dark");
+    localStorage.setItem("mecatl-studio.palette", "solar");
+  }, owner);
+}
+
+async function accountArtifacts(page: import("@playwright/test").Page) {
+  return page.evaluate(() => ({
+    account: localStorage.getItem("studio.account"),
+    folder: localStorage.getItem("studio.chat.folders"),
+    queue: localStorage.getItem("studio.chat.queue.s1"),
+    failedRun: sessionStorage.getItem("studio.chat.failedRun.s1"),
+    localKeys: Object.keys(localStorage)
+      .filter((key) => key.startsWith("studio."))
+      .sort(),
+    sessionKeys: Object.keys(sessionStorage)
+      .filter((key) => key.startsWith("studio."))
+      .sort(),
+    theme: localStorage.getItem("mecatl-studio-theme"),
+    palette: localStorage.getItem("mecatl-studio.palette"),
+  }));
+}
+
+async function expectAccountArtifacts(
+  page: import("@playwright/test").Page,
+  owner: "Alice" | "Bob",
+) {
+  await expect(page.getByRole("heading", { name: `${owner} folder` })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Queued messages" })).toContainText(
+    `${owner} queued prompt`,
+  );
+  await expect(page.getByText(`${owner} failed run`)).toBeVisible();
+}
+
+for (const signIn of ["popup", "new tab"] as const) {
+  test(`large seeded link stays in the original tab through ${signIn} sign-in until explicit Send`, async ({
+    offlineBff,
+    page,
+  }) => {
+    const state = setup(offlineBff, { signedIn: false });
+    const seed = `Review ${"x".repeat(3_000)}`;
+    const arrival = `/workspace/chat?sessionId=s1&prompt=${encodeURIComponent(seed)}&send=1`;
+    offlineBff.on("GET", "/api/v1/auth/login", (request) => {
+      const url = new URL(request.url());
+      const returnTo = url.searchParams.get("return_to");
+      expect(returnTo).toBe("/workspace/chat?sessionId=s1");
+      expect(returnTo?.length).toBeLessThanOrEqual(2_048);
+      state.signedIn = true;
+      return url.searchParams.get("flow") === "popup"
+        ? {
+            body: '<!doctype html><html data-result="success"><title>Signed in</title><script src="/api/v1/auth/callback.js" defer></script></html>',
+            contentType: "text/html",
+          }
+        : { headers: { Location: returnTo ?? "/" }, status: 302 };
+    });
+
+    await page.goto(arrival);
+    await expect(page.getByRole("button", { name: "Sign in to Mecatl" })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("prompt")).toBe(seed);
+    expect(state.runWrites).toBe(0);
+    if (signIn === "new tab") {
+      await page.evaluate(() => {
+        window.open = () => null;
+      });
+      await page.getByRole("button", { name: "Sign in to Mecatl" }).click();
+      const opened = page.waitForEvent("popup");
+      await page.getByRole("link", { name: "Open sign-in in a new tab" }).first().click();
+      const tab = await opened;
+      await expect(tab).toHaveURL(/\/workspace\/chat\?sessionId=s1$/);
+      await tab.close();
+      await page.bringToFront();
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    } else {
+      const opened = page.waitForEvent("popup");
+      await page.getByRole("button", { name: "Sign in to Mecatl" }).click();
+      await opened;
+    }
+    const confirmation = page.getByRole("dialog", { name: "Send this prompt?" });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText(seed);
+    await expect(confirmation).toContainText("Alice chat");
+    await expect(confirmation).toContainText("offline");
+    await expect(confirmation).toContainText("Manual");
+    expect(new URL(page.url()).searchParams.get("sessionId")).toBe("s1");
+    expect(new URL(page.url()).searchParams.has("prompt")).toBe(false);
+    expect(state.runWrites).toBe(0);
+    await confirmation.getByRole("button", { name: "Send prompt" }).click();
+    await expect.poll(() => state.runWrites).toBe(1);
+  });
+}
+
+test("seed confirmation and composer remain in the viewport at 320, 500, and 1280 px", async ({
+  offlineBff,
+  page,
+}) => {
+  setup(offlineBff);
+  await page.goto("/workspace/chat?sessionId=s1&prompt=Review%20this&send=1");
+  const confirmation = page.getByRole("dialog", { name: "Send this prompt?" });
+  for (const width of [320, 500, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation.getByRole("button", { name: "Send prompt" })).toBeVisible();
+    const bounds = await confirmation.boundingBox();
+    if (!bounds) throw new Error("Seed confirmation has no visible bounds");
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+  }
+  await confirmation.getByRole("button", { name: "Edit prompt" }).click();
+  await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toBeVisible();
+});
+
+test("returning after 20 seconds shows one verified offline notice without persisting it", async ({
+  offlineBff,
+  page,
+}) => {
+  setup(offlineBff);
+  let offline = false;
+  offlineBff.on("GET", "/api/v1/runtime", () => ({
+    body: JSON.stringify({
+      capabilities: { image: false, posture: "managed" },
+      connection: offline ? "offline" : "online",
+    }),
+    contentType: "application/json",
+  }));
+  await page.clock.install({ time: new Date("2026-09-24T12:00:00Z") });
+  await page.goto("/workspace/chat?sessionId=s1");
+  await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+  const storageBefore = await page.evaluate(() => ({
+    local: Object.keys(localStorage).sort(),
+    session: Object.keys(sessionStorage).sort(),
+  }));
+  // Chromium headless keeps background pages visible, so drive the document's
+  // visibility API while exercising the real rendered app and BFF requests.
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.clock.fastForward(20_000);
+  offline = true;
+  offlineBff.json("GET", "/api/v1/sessions", { status: 503 }, 503);
+  offlineBff.json("GET", "/api/v1/sessions/s1", { status: 503 }, 503);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.getByText("Mecatl is offline.")).toBeVisible();
+  expect(
+    await page.evaluate(() => ({
+      local: Object.keys(localStorage).sort(),
+      session: Object.keys(sessionStorage).sort(),
+    })),
+  ).toEqual(storageBefore);
+  await page.reload();
+  await expect(page.getByText("Mecatl is offline.")).toHaveCount(0);
+});
 
 async function expireWrite(page: import("@playwright/test").Page, state: OfflineState) {
   state.expireNextWrite = true;
@@ -377,11 +563,15 @@ test("side-thread SSE expiry preserves its draft until an explicit retry", async
   const rootMessage = { content: "Root message", role: "user" };
   const messageKey = threadKeyForMessage(rootMessage);
   await page.addInitScript(
-    ({ key }) =>
+    ({ key }) => {
+      // This saved thread belongs to the account returned by the BFF.
+      localStorage.setItem("studio.account", "opaque-a");
+      sessionStorage.setItem("studio.account", "opaque-a");
       localStorage.setItem(
         "studio.chat.threads.s1",
         JSON.stringify({ [key]: { sessionId: "s2" } }),
-      ),
+      );
+    },
     { key: messageKey },
   );
   offlineBff.json("GET", "/api/v1/sessions/s1/transcript", {
@@ -440,14 +630,19 @@ test("side-thread SSE expiry preserves its draft until an explicit retry", async
   await expect.poll(() => sideWrites).toBe(2);
 });
 
-test("different account clears the mounted draft before showing its data", async ({
+test("same-account reload keeps artifacts and a different account clears them before rendering", async ({
   offlineBff,
   page,
 }) => {
   const state = setup(offlineBff);
   await page.goto(draftRoute);
   await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
-  await page.evaluate(() => localStorage.setItem("studio.chat.queue", "Alice's queued draft"));
+  await saveAccountArtifacts(page, "Alice");
+  const aliceArtifacts = await accountArtifacts(page);
+  await page.reload();
+  await expectAccountArtifacts(page, "Alice");
+  expect(await accountArtifacts(page)).toEqual(aliceArtifacts);
+
   await expireWrite(page, state);
   state.account = "opaque-b";
   const popupEvent = page.waitForEvent("popup");
@@ -455,11 +650,19 @@ test("different account clears the mounted draft before showing its data", async
   await popupEvent;
   await expect(page.getByRole("heading", { name: "Bob chat" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveValue("");
-  const scoped = await page.evaluate(() => ({
-    account: localStorage.getItem("studio.account"),
-    queue: localStorage.getItem("studio.chat.queue"),
-  }));
-  expect(scoped).toEqual({ account: "opaque-b", queue: null });
+  await expect(page.getByRole("heading", { name: "Alice folder" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Queued messages" })).toHaveCount(0);
+  await expect(page.getByText("Alice failed run")).toHaveCount(0);
+  expect(await accountArtifacts(page)).toEqual({
+    account: "opaque-b",
+    folder: null,
+    queue: null,
+    failedRun: null,
+    localKeys: ["studio.account"],
+    sessionKeys: ["studio.account"],
+    theme: "dark",
+    palette: "solar",
+  });
 });
 
 test("accountless session clears mounted private data", async ({ offlineBff, page }) => {
@@ -468,13 +671,92 @@ test("accountless session clears mounted private data", async ({ offlineBff, pag
   await page.goto(draftRoute);
   await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
   await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Alice's draft");
-  await page.evaluate(() => localStorage.setItem("studio.chat.queue", "Alice's queued draft"));
+  await saveAccountArtifacts(page, "Alice");
   state.account = "";
   await page.clock.runFor(60_001);
   await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Mecatl Studio" })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem("studio.chat.queue"))).toBeNull();
-  expect(await page.evaluate(() => localStorage.getItem("studio.account"))).toBeNull();
+  expect(await accountArtifacts(page)).toEqual({
+    account: null,
+    folder: null,
+    queue: null,
+    failedRun: null,
+    localKeys: [],
+    sessionKeys: [],
+    theme: "dark",
+    palette: "solar",
+  });
+});
+
+test("peer account marker protects Bob's data while the stale Alice tab rechecks", async ({
+  context,
+  offlineBff,
+  page,
+}) => {
+  const state = setup(offlineBff);
+  await page.goto(draftRoute);
+  await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+  await saveAccountArtifacts(page, "Alice");
+  const peer = await context.newPage();
+  await peer.goto(draftRoute);
+  await expect(peer.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+
+  let releaseAliceCheck!: () => void;
+  let observeAliceCheck!: () => void;
+  const aliceCheckPending = new Promise<void>((resolve) => {
+    observeAliceCheck = resolve;
+  });
+  const aliceCheckGate = new Promise<void>((resolve) => {
+    releaseAliceCheck = resolve;
+  });
+  await page.route("**/api/v1/auth/session", async (route) => {
+    observeAliceCheck();
+    await aliceCheckGate;
+    await route.fulfill({
+      body: JSON.stringify({ mode: "oidc", status: "authenticated", account: "opaque-b" }),
+      contentType: "application/json",
+    });
+  });
+
+  try {
+    state.account = "opaque-b";
+    await peer.reload();
+    await expect(peer.getByRole("heading", { name: "Bob chat" })).toBeVisible();
+    await aliceCheckPending;
+    await expect(page.getByRole("heading", { name: "Alice chat" })).toHaveCount(0);
+    await saveAccountArtifacts(peer, "Bob");
+    await peer.reload();
+    await expectAccountArtifacts(peer, "Bob");
+    const bobArtifacts = await accountArtifacts(peer);
+
+    const staleAccess = await page.evaluate(async () => {
+      const scoped = (await import(
+        /* @vite-ignore */ `${window.location.origin}/src/lib/account-storage.ts`
+      )) as typeof import("../src/lib/account-storage");
+      const folders = scoped.readUserScopedItem("studio.chat.folders");
+      const queue = scoped.readUserScopedItem("studio.chat.queue.s1");
+      const keys = scoped.listUserScopedKeys("studio.chat.queue.");
+      scoped.writeUserScopedItem("studio.chat.folders", "Alice stale folder");
+      scoped.writeUserScopedItem("studio.chat.queue.s1", "Alice stale queue");
+      scoped.writeUserScopedItem(
+        "studio.chat.failedRun.s1",
+        "Alice stale failed prompt",
+        sessionStorage,
+      );
+      return { folders, queue, keys };
+    });
+    expect(staleAccess).toEqual({ folders: null, queue: null, keys: [] });
+    expect(await accountArtifacts(peer)).toEqual(bobArtifacts);
+    expect((await accountArtifacts(page)).failedRun).toBeNull();
+  } finally {
+    releaseAliceCheck();
+  }
+  await expect(page.getByRole("heading", { name: "Bob chat" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bob folder" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Queued messages" })).toContainText(
+    "Bob queued prompt",
+  );
+  await expect(page.getByText("Alice failed run")).toHaveCount(0);
 });
 
 test("peer-tab sign-out removes the mounted private workspace", async ({
@@ -486,6 +768,7 @@ test("peer-tab sign-out removes the mounted private workspace", async ({
   await page.goto(draftRoute);
   await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
   await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Alice's draft");
+  await saveAccountArtifacts(page, "Alice");
   const peer = await context.newPage();
   await peer.goto("/workspace/settings/about");
   await peer.getByRole("button", { name: "Sign out" }).click();
@@ -494,6 +777,16 @@ test("peer-tab sign-out removes the mounted private workspace", async ({
   expect(new URL(page.url()).pathname + new URL(page.url()).search + new URL(page.url()).hash).toBe(
     draftRoute,
   );
+  expect(await accountArtifacts(page)).toEqual({
+    account: null,
+    folder: null,
+    queue: null,
+    failedRun: null,
+    localKeys: [],
+    sessionKeys: [],
+    theme: "dark",
+    palette: "solar",
+  });
 });
 
 test("anonymous shell shows outage before sign-in", async ({ offlineBff, page }) => {

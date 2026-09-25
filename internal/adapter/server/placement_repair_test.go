@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -49,6 +50,78 @@ func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReatt
 
 func repairEngine() *agent.Engine {
 	return agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog()})
+}
+
+type sourcePlacementProvider struct {
+	binding PlacementBinding
+}
+
+func (p *sourcePlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
+	return p.binding, nil
+}
+
+func (p *sourcePlacementProvider) Reattach(context.Context, PlacementReattachRequest) (PlacementBinding, error) {
+	return p.binding, nil
+}
+
+func TestExecutionWorkspaceAcquisitionIsReadOnlyAndLedgerIndependent(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "source", Revision: "v1"}
+	workspace := memfs.NewWorkspace("/source")
+	version, err := workspace.CreateFile(t.Context(), "original.txt", []byte("original"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := memledger.New()
+	provider := &sourcePlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, workspace, ledger, nil)}}
+	svc, err := NewService(Config{Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, release, err := svc.executionWorkspaceAcquirer(nil, ref)(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	read, err := source.Read(t.Context(), "original.txt")
+	if err != nil || string(read) != "original" {
+		t.Fatalf("acquired source Read = %q, %v", read, err)
+	}
+	if _, _, err := source.ReadVersion(t.Context(), "original.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.CreateFile(t.Context(), "created.txt", []byte("no")); !errors.Is(err, tool.ErrFileOperationUnsupported) {
+		t.Fatalf("CreateFile = %v", err)
+	}
+	if _, err := source.ReplaceFile(t.Context(), "original.txt", version, []byte("changed")); !errors.Is(err, tool.ErrFileOperationUnsupported) {
+		t.Fatalf("ReplaceFile = %v", err)
+	}
+	if _, ok := source.(tool.WorkspaceNamespace); ok {
+		t.Fatal("read-only source exposed namespace mutation capability")
+	}
+	contents, err := workspace.Read(t.Context(), "original.txt")
+	if err != nil || string(contents) != "original" {
+		t.Fatalf("original = %q, %v", contents, err)
+	}
+	if _, err := workspace.Stat(t.Context(), "created.txt"); err == nil {
+		t.Fatal("read-only source created a file")
+	}
+	if _, ok, err := ledger.RecordedVersion(t.Context(), tool.LedgerKey(workspace.Root(), "original.txt")); err != nil || ok {
+		t.Fatalf("execution ledger changed: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestExecutionWorkspaceAcquisitionNoFSIsActionable(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "none", Revision: "v1"}
+	defaultRef := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "default", Revision: "v1"}
+	provider := &sourcePlacementProvider{binding: PlacementBinding{Ref: defaultRef, Environment: tool.MustEnvironment(defaultRef, memfs.NewWorkspace("/source"), memledger.New(), nil)}}
+	svc, buildErr := NewService(Config{Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/source"})
+	if buildErr != nil {
+		t.Fatal(buildErr)
+	}
+	_, _, err := svc.executionWorkspaceAcquirer(nil, ref)(t.Context())
+	if !errors.Is(err, ErrPlacementUnavailable) || !strings.Contains(err.Error(), "requires execution files") || strings.Contains(err.Error(), "/") {
+		t.Fatalf("no-FS source error = %v", err)
+	}
 }
 
 func TestInvariant_placement_binder_required_for_service_construction(t *testing.T) {
@@ -164,11 +237,21 @@ func (d *repairDiagnostics) With(...any) port.Diagnostics { return d }
 
 type errorCommandLister struct{ err error }
 
-func (l errorCommandLister) List(context.Context, tool.Workspace) ([]Command, error) {
+func (l errorCommandLister) List(context.Context) ([]prompt.Command, error) {
 	return nil, l.err
 }
+func (errorCommandLister) Expand(_ context.Context, input string) (string, bool, error) {
+	return input, false, nil
+}
+func (l errorCommandLister) Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error) {
+	return l, func() {}, nil
+}
+func (errorCommandLister) Activate(context.Context, session.SessionID, *session.Principal, string) error {
+	return nil
+}
+func (errorCommandLister) Retire(session.SessionID) {}
 
-func TestCommandDiscoveryClosesReattachedBinding(t *testing.T) {
+func TestCommandDiscoveryDoesNotReattachExecution(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	closed := &atomic.Int32{}
 	provider := &repairPlacementProvider{binding: PlacementBinding{
@@ -194,8 +277,8 @@ func TestCommandDiscoveryClosesReattachedBinding(t *testing.T) {
 	if _, err := svc.ListCommandsForSession(t.Context(), source.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := closed.Load(); got != 1 {
-		t.Fatalf("reattached binding closes = %d, want 1", got)
+	if got := closed.Load(); got != 0 {
+		t.Fatalf("command discovery reattached execution and closed %d bindings", got)
 	}
 }
 

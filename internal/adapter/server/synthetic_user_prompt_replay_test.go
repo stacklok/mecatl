@@ -36,8 +36,8 @@ func TestSyntheticUserPromptReplay_Scenario1_PersistenceProtoAndFoldRoundTrip(t 
 	if err := json.Unmarshal([]byte(`{"Type":"user_prompt","UserPrompt":{"Text":"legacy"}}`), &legacy); err != nil {
 		t.Fatal(err)
 	}
-	if legacy.UserPrompt == nil || legacy.UserPrompt.Synthetic || toProto(legacy).GetUserPrompt().GetSynthetic() {
-		t.Fatalf("absent legacy origin must remain false: %+v", legacy.UserPrompt)
+	if legacy.UserPrompt == nil || legacy.UserPrompt.Synthetic || legacy.UserPrompt.Provenance != session.UserPromptProvenanceUnknown || toProto(legacy).GetUserPrompt().GetSynthetic() {
+		t.Fatalf("absent legacy origin must remain false and provenance unknown: %+v", legacy.UserPrompt)
 	}
 
 	fold := func(synthetic bool) []session.Message {
@@ -64,10 +64,18 @@ func TestSyntheticUserPromptReplay_Scenario1_PersistenceProtoAndFoldRoundTrip(t 
 		return folded.Conversation.Messages
 	}
 	withoutFlag, withFlag := fold(false), fold(true)
-	if !reflect.DeepEqual(withoutFlag, withFlag) {
-		t.Fatalf("folded conversation changed with origin flag:\nfalse=%+v\ntrue=%+v", withoutFlag, withFlag)
+	wantWithoutFlag := []session.Message{
+		{Role: session.RoleUser, Text: "first", Parts: []session.Content{part}, UserPromptProvenance: session.UserPromptProvenanceUnknown},
+		{Role: session.RoleUser, Text: "second", UserPromptProvenance: session.UserPromptProvenanceUnknown},
 	}
-	if len(withFlag) != 2 || withFlag[0].Text != "first" || len(withFlag[0].Parts) != 1 || withFlag[1].Text != "second" {
-		t.Fatalf("folded ordered conversation = %+v", withFlag)
+	wantWithFlag := []session.Message{
+		{Role: session.RoleUser, Text: "first", Parts: []session.Content{part}, UserPromptProvenance: session.UserPromptProvenanceUnknown},
+		{Role: session.RoleUser, Text: "second", UserPromptProvenance: session.UserPromptProvenanceHarness},
+	}
+	if !reflect.DeepEqual(withoutFlag, wantWithoutFlag) {
+		t.Fatalf("folded conversation without synthetic flag = %+v, want %+v", withoutFlag, wantWithoutFlag)
+	}
+	if !reflect.DeepEqual(withFlag, wantWithFlag) {
+		t.Fatalf("folded conversation with synthetic flag = %+v, want %+v", withFlag, wantWithFlag)
 	}
 }

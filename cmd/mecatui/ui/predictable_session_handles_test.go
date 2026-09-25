@@ -143,8 +143,8 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		m := newTestModelFromDeps(Deps{Theme: testTheme(), Ctx: context.Background()})
 		m.sessionID = id
 		input := m.statusLineInput(time.Unix(1, 0))
-		if input.Version != 3 || input.Session.Handle != want {
-			t.Fatalf("status protocol = v%d handle %q, want v3 %q", input.Version, input.Session.Handle, want)
+		if input.Version != 4 || input.Session.Handle != want {
+			t.Fatalf("status protocol = v%d handle %q, want v4 %q", input.Version, input.Session.Handle, want)
 		}
 		if _, exists := reflect.TypeFor[customization.Session]().FieldByName("Digest"); exists {
 			t.Fatal("status protocol retains removed Session.Digest alias")
@@ -189,9 +189,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "opaque-real-id", Complete: true}}
 		m := newScenario4Model(t, loader)
 		row := client.SessionListItem{ID: "opaque-real-id", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
-		ensureActiveSessions(&m).sessions = []client.SessionListItem{row}
-		ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
-		ensureActiveSessions(&m).handles = sessionDisplayHandles(ensureActiveSessions(&m).filtered)
+		setSessionsInventoryRows(ensureActiveSessions(&m), []client.SessionListItem{row})
 		if strings.Contains(ensureActiveSessions(&m).handles[row.ID], row.ID) {
 			t.Fatalf("display handle %q unexpectedly embeds full id", ensureActiveSessions(&m).handles[row.ID])
 		}

@@ -262,7 +262,7 @@ func TestPathEscapePosture_Scenario1_PseudoFsClassification(t *testing.T) {
 					// Even when approved, the serving workspace must refuse it itself.
 					inner := permpolicy.NewPolicy([]governance.Rule{{Scope: governance.ScopeUser, Tool: "ListDir", Effect: governance.Ask}}, nil)
 					decision := newEscapePolicy(inner, PostureYolo).Evaluate(t.Context(), "s1", session.ModeDefault, call, ws)
-					if decision.Effect != governance.Ask || !decision.ConfiguredAsk {
+					if decision.Effect != governance.Ask || decision.AskProvenance != governance.AskProvenanceConfigured {
 						t.Fatalf("configured ask for %q = %+v", path, decision)
 					}
 					_, err := ws.ReadDir(t.Context(), path)

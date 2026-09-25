@@ -26,8 +26,8 @@ func regWithProvider(id string, caps port.ProviderCapabilities) *providerRegistr
 // mirrors livemeta_test.go's newLiveMetaStore + Swap convention.
 func regWithMeta(id string, caps port.ProviderCapabilities, live []modelEntry) *providerRegistry {
 	reg := regWithProvider(id, caps)
-	meta := newLiveMetaStore()
-	meta.Swap(map[string][]modelEntry{id: live})
+	meta := newMetadataFixture()
+	meta.setMetadataFixture(map[string][]modelEntry{id: live})
 	reg.meta = meta
 	return reg
 }
@@ -230,7 +230,7 @@ func TestModelCapability_LivePresentButEmpty_AgreesWithPicker(t *testing.T) {
 	if echo {
 		t.Errorf("session echo Image = true for a present-but-empty live entry (catalogued image), want false")
 	}
-	picker := projectModelEntry(reg, providerOpenRouter, empty).Image
+	picker := projectModelEntry(reg, Config{}, reg.meta.current(), providerOpenRouter, empty).Image
 	if picker {
 		t.Errorf("picker Image = true for a present-but-empty live entry, want false")
 	}
@@ -249,7 +249,7 @@ func TestModelCapability_LiveOmittedModalitiesFallsBack(t *testing.T) {
 		t.Fatal("catalogued image model with omitted live modalities lost catalog capability")
 	}
 	const unknown = "gateway/uncatalogued"
-	reg.meta.Swap(map[string][]modelEntry{providerOpenRouter: {{ID: unknown}}})
+	reg.meta.setMetadataFixture(map[string][]modelEntry{providerOpenRouter: {{ID: unknown}}})
 	if got := modelCapability(reg, providerOpenRouter, unknown); !got.Image {
 		t.Fatal("uncatalogued model with omitted live modalities lost adapter capability")
 	}

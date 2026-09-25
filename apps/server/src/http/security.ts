@@ -60,7 +60,13 @@ export function securityHeaders(): MiddlewareHandler<AppEnv> {
     const path = context.req.path;
     const callback = path === "/api/v1/auth/callback" || path === "/oauth/callback";
     const html = context.res.headers.get("content-type")?.startsWith("text/html") === true;
-    if (callback || path === "/api/v1/auth/callback.js") {
+    if (
+      callback ||
+      path === "/api/v1/auth/callback.js" ||
+      (path.startsWith("/api/v1/sessions/") &&
+        path.includes("/authorizations/") &&
+        path.endsWith("/presentation"))
+    ) {
       context.header("Referrer-Policy", "no-referrer");
     }
     if (callback && html) {
@@ -153,6 +159,32 @@ export function sameOriginMutations(options: SecurityOptions): MiddlewareHandler
         "cross_site_request",
         "Cross-site request rejected",
         `The ${csrfHeader} header must equal the ${csrfCookie} cookie.`,
+      );
+    }
+    return next();
+  };
+}
+
+/**
+ * The authorization presentation GET redirects to a fresh authorization
+ * URL. SameSite=Lax also sends the session cookie on a cross-site top-level
+ * navigation, so this browser-only route requires same-origin Fetch Metadata.
+ */
+export function sameOriginPresentation(options: SecurityOptions): MiddlewareHandler<AppEnv> {
+  return async (context, next) => {
+    if (context.req.method !== "GET") return next();
+    const origin = context.req.header("origin");
+    if (
+      context.req.header("sec-fetch-site") !== "same-origin" ||
+      (origin !== undefined && origin !== expectedOrigin(context, options))
+    ) {
+      context.header("Cache-Control", "no-store");
+      return problem(
+        context,
+        403,
+        "cross_site_request",
+        "Cross-site request rejected",
+        "Authorization pages must be opened from the Studio origin.",
       );
     }
     return next();

@@ -346,15 +346,20 @@ the exact `system:serviceaccount:<namespace>:<serviceaccount>` subject.
 Official clients send `X-Mecatl-Session-ID` on session-bound gRPC and HTTP
 requests when the ID is printable ASCII without surrounding spaces. Duplicate,
 malformed, and mismatched values are rejected. Existing clients may omit it.
+Gateways can use this active-session field for consistent routing, but the
+Kubernetes session lease remains the ownership authority.
 
-The field is a routing and provider-correlation hint. It grants no
-authentication, authorization, ownership, fencing, idempotency, or cache
-authority.
+Outbound model requests also carry `X-Mecatl-Root-Session-ID`. The root field
+stays constant across a main run's subagents, Parallel branches, team members,
+and delegated-model routing, while `X-Mecatl-Session-ID` identifies the active
+child session. Provider logs can therefore group delegated work by its main
+conversation without losing child-level attribution. The root field is outbound
+only and must not be used for gateway affinity.
 
-Use the header for consistent routing, but keep the Kubernetes session lease as
-the ownership authority. Lease loss blocks new state mutations on the stale pod,
-although an already admitted external call can finish. A pending approval stays
-durable for the successor.
+Both fields are correlation metadata. They grant no authentication,
+authorization, ownership, fencing, idempotency, or cache authority. Lease loss
+blocks new state mutations on the stale pod, although an already admitted
+external call can finish. A pending approval stays durable for the successor.
 
 Closing a live running or awaiting session fails precondition and does not
 release its lease. During shutdown, Mecatl stops admission, preserves pending

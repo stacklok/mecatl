@@ -99,6 +99,9 @@ type Snapshot struct {
 	// TokenUsage is the canonical durable usage ledger. The writer always emits it;
 	// an omitted empty ledger decodes to the zero value.
 	TokenUsage map[session.UsageKind]session.TokenUsage `json:"token_usage"`
+	// LatestContextOccupancy is the optional, display-only context-meter numerator
+	// from the last completed turn. A missing field remains unknown for legacy snapshots.
+	LatestContextOccupancy *session.ContextOccupancy `json:"latest_context_occupancy,omitempty"`
 	// RetryDisposition and StreamProgress are the typed terminal facts for a failed
 	// model stream. Missing fields decode conservatively to unknown.
 	RetryDisposition session.RetryDisposition `json:"retry_disposition,omitempty"`
@@ -172,6 +175,8 @@ type messageDTO struct {
 	// snapshot with no "parts" key decodes to nil Parts — a text-only message,
 	// exactly correct; the field is purely additive and needs no version bump.
 	Parts []contentDTO `json:"parts,omitempty"`
+	// UserPromptProvenance is additive; absent legacy snapshots remain unknown.
+	UserPromptProvenance session.UserPromptProvenance `json:"user_prompt_provenance,omitempty"`
 }
 
 // contentDTO mirrors session.Content with JSON tags. Data []byte marshals as
@@ -313,6 +318,9 @@ func Of(s *session.Session) (Snapshot, error) {
 	if authority, ok := s.BoundAuthority(); ok {
 		snap.Authority = &authority
 	}
+	if occupancy, ok := s.LatestContextOccupancy(); ok {
+		snap.LatestContextOccupancy = &occupancy
+	}
 	if s.Conversation != nil {
 		snap.Messages = make([]messageDTO, len(s.Conversation.Messages))
 		for i, m := range s.Conversation.Messages {
@@ -405,6 +413,9 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	}
 	if err := RestoreState(restored, data); err != nil {
 		return nil, err
+	}
+	if s.LatestContextOccupancy != nil {
+		restored.RecordLatestContextOccupancy(*s.LatestContextOccupancy)
 	}
 	if s.PendingWorkspaceEnrollment != nil {
 		if err := restored.BeginWorkspaceEnrollment(*s.PendingWorkspaceEnrollment); err != nil {
@@ -609,27 +620,29 @@ func validateAuthorityWireClaim(raw json.RawMessage) error {
 
 func toDTO(m session.Message) messageDTO {
 	return messageDTO{
-		Role:            m.Role,
-		Text:            m.Text,
-		ToolCalls:       m.ToolCalls,
-		ToolResult:      m.ToolResult,
-		Reasoning:       m.Reasoning,
-		ProviderPhase:   m.ProviderPhase,
-		ReasoningItemID: m.ReasoningItemID,
-		Parts:           contentToDTO(m.Parts),
+		Role:                 m.Role,
+		Text:                 m.Text,
+		ToolCalls:            m.ToolCalls,
+		ToolResult:           m.ToolResult,
+		Reasoning:            m.Reasoning,
+		ProviderPhase:        m.ProviderPhase,
+		ReasoningItemID:      m.ReasoningItemID,
+		Parts:                contentToDTO(m.Parts),
+		UserPromptProvenance: m.UserPromptProvenance,
 	}
 }
 
 func fromDTO(dto messageDTO) session.Message {
 	return session.Message{
-		Role:            dto.Role,
-		Text:            dto.Text,
-		ToolCalls:       dto.ToolCalls,
-		ToolResult:      dto.ToolResult,
-		Reasoning:       dto.Reasoning,
-		ProviderPhase:   dto.ProviderPhase,
-		ReasoningItemID: dto.ReasoningItemID,
-		Parts:           contentFromDTO(dto.Parts),
+		Role:                 dto.Role,
+		Text:                 dto.Text,
+		ToolCalls:            dto.ToolCalls,
+		ToolResult:           dto.ToolResult,
+		Reasoning:            dto.Reasoning,
+		ProviderPhase:        dto.ProviderPhase,
+		ReasoningItemID:      dto.ReasoningItemID,
+		Parts:                contentFromDTO(dto.Parts),
+		UserPromptProvenance: dto.UserPromptProvenance,
 	}
 }
 

@@ -65,7 +65,7 @@ var _ InstructionAssembler = UserModelAssembler{}
 // workspace is unused (the user model is user-scoped at the adapter, cross-project,
 // not workspace files). It fails soft on a nil source, a source error, or an
 // empty set.
-func (a UserModelAssembler) Assemble(ctx context.Context, _ tool.Workspace) ([]session.Message, error) {
+func (a UserModelAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
 	if a.Src == nil {
 		return nil, nil
 	}

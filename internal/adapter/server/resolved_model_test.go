@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -159,36 +160,33 @@ func TestServiceResolvedModelNilResolverByteIdentical(t *testing.T) {
 	}
 }
 
-// TestServiceResolvedModelResolverZeroKeepsBaked (issue #66 review gap): a DEFAULT
-// session with a baked NON-ZERO DefaultResolvedModel.ContextWindow and a
-// ResolveContextWindow returning 0 (not-yet-swapped / unknown to the live store) must
-// echo the BAKED window — the resolver's 0 must NOT clobber a known baked value. This
-// pins the `if w > 0` overlay guard.
-//
-// MUTATION-VERIFY: dropping the `if w > 0` guard in Service.ResolvedModel (so the
-// resolver's 0 overwrites rm.ContextWindow) makes this fail.
-func TestServiceResolvedModelResolverZeroKeepsBaked(t *testing.T) {
-	const baked = 200000
-	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-baked", ContextWindow: baked}
-	// A resolver that returns 0 for everything (pre-swap: the live store has no entry
-	// for this model and — unlike contextWindowFor — this stand-in does not floor to
-	// the catalog, so it returns a bare 0).
-	resolve := func(_, _ string) int64 { return 0 }
-	svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
-
-	sess, err := svc.CreateSessionWithProvider(context.Background(), session.ModeDefault, session.Limits{}, server.ProviderSelector{})
-	if err != nil {
-		t.Fatalf("CreateSessionWithProvider(zero): %v", err)
-	}
-	if got := svc.ResolvedModel(sess.ID); got.ContextWindow != baked {
-		t.Fatalf("ResolvedModel.ContextWindow = %d, want the baked %d (a resolver 0 must NOT clobber a known baked window)", got.ContextWindow, baked)
+// A wired resolver is authoritative even when discovery cannot resolve a window.
+func TestProviderModelDiscovery_Scenario3_AuthoritativeUnknownEcho(t *testing.T) {
+	for _, wired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wired=%t", wired), func(t *testing.T) {
+			dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "uncatalogued", ContextWindow: 128000}
+			var resolve func(string, string) int64
+			want := dflt
+			if wired {
+				resolve = func(_, _ string) int64 { return 0 }
+				want.ContextWindow = 0
+			}
+			svc := newResolvedModelServiceWithResolver(t, dflt, nil, resolve)
+			sess, err := svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := svc.ResolvedModel(sess.ID); got != want {
+				t.Fatalf("ResolvedModel = %+v, want %+v", got, want)
+			}
+		})
 	}
 }
 
 // TestServiceResolvedModelResolverNeverLowers (issue #66 regression): a CATALOGUED
 // default model with the resolver wired still echoes its catalog window — the
 // resolver returns the catalog floor when no live entry exists, so the fix never
-// lowers a known window. (A zero from the resolver keeps the baked seed.)
+// lowers a known window when the resolver still has positive evidence.
 func TestServiceResolvedModelResolverNeverLowers(t *testing.T) {
 	dflt := server.ResolvedModel{ProviderID: "openai", ModelID: "gpt-5", ContextWindow: 400000}
 	// Resolver returns the catalog floor for the catalogued model (mirrors
@@ -331,6 +329,7 @@ func TestServiceResolvedModelPerSession(t *testing.T) {
 		t.Fatalf("ResolvedModel(per-session) = %+v, want the resolved selector %+v", got, want)
 	}
 	svc.CloseSession(sess.ID)
+	dflt.ContextWindow = 0 // The wired resolver has no evidence for the default.
 	if got := svc.ResolvedModel(sess.ID); got != dflt {
 		t.Fatalf("ResolvedModel after CloseSession = %+v, want fallback to default %+v", got, dflt)
 	}

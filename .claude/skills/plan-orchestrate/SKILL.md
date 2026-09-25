@@ -125,10 +125,14 @@ Attempt / task branch / fallback worktree: <values>
 Task title and scope: <text>
 Acceptance criteria and verify lines: <verbatim text>
 Exact approved interface clauses this task implements: <verbatim text>
+Task-local verification: <commands, owning modules, direct integration boundaries, scoped lint>
+Aggregate verification owner: orchestrator in the integration worktree
 ```
 
-The worker uses strict red-green-refactor TDD, applicable Taskfile gates, offline fakes,
-and no push. It reports branch, worktree, commits, AC proof, and interface conformance.
+The worker uses strict red-green-refactor TDD, task-local verification, offline fakes,
+and no push. It reports branch, worktree, commits, commands with exit codes, AC proof,
+and interface conformance. Follow [verification ownership](../../../docs/development-process.md#verification-gates):
+workers do not run repository-wide test or lint gates, including on retries and repairs.
 
 If a worker discovers that the approved contract needs an amendment, it reports
 `contract-drift`; it never makes the change or repairs around it. Stop all dispatch and
@@ -171,24 +175,33 @@ accumulator. Workers never edit the shared plan.
 
 ## Aggregate gates and final review
 
-After all tasks integrate, run from the integration worktree and preserve exit codes:
+After all tasks integrate, finish applicable API generation (`task api:update` and the
+changelog entry), then run the aggregate gates once from the integration worktree.
+Generate documentation before testing so generated inputs are included. Preserve every
+exit code; a failure blocks completion.
 
 ```sh
-task lint; LINT_RC=$?
-task test:race; TEST_RC=$?
 task docs; DOCS_RC=$?
+task test; TEST_RC=$?
+task lint; LINT_RC=$?
+task test:race; RACE_RC=$?
 go run ./cmd/mecademo; DEMO_RC=$?
 ```
 
-Run `task api:update` plus the required changelog update for intentional engine API changes.
+Record the candidate commit, any uncommitted changes, commands, and exit codes in `run.md`.
 Review and commit generated deliverables explicitly. Only after every implementation and
 verification gate passes does the implementation/Combined candidate set the plan to
 `landed` in its PR diff, regenerate docs, and run `task ac-trace-strict`. That edit is the
 candidate branch's proposed state transition, not the target branch's current state:
 `landed` becomes authoritative only when the PR merges. Until then, the target branch
 remains `approved` or `in-progress`. Do not create a cleanup or status-only follow-up PR.
+After that status edit and regeneration, rerun gates whose inputs changed and update the
+candidate/gate record before review. This includes document-reading tests; a status-only
+edit is not automatically irrelevant to verification.
 
-Run `/panel-review` in orchestrator mode. Its final line must be:
+Run `/panel-review` in orchestrator mode with the candidate identity and gate results.
+Reviewers use that evidence rather than launching another aggregate verification run.
+Its final line must be:
 
 ```text
 PANEL: ship_blockers=<n> important=<n> advisory=<n> reviewer_failures=<n>
@@ -196,8 +209,12 @@ PANEL: ship_blockers=<n> important=<n> advisory=<n> reviewer_failures=<n>
 
 Malformed/missing output or reviewer failures block unless a human explicitly waives the
 named reviewer failure. Ship blockers may receive at most two repair rounds using fresh
-run-local tasks/attempts and the same TDD/isolation rules. A repair that changes the
-contract is contract drift and requires a plan amendment.
+run-local tasks/attempts and the same TDD/isolation rules. Integrate the round's repairs
+before rerunning aggregate gates whose inputs changed, once on the repaired candidate.
+Update the candidate and gate record, then have the relevant panel reviewers validate the
+repairs and resulting diff before reporting blockers resolved. Earlier results cannot
+certify changed inputs. A repair that changes the contract is contract drift and requires
+a plan amendment.
 
 ## Open the PR and stop
 

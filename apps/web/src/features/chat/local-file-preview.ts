@@ -31,6 +31,24 @@ export const maxImageAttachmentBytes = 10 * 1024 * 1024;
 export const maxImageAttachmentCount = 16;
 export const maxImagePromptBytes = 20 * 1024 * 1024;
 
+export function acceptImageAttachments(
+  existing: ImageAttachment[],
+  candidates: ImageAttachment[],
+): { accepted: ImageAttachment[]; errors: string[] } {
+  let totalBytes = existing.reduce((sum, image) => sum + image.size, 0);
+  const accepted: ImageAttachment[] = [];
+  const errors: string[] = [];
+  for (const image of candidates) {
+    if (totalBytes + image.size > maxImagePromptBytes) {
+      errors.push(`${image.name} exceeds the 20 MB total image limit.`);
+      continue;
+    }
+    totalBytes += image.size;
+    accepted.push(image);
+  }
+  return { accepted, errors };
+}
+
 const codeExtensions = new Set([
   "c",
   "css",

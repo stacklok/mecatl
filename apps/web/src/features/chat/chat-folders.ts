@@ -2,6 +2,7 @@
 
 import type { SessionSummaryResponse } from "@mecatl-studio/contracts";
 import { useCallback, useEffect, useState } from "react";
+import { readUserScopedItem, writeUserScopedItem } from "../../lib/account-storage";
 
 const storageKey = "studio.chat.folders";
 const maximumFolders = 50;
@@ -31,7 +32,7 @@ export function useChatFolders() {
   useEffect(() => {
     const synchronize = (event: StorageEvent) => {
       if (event.key === null || event.key === storageKey) {
-        setState(parseChatFolders(event.newValue));
+        setState(readChatFolders());
       }
     };
     window.addEventListener("storage", synchronize);
@@ -41,12 +42,7 @@ export function useChatFolders() {
   const update = useCallback((change: (current: ChatFolderState) => ChatFolderState) => {
     setState((current) => {
       const next = change(current);
-      try {
-        if (next.folders.length === 0) window.localStorage.removeItem(storageKey);
-        else window.localStorage.setItem(storageKey, JSON.stringify(next));
-      } catch {
-        return current;
-      }
+      writeUserScopedItem(storageKey, next.folders.length === 0 ? null : JSON.stringify(next));
       return next;
     });
   }, []);
@@ -219,11 +215,7 @@ export function groupSessions(
 
 function readChatFolders(): ChatFolderState {
   if (typeof window === "undefined") return emptyState;
-  try {
-    return parseChatFolders(window.localStorage.getItem(storageKey));
-  } catch {
-    return emptyState;
-  }
+  return parseChatFolders(readUserScopedItem(storageKey));
 }
 
 function normalizeName(name: string): string {

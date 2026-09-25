@@ -33,7 +33,7 @@ Two rules from the ADR shape everything here:
   `noRestrictedImports` rejects it). A UI change that needs an unreleased SDK change waits
   for the SDK release.
 - **The browser never talks to mecatl.** Only the BFF holds a credential; the browser
-  holds four cookies (see the [security model](https://mecatl.dev/docs/building/deployment/studio)).
+  holds four cookies (see the [security model](../user-docs/building/deployment/studio.md)).
 
 ## Run locally
 
@@ -105,7 +105,7 @@ reported as `mode: "static"` / `"none"`; inside the image they additionally requ
 
 Deploying Studio, its full environment reference, the image, browser login, and the
 security model are documented on the public
-[Mecatl Studio web UI](https://mecatl.dev/docs/building/deployment/studio) page; this README covers
+[Mecatl Studio web UI](../user-docs/building/deployment/studio.md) page; this README covers
 only local development. All configuration is environment variables read once at startup:
 `MECATL_*` describe the target, `STUDIO_*` are Studio's own (ADR 0351, decision 5).
 `.env.example` lists them with comments; `pnpm dev` reads `../.env` when it exists, and

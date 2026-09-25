@@ -53,6 +53,15 @@ func TestSessionContinuityUX_Scenario6_EmbeddedAndConnectE2E(t *testing.T) {
 
 			target, stop := tc.start(t, cfg)
 			id := seedStartupResumeSession(ctx, t, target, workspace)
+			seedClient, err := client.Dial(client.DialConfig{Server: target})
+			if err != nil {
+				t.Fatalf("dial seeded server: %v", err)
+			}
+			seedSnapshot, err := seedClient.GetSession(ctx, id)
+			_ = seedClient.Close()
+			if err != nil || seedSnapshot.ContextOccupancy == nil || seedSnapshot.ContextOccupancy.InputTokens <= 0 {
+				t.Fatalf("seeded session snapshot = %+v, %v; want persisted non-zero context occupancy", seedSnapshot, err)
+			}
 			stop()
 
 			target, stop = tc.start(t, cfg)
@@ -73,8 +82,9 @@ func TestSessionContinuityUX_Scenario6_EmbeddedAndConnectE2E(t *testing.T) {
 					if err != nil {
 						t.Fatalf("resolve startup resume: %v", err)
 					}
-					if selection.Row.ID != id || selection.Transcript.SessionID != id || !selection.Transcript.Complete || len(selection.Transcript.Messages) == 0 {
-						t.Fatalf("selection = %#v, want complete transcript for %q", selection, id)
+					if selection.Row.ID != id || selection.Transcript.SessionID != id || !selection.Transcript.Complete || len(selection.Transcript.Messages) == 0 ||
+						selection.Snapshot.ContextOccupancy == nil || selection.Snapshot.ContextOccupancy.InputTokens <= 0 {
+						t.Fatalf("selection = %#v, want complete transcript and persisted occupancy for %q", selection, id)
 					}
 					rows, err := cl.ListSessions(ctx)
 					if err != nil {

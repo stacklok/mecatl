@@ -100,6 +100,10 @@ var oracleSteps = []struct {
 	{"addTurnStat", func(c *conversation) { c.addTurnStat("turn 1 · ↑1.2k ↓300 · 2.1s") }},
 	{"addTool", func(c *conversation) { c.addTool("call-1", "Read", `{"path":"main.go"}`) }},
 	{"addNotice", func(c *conversation) { c.addNotice("context compacted") }},
+	{"retractLatestNotice", func(c *conversation) {
+		c.addNotice("provisional approval")
+		c.retractLatestNotice("provisional approval")
+	}},
 	// resolveTool covers BOTH shapes: the NON-TAIL resolve of call-1 (the notice
 	// above sits after it) and a fresh tail resolve.
 	{"resolveTool", func(c *conversation) {

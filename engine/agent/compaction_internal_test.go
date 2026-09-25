@@ -28,7 +28,7 @@ func (s internalIndexSrc) Index(context.Context) ([]tool.MemoryEntry, error) {
 
 func injectedSoulFragment(t *testing.T) session.Message {
 	t.Helper()
-	msgs, err := (prompt.SoulAssembler{Src: internalSoulSrc{body: "terse engineer"}}).Assemble(context.Background(), nil)
+	msgs, err := (prompt.SoulAssembler{Src: internalSoulSrc{body: "terse engineer"}}).Assemble(context.Background())
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("render soul fragment: msgs=%d err=%v", len(msgs), err)
 	}
@@ -38,7 +38,7 @@ func injectedSoulFragment(t *testing.T) session.Message {
 func injectedMemoryFragment(t *testing.T) session.Message {
 	t.Helper()
 	entries := []tool.MemoryEntry{{Key: "pref/runner", Description: "preferred test runner"}}
-	msgs, err := (prompt.MemoryIndexAssembler{Src: internalIndexSrc{entries: entries}}).Assemble(context.Background(), nil)
+	msgs, err := (prompt.MemoryIndexAssembler{Src: internalIndexSrc{entries: entries}}).Assemble(context.Background())
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("render memory fragment: msgs=%d err=%v", len(msgs), err)
 	}

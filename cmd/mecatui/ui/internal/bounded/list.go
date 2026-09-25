@@ -57,7 +57,25 @@ type indicatorCandidate struct {
 // policy. Every list has one selection cell and zero to two status cells; a trailing
 // padding cell separates that gutter from content.
 func (l *List) SetGeometry(width, height, gutterCells int, policy Policy) {
-	l.viewport.SetGeometry(width, height, listGutterCells(gutterCells)+1, policy)
+	gutter := listGutterCells(gutterCells) + 1
+	layoutChanges := l.viewport.width != width || l.viewport.gutter != gutter || l.viewport.policy != policy
+	if !layoutChanges {
+		l.viewport.SetGeometry(width, height, gutter, policy)
+		return
+	}
+	old := l.layout()
+	topID, topLine, haveTop := "", 0, false
+	if l.viewport.offset >= 0 && l.viewport.offset < len(old.rows) {
+		topID, topLine, haveTop = old.rows[l.viewport.offset].ID, old.rows[l.viewport.offset].ItemLine, true
+	}
+	l.viewport.SetGeometry(width, height, gutter, policy)
+	layout := l.layout()
+	if haveTop && len(layout.rows) > 0 {
+		if i := l.itemIndex(topID); i >= 0 {
+			h := layout.ends[i] - layout.starts[i]
+			l.viewport.offset = layout.starts[i] + min(topLine, max(0, h-1))
+		}
+	}
 }
 
 // Valid reports whether the list viewport has usable dimensions.

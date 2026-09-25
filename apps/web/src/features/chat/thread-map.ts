@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from "react";
+import {
+  listUserScopedKeys,
+  readUserScopedItem,
+  writeUserScopedItem,
+} from "../../lib/account-storage";
 
 export interface ThreadAssociation {
   sessionId: string;
@@ -113,9 +118,7 @@ function readThreadSessionIds() {
     if (Array.isArray(value)) {
       for (const id of value) if (typeof id === "string" && id) ids.add(id);
     }
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const key = window.localStorage.key(index);
-      if (!key?.startsWith(mapKeyPrefix)) continue;
+    for (const key of listUserScopedKeys(mapKeyPrefix)) {
       for (const entry of Object.values(parseThreadMap(readStorage(key)))) ids.add(entry.sessionId);
     }
   } catch {
@@ -129,17 +132,9 @@ function mapStorageKey(parentSessionId: string) {
 }
 
 function readStorage(key: string) {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
+  return readUserScopedItem(key);
 }
 
 function writeStorage(key: string, value: string) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // Thread associations are browser-local and remain optional when storage is unavailable.
-  }
+  writeUserScopedItem(key, value);
 }

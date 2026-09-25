@@ -4,12 +4,12 @@
 **Work classification:** Architectural — adds a durable session-snapshot field and an additive public protobuf projection whose ownership and compatibility rules must remain stable across every store and client.
 **Decision record:** [ADR 0356](../adr/0356-durable-context-occupancy.md)
 **Phase:** session continuation
-**Status:** proposed, 2026-09-23. Contract for [#1822](https://github.com/stacklok/mecatl/issues/1822).
+**Status:** landed, 2026-09-25.
 **Delivery:** Split. The persisted session aggregate and public `Session` protobuf projection require separate interface review before implementation.
 **Expected tasks:** deferred to orchestration.
 **Issue:** [stacklok/mecatl#1822](https://github.com/stacklok/mecatl/issues/1822).
-**Plan PR:** absent — not opened.
-**Approved baseline:** absent until approved.
+**Plan PR:** [#1839](https://github.com/stacklok/mecatl/pull/1839).
+**Approved baseline:** `19843a91f0f45dc1dd2cfdbb5595dd5d42270396`.
 
 Any persisted session—main chat, subagent, Parallel branch, team member, or scheduled run—must retain its latest known context occupancy when it has completed an agent-loop turn. A resumed or selected prior main chat uses that authoritative snapshot to restore its status line; inspectors and future session surfaces can use the same historical datum without reconstructing it from a transcript or activity replay. A missing occupancy value from a legacy or pre-turn snapshot remains unknown; it is never guessed from lifetime totals.
 
@@ -19,13 +19,13 @@ None — #1822 requires restoring status-line metrics on continuation, and the e
 
 ## Interface contract
 
-- **gRPC / protobuf:** Add presence-aware `ContextOccupancy latest_context_occupancy = 22` to `mecatl.v1.Session`; `ContextOccupancy` contains `int64 input_tokens = 1` and `bool estimated = 2`. It is the latest non-zero context-meter numerator established by a completed agent-loop turn in that session, with the existing display-only fallback-estimate marker. Every persisted session kind uses the field; it is absent only when no such value exists or an older server produced the snapshot. `GetSession` returns it in its existing `Session` snapshot; no RPC method, request, or event message changes.
+- **gRPC / protobuf:** Add presence-aware `ContextOccupancy latest_context_occupancy = 22` to `mecatl.v1.Session`; `ContextOccupancy` contains `int64 input_tokens = 1` and `bool estimated = 2`. Add additive `bool estimated = 3` to `TurnEnd`, mirroring `session.TurnEndPayload.Estimated`, so live and resumed meters preserve the same display-only estimate marker. It is the latest non-zero context-meter numerator established by a completed agent-loop turn in that session, with the existing display-only fallback-estimate marker. Every persisted session kind uses the field; it is absent only when no such value exists or an older server produced the snapshot. `GetSession` returns it in its existing `Session` snapshot; no RPC method or request changes.
 - **Exported Go APIs / interfaces:** Add additive `session.Session` snapshot access and aggregate mutation for optional latest context occupancy on every persisted session kind, including durable `debug` sessions; the names and package documentation must make clear that it is display state, neither `TokenUsage` nor a run budget baseline. Extend every existing session snapshot persistence/restore value and store conformance surface to round-trip optional presence and value. Add the same optional value to `engine/adapter/eventsource.SessionMeta`, so an event-log-system-of-record host supplies stored snapshot metadata to `Fold` rather than reconstructing occupancy from its event stream. No existing signature changes.
 - **Tool schemas:** None — status restoration is a mecatui projection of the existing session snapshot and does not add, remove, or alter model-visible tools.
 - **CLI / config:** None — `--resume-latest`, `--resume`, and `/sessions` retain their current syntax and selection behavior; they display additional authoritative snapshot data when it is present.
 - **Events / persistence:** After an assistant message is successfully recorded for a completed agent-loop turn in any persisted session kind, including `debug`, update optional latest context occupancy only when the `turn.end` display usage has a non-zero input count; preserve its estimate marker and leave the previous value untouched for zero-input, failed, cancelled, or auxiliary work. Persist and restore it through memstore, JSONL, Redis, remote-driver, and event-sourced restoration at existing coherent snapshot-save boundaries only. An event-log-system-of-record host persists/supplies it as `SessionMeta`, not an event-derived fold value. Each session’s `token_usage["main"].total` remains the canonical lifetime ledger. Do not add a durable event-log entry, per-turn save, or event-history reconstruction.
 - **Security / authority:** `latest_context_occupancy` carries only numeric display state derived from an authenticated session’s turn event and does not alter session ownership, permission, project trust, credentials, or tool authority. Snapshot reads remain ownership-checked.
-- **Compatibility / migration:** This is additive protobuf and snapshot data. Older clients ignore field 22; newer clients treat its absence as unknown context occupancy while still showing compatible durable lifetime usage. Existing snapshots restore without rewrite or invented occupancy; they acquire the field only after a qualifying turn is included in an existing saved snapshot.
+- **Compatibility / migration:** This is additive protobuf, event, HTTP, and snapshot data. Older clients ignore field 22 and `TurnEnd.estimated`; newer clients treat its absence as unknown context occupancy while still showing compatible durable lifetime usage. HTTP `GET /v1/sessions/{id}` carries optional `latest_context_occupancy` with the same `input_tokens`/`estimated` presence semantics as gRPC. Existing snapshots restore without rewrite or invented occupancy; they acquire the field only after a qualifying turn is included in an existing saved snapshot.
 
 ## In scope — 3 scenarios, in implementation order
 

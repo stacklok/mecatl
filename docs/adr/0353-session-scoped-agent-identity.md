@@ -134,15 +134,12 @@ means `buildAgentDefEngine`'s catalog/prompt/model/limits construction must be s
 from its child-shaped Deps choice — no v1 toggle exists between the two, since nothing
 needs the child-shaped variant as a session root.
 
-**Definition hooks compose with operator guardrails via the existing decorator, never
-around it.** A def's `hooks:` are wired as the `inner` `HookRunner` under the SAME
-`modelhook.Runner` every other main session already uses — the mechanism that already
-runs inner first, guardrails second, and merges block-dominant
-(`internal/adapter/modelhook/merge.go`). No new composition mechanism: an
-`agent_definition_name` session just supplies a non-nil inner instead of the ordinary
-no-op. A definition hook can mutate or block a call, but it runs and is merged *before*
-guardrails see the result, so it can never replace or bypass an operator guardrail
-verdict.
+**Definition hooks compose with operator guardrails through the shared dispatch order.**
+A def's `hooks:` produce its scoped runner in `internal/app/agentdefs.go`
+(`defHookRunner`). The engine applies `PreToolUse` first, then performs contextual
+action review over the effective call in `engine/agent/dispatch.go` (`runOne`). A
+definition hook can mutate or block a call, but it cannot replace or bypass the
+operator guardrail review of the resulting effective call.
 
 **Other session-shape combinations:**
 - `agent_definition_name` and `debug_target_session_id` are mutually exclusive —

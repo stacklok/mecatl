@@ -53,8 +53,8 @@ func TestBuildInstructionAssemblerNoRootOmitsAGENTS(t *testing.T) {
 		t.Fatalf("seed AGENTS.md: %v", err)
 	}
 
-	def := buildInstructionAssembler(nil, nil, nil, nil, false)
-	msgs, err := def.Assemble(ctx, ws)
+	def := buildInstructionAssembler(ws, nil, nil, nil, nil, false)
+	msgs, err := def.Assemble(ctx)
 	if err != nil {
 		t.Fatalf("default Assemble: %v", err)
 	}
@@ -62,11 +62,11 @@ func TestBuildInstructionAssemblerNoRootOmitsAGENTS(t *testing.T) {
 		t.Fatalf("default path must ingest AGENTS.md; got %d messages: %+v", len(msgs), msgs)
 	}
 
-	pinned := buildInstructionAssembler(nil, nil, nil, nil, true)
+	pinned := buildInstructionAssembler(ws, nil, nil, nil, nil, true)
 	if pinned == nil {
 		t.Fatal("noRoot with no other assembler must return an honest no-op assembler, not nil")
 	}
-	pmsgs, err := pinned.Assemble(ctx, ws)
+	pmsgs, err := pinned.Assemble(ctx)
 	if err != nil {
 		t.Fatalf("pinned Assemble: %v", err)
 	}

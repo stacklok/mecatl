@@ -2,13 +2,16 @@
 
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import { describe, expect, it } from "vitest";
+import { applyRunDelivery, initialRunDeliveryState } from "./chat-state";
 import {
   abortsOnSessionSwitch,
   acceptsDelivery,
   CATCHING_UP_NOTICE,
   controlTarget,
+  createActivityDeduplicator,
   decideTruncation,
   drainsQueue,
+  isStaleRunControl,
   MAX_ACTIVITY_REATTACHES,
   MISSING_HISTORY_NOTICE,
   ownsChatView,
@@ -60,23 +63,159 @@ describe("decideTruncation", () => {
 });
 
 describe("runStreamEnd", () => {
-  it("reports no failure for a stream the view stopped following", () => {
-    expect(runStreamEnd({ sawResult: false }, true, "prompt")).toEqual({ kind: "unfollowed" });
+  it("settles an authorization handoff but leaves an incomplete continuation uncertain", () => {
+    expect(runStreamEnd({ sawResult: false, authorizationStatus: true }, false)).toEqual({
+      kind: "authorization",
+    });
+    expect(
+      runStreamEnd(
+        { sawResult: false, authorizationStatus: true, continuationStarted: true },
+        false,
+      ),
+    ).toEqual({ kind: "uncertain" });
+    expect(
+      runStreamEnd({ sawResult: false, authorizationPark: true, continuationStarted: true }, false),
+    ).toEqual({ kind: "authorization" });
+    expect(drainsQueue({ kind: "authorization" }, "chat-a", "chat-a", false)).toBe(false);
   });
 
-  it("keeps the no-result fallback for a stream that ended on its own", () => {
-    expect(runStreamEnd({ sawResult: false }, false, "prompt")).toEqual({
-      failure: {
-        message: "The agent stopped before returning a result.",
-        permanent: false,
-        prompt: "prompt",
-      },
-      kind: "settled",
-    });
-    expect(runStreamEnd({ sawResult: true }, false, "prompt")).toEqual({
+  it("reports no failure for a stream the view stopped following", () => {
+    expect(runStreamEnd({ sawResult: false }, true)).toEqual({ kind: "unfollowed" });
+  });
+
+  it("keeps an abrupt close uncertain until a result or run.error arrives", () => {
+    expect(runStreamEnd({ sawResult: false }, false)).toEqual({ kind: "uncertain" });
+    expect(drainsQueue({ kind: "uncertain" }, "chat-a", "chat-a", false)).toBe(false);
+    expect(runStreamEnd({ sawResult: true }, false)).toEqual({
       failure: undefined,
       kind: "settled",
     });
+  });
+
+  it("keeps gaps and abrupt closes separate from results", () => {
+    const gap = decideTruncation({ cursor: "", reason: "gap", type: "run.truncated" }, 0);
+    expect(gap.action).toBe("missing-history");
+    expect(runStreamEnd({ sawResult: false }, true)).toEqual({ kind: "unfollowed" });
+    expect(runStreamEnd({ sawResult: false }, false)).toEqual({ kind: "uncertain" });
+    const failure = { message: "provider down", permanent: false, prompt: "prompt" };
+    expect(runStreamEnd({ failure, sawResult: false }, false)).toEqual({
+      failure,
+      kind: "settled",
+    });
+  });
+});
+
+describe("bounded replay", () => {
+  it("keeps separate session-scoped authorization statuses with the same run-local sequence", () => {
+    const accepts = createActivityDeduplicator();
+    const status = (kind: string): RunStreamEvent => ({
+      event: { kind, runId: "", seq: "0", text: "", turn: 0, unknown: false },
+      type: "run.event",
+    });
+    expect(accepts(status("authorization.resolved"))).toBe(true);
+    expect(accepts(status("authorization.required"))).toBe(true);
+  });
+
+  it("continues bounded replay without duplicate messages", () => {
+    const accepts = createActivityDeduplicator();
+    const options = {
+      newId: (() => {
+        let n = 0;
+        return () => `id-${++n}`;
+      })(),
+      now: 1,
+      replay: true,
+    };
+    let state = initialRunDeliveryState("assistant", "");
+    const frames: RunStreamEvent[] = [
+      { runId: "run-a", sessionId: "chat-a", type: "run.started" },
+      {
+        event: {
+          kind: "user_prompt",
+          runId: "run-a",
+          seq: "1",
+          text: "first",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "message.delta",
+          runId: "run-a",
+          seq: "2",
+          text: "one",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      { cursor: "c2", reason: "bound", type: "run.truncated" },
+      // A reattach can overlap a delivered boundary; it must not duplicate a delta.
+      {
+        event: {
+          kind: "message.delta",
+          runId: "run-a",
+          seq: "2",
+          text: "one",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "result",
+          runId: "run-a",
+          seq: "3",
+          text: "",
+          turn: 0,
+          unknown: false,
+          payload: { stop: "end_turn" },
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "user_prompt",
+          runId: "run-b",
+          seq: "4",
+          text: "second",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+      {
+        event: {
+          kind: "message.delta",
+          runId: "run-b",
+          seq: "5",
+          text: "two",
+          turn: 0,
+          unknown: false,
+        },
+        type: "run.event",
+      },
+    ];
+    const resumes: string[] = [];
+    for (const frame of frames) {
+      if (frame.type === "run.truncated") {
+        const decision = decideTruncation(frame, resumes.length);
+        if (decision.action === "reattach") resumes.push(decision.cursor);
+      } else if (accepts(frame)) {
+        state = applyRunDelivery(state, frame, options);
+      }
+    }
+    expect(resumes).toEqual(["c2"]);
+    expect(state.runId).toBe("run-b");
+    expect(state.messages.map((message) => message.content)).toEqual([
+      "first",
+      "one",
+      "second",
+      "two",
+    ]);
   });
 });
 
@@ -124,6 +263,13 @@ describe("run ownership", () => {
     expect(controlTarget(target, "chat-a")).toBe(target);
     expect(controlTarget(target, "chat-b")).toBeUndefined();
     expect(controlTarget(undefined, "chat-a")).toBeUndefined();
+  });
+
+  it("recognizes only the BFF stale-run conflict for a queue fallback", () => {
+    expect(isStaleRunControl({ code: "stale_run_control", status: 409 })).toBe(true);
+    expect(isStaleRunControl({ code: "runtime_unavailable", status: 503 })).toBe(false);
+    expect(isStaleRunControl({ code: "stale_run_control", status: 400 })).toBe(false);
+    expect(isStaleRunControl(new Error("network down"))).toBe(false);
   });
 
   it("drains a queue only into its own, still-viewed session after a settled stream", () => {

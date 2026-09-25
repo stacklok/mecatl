@@ -350,17 +350,37 @@ func TestRetryFailedRunRehydratesPersistedSelector(t *testing.T) {
 
 func TestRetryFailedRunAdmitsVisibleAndSecondFailureGovernsNextRetry(t *testing.T) {
 	ctx := context.Background()
-	llm := mockllm.New(
+	provider := &providerContextCapture{provider: mockllm.New(
 		mockllm.ErrorTurn(&retryFailure{session.RetryDispositionRetryable, session.StreamProgressVisible}),
 		mockllm.ErrorTurn(&retryFailure{session.RetryDispositionPermanent, session.StreamProgressVisible}),
-	)
-	svc, id := failedSession(t, llm, "visible-retry")
-	run, err := svc.RetryFailedRun(ctx, id)
+	)}
+	eng := agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil), Model: "retry"})
+	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: memstore.New()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("visible-retry"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := svc.StartRun(ctx, sess.ID, "one prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range failed.Events() {
+	}
+	svc.Persist(ctx, sess.ID)
+	svc.FinishRun(sess.ID, failed)
+	id := sess.ID
+
+	forged := port.WithSessionID(port.WithRootSessionID(ctx, "forged-root"), "forged-active")
+	run, err := svc.RetryFailedRun(forged, id)
 	if err != nil {
 		t.Fatalf("visible retry: %v", err)
 	}
 	for range run.Events() {
 	}
+	provider.assertLast(t, id)
 	svc.Persist(ctx, id)
 	svc.FinishRun(id, run)
 

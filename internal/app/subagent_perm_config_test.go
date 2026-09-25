@@ -179,7 +179,7 @@ permissions:
 			session.NewToolCall("c1", "Shell", args), nil)
 	}
 
-	if got := eval("go test ./..."); got.Effect != governance.Ask || !got.ConfiguredAsk {
+	if got := eval("go test ./..."); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceConfigured {
 		t.Fatalf("subagent ask must bind the child policy as a CONFIGURED ask; got %+v", got)
 	}
 	if got := eval("curl example.com"); got.Effect != governance.Deny {
@@ -188,10 +188,10 @@ permissions:
 	// `cat $(ls) > out.txt`: read-only inner, NON-read-only outer (redirection,
 	// so A1 cannot clear it) covered by the configured `cat*` allow — the
 	// floored-configured-allow shape.
-	if got := eval("cat $(ls) > out.txt"); got.Effect != governance.Ask || !got.FlooredConfiguredAllow {
+	if got := eval("cat $(ls) > out.txt"); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceConfiguredAllowFloor {
 		t.Fatalf("subagent allow must mark the floored read-only-inner substitution FlooredConfiguredAllow; got %+v", got)
 	}
-	if got := eval("cat $(zap)"); got.Effect != governance.Ask || got.FlooredConfiguredAllow {
+	if got := eval("cat $(zap)"); got.Effect != governance.Ask || got.AskProvenance == governance.AskProvenanceConfiguredAllowFloor {
 		t.Fatalf("a hidden non-read-only inner must NOT mark FlooredConfiguredAllow; got %+v", got)
 	}
 	// The top-level (AudienceMain) ask must NOT bind a child: the floor allow-all
@@ -268,10 +268,10 @@ func TestChildRulesFloorScopeNeutral(t *testing.T) {
 		if got.Effect != want.Effect {
 			t.Fatalf("childRules() not neutral for %q: got %v, legacy %v", cmd, got.Effect, want.Effect)
 		}
-		if got.FlooredConfiguredAllow {
+		if got.AskProvenance == governance.AskProvenanceConfiguredAllowFloor {
 			t.Fatalf("the floor allow-all must never register as a configured allow (%q)", cmd)
 		}
-		if got.ConfiguredAsk {
+		if got.AskProvenance == governance.AskProvenanceConfigured {
 			t.Fatalf("no configured ask exists in childRules() (%q)", cmd)
 		}
 	}
@@ -311,7 +311,7 @@ func TestPerSessionChildResolverPinsSessionRoot(t *testing.T) {
 		return policy.Evaluate(context.Background(), "s1", session.ModeDefault,
 			session.NewToolCall("c1", "Shell", args), nil)
 	}
-	if got := eval("go test ./..."); got.Effect != governance.Ask || !got.ConfiguredAsk {
+	if got := eval("go test ./..."); got.Effect != governance.Ask || got.AskProvenance != governance.AskProvenanceConfigured {
 		t.Fatalf("the SESSION root's subagent ask must bind the per-session child policy; got %+v", got)
 	}
 	if got := eval("zap"); got.Effect != governance.Allow {

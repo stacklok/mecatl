@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -31,14 +32,17 @@ type scriptedAdjudicator struct {
 	script   []adjOutcome
 	calls    int
 	isolated []bool
+	roots    []session.SessionID
 }
 
-func (s *scriptedAdjudicator) Review(_ context.Context, req agent.ChildAskReviewRequest) (agent.ChildAskReview, error) {
+func (s *scriptedAdjudicator) Review(ctx context.Context, req agent.ChildAskReviewRequest) (agent.ChildAskReview, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := s.calls
 	s.calls++
 	s.isolated = append(s.isolated, req.Isolated)
+	root, _ := port.RootSessionIDFromContext(ctx)
+	s.roots = append(s.roots, root)
 	if i < len(s.script) {
 		return s.script[i].review, s.script[i].err
 	}
@@ -49,6 +53,12 @@ func (s *scriptedAdjudicator) count() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+func (s *scriptedAdjudicator) capturedRoots() []session.SessionID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]session.SessionID(nil), s.roots...)
 }
 
 func allow(reason string) adjOutcome {

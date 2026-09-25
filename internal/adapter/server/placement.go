@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -122,6 +123,54 @@ type PlacementBinding struct {
 	// Close releases provisional provider resources. It is called after creation
 	// because ordinary bindings are reattached fresh at run entry.
 	Close func() error
+}
+
+// sourceWorkspace exposes the content-reading Workspace surface while refusing
+// mutations and withholding optional namespace mutation capabilities.
+type sourceWorkspace struct{ tool.Workspace }
+
+func (*sourceWorkspace) CreateFile(context.Context, string, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, tool.ErrFileOperationUnsupported
+}
+
+func (*sourceWorkspace) ReplaceFile(context.Context, string, tool.FileVersion, []byte) (tool.FileVersion, error) {
+	return tool.FileVersion{}, tool.ErrFileOperationUnsupported
+}
+
+func (s *Service) executionWorkspaceAcquirer(owner *session.Principal, ref session.EnvironmentRef) ExecutionWorkspaceAcquirer {
+	return func(ctx context.Context) (tool.Workspace, func() error, error) {
+		if s == nil || s.placementBinder == nil || !ref.Valid() {
+			return nil, nil, fmt.Errorf("acquire selected harness execution files: %w", ErrPlacementUnavailable)
+		}
+		if ref.Kind == session.EnvKindNoFS {
+			return nil, nil, fmt.Errorf("selected harness source requires execution files; use an independent registered source or disable the selected source in operator policy: %w", ErrPlacementUnavailable)
+		}
+		binding, err := s.placementBinder.Reattach(ctx, PlacementReattachRequest{
+			Ref: ref, Principal: owner.Clone(), Scope: s.cfg.PlacementScope,
+		})
+		if err != nil {
+			s.logPlacementProviderError(ctx, "acquire harness source", err)
+			return nil, nil, fmt.Errorf("acquire selected harness execution files: %w", err)
+		}
+		workspace := binding.Environment.Workspace()
+		if workspace == nil {
+			if binding.Close != nil {
+				_ = binding.Close()
+			}
+			return nil, nil, fmt.Errorf("acquire selected harness execution files: %w", ErrInvalidPlacementBinding)
+		}
+		var once sync.Once
+		var releaseErr error
+		release := func() error {
+			once.Do(func() {
+				if binding.Close != nil {
+					releaseErr = binding.Close()
+				}
+			})
+			return releaseErr
+		}
+		return &sourceWorkspace{Workspace: workspace}, release, nil
+	}
 }
 
 // PlacementProvider owns placement authorization, atomic binding resolution,

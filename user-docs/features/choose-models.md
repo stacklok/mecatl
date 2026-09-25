@@ -244,6 +244,22 @@ models:
         model: image
 ```
 
+The `guardrail` slot also accepts a strict provider-aware object when the checker
+must use a different configured provider:
+
+```yaml
+models:
+  slots:
+    guardrail:
+      provider: review-provider
+      model: coder
+```
+
+Both object fields are required. Unknown providers, missing fields, unknown keys,
+and an unresolvable model fail startup; Mecatl never infers a provider from an
+opaque model ID. The scalar form binds its selector to the deployment default
+provider. Project-tier objects are ignored with a warning.
+
 ### Use a planning model in plan mode
 
 Set `models.default` to the model that implements your changes and bind `plan`
@@ -505,17 +521,35 @@ including:
 - context limit when known.
 
 They do not expose API keys or provider-private credentials. The inventory is
-server-specific and can differ according to the providers and credentials
-configured at startup. A provider's live model catalog may refresh while the
-server is running.
+server-specific and depends on the providers and credentials configured at startup.
+Each `ListModels` request, including client startup and SDK requests, can refresh
+available providers after a ten-second per-provider cooldown. Concurrent requests
+share a fetch; one provider's cooldown does not prevent another from refreshing.
+The request waits up to ten seconds and returns models and safe provider statuses
+from one snapshot. There is no periodic refresh or metadata cache on disk.
+
+The server retains each provider's last non-empty model metadata for its lifetime,
+even if a later listing fails, is unauthorized, or returns no models. The latest
+status still reports that outcome where provider status is exposed. A later
+non-empty listing replaces the retained list. Retained metadata can become stale;
+it does not guarantee current model access or context limits.
 
 Models whose catalog includes it can call the read-only `DiscoverModels` tool to
-inspect this same resolved inventory. Results contain the exact `provider_id`
-plus `model_id` selection handle and the same safe metadata as `ListModels`;
-equal model IDs under different providers remain separate. Exact provider/model
-filters are supported. Output defaults to 20 entries and is capped at 50 entries
-and 32 KiB. The tool does not probe providers, accept endpoints or credentials,
-or change the current session, and remains available in no-filesystem sessions.
+inspect this same resolved inventory. Start without `provider_id` when the
+provider is unknown. The first unfiltered result includes every selectable
+provider ID and its model count, plus the first bounded model page. You can then
+search across all providers or add an exact provider filter. A query is a set of
+case-lowered literal terms; every term must occur in the provider ID, model ID,
+or display name of a result. Punctuation has no special query syntax.
+
+Each result contains the exact `provider_id` plus `model_id` selection handle and
+the same safe metadata as `ListModels`; equal model IDs under different providers
+remain separate. Output defaults to 20 entries and is capped at 50 entries and
+32 KiB. When `next_cursor` is present, call the tool again with only that value as
+`cursor`. A changed inventory invalidates the cursor, so restart without it. The
+tool does not probe or refresh providers, accept endpoints or credentials, select
+or route a model, or change the current session. It remains available in
+no-filesystem sessions.
 
 For a known model, the session's effective capabilities combine the model's
 metadata with the selected adapter's transport capabilities. For an uncatalogued
@@ -546,3 +580,35 @@ session as authoritative.
 - [Context windows](./context-windows.md) for context limits and fallback.
 - [Capability and deployment matrix](./capability-matrix.md) for deployment
   availability.
+
+## Troubleshooting
+
+### Model context metadata is unavailable
+
+You can send the first prompt in a new or resumed session without opening
+`/models` first. If the selected model's context window is unknown and its provider
+supports discovery, the server starts or joins discovery for that provider before
+executing the prompt. Native authenticated providers perform this listing on demand
+rather than at startup.
+Known configured, retained live, or catalog windows need no listing.
+
+When discovery fails or returns an empty list and no positive window is known,
+the server rejects execution with `context_window_unavailable`. Your existing
+conversation remains available, and the rejected prompt has not been recorded as
+a server turn. Restore provider discovery, or ask the server operator to configure
+the model's verified [exact context window](./context-windows.md). Retry after the
+ten-second cooldown; another failed attempt requires another explicit request.
+Cancelling your wait leaves the server's bounded discovery attempt running.
+
+In `mecatui`, **Retry** sends the identical prepared text and attachments without
+rereading files or the clipboard. **Back** restores the editable draft, including
+staged pastes and images, and asks before replacing a newer draft. Cancelling that
+confirmation keeps both drafts. **Discard submission** releases the rejected
+payload. Recovery holds one submission in client memory under the existing size
+limits; accepting the prompt, changing sessions, exiting, or an unrelated terminal
+error releases it. There is no automatic replay or recovery after client restart.
+
+API clients receive gRPC `Unavailable` with ErrorInfo domain `mecatl.stacklok.com`
+and reason `context_window_unavailable`, or HTTP 503. Match the structured reason,
+not error-message text, and retry explicitly after addressing discovery. For daemon
+configuration, see [context discovery recovery](/building/deployment/mecated.md#context-discovery-recovery).

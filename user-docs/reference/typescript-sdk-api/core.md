@@ -13,6 +13,8 @@ import Heading from "@theme/Heading";
 
 This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`.
 
+For entry points and runtime support, see the [SDK API overview](./index.md).
+
 ## Symbol index
 
 | Symbol | Kind |
@@ -38,6 +40,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`ConnectionStatusListener`](#api-connectionstatuslistener-typealias) | Type alias |
 | [`ConnectionStatusStore`](#api-connectionstatusstore-interface) | Interface |
 | [`ConnectOptions`](#api-connectoptions-typealias) | Type alias |
+| [`ControlRefusedEventPayload`](#api-controlrefusedeventpayload-interface) | Interface |
 | [`createHttpTransport`](#api-createhttptransport-function) | Function |
 | [`createRawClient`](#api-createrawclient-function) | Function |
 | [`CreateSessionOptions`](#api-createsessionoptions-interface) | Interface |
@@ -63,6 +66,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`EventUsage`](#api-eventusage-interface) | Interface |
 | [`ForkSessionOptions`](#api-forksessionoptions-interface) | Interface |
 | [`getRawJson`](#api-getrawjson-function) | Function |
+| [`GuardrailApprovalScope`](#api-guardrailapprovalscope-interface) | Interface |
 | [`HookEventPayload`](#api-hookeventpayload-interface) | Interface |
 | [`HttpTransportOptions`](#api-httptransportoptions-interface) | Interface |
 | [`imagePart`](#api-imagepart-function) | Function |
@@ -116,6 +120,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`PlanApprovalRequiredError`](#api-planapprovalrequirederror-class) | Class |
 | [`PlanApprovalResponder`](#api-planapprovalresponder-typealias) | Type alias |
 | [`PlanApprovalVerdict`](#api-planapprovalverdict-typealias) | Type alias |
+| [`PlanContinuationFailureEventPayload`](#api-plancontinuationfailureeventpayload-interface) | Interface |
 | [`PlanContinuationStartError`](#api-plancontinuationstarterror-class) | Class |
 | [`PlanResolution`](#api-planresolution-interface) | Interface |
 | [`PlanResolutionResult`](#api-planresolutionresult-interface) | Interface |
@@ -164,6 +169,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`SessionActivityReplayStatus`](#api-sessionactivityreplaystatus-interface) | Interface |
 | [`SessionBusyError`](#api-sessionbusyerror-class) | Class |
 | [`SessionCapabilities`](#api-sessioncapabilities-interface) | Interface |
+| [`SessionContextOccupancy`](#api-sessioncontextoccupancy-interface) | Interface |
 | [`SessionLimits`](#api-sessionlimits-interface) | Interface |
 | [`SessionMcpServer`](#api-sessionmcpserver-interface) | Interface |
 | [`SessionMode`](#api-sessionmode-typealias) | Type alias |
@@ -1357,6 +1363,32 @@ Parameters:
 
 Returns: `() => void`
 
+<Heading as="h3" id="api-controlrefusedeventpayload-interface"><code>ControlRefusedEventPayload</code></Heading>
+
+The normalized, client-visible reason for a refused in-stream control.
+
+```ts
+export interface ControlRefusedEventPayload
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-askid-propertysignature"><code>ControlRefusedEventPayload.askId</code></Heading>
+
+```ts
+readonly askId: string;
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-category-propertysignature"><code>ControlRefusedEventPayload.category</code></Heading>
+
+```ts
+readonly category: string;
+```
+
+<Heading as="h4" id="api-controlrefusedeventpayload-message-propertysignature"><code>ControlRefusedEventPayload.message</code></Heading>
+
+```ts
+readonly message: string;
+```
+
 <Heading as="h3" id="api-createsessionoptions-interface"><code>CreateSessionOptions</code></Heading>
 
 Session-creation fields map directly onto CreateSessionRequest.
@@ -1793,6 +1825,12 @@ readonly "authorization.resolved": AuthorizationEventPayload;
 readonly "compaction.archive": CompactionArchiveEventPayload;
 ```
 
+<Heading as="h4" id="api-eventpayloads-control-refused-propertysignature"><code>EventPayloads["control.refused"]</code></Heading>
+
+```ts
+readonly "control.refused": ControlRefusedEventPayload;
+```
+
 <Heading as="h4" id="api-eventpayloads-message-delta-propertysignature"><code>EventPayloads["message.delta"]</code></Heading>
 
 ```ts
@@ -1839,6 +1877,12 @@ readonly "permission.ask": PermissionAskEventPayload;
 
 ```ts
 readonly "permission.retract": PermissionAskEventPayload;
+```
+
+<Heading as="h4" id="api-eventpayloads-plan-continuation-failed-propertysignature"><code>EventPayloads["plan.continuation_failed"]</code></Heading>
+
+```ts
+readonly "plan.continuation_failed": PlanContinuationFailureEventPayload;
 ```
 
 <Heading as="h4" id="api-eventpayloads-provider-route-propertysignature"><code>EventPayloads["provider.route"]</code></Heading>
@@ -2105,6 +2149,38 @@ Opaque source-scoped selector for an existing worktree.
 
 ```ts
 worktreeSelector?: string;
+```
+
+<Heading as="h3" id="api-guardrailapprovalscope-interface"><code>GuardrailApprovalScope</code></Heading>
+
+A contextual guardrail approval scope carried by a permission ask.
+
+```ts
+export interface GuardrailApprovalScope
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-kind-propertysignature"><code>GuardrailApprovalScope.kind</code></Heading>
+
+```ts
+readonly kind: "action" | "result_release" | "unknown";
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-repeatavailable-propertysignature"><code>GuardrailApprovalScope.repeatAvailable</code></Heading>
+
+```ts
+readonly repeatAvailable: boolean;
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-reviewid-propertysignature"><code>GuardrailApprovalScope.reviewId</code></Heading>
+
+```ts
+readonly reviewId: string;
+```
+
+<Heading as="h4" id="api-guardrailapprovalscope-sessiononly-propertysignature"><code>GuardrailApprovalScope.sessionOnly</code></Heading>
+
+```ts
+readonly sessionOnly: boolean;
 ```
 
 <Heading as="h3" id="api-hookeventpayload-interface"><code>HookEventPayload</code></Heading>
@@ -3207,6 +3283,20 @@ readonly args: string;
 readonly askId: string;
 ```
 
+<Heading as="h4" id="api-permissionaskeventpayload-callid-propertysignature"><code>PermissionAskEventPayload.callId</code></Heading>
+
+Exact tool-call ID when supplied by the server; presentation correlation only.
+
+```ts
+readonly callId?: string;
+```
+
+<Heading as="h4" id="api-permissionaskeventpayload-guardrail-propertysignature"><code>PermissionAskEventPayload.guardrail</code></Heading>
+
+```ts
+readonly guardrail?: GuardrailApprovalScope | undefined;
+```
+
 <Heading as="h4" id="api-permissionaskeventpayload-reason-propertysignature"><code>PermissionAskEventPayload.reason</code></Heading>
 
 ```ts
@@ -3217,6 +3307,30 @@ readonly reason: string;
 
 ```ts
 readonly tool: string;
+```
+
+<Heading as="h3" id="api-plancontinuationfailureeventpayload-interface"><code>PlanContinuationFailureEventPayload</code></Heading>
+
+Safe correlation for a known failure to start the approved plan's proceed run. The session-scoped event has an empty envelope run ID.
+
+```ts
+export interface PlanContinuationFailureEventPayload
+```
+
+<Heading as="h4" id="api-plancontinuationfailureeventpayload-askid-propertysignature"><code>PlanContinuationFailureEventPayload.askId</code></Heading>
+
+ID of the approved plan ask on that run.
+
+```ts
+readonly askId: string;
+```
+
+<Heading as="h4" id="api-plancontinuationfailureeventpayload-planrunid-propertysignature"><code>PlanContinuationFailureEventPayload.planRunId</code></Heading>
+
+Run ID of the approved plan whose proceed run failed to start.
+
+```ts
+readonly planRunId: string;
 ```
 
 <Heading as="h3" id="api-planresolution-interface"><code>PlanResolution</code></Heading>
@@ -3535,7 +3649,7 @@ Returns: `Promise<void>`: A promise that resolves after the verdict frame is han
 
 Throws: `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
 
-Throws: `InvalidStateError` when used for a plan-approval ask.
+Throws: `InvalidStateError` when used for a plan-approval ask. An opted-in server-owned run uses `Session.controls(runId).resolvePlanAsk()` instead.
 
 <Heading as="h4" id="api-run-result-methodsignature"><code>Run.result</code></Heading>
 
@@ -3625,13 +3739,13 @@ readonly result: RunResult;
 
 <Heading as="h3" id="api-runcontrols-interface"><code>RunControls</code></Heading>
 
-Prompt-free controls bound to one exact session run. Construct this resource with `Session.controls`. It does not attach, subscribe, or keep a run alive. Every method requires the server's `prompt_free_controls` feature, addresses `runId` exactly, performs one unary request without automatic retry, and accepts ordinary `RequestOptions`. A server that lacks the feature raises `UnsupportedFeatureError` before a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs fail with the server's typed `stale_run_control` error. A transport failure, caller cancellation, or deadline after dispatch can reject the promise after the server accepted the operation. Reconcile that ambiguous case from the authoritative session or activity state before deciding whether to retry.
+Prompt-free controls bound to one exact session run. Construct this resource with `Session.controls`. It does not attach, subscribe, or keep a run alive. Ordinary controls require the server's `prompt_free_controls` feature; plan review requires `exact_plan_ask_control`. Every method addresses `runId` exactly, performs one unary request without automatic retry, and accepts ordinary `RequestOptions`. A server that lacks the feature raises `UnsupportedFeatureError` before a control RPC is sent. Ended, cancelling, replaced, or otherwise stale runs fail with the server's typed `stale_run_control` error. A transport failure, caller cancellation, or deadline after dispatch can reject the promise after the server accepted the operation. Reconcile that ambiguous case from the authoritative session or activity state before deciding whether to retry.
 
 ```ts
 export interface RunControls
 ```
 
-Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
+Callable members: [`cancel()`](#api-runcontrols-cancel-methodsignature), [`cancelSteer()`](#api-runcontrols-cancelsteer-methodsignature), [`resolveAsk()`](#api-runcontrols-resolveask-methodsignature), [`resolvePlanAsk()`](#api-runcontrols-resolveplanask-methodsignature), [`steer()`](#api-runcontrols-steer-methodsignature)
 
 <Heading as="h4" id="api-runcontrols-cancel-methodsignature"><code>RunControls.cancel</code></Heading>
 
@@ -3664,7 +3778,7 @@ Returns: `Promise<RunSteerCancellationAcknowledgement>`: Whether the server retr
 
 <Heading as="h4" id="api-runcontrols-resolveask-methodsignature"><code>RunControls.resolveAsk</code></Heading>
 
-Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `Session.resolvePlan()` and fail with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`. Unlike the stream-local `Run.resolveAsk()` send-only operation, this control returns only after the server acknowledges acceptance.
+Resolves one ordinary permission ask on this exact run. Root and surfaced-child permission asks are supported, including an ordinary ask restored from a persisted awaiting run. Plan-originated asks require `resolvePlanAsk()` or `Session.resolvePlan()` and fail here with `plan_resolution_required`. Unknown or already resolved asks fail with `ask_not_pending`. Unlike the stream-local `Run.resolveAsk()` send-only operation, this control returns only after the server acknowledges acceptance.
 
 ```ts
 resolveAsk(askId: string, verdict: PermissionVerdict, requestOptions?: RequestOptions): Promise<void>;
@@ -3674,6 +3788,22 @@ Parameters:
 
 - `askId` (`string`): Exact permission ask ID.
 - `verdict` (`PermissionVerdict`): Ordinary permission verdict to apply.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<void>`
+
+<Heading as="h4" id="api-runcontrols-resolveplanask-methodsignature"><code>RunControls.resolvePlanAsk</code></Heading>
+
+Resolves one plan-originated ask on this exact run and ask ID. Requires `exact_plan_ask_control`; a stale run or ask fails at the daemon. The acknowledgement must echo both IDs before this promise resolves.
+
+```ts
+resolvePlanAsk(askId: string, verdict: PlanApprovalVerdict, requestOptions?: RequestOptions): Promise<void>;
+```
+
+Parameters:
+
+- `askId` (`string`): Exact plan ask ID.
+- `verdict` (`PlanApprovalVerdict`): Approve once, accept edits, or iterate.
 - `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<void>`
@@ -3732,6 +3862,14 @@ Automatically answers only plan-originated PresentPlan asks.
 
 ```ts
 onPlanApproval?: PlanApprovalResponder;
+```
+
+<Heading as="h4" id="api-runoptions-serverownedplancontinuation-propertysignature"><code>RunOptions.serverOwnedPlanContinuation</code></Heading>
+
+Lets the server start the proceed run after an exact plan-ask approval. Defaults to false. True requires `exact_plan_ask_control`, excludes `onPlanApproval`, and is rejected by `Session.retry()`.
+
+```ts
+serverOwnedPlanContinuation?: boolean;
 ```
 
 <Heading as="h3" id="api-runresult-interface"><code>RunResult</code></Heading>
@@ -4377,7 +4515,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`guardrailCoverage()`](#api-session-guardrailcoverage-methodsignature), [`guardrailReviewDetail()`](#api-session-guardrailreviewdetail-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -4517,6 +4655,35 @@ Parameters:
 - `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<void>`: A promise that resolves after the server removes the session.
+
+<Heading as="h4" id="api-session-guardrailcoverage-methodsignature"><code>Session.guardrailCoverage</code></Heading>
+
+Reads the effective guardrail coverage for this session. The server authorizes this diagnostic for the session owner. This RPC is available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+
+```ts
+guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse>;
+```
+
+Parameters:
+
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<ListGuardrailCoverageResponse>`: The effective checker configuration and rule coverage.
+
+<Heading as="h4" id="api-session-guardrailreviewdetail-methodsignature"><code>Session.guardrailReviewDetail</code></Heading>
+
+Reads bounded live detail for one guardrail review in this session. The server authorizes this diagnostic for the session owner. This RPC is available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+
+```ts
+guardrailReviewDetail(reviewId: string, options?: RequestOptions): Promise<GetGuardrailReviewDetailResponse>;
+```
+
+Parameters:
+
+- `reviewId` (`string`): Review ID from the session's guardrail event.
+- `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `Promise<GetGuardrailReviewDetailResponse>`: The review concern, source display, and next action.
 
 <Heading as="h4" id="api-session-id-propertysignature"><code>Session.id</code></Heading>
 
@@ -4754,6 +4921,26 @@ readonly audio: boolean;
 
 ```ts
 readonly image: boolean;
+```
+
+<Heading as="h3" id="api-sessioncontextoccupancy-interface"><code>SessionContextOccupancy</code></Heading>
+
+Display-only context meter data from the latest completed session turn.
+
+```ts
+export interface SessionContextOccupancy
+```
+
+<Heading as="h4" id="api-sessioncontextoccupancy-estimated-propertysignature"><code>SessionContextOccupancy.estimated</code></Heading>
+
+```ts
+readonly estimated: boolean;
+```
+
+<Heading as="h4" id="api-sessioncontextoccupancy-inputtokens-propertysignature"><code>SessionContextOccupancy.inputTokens</code></Heading>
+
+```ts
+readonly inputTokens: bigint;
 ```
 
 <Heading as="h3" id="api-sessionlimits-interface"><code>SessionLimits</code></Heading>
@@ -5057,6 +5244,12 @@ readonly debugMcpTools: readonly string[];
 
 ```ts
 readonly kind: string;
+```
+
+<Heading as="h4" id="api-sessionsnapshot-latestcontextoccupancy-propertysignature"><code>SessionSnapshot.latestContextOccupancy</code></Heading>
+
+```ts
+readonly latestContextOccupancy?: SessionContextOccupancy;
 ```
 
 <Heading as="h4" id="api-sessionsnapshot-limits-propertysignature"><code>SessionSnapshot.limits</code></Heading>
@@ -7083,7 +7276,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
@@ -7091,7 +7284,7 @@ MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "attempt_live_c
 Stable event kinds, kept in parity with the Go server vocabulary.
 
 ```ts
-MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
+MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "plan.continuation_failed", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"]
 ```
 
 <Heading as="h3" id="api-mecatl-watch-phases-variable"><code>MECATL_WATCH_PHASES</code></Heading>
@@ -7133,6 +7326,7 @@ Known server feature identifiers. Unknown identifiers remain observable.
 
 ```ts
 ServerFeature: {
+    readonly ExactPlanAskControl: "exact_plan_ask_control";
     readonly HttpSteer: "http_steer";
     readonly McpServersOnCreate: "mcp_servers_on_create";
     readonly PromptFreeControls: "prompt_free_controls";

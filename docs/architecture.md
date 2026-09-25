@@ -468,8 +468,23 @@ The committed concise examples under `sdk/typescript/examples/` self-import only
 four exported entry points. A dedicated no-emit project runs after the package build, so no source
 path alias can hide an export/example drift. It covers remote and local Node/Bun use, callback
 tools, Deno remote and local use, browser+BFF guidance, permissions, durable attachment, teams,
-schedules, and plan resolution. The browser BFF is explicitly a deployment shape, not SDK server code. The larger
+schedules, plan resolution, session lifecycle, capability discovery, MCP workspace enrollment,
+and MCP authorization. The offline SDK e2e gate also compiles and executes the four latter
+workflow entry points against controlled daemon or protocol fixtures. The browser BFF is
+explicitly a deployment shape, not SDK server code. The larger
 Slack bot remains a separate pnpm project and has its own package-export typecheck CI leg.
+
+The test-only [high-level RPC inventory](../sdk/typescript/test/high-level-surface.test.ts)
+classifies every public `HarnessService` and `ScheduleService` descriptor by the public SDK
+operation that invokes it. The session handle invokes the two guardrail diagnostic RPCs through
+`guardrailCoverage()` and `guardrailReviewDetail()`. `StreamSessionEvents` and `StreamSessionLive`
+have individual raw-only rationales: durable `Session.activity()` and `attach()` instead use
+`WatchSessionEvents`. This coverage guard checks handwritten invocation paths separately from the
+raw transport catalog.
+The [TUI builtin inventory](../cmd/mecatui/ui/sdk_high_level_parity_test.go) classifies all
+actual builtin declarations by reusable SDK outcome or application, operator, and debug
+ownership. These inventories are verification data; the SDK and `mecatui` remain independent
+clients and share no command registry.
 
 Spawned Node/Bun clients also expose `client.tool(name, schema, handler, options)` for a
 client-wide callback-tool registry. Schemas are plain JSON Schema 2020-12 values compiled by the
@@ -1410,29 +1425,16 @@ server's `audience:["user"]` is not a suppression control). Server-returned
 fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
 backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
-**Proposed harness context boundary.** [ADR 0359](adr/0359-harness-context-source-authority.md)
-and the [acceptance plan](acceptance/harness-context.md) define a Plan / Interface contract that
-is not implemented yet. Deployment composition selects project instructions, commands, rules,
-skills, and agent definitions independently from execution. Sources can read APIs, host files,
-or explicitly selected execution files; separation does not require different storage. A strict
-operator-only policy names enabled deployment-registered source IDs and a highest-precedence-first
-order, `combine` or `replace` mode, exact exclusions, and permitted named overrides for each content
-kind. Instructions concatenate in configured order; named entries use their existing exact logical
-names, without recursive merging. A present named-override winner removes only explicitly replaced
-candidates, so an earlier non-replaced candidate still wins; an absent winner restores normal order.
-Homogeneous registrations stamp one fixed provenance tier, while trusted mixed compatibility adapters
-may preserve only validated per-entry tiers; project admission still runs before resolution. For one
-stable observation, listing and body retrieval expose the same visible names and winners, while a live
-update between calls may produce a new observation. Resolution cannot change permissions, tools,
-hooks, credentials, project admission, or child attenuation. Source-only command listing first loads
-and owner-authorizes the session, then borrows the Build-owned principal/profile binding without
-reattaching unrelated execution. The concurrency-safe binding cache retries failed creation and delays
-idempotent retirement until in-flight borrowers release. The public prompt interfaces become
-workspace-free, with file sources bound at construction. On restart, existing sessions and schedules rebind under current
-deployment policy and current authorization; no durable harness-context reference or legacy-state
-rejection is added. The shared implementation precedes the MicroVM and Redis integrations. Neither
-integration may infer sources from an execution backend kind or reinterpret a virtual root as a host
-path.
+**Harness context runtime.** The [domain model](architecture/mecatl.modelith.md#harnesscontext)
+defines source authority independently from execution. The [acceptance contract](acceptance/harness-context.md)
+owns the source-binding design; [ADR 0359](adr/0359-harness-context-source-authority.md)
+records its rationale. `app.Build` resolves the selected kind-specific registrations and owns
+process and per-session binding generations. A principal-scoped registration receives the exact
+session ID, stored owner, and profile. Only a selected registration declared for execution files
+receives a lazy callback that exactly reattaches the server-authorized placement. The callback
+returns a read-only workspace and its own release, never a runner, read ledger, public root, or
+caller-selected environment reference. Retiring a generation waits for existing engine and child
+references to drain; restart reconstructs bindings under current composition and authorization.
 
 **Server-owned placement.** Trusted composition installs one placement provider and
 scope before listeners serve. `CreateSession` accepts only the provider's deployment
@@ -1485,7 +1487,7 @@ HTTP successor routes.
 
 ## See also
 
-- [User documentation](https://mecatl.dev/docs/) — guides for building and operating Mecatl, plus rendered gRPC and HTTP/SSE reference material.
+- [User documentation](../user-docs/intro.md) — guides for building and operating Mecatl, plus rendered gRPC and HTTP/SSE reference material.
 - [mecatui terminal UI](tui.md) — the gRPC client that renders the event stream described above.
 - [ADR 0001 — the ACP adapter](adr/0001-acp-adapter.md) — the decisions behind the third (editor) wire surface.
 - [Go performance measurement & observability survey](perf-measurement-survey.md) — the technique reference behind [observability & persistence](architecture/observability.md).

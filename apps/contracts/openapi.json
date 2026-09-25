@@ -987,6 +987,13 @@
                           "title": {
                             "type": "string"
                           },
+                          "titleProvenance": {
+                            "type": "string"
+                          },
+                          "titleRevision": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d*)$"
+                          },
                           "turns": {
                             "type": "integer",
                             "minimum": 0
@@ -1003,6 +1010,8 @@
                           "modelId",
                           "state",
                           "title",
+                          "titleProvenance",
+                          "titleRevision",
                           "turns",
                           "updatedAt"
                         ]
@@ -1290,6 +1299,32 @@
                       "items": {
                         "type": "object",
                         "properties": {
+                          "delivery": {
+                            "type": "object",
+                            "properties": {
+                              "fireId": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "started",
+                                  "completed"
+                                ]
+                              },
+                              "scheduleName": {
+                                "type": "string"
+                              },
+                              "stop": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fireId",
+                              "kind",
+                              "scheduleName"
+                            ]
+                          },
                           "images": {
                             "type": "array",
                             "items": {
@@ -1721,10 +1756,19 @@
                   "properties": {
                     "title": {
                       "type": "string"
+                    },
+                    "titleProvenance": {
+                      "type": "string"
+                    },
+                    "titleRevision": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d*)$"
                     }
                   },
                   "required": [
-                    "title"
+                    "title",
+                    "titleProvenance",
+                    "titleRevision"
                   ]
                 }
               }
@@ -2003,6 +2047,32 @@
                         "event": {
                           "type": "object",
                           "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
                             "kind": {
                               "type": "string"
                             },
@@ -2266,6 +2336,32 @@
                         "event": {
                           "type": "object",
                           "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
                             "kind": {
                               "type": "string"
                             },
@@ -3270,6 +3366,32 @@
                         "event": {
                           "type": "object",
                           "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
                             "kind": {
                               "type": "string"
                             },
@@ -3951,6 +4073,652 @@
                     "status",
                     "title",
                     "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/presentation": {
+      "get": {
+        "operationId": "getAuthorizationPresentation",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "sessionId"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "authorizationId"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to a fresh external authorization page."
+          },
+          "403": {
+            "description": "Open the authorization page from the Studio origin.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The request could not be completed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/recheck": {
+      "post": {
+        "operationId": "recheckAuthorization",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "sessionId"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "authorizationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorization recheck and any continuation, in the run event stream.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "runId": {
+                          "type": "string"
+                        },
+                        "sessionId": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.started"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "runId",
+                        "sessionId",
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "event": {
+                          "type": "object",
+                          "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "payload": {
+                              "nullable": true
+                            },
+                            "raw": {
+                              "nullable": true
+                            },
+                            "runId": {
+                              "type": "string"
+                            },
+                            "seq": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "turn": {
+                              "type": "integer"
+                            },
+                            "unknown": {
+                              "type": "boolean"
+                            },
+                            "usage": {
+                              "type": "object",
+                              "properties": {
+                                "cacheReadTokens": {
+                                  "type": "string"
+                                },
+                                "cacheWriteTokens": {
+                                  "type": "string"
+                                },
+                                "inputTokens": {
+                                  "type": "string"
+                                },
+                                "outputTokens": {
+                                  "type": "string"
+                                },
+                                "reasoningTokens": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "cacheReadTokens",
+                                "cacheWriteTokens",
+                                "inputTokens",
+                                "outputTokens",
+                                "reasoningTokens"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "runId",
+                            "seq",
+                            "text",
+                            "turn",
+                            "unknown"
+                          ]
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.event"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "event",
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cursor": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "bound",
+                            "gap"
+                          ]
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.truncated"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "cursor",
+                        "reason",
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.error"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "type"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The Mecatl runtime is unavailable.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "detail",
+                    "instance",
+                    "status",
+                    "title",
+                    "type"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/cancel": {
+      "post": {
+        "operationId": "cancelAuthorization",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "sessionId"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "in": "path",
+            "name": "authorizationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorization cancellation and any continuation, in the run event stream.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "runId": {
+                          "type": "string"
+                        },
+                        "sessionId": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.started"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "runId",
+                        "sessionId",
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "event": {
+                          "type": "object",
+                          "properties": {
+                            "delivery": {
+                              "type": "object",
+                              "properties": {
+                                "fireId": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "started",
+                                    "completed"
+                                  ]
+                                },
+                                "scheduleName": {
+                                  "type": "string"
+                                },
+                                "stop": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "fireId",
+                                "kind",
+                                "scheduleName"
+                              ]
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "payload": {
+                              "nullable": true
+                            },
+                            "raw": {
+                              "nullable": true
+                            },
+                            "runId": {
+                              "type": "string"
+                            },
+                            "seq": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            },
+                            "turn": {
+                              "type": "integer"
+                            },
+                            "unknown": {
+                              "type": "boolean"
+                            },
+                            "usage": {
+                              "type": "object",
+                              "properties": {
+                                "cacheReadTokens": {
+                                  "type": "string"
+                                },
+                                "cacheWriteTokens": {
+                                  "type": "string"
+                                },
+                                "inputTokens": {
+                                  "type": "string"
+                                },
+                                "outputTokens": {
+                                  "type": "string"
+                                },
+                                "reasoningTokens": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "cacheReadTokens",
+                                "cacheWriteTokens",
+                                "inputTokens",
+                                "outputTokens",
+                                "reasoningTokens"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "runId",
+                            "seq",
+                            "text",
+                            "turn",
+                            "unknown"
+                          ]
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.event"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "event",
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cursor": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "bound",
+                            "gap"
+                          ]
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.truncated"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "cursor",
+                        "reason",
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "run.error"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "type"
+                      ]
+                    }
                   ]
                 }
               }

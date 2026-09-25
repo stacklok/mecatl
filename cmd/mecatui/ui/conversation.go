@@ -1281,6 +1281,17 @@ func (c *conversation) addNotice(text string) {
 	c.appendBlock(block{kind: blockNotice, raw: text})
 }
 
+// retractLatestNotice removes a provisional notice after its transport reply is
+// refused. It leaves unrelated notices untouched.
+func (c *conversation) retractLatestNotice(text string) {
+	for i := len(c.blocks) - 1; i >= 0; i-- {
+		if c.blocks[i].kind == blockNotice && c.blocks[i].raw == text {
+			c.blocks = append(c.blocks[:i:i], c.blocks[i+1:]...)
+			return
+		}
+	}
+}
+
 // addRecoverNotice appends a WARNING-styled recover-notice block (a session that
 // failed on a PERMANENT provider error was recovered for re-entry). Unlike a
 // compaction notice, this is ACTIONABLE (start a new session / change the

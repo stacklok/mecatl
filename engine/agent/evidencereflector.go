@@ -385,7 +385,7 @@ func ParseReflectionOutcome(in learning.Input, raw []byte, limits ReflectionLimi
 			return learning.Outcome{}, fenceErr
 		}
 	}
-	if err := rejectDuplicateJSONKeys([]byte(trimmed)); err != nil {
+	if err := RejectDuplicateJSONKeys([]byte(trimmed)); err != nil {
 		return learning.Outcome{}, fmt.Errorf("%w: %v", ErrReflectionOutput, err)
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(trimmed))
@@ -438,7 +438,9 @@ func unwrapReflectionFence(value string) (string, error) {
 	return stripped, nil
 }
 
-func rejectDuplicateJSONKeys(raw []byte) error {
+// RejectDuplicateJSONKeys validates one complete JSON value and rejects duplicate
+// object keys at every nesting depth before typed decoding can apply last-key-wins.
+func RejectDuplicateJSONKeys(raw []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	if err := consumeUniqueJSONValue(decoder); err != nil {
 		return err

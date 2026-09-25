@@ -16,7 +16,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
-	"github.com/stacklok/mecatl/internal/adapter/memory"
 	brokercontract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -399,7 +398,7 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 		}
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: continuation engine", ErrInternal)
 	}
-	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, claimed, resolution)
+	prepared, err := engine.PrepareAuthorizationContinuation(rootedRunContext(ctx, sess, env), sess, env, claimed, resolution)
 	if err != nil {
 		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
 			return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare granted authorization continuation: %v; restore claim: %v", ErrInternal, err, restoreErr)
@@ -665,7 +664,7 @@ func (s *Service) resolveAuthorizationWithFailureLocked(ctx context.Context, ses
 		}
 		return mcpAuthorizationResult(pending, status, nil), nil
 	}
-	prepared, err := engine.PrepareAfterAuthorization(memory.WithWorkspace(ctx, env.Workspace().Root()), sess, env, pending.Authorization, pending.Call.ID, results, resolution)
+	prepared, err := engine.PrepareAfterAuthorization(rootedRunContext(ctx, sess, env), sess, env, pending.Authorization, pending.Call.ID, results, resolution)
 	if err != nil {
 		return MCPAuthorizationResult{}, fmt.Errorf("%w: prepare terminal authorization continuation", ErrInternal)
 	}

@@ -5,6 +5,10 @@ import { Code, ConnectError } from "@connectrpc/connect";
 export const MECATL_ERROR_CODES = [
   "activity_gap",
   "ask_not_pending",
+  "approval_grant_ineligible",
+  "approval_intent_mismatch",
+  "approval_not_pending",
+  "approval_unsupported",
   "attempt_live_claim_conflict",
   "attempt_terminal_conflict",
   "attempt_version_conflict",

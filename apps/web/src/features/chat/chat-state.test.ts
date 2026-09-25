@@ -7,7 +7,6 @@ import {
   enqueueApproval,
   errorMessage,
   failureFromResult,
-  finalRunFailure,
   initialRunDeliveryState,
   messagesFromTranscript,
   payloadImages,
@@ -177,6 +176,15 @@ describe("messagesFromTranscript", () => {
       ],
     );
   });
+
+  it("retains the BFF delivery annotation and projected body in saved history", () => {
+    const delivery = { fireId: "fire-1", kind: "completed" as const, scheduleName: "Daily" };
+    const messages = messagesFromTranscript([
+      { delivery, role: "user", text: "The scheduled output", toolCalls: [] },
+    ]);
+    expect(messages[0]?.delivery).toEqual(delivery);
+    expect(messages[0]?.content).toBe("The scheduled output");
+  });
 });
 
 function usage(overrides: Partial<SessionUsageResponse> = {}): SessionUsageResponse {
@@ -333,7 +341,7 @@ describe("applyRunDelivery", () => {
       options,
     );
     expect(next.messages[0]?.tools).toEqual([
-      { args: "{}", id: "call-1", isError: false, name: "Read", output: "ok" },
+      { args: "{}", id: "call-1", isError: false, name: "Read", output: "ok", runId: "run-1" },
     ]);
   });
 
@@ -427,24 +435,5 @@ describe("applyRunDelivery", () => {
       },
     ]);
     expect(replay.activePrompt).toBe("hi");
-  });
-});
-
-describe("finalRunFailure", () => {
-  it("prefers an explicit failure over the no-result fallback", () => {
-    const failure = { message: "boom", permanent: false, prompt: "hello" };
-    expect(finalRunFailure({ failure, sawResult: false }, "hello")).toEqual(failure);
-  });
-
-  it("falls back to a generic message when the stream ended with no result at all", () => {
-    expect(finalRunFailure({ failure: undefined, sawResult: false }, "hello")).toEqual({
-      message: "The agent stopped before returning a result.",
-      permanent: false,
-      prompt: "hello",
-    });
-  });
-
-  it("reports no failure once a result was seen and nothing failed", () => {
-    expect(finalRunFailure({ failure: undefined, sawResult: true }, "hello")).toBeUndefined();
   });
 });

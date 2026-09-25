@@ -21,7 +21,6 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
-	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
@@ -178,14 +177,51 @@ func (*lifecycleBroker) DeleteSession(context.Context, session.SessionID) (broke
 	return brokercontract.DeleteDeleted, nil
 }
 
+type lifecycleProviderContextCapture struct {
+	mu    sync.Mutex
+	pairs [][2]session.SessionID
+}
+
+func (c *lifecycleProviderContextCapture) wrap(provider port.LLMProvider) port.LLMProvider {
+	return lifecycleContextCapturingProvider{provider: provider, capture: c}
+}
+
+func (c *lifecycleProviderContextCapture) assertLast(t *testing.T, want session.SessionID) {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.pairs) == 0 || c.pairs[len(c.pairs)-1] != [2]session.SessionID{want, want} {
+		t.Fatalf("provider correlation = %v, want final authoritative pair [%s %s]", c.pairs, want, want)
+	}
+}
+
+type lifecycleContextCapturingProvider struct {
+	provider port.LLMProvider
+	capture  *lifecycleProviderContextCapture
+}
+
+func (p lifecycleContextCapturingProvider) Capabilities() port.ProviderCapabilities {
+	return p.provider.Capabilities()
+}
+
+func (p lifecycleContextCapturingProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	active, _ := port.SessionIDFromContext(ctx)
+	root, _ := port.RootSessionIDFromContext(ctx)
+	p.capture.mu.Lock()
+	p.capture.pairs = append(p.capture.pairs, [2]session.SessionID{active, root})
+	p.capture.mu.Unlock()
+	return p.provider.Stream(ctx, req)
+}
+
 type lifecycleFixture struct {
-	svc        *Service
-	store      *memstore.Store
-	broker     *lifecycleBroker
-	attach     *lifecycleAttachment
-	pending    session.PendingAuthorization
-	builtTools *[][]string
-	builtSpecs *[][]mcp.ServerConfig
+	svc             *Service
+	store           *memstore.Store
+	broker          *lifecycleBroker
+	attach          *lifecycleAttachment
+	pending         session.PendingAuthorization
+	builtTools      *[][]string
+	builtSpecs      *[][]mcp.ServerConfig
+	providerContext *lifecycleProviderContextCapture
 }
 
 // lifecyclePlacementProvider reattaches only the local ref the fixture binds
@@ -270,25 +306,31 @@ func newLifecycleFixtureWithTurns(t *testing.T, status session.AuthorizationStat
 }
 
 func newLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
-	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, false, turns...)
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, false, lifecycleAllowPolicy{}, turns...)
 }
 
 func newInteractiveLifecycleFixtureWithMode(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, turns ...mockllm.Turn) lifecycleFixture {
-	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, true, turns...)
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, mode, true, lifecycleAllowPolicy{}, turns...)
 }
 
-func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, interactive bool, turns ...mockllm.Turn) lifecycleFixture {
+func newLifecycleFixtureWithPolicyTurns(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, policy port.PermissionPolicy, turns ...mockllm.Turn) lifecycleFixture {
+	t.Helper()
+	return newLifecycleFixtureConfigured(t, status, attachErr, now, timer, session.ModeDefault, false, policy, turns...)
+}
+
+func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationStatus, attachErr error, now func() time.Time, timer AuthorizationTimerFactory, mode session.PermissionMode, interactive bool, policy port.PermissionPolicy, turns ...mockllm.Turn) lifecycleFixture {
 	t.Helper()
 	store := memstore.New()
 	mutation := &lifecycleTool{}
 	attachment := &lifecycleAttachment{binding: "broker-binding", tool: mutation, status: status, url: "https://auth.example/authorize?state=live"}
 	broker := &lifecycleBroker{attachment: attachment, attachErr: attachErr}
+	providerContext := &lifecycleProviderContextCapture{}
 	buildEngine := func(tools []tool.Tool) *agent.Engine {
 		catalog := tool.NewCatalog()
 		for _, one := range tools {
 			catalog.MustRegister(one)
 		}
-		return agent.NewEngine(agent.Deps{LLM: mockllm.New(turns...), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, nil), Store: store, Model: "mock", Interactive: interactive})
+		return agent.NewEngine(agent.Deps{LLM: providerContext.wrap(mockllm.New(turns...)), Catalog: catalog, Policy: policy, Store: store, Model: "mock", Interactive: interactive})
 	}
 	shared := buildEngine(nil)
 	var builtTools [][]string
@@ -332,7 +374,10 @@ func newLifecycleFixtureConfigured(t *testing.T, status session.AuthorizationSta
 	if err := store.Save(t.Context(), sess); err != nil {
 		t.Fatal(err)
 	}
-	return lifecycleFixture{svc: svc, store: store, broker: broker, attach: attachment, pending: pending, builtTools: &builtTools, builtSpecs: &builtSpecs}
+	return lifecycleFixture{
+		svc: svc, store: store, broker: broker, attach: attachment, pending: pending,
+		builtTools: &builtTools, builtSpecs: &builtSpecs, providerContext: providerContext,
+	}
 }
 
 func drainLifecycleRun(t *testing.T, svc *Service, result MCPAuthorizationResult) []session.Event {
@@ -386,11 +431,13 @@ func TestMCPAuthorizationTerminalStatusesPairWithoutExecuting(t *testing.T) {
 		t.Run(string(status), func(t *testing.T) {
 			f := newLifecycleFixture(t, status, nil, time.Now, nil)
 			control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
-			result, err := f.svc.RecheckMCPAuthorization(t.Context(), control.SessionID, control)
+			forged := port.WithSessionID(port.WithRootSessionID(t.Context(), "forged-root"), "forged-active")
+			result, err := f.svc.RecheckMCPAuthorization(forged, control.SessionID, control)
 			if err != nil || result.Status != status {
 				t.Fatalf("result = %+v, %v", result, err)
 			}
 			events := drainLifecycleRun(t, f.svc, result)
+			f.providerContext.assertLast(t, control.SessionID)
 			assertAuthorizationResultBeforeResolved(t, events, f.pending.Call.ID)
 			if f.attach.tool.calls.Load() != 0 {
 				t.Fatal("protected mutation executed")
@@ -908,11 +955,13 @@ func TestMCPAuthorizationGrantedResolutionBackfillsMissingRequired(t *testing.T)
 		}
 	}
 	control := MCPAuthorizationControl{SessionID: "authorization-session", AuthorizationID: f.pending.Authorization.ID}
-	result, err := f.svc.RecheckMCPAuthorization(t.Context(), "authorization-session", control)
+	forged := port.WithSessionID(port.WithRootSessionID(t.Context(), "forged-root"), "forged-active")
+	result, err := f.svc.RecheckMCPAuthorization(forged, "authorization-session", control)
 	if err != nil || result.Run == nil || result.Status != session.AuthorizationGranted {
 		t.Fatalf("granted result = %+v, %v", result, err)
 	}
 	drainLifecycleRun(t, f.svc, result)
+	f.providerContext.assertLast(t, control.SessionID)
 	var found bool
 	for ev, readErr := range log.Read(t.Context(), "authorization-session") {
 		if readErr != nil {

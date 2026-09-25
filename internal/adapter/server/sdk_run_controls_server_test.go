@@ -103,6 +103,7 @@ func TestSDKRunControls_Scenario1_RehydratedResolveIsBounded(t *testing.T) {
 	}
 	var after atomic.Int64
 	svc2 := newAskingService(t, store2, permstore.New(), &after, mockllm.New(mockllm.TextTurn("done")), true)
+	t.Cleanup(svc2.Close)
 	client, cleanup := dialGRPC(t, svc2)
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -121,6 +122,7 @@ func TestSDKRunControls_Scenario1_RehydratedResolveIsBounded(t *testing.T) {
 	if got := after.Load(); got != 1 {
 		t.Fatalf("rehydrated tool executions = %d, want exactly 1", got)
 	}
+	svc2.Close()
 }
 
 func TestSDKRunControls_Scenario1_RehydratedResolveTransfersContextOwnership(t *testing.T) {
@@ -144,6 +146,7 @@ func TestSDKRunControls_Scenario1_RehydratedResolveTransfersContextOwnership(t *
 	store2, _ := jsonlstore.New(dir)
 	var after atomic.Int64
 	svc2 := newAskingService(t, store2, permstore.New(), &after, mockllm.New(mockllm.TextTurn("done")), true)
+	t.Cleanup(svc2.Close)
 	client, cleanup := dialGRPC(t, svc2)
 	defer cleanup()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -156,6 +159,7 @@ func TestSDKRunControls_Scenario1_RehydratedResolveTransfersContextOwnership(t *
 	if after.Load() != 1 {
 		t.Fatalf("tool executions after caller cancellation = %d, want 1", after.Load())
 	}
+	svc2.Close()
 }
 
 func TestSDKRunControls_Scenario1_StrictHTTPDecode(t *testing.T) {

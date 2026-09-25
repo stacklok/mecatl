@@ -147,8 +147,10 @@ type catalogAssets struct {
 	attemptRepository        learning.AttemptRepository
 	automaticAdmissionLedger learning.AutomaticAdmissionLedger
 	rootCatalog              *tool.Catalog
-	modelInventory           *resolvedModelInventory
+	modelInventory           server.ModelInventory
 	sessionFactoryWithTools  server.SessionEngineWithToolsFactory
+	guardrailGrants          interface{ ClearSession(string) }
+	sessionContextFactory    server.SessionContextEngineFactory
 }
 
 // catalogSession is the PER-CATALOG variation: the resolved provider/model the
