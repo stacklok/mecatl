@@ -1,8 +1,8 @@
-# ADR 0367 — Session-owned PDF artifacts outside session storage
+# ADR 0367 — Session-owned artifacts outside session storage (PDF first)
 
 - Status: Proposed
 - Date: 2026-09-24
-- Scope: TypeScript SDK PDF input and download, prompt and tool-result content, provider translation, artifact storage, and mecak8s deployment
+- Scope: Generic SDK artifact transfer and storage with PDF-only prompt input, tool-result output, provider translation, and mecak8s deployment
 - Supersedes: none
 - Superseded by: none
 
@@ -25,23 +25,31 @@ Node/Bun gRPC transports ([ADR 0279](./0279-typescript-sdk-architecture.md));
 both need the same artifact identity and access rules.
 
 The operator chose both PDF directions, tool-result PDF output, and
-S3-compatible object storage with references in Redis. This decision records
-the durable ownership and persistence boundary. The acceptance plan fixes the
-first wire and SDK APIs.
+S3-compatible object storage with references in Redis. The operator also chose
+generic names for artifact transfer, storage, and result references, while
+keeping PDF as the only accepted file type in this release. This decision
+records the durable ownership and persistence boundary. The acceptance plan
+fixes the first wire and SDK APIs.
 
 ## Decision
 
-When artifact storage is enabled, the server owns each PDF artifact. It assigns
-an opaque, session-bound ID and stores the bytes in a private S3-compatible
-object store. Session snapshots, durable events, audit records, SDK events, and
-model-visible tool-result history carry the ID and bounded metadata for
-recognized PDFs. An artifact ID is a lookup key, never authorization. Every
-upload, prompt reference, and download checks the owned session. No public
-object URL or storage key crosses the API. The bucket is dedicated to the
-mecak8s installation; storage keys do not use its rotatable telemetry ID.
+When artifact storage is enabled, the server owns each artifact. It assigns an
+opaque, session-bound ID and stores the bytes in a private S3-compatible object
+store. Transfer, storage, capability, and tool-result reference names use
+`artifact`; PDF prompt parts, model capability, provider translation, and format
+checks remain PDF-specific. This release accepts only `application/pdf`.
+Session snapshots, durable events, audit records, SDK events, and model-visible
+tool-result history carry the ID and bounded metadata, including the validated
+MIME type, for recognized PDFs. An artifact ID is a lookup key, never
+authorization. Every upload, prompt reference, and download checks the owned
+session. No public object URL or storage key crosses the API. The bucket is
+dedicated to the mecak8s installation; storage keys use artifact-generic
+namespaces and do not use its rotatable telemetry ID.
 
-Use chunked upload and download APIs. The SDK accepts a browser `Blob` or an
-async byte source for upload and exposes an async byte stream for download.
+Use chunked artifact upload and download APIs. The SDK accepts a browser `Blob`
+or an async byte source for upload and exposes an async byte stream for
+download. Its upload result carries the ID, safe name, MIME type, size, and
+SHA-256; a caller uses a PDF-specific prompt part to attach that artifact.
 The server limits a PDF to 20 MiB and each transport chunk to 256 KiB. It
 validates the `application/pdf` declaration, `%PDF-` header, and trailing
 `%%EOF` marker before publishing an artifact. This signature check does not
@@ -53,9 +61,10 @@ with a native PDF adapter and configured artifact storage. Unknown or
 unsupported models fail closed.
 
 When a top-level tool returns an `application/pdf` embedded-resource blob, a
-server-owned result processor stores it and replaces that block with an
-artifact-reference block. The MCP producer admits a PDF blob up to 20 MiB
-through its size gate; an oversized PDF becomes a tool error. The processor
+server-owned result processor stores it and replaces that block with a generic
+artifact-reference block whose MIME type is `application/pdf`. The MCP producer
+admits a PDF blob up to 20 MiB through its size gate; an oversized PDF becomes
+a tool error. The processor
 runs after `PostToolUse` has chosen the effective result and before audit,
 event emission, and conversation recording. It rebuilds the model-facing
 summary and rejects a result that repeats the PDF bytes or their base64 form
@@ -78,9 +87,10 @@ referenced PDFs into the new session's artifact namespace and rewrites its
 references before the fork is committed. If inherited history contains a PDF
 prompt, a fork to a model without PDF input capability fails before successor
 publication. Clear starts an empty successor and does not copy artifacts.
-Redis holds bounded staging markers and a durable deletion outbox, never PDF
-bytes. A staging marker precedes each object write. An unreferenced upload is
-unusable after 24 hours even if cleanup has not run. A successful snapshot save,
+Redis holds bounded artifact metadata, staging markers, and a durable deletion
+outbox, never PDF bytes. A staging marker precedes each object write. An
+unreferenced upload is unusable after 24 hours even if cleanup has not run. A
+successful snapshot save,
 including a recorded steer, commits its new PDF references; a failed marker
 update is repaired by reconciliation against that authoritative snapshot.
 Reconciliation waits for an age grace, excludes
@@ -100,6 +110,11 @@ With artifact storage enabled, Redis and durable event replay retain small
 references instead of recognized PDF blobs. Either mecak8s replica can serve a
 download after failover. SDK clients can stream a PDF without buffering the
 complete download in JavaScript memory.
+
+The generic artifact seam reserves space for later file types, but no other
+MIME type is accepted or advertised by this release. Adding one requires its
+own validation, result processing, and, if used in prompts, model capability
+and provider translation contract.
 
 The feature adds an object-store dependency and cleanup lifecycle. Provider
 APIs may still require a complete PDF encoding for each stateless model call,
