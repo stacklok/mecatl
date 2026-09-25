@@ -173,7 +173,7 @@ Saved inline images appear in the transcript; an external image URL appears as a
 link you can choose to open. You can scroll back to read earlier messages and
 use **Scroll to latest message** to resume following the stream. The status
 distinguishes sending, working, waiting for approval, and a recorded completed,
-stopped, cancelled, or failed result. If a stream closes without a recorded
+stopped, canceled, or failed result. If a stream closes without a recorded
 result, Studio reports an unknown outcome and checks saved history when you
 reconnect. A history gap does not claim that the run finished.
 
