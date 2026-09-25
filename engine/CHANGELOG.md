@@ -91,6 +91,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **`session.NoProgressNudgeText` / `session.NoProgressExtractiveNudgeText`** — exported the no-progress nudge literals that `engine/agent` authors and `session.IsGenuineUserPrompt` classifies against, so both sides reference one owned copy instead of duplicating the text (mirrors the existing `CompactionSummaryMarker`/`Tier4SummaryMarker` precedent). Added (minor).
 
+- **`session.TurnEndPayload.Model`/`.Provider`** — the per-turn model and
+  provider identifier the turn's request was made with, populated
+  unconditionally (unlike `RequestManifestPayload`, gated behind
+  `EnableDurableEvidence`) so telemetry consumers can attribute per-turn
+  usage/duration to a model and provider without that flag. Feeds the new
+  OTel GenAI semantic-convention span/metrics work in
+  `internal/adapter/telemetry`. Added (minor).
+
 - **Event-follow capacity classification** — adds
   `port.ErrEventFollowCapacity`, allowing `CursorEventLog` backends to reject a
   follow iterator before storage work begins when follower capacity is full.

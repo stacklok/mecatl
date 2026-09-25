@@ -1905,6 +1905,12 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 				TTFTMs:           timing.ttftMs,
 				InterTokenMeanMs: timing.interTokenMeanMs,
 				InterTokenMaxMs:  timing.interTokenMaxMs,
+				// Model/Provider are populated unconditionally (unlike
+				// RequestManifestPayload, gated behind EnableDurableEvidence) so
+				// telemetry (Tracing/Metrics) always has GenAI attribution. Same
+				// source fields and sanitization requestManifest() uses.
+				Model:    manifestIdentifier(req.Model),
+				Provider: manifestIdentifier(sess.ProviderID),
 			}})
 
 		if err := sess.RecordAssistant(asst); err != nil {

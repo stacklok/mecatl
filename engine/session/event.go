@@ -782,6 +782,19 @@ type TurnEndPayload struct {
 	// spike users feel. It feeds the mecatl.inter_token.max histogram. It is 0 under
 	// the same <2-delta / no-Clock conditions as InterTokenMeanMs.
 	InterTokenMaxMs int64
+	// Model is the provider model identifier this turn's request was made with
+	// (port.LLMRequest.Model, the same opaque provider-neutral string the
+	// request itself carries), sanitized through the same manifestIdentifier
+	// treatment as RequestManifestPayload.Model — a 256-byte cap, empty on
+	// anything containing "://". Populated unconditionally (unlike
+	// RequestManifestPayload, which is gated behind EnableDurableEvidence), so
+	// telemetry consumers always have model/provider attribution regardless of
+	// that flag.
+	Model string
+	// Provider is the session's provider identifier (Session.ProviderID) for
+	// this turn's model call, sanitized the same way as Model. See Model's
+	// doc-comment for the EnableDurableEvidence distinction.
+	Provider string
 }
 
 // The three DELEGATION observability families — SubagentPayload / ParallelPayload /
