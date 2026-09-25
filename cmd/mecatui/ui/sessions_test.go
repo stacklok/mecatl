@@ -304,6 +304,8 @@ func TestSessionsRenameCancelSuccessAndServerError(t *testing.T) {
 	}
 
 	mgr.renameErr = errors.New("ownership changed")
+	ensureActiveSessions(&m).loading = false
+	ensureActiveSessions(&m).loadState = sessionsComplete
 	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	m = mm.(Model)
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -326,7 +328,7 @@ func TestSessionsRenameRefreshAdoptsAuthoritativeOrderAndModifiedAt(t *testing.T
 	}
 	ensureActiveSessions(&m).filter.SetValue("match")
 	ensureActiveSessions(&m).syncFilter()
-	ensureActiveSessions(&m).cursor = 1
+	ensureActiveSessions(&m).syncList("").SetCursor(1)
 
 	mm, _, _ := m.onOverlayKey(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	m = mm.(Model)
@@ -352,8 +354,8 @@ func TestSessionsRenameRefreshAdoptsAuthoritativeOrderAndModifiedAt(t *testing.T
 	if len(ensureActiveSessions(&m).sessions) != 2 || ensureActiveSessions(&m).sessions[0].ID != "renamed" || ensureActiveSessions(&m).sessions[0].ModifiedAt != 300 {
 		t.Fatalf("authoritative rows not adopted: %+v", ensureActiveSessions(&m).sessions)
 	}
-	if ensureActiveSessions(&m).cursor != 0 || ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID != "renamed" {
-		t.Fatalf("selection not retained by ID: cursor=%d filtered=%+v", ensureActiveSessions(&m).cursor, ensureActiveSessions(&m).filtered)
+	if ensureActiveSessions(&m).list.Cursor() != 0 || ensureActiveSessions(&m).list.CursorID() != "renamed" {
+		t.Fatalf("selection not retained by ID: cursor=%d filtered=%+v", ensureActiveSessions(&m).list.Cursor(), ensureActiveSessions(&m).filtered)
 	}
 }
 
@@ -376,7 +378,7 @@ func TestSessionsDeleteConfirmationCurrentRefusalAndSelection(t *testing.T) {
 		t.Fatalf("current delete not refused actionably: %q", stripANSIstr(m.statusMsg))
 	}
 
-	ensureActiveSessions(&m).cursor = 1
+	ensureActiveSessions(&m).syncList("").SetCursor(1)
 	mm, _, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	m = mm.(Model)
 	if !ensureActiveSessions(&m).confirmDelete {
@@ -391,8 +393,8 @@ func TestSessionsDeleteConfirmationCurrentRefusalAndSelection(t *testing.T) {
 	m = mm.(Model)
 	mm, cmd, _ = m.onOverlayKey(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	m = applyAll(mm.(Model), cmd())
-	if mgr.deletedID != "other" || len(ensureActiveSessions(&m).filtered) != 2 || ensureActiveSessions(&m).filtered[ensureActiveSessions(&m).cursor].ID != "last" {
-		t.Fatalf("delete result incoherent: deleted=%q cursor=%d rows=%+v", mgr.deletedID, ensureActiveSessions(&m).cursor, ensureActiveSessions(&m).filtered)
+	if mgr.deletedID != "other" || len(ensureActiveSessions(&m).filtered) != 2 || ensureActiveSessions(&m).list.CursorID() != "last" {
+		t.Fatalf("delete result incoherent: deleted=%q cursor=%d rows=%+v", mgr.deletedID, ensureActiveSessions(&m).list.Cursor(), ensureActiveSessions(&m).filtered)
 	}
 }
 
@@ -473,7 +475,9 @@ func TestSessionsRetryAndBack(t *testing.T) {
 	loader := &fakeSessionTranscriptLoader{err: context.DeadlineExceeded}
 	m := newScenario4Model(t, loader)
 	row := client.SessionListItem{ID: "target", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true}}
-	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
+	st := ensureActiveSessions(&m)
+	st.loading, st.loadState, st.sessions = false, sessionsComplete, []client.SessionListItem{row}
+	st.syncFilter()
 	mm, cmd, _ := m.chooseSession()
 	m = applyAll(mm.(Model), cmd())
 	loader.err = nil

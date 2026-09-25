@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/stacklok/mecatl/cmd/mecatui/client"
+
 // These fixtures retain the concise state setup used by sessions tests while
 // exercising the production surface initializer for its ambient wiring.
 func newSessionsPanelState() sessionsState {
@@ -33,6 +35,23 @@ func setActiveSessions(m *Model, state sessionsState) {
 	initialized.manager = manager
 	initialized.clipboard = clipboard
 	initialized.actionRequestToken = actionRequestToken
+}
+
+func setSessionsInventoryRows(st *sessionsState, rows []client.SessionListItem) {
+	st.loading, st.loadState, st.sessions = false, sessionsComplete, rows
+	if len(rows) > 0 {
+		switch rows[0].Kind {
+		case client.SessionKindScheduled:
+			st.tab = tabScheduledRuns
+		case client.SessionKindSubagent, client.SessionKindParallelBranch, client.SessionKindTeamMember:
+			st.tab = tabChildRuns
+		case client.SessionKindMain:
+			st.tab = tabChats
+		default:
+			st.tab = tabOtherRuns
+		}
+	}
+	st.syncFilter()
 }
 
 func ensureActiveSessions(m *Model) *sessionsState {

@@ -87,7 +87,7 @@ func TestSessionContinuityUX_Scenario4_InspectionPreservesActiveChat(t *testing.
 			m.conv.addUser("active conversation")
 			m.liveArmed = "active-chat"
 			before := m
-			ensureActiveSessions(&m).filtered = []client.SessionListItem{tc.row}
+			setSessionsInventoryRows(ensureActiveSessions(&m), []client.SessionListItem{tc.row})
 			mm, cmd, _ := m.chooseSession()
 			m = mm.(Model)
 			m = applyAll(m, cmd())
@@ -108,7 +108,7 @@ func TestInvariant_transcript_failure_never_enables_hidden_context(t *testing.T)
 	m := newScenario4Model(t, loader)
 	m.sessionID = "active-chat"
 	row := client.SessionListItem{ID: "target-chat", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
-	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
+	setSessionsInventoryRows(ensureActiveSessions(&m), []client.SessionListItem{row})
 	mm, cmd, _ := m.chooseSession()
 	m = mm.(Model)
 	m = applyAll(m, cmd())
@@ -127,7 +127,7 @@ func TestInvariant_transcript_failure_never_enables_hidden_context(t *testing.T)
 func TestSessionContinuityUX_Scenario4_ReasonCodes(t *testing.T) {
 	m := newScenario4Model(t, &fakeSessionTranscriptLoader{})
 	row := client.SessionListItem{ID: "opaque", Kind: client.SessionKindMain, ReasonCode: client.CapabilityReasonActiveElsewhere}
-	ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
+	setSessionsInventoryRows(ensureActiveSessions(&m), []client.SessionListItem{row})
 	mm, cmd, handled := m.chooseSession()
 	m = mm.(Model)
 	if !handled || cmd != nil {

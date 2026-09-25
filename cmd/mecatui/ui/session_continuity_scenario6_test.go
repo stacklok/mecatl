@@ -29,10 +29,12 @@ func startupSelection(id, state string) *client.ResumeSelection {
 
 func startupResumeUI(t *testing.T, conv *fakeConv, seed string, state string) Model {
 	t.Helper()
-	return newTestModelFromDeps(Deps{
+	m := newTestModelFromDeps(Deps{
 		Session: conv, Conv: conv, Theme: testTheme(), Ctx: t.Context(), Workspace: "/launch",
 		Resume: startupSelection("existing", state), InitialPrompt: seed,
 	})
+	m.width, m.height = 80, 24
+	return m
 }
 
 func runStartupCommands(cmd tea.Cmd) {

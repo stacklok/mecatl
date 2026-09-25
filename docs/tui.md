@@ -1711,7 +1711,9 @@ one **`Legacy session — inspect only`**. ADR 0291 removed writable legacy adop
 there is no preflight/adopt action and no way to supply a replacement workspace or
 placement authority.
 `tab` switches tabs; the
-search box filters the current tab. Search matches the title, full session ID,
+search box filters the current tab. The remappable `Up` and `Down` actions move
+one session at a time, while `ScrollU` and `ScrollD` move by a physical page.
+Search matches the title, full session ID,
 its terminal-safe short handle, model, bounded placement label, and the available
 relationship metadata (parent/call, schedule/origin, team/member). This keeps
 scheduled fires and delegation children discoverable without making their IDs
