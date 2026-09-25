@@ -30,6 +30,7 @@ func TestHarnessContext_ChildAttenuationPreserved(t *testing.T) {
 			kinds.AgentDefs = permconfig.HarnessContextKind{Sources: []string{"specialists"}, Mode: "combine"}
 			cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"context", "specialists"}, Kinds: kinds})
 			cfg.AllowAllTools = true
+			cfg.GuardrailsDisabled = true
 			if profile == server.ProfileDefault {
 				cfg.Shell = "/bin/sh"
 			}
@@ -233,6 +234,7 @@ func TestHarnessContext_ContextOverridesCannotGrantAuthority(t *testing.T) {
 			cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"repository", "operator"}, Kinds: kinds})
 			cfg.TrustProject = trusted
 			cfg.AllowAllTools = true
+			cfg.GuardrailsDisabled = true
 			data, err := os.ReadFile(cfg.PermissionConfigs[0])
 			if err != nil {
 				t.Fatal(err)
