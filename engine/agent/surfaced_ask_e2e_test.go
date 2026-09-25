@@ -50,8 +50,12 @@ func TestSurfacedChildApprovalRecordsParentVerdict(t *testing.T) {
 			if ask == nil || ask.Call != "collision" {
 				t.Fatalf("surfaced ask = %+v, want child call collision", ask)
 			}
-			approvals := 0
-			for _, ev := range events {
+			approvals, results, approvalIndex, resultIndex := 0, 0, -1, -1
+			for i, ev := range events {
+				if ev.Type == session.EvResult {
+					results++
+					resultIndex = i
+				}
 				if ev.Type == session.EvPermissionRetract && ev.Ask != nil && ev.Ask.AskID == ask.AskID {
 					t.Fatal("answered child ask was retracted")
 				}
@@ -59,6 +63,7 @@ func TestSurfacedChildApprovalRecordsParentVerdict(t *testing.T) {
 					continue
 				}
 				approvals++
+				approvalIndex = i
 				if ev.RunID != run.RunID() || ev.Approval.Verdict != session.VerdictString(tc.verdict) ||
 					ev.Approval.Tool != ask.Tool || ev.Approval.Origin != ask.Origin ||
 					ev.Approval.AllowAlways != (tc.verdict == session.VerdictAllowAlways) || ev.Approval.Call != "" {
@@ -74,6 +79,9 @@ func TestSurfacedChildApprovalRecordsParentVerdict(t *testing.T) {
 			}
 			if approvals != 1 {
 				t.Fatalf("parent approvals for surfaced ask = %d, want one", approvals)
+			}
+			if results != 1 || resultIndex <= approvalIndex {
+				t.Fatalf("parent results = %d, approval index = %d, result index = %d; want one result after approval", results, approvalIndex, resultIndex)
 			}
 		})
 	}

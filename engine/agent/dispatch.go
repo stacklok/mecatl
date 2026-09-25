@@ -2012,8 +2012,14 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	}
 	if interactive {
 		caps.emitChildApprovals = func(child *Run) {
-			r.children.emitAccepted(func() []session.Event { return r.childAsks.takeAccepted(child) },
-				func(ev session.Event) { e.emit(r, ev) })
+			delivered := r.children.emitAccepted(
+				func() []session.Event { return r.childAsks.takeAccepted(child) },
+				func(ev session.Event) (session.Event, bool) { return r.emitOrAbortSequenced(ev, r.children.emitAbort) },
+				func(events []session.Event) { r.childAsks.requeueAccepted(child, events) },
+			)
+			for _, ev := range delivered {
+				e.mirrorEvent(r, ev)
+			}
 		}
 		caps.surfaceAsk = func(askID, childID string, child *Run, ask session.PendingAsk, requesterLabel string) {
 			// Register BEFORE emitting so a fast ResumeApproval cannot race ahead of
@@ -2321,6 +2327,10 @@ func (e *Engine) openCard(r *Run, turnIdx int, c session.ToolCall) {
 // surface; the sink is an optional secondary relay.
 func (e *Engine) emit(r *Run, ev session.Event) {
 	sequenced := r.emit(ev)
+	e.mirrorEvent(r, sequenced)
+}
+
+func (e *Engine) mirrorEvent(r *Run, sequenced session.Event) {
 	if e.deps.Sink != nil {
 		ctx := r.ctx
 		if ctx == nil {

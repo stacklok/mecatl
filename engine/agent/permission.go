@@ -195,11 +195,9 @@ func (r *childAskRouter) registerSurfaced(ask session.PendingAsk, child *Run, tu
 	r.mu.Unlock()
 }
 
-// route delivers verdict v to the child that owns askID and returns true; it returns
-// false (the parent then resolves its own ask) when askID is unknown. The owning child
-// is unregistered on a hit so a stale verdict cannot resolve a later ask. child.Approve
-// is itself idempotent and safe on an already-resolved/unknown id, so a verdict that
-// arrives after the child moved on is a harmless no-op.
+// route reports child ownership for internal tests. Production callers use
+// routeResolution so they can return a stale or invalid verdict error. Only an
+// accepted verdict removes the child route; a stale route remains retractable.
 func (r *childAskRouter) route(askID string, v session.ApprovalVerdict) bool {
 	owned, _ := r.routeResolution(ApprovalResolution{AskID: askID, Verdict: v})
 	return owned
@@ -240,10 +238,11 @@ func (r *childAskRouter) resolveOrdinary(askID string, v session.ApprovalVerdict
 	}
 
 	result = route.child.asks.resolveOrdinary(askID, v)
-	if result != AskResolutionPlanOriginated {
-		delete(r.byAskID, askID)
-	}
+	// A child may have cancelled its await before this verdict reached it. Keep
+	// that unresolved route for the child's terminal retraction; only an
+	// accepted verdict consumes the parent's retract gate.
 	if result == AskResolutionResolved {
+		delete(r.byAskID, askID)
 		r.recordAccepted(route, v)
 	}
 	r.mu.Unlock()
@@ -272,6 +271,17 @@ func (r *childAskRouter) takeAccepted(child *Run) []session.Event {
 	delete(r.accepted, child)
 	r.mu.Unlock()
 	return events
+}
+
+func (r *childAskRouter) requeueAccepted(child *Run, events []session.Event) {
+	if len(events) == 0 {
+		return
+	}
+	r.mu.Lock()
+	// A later accepted ask on this child may have arrived while the first
+	// send was parked. Restore the older verdicts ahead of those later ones.
+	r.accepted[child] = append(events, r.accepted[child]...)
+	r.mu.Unlock()
 }
 
 // closeEvents is the parent's final answer to every still-routed ask. It runs

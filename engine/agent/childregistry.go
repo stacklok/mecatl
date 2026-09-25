@@ -898,26 +898,23 @@ func (g *childRunRegistry) seal() {
 	g.emitMu.Unlock()
 }
 
-// sealWithFinal closes child-ask routing and emits its last approvals or
-// retractions in the same emitMu section that seals the stream. The final
-// emitter is the parent Run's ordinary emit: abortEmits has already closed the
-// child-only abort signal, so using g.emit would drop a final event under
-// transient backpressure. The parent terminal uses the same emitter next.
-func (g *childRunRegistry) sealWithFinal(final func() []session.Event, emitFinal func(session.Event)) {
+// sealWithFinal atomically closes child-ask routing and seals child emission.
+// It returns the final approvals/retractions for the parent loop to emit after
+// releasing emitMu. The parent emitter may wait for a draining consumer; it
+// must never hold emitMu while doing so, or the seal escape can deadlock.
+func (g *childRunRegistry) sealWithFinal(final func() []session.Event) []session.Event {
 	g.abortEmits()
 	g.emitMu.Lock()
 	defer g.emitMu.Unlock()
 	if g.sealed {
-		return
+		return nil
 	}
+	var events []session.Event
 	if final != nil {
-		for _, ev := range final() {
-			if emitFinal != nil {
-				emitFinal(ev)
-			}
-		}
+		events = final()
 	}
 	g.sealed = true
+	return events
 }
 
 // safeEmit publishes one event on the parent stream through the seal guard: the
@@ -941,20 +938,28 @@ func (g *childRunRegistry) safeEmit(ev session.Event) {
 	g.emit(ev)
 }
 
-// emitAccepted takes queued child-ask approvals only while the parent stream is
-// still open. Taking under emitMu uses the same emitMu → router-mu lock order as
-// retractAsksVia, then releases router-mu before any send. The parent emitter
-// uses parent terminal backpressure rather than the child-only abort signal, so
-// an accepted verdict survives transiently full streams even during drain.
-func (g *childRunRegistry) emitAccepted(take func() []session.Event, emitApproval func(session.Event)) {
+// emitAccepted takes accepted child verdicts while the parent stream is open.
+// Sends use the child abort signal, so drain can release a stalled consumer.
+// Any send that aborts is restored under router.mu before emitMu is released;
+// sealWithFinal then picks it up for parent emission before EvResult. Delivered
+// sequenced events are returned for sink mirroring after emitMu is released.
+func (g *childRunRegistry) emitAccepted(take func() []session.Event, send func(session.Event) (session.Event, bool), requeue func([]session.Event)) []session.Event {
 	g.emitMu.Lock()
 	defer g.emitMu.Unlock()
-	if g.sealed || take == nil || emitApproval == nil {
-		return
+	if g.sealed || take == nil || send == nil || requeue == nil {
+		return nil
 	}
-	for _, ev := range take() {
-		emitApproval(ev)
+	queued := take()
+	var delivered []session.Event
+	for i, ev := range queued {
+		sequenced, ok := send(ev)
+		if !ok {
+			requeue(queued[i:])
+			break
+		}
+		delivered = append(delivered, sequenced)
 	}
+	return delivered
 }
 
 // emitRetract publishes a permission.retract event for one withdrawn askID on

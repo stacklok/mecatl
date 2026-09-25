@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -98,6 +99,25 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	})
 }
 
+func TestApproveReportsStaleSurfacedChildAsk(t *testing.T) {
+	parent := &Run{asks: newAskRegistry(), childAsks: newChildAskRouter()}
+	child := &Run{asks: newAskRegistry()}
+	ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Origin: session.ApprovalOriginPermission}
+	child.asks.registerAsk(ask)
+	parent.childAsks.registerSurfaced(ask, child, 1)
+	child.asks.discard(ask.AskID)
+
+	if err := parent.Approve(ask.AskID, session.VerdictAllowOnce); !errors.Is(err, ErrApprovalNotPending) {
+		t.Fatalf("stale compatibility approval error = %v, want ErrApprovalNotPending", err)
+	}
+	if got := parent.childAsks.takeAccepted(child); len(got) != 0 {
+		t.Fatalf("stale approval recorded a parent event: %+v", got)
+	}
+	if !parent.childAsks.unregister(ask.AskID) {
+		t.Fatal("stale approval consumed the terminal retract gate")
+	}
+}
+
 // TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait deterministically
 // models cancellation after the verdict entered the child's buffered channel,
 // before the child could emit EvApproval. The terminal drain must still publish
@@ -125,7 +145,11 @@ func TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait(t *testing.T) {
 			var emitted []session.Event
 			parent.children.emit = func(ev session.Event) { emitted = append(emitted, ev) }
 			posture := childPosture{caps: parentCaps{emitChildApprovals: func(child *Run) {
-				parent.children.emitAccepted(func() []session.Event { return parent.childAsks.takeAccepted(child) }, parent.children.emit)
+				parent.children.emitAccepted(
+					func() []session.Event { return parent.childAsks.takeAccepted(child) },
+					func(ev session.Event) (session.Event, bool) { parent.children.emit(ev); return ev, true },
+					func(events []session.Event) { parent.childAsks.requeueAccepted(child, events) },
+				)
 			}}}
 			if tc.guardrail {
 				wrong := ApprovalResolution{AskID: ask.AskID, ReviewID: "wrong", Kind: session.GuardrailApprovalAction, Verdict: tc.verdict}

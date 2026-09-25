@@ -1040,8 +1040,10 @@ func (r *Run) Approve(askID string, v session.ApprovalVerdict) error {
 	if r == nil || askID == "" {
 		return errors.New("approval requires a non-empty ask id")
 	}
-	if r.childAsks != nil && r.childAsks.route(askID, v) {
-		return nil
+	if r.childAsks != nil {
+		if owned, err := r.childAsks.routeResolution(ApprovalResolution{AskID: askID, Verdict: v}); owned {
+			return err
+		}
 	}
 	return r.asks.resolveChecked(askID, approval{verdict: v}, func(ask session.PendingAsk) error {
 		if ask.Guardrail != nil && ask.Guardrail.Kind == session.GuardrailApprovalResultRelease {
@@ -1089,8 +1091,8 @@ func (r *Run) RetractPermissionAsk(askID string) bool {
 // registerChildAsk records a surfaced child ask in this run's router so a later
 // Approve(askID) is routed to the owning child. It is a no-op when this run has no
 // router (a non-interactive or child run never surfaces). The router auto-removes the
-// entry on the routed verdict (childAskRouter.route), so there is no explicit
-// unregister on the resolution path.
+// entry on an accepted verdict, so there is no explicit unregister on the
+// resolution path. A stale child verdict leaves the route for terminal retract.
 func (r *Run) registerChildAsk(ask session.PendingAsk, child *Run, turn int) {
 	if r.childAsks != nil {
 		r.childAsks.registerSurfaced(ask, child, turn)
@@ -1679,8 +1681,8 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	r.children = newChildRunRegistry()
 	r.children.liveness = e.deps.SessionLiveness
 	r.children.emit = func(ev session.Event) {
-		if r.emitOrAbort(ev, r.children.emitAbort) && e.deps.Sink != nil {
-			e.deps.Sink.Emit(r.ctx, ev)
+		if sequenced, delivered := r.emitOrAbortSequenced(ev, r.children.emitAbort); delivered {
+			e.mirrorEvent(r, sequenced)
 		}
 	}
 	// unregisterAsk is the answered-vs-pending gate for ask retraction at a
@@ -3165,22 +3167,30 @@ func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
 // emit: delivery is deterministic whenever the buffer has room, so the abort
 // arms only ever claim a send that would genuinely park.
 func (r *Run) emitOrAbort(ev session.Event, abort <-chan struct{}) bool {
+	_, delivered := r.emitOrAbortSequenced(ev, abort)
+	return delivered
+}
+
+// emitOrAbortSequenced returns the exact stamped event handed to the parent
+// channel so a delivered child approval can be mirrored byte-for-byte to the
+// EventSink after the child registry's emit mutex is released.
+func (r *Run) emitOrAbortSequenced(ev session.Event, abort <-chan struct{}) (session.Event, bool) {
 	ev.Seq = r.seq.Add(1)
 	// Same stamp as emit — see the note there. These two are the ONLY sites a run
 	// hands an event outward, which is what makes the guarantee structural.
 	ev.RunID = r.runID
 	select {
 	case r.events <- ev:
-		return true
+		return ev, true
 	default:
 	}
 	select {
 	case r.events <- ev:
-		return true
+		return ev, true
 	case <-abort:
-		return false
+		return ev, false
 	case <-r.hardAbort:
-		return false
+		return ev, false
 	}
 }
 
@@ -3261,7 +3271,9 @@ func (e *Engine) drainChildren(ctx context.Context, r *Run) {
 		}
 	}
 	if r.childAsks != nil {
-		r.children.sealWithFinal(r.childAsks.closeEvents, func(ev session.Event) { e.emit(r, ev) })
+		for _, ev := range r.children.sealWithFinal(r.childAsks.closeEvents) {
+			e.emit(r, ev)
+		}
 		return
 	}
 	r.children.seal()

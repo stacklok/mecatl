@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +12,125 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
+
+func TestAcceptedChildApprovalRequeuesAfterEmitAbort(t *testing.T) {
+	r, _ := newDrainRun(1)
+	r.childAsks = newChildAskRouter()
+	r.hardAbort = make(chan struct{})
+	r.events <- session.Event{Type: session.EvTurnStart}
+	sink := &recordingSink{}
+	e := &Engine{deps: Deps{Sink: sink}}
+	child := &Run{asks: newAskRegistry()}
+	ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Origin: session.ApprovalOriginPermission}
+	child.asks.registerAsk(ask)
+	r.childAsks.registerSurfaced(ask, child, 1)
+	if got := r.ResolveOrdinaryAsk(ask.AskID, session.VerdictAllowOnce); got != AskResolutionResolved {
+		t.Fatalf("resolved ask = %v", got)
+	}
+	caps := e.parentCaps(r, nil, 1)
+	done := make(chan struct{})
+	go func() {
+		caps.emitChildApprovals(child)
+		close(done)
+	}()
+	deadline := time.After(10 * time.Second)
+	for {
+		r.childAsks.mu.Lock()
+		taken := len(r.childAsks.accepted[child]) == 0
+		r.childAsks.mu.Unlock()
+		if taken {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("child drain did not take accepted approval")
+		default:
+			runtime.Gosched()
+		}
+	}
+	r.children.abortEmits()
+	close(r.hardAbort) // also releases the baseline's unabortable parent emit
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("child drain did not stop after emit abort")
+	}
+	if queued := r.childAsks.takeAccepted(child); len(queued) != 1 || queued[0].Approval == nil || queued[0].Approval.AskID != ask.AskID {
+		t.Fatalf("aborted approval was not requeued: %+v", queued)
+	}
+	if mirrored := sink.snapshotEvents(); len(mirrored) != 0 {
+		t.Fatalf("aborted approval reached sink without stream delivery: %+v", mirrored)
+	}
+}
+
+// TestFinalChildApprovalSealDoesNotHoldEmitMuBehindStream proves that a parent
+// stream waiting for a consumer cannot prevent child-registry seal. The final
+// approval still reaches the stream after the consumer makes room.
+func TestFinalChildApprovalSealDoesNotHoldEmitMuBehindStream(t *testing.T) {
+	r, _ := newDrainRun(1)
+	r.childAsks = newChildAskRouter()
+	r.events <- session.Event{Type: session.EvTurnStart}
+	child := &Run{asks: newAskRegistry()}
+	ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Origin: session.ApprovalOriginPermission}
+	child.asks.registerAsk(ask)
+	r.childAsks.registerSurfaced(ask, child, 1)
+	if got := r.ResolveOrdinaryAsk(ask.AskID, session.VerdictAllowOnce); got != AskResolutionResolved {
+		t.Fatalf("resolved ask = %v", got)
+	}
+	drainDone := make(chan struct{})
+	go func() {
+		(&Engine{}).drainChildren(context.Background(), r)
+		close(drainDone)
+	}()
+	deadline := time.After(10 * time.Second)
+	for {
+		r.childAsks.mu.Lock()
+		closed := r.childAsks.closed
+		r.childAsks.mu.Unlock()
+		if closed {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("terminal router never closed")
+		default:
+			runtime.Gosched()
+		}
+	}
+	sealDone := make(chan struct{})
+	go func() {
+		r.children.seal()
+		close(sealDone)
+	}()
+	sealBlocked := false
+	select {
+	case <-sealDone:
+	case <-time.After(time.Second):
+		sealBlocked = true
+	}
+	<-r.events // consumer makes room after seal was attempted
+	select {
+	case ev := <-r.events:
+		if ev.Type != session.EvApproval || ev.Approval == nil || ev.Approval.AskID != ask.AskID {
+			t.Fatalf("final event = %+v, want approval", ev)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("final approval did not reach parent stream")
+	}
+	select {
+	case <-drainDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("terminal drain did not finish")
+	}
+	select {
+	case <-sealDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("child registry did not seal")
+	}
+	if sealBlocked {
+		t.Fatal("final approval held emitMu while parent stream was full")
+	}
+}
 
 // setDrainCaps shortens the run-end drain phases for a test and restores the
 // real values on cleanup. The caps are vars ONLY as this test seam; the drain
@@ -98,16 +219,8 @@ func TestChildDrainApprovalSinkMatchesParentStream(t *testing.T) {
 
 func assertApprovalSinkParity(t *testing.T, mirrored []session.Event, streamed ...session.Event) {
 	t.Helper()
-	if len(mirrored) != len(streamed) {
-		t.Fatalf("sink events = %d, stream events = %d", len(mirrored), len(streamed))
-	}
-	for i, ev := range streamed {
-		got := mirrored[i]
-		if got.Type != ev.Type || got.Seq != ev.Seq || got.RunID != ev.RunID ||
-			(got.Approval == nil) != (ev.Approval == nil) ||
-			(got.Approval != nil && got.Approval.AskID != ev.Approval.AskID) {
-			t.Fatalf("sink event[%d] = %+v, stream = %+v", i, got, ev)
-		}
+	if !reflect.DeepEqual(mirrored, streamed) {
+		t.Fatalf("sink events = %+v, stream events = %+v", mirrored, streamed)
 	}
 }
 
@@ -122,7 +235,11 @@ func TestSealedChildDrainDoesNotConsumeAcceptedApproval(t *testing.T) {
 		t.Fatalf("resolved ask = %v", got)
 	}
 	r.children.seal()
-	r.children.emitAccepted(func() []session.Event { return r.childAsks.takeAccepted(child) }, func(session.Event) {})
+	r.children.emitAccepted(
+		func() []session.Event { return r.childAsks.takeAccepted(child) },
+		func(ev session.Event) (session.Event, bool) { return ev, true },
+		func(events []session.Event) { r.childAsks.requeueAccepted(child, events) },
+	)
 	if queued := r.childAsks.takeAccepted(child); len(queued) != 1 || queued[0].Approval == nil || queued[0].Approval.AskID != ask.AskID {
 		t.Fatalf("post-seal drain consumed accepted approval: %+v", queued)
 	}
@@ -162,21 +279,16 @@ func TestFinalChildApprovalWaitsForDrainingParentStream(t *testing.T) {
 	entered := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
-		r.children.sealWithFinal(r.childAsks.closeEvents, func(ev session.Event) {
+		for _, ev := range r.children.sealWithFinal(r.childAsks.closeEvents) {
 			close(entered)
 			r.emit(ev)
-		})
+		}
 		close(done)
 	}()
 	select {
 	case <-entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("terminal sweep did not reach final emitter")
-	}
-	select {
-	case <-done:
-		t.Fatal("terminal sweep dropped approval while parent stream was full")
-	case <-time.After(20 * time.Millisecond):
 	}
 	<-r.events // release backpressure
 	select {
