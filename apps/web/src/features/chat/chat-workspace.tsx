@@ -267,7 +267,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
   const authorizationFlows = useRef(new Set<string>());
-  const authorizationUncertain = useRef(new Set<string>());
+  const authorizationUncertain = useRef(
+    new Map<string, { callId: string; beforeCursor?: string }>(),
+  );
+  const latestActivityCursor = useRef<{ cursor: string; sessionId: string } | undefined>(undefined);
+  const activityRefreshCursor = useRef<{ cursor: string; sessionId: string } | undefined>(
+    undefined,
+  );
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
@@ -368,6 +374,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     viewedSessionId.current = sessionId;
+    activityRefreshCursor.current = undefined;
+    latestActivityCursor.current = undefined;
     // A run belongs to one session: leaving it stops its stream here, so its
     // asks, controls, and queue can never act on the chat the user opened.
     const owner = activeRun.current;
@@ -645,6 +653,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     if (!sessionId || !watchable || activeRun.current || protectedRequestsPaused()) return;
 
+    const resumeFrom =
+      activityRefreshCursor.current?.sessionId === sessionId
+        ? activityRefreshCursor.current.cursor
+        : undefined;
+    activityRefreshCursor.current = undefined;
     const controller = new AbortController();
     const owner: RunOwner = { controller, sessionId };
     activeRun.current = owner;
@@ -654,14 +667,38 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setError(undefined);
     setNotice(undefined);
     setApprovals([]);
-    setMessages([]);
+    if (!resumeFrom) setMessages([]);
 
     void (async () => {
       const streamFailure: StreamFailure = {};
       let end: RunStreamEnd = { kind: "unfollowed" };
       try {
-        const stream = await watchActivity(owner, streamFailure);
-        end = await consumeRun(owner, stream, streamFailure, crypto.randomUUID(), "", true);
+        const stream = await watchActivity(owner, streamFailure, resumeFrom);
+        end = await consumeRun(
+          owner,
+          stream,
+          streamFailure,
+          crypto.randomUUID(),
+          "",
+          !resumeFrom,
+          undefined,
+          resumeFrom
+            ? (kind, payload) => {
+                if (kind !== "authorization.required") return;
+                const candidate = payloadRecord(payload);
+                if (
+                  typeof candidate?.authorizationId !== "string" ||
+                  typeof candidate.callId !== "string" ||
+                  candidate.status !== "pending"
+                )
+                  return;
+                const key = `${sessionId}\u0000${candidate.authorizationId}`;
+                if (authorizationUncertain.current.get(key)?.callId !== candidate.callId) return;
+                authorizationUncertain.current.delete(key);
+                setAuthorizationUncertainEpoch((current) => current + 1);
+              }
+            : undefined,
+        );
         if (streamFailure.error && !controller.signal.aborted) throw streamFailure.error;
       } catch (caught) {
         end = { kind: "uncertain" };
@@ -1121,6 +1158,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   async function watchActivity(owner: RunOwner, streamFailure: StreamFailure, resumeFrom?: string) {
     const response = await watchSessionActivity({
       onSseError: captureSseFailure(streamFailure),
+      onSseEvent: ({ data, id }) => {
+        if (
+          id &&
+          data &&
+          typeof data === "object" &&
+          data.type === "run.event" &&
+          owner.sessionId &&
+          ownsChatView(owner, activeRun.current, viewedSessionId.current)
+        ) {
+          latestActivityCursor.current = { cursor: id, sessionId: owner.sessionId };
+        }
+      },
       path: { sessionId: owner.sessionId ?? "" },
       query: resumeFrom ? { resumeFrom } : undefined,
       signal: owner.controller.signal,
@@ -1321,7 +1370,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 payload.status.length > 0
               ) {
                 const key = `${authorizationSessionId}\u0000${payload.authorizationId}`;
-                if (authorizationUncertain.current.delete(key))
+                const uncertain = authorizationUncertain.current.get(key);
+                if (
+                  uncertain?.callId === payload.callId &&
+                  authorizationUncertain.current.delete(key)
+                )
                   setAuthorizationUncertainEpoch((current) => current + 1);
               }
             }
@@ -1419,6 +1472,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (authorizationFlows.current.size > 0) return;
     authorizationFlows.current.add(key);
     setAuthorizationBusy(key);
+    const beforeCursor =
+      latestActivityCursor.current?.sessionId === authorization.sessionId
+        ? latestActivityCursor.current.cursor
+        : undefined;
 
     // The previous activity reader only follows this view. Aborting it does
     // not cancel the server-owned authorization; the SDK control is separate.
@@ -1483,7 +1540,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         throw new Error("Authorization status was not confirmed by activity.");
     } catch (caught) {
       if (!owner.controller.signal.aborted && viewedSessionId.current === authorization.sessionId) {
-        authorizationUncertain.current.add(key);
+        authorizationUncertain.current.set(key, {
+          beforeCursor,
+          callId: authorization.callId,
+        });
         setAuthorizationUncertainEpoch((current) => current + 1);
         setError(`Could not confirm authorization outcome: ${errorMessage(caught)}`);
       }
@@ -1493,6 +1553,23 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       setAuthorizationBusy((current) => (current === key ? undefined : current));
       await finishRun(owner, end);
     }
+  }
+
+  function refreshAuthorizationActivity(authorization: AuthorizationHandoff) {
+    const key = `${authorization.sessionId}\u0000${authorization.authorizationId}`;
+    const uncertain = authorizationUncertain.current.get(key);
+    if (
+      viewedSessionId.current !== authorization.sessionId ||
+      !uncertain ||
+      protectedRequestsPaused()
+    )
+      return;
+    // Resume after the last observed event before the control. An opaque cursor
+    // establishes ordering without comparing run-local event sequence numbers.
+    activityRefreshCursor.current = uncertain.beforeCursor
+      ? { cursor: uncertain.beforeCursor, sessionId: authorization.sessionId }
+      : undefined;
+    setReconnectGeneration((current) => current + 1);
   }
 
   async function refreshSession(
@@ -2100,6 +2177,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           canvas={canvas.value}
           onCanvasChange={canvas.setValue}
           onAuthorizationOperation={operateAuthorization}
+          onRefreshAuthorizationActivity={refreshAuthorizationActivity}
           onClose={() => setContentPreview(undefined)}
           preview={displayedPreview}
         />

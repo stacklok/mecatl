@@ -197,6 +197,16 @@ describe("chat routes", () => {
     const refreshed = await scopedRequest(`${path}/presentation`);
     expect(refreshed.headers.get("location")).toBe("https://issuer.example/authorize?token=fresh");
 
+    const withControlCharacters = createApp({
+      chat: {
+        ...chat,
+        authorizationPresentation: async () => "https://issuer.example/authorize\u0000",
+      },
+    });
+    const normalized = await withControlCharacters.request(`${path}/presentation`);
+    expect(normalized.status).toBe(302);
+    expect(normalized.headers.get("location")).toBe("https://issuer.example/authorize");
+
     const checked = await scopedRequest(`${path}/recheck`, "POST");
     expect(checked.status).toBe(200);
     expect(checked.headers.get("content-type")).toContain("text/event-stream");

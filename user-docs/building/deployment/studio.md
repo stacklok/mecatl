@@ -191,6 +191,12 @@ observed status. **Cancel authorization** ends the pending handoff. Opening the
 external page alone does not grant access, and closing the review panel leaves
 the handoff pending.
 
+If Studio cannot confirm a **Recheck** or **Cancel authorization** result, the
+panel disables both actions. Select **Refresh activity** to check for a later
+status from the same handoff. A new pending status restores the actions; a
+resolved status updates the panel. If no later status appears, the outcome
+remains uncertain and the actions stay disabled.
+
 Folders, queued messages, and account preferences survive a reload for the same
 account. Studio clears them when you sign out or switch accounts. The device
 theme and palette remain.

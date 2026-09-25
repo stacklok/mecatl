@@ -151,6 +151,7 @@ export function AuthorizationReview({
   disabled = false,
   uncertain: inheritedUncertain = false,
   onOperate,
+  onRefreshActivity,
 }: {
   authorization: AuthorizationHandoff;
   disabled?: boolean;
@@ -159,6 +160,7 @@ export function AuthorizationReview({
     operation: AuthorizationOperation,
     authorization: AuthorizationHandoff,
   ) => Promise<void>;
+  onRefreshActivity?: (authorization: AuthorizationHandoff) => void;
 }) {
   const submitting = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -207,7 +209,19 @@ export function AuthorizationReview({
             Open authorization <ExternalLink aria-hidden="true" className="size-4" />
           </a>
           {(uncertain || inheritedUncertain) && (
-            <p role="alert">The outcome is uncertain. Refresh activity before another action.</p>
+            <>
+              <p role="alert">The outcome is uncertain. Refresh activity before another action.</p>
+              {onRefreshActivity && (
+                <Button
+                  disabled={busy || disabled}
+                  onClick={() => onRefreshActivity(authorization)}
+                  size="sm"
+                  variant="outline"
+                >
+                  Refresh activity
+                </Button>
+              )}
+            </>
           )}
           <div className="flex flex-wrap gap-2">
             <Button

@@ -39,6 +39,7 @@ export function ContentPreviewPanel({
   authorizationUncertain = false,
   canvas,
   onAuthorizationOperation,
+  onRefreshAuthorizationActivity,
   onCanvasChange,
   onClose,
   preview,
@@ -50,6 +51,7 @@ export function ContentPreviewPanel({
     operation: AuthorizationOperation,
     authorization: AuthorizationHandoff,
   ) => Promise<void>;
+  onRefreshAuthorizationActivity?: (authorization: AuthorizationHandoff) => void;
   onCanvasChange: (value: string) => void;
   onClose: () => void;
   preview: ContentPreview;
@@ -79,6 +81,7 @@ export function ContentPreviewPanel({
       authorizationUncertain={authorizationUncertain}
       canvas={canvas}
       onAuthorizationOperation={onAuthorizationOperation}
+      onRefreshAuthorizationActivity={onRefreshAuthorizationActivity}
       onCanvasChange={onCanvasChange}
       onClose={onClose}
       preview={preview}
@@ -91,6 +94,7 @@ function GenericPreviewPanel({
   authorizationUncertain,
   canvas,
   onAuthorizationOperation,
+  onRefreshAuthorizationActivity,
   onCanvasChange,
   onClose,
   preview,
@@ -102,6 +106,7 @@ function GenericPreviewPanel({
     operation: AuthorizationOperation,
     authorization: AuthorizationHandoff,
   ) => Promise<void>;
+  onRefreshAuthorizationActivity?: (authorization: AuthorizationHandoff) => void;
   onCanvasChange: (value: string) => void;
   onClose: () => void;
   preview: StaticPreview;
@@ -167,10 +172,12 @@ function GenericPreviewPanel({
         <div className="min-h-0 flex-1 overflow-auto">
           {preview.kind === "authorization" ? (
             <AuthorizationReview
+              key={`${preview.authorization.sessionId}\u0000${preview.authorization.authorizationId}\u0000${authorizationUncertain}`}
               authorization={preview.authorization}
               disabled={authorizationDisabled || !onAuthorizationOperation}
               uncertain={authorizationUncertain}
               onOperate={onAuthorizationOperation ?? (async () => undefined)}
+              onRefreshActivity={onRefreshAuthorizationActivity}
             />
           ) : preview.kind === "canvas" ? (
             <LocalCanvasEditor onChange={onCanvasChange} value={canvas} />

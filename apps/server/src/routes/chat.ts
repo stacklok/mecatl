@@ -711,7 +711,7 @@ export function registerChatRoutes(
     }
     context.header("Cache-Control", "no-store");
     context.header("Referrer-Policy", "no-referrer");
-    return context.redirect(url, 302);
+    return context.redirect(destination.href, 302);
   });
 
   const streamAuthorization = (

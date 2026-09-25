@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AuthorizationHandoff,
@@ -9,6 +9,7 @@ import {
   recordAuthorizationEvent,
 } from "./authorization-review";
 import { ChatTranscript } from "./chat-transcript";
+import { ContentPreviewPanel } from "./content-preview-panel";
 
 afterEach(cleanup);
 
@@ -46,6 +47,22 @@ describe("authorization review", () => {
       "assistant-1",
     );
     expect(required[0]?.authorizations).toEqual([pending]);
+    const repeatedRequired = recordAuthorizationEvent(
+      required,
+      {
+        kind: "authorization.required",
+        payload: {
+          authorizationId: "auth-1",
+          callId: "call-7",
+          displayName: "Calendar connector",
+          status: "pending",
+        },
+        runId: "run-3",
+      },
+      "session-2",
+      "assistant-1",
+    );
+    expect(repeatedRequired).toBe(required);
     const transcript = render(
       <ChatTranscript messages={required} onReviewAuthorization={review} showToolCalls />,
     );
@@ -101,6 +118,22 @@ describe("authorization review", () => {
       "assistant-1",
     );
     expect(resolved[0]?.authorizations?.[0]?.status).toBe("granted");
+    const repeatedResolved = recordAuthorizationEvent(
+      resolved,
+      {
+        kind: "authorization.resolved",
+        payload: {
+          authorizationId: "auth-1",
+          callId: "call-7",
+          displayName: "Calendar connector",
+          status: "granted",
+        },
+        runId: "",
+      },
+      "session-2",
+      "assistant-1",
+    );
+    expect(repeatedResolved).toBe(resolved);
     expect(screen.getByText("Access granted")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Open authorization" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Recheck" })).toBeNull();
@@ -167,5 +200,38 @@ describe("authorization review", () => {
     expect(within(unknownRow).queryByText("Calendar connector")).toBeNull();
     expect(screen.getByText("Calendar connector")).toBeTruthy();
     view.unmount();
+  });
+
+  it("does not carry an uncertain control to a different handoff in the mounted panel", async () => {
+    const operate = vi.fn().mockRejectedValueOnce(new Error("response lost"));
+    const panel = render(
+      <ContentPreviewPanel
+        canvas=""
+        onAuthorizationOperation={operate}
+        onCanvasChange={() => undefined}
+        onClose={() => undefined}
+        preview={{ authorization: pending, kind: "authorization" }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Recheck" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+    expect(
+      screen.getByRole("button", { name: "Cancel authorization" }).hasAttribute("disabled"),
+    ).toBe(true);
+
+    const next = { ...pending, authorizationId: "auth-2", displayName: "Drive connector" };
+    panel.rerender(
+      <ContentPreviewPanel
+        canvas=""
+        onAuthorizationOperation={operate}
+        onCanvasChange={() => undefined}
+        onClose={() => undefined}
+        preview={{ authorization: next, kind: "authorization" }}
+      />,
+    );
+    expect(screen.getByText("Drive connector")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel authorization" }));
+    expect(operate).toHaveBeenLastCalledWith("cancel", next);
   });
 });

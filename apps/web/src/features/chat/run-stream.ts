@@ -97,6 +97,14 @@ export function createActivityDeduplicator(): (delivery: RunStreamEvent) => bool
   return (delivery) => {
     if (delivery.type !== "run.event") return true;
     const { runId, seq } = delivery.event;
+    // Authorization controls publish session-scoped status events with an
+    // empty run ID and seq 0. The activity cursor, not (runId, seq), orders them.
+    if (
+      !runId &&
+      (delivery.event.kind === "authorization.required" ||
+        delivery.event.kind === "authorization.resolved")
+    )
+      return true;
     if (!/^\d+$/u.test(seq)) return true;
     const current = BigInt(seq);
     const previous = latestByRun.get(runId);
