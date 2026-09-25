@@ -36,6 +36,11 @@ import (
 
 func newPDFDownloadFixture(t *testing.T, objects pdfartifact.ObjectStore, ownership bool) (*server.Service, *redisstore.Store) {
 	t.Helper()
+	return newPDFDownloadFixtureWithCapabilities(t, objects, ownership, port.ProviderCapabilities{PDF: true}, mockllm.New())
+}
+
+func newPDFDownloadFixtureWithCapabilities(t *testing.T, objects pdfartifact.ObjectStore, ownership bool, caps port.ProviderCapabilities, llm *mockllm.Provider) (*server.Service, *redisstore.Store) {
+	t.Helper()
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
@@ -47,9 +52,9 @@ func newPDFDownloadFixture(t *testing.T, objects pdfartifact.ObjectStore, owners
 	}
 	t.Cleanup(func() { _ = metadata.Close() })
 	svc, err := newPlacementTeamTestService(server.Config{
-		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
+		Engine: agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}),
 		Store:  metadata, PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
-		Artifacts: pdfartifact.New(metadata, objects), DefaultCapabilities: port.ProviderCapabilities{PDF: true},
+		Artifacts: pdfartifact.New(metadata, objects), DefaultCapabilities: caps,
 		OwnershipEnforced: ownership,
 	})
 	if err != nil {
@@ -61,6 +66,42 @@ func newPDFDownloadFixture(t *testing.T, objects pdfartifact.ObjectStore, owners
 
 func pdfDownloadBytes() []byte {
 	return append(append([]byte("%PDF-1.7\n"), bytes.Repeat([]byte("private-pdf-content\n"), 40_000)...), []byte("%%EOF")...)
+}
+
+func TestArtifactTransferPermittedForTextOnlySession_RealLifecycle(t *testing.T) {
+	objects := &pdfMemoryObjects{data: make(map[string][]byte)}
+	llm := mockllm.New(mockllm.TextTurn("unexpected"))
+	svc, _ := newPDFDownloadFixtureWithCapabilities(t, objects, true, port.ProviderCapabilities{PDF: false}, llm)
+	owner := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "https://idp.example", Subject: "alice", GrantType: session.GrantTypeUser})
+	created, err := svc.CreateSessionWithProfile(owner, session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("text-only-artifacts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("%PDF-1.7\nprivate-payload\n%%EOF")
+	stored, err := svc.UploadArtifact(owner, created.ID, "report.pdf", "application/pdf", bytes.NewReader(want))
+	if err != nil {
+		t.Fatalf("upload with PDF input disabled: %v", err)
+	}
+	digest := sha256.Sum256(want)
+	if stored.MIMEType != "application/pdf" || stored.Name != "report.pdf" || stored.Size != int64(len(want)) || stored.SHA256 != hex.EncodeToString(digest[:]) {
+		t.Fatalf("uploaded artifact metadata = %+v", stored)
+	}
+	opened, reader, err := svc.DownloadArtifact(owner, created.ID, stored.ID)
+	if err != nil {
+		t.Fatalf("download with PDF input disabled: %v", err)
+	}
+	got, readErr := io.ReadAll(reader)
+	closeErr := reader.Close()
+	if readErr != nil || closeErr != nil || opened != stored || !bytes.Equal(got, want) {
+		t.Fatalf("downloaded artifact = %+v, bytes=%d, read=%v, close=%v", opened, len(got), readErr, closeErr)
+	}
+	part := session.Content{Kind: session.MediaPDF, MIMEType: "application/pdf", ArtifactID: stored.ID}
+	if _, err := svc.StartRunContent(owner, created.ID, "read", []session.Content{part}); !errors.Is(err, server.ErrInvalidArgument) {
+		t.Fatalf("PDF prompt with PDF input disabled = %v, want invalid argument", err)
+	}
+	if calls := llm.Calls(); calls != 0 {
+		t.Fatalf("rejected PDF prompt made %d model calls", calls)
+	}
 }
 
 func TestSDKPDFArtifacts_Scenario3_StreamDownload(t *testing.T) {

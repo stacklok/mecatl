@@ -155,6 +155,54 @@ func TestSDKServerEnablers_Scenario1_CompatibilityInfoTransportParity(t *testing
 	}
 }
 
+func TestArtifactCompatibilityCapabilityTracksStoreNotModel(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		storage   bool
+		modelPDF  bool
+		artifacts bool
+	}{
+		{name: "storage with text-only model", storage: true, modelPDF: false, artifacts: true},
+		{name: "no storage with text-only model", storage: false, modelPDF: false, artifacts: false},
+		{name: "no storage with PDF model", storage: false, modelPDF: true, artifacts: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := port.ProviderCapabilities{PDF: tt.modelPDF}
+			var svc *server.Service
+			if tt.storage {
+				objects := &pdfMemoryObjects{data: make(map[string][]byte)}
+				svc, _ = newPDFDownloadFixtureWithCapabilities(t, objects, false, caps, mockllm.New())
+			} else {
+				svc = compatibilityInfoService(t, "", caps)
+				t.Cleanup(svc.Close)
+			}
+			client, cleanup := dialGRPC(t, svc)
+			defer cleanup()
+			viaGRPC, err := client.GetCompatibilityInfo(t.Context(), &mecatlv1.GetCompatibilityInfoRequest{})
+			if err != nil {
+				t.Fatalf("GetCompatibilityInfo: %v", err)
+			}
+			if got := viaGRPC.GetCapabilities().GetArtifacts(); got != tt.artifacts {
+				t.Errorf("gRPC artifacts capability = %v, want %v", got, tt.artifacts)
+			}
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/v1/compatibility", nil).WithContext(t.Context())
+			server.NewHTTPHandler(svc).ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("GET /v1/compatibility status = %d, want 200", recorder.Code)
+			}
+			var viaHTTP mecatlv1.GetCompatibilityInfoResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &viaHTTP); err != nil {
+				t.Fatalf("decode GET /v1/compatibility: %v", err)
+			}
+			if got := viaHTTP.GetCapabilities().GetArtifacts(); got != tt.artifacts {
+				t.Errorf("HTTP artifacts capability = %v, want %v", got, tt.artifacts)
+			}
+		})
+	}
+}
+
 // TestADR_0248_FeatureRegistryIsSingleSource is AC1.4.
 //
 // The feature set is non-empty, sorted, duplicate-free, and identical on both
