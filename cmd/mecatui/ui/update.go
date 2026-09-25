@@ -1019,7 +1019,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			return mm, cmd, true
 		}
 		if m.startupFirstPromptPending {
-			m = m.failStartupRunEntry()
+			m = m.failStartupRunEntry(msg.Err)
 			return m, nil, true
 		}
 		if m.failedStepRetryRun && !m.failedStepRetryAuthoritative {
@@ -3472,16 +3472,23 @@ func (m Model) afterInputEdit(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return mm, tea.Batch(cmd, fetch)
 }
 
-var errStartupRunEntry = &sessionTranscriptError{"the chat could not be attached for a new turn"}
+type startupRunEntryError struct{ title, text string }
 
-func (m Model) failStartupRunEntry() Model {
+func (e *startupRunEntryError) Error() string               { return e.text }
+func (e *startupRunEntryError) SafeTranscriptText() string  { return e.text }
+func (e *startupRunEntryError) SafeTranscriptTitle() string { return e.title }
+
+func (m Model) failStartupRunEntry(err error) Model {
 	m = m.endRun("")
 	m = m.resetDocumentProjection()
 	m.conv = conversationFromTranscript(m.deps.Resume.Transcript.Messages)
 	m.modal = &sessionsState{
-		selected:        m.deps.Resume.Row,
-		inspect:         true,
-		loadErr:         errStartupRunEntry,
+		selected: m.deps.Resume.Row,
+		inspect:  true,
+		loadErr: &startupRunEntryError{
+			title: client.SafeStartupRunEntryErrorTitle(err),
+			text:  client.SafeStartupRunEntryError(err),
+		},
 		view:            sessionsTranscript,
 		deps:            (&m).surfaceDeps(),
 		activeSessionID: m.sessionID,

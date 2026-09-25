@@ -1575,8 +1575,16 @@ func renderSessionsTranscript(th theme.Theme, st sessionsState, _ string, vpCont
 		return b.String()
 	}
 	if st.loadErr != nil {
-		b.WriteString(th.Style("title").Render("conversation unavailable") + "\n\n")
-		b.WriteString(th.Style("errorText").Render("This conversation could not be loaded. You cannot continue this session."))
+		title := "conversation unavailable"
+		if safe, ok := st.loadErr.(interface{ SafeTranscriptTitle() string }); ok && safe.SafeTranscriptTitle() != "" {
+			title = safe.SafeTranscriptTitle()
+		}
+		b.WriteString(th.Style("title").Render(title) + "\n\n")
+		message := "This conversation could not be loaded. You cannot continue this session."
+		if safe, ok := st.loadErr.(interface{ SafeTranscriptText() string }); ok {
+			message = safe.SafeTranscriptText()
+		}
+		b.WriteString(th.Style("errorText").Render(message))
 		b.WriteString("\n" + th.Style("muted").Render("r: Retry  "+hk.closeOnly+": Back"))
 		return b.String()
 	}
