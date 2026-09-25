@@ -60,6 +60,28 @@ func TestUserFacingChildRolesInjectFreshVolatileOperatorProfile(t *testing.T) {
 	}
 }
 
+func TestSpecialistNameContainingJudgeRetainsHarnessContext(t *testing.T) {
+	store := memmemory.New()
+	cfg := Config{
+		Model:                 "m",
+		operatorProfileSource: store,
+		harnessInstructions:   hcAssembler("SPECIALIST-CONTEXT"),
+	}
+	provider := mockllm.New(mockllm.TextTurn("done"))
+	deps := childEngineDepsForProvider(cfg, "task:review-judge", provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+	if deps.OperatorProfileSource != store {
+		t.Fatal("ordinary named specialist lost operator profile")
+	}
+	if deps.Instructions == nil {
+		t.Fatal("ordinary named specialist lost harness instructions")
+	}
+
+	judge := childEngineDepsForProvider(cfg, "parallel-judge", provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+	if judge.OperatorProfileSource != nil || judge.Instructions != nil {
+		t.Fatal("internal parallel judge inherited user-facing context")
+	}
+}
+
 func TestInternalPurposeChildRolesExcludeOperatorProfile(t *testing.T) {
 	store := memmemory.New()
 	cfg := Config{operatorProfileSource: store}

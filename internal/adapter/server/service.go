@@ -254,8 +254,12 @@ type ModelInventory interface {
 // must not recover them from context values or a process-global fallback.
 type SessionEngineWithToolsFactory func(ctx context.Context, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error)
 
+// ExecutionFilesAcquirer lazily borrows the exact server-authorized session
+// workspace as a source-only capability. The caller owns the returned release.
+type ExecutionFilesAcquirer func(context.Context) (tool.Workspace, func() error, error)
+
 // SessionContextEngineFactory builds a session engine with its stored source identity.
-type SessionContextEngineFactory func(context.Context, session.SessionID, *session.Principal, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error)
+type SessionContextEngineFactory func(context.Context, session.SessionID, *session.Principal, ExecutionFilesAcquirer, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error)
 
 // Config wires the Service's collaborators and resolved composition values.
 type Config struct {
@@ -2492,7 +2496,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		if s.cfg.SessionContextEngine != nil && id == "" {
 			id = mintID()
 		}
-		res, err = s.callSessionEngine(ctx, id, owner, sel, specs, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, id, owner, s.executionFilesAcquirer(owner, placement.Ref), sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		// Factory maps an unknown/unavailable provider to ErrInvalidArgument; any
@@ -4193,8 +4197,14 @@ func (s *Service) loadSessionContext(ctx context.Context, id session.SessionID, 
 		return nil, err
 	}
 	if activate && s.cfg.Commands != nil {
-		if err := s.cfg.Commands.Activate(ctx, sess.ID, sess.Owner.Clone(), sess.Profile); err != nil {
-			s.logDiscoveryError(ctx, "activate command sources", err)
+		var activateErr error
+		if resolver, ok := s.cfg.Commands.(executionFilesCommandSourceResolver); ok {
+			activateErr = resolver.ActivateWithExecutionFiles(ctx, sess.ID, sess.Owner.Clone(), sess.Profile, s.executionFilesAcquirer(sess.Owner, sess.EnvironmentRef))
+		} else {
+			activateErr = s.cfg.Commands.Activate(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
+		}
+		if activateErr != nil {
+			s.logDiscoveryError(ctx, "activate command sources", activateErr)
 			return nil, fmt.Errorf("%w: command source activation failed", ErrInternal)
 		}
 	}
@@ -4379,7 +4389,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), sel, specs, profile, workspace, sess.Mode, nil)
+	res, err := s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionFilesAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, sess.Mode, nil)
 	if err != nil {
 		// The session was loaded + (if needed) reopened and re-persisted, but the
 		// per-session engine could not be built. We deliberately do NOT roll that
@@ -5906,7 +5916,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionFilesAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), exactTools...))
 	} else {
 		broker, err = s.openBrokerAttachment(ctx, id, sess.ExternalBinding, true)
 		if err != nil {
@@ -5917,7 +5927,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
-		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), sel, specs, profile, workspace, mode, brokerTools(broker))
+		res, err = s.callSessionEngine(ctx, sess.ID, sess.Owner.Clone(), s.executionFilesAcquirer(sess.Owner, sess.EnvironmentRef), sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("server: build session engine %q: %w", id, err)
@@ -8587,6 +8597,13 @@ type CommandSourceResolver interface {
 	Borrow(context.Context, session.SessionID, *session.Principal, string) (CommandSourceBinding, func(), error)
 	Activate(context.Context, session.SessionID, *session.Principal, string) error
 	Retire(session.SessionID)
+}
+
+// executionFilesCommandSourceResolver is the optional internal capability path
+// used only when a selected registration explicitly consumes execution files.
+type executionFilesCommandSourceResolver interface {
+	BorrowWithExecutionFiles(context.Context, session.SessionID, *session.Principal, string, ExecutionFilesAcquirer) (CommandSourceBinding, func(), error)
+	ActivateWithExecutionFiles(context.Context, session.SessionID, *session.Principal, string, ExecutionFilesAcquirer) error
 }
 
 // --- Worktree discovery (provider-private) -----------------------------------

@@ -31,7 +31,7 @@ func (s principalSkillSource) ReadSkillAsset(context.Context, string, string) ([
 	return []byte("OWNER-SKILL-ASSET-" + s.owner), nil
 }
 
-func TestADR_0357_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *testing.T) {
 	t.Run("concurrent retry and retirement", TestHarnessCommandBindingConcurrentRetryAndRetirement)
 	t.Run("replacement survives stale cleanup", TestHarnessGenerationOldReleaseCannotEvictReplacement)
 	t.Run("scope and current authorization", TestHarnessGenerationActivationRechecksScopeAndAuthorization)

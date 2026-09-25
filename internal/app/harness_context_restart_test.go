@@ -18,7 +18,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
-func TestADR_0357_HarnessContext_Scenario4_RestartRebindsCurrentPolicy(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario4_RestartRebindsCurrentPolicy(t *testing.T) {
 	root, storeDir, userDir, memoryDir := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
 	ctx := session.WithPrincipal(t.Context(), owner)

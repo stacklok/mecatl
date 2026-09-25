@@ -74,7 +74,13 @@ func (s *Service) ListCommandsForSession(ctx context.Context, id session.Session
 	if s.cfg.Commands == nil {
 		return nil, nil
 	}
-	binding, release, err := s.cfg.Commands.Borrow(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
+	var binding CommandSourceBinding
+	var release func()
+	if resolver, ok := s.cfg.Commands.(executionFilesCommandSourceResolver); ok {
+		binding, release, err = resolver.BorrowWithExecutionFiles(ctx, sess.ID, sess.Owner.Clone(), sess.Profile, s.executionFilesAcquirer(sess.Owner, sess.EnvironmentRef))
+	} else {
+		binding, release, err = s.cfg.Commands.Borrow(ctx, sess.ID, sess.Owner.Clone(), sess.Profile)
+	}
 	if err != nil {
 		s.logDiscoveryError(ctx, "bind command sources", err)
 		return nil, fmt.Errorf("%w: command source binding failed", ErrInternal)

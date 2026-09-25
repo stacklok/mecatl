@@ -70,7 +70,7 @@ func harnessVirtualPlacement(ws tool.Workspace) *harnessPlacement {
 	return &harnessPlacement{&compositionPlacementProvider{binding: server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, ws, memledger.New(), nil)}}}
 }
 
-func TestADR_0357_HarnessContext_Scenario1_UnselectedExecutionContentIgnored(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario1_UnselectedExecutionContentIgnored(t *testing.T) {
 	source := memfs.NewWorkspace("/selected")
 	harnessSeed(t, source, "AGENTS.md", "SELECTED")
 	harnessSeed(t, source, ".mecatl/commands/review.md", "SELECTED-COMMAND")
@@ -124,7 +124,7 @@ func TestADR_0357_HarnessContext_Scenario1_UnselectedExecutionContentIgnored(t *
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario1_ExplicitExecutionFileSource(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario1_ExplicitExecutionFileSource(t *testing.T) {
 	ws := memfs.NewWorkspace("/virtual-not-a-host-directory")
 	harnessSeed(t, ws, "AGENTS.md", "EXPLICIT-EXECUTION-CONTEXT")
 	harnessSeed(t, ws, ".mecatl/commands/review.md", "EXPLICIT-EXECUTION-COMMAND")
@@ -162,7 +162,7 @@ func TestADR_0357_HarnessContext_Scenario1_ExplicitExecutionFileSource(t *testin
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario2_SourceOnlyDiscovery(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario2_SourceOnlyDiscovery(t *testing.T) {
 	ws := memfs.NewWorkspace("/selected")
 	harnessSeed(t, ws, ".mecatl/commands/review.md", "selected")
 	cfg := hcConfiguredFiles(t, ws)
@@ -191,7 +191,7 @@ func TestADR_0357_HarnessContext_Scenario2_SourceOnlyDiscovery(t *testing.T) {
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario3_SourceReadsDoNotAuthorizeEdits(t *testing.T) {
 	ws := memfs.NewWorkspace("/same-files")
 	harnessSeed(t, ws, "AGENTS.md", "original")
 	cfg := hcConfiguredFiles(t, ws)

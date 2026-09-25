@@ -47,9 +47,9 @@ func brokerTools(local *localBrokerAttachment) []tool.Tool {
 	return tools
 }
 
-func (s *Service) callSessionEngine(ctx context.Context, id session.SessionID, owner *session.Principal, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error) {
+func (s *Service) callSessionEngine(ctx context.Context, id session.SessionID, owner *session.Principal, acquire ExecutionFilesAcquirer, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (SessionEngineResult, error) {
 	if s.cfg.SessionContextEngine != nil {
-		return s.cfg.SessionContextEngine(ctx, id, owner.Clone(), sel, specs, profile, workspace, mode, append([]tool.Tool(nil), sessionTools...))
+		return s.cfg.SessionContextEngine(ctx, id, owner.Clone(), acquire, sel, specs, profile, workspace, mode, append([]tool.Tool(nil), sessionTools...))
 	}
 	if s.cfg.MCPBroker != nil {
 		if s.cfg.SessionEngineWithTools == nil {

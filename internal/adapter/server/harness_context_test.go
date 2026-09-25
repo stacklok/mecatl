@@ -38,7 +38,7 @@ func TestHarnessContextUnpublishedCreateRetiresBinding(t *testing.T) {
 			t.Fatal("legacy factory called")
 			return SessionEngineResult{}, nil
 		},
-		SessionContextEngine: func(_ context.Context, id session.SessionID, _ *session.Principal, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
+		SessionContextEngine: func(_ context.Context, id session.SessionID, _ *session.Principal, _ ExecutionFilesAcquirer, _ ProviderSelector, _ []mcp.ServerConfig, _ SessionProfile, _ string, _ session.PermissionMode, _ []tool.Tool) (SessionEngineResult, error) {
 			bound = id
 			return SessionEngineResult{Engine: eng, Close: func() error { closed = true; return nil }}, nil
 		},

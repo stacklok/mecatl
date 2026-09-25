@@ -150,11 +150,19 @@ func prepareHarnessProcessBindings(cfg *Config) {
 	}
 }
 
-func harnessBindingScope(cfg Config) HarnessSourceScope {
+func harnessBindingScope(cfg Config, executionFiles bool) HarnessSourceScope {
 	if cfg.harnessScope == nil {
 		return HarnessSourceScope{}
 	}
-	return HarnessSourceScope{Principal: cfg.harnessScope.Principal.Clone(), Profile: cfg.harnessScope.Profile}
+	scope := HarnessSourceScope{
+		SessionID: cfg.harnessScope.SessionID,
+		Principal: cfg.harnessScope.Principal.Clone(),
+		Profile:   cfg.harnessScope.Profile,
+	}
+	if executionFiles {
+		scope.AcquireExecutionFiles = cfg.harnessScope.AcquireExecutionFiles
+	}
+	return scope
 }
 
 type frozenHarnessRules struct {

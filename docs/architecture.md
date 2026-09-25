@@ -1410,10 +1410,16 @@ server's `audience:["user"]` is not a suppression control). Server-returned
 fetched by the `FetchMcpResource` tool through `ValidateMediaURL` (SSRF
 backstop, CWE-918). See `docs/adr/0078-mcp-typed-tool-results.md`.
 
-**Harness context design.** The [domain model](architecture/mecatl.modelith.md#harnesscontext)
+**Harness context runtime.** The [domain model](architecture/mecatl.modelith.md#harnesscontext)
 defines source authority independently from execution. The [acceptance contract](acceptance/harness-context.md)
 owns the source-binding design; [ADR 0359](adr/0359-harness-context-source-authority.md)
-records its rationale. Contract approval does not establish runtime availability.
+records its rationale. `app.Build` resolves the selected kind-specific registrations and owns
+process and per-session binding generations. A principal-scoped registration receives the exact
+session ID, stored owner, and profile. Only a selected registration declared for execution files
+receives a lazy callback that exactly reattaches the server-authorized placement. The callback
+returns a read-only workspace and its own release, never a runner, read ledger, public root, or
+caller-selected environment reference. Retiring a generation waits for existing engine and child
+references to drain; restart reconstructs bindings under current composition and authorization.
 
 **Server-owned placement.** Trusted composition installs one placement provider and
 scope before listeners serve. `CreateSession` accepts only the provider's deployment

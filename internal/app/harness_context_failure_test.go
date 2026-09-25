@@ -56,7 +56,7 @@ func (s inconsistentHarnessCommands) List(context.Context) ([]prompt.Command, er
 	return s.listed, nil
 }
 
-func TestADR_0357_HarnessContext_Scenario2_PaletteAndExpansionAgree(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario2_PaletteAndExpansionAgree(t *testing.T) {
 	kinds := harnessEmptyKinds()
 	kinds.Commands = permconfig.HarnessContextKind{Sources: []string{"a", "b", "c"}, Mode: "combine", Overrides: []permconfig.HarnessContextOverride{{Name: "review", Winner: "c", Replaces: []string{"a"}}}}
 	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: []string{"a", "b", "c"}, Kinds: kinds})
@@ -107,7 +107,7 @@ func TestADR_0357_HarnessContext_Scenario2_PaletteAndExpansionAgree(t *testing.T
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario4_NoUnconfiguredAuthorityFallback(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario4_NoUnconfiguredAuthorityFallback(t *testing.T) {
 	t.Run("required bind fails before model", func(t *testing.T) {
 		source := memfs.NewWorkspace("/source")
 		cfg := hcConfiguredFiles(t, source)
@@ -152,7 +152,7 @@ func TestADR_0357_HarnessContext_Scenario4_NoUnconfiguredAuthorityFallback(t *te
 	})
 }
 
-func TestADR_0357_HarnessContext_Scenario4_ConfiguredChainFailureSemantics(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario4_ConfiguredChainFailureSemantics(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		for _, soft := range []bool{false, true} {
 			t.Run(fmt.Sprintf("shared=%v/soft=%v", shared, soft), func(t *testing.T) {

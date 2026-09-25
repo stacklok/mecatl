@@ -37,7 +37,7 @@ func (w *harnessInstructionReads) Read(ctx context.Context, path string) ([]byte
 	return w.Workspace.Read(ctx, path)
 }
 
-func TestADR_0357_HarnessContext_Scenario3_ProjectInstructionsPerRun(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario3_ProjectInstructionsPerRun(t *testing.T) {
 	ws := memfs.NewWorkspace("/source")
 	harnessSeed(t, ws, "AGENTS.md", "FIRST-CONTEXT")
 	source := &harnessInstructionReads{Workspace: ws}
@@ -99,7 +99,7 @@ func TestADR_0357_HarnessContext_Scenario3_ProjectInstructionsPerRun(t *testing.
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario3_RootDiscoveryCompatibility(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario3_RootDiscoveryCompatibility(t *testing.T) {
 	for _, tc := range []struct{ name, agents, claude, want string }{
 		{"agents wins", " agents ", "claude", "agents"},
 		{"whitespace fallback", " \t\n", " claude ", "claude"},
@@ -149,7 +149,7 @@ func TestADR_0357_HarnessContext_Scenario3_RootDiscoveryCompatibility(t *testing
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario2_SelectedCommandsRemainLive(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario2_SelectedCommandsRemainLive(t *testing.T) {
 	for _, kind := range []string{"logical-api", "execution-files"} {
 		t.Run(kind, func(t *testing.T) {
 			source := memfs.NewWorkspace("/selected-live")

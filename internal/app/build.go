@@ -4406,7 +4406,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// not per per-session stop (one of the two sanctioned per-session deltas).
 	assets.sessionFactoryWithTools = sessionEngineFactoryWithTools(cfg, reg, provider, engineStore, sharedPolicy, hooks, mcpProvider, instructions, assets, guardrailWaiver)
 	if cfg.harnessResolver != nil {
-		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool) (server.SessionEngineResult, error) {
+		assets.sessionContextFactory = func(ctx context.Context, id session.SessionID, owner *session.Principal, acquire server.ExecutionFilesAcquirer, selector server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, extra []tool.Tool) (server.SessionEngineResult, error) {
 			// Reject an invalid selector before principal-scoped source binding creates
 			// unpublished state that cannot be adopted by a session.
 			if selector.ProviderID != "" {
@@ -4414,7 +4414,7 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 					return server.SessionEngineResult{}, err
 				}
 			}
-			binding, release, err := cfg.harnessResolver.Borrow(ctx, id, owner, string(profile))
+			binding, release, err := cfg.harnessResolver.BorrowWithExecutionFiles(ctx, id, owner, string(profile), acquire)
 			if err != nil {
 				return server.SessionEngineResult{}, err
 			}
@@ -6777,9 +6777,8 @@ func childTelemetryFor(cfg Config, role string) (port.EventSink, port.ToolCallRe
 }
 
 func childOperatorProfileSource(cfg Config, role string) prompt.OperatorProfileSource {
-	switch {
-	case role == "guardrail-checker", role == "ask-reviewer", role == "model-router",
-		role == "usermodel-review", strings.Contains(role, "judge"):
+	switch role {
+	case "guardrail-checker", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
 		return nil
 	default:
 		return cfg.operatorProfileSource
@@ -6909,8 +6908,8 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 	deps.Catalog = cat
 	deps.PromptConfig = applyContextualGuardrailWorkerPosture(pc, guardrailsConfigured(cfg) && len(cat.Tools()) > 0)
 	if cfg.harnessInstructions != nil {
-		switch {
-		case role == "guardrail-checker", role == "ask-reviewer", role == "model-router", role == "usermodel-review", strings.Contains(role, "judge"):
+		switch role {
+		case "guardrail-checker", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
 		default:
 			deps.Instructions = prompt.NewMultiAssembler(cfg.harnessInstructions, prompt.RulesAssembler{Src: cfg.harnessRules})
 		}

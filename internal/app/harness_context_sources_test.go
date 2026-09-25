@@ -440,7 +440,7 @@ func TestHarnessReplaceStopsBeforeLowerSource(t *testing.T) {
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario5_PerKindOverrideResolution(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario5_PerKindOverrideResolution(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		missing string
@@ -633,7 +633,7 @@ func TestHarnessPreserveAllowedRetainsTrustedMixedOrigins(t *testing.T) {
 	}
 }
 
-func TestADR_0357_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testing.T) {
+func TestADR_0359_HarnessContext_Scenario3_ProvenanceAndSourceContracts(t *testing.T) {
 	kinds := harnessEmptyKinds()
 	policy := permconfig.HarnessContextKind{Sources: []string{"fixture"}, Mode: "combine"}
 	kinds.Rules = policy

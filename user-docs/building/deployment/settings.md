@@ -104,11 +104,17 @@ The built-in compatibility IDs are:
 
 Other IDs, such as `deployment`, `organization`, or `repository`, require a
 trusted composition root to register the corresponding typed sources before
-calling `app.Build`. IDs are registration names, not paths or transport names;
-a settings file does not create adapters. Ask your deployment owner which
-additional IDs and kinds are available. Every enabled ID must appear in at
-least one kind. Unknown, disabled, duplicate, unused, or kind-incompatible
-references fail startup without falling back to execution files.
+calling `app.Build`. A deployment can register a project-provenance source that
+reads the selected session's execution files. Mecatl authorizes that source
+against the session's exact placement and gives it a read-only view; the source
+cannot choose a root or environment reference. This capability is part of the
+deployment registration, not the settings schema.
+
+IDs are registration names, not paths or transport names; a settings file does
+not create adapters. Ask your deployment owner which additional IDs and kinds
+are available. Every enabled ID must appear in at least one kind. Unknown,
+disabled, duplicate, unused, or kind-incompatible references fail startup
+without falling back to execution files.
 
 A project `harness_context` block is ignored in full with a warning that omits
 its values, even in a trusted project. Source selection cannot grant tool
