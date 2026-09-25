@@ -680,9 +680,10 @@ type Model struct {
 	// is later; the field carries the one migrated surface. A surface's state is
 	// created at Open and lives ONLY inside this interface field — never a
 	// pre-declared tombstone field (surface.go).
-	modal           surface
-	pendingApproval *approvalResolvedIntent
-	pendingRecovery *pendingApprovalRecovery
+	modal                     surface
+	pendingApproval           *approvalResolvedIntent
+	pendingRecovery           *pendingApprovalRecovery
+	pendingRecoveryGeneration uint64
 	// modelSwitchRequestToken correlates the asynchronous create-and-hydrate handoff.
 	// A stale result must not replace a session selected by a later lifecycle action.
 	modelSwitchRequestToken uint64
@@ -1162,7 +1163,19 @@ func New(deps Deps) Model {
 		m.restartedThisRun = true
 		m.statusMsg = "continuing chat " + terminaltext.Sanitize(resume.Row.Title) + " — type to add a turn"
 		if resume.Pending != nil {
-			m.pendingRecovery = &pendingApprovalRecovery{approval: *resume.Pending}
+			m.pendingRecoveryGeneration++
+			recoveryCtx, recoveryCancel := context.WithCancel(deps.Ctx)
+			snapshotCalls := make(map[string]struct{})
+			for i := range m.conv.blocks {
+				b := &m.conv.blocks[i]
+				if b.kind == blockTool && !b.resolved {
+					snapshotCalls[b.toolID] = struct{}{}
+				}
+			}
+			m.pendingRecovery = &pendingApprovalRecovery{
+				approval: *resume.Pending, ctx: recoveryCtx, cancel: recoveryCancel,
+				generation: m.pendingRecoveryGeneration, snapshotCalls: snapshotCalls,
+			}
 			m.phase = phaseConnecting
 			m.pendingInitialPrompt = ""
 			if deps.InitialPrompt != "" {
@@ -1207,6 +1220,7 @@ func (m Model) resetSession() Model {
 }
 
 func (m Model) resetSessionDerived() Model {
+	(&m).retirePendingApprovalRecovery()
 	m.admissionSubmission = nil
 	m = m.resetDocumentProjection()
 	m.usage = client.Usage{}

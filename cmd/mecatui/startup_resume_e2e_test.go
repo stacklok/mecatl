@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -505,7 +506,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				Shell: "/bin/sh", Compaction: "heuristic", Tokenizer: "heuristic", PermissionConfigs: []string{settings},
 			}
 
-			target, built, grpcServer, lis := startPendingRecoveryServer(t, cfg)
+			target, _, cleanupFirst := startPendingRecoveryServer(t, cfg)
 			conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				t.Fatalf("dial first server: %v", err)
@@ -538,22 +539,25 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				t.Fatalf("dial persistence probe: %v", err)
 			}
 			persisted, err := probe.DiscoverPendingApproval(ctx, created.GetSessionId())
-			_ = probe.Close()
 			if err != nil || persisted.RunID != originalRun || persisted.AskID != originalAsk {
 				t.Fatalf("persist initial ask before restart: candidate=%+v err=%v", persisted, err)
 			}
+			persistenceWatch, err := probe.WatchPendingApprovalRun(ctx, persisted)
+			if err != nil {
+				t.Fatalf("open pre-restart persistence barrier: %v", err)
+			}
+			boundary, err := persistenceWatch.Recv()
+			persistenceWatch.Close()
+			if err != nil || boundary.Kind != client.PendingApprovalEventBoundary {
+				t.Fatalf("pre-restart persistence barrier: event=%+v err=%v", boundary, err)
+			}
+			_ = probe.Close()
 
-			built.Close()
-			grpcServer.Stop()
-			_ = lis.Close()
+			cleanupFirst()
 			_ = conn.Close()
 
-			target, built, grpcServer, lis = startPendingRecoveryServer(t, cfg)
-			defer func() {
-				built.Close()
-				grpcServer.Stop()
-				_ = lis.Close()
-			}()
+			target, _, cleanupSecond := startPendingRecoveryServer(t, cfg)
+			defer cleanupSecond()
 			cl, err := client.Dial(client.DialConfig{Server: target})
 			if err != nil {
 				t.Fatalf("dial restarted server: %v", err)
@@ -562,7 +566,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 
 			selection, err := resolveStartupResume(ctx, cl, created.GetSessionId(), false)
 			if err != nil {
-				t.Fatalf("exact pending resume: %v", err)
+				t.Fatalf("exact pending resume: %v (cause: %v)", err, errors.Unwrap(err))
 			}
 			if selection.Pending == nil || selection.Pending.RunID != originalRun || selection.Pending.AskID != originalAsk {
 				t.Fatalf("recovered correlation = %+v, want run %q ask %q", selection.Pending, originalRun, originalAsk)
@@ -576,7 +580,7 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				t.Fatalf("open exact continuation watch: %v", err)
 			}
 			defer watch.Close()
-			boundary, err := watch.Recv()
+			boundary, err = watch.Recv()
 			if err != nil || boundary.Kind != client.PendingApprovalEventBoundary {
 				t.Fatalf("establish replay/live boundary: event=%+v err=%v", boundary, err)
 			}
@@ -651,19 +655,36 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 	}
 }
 
-func startPendingRecoveryServer(t *testing.T, cfg app.Config) (string, *app.Built, *grpc.Server, net.Listener) {
+func startPendingRecoveryServer(t *testing.T, cfg app.Config) (string, *app.Built, func()) {
 	t.Helper()
 	built, err := buildIsolated(t, t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("build pending recovery server: %v", err)
 	}
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	var (
+		cleanupOnce sync.Once
+		lis         net.Listener
+		grpcServer  *grpc.Server
+	)
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			built.Close()
+			if grpcServer != nil {
+				grpcServer.Stop()
+			}
+			if lis != nil {
+				_ = lis.Close()
+			}
+		})
+	}
+	t.Cleanup(cleanup)
+	lis, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		built.Close()
+		cleanup()
 		t.Fatalf("listen pending recovery server: %v", err)
 	}
-	grpcServer := grpc.NewServer()
+	grpcServer = grpc.NewServer()
 	mecatlv1.RegisterHarnessServiceServer(grpcServer, server.NewHarnessServer(built.Service))
 	go func() { _ = grpcServer.Serve(lis) }()
-	return lis.Addr().String(), built, grpcServer, lis
+	return lis.Addr().String(), built, cleanup
 }

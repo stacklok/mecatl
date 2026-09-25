@@ -105,6 +105,9 @@ var oracleSteps = []struct {
 	{"endReasoningStream", func(c *conversation) { c.endReasoningStream() }},
 	{"addTurnStat", func(c *conversation) { c.addTurnStat("turn 1 · ↑1.2k ↓300 · 2.1s") }},
 	{"addTool", func(c *conversation) { c.addTool("call-1", "Read", `{"path":"main.go"}`) }},
+	{"reconcileUnresolvedTool", func(c *conversation) {
+		c.reconcileUnresolvedTool("call-1", "Read", `{"path":"actual.go"}`)
+	}},
 	{"addNotice", func(c *conversation) { c.addNotice("context compacted") }},
 	{"retractLatestNotice", func(c *conversation) {
 		c.addNotice("provisional approval")

@@ -61,35 +61,62 @@ func (w *pendingApprovalFixtureWatch) isClosed() bool {
 }
 
 type pendingApprovalFixtureController struct {
-	mu           sync.Mutex
-	watch        *pendingApprovalFixtureWatch
-	watchCalls   int
-	resolveCalls int
-	cancelCalls  int
-	verdict      client.Verdict
-	resolved     chan struct{}
+	mu             sync.Mutex
+	watch          *pendingApprovalFixtureWatch
+	watchCalls     int
+	resolveCalls   int
+	cancelCalls    int
+	verdict        client.Verdict
+	resolvedFor    []client.PendingApproval
+	cancelledFor   []client.PendingApproval
+	resolved       chan struct{}
+	resolveStarted chan struct{}
+	resolveRelease chan struct{}
+	resolveErr     error
+	watchStarted   chan struct{}
+	watchRelease   chan struct{}
 }
 
 func (f *pendingApprovalFixtureController) WatchPendingApprovalRun(context.Context, client.PendingApproval) (PendingApprovalWatch, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.watchCalls++
-	return f.watch, nil
+	started, release, watch := f.watchStarted, f.watchRelease, f.watch
+	f.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
+	}
+	if release != nil {
+		<-release
+	}
+	return watch, nil
 }
-func (f *pendingApprovalFixtureController) ResolvePendingApproval(_ context.Context, _ client.PendingApproval, verdict client.Verdict) error {
+func (f *pendingApprovalFixtureController) ResolvePendingApproval(ctx context.Context, approval client.PendingApproval, verdict client.Verdict) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.resolveCalls++
 	f.verdict = verdict
-	if f.resolved != nil {
-		f.resolved <- struct{}{}
+	f.resolvedFor = append(f.resolvedFor, approval)
+	started, release, resolved, err := f.resolveStarted, f.resolveRelease, f.resolved, f.resolveErr
+	f.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
 	}
-	return nil
+	if release != nil {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if resolved != nil {
+		resolved <- struct{}{}
+	}
+	return err
 }
-func (f *pendingApprovalFixtureController) CancelPendingRun(context.Context, client.PendingApproval) error {
+func (f *pendingApprovalFixtureController) CancelPendingRun(_ context.Context, approval client.PendingApproval) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cancelCalls++
+	f.cancelledFor = append(f.cancelledFor, approval)
 	return nil
 }
 
@@ -173,16 +200,23 @@ func TestPendingApprovalRecoveryUIExplicitControls(t *testing.T) {
 	if controller.cancelCalls != 1 {
 		t.Fatalf("ctrl+c cancel calls = %d, want 1", controller.cancelCalls)
 	}
+	controller.mu.Lock()
+	cancelled := append([]client.PendingApproval(nil), controller.cancelledFor...)
+	controller.mu.Unlock()
+	if len(cancelled) != 1 || cancelled[0].SessionID != "session" || cancelled[0].RunID != "run" || cancelled[0].AskID != "ask" {
+		t.Fatalf("cancel identities = %+v", cancelled)
+	}
 }
 
 func TestPendingApprovalRecoveryTeatestPhase(t *testing.T) {
 	watch := &pendingApprovalFixtureWatch{events: make(chan pendingApprovalWatchResult, 2), done: make(chan struct{})}
 	watch.events <- pendingApprovalWatchResult{event: client.PendingApprovalEvent{Kind: client.PendingApprovalEventBoundary}}
 	controller := &pendingApprovalFixtureController{watch: watch, resolved: make(chan struct{}, 1)}
+	converser, converseService := newResumeBufConverser(t)
 	approval := client.PendingApproval{SessionID: "session", RunID: "run", AskID: "ask", Tool: "Write", Args: `{"path":"x"}`, Cursor: "cursor"}
 	progress := newProgress()
 	model := newTestModelFromDeps(Deps{
-		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), PendingApprovals: controller,
+		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), PendingApprovals: controller, Conv: converser,
 		Resume: &client.ResumeSelection{
 			Row:        client.SessionListItem{ID: "session", Kind: client.SessionKindMain},
 			Transcript: client.SessionTranscript{SessionID: "session", Complete: true, Kind: client.SessionKindMain},
@@ -194,6 +228,9 @@ func TestPendingApprovalRecoveryTeatestPhase(t *testing.T) {
 	progress.wait(t, phaseAwaitingApproval, 5*time.Second)
 	if resolves, cancels, _ := controller.counts(); resolves != 0 || cancels != 0 {
 		t.Fatalf("startup controls = resolve %d cancel %d", resolves, cancels)
+	}
+	if _, prompts := converseService.snapshot(); len(prompts) != 0 {
+		t.Fatalf("approval recovery automatically prompted: %q", prompts)
 	}
 
 	tm.Send(tea.KeyPressMsg{Code: 'd', Text: "d"})
@@ -210,12 +247,22 @@ func TestPendingApprovalRecoveryTeatestPhase(t *testing.T) {
 		Kind: client.PendingApprovalEventTerminal, RunID: "run", Message: client.ResultMsg{Stop: "end_turn"},
 	}}
 	progress.wait(t, phaseIdle, 5*time.Second)
+	if _, prompts := converseService.snapshot(); len(prompts) != 0 {
+		t.Fatalf("verdict automatically prompted: %q", prompts)
+	}
+	tm.Send(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	tm.Type("manual follow-up")
+	tm.Send(tea.KeyPressMsg{Code: tea.KeyEnter})
+	progress.waitRunComplete(t, 2, 5*time.Second)
+	if _, prompts := converseService.snapshot(); len(prompts) != 1 || prompts[0] != "manual follow-up" {
+		t.Fatalf("manual prompt control = %q", prompts)
+	}
 	if err := tm.Quit(); err != nil {
 		t.Fatalf("quit teatest: %v", err)
 	}
 	tm.WaitFinished(t, teatest.WithFinalTimeout(scaleWait(3*time.Second)))
 	final := tm.FinalModel(t).(Model)
-	if final.prompt.Value() != "draft only" || !watch.isClosed() {
+	if final.prompt.Value() != "" || !watch.isClosed() {
 		t.Fatalf("terminal recovery draft=%q watch closed=%t", final.prompt.Value(), watch.isClosed())
 	}
 }
