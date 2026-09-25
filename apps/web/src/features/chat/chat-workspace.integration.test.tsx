@@ -285,7 +285,7 @@ class BffFixture {
   };
 }
 
-async function mountWorkspace(bff: BffFixture, sessionId?: string) {
+async function mountWorkspace(bff: BffFixture, sessionId?: string, expectSeed = false) {
   setRequestRecoveryState({ identityEpoch: 0, phase: "ready", workspaceMounted: true });
   vi.stubGlobal("fetch", bff.fetch);
   client.setConfig({ baseUrl: "http://studio.test" });
@@ -328,7 +328,11 @@ async function mountWorkspace(bff: BffFixture, sessionId?: string) {
     );
     await router.load();
   });
-  await screen.findByRole("textbox", { name: "Message Mecatl" });
+  if (expectSeed) {
+    await screen.findByRole("dialog", { name: "Send this prompt?" });
+  } else {
+    await screen.findByRole("textbox", { name: "Message Mecatl" });
+  }
   return { queryClient, router };
 }
 
@@ -385,6 +389,7 @@ afterEach(() => {
   clearUserScopedStorage();
   window.localStorage.clear();
   window.sessionStorage.clear();
+  window.history.replaceState(window.history.state, "", "/");
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -821,6 +826,49 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.queryByText("Completed")).toBeNull();
   });
 
+  it.each(["offline", "busy"] as const)(
+    "keeps an arrival seed inert in a mounted %s workspace",
+    async (availability) => {
+      const bff = new BffFixture(session("chat-a", availability === "busy" ? "running" : "idle"));
+      const activity = heldStream();
+      if (availability === "busy") bff.activityResponses.set("", [activity.response]);
+      if (availability === "offline") bff.runtimeConnection = "offline";
+      window.history.replaceState(
+        window.history.state,
+        "",
+        "/workspace/chat?sessionId=chat-a&prompt=Review%20the%20change&send=1",
+      );
+      const mounted = await mountWorkspace(bff, "chat-a", true);
+      const confirmation = await screen.findByRole("dialog", { name: "Send this prompt?" });
+      await waitFor(() =>
+        expect(mounted.queryClient.getQueryData(getRuntimeOptions().queryKey)).toMatchObject({
+          connection: availability === "offline" ? "offline" : "online",
+        }),
+      );
+      if (availability === "busy") {
+        await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+        await act(async () => activity.send(runStarted()));
+      }
+
+      expect(within(confirmation).getByText("Chat chat-a")).toBeTruthy();
+      expect(within(confirmation).getByText("Manual")).toBeTruthy();
+      expect(within(confirmation).getByText("Review the change")).toBeTruthy();
+      const send = within(confirmation).getByRole("button", { name: "Send prompt" });
+      expect(send.hasAttribute("disabled")).toBe(true);
+      fireEvent.click(send);
+      expect(bff.requestsFor("POST", "/runs")).toHaveLength(0);
+      expect(bff.requestsAt("POST", "/api/v1/sessions")).toHaveLength(0);
+      expect(window.location.search).toBe("?sessionId=chat-a");
+      fireEvent.click(within(confirmation).getByRole("button", { name: "Edit prompt" }));
+      expect(
+        (screen.getByRole("textbox", { name: "Message Mecatl" }) as HTMLTextAreaElement).value,
+      ).toBe("Review the change");
+      if (availability === "busy") {
+        expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+      }
+    },
+  );
+
   it("uses fresh inventory to replace a legacy title with revision zero", async () => {
     const bff = new BffFixture(session("chat-a"));
     window.localStorage.setItem(
@@ -844,6 +892,76 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(await screen.findByRole("heading", { name: "Renamed legacy title" })).toBeTruthy();
     expect(screen.getAllByText("Renamed legacy title")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Renamed legacy title idle" })).toBeTruthy();
+  });
+
+  it("keeps a rename response and newer title event over stale inventory in the header and folder", async () => {
+    const user = userEvent.setup();
+    const original = {
+      ...session("chat-a", "running"),
+      title: "Original title",
+      titleProvenance: "generated",
+      titleRevision: "3",
+    };
+    const bff = new BffFixture(original);
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    window.localStorage.setItem(
+      "studio.chat.folders",
+      JSON.stringify({
+        assignments: { "chat-a": "project-folder" },
+        folders: [{ id: "project-folder", name: "Project" }],
+      }),
+    );
+    startPollingClock();
+    await mountWorkspace(bff, "chat-a");
+    await screen.findByRole("heading", { name: "Original title" });
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(
+        json({ title: "Operator title", titleProvenance: "operator", titleRevision: "5" }),
+      ),
+    ]);
+    await user.click(screen.getAllByRole("button", { name: "Chat options" })[0] as HTMLElement);
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    const renameDialog = screen.getByRole("dialog", { name: "Rename chat" });
+    await user.clear(within(renameDialog).getByRole("textbox", { name: "Chat name" }));
+    await user.type(
+      within(renameDialog).getByRole("textbox", { name: "Chat name" }),
+      "Operator title",
+    );
+    await user.click(within(renameDialog).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(bff.requestsAt("PATCH", "/api/v1/sessions/chat-a")).toHaveLength(1));
+    expect(await screen.findByRole("heading", { name: "Operator title" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Operator title running" })).toBeTruthy();
+
+    await act(async () =>
+      activity.send(
+        runEvent("session.title", "2", "", "run-a", {
+          provenance: "generated",
+          revision: "4",
+          title: "Late old generation",
+        }),
+      ),
+    );
+    expect(screen.getByRole("heading", { name: "Operator title" })).toBeTruthy();
+    await act(async () =>
+      activity.send(
+        runEvent("session.title", "3", "", "run-a", {
+          provenance: "generated",
+          revision: "6",
+          title: "Newer event title",
+        }),
+      ),
+    );
+    expect(await screen.findByRole("heading", { name: "Newer event title" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Newer event title running" })).toBeTruthy();
+
+    await advanceClock(20_000);
+    expect(bff.requestsAt("GET", "/api/v1/sessions").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByRole("heading", { name: "Newer event title" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Newer event title running" })).toBeTruthy();
+    expect(screen.queryByText("Late old generation")).toBeNull();
   });
 
   it("adopts a late title and one recorded delivery on the next visible 20-second poll", async () => {
