@@ -111,7 +111,7 @@ conversation mutation, independently of attachment ownership. Acquisition state 
 persisted and is recreated by exact authorized reattachment after restart. Ambiguous
 publication or cleanup never grants destructive authority over retained state.
 
-This approved attachment-lifetime amendment remains to be implemented and verified under
+The acquisition exchange and its required proofs are specified in
 [Scenario 5 and the private lifecycle v4 contract](../acceptance/microvm-execution-environments.md).
 The retained lifecycle socket supplies liveness without heartbeat, TTL, durable owner state,
 new configuration, or a single-instance limit. v4 rejects v3 ownership requests; compatibility

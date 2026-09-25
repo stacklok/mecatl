@@ -59,8 +59,11 @@ const (
 var errLifecycleProtocol = errors.New("invalid microvmd lifecycle protocol request")
 
 // LifecycleRequest is one bounded request on the authenticated daemon socket.
-// Create binds the requested owner/session and returns the allocated ref/generation;
-// every operation on an existing environment requires the complete Binding.
+// Create, resolve, and fork retain their connection until terminal release and
+// return an AcquisitionID. Workspace, exec, fork, and merge requests require a
+// live acquisition and its complete Binding. Detach and owned deletion must use
+// the acquisition's retained connection. See the private lifecycle v4 contract in
+// docs/acceptance/microvm-execution-environments.md for the exact exchange rules.
 type LifecycleRequest struct {
 	Version       uint16             `json:"version"`
 	Operation     LifecycleOperation `json:"operation"`

@@ -233,7 +233,10 @@ against the same checkout without extra configuration. Each process receives its
 worktree for a newly created session. When processes intentionally use the same persisted ref,
 closing one process releases only its own attachment; the other process can continue reading,
 writing, and running commands. The repository VM, rootfs, and durable worktrees remain shared
-at the repository boundary described above.
+at the repository boundary described above. This does not allow two terminals to drive the
+same conversation concurrently: its existing single-writer lease still applies and may remain
+held while the owning terminal is idle. Close that session in the owning instance before
+resuming it elsewhere, or start a separate session for another coding task.
 
 Harness context follows the separately configured source
 policy. Independent `local`, `driver`, `skills`, and `mcp` sources remain available without
@@ -244,6 +247,19 @@ resume starts a fresh VM boot around the retained rootfs and logical worktrees. 
 `EnvironmentRef`, including its revision, stays unchanged. Installed packages, guest home,
 caches, branches, indexes, and dirty or untracked files remain available. A command that was
 running when the process stopped is interrupted and is never replayed automatically.
+A daemon restart also invalidates bindings cached in an already-running harness; Mecatl does
+not automatically reconnect or reuse that cached repository context. Exit the affected
+harness, then run `mecatui --resume SESSION_ID` to reacquire its retained exact placement and
+sources under current authorization. Reattachment fails rather than substituting another
+worktree if the daemon or placement is unavailable.
+
+If one terminal reports an incompatible release or daemon identity after an upgrade, Mecatl
+leaves the existing daemon and other terminals' work unchanged. Compare `mecatui --version`
+and `mecated --version`, run `mecated microvm doctor`, and use the release matching the existing
+local deployment. A version mismatch is not an orphan-owner error and does not by itself
+require restarting the host. Mecatl does not automatically replace incompatible retained
+runtime state; do not delete a worktree or VM to clear the mismatch.
+
 On the experimental Darwin path, an ordinary daemon restart retains the exact ref.
 If readiness reports that the launch owner is orphaned, Mecatl has no automated
 self-service operation that can prove the surviving runner's identity safely. Preserve the
