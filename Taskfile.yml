@@ -989,7 +989,7 @@ tasks:
       - bash .claude/skills/to-acceptance-plan/scripts/check-acceptance-plan-test.sh
       - go test ./docs/lint
       - go test ./cmd/mecated -run '^TestSessionStorageContinuity_Scenario9_ServiceExamplesExecuteConfiguredArgs$'
-      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.9 check . --strict
+      - go run github.com/stacklok/matlatl/cmd/matlatl@v0.0.11 check . --strict
 
   docs:model:
     desc: Re-render & validate the modelith domain model (edit the .yaml, never the .md)
