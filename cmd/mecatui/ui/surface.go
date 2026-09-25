@@ -162,6 +162,7 @@ func (m *Model) closeModal() {
 	}
 	m.hits.clear()
 	m.metrics.clear()
+	m.bodyFrame.reset()
 }
 
 // setResolvedSessionModel applies server-authoritative model information. A model-ID
@@ -182,7 +183,7 @@ func (m *Model) setResolvedSessionModel(resolved client.ResolvedModel) (changed 
 	return false
 }
 
-func (m *Model) renderModalSurface() string {
+func (m *Model) renderModalSurface(owner bodyOwner) string {
 	placement := modalPlacementCard
 	if source, ok := m.modal.(modalPlacementSource); ok {
 		placement = source.modalPlacement()
@@ -192,6 +193,7 @@ func (m *Model) renderModalSurface() string {
 	if bodyW <= 0 || bodyH <= 0 {
 		m.hits.clear()
 		m.metrics.clear()
+		m.bodyFrame.reset()
 		return ""
 	}
 	if placement == modalPlacementFill {
@@ -202,6 +204,9 @@ func (m *Model) renderModalSurface() string {
 			*m.metrics = renderedSurfaceMetrics{
 				outerBounds: bounds, contentBounds: bounds, contentOrigin: cellPoint{x: 0, y: top},
 			}
+			body = m.bodyFrame.capture(owner, body, m.metrics.contentOrigin, bounds, mouseCaptureEnabled(*m), m.deps.Theme.Style("selection"))
+		} else {
+			m.bodyFrame.reset()
 		}
 		return body
 	}
@@ -231,20 +236,27 @@ func (m *Model) renderModalSurface() string {
 	}
 	if !framed {
 		body = ansi.Cut(body, 0, bodyW) + "\x1b[0m"
-		placed := lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, body)
-		if top >= 0 {
-			x, y := centeredCardOrigin(lipgloss.Width(body), lipgloss.Height(body), bodyW, bodyH)
-			bounds := cellRect{x0: x, x1: x + lipgloss.Width(body), y0: top + y, y1: top + y + lipgloss.Height(body)}
-			m.hits.replace(regions)
-			*m.metrics = renderedSurfaceMetrics{outerBounds: bounds, contentBounds: bounds, contentOrigin: cellPoint{x: x, y: top + y}}
+		if top < 0 {
+			m.bodyFrame.reset()
+			return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, body)
 		}
-		return placed
+		x, y := centeredCardOrigin(lipgloss.Width(body), lipgloss.Height(body), bodyW, bodyH)
+		bounds := cellRect{x0: x, x1: x + lipgloss.Width(body), y0: top + y, y1: top + y + lipgloss.Height(body)}
+		m.hits.replace(regions)
+		*m.metrics = renderedSurfaceMetrics{outerBounds: bounds, contentBounds: bounds, contentOrigin: cellPoint{x: x, y: top + y}}
+		body = m.bodyFrame.capture(owner, body, m.metrics.contentOrigin, bounds, mouseCaptureEnabled(*m), m.deps.Theme.Style("selection"))
+		return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, body)
 	}
-	card := style.Render(body)
-	if _, capped := m.modal.(modalMaxOuterWidthSource); capped {
-		card = style.Render(lipgloss.NewStyle().Width(contentW).Render(body))
+	_, capped := m.modal.(modalMaxOuterWidthSource)
+	renderCard := func(body string) string {
+		if capped {
+			body = lipgloss.NewStyle().Width(contentW).Render(body)
+		}
+		return style.Render(body)
 	}
+	card := renderCard(body)
 	if top < 0 {
+		m.bodyFrame.reset()
 		return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, card)
 	}
 	cardX, cardY := centeredCardOrigin(lipgloss.Width(card), lipgloss.Height(card), bodyW, bodyH)
@@ -258,6 +270,8 @@ func (m *Model) renderModalSurface() string {
 		contentBounds: cellRect{x0: origin.x, x1: origin.x + contentW, y0: origin.y, y1: origin.y + contentH},
 		contentOrigin: origin,
 	}
+	body = m.bodyFrame.capture(owner, body, origin, m.metrics.contentBounds, mouseCaptureEnabled(*m), m.deps.Theme.Style("selection"))
+	card = renderCard(body)
 	return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, card)
 }
 

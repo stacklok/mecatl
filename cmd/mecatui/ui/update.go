@@ -2234,6 +2234,26 @@ func (m Model) onKeyboardProtocolMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) onBodyOwnerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if key.Matches(msg, m.keys.CopySelection) {
+		if payload := m.selectedBodyText(); payload != "" {
+			mm, cmd := m.copyPayload(payload)
+			return mm, cmd, true
+		}
+		if m.phase == phaseAuthorizing {
+			mm, cmd := m.onMCPAuthorizationKey(msg)
+			return mm, cmd, true
+		}
+	}
+	if key.Matches(msg, m.keys.Cancel) && m.clearBodySelection() {
+		return m, nil, true
+	}
+	if m.showHelp {
+		return m.onHelpKey(msg), nil, true
+	}
+	return m, nil, false
+}
+
 // onKey routes key presses by phase. ctrl+c is handled first, with a graceful
 // double-press guard (Claude Code's "press again to exit"): a first ctrl+c does
 // NOT quit — it clears a non-empty prompt, or on an empty prompt arms the guard
@@ -2253,10 +2273,10 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return mm, cmd
 	}
 
-	// Help owns the remaining keys while open: its documented navigation and close
-	// controls act on the overlay and every ordinary key is swallowed.
-	if m.showHelp {
-		return m.onHelpKey(msg)
+	// Body-owner selection has precedence over every overlay action. With no body
+	// selection the key keeps its existing meaning (notably MCP Copy Link).
+	if mm, cmd, handled := m.onBodyOwnerKey(msg); handled {
+		return mm, cmd
 	}
 
 	// Disarm whichever quit guards are armed: any non-ctrl+c key disarms the Quit
@@ -2366,7 +2386,7 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 // onHelpKey handles the help overlay's complete keyboard contract. It runs before
 // phase routing, so navigation never reaches the conversation and every other key
 // remains swallowed.
-func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m Model) onHelpKey(msg tea.KeyPressMsg) tea.Model {
 	m.clampHelpScroll()
 	total, window := m.helpScrollGeometry()
 	switch {
@@ -2387,7 +2407,7 @@ func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ScrollTop):
 		m.helpScroll = 0
 	}
-	return m, nil
+	return m
 }
 
 // helpScrollGeometry derives the same complete rendered lines and window used by
@@ -2407,10 +2427,13 @@ func (m *Model) clampHelpScroll() {
 
 // selection owner is active.
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
-	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
-		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
-		m.reflections.view != reflectionsNone ||
-		m.dream.view != dreamClosed || m.effort.view != effortNone || m.worktrees.view != worktreesNone {
+	if !key.Matches(msg, m.keys.Cancel) {
+		return m, false
+	}
+	if m.clearBodySelection() {
+		return m, true
+	}
+	if (!m.sel.active && !m.prompt.HasSelection()) || bodyOwnerOpen(m) {
 		return m, false
 	}
 	m = m.clearSelection()
@@ -4239,8 +4262,8 @@ func (m Model) endRun(stop string) Model {
 	return m
 }
 
-// onMouseWheel lets an open modal handle the wheel, then always consumes it.
-// The conversation viewport receives wheel events only while no modal is open.
+// onMouseWheel lets an open modal or agents overlay handle the wheel, then
+// consumes it for other body owners so the hidden conversation never scrolls.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
 		if m.width <= 0 || m.vp.Height() <= 0 {
@@ -4251,6 +4274,9 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.team.view != teamNone {
 		return m.onAgentsWheel(msg)
+	}
+	if currentBodyOwner(m).valid() {
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
@@ -4266,11 +4292,10 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 // re-discriminates the concrete mouse type here, where the dispatch logically
 // belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.agentsInv.view != agentsInvNone {
-		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
-			return m.onAgentsInvWheel(wheel)
-		}
-		return m, nil
+	// Other mouse events fall through to the body-owner selection handlers, which
+	// keep them away from the hidden conversation.
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok && m.agentsInv.view != agentsInvNone {
+		return m.onAgentsInvWheel(wheel)
 	}
 	switch msg := msg.(type) {
 	case tea.MouseWheelMsg:
@@ -4320,8 +4345,7 @@ func inputRegionRect(m Model) (cellRect, bool) {
 	return cellRect{}, false
 }
 
-// onModalMousePress handles generic rendered-frame hits before the legacy
-// approval branch. A modal owns misses as well, so clicks never reach selection.
+// onModalMousePress gives modal button/clickable hits priority over body text.
 func (m Model) onModalMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
 	if m.modal == nil {
 		return m, nil, false
@@ -4331,6 +4355,41 @@ func (m Model) onModalMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
 	}
 	if mm, cmd, handled := m.dispatchSurfaceHit(mo.X, mo.Y); handled {
 		return mm, cmd, true
+	}
+	return m, nil, false
+}
+
+func (m Model) onRightMousePress() (tea.Model, tea.Cmd) {
+	if payload := m.selectedBodyText(); payload != "" {
+		return m.copyPayload(payload)
+	}
+	if currentBodyOwner(m).valid() {
+		// The prompt stays visible beside a body owner; the conversation does not.
+		if m.prompt.HasSelection() {
+			return m.copyPayload(m.prompt.SelectedText())
+		}
+		return m, nil
+	}
+	return m.copyActiveSelection()
+}
+
+func (m Model) onMiddleMousePress() (tea.Model, tea.Cmd) {
+	if currentBodyOwner(m).valid() || !m.pasteGateOpen() {
+		return m, nil
+	}
+	return m, m.primaryPasteCmd()
+}
+
+func (m Model) onBodyLeftMousePress(mo tea.Mouse) (tea.Model, tea.Cmd, bool) {
+	if mm, cmd, handled := m.onModalMousePress(mo); handled {
+		return mm, cmd, true
+	}
+	owner := currentBodyOwner(m)
+	if !owner.valid() {
+		return m, nil, false
+	}
+	if m.bodyFrame.owns(owner) {
+		m.bodyFrame.begin(mo.X, mo.Y)
 	}
 	return m, nil, true
 }
@@ -4346,23 +4405,13 @@ func (m Model) onMousePress(mo tea.Mouse) (tea.Model, tea.Cmd) {
 	}
 	switch mo.Button {
 	case tea.MouseRight:
-		return m.copyActiveSelection()
+		return m.onRightMousePress()
 	case tea.MouseMiddle:
-		// Middle-click pastes the PRIMARY selection (issue #43). Mouse capture
-		// (cell-motion tracking, see View) means the terminal never performs its
-		// native middle-click paste — the app does it instead: an async primary-
-		// selection read (shell backend preferred, OSC52 fallback — see
-		// primaryPasteCmd) whose result routes through the bracketed-paste pipeline.
-		// Gated exactly like a bracketed paste; position-independent (the paste goes
-		// to the prompt input wherever the pointer is, matching terminal convention).
-		// Deliberately does NOT touch clickCount/clickGen or the drag-selection
-		// state — like right-click, it lives outside the multi-click sequence.
-		if !m.pasteGateOpen() {
-			return m, nil
-		}
-		return m, m.primaryPasteCmd()
+		// Mouse capture suppresses the terminal's native middle-click paste. The
+		// app restores it only while no panel or overlay owns the body.
+		return m.onMiddleMousePress()
 	case tea.MouseLeft:
-		if mm, cmd, handled := m.onModalMousePress(mo); handled {
+		if mm, cmd, handled := m.onBodyLeftMousePress(mo); handled {
 			return mm, cmd
 		}
 		if cmd, handled := (&m).promptMousePress(mo); handled {
@@ -4489,6 +4538,12 @@ func (Model) autoScrollCmd() tea.Cmd {
 func (m Model) onMouseMotion(mo tea.Mouse) (tea.Model, tea.Cmd) {
 	if m.deps.Debug || m.deps.DebugMouse {
 		m.mouseDebug = m.mouseDebugLine(mo)
+	}
+	if owner := currentBodyOwner(m); owner.valid() {
+		if m.bodyFrame.owns(owner) {
+			m.bodyFrame.extend(mo.X, mo.Y)
+		}
+		return m, nil
 	}
 	if (&m).promptMouseMotion(mo) {
 		return m, nil
@@ -4655,6 +4710,17 @@ func (m *Model) extendHeadToEdge(dir autoScrollDir, x int) {
 // autoscroll only makes sense while the button is HELD; on release the drag is over,
 // so we just snap the head to wherever the pointer last was and finish.
 func (m Model) onMouseRelease(mo tea.Mouse) (tea.Model, tea.Cmd) {
+	if owner := currentBodyOwner(m); owner.valid() {
+		if m.bodyFrame.owns(owner) {
+			if payload, handled := m.bodyFrame.end(mo.X, mo.Y); handled {
+				if payload == "" {
+					return m, nil
+				}
+				return m.copyPayload(payload)
+			}
+		}
+		return m, nil
+	}
 	if (&m).promptMouseRelease(mo) {
 		return m, nil
 	}

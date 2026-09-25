@@ -93,7 +93,7 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_WidthCapAndFrameAccount
 		m.deps.Theme = th
 		st := skillsScenarioState(th, 4, 2)
 		m.modal = st
-		out := m.renderModalSurface()
+		out := m.renderModalSurface(bodyOwner{kind: bodyOwnerModal, modal: m.modal})
 		assertSkillsOfferedFit(t, out, width, 50)
 		if got := skillsRenderedCardWidth(out); got != min(128, width) {
 			t.Fatalf("rendered card width=%d, want %d", got, min(128, width))
@@ -199,7 +199,7 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_CompactFallbackAndNonpo
 		m.deps.Theme, m.width = th, size[0]
 		m.vp.SetHeight(size[1])
 		m.modal = st
-		out := m.renderModalSurface()
+		out := m.renderModalSurface(bodyOwner{kind: bodyOwnerModal, modal: m.modal})
 		assertSkillsOfferedFit(t, out, size[0], size[1])
 		plain := ansi.Strip(out)
 		if st.viewport != nil || st.filter.Focused() || st.cursor != 0 || st.detail != nil || strings.Contains(plain, "Skills inventory") || strings.ContainsAny(plain, "┏┓┗┛") {
@@ -226,7 +226,7 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_CompactFallbackAndNonpo
 	m.deps.Theme, m.width = th, frame-1
 	m.vp.SetHeight(30)
 	m.modal = narrow
-	out := m.renderModalSurface()
+	out := m.renderModalSurface(bodyOwner{kind: bodyOwnerModal, modal: m.modal})
 	wantClose := ansi.Strip(ansi.Cut(th.Style("muted").Render(defaultHelpKeys().closeOnly+" close"), 0, frame-1))
 	if !narrow.compact || strings.Join(strings.Fields(ansi.Strip(out)), " ") != strings.Join(strings.Fields(wantClose), " ") || strings.ContainsAny(ansi.Strip(out), "┏┓┗┛╭╮╰╯") {
 		t.Fatalf("too-narrow parent geometry did not use unframed close-only fallback: %q", ansi.Strip(out))
@@ -239,7 +239,7 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_CompactFallbackAndNonpo
 		m.vp.SetHeight(size[1])
 		m.modal = st
 		*m.metrics = renderedSurfaceMetrics{outerBounds: cellRect{x0: 1, x1: 2, y0: 3, y1: 4}}
-		if out := m.renderModalSurface(); out != "" || *m.metrics != (renderedSurfaceMetrics{}) {
+		if out := m.renderModalSurface(bodyOwner{kind: bodyOwnerModal, modal: m.modal}); out != "" || *m.metrics != (renderedSurfaceMetrics{}) {
 			t.Fatalf("parent geometry %v rendered %q or retained metrics: %+v", size, ansi.Strip(out), *m.metrics)
 		}
 	}
