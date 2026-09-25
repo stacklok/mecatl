@@ -37,7 +37,6 @@ const (
 	maxInventoryPageSize                            = 64
 	defaultInventoryPageSize                        = 50
 	maxInventoryTokenBytes                          = 1024
-	resolvePhaseTimeout                             = 15 * time.Second
 	cleanupPhaseTimeout                             = 5 * time.Second
 	kindMicroVM                                     = session.EnvironmentKind("microvm")
 	publicGuestRoot                                 = "/workspace"
@@ -123,6 +122,7 @@ type Client struct {
 	scope                      server.PlacementScope
 	readiness                  func(context.Context) error
 	cleanupTimeout             time.Duration
+	acquisitionDial            func(context.Context, string, string) (net.Conn, error)
 	acquisitionResponseDecoded func()
 	acquisitionAfterFunc       func(context.Context, func()) func() bool
 }
@@ -258,9 +258,9 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 			return server.PlacementBinding{}, fmt.Errorf("microvm readiness: %w", err)
 		}
 	}
-	resolveCtx, cancelResolve := context.WithTimeoutCause(ctx, resolvePhaseTimeout, errors.New("microvmd resolve phase timed out"))
-	defer cancelResolve()
-	response, owner, err := c.acquire(resolveCtx, lifecycleRequest{
+	// Resolve may recover a cold repository VM, including artifact validation and
+	// boot. Like Bind, the whole acquisition uses the caller's cancellation budget.
+	response, owner, err := c.acquire(ctx, lifecycleRequest{
 		Version: protocolVersion, Operation: "resolve", Binding: claim,
 		Provision: &provisionRequest{Owner: claim.Owner, SessionID: claim.SessionID, Profile: c.profile, SourceCheckout: c.sourceCheckout},
 	})
@@ -797,7 +797,11 @@ func validAcquisitionID(id string) bool {
 
 func (c *Client) acquire(ctx context.Context, request lifecycleRequest) (lifecycleResponse, *acquisition, error) {
 	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", c.endpoint)
+	dial := dialer.DialContext
+	if c.acquisitionDial != nil {
+		dial = c.acquisitionDial
+	}
+	conn, err := dial(ctx, "unix", c.endpoint)
 	if err != nil {
 		return lifecycleResponse{}, nil, fmt.Errorf("dial microvmd: %w", err)
 	}

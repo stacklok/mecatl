@@ -108,10 +108,9 @@ func TestMicroVMDirectBuildResolvesExecutionBeforeSources(t *testing.T) {
 	}
 }
 
-func TestMicroVMRestartReattachUsesConfiguredReadiness(t *testing.T) {
+func TestMicroVMRestartReattachUsesConfiguredReadinessAndRepositorySource(t *testing.T) {
 	daemon := startPlacementTestDaemon(t)
 	cfg := microVMHarnessConfig(t, daemon, "repository")
-	cfg.PermissionConfigs = nil
 	cfg.StoreDir = t.TempDir()
 	manager := &placementReadyManager{endpoint: daemon.endpoint()}
 	cfg.MicroVMManagerFactory = func() (MicroVMReadyManager, string, error) {
@@ -127,20 +126,37 @@ func TestMicroVMRestartReattachUsesConfiguredReadiness(t *testing.T) {
 		first.Close()
 		t.Fatal(err)
 	}
-	if manager.calls != 1 {
+	if manager.calls != daemon.operationCount("create")+daemon.operationCount("resolve") {
 		first.Close()
-		t.Fatalf("initial readiness calls = %d, want 1", manager.calls)
+		t.Fatal("initial placement/source acquisitions skipped configured readiness")
 	}
+	initialReadiness := manager.calls
 	first.Close()
+	daemon.writeGuestFile(t, "logical-1", "AGENTS.md", "RESTART-REPOSITORY-INSTRUCTION")
+	daemon.writeGuestFile(t, "logical-1", ".mecatl/commands/resume.md", "RESTART-REPOSITORY-COMMAND")
+	var requests []port.LLMRequest
+	cfg.MockProvider = mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })}, mockllm.TextTurn("resumed"))
 
 	second, err := buildIsolated(t, t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	assertSuccessfulRun(t, second.Service, sess.ID, "continue")
-	if manager.calls != 2 {
-		t.Fatalf("restart readiness calls = %d, want 2", manager.calls)
+	assertSuccessfulRun(t, second.Service, sess.ID, "/resume")
+	if len(requests) != 1 || !strings.Contains(harnessRequestText(requests[0]), "RESTART-REPOSITORY-INSTRUCTION") || !strings.Contains(harnessRequestText(requests[0]), "RESTART-REPOSITORY-COMMAND") {
+		t.Fatal("restart did not rebind the configured source through the exact guest workspace")
+	}
+	if daemon.operationCount("create") != 1 || manager.calls <= initialReadiness {
+		t.Fatalf("restart must resolve, not replace placement: %v", daemon.operations())
+	}
+	if manager.calls != daemon.operationCount("create")+daemon.operationCount("resolve") {
+		t.Fatal("restart placement/source acquisitions skipped configured readiness")
+	}
+	second.Close()
+	daemon.mu.Lock()
+	defer daemon.mu.Unlock()
+	if len(daemon.acquisitions) != 0 || len(daemon.attached) != 0 {
+		t.Fatalf("restart source leaked owner or registration: %v / %v", daemon.acquisitions, daemon.attached)
 	}
 }
 

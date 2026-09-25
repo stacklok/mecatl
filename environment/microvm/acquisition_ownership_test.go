@@ -419,6 +419,36 @@ func TestMicroVMOwnershipRestartPreservesExactWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	auth, err := control.NewService(control.ServiceConfig{AccountUID: 1000, PeerAuthenticator: controltest.StaticPeerAuthenticator{UID: 1000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := NewDaemon(DaemonConfig{Control: auth, RepositoryAttachments: restarted.Attachments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"owner", "ref", "generation", "session"} {
+		wrong := binding
+		switch field {
+		case "owner":
+			wrong.Owner = "other"
+		case "ref":
+			wrong.EnvironmentID += "-other"
+			wrong.Ref = wrong.EnvironmentID + "@" + strconv.FormatUint(uint64(wrong.Generation), 10)
+		case "generation":
+			wrong.Generation++
+			wrong.Ref = wrong.EnvironmentID + "@" + strconv.FormatUint(uint64(wrong.Generation), 10)
+		case "session":
+			wrong.SessionID += "-other"
+		}
+		response := repairExchange(t, daemon, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleResolve, Binding: wrong, Provision: &ProvisionRequest{Owner: wrong.Owner, SessionID: wrong.SessionID, SourceCheckout: fixture.repository}})
+		if response.ErrorCode != "binding_mismatch" || fixture.backend.starts != 1 {
+			t.Fatalf("cold resolve with wrong %s recovered a VM: response=%+v starts=%d", field, response, fixture.backend.starts)
+		}
+		if len(daemon.refOwnership) != 0 || len(daemon.acquisitions) != 0 {
+			t.Fatalf("rejected cold resolve retained ownership for wrong %s", field)
+		}
+	}
 	reattached, err := restarted.Attachments.Reattach(t.Context(), LogicalEnvironmentRequest{Owner: binding.Owner, Checkout: fixture.repository}, attachment.Environment.Ref())
 	if err != nil {
 		t.Fatal(err)
