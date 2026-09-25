@@ -566,7 +566,12 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--default-model` | – | **embedded** server: deployment-wide default model for the default provider; sits below client-side defaults and above the per-provider built-in. A model not catalogued for the default provider **fails startup** |
 | `--context-window-override` | `0` | **embedded** server: global context-window token override for both compaction and the footer denominator. `0` keeps exact operator `models.context_windows` → live metadata → models.dev catalog → 128K fallback resolution. Rejected in `connect` mode; configure the external `mecated` instead |
 | `--subagent-model` | – (inherits `--model`) | **embedded** server: global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (the `CLAUDE_CODE_SUBAGENT_MODEL` analogue); the Parallel judge stays on the session model. Same provider as the session; an unresolvable id **fails startup** |
+| `--llm-recovery-budget` | `30m` | **embedded only:** maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting |
+| `--llm-max-attempts` | `60` | **embedded only:** maximum model-stream attempts for one precommit step, including the initial call |
+| `--llm-per-attempt-timeout` | `300s` | **embedded only:** maximum time to connect and receive the first raw response chunk; `0` disables the timeout |
+| `--llm-stream-idle-timeout` | `180s` | **embedded only:** maximum pause between raw response chunks; `0` disables the timeout |
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
+
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
 | `--api-key-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |
@@ -2051,23 +2056,9 @@ limits `max_turns`, `max_tool_calls`, and `budget` (the run just ran out of
 turn/tool/token budget; firing the merged prompt reopens it with a fresh budget, which
 is what a lined-up "continue" wants).
 
-A terminal provider failure is classified by two presence-aware fields: retry
-disposition (`unknown`, `retryable`, or `permanent`) and stream progress
-(`unknown`, `precommit`, `visible`, or `complete`). Mecatui starts **one** automatic,
-prompt-free failed-step retry only when a new server explicitly reports
-`retryable + precommit`. It sends a fresh `Converse` stream whose first frame is
-`RetryStart`, not another Prompt, so the original user message is not duplicated.
-The textarea and queued future prompts stay untouched. If that retry succeeds, the
-existing healthy queue drain resumes.
+A terminal provider failure preserves the failed run. The server owns precommit recovery and does not reissue calls after semantic output becomes visible. The TUI shows no recovery countdown; recovery activity stays in the embedded-server diagnostics log. Disconnecting or shutting down cancels an active recovery, and restarting the client does not continue it.
 
-An absent typed field (an old server) or explicit `unknown` pauses and preserves
-the queue. `/retry` is available for every bound idle session and sends `RetryStart`;
-the server authoritatively accepts or rejects eligibility from durable state. It adds no
-Prompt or user card and does not reset the textarea or mutate queued prompts. Visible
-output is never retried automatically. Retry transport failures and clean pre-turn
-brakes preserve the manual affordance and keep queued work paused; only `turn.start`
-proves an authoritative model attempt. Persisted conversation/tool state is reused, but
-live turn-0 instructions, operator profile, and system prompt are re-resolved.
+`/retry` is available for every bound idle session and sends `RetryStart`; the server authoritatively accepts or rejects eligibility from durable state. It adds no Prompt or user card and does not reset the textarea or mutate queued prompts. Visible output is never retried automatically. Retry transport failures and clean pre-turn brakes preserve the manual affordance and keep queued work paused; only `turn.start` proves an authoritative model attempt. Persisted conversation/tool state is reused, but live turn-0 instructions, operator profile, and system prompt are re-resolved.
 
 A **permanent** provider error, such as a non-retryable 4xx rejection or context-window
 overflow, renders a ONE-LINE summary block

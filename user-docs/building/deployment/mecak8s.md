@@ -515,6 +515,23 @@ default empty value preserves the binary's `INFO` default. Supported values are
 that are not modeled by the chart; if it also contains `--log-level`, its later
 argument takes precedence.
 
+### Configure model recovery
+
+Use `extraArgs` to set the server-owned precommit recovery policy. The defaults
+are `--llm-recovery-budget=30m` and `--llm-max-attempts=60`; command-line values
+override the command defaults.
+
+```yaml
+extraArgs:
+  - --llm-recovery-budget=10m
+  - --llm-max-attempts=12
+```
+
+The server retries a model step only before semantic output is visible. A visible
+failure remains terminal, so a model does not rerun completed tool calls or
+visible assistant text. See [LLM resilience](/building/deployment/mecated.md#llm-resilience)
+for the policy and the remaining resilience flags.
+
 ### Mount trusted skills, agents, and rules
 
 Set `XDG_CONFIG_HOME` to the mount root, put files below

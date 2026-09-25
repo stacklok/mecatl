@@ -572,6 +572,21 @@ session as authoritative.
 - Provider/model selection flags configure an embedded or server deployment;
   they do not override a remote server reached with `connect`.
 
+## Troubleshooting
+
+### A provider error ended a model step
+
+The server retries transient provider failures before meaningful assistant text is
+visible. If recovery ends in an error, use `/retry` from an idle `mecatui`
+session to ask the server to retry the failed step without duplicating your
+prompt. A failure after visible output is terminal and is not automatically
+replayed, because the model might otherwise repeat visible text or tool calls.
+
+For an embedded terminal session, set `--llm-recovery-budget` and
+`--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
+server owns these values. Daemon, Kubernetes, and CI configuration is described
+in [LLM resilience](/building/deployment/mecated.md#llm-resilience).
+
 ## Next steps
 
 - [Use mecatui](/mecatui/index.md) for the interactive model and effort pickers.
