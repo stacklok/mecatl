@@ -298,7 +298,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0303 — Fail closed double-Escape clearing on enhanced key-event support](./0303-fail-closed-double-escape.md)
 - [0336 — Draft-aware session inventory](./0336-draft-aware-session-inventory.md)
   *(proposed)*
-- [0351 — One named permission-mode vocabulary, and two admission gates](./0351-one-permission-mode-vocabulary.md)
+- [0365 — One named permission-mode vocabulary, and two admission gates](./0365-one-permission-mode-vocabulary.md)
   *(proposed)*
 
 ### Retired
