@@ -48,9 +48,10 @@ func TestNativePersistedExactPlanClaimLifecycle(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				acquireErr := errors.New("native claim unavailable")
-				if outcome == "acquisition failure" {
+				switch outcome {
+				case "acquisition failure":
 					provider.acquireErr = acquireErr
-				} else if outcome == "cancel before acceptance" {
+				case "cancel before acceptance":
 					provider.acquireHook = cancel
 				}
 				store := memstore.New()
@@ -257,9 +258,10 @@ func TestNativeExactPlanClaimLifecycle(t *testing.T) {
 					synctest.Wait()
 				}
 				wantAcquires, wantReleases, wantCalls := int64(1), int64(1), 1
-				if outcome == "allow" {
+				switch outcome {
+				case "allow":
 					wantAcquires, wantReleases, wantCalls = 2, 2, 2
-				} else if outcome == "release failure" {
+				case "release failure":
 					wantAcquires, wantReleases = 2, 0
 				}
 				if provider.acquires.Load() != wantAcquires || provider.releases.Load() != wantReleases || provider.held.Load() != (outcome == "release failure") || llm.Calls() != wantCalls || pins.Load() != unpins.Load() {
