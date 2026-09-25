@@ -4374,24 +4374,15 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	// the tier-0 project MemoryIndexAssembler. Operator facts no longer ride a
 	// turn-0 user fragment; the same user store is loaded per request into the
 	// volatile system-prompt suffix below.
-	standardInstructions := cfg.harnessInstructions
-	if standardInstructions == nil {
+	instructions := cfg.harnessInstructions
+	if instructions == nil {
 		var instructionSource tool.Workspace
 		if cfg.Workspace != "" {
 			instructionSource, _ = osfs.NewWorkspace(cfg.Workspace)
 		}
-		standardInstructions = buildInstructionAssembler(instructionSource, rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg))
+		instructions = buildInstructionAssembler(instructionSource, rulesSrc, soulSrc, memStore, userModelStore, !projectIngestionAdmitted(cfg))
 	} else {
-		standardInstructions = prompt.NewMultiAssembler(standardInstructions, prompt.RulesAssembler{Src: rulesSrc}, prompt.SoulAssembler{Src: soulSrc}, prompt.MemoryIndexAssembler{Src: memStore})
-	}
-	remoteRules := prompt.RulesSource(nil)
-	if cfg.RemoteExecution {
-		// Project admission is off for this deployment; retain user-tier rules.
-		remoteRules = rulesSrc
-	}
-	instructions := sessionInstructionSet{
-		standard: standardInstructions,
-		remote:   buildInstructionAssembler(nil, remoteRules, soulSrc, memStore, userModelStore, true),
+		instructions = prompt.NewMultiAssembler(instructions, prompt.RulesAssembler{Src: rulesSrc}, prompt.SoulAssembler{Src: soulSrc}, prompt.MemoryIndexAssembler{Src: memStore})
 	}
 
 	// Contextual review runs at the engine's exact action/result choke points;

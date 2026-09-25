@@ -70,28 +70,6 @@ This page is the overview and router; the big picture and the layering rule are 
 - **[Session titles & durable token accounting](architecture/domain-model.md#session-titles-and-durable-token-accounting)** — operator renaming, opt-in asynchronous generation, and canonical token usage.
 - **[Deployment & server hardening](architecture/deployment-and-hardening.md)**
 
-### Native Kubernetes execution
-
-The opt-in native execution path keeps the controller boundary outside `mecak8s`.
-`cmd/mecatl-execution-provider` owns the private authenticated API
-(`mecatl.execution.v1.ExecutionProviderService`, protocol `execution-grpc/1`) over
-bounded mTLS gRPC and the namespaced `ExecutionEnvironment` reconciler. It
-creates a retained PVC and credential-free executor Pod from an operator-defined,
-digest-pinned profile. Startup validates each profile's named RuntimeClass and
-StorageClass before readiness or Pod creation. `cmd/mecatl-executor` serves
-bounded file operations and foreground commands inside `/workspace`; the
-host-side `internal/adapter/executionclient` adapts those operations to the
-existing `tool.Environment` contract.
-
-Run claims, reference transactions, replacement, retirement, retained-PVC
-deletion, schema migration, and grant revocation use exact CR status identities
-and resource-version CAS. Security material reloads as one immutable snapshot and
-is checked against a durable generation/digest ledger on every RPC. Unknown
-operation ownership or unproven Pod termination leaves the environment fenced.
-Disabled composition builds no execution client, and the separate provider chart
-has no dependency on the `mecak8s` chart. Remote Git/project ingestion,
-background commands, and delegated filesystem execution remain unsupported.
-
 ### Protected-resource discovery
 
 Both `mecated` and `mecak8s` use the shared OIDC profile flags. When configured,
