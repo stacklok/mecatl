@@ -155,6 +155,8 @@ func pendingApprovalStartupError(err error) error {
 	text := "that chat is awaiting approval, but recovery could not be verified; retry or leave the approval pending"
 	if client.IsPendingApprovalFailure(err, client.PendingApprovalWatchUnsupported) {
 		text = "that chat is awaiting approval; this server does not support durable pending-approval recovery"
+	} else if client.IsPendingApprovalFailure(err, client.PendingApprovalUnsupportedAsk) {
+		text = "that chat requires a dedicated plan or guardrail approval flow; ordinary approval recovery cannot resolve it"
 	}
 	return &startupResumeError{Reason: client.CapabilityReasonAwaitingApproval, text: text, cause: err}
 }

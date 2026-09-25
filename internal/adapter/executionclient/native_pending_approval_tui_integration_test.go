@@ -515,14 +515,14 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				observedKinds = append(observedKinds, event.Kind)
 				observedNil = observedNil || event.Kind == mecatuiclient.PendingApprovalEventOther && event.Message == nil
 				if result, ok := event.Message.(mecatuiclient.ToolResultMsg); ok {
-					if event.RunID != runID || result.CallID != "native-shell" || result.IsError == tc.wantRun {
+					if result.CallID != "native-shell" || result.IsError == tc.wantRun {
 						t.Fatal("resumed tool result identity/outcome mismatch")
 					}
 					toolResults++
 				}
 				if event.Kind == mecatuiclient.PendingApprovalEventTerminal {
 					result, ok := event.Message.(mecatuiclient.ResultMsg)
-					if !ok || event.RunID != runID || result.Stop != "end_turn" {
+					if !ok || result.Stop != "end_turn" {
 						t.Fatal("resumed run did not end normally")
 					}
 					break

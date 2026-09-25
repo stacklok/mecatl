@@ -2705,9 +2705,9 @@ func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 	if m.quitArmed || m.phase == phaseFatal {
 		return m.quitNow()
 	}
-	// First ctrl+c with staged input: clear the input (mirrors esc's clear-the-line)
-	// and do NOT arm — a single press to wipe a draft is expected.
-	if strings.TrimSpace(m.prompt.Value()) != "" {
+	// Ordinary staged input clears on the first press. An in-flight recovery
+	// choice instead keeps its draft and arms exit with the uncertainty warning.
+	if strings.TrimSpace(m.prompt.Value()) != "" && (m.pendingRecovery == nil || !m.pendingRecovery.resolving) {
 		m.prompt.Reset()
 		m.pendingPromptMedia = client.MediaResult{}
 		return m.afterInputEdit(nil)

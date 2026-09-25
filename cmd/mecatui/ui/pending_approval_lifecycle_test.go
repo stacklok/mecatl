@@ -114,7 +114,8 @@ func TestPendingApprovalRecoveryQuitDuringBlockedResolve(t *testing.T) {
 				watch:          &pendingApprovalFixtureWatch{},
 				resolveStarted: make(chan struct{}, 1), resolveRelease: make(chan struct{}),
 			}
-			m := pendingRecoveryModel(t, controller, "")
+			const draft = "keep this unsent recovery prompt"
+			m := pendingRecoveryModel(t, controller, draft)
 			recovery := m.pendingRecovery
 			t.Cleanup(recovery.cancel)
 			t.Cleanup(controller.watch.Close)
@@ -143,8 +144,8 @@ func TestPendingApprovalRecoveryQuitDuringBlockedResolve(t *testing.T) {
 			} else {
 				next, _ = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 				m = next.(Model)
-				if !m.quitArmed || recovery.ctx.Err() != nil || controller.watch.isClosed() {
-					t.Fatal("first ctrl+c must arm exit without cancelling the owner choice")
+				if !m.quitArmed || m.prompt.Value() != draft || recovery.ctx.Err() != nil || controller.watch.isClosed() {
+					t.Fatal("first ctrl+c must preserve the draft and arm exit without cancelling the owner choice")
 				}
 				next, quit = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 			}

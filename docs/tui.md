@@ -534,7 +534,9 @@ decoded value to `--resume` later.
 `-p`/`--prompt` (or `--prompt-file` for a longer body) launches the session with
 a seed prompt auto-submitted as the FIRST turn — the equivalent of typing the
 prompt and pressing enter the moment the session is ready. The TUI then stays
-interactive for follow-ups; this is NOT a print-and-exit one-shot.
+interactive for follow-ups; this is NOT a print-and-exit one-shot. During
+pending-approval recovery, the seed remains an unsent composer draft instead;
+it is not automatically submitted after the approval or recovered run finishes.
 
 ```sh
 mecatui -p "Summarize the failing tests in this repo"
@@ -554,7 +556,7 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--mode` | `default` | permission posture for a new session: `default` \| `plan` \| `accept-edits`; an adopted chat keeps its stored mode |
 | `--resume` | – | continue the owned stored main chat with this exact opaque session ID, or recover its supported pending ordinary approval; mutually exclusive with `--resume-latest` |
 | `--resume-latest` | off | continue the newest eligible owned main chat with an available authoritative transcript; excludes active, pending-approval, scheduled, child, and unknown sessions; when none is eligible, start a new chat; mutually exclusive with `--resume` |
-| `-p` / `--prompt` | – | seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both `--prompt` and `--prompt-file` may be given (literal first, joined by a blank line). Fires ONCE — a `/models` restart or `/clear` never re-submits it |
+| `-p` / `--prompt` | – | seed prompt auto-submitted once the first session is ready; kept as an unsent draft during pending-approval recovery. The TUI stays interactive for follow-ups; this is NOT a one-shot. Both `--prompt` and `--prompt-file` may be given (literal first, joined by a blank line). Fires ONCE — a `/models` restart or `/clear` never re-submits it |
 | `--prompt-file` | – | path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after `--prompt` when both are given. Same once-only semantics as `--prompt` |
 | `--theme` | `aztec` | theme name (also `MECATUI_THEME`); giving either pins the theme and disables the light/dark auto-detect below |
 | `--theme-dir` | – | extra directory of `*.json` themes to load |
