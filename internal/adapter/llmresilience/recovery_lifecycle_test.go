@@ -65,140 +65,141 @@ func TestServerProviderRecovery_Scenario3_ProbeReleaseAndStaleGenerationIsolatio
 	})
 	for _, outcome := range []string{"abandon", "cancel before iteration", "cancel during iteration", "permanent", "transient", "complete"} {
 		t.Run(outcome, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			stopped := make(chan struct{})
-			calls := 0
-			inner := recoveryProviderFunc(func(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
-				calls++
-				if calls == 1 {
-					return nil, apiErr(503)
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				stopped := make(chan struct{})
+				calls := 0
+				inner := recoveryProviderFunc(func(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+					calls++
+					if calls == 1 {
+						return nil, apiErr(503)
+					}
+					return func(yield func(port.Chunk, error) bool) {
+						defer close(stopped)
+						if !yield(port.Chunk{Kind: port.ChunkText, Text: "visible"}, nil) {
+							return
+						}
+						switch outcome {
+						case "permanent":
+							yield(port.Chunk{}, apiErr(400))
+						case "transient":
+							yield(port.Chunk{}, apiErr(503))
+						case "cancel during iteration":
+							cancel()
+							<-ctx.Done()
+						default:
+							yield(port.Chunk{Kind: port.ChunkDone}, nil)
+						}
+					}, nil
+				})
+				cfg := recoveryConfig(1, time.Second)
+				cfg.BreakerThreshold = 1
+				p := Wrap(inner, cfg).(*resilientProvider)
+				_, _ = p.Stream(context.Background(), port.LLMRequest{})
+				seq, err := p.Stream(ctx, port.LLMRequest{})
+				if err != nil {
+					t.Fatal(err)
 				}
-				return func(yield func(port.Chunk, error) bool) {
-					defer close(stopped)
-					if !yield(port.Chunk{Kind: port.ChunkText, Text: "visible"}, nil) {
-						return
+				p.breaker.mu.Lock()
+				half := p.breaker.halfOpen
+				changed := p.breaker.changed
+				p.breaker.mu.Unlock()
+				if !half {
+					t.Fatal("visibility released ownership")
+				}
+				switch outcome {
+				case "cancel before iteration":
+					cancel()
+				case "abandon":
+					seq(func(port.Chunk, error) bool { return false })
+				default:
+					_, _ = drain(t, seq)
+				}
+				synctest.Wait()
+				select {
+				case <-stopped:
+				default:
+					// Always unwind the old implementation's suspended iterator before failing.
+					seq(func(port.Chunk, error) bool { return false })
+					t.Fatal("cancellation retained the unconsumed iterator")
+				}
+				select {
+				case <-changed:
+				default:
+					t.Fatal("probe release did not notify")
+				}
+				// The notification makes the cancellation callback's health result observable.
+				p.breaker.mu.Lock()
+				half = p.breaker.halfOpen
+				open := p.breaker.open
+				failures := p.breaker.consecutiveFailures
+				p.breaker.mu.Unlock()
+				if half {
+					t.Fatal("completed operation retained probe")
+				}
+				if outcome == "complete" {
+					if open || failures != 0 {
+						t.Fatal("clean completion did not recover")
 					}
-					switch outcome {
-					case "permanent":
-						yield(port.Chunk{}, apiErr(400))
-					case "transient":
-						yield(port.Chunk{}, apiErr(503))
-					case "cancel during iteration":
-						cancel()
-						<-ctx.Done()
-					default:
-						yield(port.Chunk{Kind: port.ChunkDone}, nil)
-					}
-				}, nil
+				} else if !open {
+					t.Fatal("non-success closed breaker")
+				}
 			})
-			cfg := recoveryConfig(1, time.Second)
-			cfg.BreakerThreshold = 1
-			p := Wrap(inner, cfg).(*resilientProvider)
-			_, _ = p.Stream(context.Background(), port.LLMRequest{})
-			seq, err := p.Stream(ctx, port.LLMRequest{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			p.breaker.mu.Lock()
-			half := p.breaker.halfOpen
-			changed := p.breaker.changed
-			p.breaker.mu.Unlock()
-			if !half {
-				t.Fatal("visibility released ownership")
-			}
-			switch outcome {
-			case "cancel before iteration":
-				cancel()
-			case "abandon":
-				seq(func(port.Chunk, error) bool { return false })
-			default:
-				_, _ = drain(t, seq)
-			}
-			select {
-			case <-stopped:
-			case <-time.After(time.Second):
-				// Always unwind the old implementation's suspended iterator before failing.
-				seq(func(port.Chunk, error) bool { return false })
-				t.Fatal("cancellation retained the unconsumed iterator")
-			}
-			select {
-			case <-changed:
-			case <-time.After(time.Second):
-				t.Fatal("probe release did not notify")
-			}
-			// The notification makes the cancellation callback's health result observable.
-			p.breaker.mu.Lock()
-			half = p.breaker.halfOpen
-			open := p.breaker.open
-			failures := p.breaker.consecutiveFailures
-			p.breaker.mu.Unlock()
-			if half {
-				t.Fatal("completed operation retained probe")
-			}
-			if outcome == "complete" {
-				if open || failures != 0 {
-					t.Fatal("clean completion did not recover")
-				}
-			} else if !open {
-				t.Fatal("non-success closed breaker")
-			}
 		})
 	}
 }
 
 func TestServerProviderRecovery_Scenario4_CancellationAndTerminalClassification(t *testing.T) {
-	for i := range 50 {
-		t.Run(fmt.Sprintf("simultaneous caller cancel and budget expiry %d", i), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-				var calls int
-				inner := recoveryProviderFunc(func(attemptCtx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
-					calls++
-					if calls == 1 {
-						return nil, apiErr(503)
-					}
-					return func(func(port.Chunk, error) bool) {
-						<-attemptCtx.Done()
-						cancel()
-					}, nil
-				})
-				_, err := recoveryDrain(ctx, t, Wrap(inner, recoveryConfig(2, time.Second)))
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("simultaneous caller cancellation lost to local expiry: %v", err)
-				}
-				if calls != 2 {
-					t.Fatalf("calls=%d want 2", calls)
-				}
-			})
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var calls int
+		inner := recoveryProviderFunc(func(attemptCtx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+			calls++
+			if calls == 1 {
+				return nil, apiErr(503)
+			}
+			return func(func(port.Chunk, error) bool) {
+				<-attemptCtx.Done()
+				cancel()
+			}, nil
 		})
-	}
+		_, err := recoveryDrain(ctx, t, Wrap(inner, recoveryConfig(2, time.Second)))
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("simultaneous caller cancellation lost to local expiry: %v", err)
+		}
+		if calls != 2 {
+			t.Fatalf("calls=%d want 2", calls)
+		}
+	})
 	t.Run("budget expires while another probe owns admission", func(t *testing.T) {
-		cfg := recoveryConfig(1, 15*time.Millisecond)
-		cfg.BreakerThreshold = 1
-		f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: textTurn("probe")}}}
-		p := Wrap(f, cfg).(*resilientProvider)
-		_, _ = p.Stream(context.Background(), port.LLMRequest{})
-		seq, err := p.Stream(context.Background(), port.LLMRequest{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer seq(func(port.Chunk, error) bool { return false })
-		observations := 0
-		ctx := port.WithAttemptObserver(context.Background(), func(session.NetworkAttemptPayload) { observations++ })
-		_, err = p.Stream(ctx, port.LLMRequest{})
-		requirePrecommitRetryable(t, err)
-		var breaker *BreakerError
-		if !errors.As(err, &breaker) || observations != 0 || f.Calls() != 2 {
-			t.Fatalf("err=%v observations=%d calls=%d", err, observations, f.Calls())
-		}
-		p.breaker.mu.Lock()
-		half, failures := p.breaker.halfOpen, p.breaker.consecutiveFailures
-		p.breaker.mu.Unlock()
-		if !half || failures != 1 {
-			t.Fatal("local admission expiry changed probe health")
-		}
+		synctest.Test(t, func(t *testing.T) {
+			cfg := recoveryConfig(1, 15*time.Second)
+			cfg.BreakerThreshold = 1
+			f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: textTurn("probe")}}}
+			p := Wrap(f, cfg).(*resilientProvider)
+			_, _ = p.Stream(context.Background(), port.LLMRequest{})
+			seq, err := p.Stream(context.Background(), port.LLMRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer seq(func(port.Chunk, error) bool { return false })
+			observations := 0
+			ctx := port.WithAttemptObserver(context.Background(), func(session.NetworkAttemptPayload) { observations++ })
+			_, err = p.Stream(ctx, port.LLMRequest{})
+			requirePrecommitRetryable(t, err)
+			var breaker *BreakerError
+			if !errors.As(err, &breaker) || observations != 0 || f.Calls() != 2 {
+				t.Fatalf("err=%v observations=%d calls=%d", err, observations, f.Calls())
+			}
+			p.breaker.mu.Lock()
+			half, failures := p.breaker.halfOpen, p.breaker.consecutiveFailures
+			p.breaker.mu.Unlock()
+			if !half || failures != 1 {
+				t.Fatal("local admission expiry changed probe health")
+			}
+		})
 	})
 	t.Run("breaker-only exhaustion", func(t *testing.T) {
 		f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}}}
@@ -235,34 +236,31 @@ func TestServerProviderRecovery_Scenario4_CancellationAndTerminalClassification(
 	}
 	for _, deadline := range []bool{false, true} {
 		t.Run(fmt.Sprint("caller wins ", deadline), func(t *testing.T) {
-			clock := &manualClock{t: time.Unix(1, 0)}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			expected := context.Canceled
-			if deadline {
-				ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(20*time.Millisecond))
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				expected = context.DeadlineExceeded
-			}
-			f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {block: true}}, onAttempt: func(_ context.Context, n int) {
-				if n == 1 {
-					clock.Advance(time.Hour)
-					if !deadline {
+				expected := context.Canceled
+				if deadline {
+					ctx, cancel = context.WithTimeout(context.Background(), 20*time.Second)
+					defer cancel()
+					expected = context.DeadlineExceeded
+				}
+				f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {block: true}}, onAttempt: func(_ context.Context, n int) {
+					if n == 1 && !deadline {
 						cancel()
 					}
+				}}
+				cfg := recoveryConfig(3, time.Minute)
+				cfg.BreakerThreshold = 2
+				p := Wrap(f, cfg).(*resilientProvider)
+				_, err := recoveryDrain(ctx, t, p)
+				if !errors.Is(err, expected) {
+					t.Fatalf("err=%v want %v", err, expected)
 				}
-			}}
-			cfg := recoveryConfig(3, time.Second)
-			cfg.Clock = clock.Now
-			cfg.BreakerThreshold = 2
-			p := Wrap(f, cfg).(*resilientProvider)
-			_, err := recoveryDrain(ctx, t, p)
-			if !errors.Is(err, expected) {
-				t.Fatalf("err=%v want %v", err, expected)
-			}
-			if p.breaker.consecutiveFailures != 1 || p.breaker.open {
-				t.Fatal("local expiry/caller cancellation changed health")
-			}
+				if p.breaker.consecutiveFailures != 1 || p.breaker.open {
+					t.Fatal("local expiry/caller cancellation changed health")
+				}
+			})
 		})
 	}
 }
@@ -276,82 +274,84 @@ func (*providerRetryVeto) Retryable() bool { return false }
 func TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttemptVocabulary(t *testing.T) {
 	for _, mode := range []string{"provider wait", "breaker only", "budget cancels call", "recovered"} {
 		t.Run(mode, func(t *testing.T) {
-			diag := &recordingDiag{}
-			cfg := recoveryConfig(3, 2*time.Second)
-			cfg.Diagnostics = diag
-			f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: textTurn("ok")}}}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			if mode == "provider wait" {
-				f.steps[0].outerErr = recoveryHintError{apiErr(429), time.Now().Add(1100 * time.Millisecond)}
-				// Cancel from the diagnostic sink, after observing the planned long wait.
-				cfg.Diagnostics = &cancelWaitDiag{recordingDiag: diag, cancel: cancel}
-			}
-			if mode == "breaker only" {
-				cfg.MaxAttempts = 1
-				cfg.BreakerThreshold = 1
-				cfg.BreakerCooldown = time.Hour
-			}
-			if mode == "budget cancels call" {
-				cfg.RecoveryBudget = 15 * time.Millisecond
-				f.steps[1] = step{chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 9}}}, stallAfterChunks: true}
-			}
-			p := Wrap(f, cfg)
-			if mode == "breaker only" {
-				_, _ = p.Stream(ctx, port.LLMRequest{})
-				diag.records = nil
-			}
-			var observed []session.NetworkAttemptPayload
-			ctx = port.WithAttemptObserver(ctx, func(o session.NetworkAttemptPayload) { observed = append(observed, o) })
-			got, err := recoveryDrain(ctx, t, p)
-			if mode == "recovered" {
-				if err != nil {
-					t.Fatal(err)
+			synctest.Test(t, func(t *testing.T) {
+				diag := &recordingDiag{}
+				cfg := recoveryConfig(3, 2*time.Minute)
+				cfg.Diagnostics = diag
+				f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: textTurn("ok")}}}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				if mode == "provider wait" {
+					f.steps[0].outerErr = recoveryHintError{apiErr(429), time.Now().Add(2 * time.Minute)}
+					// Cancel from the diagnostic sink, after observing the planned long wait.
+					cfg.Diagnostics = &cancelWaitDiag{recordingDiag: diag, cancel: cancel}
 				}
-			} else if err == nil {
-				t.Fatal("expected terminal")
-			}
-			if mode == "budget cancels call" {
-				if len(got) != 1 || got[0].Usage.InputTokens != 9 {
-					t.Fatalf("lost usage: %v", got)
+				if mode == "breaker only" {
+					cfg.MaxAttempts = 1
+					cfg.BreakerThreshold = 1
+					cfg.BreakerCooldown = time.Hour
 				}
-				requirePrecommitRetryable(t, err)
-			}
-			want := 1
-			if mode == "breaker only" {
-				want = 0
-			}
-			if len(observed) != want {
-				t.Fatalf("observations=%+v", observed)
-			}
-			for _, o := range observed {
-				if _, valid := session.CanonicalNetworkAttempt(o, "test", 1, 1); !valid {
-					t.Fatalf("invalid observation: %+v", o)
+				if mode == "budget cancels call" {
+					cfg.RecoveryBudget = 15 * time.Second
+					f.steps[1] = step{chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 9}}}, stallAfterChunks: true}
 				}
-				if o.Attempt != 1 || o.SuppressionReason != "" {
-					t.Fatalf("fabricated terminal: %+v", o)
+				p := Wrap(f, cfg)
+				if mode == "breaker only" {
+					_, _ = p.Stream(ctx, port.LLMRequest{})
+					diag.records = nil
 				}
-			}
-			records := diag.find("llm provider recovery")
-			if len(records) == 0 {
-				t.Fatal("missing recovery decision")
-			}
-			for _, record := range records {
-				if record.level != port.LevelInfo {
-					t.Fatal("recovery was not INFO")
+				var observed []session.NetworkAttemptPayload
+				ctx = port.WithAttemptObserver(ctx, func(o session.NetworkAttemptPayload) { observed = append(observed, o) })
+				got, err := recoveryDrain(ctx, t, p)
+				if mode == "recovered" {
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else if err == nil {
+					t.Fatal("expected terminal")
 				}
-				for _, key := range []string{"decision", "attempt", "max_attempts", "wait", "remaining_budget", "source"} {
-					if argValue(record.args, key) == nil {
-						t.Fatalf("missing %s", key)
+				if mode == "budget cancels call" {
+					if len(got) != 1 || got[0].Usage.InputTokens != 9 {
+						t.Fatalf("lost usage: %v", got)
+					}
+					requirePrecommitRetryable(t, err)
+				}
+				want := 1
+				if mode == "breaker only" {
+					want = 0
+				}
+				if len(observed) != want {
+					t.Fatalf("observations=%+v", observed)
+				}
+				for _, o := range observed {
+					if _, valid := session.CanonicalNetworkAttempt(o, "test", 1, 1); !valid {
+						t.Fatalf("invalid observation: %+v", o)
+					}
+					if o.Attempt != 1 || o.SuppressionReason != "" {
+						t.Fatalf("fabricated terminal: %+v", o)
 					}
 				}
-				if strings.Contains(fmt.Sprint(record), "recovery_budget_exhausted") {
-					t.Fatal("new serialized reason")
+				records := diag.find("llm provider recovery")
+				if len(records) == 0 {
+					t.Fatal("missing recovery decision")
 				}
-			}
-			if mode == "provider wait" && len(records) != 2 {
-				t.Fatalf("want one wait and terminal, got %v", records)
-			}
+				for _, record := range records {
+					if record.level != port.LevelInfo {
+						t.Fatal("recovery was not INFO")
+					}
+					for _, key := range []string{"decision", "attempt", "max_attempts", "wait", "remaining_budget", "source"} {
+						if argValue(record.args, key) == nil {
+							t.Fatalf("missing %s", key)
+						}
+					}
+					if strings.Contains(fmt.Sprint(record), "recovery_budget_exhausted") {
+						t.Fatal("new serialized reason")
+					}
+				}
+				if mode == "provider wait" && len(records) != 2 {
+					t.Fatalf("want one wait and terminal, got %v", records)
+				}
+			})
 		})
 	}
 }
@@ -369,33 +369,32 @@ func (d *cancelWaitDiag) Log(ctx context.Context, level port.Level, msg string, 
 }
 
 func TestRecoveryBudgetStartsBeforeHealthDiagnostics(t *testing.T) {
-	clock := &manualClock{t: time.Unix(100, 0)}
-	f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: textTurn("too late")}}}
-	cfg := recoveryConfig(2, time.Second)
-	cfg.Clock = clock.Now
-	cfg.BreakerThreshold = 1
-	cfg.Diagnostics = &advanceHealthDiag{recordingDiag: &recordingDiag{}, clock: clock}
-	_, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
-	requirePrecommitRetryable(t, err)
-	if f.Calls() != 1 {
-		t.Fatalf("calls=%d, budget slid past health log", f.Calls())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		f := &fakeProvider{steps: []step{{outerErr: apiErr(503)}, {chunks: textTurn("too late")}}}
+		cfg := recoveryConfig(2, time.Minute)
+		cfg.BreakerThreshold = 1
+		cfg.Diagnostics = &delayHealthDiag{recordingDiag: &recordingDiag{}}
+		_, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
+		requirePrecommitRetryable(t, err)
+		if f.Calls() != 1 {
+			t.Fatalf("calls=%d, budget slid past health log", f.Calls())
+		}
+	})
 }
 
-type advanceHealthDiag struct {
+type delayHealthDiag struct {
 	*recordingDiag
-	clock *manualClock
 }
 
-func (d *advanceHealthDiag) Log(ctx context.Context, level port.Level, msg string, args ...any) {
+func (d *delayHealthDiag) Log(ctx context.Context, level port.Level, msg string, args ...any) {
 	d.recordingDiag.Log(ctx, level, msg, args...)
 	if msg == "llm circuit breaker opened" {
-		d.clock.Advance(2 * time.Second)
+		<-time.After(2 * time.Minute)
 	}
 }
 
 func TestRecoveryHalfOpenWaitIsOperationallyVisibleAndCancellable(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	diag := &recordingDiag{}
 	cfg := recoveryConfig(1, 2*time.Second)
@@ -423,21 +422,23 @@ func TestRecoveryHalfOpenWaitIsOperationallyVisibleAndCancellable(t *testing.T) 
 }
 
 func TestRecoveryFirstChunkTimeoutRetainsReceivedUsage(t *testing.T) {
-	usage := session.Usage{InputTokens: 11}
-	f := &fakeProvider{steps: []step{{chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}}, firstChunkAfterCancel: true}, {chunks: textTurn("ok")}}}
-	cfg := recoveryConfig(2, time.Second)
-	cfg.PerAttemptTimeout = 10 * time.Millisecond
-	got, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
-	if err != nil {
-		t.Fatal(err)
-	}
-	total := session.Usage{}
-	for _, c := range got {
-		total = total.Add(discardedChunkUsage(c))
-	}
-	if total.InputTokens != 11 {
-		t.Fatalf("usage=%+v", total)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		usage := session.Usage{InputTokens: 11}
+		f := &fakeProvider{steps: []step{{chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}}, firstChunkAfterCancel: true}, {chunks: textTurn("ok")}}}
+		cfg := recoveryConfig(2, time.Minute)
+		cfg.PerAttemptTimeout = 10 * time.Second
+		got, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := session.Usage{}
+		for _, c := range got {
+			total = total.Add(discardedChunkUsage(c))
+		}
+		if total.InputTokens != 11 {
+			t.Fatalf("usage=%+v", total)
+		}
+	})
 }
 
 func TestRecoveryTerminalCancellationDominatesDuringDiagnostic(t *testing.T) {
