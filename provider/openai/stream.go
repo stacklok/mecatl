@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	oai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
@@ -350,6 +354,8 @@ type providerErrorMetadata struct {
 	providerCode    string
 	correlationKind string
 	correlationID   string
+	retryNotBefore  time.Time
+	hasRetryAfter   bool
 }
 
 type responseStreamError struct {
@@ -366,6 +372,9 @@ func (e *responseStreamError) ProviderErrorCorrelationKind() string {
 	return e.metadata.correlationKind
 }
 func (e *responseStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
+func (e *responseStreamError) RetryNotBefore() (time.Time, bool) {
+	return e.metadata.retryNotBefore, e.metadata.hasRetryAfter
+}
 
 // httpMetadataError keeps the SDK error unwrap-visible while exposing a safe
 // display projection plus typed metadata for diagnostics.
@@ -382,6 +391,9 @@ func (e *httpMetadataError) ProviderInBandStatus() int            { return e.met
 func (e *httpMetadataError) ProviderErrorCode() string            { return e.metadata.providerCode }
 func (e *httpMetadataError) ProviderErrorCorrelationKind() string { return e.metadata.correlationKind }
 func (e *httpMetadataError) ProviderErrorCorrelationID() string   { return e.metadata.correlationID }
+func (e *httpMetadataError) RetryNotBefore() (time.Time, bool) {
+	return e.metadata.retryNotBefore, e.metadata.hasRetryAfter
+}
 
 func structuredHTTPErrorText(code, kind, message string) string {
 	label := strings.TrimSpace(code)
@@ -409,6 +421,9 @@ func withHTTPErrorMetadata(err error) error {
 	metadata := providerErrorMetadata{
 		httpStatus:   apiErr.StatusCode,
 		providerCode: apiErr.Code,
+	}
+	if apiErr.Response != nil {
+		metadata.retryNotBefore, metadata.hasRetryAfter = parseRetryAfter(apiErr.Response.Header, time.Now())
 	}
 	requestID := ""
 	if apiErr.Response != nil {
@@ -439,6 +454,41 @@ func (e *responseStreamError) RetryDisposition() session.RetryDisposition {
 		return session.RetryDispositionRetryable
 	}
 	return session.RetryDispositionUnknown
+}
+
+var retryAfterHorizon = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+
+func parseRetryAfter(header http.Header, received time.Time) (time.Time, bool) {
+	values := header.Values("Retry-After")
+	if len(values) != 1 {
+		return time.Time{}, false
+	}
+	value := values[0]
+	if value != "" && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return time.Time{}, false
+		}
+		if seconds > uint64(math.MaxInt64/int64(time.Second)) {
+			return retryAfterHorizon, true
+		}
+		at := received.Add(time.Duration(seconds) * time.Second)
+		if !at.Before(retryAfterHorizon) {
+			return retryAfterHorizon, true
+		}
+		return at, true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if at.Before(received) {
+		return received, true
+	}
+	if !at.Before(retryAfterHorizon) {
+		return retryAfterHorizon, true
+	}
+	return at, true
 }
 
 // retryableStatus reports whether an HTTP status code is transient (worthy of
