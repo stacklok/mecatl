@@ -215,6 +215,180 @@ func TestADR_0366_LiveAndRestoredExactPlanAsk(t *testing.T) {
 	})
 }
 
+// TestADR_0366_OptedInPlanAndScopedGuardrailInStream proves that the same
+// opted-in Converse run can resolve an exact guardrail hold while its plan gate
+// remains reserved for the strict run-and-ask control.
+func TestADR_0366_OptedInPlanAndScopedGuardrailInStream(t *testing.T) {
+	store := memstore.New()
+	read := &scriptTool{name: "Read", readOnly: true, content: "reviewed result"}
+	cat := tool.NewCatalog()
+	cat.MustRegister(read)
+	cat.MustRegister(agent.NewPresentPlanTool())
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(call("read-1", "Read", `{"path":"a"}`)),
+		mockllm.ToolCallTurn(call("plan-1", "PresentPlan", `{"plan":"one"}`)),
+	)
+	eng := agent.NewEngine(agent.Deps{
+		LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(allowRules(), nil),
+		ToolReviewer: heldResultReviewer{}, Interactive: true, Store: store, Model: "test-model",
+	})
+	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: memstore.NewEventLog()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	sess, err := svc.CreateSession(t.Context(), session.ModePlan, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, closeClient := dialGRPC(t, svc)
+	defer closeClient()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	stream, err := client.Converse(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{
+		SessionId: string(sess.ID), Text: "read and present a plan", ServerOwnedPlanContinuation: true,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	var runID string
+	var guardrailAsk *mecatlv1.PermissionAsk
+	for guardrailAsk == nil {
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("guardrail ask not surfaced: %v", err)
+		}
+		if ask := response.GetEvent().GetAsk(); ask != nil {
+			runID, guardrailAsk = response.GetEvent().GetRunId(), ask
+		}
+	}
+	if runID == "" || guardrailAsk.GetTool() != "Read" || guardrailAsk.GetGuardrail().GetReviewId() == "" ||
+		guardrailAsk.GetGuardrail().GetKind() != mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_RESULT_RELEASE {
+		t.Fatalf("first ask is not the exact result-release guardrail: run=%q ask=%+v", runID, guardrailAsk)
+	}
+	send := func(frame *mecatlv1.ResumeApproval) {
+		t.Helper()
+		frame.ExpectedRunId = runID
+		if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_ResumeApproval{ResumeApproval: frame}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expectRefused := func(askID, category string) {
+		t.Helper()
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev := response.GetEvent()
+		if ev.GetType() != "control.refused" || ev.GetRunId() != runID || ev.GetControlRefused().GetAskId() != askID ||
+			ev.GetControlRefused().GetCategory() != category {
+			t.Fatalf("refusal = %+v, want ask=%q category=%q run=%q", ev, askID, category, runID)
+		}
+	}
+	reviewID := guardrailAsk.GetGuardrail().GetReviewId()
+	kind := guardrailAsk.GetGuardrail().GetKind()
+	send(&mecatlv1.ResumeApproval{AskId: guardrailAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+		ReviewId: "wrong-review", GuardrailKind: kind})
+	expectRefused(guardrailAsk.GetAskId(), "approval_intent_mismatch")
+	send(&mecatlv1.ResumeApproval{AskId: guardrailAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+		ReviewId: reviewID, GuardrailKind: mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION})
+	expectRefused(guardrailAsk.GetAskId(), "approval_intent_mismatch")
+	exactGuardrail := &mecatlv1.ResumeApproval{AskId: guardrailAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+		ReviewId: reviewID, GuardrailKind: kind}
+	send(exactGuardrail)
+	var planAsk *mecatlv1.PermissionAsk
+	var toolResults int
+	for planAsk == nil {
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("plan ask not surfaced after exact result release: %v", err)
+		}
+		ev := response.GetEvent()
+		if ev.GetType() == "tool.result" && ev.GetToolResult().GetContent() == "reviewed result" {
+			toolResults++
+		}
+		if ask := ev.GetAsk(); ask != nil {
+			if ask.GetTool() != "PresentPlan" || ask.GetGuardrail() != nil || ev.GetRunId() != runID {
+				t.Fatalf("unexpected ask after guardrail release: %+v", ev)
+			}
+			planAsk = ask
+		}
+	}
+	if read.runs() != 1 || toolResults != 1 || llm.Calls() != 2 {
+		t.Fatalf("result release executed more than once: tool runs=%d results=%d model calls=%d", read.runs(), toolResults, llm.Calls())
+	}
+	// The last accepted guardrail resolution is idempotent; a changed duplicate
+	// is refused. The plan refusal is a frame-order barrier for both duplicates.
+	send(&mecatlv1.ResumeApproval{AskId: guardrailAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+		ReviewId: reviewID, GuardrailKind: kind})
+	send(&mecatlv1.ResumeApproval{AskId: guardrailAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
+		ReviewId: reviewID, GuardrailKind: kind})
+	send(&mecatlv1.ResumeApproval{AskId: planAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE})
+	var changedDuplicateRefusals int
+	for {
+		response, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("plan control refusal not surfaced: %v", err)
+		}
+		ev := response.GetEvent()
+		if ev.GetType() == "result" {
+			t.Fatalf("in-stream plan verdict consumed the pending plan: %+v", ev)
+		}
+		if ev.GetType() != "control.refused" {
+			continue
+		}
+		refused := ev.GetControlRefused()
+		switch refused.GetAskId() {
+		case guardrailAsk.GetAskId():
+			if refused.GetCategory() != "approval_not_pending" {
+				t.Fatalf("changed duplicate category = %q", refused.GetCategory())
+			}
+			changedDuplicateRefusals++
+		case planAsk.GetAskId():
+			if refused.GetCategory() != "plan_resolution_required" || changedDuplicateRefusals != 1 {
+				t.Fatalf("plan refusal=%+v, changed duplicate refusals=%d", refused, changedDuplicateRefusals)
+			}
+			goto planRefused
+		default:
+			t.Fatalf("refusal targeted unexpected ask: %+v", refused)
+		}
+	}
+planRefused:
+	ack, err := client.ResolvePlanAsk(ctx, &mecatlv1.ResolvePlanAskRequest{SessionId: string(sess.ID), ExpectedRunId: runID,
+		AskId: planAsk.GetAskId(), Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY})
+	if err != nil {
+		t.Fatalf("exact plan verdict could not consume still-pending ask: %v", err)
+	}
+	if ack.GetRunId() != runID || ack.GetAskId() != planAsk.GetAskId() {
+		t.Fatalf("exact plan acknowledgement = %+v", ack)
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+	var terminals int
+	for {
+		response, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ev := response.GetEvent(); ev.GetType() == "result" {
+			terminals++
+			if ev.GetResult().GetStop() != string(session.StopPlanIterate) {
+				t.Fatalf("unexpected terminal after exact deny: %+v", ev)
+			}
+		}
+	}
+	if terminals != 1 || read.runs() != 1 || llm.Calls() != 2 {
+		t.Fatalf("terminals=%d tool runs=%d model calls=%d", terminals, read.runs(), llm.Calls())
+	}
+}
+
 // TestStudioPlanAsk_Scenario2_DuplicateAndStaleVerdicts guards the negative
 // branches: ordinary origin, lease-race replacement, and explicit iteration.
 func TestStudioPlanAsk_Scenario2_DuplicateAndStaleVerdicts(t *testing.T) {

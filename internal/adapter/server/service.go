@@ -6332,23 +6332,7 @@ func (s *Service) resolveRunState(id session.SessionID, st *runState, target *ag
 		}
 		return fmt.Errorf("%w: ask was already resolved", agent.ErrApprovalNotPending)
 	}
-	if st.serverOwnedPlanContinuation && resolution.ReviewID == "" && resolution.Kind == "" {
-		// This run's plan gate belongs to ResolvePlanAsk. Ordinary root and
-		// surfaced child asks keep their in-stream delivery path. Scoped
-		// guardrail controls use ResolveApproval's explicit review identity.
-		if !validRunAskVerdict(resolution.Verdict) {
-			return agent.ErrApprovalGrantIneligible
-		}
-		switch target.ResolveOrdinaryAsk(resolution.AskID, resolution.Verdict) {
-		case agent.AskResolutionPlanOriginated:
-			return ErrPlanResolutionRequired
-		case agent.AskResolutionNotPending:
-			return agent.ErrApprovalNotPending
-		case agent.AskResolutionResolved:
-		default:
-			return agent.ErrApprovalNotPending
-		}
-	} else if err := target.ResolveApproval(resolution); err != nil {
+	if err := submitInStreamApproval(target, resolution, st.serverOwnedPlanContinuation); err != nil {
 		return err
 	}
 	// Set only after atomic validation+submission succeeds. If permission.ask is
@@ -6356,6 +6340,29 @@ func (s *Service) resolveRunState(id session.SessionID, st *runState, target *ag
 	st.resolvedAskID = resolution.AskID
 	st.acceptedApproval = &resolution
 	return nil
+}
+
+// submitInStreamApproval keeps the opted-in plan gate on ResolvePlanAsk while
+// preserving the exact review identity required by guardrail-scoped approvals.
+func submitInStreamApproval(target *agent.Run, resolution agent.ApprovalResolution, serverOwnedPlanContinuation bool) error {
+	if !serverOwnedPlanContinuation || resolution.ReviewID != "" || resolution.Kind != "" {
+		return target.ResolveApproval(resolution)
+	}
+	// Ordinary root and surfaced child asks retain their in-stream path. A plan
+	// ask stays pending for the strict run-and-ask control.
+	if !validRunAskVerdict(resolution.Verdict) {
+		return agent.ErrApprovalGrantIneligible
+	}
+	switch target.ResolveOrdinaryAsk(resolution.AskID, resolution.Verdict) {
+	case agent.AskResolutionPlanOriginated:
+		return ErrPlanResolutionRequired
+	case agent.AskResolutionNotPending:
+		return agent.ErrApprovalNotPending
+	case agent.AskResolutionResolved:
+		return nil
+	default:
+		return agent.ErrApprovalNotPending
+	}
 }
 
 // Approve resolves the paused permission ask on the session's in-flight run with
