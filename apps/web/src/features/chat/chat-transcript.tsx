@@ -13,6 +13,7 @@ import {
 import { FailedTurnCard } from "./failed-turn-card";
 import { type ChatImage, chatImageDisplay } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
@@ -73,6 +74,8 @@ interface TranscriptRowProps extends TranscriptRowState {
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
   onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
+  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
+  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
   threadDisabled: boolean;
   threadSessionId?: string;
   userName: string;
@@ -91,6 +94,8 @@ function TranscriptRow({
   onPreviewImage,
   onPreviewTool,
   onRespondToApproval,
+  onRespondToPlan,
+  planUnavailableReason,
   showToolCalls,
   streaming,
   threadDisabled,
@@ -237,15 +242,30 @@ function TranscriptRow({
                   ))}
                 {approvals
                   ?.filter((approval) => approvalMatchesToolCall(approval, tool))
-                  .map((approval) => (
-                    <ApprovalPanel
-                      approval={approval}
-                      disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-                      key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                      onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
-                      uncertain={approvalUncertain?.(approval)}
-                    />
-                  ))}
+                  .map((approval) =>
+                    approval.tool === "PresentPlan" ? (
+                      <PlanReviewCard
+                        approval={approval}
+                        disabled={
+                          !approval.controlTarget || (approvalDisabled?.(approval) ?? false)
+                        }
+                        key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                        onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
+                        uncertain={approvalUncertain?.(approval)}
+                        unavailableReason={planUnavailableReason?.(approval)}
+                      />
+                    ) : (
+                      <ApprovalPanel
+                        approval={approval}
+                        disabled={
+                          !approval.controlTarget || (approvalDisabled?.(approval) ?? false)
+                        }
+                        key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                        onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
+                        uncertain={approvalUncertain?.(approval)}
+                      />
+                    ),
+                  )}
               </li>
             ))}
           </ol>
@@ -326,6 +346,8 @@ export interface ChatTranscriptProps {
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
   onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
+  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
+  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
   showToolCalls: boolean;
   streamingMessageId?: string;
   threadDisabled?: boolean;
@@ -347,6 +369,8 @@ export function ChatTranscript({
   onPreviewImage,
   onPreviewTool,
   onRespondToApproval,
+  onRespondToPlan,
+  planUnavailableReason,
   showToolCalls,
   streamingMessageId,
   threadDisabled = false,
@@ -362,6 +386,8 @@ export function ChatTranscript({
     onPreviewTool,
     onReviewAuthorization,
     onRespondToApproval,
+    onRespondToPlan,
+    planUnavailableReason,
   });
   actions.current = {
     approvalDisabled,
@@ -372,6 +398,8 @@ export function ChatTranscript({
     onPreviewTool,
     onReviewAuthorization,
     onRespondToApproval,
+    onRespondToPlan,
+    planUnavailableReason,
   };
   const openActivity = useCallback(
     (focus: DelegationFocus, opener: HTMLButtonElement) =>
@@ -397,6 +425,15 @@ export function ChatTranscript({
   const respondToApproval = useCallback(
     (approval: ApprovalRequest, verdict: ApprovalVerdict) =>
       actions.current.onRespondToApproval?.(approval, verdict),
+    [],
+  );
+  const respondToPlan = useCallback(
+    (approval: ApprovalRequest, verdict: PlanVerdict) =>
+      actions.current.onRespondToPlan?.(approval, verdict),
+    [],
+  );
+  const planUnavailable = useCallback(
+    (approval: ApprovalRequest) => actions.current.planUnavailableReason?.(approval),
     [],
   );
   const isApprovalDisabled = useCallback(
@@ -432,6 +469,8 @@ export function ChatTranscript({
           onPreviewImage={onPreviewImage ? previewImage : undefined}
           onPreviewTool={onPreviewTool ? previewTool : undefined}
           onRespondToApproval={onRespondToApproval ? respondToApproval : undefined}
+          onRespondToPlan={onRespondToPlan ? respondToPlan : undefined}
+          planUnavailableReason={planUnavailableReason ? planUnavailable : undefined}
           showToolCalls={showToolCalls}
           streaming={message.id === streamingMessageId}
           threadDisabled={threadDisabled}
@@ -439,15 +478,26 @@ export function ChatTranscript({
           userName={userName}
         />
       ))}
-      {unmatched.map((approval) => (
-        <ApprovalPanel
-          approval={approval}
-          disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-          key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-          onRespond={(verdict) => respondToApproval(approval, verdict)}
-          uncertain={approvalUncertain?.(approval)}
-        />
-      ))}
+      {unmatched.map((approval) =>
+        approval.tool === "PresentPlan" ? (
+          <PlanReviewCard
+            approval={approval}
+            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+            onRespond={(verdict) => respondToPlan(approval, verdict)}
+            uncertain={approvalUncertain?.(approval)}
+            unavailableReason={planUnavailableReason?.(approval)}
+          />
+        ) : (
+          <ApprovalPanel
+            approval={approval}
+            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+            onRespond={(verdict) => respondToApproval(approval, verdict)}
+            uncertain={approvalUncertain?.(approval)}
+          />
+        ),
+      )}
     </div>
   );
 }

@@ -570,9 +570,12 @@ describe("mounted chat workspace BFF boundary", () => {
       );
     });
     expect(await screen.findByText("Original plan")).toBeTruthy();
-    expect(screen.getByText(/plan ask is stale/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Approve & run" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Iterate" })).toBeNull();
+    const staleCard = screen.getByText("Original plan").closest("section") as HTMLElement;
+    const currentCard = screen.getByText("Successor plan").closest("section") as HTMLElement;
+    expect(within(staleCard).getByText(/plan ask is stale/i)).toBeTruthy();
+    expect(within(staleCard).queryByRole("button", { name: "Approve & run" })).toBeNull();
+    expect(within(staleCard).queryByRole("button", { name: "Iterate" })).toBeNull();
+    expect(within(currentCard).getByRole("button", { name: "Approve & run" })).toBeTruthy();
     expect(bff.requests.filter((request) => request.pathname.includes("/plan-asks/"))).toHaveLength(
       0,
     );
@@ -608,6 +611,9 @@ describe("mounted chat workspace BFF boundary", () => {
     await act(async () => {
       acknowledgement.resolve(json({ code: "stale_run_control", detail: "stale" }, 409));
     });
+    expect(await screen.findByText(/outcome is uncertain/i)).toBeTruthy();
+    fireEvent.click(button);
+    expect(bff.requestsAt("POST", planPath)).toHaveLength(1);
   });
 
   it("does not treat a broken continuation as the earlier authorization park", async () => {

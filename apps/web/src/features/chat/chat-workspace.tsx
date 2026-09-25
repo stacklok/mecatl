@@ -169,7 +169,7 @@ import {
 } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
 import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
-import { PlanControlBridge, type PlanVerdict } from "./plan-control-bridge";
+import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import { QueuedMessageList } from "./queued-message-list";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import {
@@ -396,7 +396,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
   const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
-  const planVerdictInFlight = useRef(false);
+  const planVerdictsInFlight = useRef(new Set<string>());
+  const planVerdictsUncertain = useRef(new Set<string>());
+  const [planVerdictEpoch, setPlanVerdictEpoch] = useState(0);
   const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
@@ -514,6 +516,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setApprovals([]);
     ordinaryVerdictsInFlight.current.clear();
     ordinaryVerdictsUncertain.current.clear();
+    planVerdictsInFlight.current.clear();
+    planVerdictsUncertain.current.clear();
     settledAskKeys.current.clear();
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
@@ -709,11 +713,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       awayTracker.current.clear();
     },
     [],
-  );
-  const planApproval = approvals.find((candidate) => candidate.tool === "PresentPlan");
-  const ordinaryApprovals = useMemo(
-    () => approvals.filter((candidate) => candidate.tool !== "PresentPlan"),
-    [approvals],
   );
   const displayedPreview =
     contentPreview?.kind === "authorization"
@@ -1807,6 +1806,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (owner.sessionId) {
               const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
               ordinaryVerdictsUncertain.current.delete(key);
+              planVerdictsUncertain.current.delete(key);
             }
             setOrdinaryVerdictEpoch((value) => value + 1);
           }
@@ -1819,6 +1819,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             if (owner.sessionId) {
               const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
               ordinaryVerdictsUncertain.current.delete(key);
+              planVerdictsUncertain.current.delete(key);
             }
             setOrdinaryVerdictEpoch((value) => value + 1);
           }
@@ -2096,7 +2097,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     return current.filter(
       (candidate) =>
         candidate.controlTarget &&
-        ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+        (ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)) ||
+          planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget))),
     );
   }
 
@@ -2157,21 +2159,52 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }
   }
 
-  async function respondToPlan(verdict: PlanVerdict) {
-    if (!planApproval || planVerdictInFlight.current) return;
+  function planUnavailableReason(candidate: ApprovalRequest): string | undefined {
+    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
+    if (featureReason) return featureReason;
     const activeTarget = controlTarget(runTarget, sessionId);
-    const target = planApproval.controlTarget;
-    if (
-      !target ||
-      target.askId !== planApproval.askId ||
+    const target = candidate.controlTarget;
+    return !target ||
+      target.askId !== candidate.askId ||
       target.sessionId !== activeTarget?.sessionId ||
       target.runId !== activeTarget?.runId ||
       target.sessionId !== viewedSessionId.current
+      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
+      : undefined;
+  }
+
+  function planApprovalDisabled(candidate: ApprovalRequest): boolean {
+    void planVerdictEpoch;
+    const target = candidate.controlTarget;
+    return Boolean(
+      !target ||
+        controlPending ||
+        planVerdictsInFlight.current.has(approvalKey(target)) ||
+        planVerdictsUncertain.current.has(approvalKey(target)),
+    );
+  }
+
+  function planApprovalUncertain(candidate: ApprovalRequest): boolean {
+    void planVerdictEpoch;
+    return Boolean(
+      candidate.controlTarget &&
+        planVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+    );
+  }
+
+  async function respondToPlan(candidate: ApprovalRequest, verdict: PlanVerdict) {
+    if (
+      candidate.tool !== "PresentPlan" ||
+      planUnavailableReason(candidate) ||
+      planApprovalDisabled(candidate)
     ) {
       setError("This plan ask is stale. Refresh activity before deciding.");
       return;
     }
-    planVerdictInFlight.current = true;
+    const target = candidate.controlTarget;
+    if (!target) return;
+    const key = approvalKey(target);
+    planVerdictsInFlight.current.add(key);
     const askId = target.askId;
     setControlPending(true);
     setError(undefined);
@@ -2181,6 +2214,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         path: { askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
+      settledAskKeys.current.add(`${target.runId}\u0000${askId}`);
       if (viewedSessionId.current === target.sessionId) {
         setApprovals((current) => retractApproval(current, askId, target.runId));
       }
@@ -2211,10 +2245,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         );
       }
     } catch (caught) {
+      planVerdictsUncertain.current.add(key);
+      setPlanVerdictEpoch((value) => value + 1);
       if (viewedSessionId.current === target.sessionId) setError(errorMessage(caught));
     } finally {
       planFollowController.current = undefined;
-      planVerdictInFlight.current = false;
+      planVerdictsInFlight.current.delete(key);
       setControlPending(false);
     }
   }
@@ -2598,7 +2634,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             {showSteerTrace && <SteerTrace entries={steerTrace} />}
             {transcript.isPending && sessionId && !isRunning ? (
               <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
-            ) : messages.length === 0 && ordinaryApprovals.length === 0 ? (
+            ) : messages.length === 0 && approvals.length === 0 ? (
               <div className="m-auto flex flex-col items-center">
                 <DraftGreeting
                   onPickSeed={(seed) => {
@@ -2613,9 +2649,17 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             ) : (
               <ChatTranscript
                 agentName={agentName}
-                approvalDisabled={ordinaryApprovalDisabled}
-                approvalUncertain={ordinaryApprovalUncertain}
-                approvals={ordinaryApprovals}
+                approvalDisabled={(candidate) =>
+                  candidate.tool === "PresentPlan"
+                    ? planApprovalDisabled(candidate)
+                    : ordinaryApprovalDisabled(candidate)
+                }
+                approvalUncertain={(candidate) =>
+                  candidate.tool === "PresentPlan"
+                    ? planApprovalUncertain(candidate)
+                    : ordinaryApprovalUncertain(candidate)
+                }
+                approvals={approvals}
                 delegationsByMessageId={delegationPlacement.byMessageId}
                 messages={messages}
                 onOpenActivity={(focus, opener) => {
@@ -2636,6 +2680,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 onRespondToApproval={(candidate, verdict) =>
                   void respondToApproval(candidate, verdict)
                 }
+                onRespondToPlan={(candidate, verdict) => void respondToPlan(candidate, verdict)}
+                planUnavailableReason={planUnavailableReason}
                 showToolCalls={showToolCalls}
                 streamingMessageId={
                   isRunning && messages.at(-1)?.role === "assistant"
@@ -2716,22 +2762,6 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           <div className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg bg-success/10 px-3 py-2 text-sm text-foreground">
             {notice}
           </div>
-        )}
-        {planApproval && (
-          <PlanControlBridge
-            approval={planApproval}
-            disabled={controlPending}
-            onRespond={(verdict) => void respondToPlan(verdict)}
-            unavailableReason={
-              exactPlanControlAvailability(runtime.data?.features).reason ??
-              (planApproval.controlTarget?.askId === planApproval.askId &&
-              planApproval.controlTarget?.sessionId === sessionId &&
-              planApproval.controlTarget?.runId === runTarget?.runId &&
-              runTarget?.sessionId === sessionId
-                ? undefined
-                : "This plan ask is stale or its exact run is unavailable. Refresh activity.")
-            }
-          />
         )}
         {failedRun && (
           <RunFailurePanel
@@ -2958,6 +2988,8 @@ export function Message({
   onPreviewImage,
   onPreviewTool,
   onRespondToApproval,
+  onRespondToPlan,
+  planUnavailableReason,
   showToolCalls,
   streaming,
   threadDisabled,
@@ -2975,6 +3007,8 @@ export function Message({
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
   onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
+  onRespondToPlan?: (approval: ApprovalRequest, verdict: PlanVerdict) => void;
+  planUnavailableReason?: (approval: ApprovalRequest) => string | undefined;
   showToolCalls: boolean;
   streaming: boolean;
   threadDisabled: boolean;
@@ -3082,21 +3116,44 @@ export function Message({
           <ToolActivityList
             approvalDisabled={approvalDisabled}
             approvalUncertain={approvalUncertain}
-            approvals={matching}
+            approvals={matching.filter((approval) => approval.tool !== "PresentPlan")}
             onPreview={onPreviewTool}
             onRespondToApproval={onRespondToApproval}
             tools={message.tools}
           />
         )}
-        {unmatched.map((approval) => (
-          <ApprovalPanel
-            approval={approval}
-            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
-            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-            onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
-            uncertain={approvalUncertain?.(approval)}
-          />
-        ))}
+        {matching
+          .filter((approval) => approval.tool === "PresentPlan")
+          .map((approval) => (
+            <PlanReviewCard
+              approval={approval}
+              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
+              uncertain={approvalUncertain?.(approval)}
+              unavailableReason={planUnavailableReason?.(approval)}
+            />
+          ))}
+        {unmatched.map((approval) =>
+          approval.tool === "PresentPlan" ? (
+            <PlanReviewCard
+              approval={approval}
+              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+              onRespond={(verdict) => onRespondToPlan?.(approval, verdict)}
+              uncertain={approvalUncertain?.(approval)}
+              unavailableReason={planUnavailableReason?.(approval)}
+            />
+          ) : (
+            <ApprovalPanel
+              approval={approval}
+              disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+              onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
+              uncertain={approvalUncertain?.(approval)}
+            />
+          ),
+        )}
         {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
         {message.failure && (
           <FailedTurnCard

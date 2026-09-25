@@ -3,12 +3,14 @@
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import {
   cancelRun,
+  resolvePlanAsk,
   resolveRunPermission,
   startRun,
   watchSessionActivity,
 } from "@mecatl-studio/contracts/generated";
 import {
   forkSessionMutation,
+  getRuntimeOptions,
   getRuntimeSettingsOptions,
   getSessionDetailOptions,
   getSessionTranscriptOptions,
@@ -71,7 +73,8 @@ import {
 } from "./chat-state";
 import { Message } from "./chat-workspace";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
-import { PlanControlBridge } from "./plan-control-bridge";
+import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
+import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
 import {
   CATCHING_UP_NOTICE,
   decideTruncation,
@@ -279,14 +282,14 @@ export function SideThreadPanel({
                     agentName={agentName}
                     approvalDisabled={run.approvalDisabled}
                     approvalUncertain={run.approvalUncertain}
-                    approvals={run.approvals.filter(
-                      (approval) =>
-                        approval.tool !== "PresentPlan" &&
-                        message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+                    approvals={run.approvals.filter((approval) =>
+                      message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
                     )}
                     key={message.id}
                     message={message}
                     onRespondToApproval={run.respondToApproval}
+                    onRespondToPlan={run.respondToPlan}
+                    planUnavailableReason={run.planUnavailableReason}
                     showToolCalls={showTools}
                     streaming={run.isRunning && index === run.messages.length - 1}
                     threadDisabled
@@ -299,20 +302,30 @@ export function SideThreadPanel({
             {run.approvals
               .filter(
                 (approval) =>
-                  approval.tool !== "PresentPlan" &&
                   !run.messages.some((message) =>
                     message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
                   ),
               )
-              .map((approval) => (
-                <ApprovalPanel
-                  approval={approval}
-                  disabled={run.approvalDisabled(approval)}
-                  key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-                  onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
-                  uncertain={run.approvalUncertain(approval)}
-                />
-              ))}
+              .map((approval) =>
+                approval.tool === "PresentPlan" ? (
+                  <PlanReviewCard
+                    approval={approval}
+                    disabled={run.approvalDisabled(approval)}
+                    key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                    onRespond={(verdict) => void run.respondToPlan(approval, verdict)}
+                    uncertain={run.approvalUncertain(approval)}
+                    unavailableReason={run.planUnavailableReason(approval)}
+                  />
+                ) : (
+                  <ApprovalPanel
+                    approval={approval}
+                    disabled={run.approvalDisabled(approval)}
+                    key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+                    onRespond={(verdict) => void run.respondToApproval(approval, verdict)}
+                    uncertain={run.approvalUncertain(approval)}
+                  />
+                ),
+              )}
           </div>
         </div>
 
@@ -328,18 +341,6 @@ export function SideThreadPanel({
             {run.notice}
           </div>
         )}
-
-        {run.approvals
-          .filter((approval) => approval.tool === "PresentPlan")
-          .map((approval) => (
-            <PlanControlBridge
-              approval={approval}
-              disabled
-              key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
-              onRespond={() => undefined}
-              unavailableReason="Open this thread as a full chat to review its plan."
-            />
-          ))}
 
         {run.isRunning && run.runId && (
           <div className="mx-4 mb-2 flex items-center justify-end">
@@ -441,6 +442,7 @@ export function SideThreadPanel({
  */
 function useSideThreadRun(sessionId: string) {
   const queryClient = useQueryClient();
+  const runtime = useQuery(getRuntimeOptions());
   const sessions = useQuery(listSessionsOptions());
   const transcript = useQuery({
     ...getSessionTranscriptOptions({ path: { sessionId } }),
@@ -454,11 +456,14 @@ function useSideThreadRun(sessionId: string) {
   const [notice, setNotice] = useState<string>();
   const [controlPending, setControlPending] = useState(false);
   const runAbort = useRef<AbortController | undefined>(undefined);
+  const planFollowAbort = useRef<AbortController | undefined>(undefined);
   const runIdRef = useRef<string | undefined>(undefined);
   const verdictInFlight = useRef(new Set<string>());
   const uncertainVerdicts = useRef(new Set<string>());
   const acknowledgedVerdicts = useRef(new Set<string>());
   const [verdictEpoch, setVerdictEpoch] = useState(0);
+
+  useEffect(() => () => planFollowAbort.current?.abort(), []);
 
   useEffect(() => {
     if (!isRunning && transcript.data)
@@ -468,6 +473,7 @@ function useSideThreadRun(sessionId: string) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally resets on session identity alone, not on any value read inside
   useEffect(() => {
     runAbort.current?.abort();
+    planFollowAbort.current?.abort();
     runAbort.current = undefined;
     setError(undefined);
     setNotice(undefined);
@@ -739,6 +745,72 @@ function useSideThreadRun(sessionId: string) {
     );
   }
 
+  function planUnavailableReason(approval: ApprovalRequest): string | undefined {
+    const featureReason = exactPlanControlAvailability(runtime.data?.features).reason;
+    if (featureReason) return featureReason;
+    const target = approval.controlTarget;
+    return !target ||
+      target.askId !== approval.askId ||
+      target.sessionId !== sessionId ||
+      target.runId !== runIdRef.current
+      ? "This plan ask is stale or its exact run is unavailable. Refresh activity."
+      : undefined;
+  }
+
+  async function respondToPlan(approval: ApprovalRequest, verdict: PlanVerdict) {
+    if (
+      approval.tool !== "PresentPlan" ||
+      planUnavailableReason(approval) ||
+      approvalDisabled(approval)
+    )
+      return;
+    const target = approval.controlTarget;
+    if (!target) return;
+    const key = approvalKey(target);
+    verdictInFlight.current.add(key);
+    setControlPending(true);
+    try {
+      await resolvePlanAsk({
+        body: { verdict },
+        path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
+        throwOnError: true,
+      });
+      acknowledgedVerdicts.current.add(key);
+      setApprovals((current) => retractApproval(current, target.askId, target.runId));
+      if (verdict === "iterate") {
+        setNotice("Plan iteration requested.");
+      } else {
+        setNotice("Plan approval accepted; checking whether execution started.");
+        const controller = new AbortController();
+        planFollowAbort.current = controller;
+        const evidence = await followPlanContinuationFromBff(
+          { askId: target.askId, planRunId: target.runId, sessionId: target.sessionId },
+          controller.signal,
+        );
+        if (!controller.signal.aborted) {
+          if (evidence.kind === "started") setNotice("Plan approved; execution started.");
+          else if (evidence.kind === "failed") {
+            setNotice(undefined);
+            setError("Plan approval was recorded, but execution could not start.");
+          } else {
+            setNotice(undefined);
+            setError(
+              "Plan approval was recorded, but could not confirm whether execution started. Refresh activity to check.",
+            );
+          }
+        }
+      }
+    } catch (caught) {
+      uncertainVerdicts.current.add(key);
+      setVerdictEpoch((value) => value + 1);
+      setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
+    } finally {
+      planFollowAbort.current = undefined;
+      verdictInFlight.current.delete(key);
+      setControlPending(false);
+    }
+  }
+
   async function respondToApproval(approval: ApprovalRequest, verdict: ApprovalVerdict) {
     if (
       approval.tool === "PresentPlan" ||
@@ -780,6 +852,8 @@ function useSideThreadRun(sessionId: string) {
     messages,
     notice,
     respondToApproval,
+    respondToPlan,
+    planUnavailableReason,
     runId,
     sendPrompt,
     setError,

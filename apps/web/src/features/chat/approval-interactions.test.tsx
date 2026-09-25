@@ -81,6 +81,7 @@ class Fixture {
   readonly stream = heldStream();
   readonly requests: Array<{ body: unknown; method: string; pathname: string }> = [];
   readonly verdicts: Array<Promise<Response>> = [];
+  runtimeFeatures: string[] = [];
 
   readonly fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -92,7 +93,11 @@ class Fixture {
       pathname,
     });
     if (pathname === "/api/v1/runtime")
-      return json({ capabilities: { image: false, posture: "managed" }, connection: "online" });
+      return json({
+        capabilities: { image: false, posture: "managed" },
+        connection: "online",
+        features: this.runtimeFeatures,
+      });
     if (pathname === "/api/v1/settings/runtime") return json({ models: [], modelsSupported: true });
     if (pathname === "/api/v1/sessions")
       return json({
@@ -131,6 +136,11 @@ class Fixture {
     if (pathname.includes("/permissions/")) {
       const verdict = this.verdicts.shift();
       if (!verdict) throw new Error(`Unexpected verdict: ${pathname}`);
+      return verdict;
+    }
+    if (pathname.includes("/plan-asks/")) {
+      const verdict = this.verdicts.shift();
+      if (!verdict) throw new Error(`Unexpected plan verdict: ${pathname}`);
       return verdict;
     }
     throw new Error(`Unexpected request: ${request.method} ${pathname}`);
@@ -585,5 +595,48 @@ describe("ordinary approval interactions", () => {
       expect(await screen.findByText(/outcome is uncertain/i)).toBeTruthy();
       cleanup();
     }
+  });
+});
+
+describe("side-thread plan review", () => {
+  it("iterates the exact plan ask in its independent transcript", async () => {
+    const fixture = new Fixture();
+    fixture.runtimeFeatures = ["exact_plan_ask_control"];
+    fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+    await mount(fixture, true);
+    await act(async () => {
+      fixture.stream.send({ runId: "run-plan", sessionId: "thread-a", type: "run.started" });
+      fixture.stream.send(
+        event("tool.call", "1", "run-plan", {
+          args: '{"plan":"Side plan"}',
+          id: "call-plan",
+          name: "PresentPlan",
+        }),
+      );
+      fixture.stream.send(
+        event("permission.ask", "2", "run-plan", {
+          args: '{"plan":"Side plan","note":"Check side thread"}',
+          askId: "ask-plan",
+          callId: "call-plan",
+          reason: "Review",
+          tool: "PresentPlan",
+        }),
+      );
+    });
+    const card = await screen.findByRole("region", { name: "Plan review" });
+    expect(within(card).getByText("Side plan")).toBeTruthy();
+    expect(within(card).getByText("Check side thread")).toBeTruthy();
+    fireEvent.click(within(card).getByRole("button", { name: "Iterate" }));
+    await waitFor(() =>
+      expect(
+        fixture.requests.filter((request) => request.pathname.includes("/plan-asks/")),
+      ).toEqual([
+        {
+          body: { verdict: "iterate" },
+          method: "POST",
+          pathname: "/api/v1/sessions/thread-a/runs/run-plan/plan-asks/ask-plan",
+        },
+      ]),
+    );
   });
 });
