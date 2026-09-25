@@ -20,10 +20,13 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 )
 
-// maxToolResultLines caps how many visible display rows of a tool result are
-// shown inline; the rest collapse into a "+N more lines" affordance so a giant
-// Read result doesn't drown the scrollback.
+// maxToolResultLines retains the independent preview limit used outside active
+// conversation tool cards, including MCP resource previews.
 const maxToolResultLines = 12
+
+// defaultCollapsedToolResultRows is the active conversation's shipped collapsed
+// result-row budget. Expanded results and specialized card bodies do not use it.
+const defaultCollapsedToolResultRows = 3
 
 // maxDiffLines caps how many lines of each diff side (Edit old/new, Write
 // content) show inline when collapsed; ctrl+t expands to the full diff.
@@ -868,6 +871,102 @@ func renderToolHeader(glyph, glyphText, label string, nameStyle lipgloss.Style, 
 	return strings.Join(rows, "\n")
 }
 
+// renderCollapsedToolHeader packs the status, complete display name, and a
+// deterministic prefix of complete argument segments into one display row.
+func renderCollapsedToolHeader(glyph, glyphText, label string, segments []string, nameStyle, argStyle lipgloss.Style, width int) string {
+	label = oneLine(terminaltext.Sanitize(label))
+	for i := range segments {
+		segments[i] = oneLine(terminaltext.Sanitize(segments[i]))
+	}
+	if width <= 0 {
+		line := glyph + nameStyle.Render(" "+label)
+		if len(segments) > 0 {
+			line += argStyle.Render(" · " + strings.Join(segments, " · "))
+		}
+		return line
+	}
+	if width <= lipgloss.Width(glyphText) {
+		return ansi.TruncateWc(glyph, width, "")
+	}
+
+	namePrefix := glyphText + " "
+	nameWidth := width - lipgloss.Width(namePrefix)
+	if lipgloss.Width(label) > nameWidth {
+		available := width - lipgloss.Width(glyphText)
+		if available == 1 {
+			return glyph + nameStyle.Render("…")
+		}
+		return glyph + nameStyle.Render(" "+ansi.TruncateWc(label, max(0, available-1), "…"))
+	}
+
+	shown := 0
+	plain := namePrefix + label
+	for shown < len(segments) {
+		candidate := plain + " · " + segments[shown]
+		if lipgloss.Width(candidate) > width {
+			break
+		}
+		plain = candidate
+		shown++
+	}
+	omitted := shown < len(segments)
+	if omitted {
+		for shown > 0 && lipgloss.Width(plain+" · …") > width {
+			shown--
+			plain = namePrefix + label
+			if shown > 0 {
+				plain += " · " + strings.Join(segments[:shown], " · ")
+			}
+		}
+	}
+
+	out := glyph + nameStyle.Render(" "+label)
+	if shown > 0 {
+		out += argStyle.Render(" · " + strings.Join(segments[:shown], " · "))
+	}
+	if omitted && lipgloss.Width(ansi.Strip(out))+lipgloss.Width(" · …") <= width {
+		out += argStyle.Render(" · …")
+	}
+	return out
+}
+
+func collapsedToolArgumentSegments(b *block) []string {
+	if b.team || b.subagent || b.toolName == "Edit" || b.toolName == "Write" {
+		return nil
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(b.toolArgs)), &obj); err != nil || len(obj) == 0 {
+		return nil
+	}
+	if b.toolName == "Skill" {
+		segments := make([]string, 0, 2)
+		if name := compactStringArgument(obj["name"]); name != "" {
+			segments = append(segments, name)
+		}
+		if asset := compactStringArgument(obj["asset"]); asset != "" {
+			segments = append(segments, "asset: "+asset)
+		}
+		return segments
+	}
+	keys := sortedArgKeys(obj)
+	segments := make([]string, 0, len(keys))
+	for _, key := range keys {
+		segments = append(segments, terminaltext.Sanitize(key)+": "+summarizeValue(obj[key]))
+	}
+	return segments
+}
+
+func compactStringArgument(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return oneLine(terminaltext.Sanitize(value))
+}
+
 // renderToolCardText wraps plain card content before applying one region's
 // existing style, so ANSI styling cannot affect width accounting.
 func renderToolCardText(style lipgloss.Style, text string, bodyWidth int) string {
@@ -1030,20 +1129,13 @@ func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
 			// Edit/Write render their change as a diff in place of the raw JSON args.
 			return diff
 		}
-		if expand {
-			// Expanded: always the FULL pretty-printed JSON (the inspect path; the summary
-			// is collapsed-only, so ctrl+t reveals everything). Wrap raw JSON before its
-			// style so the card row budget is ANSI-independent.
-			if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-				return renderToolCardText(r.th.Style("toolArgs"), jsonArgs, bodyWidth)
-			}
-		} else if summary, ok := r.summarizeArgs(b.toolArgs); ok {
-			// Collapsed: the compact key:value summary in place of raw JSON (issue #24).
-			args = summary
-		} else if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-			// Collapsed but the args aren't a JSON object (bare array/scalar/odd shape):
-			// fall back to the existing pretty-JSON behaviour.
-			args = r.th.Style("toolArgs").Render(jsonArgs)
+		if !expand {
+			return ""
+		}
+		// Expanded: always the full pretty-printed JSON; collapsed arguments
+		// have already moved into the one-line header.
+		if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
+			return renderToolCardText(r.th.Style("toolArgs"), jsonArgs, bodyWidth)
 		}
 	}
 	return wrapToolCardRegion(args, bodyWidth)
@@ -1941,14 +2033,14 @@ func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) st
 	if bodyWidth > 0 {
 		body = ansi.Hardwrap(body, bodyWidth, true)
 	}
-	return truncateLinesTailMark(body, maxToolResultLines, "", r.marks.expandTools)
+	return truncateLinesTailMark(body, defaultCollapsedToolResultRows, "", r.marks.expandTools)
 }
 
 func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {
 	wrapped := wrapResultDisplayLines(lines, bodyWidth)
-	if len(wrapped) > maxToolResultLines {
-		return append(wrapped[:maxToolResultLines], toolResultLine{
-			text:  r.collapseMarker(len(wrapped) - maxToolResultLines),
+	if len(wrapped) > defaultCollapsedToolResultRows {
+		return append(wrapped[:defaultCollapsedToolResultRows], toolResultLine{
+			text:  r.collapseMarker(len(wrapped) - defaultCollapsedToolResultRows),
 			style: resultLineMarker,
 		})
 	}

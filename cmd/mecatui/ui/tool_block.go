@@ -47,6 +47,13 @@ func (r *renderer) prepareToolCard(b *block, expand bool) preparedToolCard {
 		headLabel = mcpName
 	}
 	head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style("toolName"), bodyWidth)
+	if !expand {
+		head = renderCollapsedToolHeader(
+			glyph, glyphText, headLabel,
+			collapsedToolArgumentSegments(b),
+			r.th.Style("toolName"), r.th.Style("toolArgs"), bodyWidth,
+		)
+	}
 	if isMCP && expand {
 		head += "\n" + renderToolCardText(r.th.Style("muted"), terminaltext.Sanitize(b.toolName), bodyWidth)
 	}
