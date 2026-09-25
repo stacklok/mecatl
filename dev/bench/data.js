@@ -246732,6 +246732,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790329647597,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4acc5959d66e213c5ced5c04bef95542f43b9901",
+          "message": "test(mecatui): eliminate real polling waits with virtual time (#1919)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T13:21:19+03:00",
+          "tree_id": "76c3c1472964d818f8706dd4a6088703200ded73",
+          "url": "https://github.com/stacklok/mecatl/commit/4acc5959d66e213c5ced5c04bef95542f43b9901"
+        },
+        "date": 1790332399482,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -358462,6 +358496,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790332396456,
+  "lastUpdate": 1790332400630,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
