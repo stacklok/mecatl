@@ -270,7 +270,7 @@ func driveSubagentWithRoleMetrics(t *testing.T) []*dto.MetricFamily {
 	parentCat.MustRegister(task)
 	// Role "" routes the parent through the SAME scoper onto the "main" family —
 	// the uniform-label property the cmd wiring establishes with WithRole(RoleMain).
-	parentEng := newChildEngine(cfg, "", parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	parentWS := osfsWSForTest(t, ws)
 	parentEnv := testEnvironment(parentWS, nil)

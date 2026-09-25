@@ -250,9 +250,10 @@ type PlanApprovalStore interface {
 	ConsumePlanApproval(session.SessionID) (PlanApprovalReceipt, bool)
 }
 
-// ToolReviewer performs one contextual tool review.
+// ToolReviewer performs one contextual tool review and returns all model usage
+// incurred by the review, including partial usage returned with an error.
 type ToolReviewer interface {
-	Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, error)
+	Review(context.Context, ToolReviewRequest, ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error)
 }
 
 // ReviewDetail is transient, owner-authorized human display detail. RootSessionID

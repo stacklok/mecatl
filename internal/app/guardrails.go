@@ -107,9 +107,9 @@ type engineGuardrailsChecker struct {
 	reviewer agent.ToolReviewer
 }
 
-func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.Verdict, error) {
+func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckRequest) (modelhook.CheckResult, error) {
 	if c.reviewer == nil {
-		return modelhook.Verdict{}, errGuardrailVerdictUnparseable
+		return modelhook.CheckResult{}, errGuardrailVerdictUnparseable
 	}
 	job := agent.ReviewJobInbound
 	phase := governance.PhasePostToolUse
@@ -118,7 +118,7 @@ func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckR
 		phase = governance.PhasePreToolUse
 	}
 	event := governance.HookEvent{Phase: phase, Tool: req.Tool, Input: []byte(req.Content), SessionID: "escape-review", CallID: "escape-call"}
-	result, err := c.reviewer.Review(ctx, agent.ToolReviewRequest{
+	result, usage, err := c.reviewer.Review(ctx, agent.ToolReviewRequest{
 		ReviewID:               "escape-review",
 		Job:                    job,
 		Event:                  event,
@@ -129,17 +129,17 @@ func (c engineGuardrailsChecker) Check(ctx context.Context, req modelhook.CheckR
 		TrajectoryComplete:     true,
 	}, nil)
 	if err != nil {
-		return modelhook.Verdict{}, err
+		return modelhook.CheckResult{Usage: usage}, err
 	}
 	safe := result.Assessment == agent.ReviewAcceptable
 	if result.Assessment == agent.ReviewUnresolved {
-		return modelhook.Verdict{}, errGuardrailVerdictUnparseable
+		return modelhook.CheckResult{Usage: usage}, errGuardrailVerdictUnparseable
 	}
 	reason := ""
 	if !safe {
 		reason = "contextual guardrail finding"
 	}
-	return modelhook.Verdict{Safe: &safe, Reason: reason}, nil
+	return modelhook.CheckResult{Verdict: modelhook.Verdict{Safe: &safe, Reason: reason}, Usage: usage}, nil
 }
 
 // errGuardrailVerdictUnparseable is the sentinel used by the narrow escape
@@ -250,21 +250,21 @@ func (r *guardrailActionReviewer) RecordGuardrailReviewFailure(result agent.Tool
 	r.health.record(result, err)
 }
 
-func (r *guardrailActionReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+func (r *guardrailActionReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, session.AuxiliaryUsage, error) {
 	phase := modelhook.PhasePre
 	if req.Job == agent.ReviewJobInbound {
 		phase = modelhook.PhasePost
 	}
 	rule, matched := modelhook.ResolveRule(r.rules, req.EffectiveCall.Name, phase)
 	if !matched || (phase == modelhook.PhasePre && rule.SkipAction(req.EffectiveCall.Name, string(req.EffectiveCall.Args))) {
-		return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, nil
+		return agent.ToolReviewResult{Assessment: agent.ReviewAcceptable}, session.AuxiliaryUsage{}, nil
 	}
 	if prompt := strings.TrimSpace(rule.Prompt()); prompt != "" {
 		req.PrincipalFacts = append(req.PrincipalFacts, agent.ReviewPrincipalFact{Kind: "operator_task_risk_policy", Ref: "operator-policy", Statement: prompt})
 	}
-	result, err := r.base.Review(ctx, req, source)
+	result, usage, err := r.base.Review(ctx, req, source)
 	r.health.record(result, err)
-	return result, err
+	return result, usage, err
 }
 
 func (r *guardrailActionReviewer) GrantDigest(req agent.ToolReviewRequest) (string, bool) {
@@ -616,38 +616,44 @@ func resolveGuardrailsCheckerModel(cfg Config) (model string, src guardrailSourc
 // bound to the Build-captured checker route. Its catalog is empty; only the two
 // run-scoped evidence protocol tools are visible during Review.
 func buildGuardrailsReviewer(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID string) agent.ToolReviewer {
-	var providerID, resolved string
-	var configured bool
-	var err error
-	if cfg.guardrailConfigured {
-		providerID, resolved, configured = cfg.guardrailProviderID, cfg.guardrailModel, true
-	} else if provReg == nil {
-		resolved, _, configured = resolveGuardrailsCheckerModel(cfg)
-		providerID = parentProviderID
-	} else {
-		providerID, resolved, _, configured, err = resolveGuardrailBinding(cfg, provReg)
-	}
-	if err != nil || !configured {
+	deps, ok := guardrailsCheckerDeps(cfg, provReg, provider, parentProviderID, "")
+	if !ok {
 		return nil
 	}
-	if provReg != nil {
+	return newContextualToolReviewer(agent.NewEngine(deps), deps.ProviderModel.ProviderID, deps.ProviderModel.ModelID, cfg.diag())
+}
+
+func guardrailsCheckerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) (agent.Deps, bool) {
+	var providerID, resolved string
+	var configured bool
+	if cfg.guardrailConfigured {
+		providerID, resolved, configured = cfg.guardrailProviderID, cfg.guardrailModel, true
+	} else {
+		resolved, _, configured = resolveGuardrailsCheckerModel(cfg)
+		providerID = parentProviderID
+	}
+	if !configured {
+		return agent.Deps{}, false
+	}
+	if provReg != nil && cfg.guardrailConfigured {
 		entry, ok := provReg.Lookup(providerID)
 		if !ok {
-			return nil
+			return agent.Deps{}, false
 		}
 		provider = entry.provider
 	}
 	if provider == nil {
-		return nil
+		return agent.Deps{}, false
 	}
 	windowFn := childWindowFor(cfg, provReg, providerID, resolved)
 	pc := promptConfig(modelCfgFor(cfg, resolved), cfg.gitStatus)
 	pc.Role = contextualReviewerSystemPrompt
-	deps := childEngineDepsForProvider(cfg, "guardrail-reviewer", provider, resolved, windowFn,
+	providerModel := session.ProviderModelID{ProviderID: providerID, ModelID: resolved}
+	deps := childEngineDepsForProvider(cfg, "guardrail-reviewer", provider, providerModel, windowFn,
 		tool.NewCatalog(), pc, nil)
 	deps.MaxNoProgressNudges = -1
 	deps.ToolReviewer = nil
-	return newContextualToolReviewer(agent.NewEngine(deps), providerID, resolved, cfg.diag())
+	return deps, true
 }
 
 // buildGuardrailsChecker is the compatibility shape consumed by the narrow

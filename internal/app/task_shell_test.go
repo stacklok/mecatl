@@ -213,7 +213,7 @@ func TestSubagentRunsGitInWorktreeEndToEnd(t *testing.T) {
 	)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
@@ -318,7 +318,7 @@ func TestBuildSubagentToolRealWiringForksChildShellWhenShell(t *testing.T) {
 	parentEnv := osfsEnvironment(t, repo, nil)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
@@ -390,7 +390,7 @@ func TestBuildSubagentToolRealWiringNoShellNoForker(t *testing.T) {
 	parentEnv := osfsEnvironment(t, repo, nil)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 5}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
@@ -445,7 +445,7 @@ func TestSubagentSeesDirtyWorkspaceEndToEnd(t *testing.T) {
 	)
 	parentCat := tool.NewCatalog()
 	parentCat.MustRegister(task)
-	parentEng := newChildEngine(cfg, "", parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	sess := session.New("parent", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: repo, Revision: "in-tree-v1"}, session.Limits{MaxTurns: 6}, time.Now())
 	run := parentEng.Run(context.Background(), sess, parentEnv, agent.RunRequest{Text: "go"})
