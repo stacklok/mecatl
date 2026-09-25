@@ -19,21 +19,25 @@ consulted on session writes (`engine/port/lease.go:37-48`). Kubernetes Pod repla
 partition, and controller restart therefore introduce a separate execution-ownership problem.
 Preflight placement validation must remain side-effect-free because using an allocating operation would leak PVCs and Pods.
 
-The human authorized the direction and defaults: a purpose-built execution environment provider in this
-monorepo, separate from mecak8s, with its own binaries, images, chart lifecycle, optional client integration,
-and deterministic kind qualification followed by native-provider OpenRouter coding evidence. The target
-is an operator-controlled first production slice with explicit limits; release maturity remains undecided.
+The human authorized the direction and defaults: a minimal coding-agent MVP for multiple authenticated users
+from one company, using the existing TUI OIDC login/connect flow and blank persistent tool-seeded workspaces.
+A purpose-built execution environment provider lives in this monorepo, separate from mecak8s, with its own
+binaries, images, chart lifecycle, optional client integration, and deterministic kind qualification followed
+by native-provider OpenRouter coding evidence. The target is an operator-controlled first production slice
+with explicit limits; it is not a hostile/public-tenancy claim, and release maturity remains undecided.
 
-The existing plan PR #1579 and implementation PR #1614 form a human-authorized **draft** stack. The
-[acceptance plan](../acceptance/native-kubernetes-execution.md) now authors the exact proposed contract,
-reconciled against tested runtime `2020e59934369e8f771059d0c173fa4cbf964c7e`. API, schema, and security
-review approvals remain unchecked; neither authored specs nor draft code is a merged approved baseline.
-This amendment also authorizes development of scoped administration, continuing provisioning retries,
-retained-resource Helm lifecycle safeguards, and conformance with the shared [HarnessContext source-authority
-decision](0359-harness-context-source-authority.md) on those existing PRs. The native first slice selects
-independent instruction and command sources while leaving PVC-backed context unselected. Human alone merges.
+Plan / Interface PR #1579 is ready for review; implementation PR #1614 remains draft. The
+[acceptance plan](../acceptance/native-kubernetes-execution.md) authors the exact proposed contract,
+reconciled against tested runtime `2020e59934369e8f771059d0c173fa4cbf964c7e` and shared HarnessContext
+source/test evidence at implementation candidate `f63055665e97372316847bb6f5a5aaa859cf3c66`. The latter is
+not a new Kind, live-provider, or complete user-journey run. API, schema, and security review approvals
+remain unchecked; neither authored specs nor draft code is a merged approved baseline. This amendment also
+authorizes development of scoped administration, continuing provisioning retries, retained-resource Helm
+lifecycle safeguards, and conformance with the shared [HarnessContext source-authority decision](0359-harness-context-source-authority.md).
+Baseline coding requires no custom source; optional programmatic sources remain independent from execution,
+and PVC-backed context remains unselected. Human alone merges.
 
-## Proposed decision within the authorized draft stack
+## Proposed decision within the unmerged contract
 
 This ADR records the approved direction: a separate execution environment provider in this monorepo;
 it does **not supersede ADR 0048**. ADR 0048 governs storage-free mecak8s. Mecak8s remains a client of
@@ -55,9 +59,13 @@ immutable `EnvironmentRef.Revision`; run epoch, grant generation, Pod UID, and P
 `observedGeneration` records processed spec generation, not executor identity.
 
 Only operator-configured, digest-pinned profiles select image, storage, resource/operation bounds, and
-RuntimeClass. Public clients/models cannot submit arbitrary Pod specs, images, paths, URLs, credentials,
-or Kubernetes names. Creator `clientHash`, owner identity, allocation fingerprint, and revision remain
-immutable. The [schema and transaction contract](../acceptance/native-kubernetes-execution.md#reference-transaction-schema-v2-and-fencing)
+RuntimeClass. The MVP qualifies one operator-configured coding image and one mecak8s replica; existing
+provider replica-safety behavior remains supported rather than being removed. Public clients/models cannot
+submit arbitrary Pod specs, images, paths, URLs, credentials, or Kubernetes names. Creator `clientHash`,
+per-user OIDC owner identity, allocation fingerprint, and revision remain immutable. Users behind the same
+mecak8s creator identity receive separate owner-bound environments; shared company membership grants no
+cross-user list, read, run, control, or delete authority. Profile resource limits and durable capacity
+accounting are required, not deferred. The [schema and transaction contract](../acceptance/native-kubernetes-execution.md#reference-transaction-schema-v2-and-fencing)
 records exact fields, receipts, conditions, and migration behavior. Completed migration receipts retain
 the source schema with explicit presence (including legacy schema zero); replay requires the exact
 request identity, and receipts missing that information fail closed. Replacement atomically expires
@@ -110,10 +118,12 @@ mixed-version compatibility claim for this amendment.
 ### 4. Separate execution fencing from session leasing
 
 The chosen approach is mTLS service links plus a least-privilege execution grant scoped to the exact
-environment, operation, and ownership epoch. Initial qualification is authenticated and authorized use in
-an operator-controlled cluster, not hardened hostile multitenancy. The arbitrary-shell workload receives
-no controller credential, signing key, provider key, or default service-account token. Same-Pod or
-localhost placement is not treated as a trust boundary.
+environment, operation, and ownership epoch. Initial qualification serves authenticated users from one
+company in an operator-controlled cluster, not random web users and not hardened hostile multitenancy.
+Trust in the user population does not bypass OIDC/per-user ownership, configured Ask/Deny, file confinement,
+operation fencing, credential isolation, resource limits, or capacity accounting. The arbitrary-shell
+workload receives no controller credential, signing key, provider key, or default service-account token.
+Same-Pod or localhost placement is not treated as a trust boundary.
 
 Grant revocation prevents new commands. Cancellation request, acknowledged complete process termination,
 and externally proven compute/storage fencing are distinct states. Namespace process teardown must include
@@ -159,55 +169,62 @@ A scope never grants attach, Files, Shell, run/reference access, or MayAttestOwn
 engine, or private protobuf widening is needed. The acceptance contract specifies validation and digest
 inclusion; authoring this proposal is not the outstanding human security approval.
 
-### 5. Start with a persistent blank workspace and independently selected context
+### 5. Start with a persistent blank workspace and keep context independent
 
-The first slice provisions a blank/PVC-backed workspace that existing filesystem tools seed. It supports
-foreground Shell and has no warm pools or automatic idle suspension. Harness context is not selected by
-that execution placement. Mecak8s registers independently configured deployment/operator/API instruction
-and command sources, and the shared operator-tier HarnessContext policy admits, orders, and resolves them.
-Configured instruction markers reach model requests, and configured commands reach slash invocation,
-only after a healthy provider completes exact Attach and AcquireRun, or for `no-fs` execution; command
-discovery and listing do not require an execution run. During a provider outage, only independent
-discovery/listing remains available on an already-started Service with a stored authorized session.
-Startup validation remains fail-closed, and execution never falls back locally.
+The MVP provisions a blank PVC-backed workspace that existing filesystem tools seed. A company user signs
+in and connects through the existing TUI OIDC flow, creates a session, and directs coding through ordinary
+prompts and built-in model instructions. Foreground Shell returns command results; there are no warm pools,
+automatic idle suspension, background commands, or in-flight-command survival guarantee. Baseline coding
+requires no custom HarnessContext source, source flag, API, configuration, or protocol.
 
-PVC-backed context is deliberately unselected in this slice. Conflicting AGENTS or commands planted in the
-PVC cannot enter context assembly or discovery and cannot cause a context-acquisition or provider request.
-A future exact-backend PVC source requires separate authorization and native adapter review. It must use the
-shared principal-scoped `UsesExecutionWorkspace` registration with authoritative session ID, owner, and
-profile plus selector-free `AcquireExecutionWorkspace`. Only a selected admitted source receives that lazy
-capability. It exposes the exact authorized workspace read-only, with no runner or execution ReadLedger, and
-releases only its own borrow. Independent sources receive no acquisition capability. Source reads never
-seed execution read evidence or authorize Edit.
+Harness context remains architecturally independent from execution placement. A composition may register
+optional programmatic instruction or command sources through the shared operator-tier HarnessContext policy;
+remote execution does not suppress those sources merely because the backend is Kubernetes. Shared ordering,
+provenance, collision, admission, source authority, cleanup, and Ask/Deny behavior remain canonical. This
+compatibility boundary is not a requirement to provision a new source in standalone mecak8s for the MVP.
+
+PVC-backed context is deliberately unselected. Conflicting AGENTS, instructions, or commands planted in the
+PVC cannot enter context assembly or discovery. A future exact-backend PVC source requires separate
+authorization and native adapter review. It must use the shared principal-scoped `UsesExecutionWorkspace`
+registration with authoritative session ID, owner, and profile plus selector-free
+`AcquireExecutionWorkspace`. Only a selected admitted source receives that lazy capability. It exposes the
+exact authorized workspace read-only, with no runner or execution ReadLedger, and releases only its own
+borrow. Independent sources receive no acquisition capability. Source reads never seed execution read
+evidence or authorize Edit.
 
 The native integration adds no source or inventory API, durable context identity, history transfer,
-`SessionAccess`, five-kind parity requirement, or backend-specific lifecycle. Each Build rebinds existing
-sessions to current policy and current source authorization. Required-source failure has no host, PVC,
-process-cwd, operator-global, or other unconfigured fallback. Cancellation cannot publish a late binding,
+`SessionAccess`, five-kind parity requirement, or backend-specific lifecycle. Current shared invariants still
+apply: required selected-source failure has no host, PVC, process-cwd, operator-global, or other unconfigured
+fallback; each Build applies current policy and authorization; cancellation cannot publish a late binding;
 and shutdown waits for in-flight creation and cleanup under the canonical shared
 [HarnessContext lifecycle](../acceptance/harness-context.md#scenario-4---source-failure-does-not-change-authority).
+Standalone source provisioning and an expanded native-specific source outage/no-FS/rebinding qualification
+matrix are deferred product features, not waivers of those authorization, fail-closed, or lifetime rules.
 
-Git clone, private source credentials, remote project ingestion, background commands, and isolated
-delegation remain deferred. Harness content selection does not change governance or permission roots:
-configured Ask/Deny, root-aware project trust, hooks, credentials, tool grants, execution placement, and
-fencing remain effective. Schedules remain excluded. SkillDraft and unsupported remote
-Subagent/Parallel/Team, background Shell, worktree-successor, delegation-expansion, and schedule-expansion
-paths return explicit unsupported/precondition results and never execute locally. Clear/Fork reserve and
-publish references under environment exclusion while preserving the same remote `EnvironmentRef`; neither
-clones the workspace. Clear creates empty history and Fork copies valid history. Publication failure
-preserves the source; ambiguous reference outcomes stay durable for reconciliation. No public placement
-selector or model-chosen profile is added.
+Private Git credentials, remote project ingestion, automatic PRs, import/export, arbitrary user-supplied
+tools, background commands, isolated delegation, schedules, and multi-replica MVP qualification remain
+deferred. Existing supported provider replica-safety behavior remains in place. Harness content selection
+does not change governance or permission roots: configured Ask/Deny, root-aware project trust, hooks,
+credentials, tool grants, execution placement, and fencing remain effective. SkillDraft and unsupported
+remote Subagent/Parallel/Team, background Shell, worktree-successor, delegation-expansion, and
+schedule-expansion paths return explicit unsupported/precondition results and never execute locally.
+Clear/Fork reserve and publish references under environment exclusion while preserving the same remote
+`EnvironmentRef`; neither clones the workspace. Both share the exact workspace and serialize execution.
+Clear creates empty history and Fork copies valid history. Publication failure preserves the source;
+ambiguous reference outcomes stay durable for reconciliation. No public placement selector or model-chosen
+profile is added.
 
 ### 6. Retain committed workspaces by default
 
 One persistent PVC per logical environment is retained across executor and mecak8s/controller restarts.
-Session deletion does not delete a workspace. The lifecycle default is: removal of one reference retains
-the environment; removal of the last reference retains it; committed data retires only through explicit
-authorized retirement; and a retiring environment rejects new bindings and successors. An unreadable
-store/reference is not an orphan and is retained. A pending allocation whose session association might
-have committed cannot be collected merely after TTL: publication absence must first be conclusively
-reconciled. Explicit retirement of a live/shared environment is refused while any live reference exists
-unless a later reviewed retire/quiesce policy specifies otherwise.
+Session deletion does not delete a workspace; the PVC remains for explicit operator retirement and manual
+cleanup. The lifecycle default is: removal of one reference retains the environment; removal of the last
+reference retains it; committed data retires only through explicit authorized retirement; and a retiring
+environment rejects new bindings and successors. An unreadable store/reference is not an orphan and is
+retained. A pending allocation whose session association might have committed cannot be collected merely
+after TTL: publication absence must first be conclusively reconciled. Explicit retirement of a live/shared
+environment is refused while any live reference exists unless a later reviewed retire/quiesce policy
+specifies otherwise.
 
 Default chart uninstall retains runtime CRs/PVCs. While executors survive, workload isolation,
 security high-water/key history, and the profile-capacity ledger must survive too. Their lifetime follows
@@ -246,6 +263,16 @@ records all 11 production Kind+Calico scenarios passing at runtime SHA
 Draft full-race CI remained skipped; earlier local full-race and latest targeted-race results
 are distinguished in that receipt, not represented as a draft full-race CI execution.
 
+MVP product qualification uses one mecak8s replica with Redis, a supported model provider, and one
+operator-configured coding image. Existing multi-replica provider safety remains supported but is not a
+required MVP topology. Five observable current-candidate journeys remain required and PENDING: actual TUI
+company OIDC login/connect through blank-session coding, file edit, protected Ask, and foreground test
+results; concurrent Alice/Bob sessions with bidirectional cross-user denial behind the same creator identity;
+disconnect/reconnect plus service restart preserving exact files; cancellation or authority loss with no
+competing writer or local fallback; and profile-capacity exhaustion followed by authorized retirement/deletion
+that safely restores allocation. The acceptance plan names exact proof targets. These journeys can use the
+deterministic provider and do not each require a paid model call.
+
 The checked human live decision requires the separate `task e2e:k8s:execution:live` OpenRouter coding
 qualification **for this stack**, after deterministic qualification. It is not an always-on live CI
 dependency. Prove model-driven tools, independently verified persistent artifacts, and a successful
@@ -268,10 +295,11 @@ the deterministic correctness gate.
 ## Consequences
 
 **Positive.** Mecak8s can optionally bind tools to a persistent Kubernetes namespace without changing
-tool schemas, engine APIs, public placement authority, or shared HarnessContext interfaces. Independent
-instruction and command sources continue to work without execution; the unselected PVC cannot silently
-become context authority. Disabled deployments remain free of CRDs, RBAC, informers, clients, and resources.
-Logical identity survives Pod replacement, and kind can prove the complete coding path offline.
+tool schemas, engine APIs, public placement authority, or shared HarnessContext interfaces. Baseline coding
+works with a blank workspace and no custom source. Optional programmatic instruction and command sources
+continue to work independently from execution; the unselected PVC cannot silently become context authority.
+Disabled deployments remain free of CRDs, RBAC, informers, clients, and resources. Logical identity survives
+Pod replacement, and kind can prove the coding path offline.
 
 **Costs and risks.** Mecatl would own a controller, CRD, private protocol, PVC lifecycle, command
 execution/cancellation, and a security-critical fencing system. A persistent volume does not stop a
@@ -280,14 +308,15 @@ resource quotas, output caps, non-root execution, service-account-token suppress
 separation are required but not sufficient.
 
 **Draft boundary.** The exact proposed interfaces are authored in the acceptance plan; human API/schema/
-security approval, this HarnessContext amendment, and release maturity remain unresolved. The historical
-operator-global/blanket-suppression run does not prove the amended source contract. Native integration
-proofs through production Build, public Service/discovery, and the actual executionclient boundary remain
-pending. Authorized pre-merge development may proceed on the existing draft stack, but no review, approval,
-landed status, or merge is inferred. Completion requires strict AC trace, full offline/race/build/API/docs/site/demo
-gates, independent panel review, final deterministic qualification, and stack-specific native live evidence.
-The latter two now have successful candidate receipts for the earlier contract, including scope, retry, and
-Helm scenarios; the plan preserves partial proof boundaries and outstanding human/panel reviews. Human alone merges.
+security approval and release maturity remain unresolved. Plan / Interface PR #1579 is ready for review;
+implementation PR #1614 remains draft, and neither is approved or landed. Shared HarnessContext source/test
+evidence at implementation candidate `f63055665e97372316847bb6f5a5aaa859cf3c66` preserves independent
+source authority without making standalone source provisioning an MVP requirement; it is not a new Kind,
+live-provider, or complete user-journey run. Completion requires strict AC trace, `task test` plus
+`task test:race`, build/API/docs/site/demo gates, independent panel review, the five pending current-candidate
+journeys, final deterministic qualification, and stack-specific native live evidence. The latter two have
+successful receipts only for tested runtime `2020e59934369e8f771059d0c173fa4cbf964c7e`; outstanding human/
+panel review and new journey evidence remain explicit. Human alone merges.
 
 ## See also
 
