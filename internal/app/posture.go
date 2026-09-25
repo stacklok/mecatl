@@ -275,7 +275,14 @@ func foldOperatorPosture(cfg Config) Config {
 // decision drive the real Build and read its structured diagnostic.
 func ResolveAuthoritativePosture(cfg Config) Posture {
 	cfg.permResolver = buildPermResolver(cfg)
-	cfg = foldOperatorPosture(cfg)
+	// Fold the permission-mode token first (ADR 0365), so an operator-YAML-only
+	// permissionMode: auto/yolo reaches the cmd fast paths. An invalid token is
+	// Build's to report; the pre-check falls back to the deprecated surface.
+	if folded, err := foldPermissionMode(cfg); err == nil {
+		cfg = folded
+	} else {
+		cfg = foldOperatorPosture(cfg)
+	}
 	return resolvePosture(cfg, postureNoCeiling)
 }
 
