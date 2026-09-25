@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -23,6 +24,8 @@ type nativeRunProvider struct {
 	ref             session.EnvironmentRef
 	acquireErr      error
 	acquireHook     func()
+	exclusive       bool
+	held            atomic.Bool
 	released        chan struct{}
 	renewed         chan struct{}
 	renewErr        error
@@ -42,6 +45,9 @@ func (p *nativeRunProvider) AcquireRun(context.Context, server.ExecutionRunReque
 	p.acquires.Add(1)
 	if p.acquireErr != nil {
 		return nil, p.acquireErr
+	}
+	if p.exclusive && !p.held.CompareAndSwap(false, true) {
+		return nil, errors.New("native run already held")
 	}
 	if p.acquireHook != nil {
 		p.acquireHook()
@@ -64,6 +70,9 @@ type nativeRunHandle struct {
 func (h *nativeRunHandle) Environment() tool.Environment { return h.env }
 func (*nativeRunHandle) Renew(context.Context) error     { return nil }
 func (h *nativeRunHandle) Release(context.Context) error {
+	if h.provider.exclusive {
+		h.provider.held.Store(false)
+	}
 	h.provider.releases.Add(1)
 	if h.provider.released != nil {
 		h.provider.released <- struct{}{}
@@ -219,6 +228,157 @@ func TestNativePersistedResolveRenewalFailureCancelsAndReleasesAfterDrain(t *tes
 	}
 	if provider.acquires.Load() != 1 || provider.releases.Load() != 1 || ran.Load() != 1 {
 		t.Fatalf("acquires=%d releases=%d executions=%d", provider.acquires.Load(), provider.releases.Load(), ran.Load())
+	}
+}
+
+func TestNativePersistedResolveCloseHoldsClaimUntilDetachedDrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ref := session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "env", Revision: "rev"}
+		provider := &nativeRunProvider{ref: ref, exclusive: true, released: make(chan struct{}, 2)}
+		store := memstore.New()
+		parked, ask := makePersistedControlSession(t, "native-close-claim-drain")
+		parked.EnvironmentRef = ref
+		if err := store.Save(t.Context(), parked); err != nil {
+			t.Fatal(err)
+		}
+		model := &closeJoinProvider{entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+		var ran atomic.Int64
+		cat := tool.NewCatalog()
+		cat.MustRegister(&writeAskTool{ran: &ran})
+		engine := agent.NewEngine(agent.Deps{LLM: model, Catalog: cat, Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
+		svc, err := newPlacementTestService(server.Config{
+			Engine: engine, Store: store, PlacementProvider: provider, PlacementScope: "test",
+			ExecutionAccess: provider, SharedEngineRoot: "/native", Now: func() time.Time { return time.Unix(1, 0) },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(svc.Close)
+		releaseModel := sync.OnceFunc(func() { close(model.release) })
+		t.Cleanup(releaseModel)
+
+		if _, err := svc.ResolveRunAsk(t.Context(), parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-model.entered:
+		case <-time.After(time.Second):
+			t.Fatal("resumed run did not reach its model continuation")
+		}
+		closed := make(chan struct{})
+		go func() {
+			svc.Close()
+			close(closed)
+		}()
+		select {
+		case <-model.cancelled:
+		case <-time.After(time.Second):
+			t.Fatal("Service.Close did not cancel the resumed continuation")
+		}
+		synctest.Wait()
+		if provider.releases.Load() != 0 {
+			t.Fatal("Service.Close released the native claim before the detached continuation drained")
+		}
+		competing, err := provider.AcquireRun(t.Context(), server.ExecutionRunRequest{Ref: ref, BindingID: "competing", RunID: "competing"})
+		if err == nil {
+			_ = competing.Release(t.Context())
+			t.Fatal("competing writer acquired the native claim while the cancelled continuation was still draining")
+		}
+		select {
+		case <-closed:
+			t.Fatal("Service.Close returned before the detached continuation drained")
+		default:
+		}
+
+		releaseModel()
+		select {
+		case <-closed:
+		case <-time.After(time.Second):
+			t.Fatal("Service.Close did not finish after the detached continuation drained")
+		}
+		select {
+		case <-provider.released:
+		case <-time.After(time.Second):
+			t.Fatal("native claim was not released after detached drain")
+		}
+		if provider.acquires.Load() != 2 || provider.releases.Load() != 1 || provider.held.Load() || ran.Load() != 1 {
+			t.Fatalf("acquires=%d releases=%d held=%t executions=%d", provider.acquires.Load(), provider.releases.Load(), provider.held.Load(), ran.Load())
+		}
+	})
+}
+
+func TestNativePersistedResolveCloseRejectsLateProvisionalClaim(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: session.EnvironmentKind("kubernetes"), ID: "env", Revision: "rev"}
+	provider := &nativeRunProvider{ref: ref, exclusive: true, released: make(chan struct{}, 1)}
+	acquireEntered := make(chan struct{})
+	releaseAcquire := make(chan struct{})
+	provider.acquireHook = func() {
+		close(acquireEntered)
+		<-releaseAcquire
+	}
+	store := memstore.New()
+	parked, ask := makePersistedControlSession(t, "native-close-provisional-claim")
+	parked.EnvironmentRef = ref
+	if err := store.Save(t.Context(), parked); err != nil {
+		t.Fatal(err)
+	}
+	var ran atomic.Int64
+	cat := tool.NewCatalog()
+	cat.MustRegister(&writeAskTool{ran: &ran})
+	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("must not continue")), Catalog: cat, Policy: permpolicy.NewPolicy(nil, nil), Model: "test"})
+	svc, err := newPlacementTestService(server.Config{
+		Engine: engine, Store: store, PlacementProvider: provider, PlacementScope: "test",
+		ExecutionAccess: provider, SharedEngineRoot: "/native", Now: func() time.Time { return time.Unix(1, 0) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	ctx, cancel := context.WithCancel(t.Context())
+	unblockAcquire := sync.OnceFunc(func() { close(releaseAcquire) })
+	resolveDone := make(chan error, 1)
+	t.Cleanup(func() {
+		cancel()
+		unblockAcquire()
+		select {
+		case <-resolveDone:
+		case <-time.After(time.Second):
+			t.Error("provisional approval admission did not finish during cleanup")
+		}
+	})
+	go func() {
+		defer close(resolveDone)
+		_, err := svc.ResolveRunAsk(ctx, parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce)
+		resolveDone <- err
+	}()
+	select {
+	case <-acquireEntered:
+	case <-time.After(time.Second):
+		t.Fatal("native claim acquisition did not start")
+	}
+	svc.Close()
+	if provider.releases.Load() != 0 {
+		t.Fatal("shutdown released a native handle before its blocked acquisition returned")
+	}
+	unblockAcquire()
+	select {
+	case err := <-resolveDone:
+		if err == nil {
+			t.Fatal("provisional approval admission succeeded after shutdown")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provisional approval admission did not reject its late native handle")
+	}
+	select {
+	case <-provider.released:
+	case <-time.After(time.Second):
+		t.Fatal("late native handle was not released")
+	}
+	if _, live := svc.LookupRun(parked.ID); live {
+		t.Fatal("late provisional admission remained published after shutdown")
+	}
+	if provider.acquires.Load() != 1 || provider.releases.Load() != 1 || provider.held.Load() || ran.Load() != 0 {
+		t.Fatalf("acquires=%d releases=%d held=%t executions=%d", provider.acquires.Load(), provider.releases.Load(), provider.held.Load(), ran.Load())
 	}
 }
 

@@ -3282,8 +3282,10 @@ func (s *Service) Close() {
 			run.Cancel()
 		} else if admissionCancel != nil {
 			admissionCancel()
+			// No relay owns a provisional admission. Close its execution slot here so
+			// an AcquireRun that returns after cancellation releases its late handle.
+			s.teardownExecution(rs)
 		}
-		s.teardownExecution(rs)
 	}
 	s.waitDetachedControlRelays()
 

@@ -122,7 +122,19 @@ func TestNativeBuildResolvePersistedShellAskAfterRestart(t *testing.T) {
 		builtA.Close()
 		t.Fatal("native Shell run did not persist an exact ask")
 	}
+	drained := make(chan struct{})
+	go func() {
+		for range run.Events() {
+		}
+		builtA.Service.FinishRun(sessionID, run)
+		close(drained)
+	}()
 	builtA.Close()
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("normal transport relay did not drain the parked run during shutdown")
+	}
 
 	continuationEntered := make(chan struct{})
 	continueModel := make(chan struct{})
