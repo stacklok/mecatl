@@ -11,12 +11,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/session"
+	microvmclient "github.com/stacklok/mecatl/internal/adapter/microvm"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/app"
 	"github.com/stacklok/mecatl/internal/microvmcmd"
@@ -162,15 +164,16 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 	}
 	microVMReleaseDefaultsB64 = base64.StdEncoding.EncodeToString(defaults)
 
-	socketDir, err := os.MkdirTemp("/tmp", "mecatl-mv-cli-")
+	socketDir, err := os.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_ = os.Remove(filepath.Join(socketDir, "microvmd.sock"))
-		_ = os.Remove(socketDir)
-	})
-	listener, err := net.Listen("unix", filepath.Join(socketDir, "microvmd.sock"))
+	t.Cleanup(func() { _ = socketDir.Close() })
+	fdRoot := "/proc/self/fd"
+	if runtime.GOOS == "darwin" {
+		fdRoot = "/dev/fd"
+	}
+	listener, err := net.Listen("unix", filepath.Join(fdRoot, fmt.Sprint(socketDir.Fd()), "microvmd.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,40 +271,45 @@ func assertNoCLICompositionDetach(t *testing.T, detached <-chan struct{}, done <
 }
 
 func serveCLICompositionPlacement(listener net.Listener, created, detached chan<- struct{}, result chan<- error) {
+	conn, err := listener.Accept()
+	if err != nil {
+		result <- err
+		return
+	}
+	defer conn.Close()
+	const acquisitionID = "0123456789abcdef0123456789abcdef"
+	var ownedBinding map[string]any
 	for _, expected := range []string{"create", "detach"} {
-		conn, err := listener.Accept()
-		if err != nil {
-			result <- err
-			return
-		}
 		var request map[string]any
 		if err := readCLICompositionFrame(conn, &request); err != nil {
-			_ = conn.Close()
 			result <- err
 			return
 		}
 		operation, _ := request["operation"].(string)
-		if operation != expected {
-			_ = conn.Close()
-			result <- fmt.Errorf("placement operation = %q, want %q", operation, expected)
+		if operation != expected || request["version"] != float64(microvmclient.DaemonProtocolVersion) {
+			result <- fmt.Errorf("placement operation/version = %q/%v, want %q/v4", operation, request["version"], expected)
 			return
 		}
 		binding, _ := request["binding"].(map[string]any)
-		response := map[string]any{"binding": binding}
 		if operation == "create" {
-			sessionID, _ := binding["session_id"].(string)
-			response = map[string]any{
-				"binding": map[string]any{"owner": "local", "session_id": sessionID, "environment_id": "logical-cli", "ref": "logical-cli@1", "generation": 1},
-				"created": map[string]any{
-					"ref": map[string]any{"Kind": "microvm", "ID": "logical-cli@1"}, "generation": 1,
-					"host_worktree": "/private/worktree", "guest_root": "/workspace", "profile": "microvm-local",
-					"guest_egress": "permissive", "host_egress": "not constrained",
-				},
+			if request["acquisition_id"] != nil {
+				result <- fmt.Errorf("create supplied acquisition authority")
+				return
+			}
+			ownedBinding = map[string]any{"owner": "local", "session_id": binding["session_id"], "environment_id": "logical-cli", "ref": "logical-cli@1", "generation": float64(1)}
+		} else if request["acquisition_id"] != acquisitionID || !reflect.DeepEqual(binding, ownedBinding) || request["provision"] != nil || request["payload"] != nil {
+			result <- fmt.Errorf("detach did not consume the exact retained acquisition")
+			return
+		}
+		response := map[string]any{"binding": ownedBinding, "acquisition_id": acquisitionID}
+		if operation == "create" {
+			response["created"] = map[string]any{
+				"ref": map[string]any{"Kind": "microvm", "ID": "logical-cli@1"}, "generation": 1,
+				"host_worktree": "/private/worktree", "guest_root": "/workspace", "profile": "microvm-local",
+				"guest_egress": "permissive", "host_egress": "not constrained",
 			}
 		}
-		err = writeCLICompositionFrame(conn, response)
-		_ = conn.Close()
-		if err != nil {
+		if err := writeCLICompositionFrame(conn, response); err != nil {
 			result <- err
 			return
 		}

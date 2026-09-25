@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"github.com/stacklok/mecatl/environment/microvm/control/controltest"
 	"github.com/stacklok/mecatl/environment/microvm/guestagent"
 	"github.com/stacklok/mecatl/environment/microvm/guestexec"
+	"github.com/stacklok/mecatl/internal/adapter/gitenv"
 	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -54,6 +56,7 @@ type multiBuildBackend struct {
 	mu     sync.Mutex
 	server *guestagent.RepositoryServer
 	starts int
+	roots  map[string]string // offline mount translation, host path -> guest path
 }
 
 func (b *multiBuildBackend) Reconcile(context.Context, string) (microvm.LaunchReconcileResult, error) {
@@ -80,7 +83,11 @@ func (b *multiBuildBackend) Start(_ context.Context, launch microvm.GoMicroVMLau
 			if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
 				return "", errors.New("invalid guest root")
 			}
-			return filepath.Join(hostMount, filepath.FromSlash(rel)), nil
+			hostRoot := filepath.Join(hostMount, filepath.FromSlash(rel))
+			b.mu.Lock()
+			b.roots[hostRoot] = guestRoot
+			b.mu.Unlock()
+			return hostRoot, nil
 		},
 	})
 	if err != nil {
@@ -123,11 +130,29 @@ func newMultiBuildFixture(t *testing.T) *multiBuildFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
+		t.Setenv(key, t.TempDir())
+	}
+	poisonHooks := filepath.Join(root, "poison-hooks")
+	for _, name := range []string{"pre-commit", "post-checkout"} {
+		hook := filepath.Join(poisonHooks, name)
+		mbWriteFile(t, hook, "#!/bin/sh\nprintf poison > \"$0.ran\"\nexit 71\n", 0o700)
+		t.Cleanup(func() {
+			if _, err := os.Stat(hook + ".ran"); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("ambient Git hook ran: %v", err)
+			}
+		})
+	}
+	poisonConfig := filepath.Join(os.Getenv("HOME"), ".gitconfig")
+	mbWriteFile(t, poisonConfig, fmt.Sprintf("[core]\n hooksPath = %s\n[commit]\n gpgSign = true\n[gpg]\n program = /nonexistent-test-signer\n", poisonHooks), 0o600)
+	t.Setenv("GIT_CONFIG_GLOBAL", poisonConfig)
+	t.Setenv("GIT_DIR", filepath.Join(root, "not-the-repository.git"))
+	t.Setenv("GIT_WORK_TREE", filepath.Join(root, "not-the-worktree"))
 	repository := filepath.Join(root, "repository")
 	if err := os.Mkdir(repository, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, repository, "init")
+	runGit(t, repository, "init", "--initial-branch=main")
 	mbWriteFile(t, filepath.Join(repository, "tracked.txt"), "base\n", 0o644)
 	runGit(t, repository, "add", "tracked.txt")
 	runGitEnv(t, repository, []string{"GIT_AUTHOR_NAME=mecatl test", "GIT_AUTHOR_EMAIL=test@example.invalid", "GIT_COMMITTER_NAME=mecatl test", "GIT_COMMITTER_EMAIL=test@example.invalid"}, "commit", "-m", "fixture")
@@ -158,7 +183,7 @@ func newMultiBuildFixture(t *testing.T) *multiBuildFixture {
 			verified.GuestAgent = artifact
 		}
 	}
-	backend := &multiBuildBackend{}
+	backend := &multiBuildBackend{roots: make(map[string]string)}
 	network := microvm.NewNetworkController(func() gomicrovmnet.Provider { return &multiBuildNetwork{socket: filepath.Join(root, "network.sock")} }, &multiBuildGuestNetwork{})
 	composition, err := microvm.NewRepositoryComposition(filepath.Join(root, "state"), microvm.RepositoryRuntimeConfig{
 		Backend: backend, Network: network, GuestEgress: microvm.GuestEgressPolicy{Mode: microvm.EgressDenyAll}, DialGuest: backend.dial, DialControl: backend.dial,
@@ -244,6 +269,25 @@ func (f *multiBuildFixture) build(t *testing.T, ctx context.Context, checkout, s
 	return built, cfg.PlacementProvider.(*microvmadapter.Client), &requests
 }
 
+func (f *multiBuildFixture) placement(t *testing.T, client *microvmadapter.Client, sess *session.Session) microvmadapter.InventoryEntry {
+	t.Helper()
+	owner, err := json.Marshal([2]string{sess.Owner.Issuer, sess.Owner.Subject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := client.Inventory(t.Context(), string(owner))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range page.Entries {
+		if sess.EnvironmentRef.ID == entry.SessionID+"."+entry.EnvironmentID && sess.EnvironmentRef.Revision == fmt.Sprint(entry.Generation) {
+			return entry
+		}
+	}
+	t.Fatal("exact placement missing from daemon inventory")
+	return microvmadapter.InventoryEntry{}
+}
+
 func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 	for _, linked := range []bool{false, true} {
 		name := "same-checkout"
@@ -265,7 +309,7 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 			turnsA := []mockllm.Turn{mockllm.TextTurn("a-context"), mockllm.ToolCallTurn(session.ToolCall{ID: "read-a", Name: "Read", Args: []byte(`{"path":"tracked.txt"}`)}), mockllm.TextTurn("a-after-close")}
 			turnsB := []mockllm.Turn{mockllm.TextTurn("b-context"), mockllm.ToolCallTurn(session.ToolCall{ID: "shell-b", Name: "Shell", Args: []byte(`{"command":"cat tracked.txt"}`)}), mockllm.TextTurn("b-after-close")}
 			storeDir := t.TempDir()
-			first, _, firstRequests := fixture.build(t, ctx, fixture.repository, storeDir, turnsA...)
+			first, firstClient, firstRequests := fixture.build(t, ctx, fixture.repository, storeDir, turnsA...)
 			t.Cleanup(first.Close)
 			one, err := first.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 			if err != nil {
@@ -310,19 +354,26 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 				}
 				second.Service.CloseSession(one.ID)
 				second.Close()
-				assertRunEvents(t, harnessRun(t, first, ctx, one.ID, "use A after B released its reader"))
+				placement := fixture.placement(t, firstClient, one)
+				mbWriteFile(t, filepath.Join(placement.WorktreePath, "AGENTS.md"), "FRESH-A-INSTRUCTION", 0o644)
+				mbWriteFile(t, filepath.Join(placement.WorktreePath, ".mecatl/commands/which.md"), "FRESH-A-COMMAND", 0o644)
+				assertRunEvents(t, harnessRun(t, first, ctx, one.ID, "/which"), "read-a", "     1\tHOST-A\n")
+				if len(*firstRequests) != 3 {
+					t.Fatalf("A requests = %d, want initial plus post-reader tool and completion", len(*firstRequests))
+				}
+				assertRequestMarkers(t, (*firstRequests)[1], []string{"FRESH-A-INSTRUCTION", "FRESH-A-COMMAND"}, []string{"SOURCE-B", "COMMAND-B"})
 				return
 			}
 
 			first.Service.CloseSession(one.ID)
 			first.Close()
-			assertRunEvents(t, harnessRun(t, second, ctx, two.ID, "use the execution tool"))
+			assertRunEvents(t, harnessRun(t, second, ctx, two.ID, "use the execution tool"), "shell-b", "HOST-B\n[exit code: 0]")
 			if len(*secondRequests) < 2 {
 				t.Fatal("surviving Build made no post-close model request")
 			}
 			assertRequestMarkers(t, (*secondRequests)[1], []string{"SOURCE-B"}, []string{"SOURCE-A"})
 
-			// A source reader borrows B's exact placement and releases it; that release must not revoke B's execution owner.
+			// B's command discovery remains usable after A shuts down.
 			commands, err := second.Service.ListCommandsForSession(ctx, two.ID)
 			if err != nil || len(commands) != 1 {
 				t.Fatalf("post-close command borrow = %+v, %v", commands, err)
@@ -338,7 +389,7 @@ func TestMicroVMCrossBuildScheduleClosePreservesOrigin(t *testing.T) {
 	storeDir := t.TempDir()
 	leader, _, leaderRequests := fixture.build(t, ctx, fixture.repository, storeDir, mockllm.TextTurn("fire complete"))
 	t.Cleanup(leader.Close)
-	originBuild, _, originRequests := fixture.build(t, ctx, fixture.repository, storeDir,
+	originBuild, originClient, originRequests := fixture.build(t, ctx, fixture.repository, storeDir,
 		mockllm.ToolCallTurn(session.ToolCall{ID: "origin-read", Name: "Read", Args: []byte(`{"path":"tracked.txt"}`)}),
 		mockllm.TextTurn("origin still complete"))
 	t.Cleanup(originBuild.Close)
@@ -382,31 +433,60 @@ func TestMicroVMCrossBuildScheduleClosePreservesOrigin(t *testing.T) {
 
 	// FireNow is synchronous through the elected leader: its deferred CloseSession has
 	// run before this uses B's already-acquired original Service binding.
-	assertRunEvents(t, harnessRun(t, originBuild, ctx, origin.ID, "read from the original environment"))
+	assertRunEvents(t, harnessRun(t, originBuild, ctx, origin.ID, "read from the original environment"), "origin-read", "     1\tORIGIN-FILE\n")
 	if len(*originRequests) != 2 {
 		t.Fatalf("origin model requests = %d, want tool request and completion", len(*originRequests))
 	}
 	for _, request := range *originRequests {
 		assertRequestMarkers(t, request, []string{"ORIGIN-INSTRUCTION"}, nil)
 	}
+	placement := fixture.placement(t, originClient, origin)
+	fixture.backend.mu.Lock()
+	guest := fixture.backend.server
+	guestRoot := fixture.backend.roots[placement.WorktreePath]
+	fixture.backend.mu.Unlock()
+	logicalID := strings.TrimPrefix(placement.EnvironmentID, "logical-")
+	guestBinding := control.Binding{Owner: placement.Owner, SessionID: logicalID, EnvironmentID: logicalID, Ref: placement.Ref, Generation: placement.Generation, AssignedRoot: guestRoot}
+	if err := guest.Probe(guestBinding); err != nil {
+		t.Fatalf("positive control: origin guest registration unavailable before final close: %v", err)
+	}
 	originBuild.Service.CloseSession(origin.ID)
 	originBuild.Close()
+	if err := guest.Probe(guestBinding); !errors.Is(err, control.ErrBindingMismatch) {
+		t.Fatalf("final owner close retained logical guest registration: %v", err)
+	}
+	if _, err := originClient.DaemonInfo(t.Context()); err != nil {
+		t.Fatalf("registration disappeared because daemon stopped, not final owner release: %v", err)
+	}
+	if _, err := os.Stat(placement.WorktreePath); err != nil {
+		t.Fatalf("final release destroyed durable worktree: %v", err)
+	}
 	leader.Close()
 	if fixture.backend.starts != 1 {
 		t.Fatalf("repository VM starts = %d, want one shared VM", fixture.backend.starts)
 	}
 }
 
-func assertRunEvents(t *testing.T, events []session.Event) {
+func assertRunEvents(t *testing.T, events []session.Event, callID session.ToolCallID, want string) {
 	t.Helper()
 	var result *session.ResultPayload
+	matches := 0
 	for _, event := range events {
+		if event.ToolResult != nil && event.ToolResult.CallID == callID {
+			matches++
+			if event.ToolResult.Content != want {
+				t.Fatalf("tool %s content = %q, want %q", callID, event.ToolResult.Content, want)
+			}
+		}
 		if event.ToolResult != nil && event.ToolResult.IsError {
 			t.Fatalf("tool %s failed: %s", event.ToolResult.CallID, event.ToolResult.Content)
 		}
 		if event.Result != nil {
 			result = event.Result
 		}
+	}
+	if matches != 1 {
+		t.Fatalf("tool %s result count = %d, want exactly one", callID, matches)
 	}
 	if result == nil || result.Stop == session.StopError {
 		t.Fatalf("run result = %+v", result)
@@ -447,7 +527,7 @@ func runGitEnv(t *testing.T, dir string, env []string, args ...string) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(gitenv.Scrub(os.Environ()), env...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, output)
 	}

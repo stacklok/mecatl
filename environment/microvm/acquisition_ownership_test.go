@@ -312,9 +312,14 @@ func TestMicroVMOwnerDisconnectReclaimsRegistration(t *testing.T) {
 }
 
 func TestMicroVMDeleteRejectsLiveOtherAcquisitions(t *testing.T) {
-	fixture := newOwnershipFixture(t)
+	t.Run("sole owner with operation socket pin", testOwnedDeleteWithOperationPin)
+	t.Run("dirty retained terminal", func(t *testing.T) { testOwnedDeleteTerminal(t, false) })
+	t.Run("cleanup error terminal", func(t *testing.T) { testOwnedDeleteTerminal(t, true) })
+	f, a, fixture := repairOwnershipFixture(t)
 	first := acquireTestOwner(t, fixture)
+	defer first.conn.Close()
 	second := acquireTestOwner(t, fixture)
+	defer second.conn.Close()
 	codec := control.NewCodec(control.DefaultMaxMessageBytes)
 	if err := codec.Write(first.conn, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDelete, Binding: fixture.binding, AcquisitionID: first.id}); err != nil {
 		t.Fatal(err)
@@ -323,14 +328,23 @@ func TestMicroVMDeleteRejectsLiveOtherAcquisitions(t *testing.T) {
 	if err := codec.Read(first.conn, &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.ErrorCode != "in_use" {
-		t.Fatalf("delete with sibling acquisition = %+v, want in_use", response)
+	if response.ErrorCode != "in_use" || response.Binding != fixture.binding || response.AcquisitionID != first.id {
+		t.Fatalf("delete with sibling acquisition = %+v, want exact terminal in_use", response)
 	}
-	if fixture.guest.unregisters.Load() != 0 {
-		t.Fatal("in-use delete detached the surviving owner")
+	assertRetiredOwner(t, fixture, first)
+	got := repairExchange(t, fixture.daemon, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleWorkspace, Binding: fixture.binding, AcquisitionID: second.id, Payload: []byte(`{"operation":"read","path":"tracked.txt"}`)})
+	var read proxyWorkspaceResponse
+	if err := json.Unmarshal(got.Payload, &read); err != nil || got.ErrorCode != "" || string(read.Data) != "source\n" {
+		t.Fatalf("in_use/EOF revoked surviving owner: %+v, %v", got, err)
 	}
-	if response := closeTestOwner(t, fixture, second); response.ErrorCode != "" || fixture.guest.unregisters.Load() != 1 {
-		t.Fatalf("survivor response=%+v unregisters=%d", response, fixture.guest.unregisters.Load())
+	if response := closeTestOwner(t, fixture, second); response.ErrorCode != "" {
+		t.Fatalf("survivor final cleanup = %+v", response)
+	}
+	if err := f.backend.server.Probe(a.Logical.Binding); !errors.Is(err, control.ErrBindingMismatch) {
+		t.Fatalf("final surviving owner did not unregister: %v", err)
+	}
+	if _, err := os.Stat(a.Logical.WorktreePath); err != nil {
+		t.Fatalf("in_use/EOF implicitly deleted worktree: %v", err)
 	}
 }
 
@@ -358,14 +372,16 @@ func TestMicroVMAcquisitionCancellationAndLostRepliesReleaseOnlyOwner(t *testing
 		}
 	}
 
-	for _, tc := range []struct {
-		name      string
-		premature bool
-	}{
-		{name: "failed acquisition reply"},
-		{name: "premature terminal frame", premature: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, name := range []string{"failed acquisition reply", "premature terminal frame", "fast detach during reply"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "premature terminal frame" {
+				testPrematureAcquisitionTerminal(t)
+				return
+			}
+			if name == "fast detach during reply" {
+				testFastAcquisitionDetach(t)
+				return
+			}
 			fixture := newOwnershipFixture(t)
 			survivor := acquireTestOwner(t, fixture)
 			server, client := net.Pipe()
@@ -375,13 +391,6 @@ func TestMicroVMAcquisitionCancellationAndLostRepliesReleaseOnlyOwner(t *testing
 			request := LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleResolve, Binding: fixture.binding, Provision: &ProvisionRequest{Owner: fixture.binding.Owner, SessionID: fixture.binding.SessionID, SourceCheckout: "/repository"}}
 			if err := codec.Write(client, request); err != nil {
 				t.Fatal(err)
-			}
-			if tc.premature {
-				if err := codec.Write(client, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDelete, Binding: fixture.binding}); err != nil {
-					t.Fatal(err)
-				}
-				var response LifecycleResponse
-				_ = codec.Read(client, &response)
 			}
 			_ = client.Close()
 			<-done
