@@ -89,6 +89,8 @@ type renderer struct {
 	th    theme.Theme
 	width int
 
+	collapsedToolResultRows int
+
 	// traceWidth is the available width of a delegation-inspector card's body. A
 	// zero value preserves the transcript renderer's existing trace layout.
 	traceWidth int
@@ -251,13 +253,18 @@ const assistantBodyHang = 2
 // (ExpandTools/Agents) reflect any override (issue #457). With default keys hk
 // resolves to exactly the literals the affordances used to hardcode, so the
 // goldens stay byte-identical.
-func newRenderer(th theme.Theme, hk helpKeys) *renderer {
+func newRenderer(th theme.Theme, hk helpKeys, collapsedToolResultRows ...int) *renderer {
+	rows := defaultCollapsedToolResultRows
+	if len(collapsedToolResultRows) > 0 && collapsedToolResultRows[0] > 0 {
+		rows = collapsedToolResultRows[0]
+	}
 	return &renderer{
-		th:     th,
-		marks:  hk,
-		indent: defaultBlockIndent,
-		cache:  map[int]*glamour.TermRenderer{},
-		blocks: blockRenderCache{},
+		th:                      th,
+		marks:                   hk,
+		collapsedToolResultRows: rows,
+		indent:                  defaultBlockIndent,
+		cache:                   map[int]*glamour.TermRenderer{},
+		blocks:                  blockRenderCache{},
 	}
 }
 
@@ -2033,14 +2040,14 @@ func (r *renderer) resultBodyAtWidth(body string, expand bool, bodyWidth int) st
 	if bodyWidth > 0 {
 		body = ansi.Hardwrap(body, bodyWidth, true)
 	}
-	return truncateLinesTailMark(body, defaultCollapsedToolResultRows, "", r.marks.expandTools)
+	return truncateLinesTailMark(body, r.collapsedToolResultRows, "", r.marks.expandTools)
 }
 
 func (r *renderer) truncateResultDisplayLines(lines []toolResultLine, bodyWidth, hiddenSummaryFields int) []toolResultLine {
 	wrapped := wrapResultDisplayLines(lines, bodyWidth)
-	if len(wrapped) > defaultCollapsedToolResultRows {
-		return append(wrapped[:defaultCollapsedToolResultRows], toolResultLine{
-			text:  r.collapseMarker(len(wrapped) - defaultCollapsedToolResultRows),
+	if len(wrapped) > r.collapsedToolResultRows {
+		return append(wrapped[:r.collapsedToolResultRows], toolResultLine{
+			text:  r.collapseMarker(len(wrapped) - r.collapsedToolResultRows),
 			style: resultLineMarker,
 		})
 	}

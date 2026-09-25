@@ -358,6 +358,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		GlobalDefault:           globalDefault,
 		Clipboard:               client.NewClipboard(),
 		Theme:                   th,
+		CollapsedToolResultRows: settings.ToolCards.CollapsedResultRows,
 		ThemeAutoDetect:         themeAutoDetect,
 		ProbeKeyboardCapability: keyboardProbe,
 		StatusSource:            statusSource,

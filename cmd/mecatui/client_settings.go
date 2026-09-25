@@ -27,6 +27,15 @@ type clientSettings struct {
 	Keymap              map[string]string    `yaml:"keymap"`
 	StatusCustomization *statusCustomization `yaml:"status_customization"`
 	TerminalTitle       terminalTitleSettings
+	ToolCards           toolCardSettings
+}
+
+type toolCardSettings struct {
+	CollapsedResultRows int
+}
+
+type toolCardSettingsYAML struct {
+	CollapsedResultRows *int `yaml:"collapsed_result_rows"`
 }
 
 type terminalTitleSettings struct {
@@ -48,7 +57,10 @@ func newTitleRenderer(settings terminalTitleSettings) (*customization.TitleRende
 }
 
 func defaultClientSettings() clientSettings {
-	return clientSettings{TerminalTitle: shippedTerminalTitleSettings()}
+	return clientSettings{
+		TerminalTitle: shippedTerminalTitleSettings(),
+		ToolCards:     toolCardSettings{CollapsedResultRows: 3},
+	}
 }
 
 // clientSettingsYAML is the strict decode shape. A duration stays textual until
@@ -57,6 +69,7 @@ type clientSettingsYAML struct {
 	Keymap              map[string]string          `yaml:"keymap"`
 	StatusCustomization *statusCustomizationYAML   `yaml:"status_customization"`
 	TerminalTitle       *terminalTitleSettingsYAML `yaml:"terminal_title"`
+	ToolCards           *toolCardSettingsYAML      `yaml:"tool_cards"`
 }
 
 type statusCustomizationYAML struct {
@@ -171,7 +184,23 @@ func readClientSettings() (clientSettings, error) {
 	if err != nil {
 		return clientSettings{}, fmt.Errorf("parsing %s: terminal_title.template: %w", path, err)
 	}
-	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title}, nil
+	toolCards, err := decodeToolCards(raw.ToolCards)
+	if err != nil {
+		return clientSettings{}, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title, ToolCards: toolCards}, nil
+}
+
+func decodeToolCards(raw *toolCardSettingsYAML) (toolCardSettings, error) {
+	out := toolCardSettings{CollapsedResultRows: 3}
+	if raw == nil || raw.CollapsedResultRows == nil {
+		return out, nil
+	}
+	if *raw.CollapsedResultRows < 1 {
+		return toolCardSettings{}, errors.New("tool_cards.collapsed_result_rows must be a positive integer")
+	}
+	out.CollapsedResultRows = *raw.CollapsedResultRows
+	return out, nil
 }
 
 func decodeTerminalTitle(raw *terminalTitleSettingsYAML) (terminalTitleSettings, error) {
@@ -196,9 +225,9 @@ func clientSettingsSchemaError(path string, err error) error {
 
 	diagnostic := yamldiag.Classify("parse client settings", err)
 	if diagnostic.HasLocation {
-		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type, including terminal_title; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
+		return fmt.Errorf("parsing %s: does not match the expected client settings schema at line %d, column %d (unknown key or type, including terminal_title; tool card settings use tool_cards.collapsed_result_rows as a positive integer; %s)", path, diagnostic.Line, diagnostic.Column, guidance)
 	}
-	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type, including terminal_title; %s)", path, guidance)
+	return fmt.Errorf("parsing %s: does not match the expected client settings schema (unknown key or type, including terminal_title; tool card settings use tool_cards.collapsed_result_rows as a positive integer; %s)", path, guidance)
 }
 func clientKeymapSyntaxError(path string, err error) error {
 	var documentError *yamldiag.DocumentError

@@ -39,6 +39,26 @@ local executable. The client sends command input only through standard input.
 See [Status line customization](./status-line.md) for template and executable
 examples, the input reference, StatusML syntax, and safety limits.
 
+## Set the collapsed tool-result preview size
+
+Collapsed tool cards show up to three wrapped result rows by default. To use a
+different limit, add `tool_cards.collapsed_result_rows` to
+`$XDG_CONFIG_HOME/mecatui/settings.yaml`:
+
+```yaml title="$XDG_CONFIG_HOME/mecatui/settings.yaml"
+tool_cards:
+  collapsed_result_rows: 5
+```
+
+Set `collapsed_result_rows` to a positive integer. `mecatui` reports a startup
+configuration error for zero, negative, or non-integer values. Restart
+`mecatui` after editing the file. The setting applies to the active
+conversation in embedded and connected modes.
+
+Press the configured **ExpandTools** key, `ctrl+t` by default, to view complete
+tool arguments and output. Stored transcript previews under `/sessions` keep
+their own preview size.
+
 ## Next steps
 
 - [Connect to a server](./remote-servers.md) to use a remote deployment.

@@ -1992,7 +1992,7 @@ func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
 // construction time and must be rebuilt explicitly.
 func (m Model) switchTheme(th theme.Theme) Model {
 	m.deps.Theme = th
-	m.rend = newRenderer(th, m.rend.marks)
+	m.rend = newRenderer(th, m.rend.marks, m.rend.collapsedToolResultRows)
 	m.rend.setWidth(m.width)
 	m.sp.Style = th.Style("spinner")
 	m.refreshView()
