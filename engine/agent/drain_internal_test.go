@@ -17,6 +17,7 @@ func TestAcceptedChildApprovalRequeuesAfterEmitAbort(t *testing.T) {
 	r, _ := newDrainRun(1)
 	r.childAsks = newChildAskRouter()
 	r.hardAbort = make(chan struct{})
+	defer close(r.hardAbort)
 	r.events <- session.Event{Type: session.EvTurnStart}
 	sink := &recordingSink{}
 	e := &Engine{deps: Deps{Sink: sink}}
@@ -49,11 +50,10 @@ func TestAcceptedChildApprovalRequeuesAfterEmitAbort(t *testing.T) {
 		}
 	}
 	r.children.abortEmits()
-	close(r.hardAbort) // also releases the baseline's unabortable parent emit
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("child drain did not stop after emit abort")
+	case <-time.After(time.Second):
+		t.Fatal("child drain did not stop on the child emit abort alone")
 	}
 	if queued := r.childAsks.takeAccepted(child); len(queued) != 1 || queued[0].Approval == nil || queued[0].Approval.AskID != ask.AskID {
 		t.Fatalf("aborted approval was not requeued: %+v", queued)
@@ -61,6 +61,100 @@ func TestAcceptedChildApprovalRequeuesAfterEmitAbort(t *testing.T) {
 	if mirrored := sink.snapshotEvents(); len(mirrored) != 0 {
 		t.Fatalf("aborted approval reached sink without stream delivery: %+v", mirrored)
 	}
+}
+
+// orderedApprovalSink parks after a child approval reaches the sink, before
+// recording it. A terminal result may not overtake that already-delivered
+// approval, even when parent drain races the child sink callback.
+type orderedApprovalSink struct {
+	approvalEntered chan struct{}
+	releaseApproval chan struct{}
+	seen            chan session.Event
+}
+
+func (s *orderedApprovalSink) Emit(_ context.Context, ev session.Event) {
+	if ev.Type == session.EvApproval {
+		close(s.approvalEntered)
+		<-s.releaseApproval
+	}
+	s.seen <- ev
+}
+
+func TestStudioChatApprovals_Scenario1_ChildApprovalSinkPrecedesTerminal(t *testing.T) {
+	r, _ := newDrainRun(2)
+	r.runID = "parent-run"
+	r.childAsks = newChildAskRouter()
+	sink := &orderedApprovalSink{
+		approvalEntered: make(chan struct{}),
+		releaseApproval: make(chan struct{}),
+		seen:            make(chan session.Event, 2),
+	}
+	releaseApproval := sync.OnceFunc(func() { close(sink.releaseApproval) })
+	defer releaseApproval()
+	e := &Engine{deps: Deps{Sink: sink}}
+	child := &Run{asks: newAskRegistry()}
+	ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Origin: session.ApprovalOriginPermission}
+	child.asks.registerAsk(ask)
+	r.childAsks.registerSurfaced(ask, child, 1)
+	if got := r.ResolveOrdinaryAsk(ask.AskID, session.VerdictAllowOnce); got != AskResolutionResolved {
+		t.Fatalf("resolved ask = %v, want accepted", got)
+	}
+	childDone := make(chan struct{})
+	go func() {
+		e.parentCaps(r, nil, 1).emitChildApprovals(child)
+		close(childDone)
+	}()
+	select {
+	case <-sink.approvalEntered:
+	case <-time.After(time.Second):
+		t.Fatal("child approval never reached the sink")
+	}
+	parentDone := make(chan struct{})
+	go func() {
+		e.drainChildren(context.Background(), r)
+		e.emit(r, session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopEndTurn}})
+		close(parentDone)
+	}()
+	select {
+	case <-r.children.emitAbort:
+	case <-time.After(time.Second):
+		t.Fatal("parent drain never began sealing")
+	}
+	var early session.Event
+	select {
+	case early = <-sink.seen:
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseApproval()
+	select {
+	case <-childDone:
+	case <-time.After(time.Second):
+		t.Fatal("child approval mirror did not finish")
+	}
+	select {
+	case <-parentDone:
+	case <-time.After(time.Second):
+		t.Fatal("parent terminal did not finish")
+	}
+	if early.Type != "" {
+		t.Fatalf("sink observed %s before the accepted child approval", early.Type)
+	}
+	readEvent := func(ch <-chan session.Event, source string) session.Event {
+		t.Helper()
+		select {
+		case ev := <-ch:
+			return ev
+		case <-time.After(time.Second):
+			t.Fatalf("%s did not deliver its event", source)
+			return session.Event{}
+		}
+	}
+	firstSink, secondSink := readEvent(sink.seen, "sink"), readEvent(sink.seen, "sink")
+	firstStream, secondStream := readEvent(r.events, "stream"), readEvent(r.events, "stream")
+	if firstSink.Type != session.EvApproval || secondSink.Type != session.EvResult {
+		t.Fatalf("sink order = %s, %s; want approval before result", firstSink.Type, secondSink.Type)
+	}
+	assertApprovalSinkParity(t, []session.Event{firstSink, secondSink}, firstStream, secondStream)
 }
 
 // TestFinalChildApprovalSealDoesNotHoldEmitMuBehindStream proves that a parent
@@ -237,7 +331,7 @@ func TestSealedChildDrainDoesNotConsumeAcceptedApproval(t *testing.T) {
 	r.children.seal()
 	r.children.emitAccepted(
 		func() []session.Event { return r.childAsks.takeAccepted(child) },
-		func(ev session.Event) (session.Event, bool) { return ev, true },
+		func(session.Event) bool { return true },
 		func(events []session.Event) { r.childAsks.requeueAccepted(child, events) },
 	)
 	if queued := r.childAsks.takeAccepted(child); len(queued) != 1 || queued[0].Approval == nil || queued[0].Approval.AskID != ask.AskID {

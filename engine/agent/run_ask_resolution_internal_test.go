@@ -147,7 +147,7 @@ func TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait(t *testing.T) {
 			posture := childPosture{caps: parentCaps{emitChildApprovals: func(child *Run) {
 				parent.children.emitAccepted(
 					func() []session.Event { return parent.childAsks.takeAccepted(child) },
-					func(ev session.Event) (session.Event, bool) { parent.children.emit(ev); return ev, true },
+					func(ev session.Event) bool { parent.children.emit(ev); return true },
 					func(events []session.Event) { parent.childAsks.requeueAccepted(child, events) },
 				)
 			}}}

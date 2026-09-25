@@ -2012,14 +2012,19 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	}
 	if interactive {
 		caps.emitChildApprovals = func(child *Run) {
-			delivered := r.children.emitAccepted(
+			r.children.emitAccepted(
 				func() []session.Event { return r.childAsks.takeAccepted(child) },
-				func(ev session.Event) (session.Event, bool) { return r.emitOrAbortSequenced(ev, r.children.emitAbort) },
+				func(ev session.Event) bool {
+					sequenced, delivered := r.emitOrAbortSequenced(ev, r.children.emitAbort)
+					if delivered {
+						// The parent terminal waits on emitMu, so its sink mirror cannot
+						// overtake this already-delivered approval.
+						e.mirrorEvent(r, sequenced)
+					}
+					return delivered
+				},
 				func(events []session.Event) { r.childAsks.requeueAccepted(child, events) },
 			)
-			for _, ev := range delivered {
-				e.mirrorEvent(r, ev)
-			}
 		}
 		caps.surfaceAsk = func(askID, childID string, child *Run, ask session.PendingAsk, requesterLabel string) {
 			// Register BEFORE emitting so a fast ResumeApproval cannot race ahead of
