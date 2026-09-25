@@ -40,6 +40,12 @@ var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
 		additionalSDKOperation: "Session.listMcpConnectors",
 		applicationDetail:      "The TUI chooses source listing in direct mode or connector inventory in broker mode and renders the result locally.",
 	},
+	"mcp-refresh": {
+		category:               sdkBacked,
+		sdkOperation:           "Client.mcp.refresh",
+		additionalSDKOperation: "Session.connectWorkspaceServices",
+		applicationDetail:      "The TUI chooses direct source refresh or broker workspace enrollment from server capabilities.",
+	},
 	"agents":      {category: sdkBacked, sdkOperation: "Client.agents.list"},
 	"team":        {category: sdkBacked, sdkOperation: "Team.list"},
 	"skills":      {category: sdkBacked, sdkOperation: "Client.skills.list"},
@@ -189,7 +195,7 @@ func TestSDKHighLevelParity_Scenario2_BuiltinDispatchUnchanged(t *testing.T) {
 		}
 	}
 	slices.Sort(absent)
-	want := []string{"connect", "dream", "reflect", "reflections", "tools-cancel", "tools-connect"}
+	want := []string{"connect", "dream", "mcp-refresh", "reflect", "reflections", "tools-cancel", "tools-connect"}
 	if !slices.Equal(absent, want) {
 		t.Fatalf("known-name registry drift: absent = %v, want %v", absent, want)
 	}

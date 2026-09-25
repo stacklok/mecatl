@@ -62,6 +62,7 @@ const HIGH_LEVEL_SURFACE = {
   "HarnessService.ListMcpPrompts": { kind: "namespace", operation: "Client.mcp.listPrompts" },
   "HarnessService.GetMcpPrompt": { kind: "namespace", operation: "Client.mcp.getPrompt" },
   "HarnessService.ListMcpSources": { kind: "namespace", operation: "Client.mcp.listSources" },
+  "HarnessService.RefreshMcpSources": { kind: "namespace", operation: "Client.mcp.refresh" },
   "HarnessService.ListToolHiveGroups": {
     kind: "namespace",
     operation: "Client.mcp.listToolHiveGroups",
