@@ -2372,7 +2372,6 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 			return nil, reserveErr
 		}
 		if existing != nil {
-			release()
 			return nil, fmt.Errorf("%w: generated session id %q already exists", ErrInvalidArgument, id)
 		}
 		defer release()
