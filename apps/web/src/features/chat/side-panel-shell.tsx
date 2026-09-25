@@ -3,9 +3,9 @@
 import { Maximize2, PanelRightClose } from "lucide-react";
 import {
   type CSSProperties,
-  type Ref,
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
+  type Ref,
   useEffect,
   useRef,
   useState,
@@ -16,23 +16,27 @@ import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-wid
 /** Presentation only: each feature owns its content, actions, and delivery state. */
 export function SidePanelShell({
   actions,
+  autoFocusClose = true,
   bodyClassName,
   children,
   closeLabel = "Close panel",
   icon,
   maximizable = false,
   onClose,
+  restoreFocusOnClose = true,
   title,
   titleRef,
   titleTabIndex,
 }: {
   actions?: ReactNode;
+  autoFocusClose?: boolean;
   bodyClassName?: string;
   children: ReactNode;
   closeLabel?: string;
   icon?: ReactNode;
   maximizable?: boolean;
   onClose: () => void;
+  restoreFocusOnClose?: boolean;
   title: string;
   titleRef?: Ref<HTMLHeadingElement>;
   titleTabIndex?: number;
@@ -46,12 +50,13 @@ export function SidePanelShell({
   // away from a reader's selection or composer.
   useEffect(() => {
     const returnFocus = document.activeElement;
-    closeButton.current?.focus();
+    if (autoFocusClose) closeButton.current?.focus();
     return () => {
       resizeCleanup.current?.();
-      if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
+      if (restoreFocusOnClose && returnFocus instanceof HTMLElement && returnFocus.isConnected)
+        returnFocus.focus();
     };
-  }, []);
+  }, [autoFocusClose, restoreFocusOnClose]);
 
   function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
     event.currentTarget.focus();
