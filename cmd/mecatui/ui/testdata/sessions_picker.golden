@@ -6,6 +6,31 @@
 
 enter: continue  y: copy ID  v: view  f: fork  r: rename  d: delete  tab: switch  esc: close
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 │
 │ Ask mecatl to do something…  (enter to send · shift+enter for newline · ? for help)
 │

@@ -1327,6 +1327,9 @@ func boundedSessionsPanel(parts []string, width, height int) string {
 			lines = append(lines, boundedDisplayLine(line, width))
 		}
 	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
 	return strings.Join(lines, "\n")
 }
 
