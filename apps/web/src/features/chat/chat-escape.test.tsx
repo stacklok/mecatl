@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useChatEscape } from "./chat-escape";
 
@@ -97,6 +97,60 @@ function Harness({
         value={draft}
       />
     </main>
+  );
+}
+
+function IndependentThreadHarness() {
+  const threadRoot = useRef<HTMLElement>(null);
+  const [threadAsk, setThreadAsk] = useState(true);
+  const [parentPanel, setParentPanel] = useState(true);
+  const [actions, setActions] = useState<string[]>([]);
+  const record = (value: string) => setActions((current) => [...current, value]);
+  const noop = () => {};
+  useChatEscape({
+    active: true,
+    draft: false,
+    onClearDraft: noop,
+    onClosePanel: () => {
+      record("parent panel");
+      setParentPanel(false);
+    },
+    onDenyAsk: noop,
+    onHintChange: noop,
+    onIteratePlan: noop,
+    onStopRun: noop,
+    onUnavailablePlan: noop,
+    ownsFocus: (target) => target instanceof Node && !threadRoot.current?.contains(target),
+    panelOpen: parentPanel,
+    pendingAsk: "none",
+    runActive: false,
+  });
+  useChatEscape({
+    active: true,
+    draft: false,
+    onClearDraft: noop,
+    onClosePanel: noop,
+    onDenyAsk: () => {
+      record("thread deny");
+      setThreadAsk(false);
+    },
+    onHintChange: noop,
+    onIteratePlan: noop,
+    onStopRun: noop,
+    onUnavailablePlan: noop,
+    ownsFocus: (target) => target instanceof Node && Boolean(threadRoot.current?.contains(target)),
+    panelOpen: false,
+    pendingAsk: threadAsk ? "ordinary" : "none",
+    runActive: false,
+  });
+  return (
+    <div>
+      <button type="button">Parent target</button>
+      <aside ref={threadRoot}>
+        <button type="button">Thread target</button>
+      </aside>
+      <output>{actions.join(",")}</output>
+    </div>
   );
 }
 
@@ -270,5 +324,20 @@ describe("chat Escape", () => {
     expect(screen.getByText("Press Escape again to clear draft")).toBeTruthy();
     view.rerender(<Harness ask="none" navigationKey="chat-b" />);
     expect(screen.getByText("No hint")).toBeTruthy();
+  });
+
+  it("keeps a focused thread ask ahead of its parent panel", () => {
+    render(<IndependentThreadHarness />);
+    const thread = screen.getByRole("button", { name: "Thread target" });
+    thread.focus();
+    act(() => pressEscape(thread));
+    expect(screen.getByRole("status").textContent).toBe("thread deny");
+    const parent = screen.getByRole("button", { name: "Parent target" });
+    parent.focus();
+    act(() => {
+      releaseEscape();
+      pressEscape(parent);
+    });
+    expect(screen.getByRole("status").textContent).toBe("thread deny,parent panel");
   });
 });
