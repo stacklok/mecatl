@@ -60,6 +60,29 @@ func TestSessionContinuityUX_Scenario6_NoThrowawaySession(t *testing.T) {
 	}
 }
 
+func TestResumeStartupRetainsAdvertisedCapabilities(t *testing.T) {
+	resume := startupSelection("existing", "completed")
+	resume.Snapshot.Capabilities = client.Capabilities{
+		Steer: true, Teams: true, Image: false, Audio: true, SessionMediaPresent: true,
+	}
+	conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+	m := newTestModelFromDeps(Deps{
+		Session: conv, Conv: conv, Theme: testTheme(), Ctx: t.Context(), Workspace: "/launch", Resume: resume,
+	})
+
+	if !m.caps.Steer || !m.caps.Teams || m.caps.Image || !m.caps.Audio || !m.caps.SessionMediaPresent {
+		t.Fatalf("resumed capabilities = %+v", m.caps)
+	}
+	m = startRunning(t, m, "first")
+	m = enqueueSteer(t, m, "follow this instead")
+	if got := steerTexts(conv.send); !reflect.DeepEqual(got, []string{"follow this instead"}) {
+		t.Fatalf("steer frames = %#v, want resumed session to steer", got)
+	}
+	if len(m.queued) != 0 {
+		t.Fatalf("queued prompts = %#v, want no local queue in steer mode", m.queued)
+	}
+}
+
 func TestSessionContinuityUX_Scenario6_StaleRunningDefersToRunEntry(t *testing.T) {
 	conv := &fakeConv{}
 	m := startupResumeUI(t, conv, "", "running")

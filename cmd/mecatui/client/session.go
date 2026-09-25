@@ -54,6 +54,10 @@ func contextOccupancyFrom(occupancy *mecatlv1.ContextOccupancy) *ContextOccupanc
 }
 
 func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
+	return snapshotFromWithGlobalCapabilities(s, Capabilities{})
+}
+
+func snapshotFromWithGlobalCapabilities(s *mecatlv1.Session, global Capabilities) SessionSnapshot {
 	if s == nil {
 		return SessionSnapshot{Mode: ModeDefaultString}
 	}
@@ -68,7 +72,7 @@ func snapshotFrom(s *mecatlv1.Session) SessionSnapshot {
 		Title:            titleFromProto(s),
 		TitleProvenance:  titleProvenanceFromProto(s),
 		TitleRevision:    s.GetTitleMetadata().GetRevision(),
-		Capabilities:     capabilitiesWithSessionMedia(nil, s.GetSessionCapabilities()),
+		Capabilities:     capabilitiesWithSessionMediaFrom(global, s.GetSessionCapabilities()),
 	}
 }
 
@@ -97,7 +101,14 @@ func (c *Client) GetSession(ctx context.Context, id string) (SessionSnapshot, er
 	if err != nil {
 		return SessionSnapshot{}, fmt.Errorf("get session: %w", err)
 	}
-	return snapshotFrom(resp.GetSession()), nil
+	global, err := c.compatibilityCapabilities(ctx)
+	if err != nil {
+		// Servers predating GetCompatibilityInfo still support session resume. Their
+		// session media snapshot remains authoritative; absent global bits degrade
+		// safely to false rather than making resume fail.
+		global = Capabilities{}
+	}
+	return snapshotFromWithGlobalCapabilities(resp.GetSession(), global), nil
 }
 
 // SetMode asks the server to change the session's permission posture and returns

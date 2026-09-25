@@ -486,11 +486,7 @@ func (c *Client) createSession(ctx context.Context, req *mecatlv1.CreateSessionR
 	if err != nil {
 		return "", Capabilities{}, ResolvedModel{}, fmt.Errorf("create session: %w", err)
 	}
-	if media := resp.GetSessionCapabilities(); media != nil {
-		caps.Image = media.GetImage()
-		caps.Audio = media.GetAudio()
-		caps.SessionMediaPresent = true
-	}
+	caps = capabilitiesWithSessionMediaFrom(caps, resp.GetSessionCapabilities())
 	return resp.GetSessionId(), caps, resolvedModelFrom(resp.GetResolvedModel()), nil
 }
 

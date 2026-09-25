@@ -77,7 +77,64 @@ func (m Model) diagnosticsReport(serverBuild, serverImplementation, displayServe
 	return report + "\n" +
 		"active provider: " + provider + "\n" +
 		"active model: " + model + "\n" +
-		"permission mode: " + mode + m.statusCommandDiagnosticsReport()
+		"permission mode: " + mode + m.capabilityDiagnosticsReport() + "\n" +
+		"Converse stream: " + map[bool]string{true: "connected", false: unavailableText}[m.stream != nil] + m.statusCommandDiagnosticsReport()
+}
+
+func (m Model) capabilityDiagnosticsReport() string {
+	caps := m.caps
+	manualDream := caps.ManualDream
+	capabilities := []struct {
+		name    string
+		enabled bool
+	}{
+		{"mcp_connector_status", caps.MCPConnectorStatus},
+		{"mcp_refresh", caps.MCPRefresh},
+		{"mcp", caps.MCP},
+		{"slash_commands", caps.SlashCommands},
+		{"memory", caps.Memory},
+		{"skills", caps.Skills},
+		{"teams", caps.Teams},
+		{"agents", caps.Agents},
+		{"shell", caps.Shell},
+		{"soul", caps.Soul},
+		{"user_model", caps.UserModel},
+		{"model_selection", caps.ModelSelection},
+		{"image", caps.Image},
+		{"audio", caps.Audio},
+		{"worktrees", caps.Worktrees},
+		{"scheduling", caps.Scheduling},
+		{"reflection", caps.Reflection},
+		{"learning_proposals", caps.LearningProposals},
+		{"learned_skills", caps.LearnedSkills},
+		{"storage_health", caps.StorageHealth},
+		{"storage_cleanup", caps.StorageCleanup},
+		{"manual_dream_advertised", manualDream != nil},
+		{"manual_dream_project_memory_generate", manualDream != nil && manualDream.ProjectMemory.Generate},
+		{"manual_dream_project_memory_decide", manualDream != nil && manualDream.ProjectMemory.Decide},
+		{"manual_dream_user_model_generate", manualDream != nil && manualDream.UserModel.Generate},
+		{"manual_dream_user_model_decide", manualDream != nil && manualDream.UserModel.Decide},
+		{"steer", caps.Steer},
+		{"manual_compaction", caps.ManualCompaction},
+		{"session_debug", caps.SessionDebug},
+		{"debug_mcp", caps.DebugMCP},
+		{"workspace_enrollment", caps.WorkspaceEnrollment},
+		{"session_media_present", caps.SessionMediaPresent},
+	}
+	var report strings.Builder
+	report.WriteString("\ncaps:")
+	for _, capability := range capabilities {
+		report.WriteByte(' ')
+		if capability.enabled {
+			report.WriteByte('+')
+		} else {
+			report.WriteByte('-')
+		}
+		report.WriteString(capability.name)
+	}
+	report.WriteString(" posture=")
+	report.WriteString(diagnosticToken(caps.Posture))
+	return report.String()
 }
 
 func (m Model) statusCommandDiagnosticsReport() string {

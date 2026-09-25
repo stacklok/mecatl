@@ -116,8 +116,8 @@ func TestSessionAffinityAndHandoff_Scenario4_MecatuiUnaryAndStreamPropagation(t 
 		})
 	}
 
-	if len(conn.calls) != len(calls)+1 {
-		t.Fatalf("recorded calls = %d, want %d", len(conn.calls), len(calls)+1)
+	if len(conn.calls) != len(calls)+2 {
+		t.Fatalf("recorded calls = %d, want %d", len(conn.calls), len(calls)+2)
 	}
 	for _, call := range conn.calls {
 		if strings.HasSuffix(call.method, "/GetCompatibilityInfo") {
