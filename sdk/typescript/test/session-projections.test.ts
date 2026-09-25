@@ -41,6 +41,7 @@ function session() {
       reasoningEffort: "high",
     },
     sessionCapabilities: { audio: true, image: false },
+    latestContextOccupancy: { estimated: true, inputTokens: 42_000n },
     sessionId: "session",
     state: "future-state",
     titleMetadata: {
@@ -98,6 +99,7 @@ describe("session projections", () => {
         reasoningEffort: "high",
       },
       sessionCapabilities: { audio: true, image: false },
+      latestContextOccupancy: { estimated: true, inputTokens: 42_000n },
       sessionId: "session",
       state: "future-state",
       title: {
@@ -272,6 +274,7 @@ describe("session projections", () => {
         "debugMcpServers",
         "debugMcpTools",
         "kind",
+        "latestContextOccupancy",
         "limits",
         "mode",
         "placement",

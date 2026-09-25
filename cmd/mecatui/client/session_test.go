@@ -56,3 +56,22 @@ func TestSnapshotFromReadsTitle(t *testing.T) {
 		t.Fatalf("nil Title = %q, want empty", nilSnap.Title)
 	}
 }
+
+func TestSnapshotFromProjectsMainUsageAndOptionalContextOccupancy(t *testing.T) {
+	snap := snapshotFrom(&mecatlv1.Session{
+		TokenUsage: map[string]*mecatlv1.TokenUsage{
+			"main": {Total: &mecatlv1.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000}},
+		},
+		LatestContextOccupancy: &mecatlv1.ContextOccupancy{InputTokens: 40_000, Estimated: true},
+	})
+	if snap.Usage != (Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000}) {
+		t.Fatalf("main usage = %+v", snap.Usage)
+	}
+	if snap.ContextOccupancy == nil || *snap.ContextOccupancy != (ContextOccupancy{InputTokens: 40_000, Estimated: true}) {
+		t.Fatalf("context occupancy = %+v", snap.ContextOccupancy)
+	}
+	legacy := snapshotFrom(&mecatlv1.Session{TokenUsage: map[string]*mecatlv1.TokenUsage{"main": {Total: &mecatlv1.Usage{InputTokens: 120_000}}}})
+	if legacy.ContextOccupancy != nil || legacy.Usage.InputTokens != 120_000 {
+		t.Fatalf("legacy snapshot = %+v", legacy)
+	}
+}

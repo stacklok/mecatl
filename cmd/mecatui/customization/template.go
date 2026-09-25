@@ -170,8 +170,9 @@ type templateContextAtom struct {
 	Human templateText
 }
 type templateContext struct {
-	Used, Window templateContextAtom
-	Percent      int
+	Used, Window     templateContextAtom
+	Percent          int
+	Known, Estimated bool
 }
 
 // contextMeter is the shipped template primitive for the context-pressure bar.
@@ -274,7 +275,7 @@ func newTemplateInput(input Input) templateInput {
 		Session:    templateSession{escapeTemplateText(input.Session.Title), escapeTemplateText(input.Session.Handle), escapeTemplateText(input.Session.Mode), escapeTemplateText(input.Session.ReasoningEffort)},
 		Model:      templateModel{escapeTemplateText(input.Model.ProviderID), escapeTemplateText(input.Model.ID), escapeTemplateText(input.Model.DisplayName), escapeTemplateText(input.Model.Route), templateContextAtom{input.Model.ContextWindow.Raw, escapeTemplateText(input.Model.ContextWindow.Human)}},
 		Usage:      templateUsage{templateUsageAtom{input.Usage.Input.Raw, escapeTemplateText(input.Usage.Input.Human)}, templateUsageAtom{input.Usage.Output.Raw, escapeTemplateText(input.Usage.Output.Human)}, templateUsageAtom{input.Usage.CacheRead.Raw, escapeTemplateText(input.Usage.CacheRead.Human)}, templateUsageAtom{input.Usage.CacheWrite.Raw, escapeTemplateText(input.Usage.CacheWrite.Human)}, input.Usage.CacheReadPercent},
-		Context:    templateContext{templateContextAtom{input.Context.Used.Raw, escapeTemplateText(input.Context.Used.Human)}, templateContextAtom{input.Context.Window.Raw, escapeTemplateText(input.Context.Window.Human)}, input.Context.Percent},
+		Context:    templateContext{templateContextAtom{input.Context.Used.Raw, escapeTemplateText(input.Context.Used.Human)}, templateContextAtom{input.Context.Window.Raw, escapeTemplateText(input.Context.Window.Human)}, input.Context.Percent, input.Context.Known, input.Context.Estimated},
 		Workspace:  templateWorkspace{escapeTemplateText(input.Workspace.Location), escapeTemplateText(input.Workspace.Name), escapeTemplateText(input.Workspace.Path)},
 		Terminal:   input.Terminal,
 		MainAgent:  templateMainAgent{escapeTemplateText(input.MainAgent.State), escapeTemplateText(input.MainAgent.Activity), escapeTemplateText(input.MainAgent.Approval)},

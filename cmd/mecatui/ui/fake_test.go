@@ -225,7 +225,8 @@ type fakeConv struct {
 	// (the caps-heal channel for /sessions continue + /effort fork, issue #348).
 	// A zero value (default, no field set) models an older server that omits the
 	// field.
-	getSessionCaps client.Capabilities
+	getSessionCaps      client.Capabilities
+	getSessionSnapshots []client.SessionSnapshot
 
 	// ForkSession recorders (ADR 0068 effort fork-resume). forkedFrom/forkedEffort
 	// record the LAST fork's source id + effort override; forkCount counts calls.
@@ -300,6 +301,13 @@ func (c *fakeConv) GetSession(_ context.Context, id string) (client.SessionSnaps
 	c.getSessionIDs = append(c.getSessionIDs, id)
 	if c.getSessionErr != nil {
 		return client.SessionSnapshot{}, c.getSessionErr
+	}
+	if len(c.getSessionSnapshots) > 0 {
+		i := c.getSessionCount - 1
+		if i >= len(c.getSessionSnapshots) {
+			i = len(c.getSessionSnapshots) - 1
+		}
+		return c.getSessionSnapshots[i], nil
 	}
 	resolved := c.resolvedModel
 	// When a create echoed a selector-derived model (echoSelAsResolved), GetSession

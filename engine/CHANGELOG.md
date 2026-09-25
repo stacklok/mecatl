@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Display-only latest context occupancy** — adds `session.ContextOccupancy` and
+  `Session.LatestContextOccupancy` / `Session.RecordLatestContextOccupancy` for
+  the optional non-zero context-meter numerator from a completed agent-loop turn.
+  It remains distinct from canonical `TokenUsage` and run budgets. Added (minor).
+
 - **Root-session run correlation context** — adds `port.WithRootSessionID` and
   `port.RootSessionIDFromContext` so trusted engine composition can preserve one
   causal session identity across nested runs without changing active session

@@ -118,7 +118,7 @@ refreshes it.
 
 |JSON path|Type|Meaning|
 |-|-|-|
-|`Version`|integer|Status input protocol version (currently `3`).|
+|`Version`|integer|Status input protocol version (currently `4`).|
 |`Server.DisplayTarget`|string|Credential-free target shown by the client.|
 |`Server.ConnectionMode`|string|`embedded`, `connect`, or empty while unknown.|
 |`Session.Title`|string|Optional display title.|
@@ -130,6 +130,8 @@ refreshes it.
 |`Usage.{Input,Output,CacheRead,CacheWrite}.{Raw,Human}`|integer, string|Cumulative exact and display-ready token atoms. `CacheRead` is a subset of input.|
 |`Usage.CacheReadPercent`|integer|`CacheRead.Raw / Input.Raw` as an integer percentage, or `0` when input is zero.|
 |`Context.{Used,Window}.{Raw,Human}`|integer, string|Current context use and capacity as exact and display-ready values.|
+|`Context.Known`|boolean|Whether the current context occupancy is known. When false, `Used.Human` remains `?`.|
+|`Context.Estimated`|boolean|Whether the known context occupancy is an estimate. When true, `Used.Human` retains its `~` prefix.|
 |`Context.Percent`|integer|`Used.Raw / Window.Raw` as an integer percentage, or `0` when unknown.|
 |`Workspace.Location`|string|`local`, `remote`, or `unknown`.|
 |`Workspace.Name`|string|Provider-supplied workspace display metadata. It is not a directory basename or a usable path.|

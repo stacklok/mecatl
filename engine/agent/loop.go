@@ -1921,6 +1921,12 @@ func (e *Engine) runLoop(ctx context.Context, r *Run, sess *session.Session, env
 			e.terminate(ctx, r, sess, session.StopError, lastText, total, err, false)
 			return
 		}
+		if streamStop != session.StopCancelled && streamStop != session.StopError {
+			sess.RecordLatestContextOccupancy(session.ContextOccupancy{
+				InputTokens: emitUsage.InputTokens,
+				Estimated:   estimated,
+			})
+		}
 
 		// Step 5: a tool-call-free turn is either a real answer, a bounded no-progress
 		// nudge, or a clean give-up — finishTurnNoTools owns that classification (and

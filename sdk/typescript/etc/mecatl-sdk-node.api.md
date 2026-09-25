@@ -1455,6 +1455,14 @@ export interface SessionCapabilities {
 }
 
 // @public
+export interface SessionContextOccupancy {
+    // (undocumented)
+    readonly estimated: boolean;
+    // (undocumented)
+    readonly inputTokens: bigint;
+}
+
+// @public
 export interface SessionLimits {
     maxConsecutiveFailures?: number;
     maxToolCalls?: number;
@@ -1545,6 +1553,8 @@ export interface SessionSnapshot {
     readonly debugMcpTools: readonly string[];
     // (undocumented)
     readonly kind: string;
+    // (undocumented)
+    readonly latestContextOccupancy?: SessionContextOccupancy;
     // (undocumented)
     readonly limits?: SessionSnapshotLimits;
     // (undocumented)

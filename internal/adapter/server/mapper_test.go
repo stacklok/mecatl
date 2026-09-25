@@ -11,7 +11,10 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/dynamicpb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
@@ -28,6 +31,94 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/mcp/source"
 	"github.com/stacklok/mecatl/internal/adapter/sessiondebug"
 )
+
+func TestResumableSessionStatusMetrics_Scenario2_GetSessionProjection(t *testing.T) {
+	for _, kind := range []session.SessionKind{
+		session.SessionKindMain,
+		session.SessionKindScheduled,
+		session.SessionKindSubagent,
+		session.SessionKindParallelBranch,
+		session.SessionKindTeamMember,
+		session.SessionKindDebug,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			sess := session.New(session.SessionID("status-"+string(kind)), session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "test"}, session.Limits{}, time.Unix(0, 0))
+			sess.Kind = kind
+			if err := sess.BeginTurn(); err != nil {
+				t.Fatalf("BeginTurn: %v", err)
+			}
+			if err := sess.RecordUsage(session.Usage{InputTokens: 100, OutputTokens: 25}); err != nil {
+				t.Fatalf("RecordUsage: %v", err)
+			}
+			sess.RecordLatestContextOccupancy(session.ContextOccupancy{InputTokens: 4096, Estimated: true})
+
+			got := toProtoSession(sess, ResolvedModel{ProviderID: "test", ModelID: "model", ContextWindow: 8192}, nil, port.ProviderCapabilities{})
+			if got.GetResolvedModel().GetContextWindow() != 8192 {
+				t.Fatalf("resolved context window = %d, want 8192", got.GetResolvedModel().GetContextWindow())
+			}
+			if usage := got.GetTokenUsage()["main"].GetTotal(); usage.GetInputTokens() != 100 || usage.GetOutputTokens() != 25 {
+				t.Fatalf("main lifetime usage = %+v, want input/output 100/25", usage)
+			}
+			if got.GetLatestContextOccupancy() == nil || got.GetLatestContextOccupancy().GetInputTokens() != 4096 || !got.GetLatestContextOccupancy().GetEstimated() {
+				t.Fatalf("latest context occupancy = %+v, want 4096 estimated", got.GetLatestContextOccupancy())
+			}
+		})
+	}
+}
+
+func TestResumableSessionStatusMetrics_Scenario2_LegacySnapshotCompatibility(t *testing.T) {
+	legacyWire, err := proto.Marshal(&mecatlv1.Session{SessionId: "legacy"})
+	if err != nil {
+		t.Fatalf("marshal legacy Session: %v", err)
+	}
+	var restored mecatlv1.Session
+	if err := proto.Unmarshal(legacyWire, &restored); err != nil {
+		t.Fatalf("unmarshal legacy Session: %v", err)
+	}
+	if restored.GetLatestContextOccupancy() != nil {
+		t.Fatalf("legacy latest_context_occupancy = %+v, want absent", restored.GetLatestContextOccupancy())
+	}
+
+	field := (&mecatlv1.Session{}).ProtoReflect().Descriptor().Fields().ByNumber(22)
+	if field == nil || field.Name() != "latest_context_occupancy" || field.Message() == nil {
+		t.Fatalf("Session field 22 = %v, want ContextOccupancy latest_context_occupancy", field)
+	}
+
+	currentWire, err := proto.Marshal(&mecatlv1.Session{
+		SessionId:              "new",
+		LatestContextOccupancy: &mecatlv1.ContextOccupancy{InputTokens: 4096, Estimated: true},
+	})
+	if err != nil {
+		t.Fatalf("marshal current Session: %v", err)
+	}
+	legacyFile := protodesc.ToFileDescriptorProto(mecatlv1.File_mecatl_v1_harness_proto)
+	for _, message := range legacyFile.MessageType {
+		if message.GetName() != "Session" {
+			continue
+		}
+		fields := message.Field[:0]
+		for _, candidate := range message.Field {
+			if candidate.GetNumber() != 22 {
+				fields = append(fields, candidate)
+			}
+		}
+		message.Field = fields
+	}
+	legacyDescriptor, err := protodesc.NewFile(legacyFile, protoregistry.GlobalFiles)
+	if err != nil {
+		t.Fatalf("build legacy Session descriptor: %v", err)
+	}
+	legacyClient := dynamicpb.NewMessage(legacyDescriptor.Messages().ByName("Session"))
+	if err := proto.Unmarshal(currentWire, legacyClient); err != nil {
+		t.Fatalf("older client rejected additive field: %v", err)
+	}
+	if got := legacyClient.Get(legacyClient.Descriptor().Fields().ByName("session_id")).String(); got != "new" {
+		t.Fatalf("older client session_id = %q, want new", got)
+	}
+	if len(legacyClient.GetUnknown()) == 0 {
+		t.Fatal("older client did not retain the ignored additive field as unknown")
+	}
+}
 
 func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
 	zero := 0.0
@@ -250,7 +341,7 @@ func TestToProtoTable(t *testing.T) {
 		{
 			name: "turn.end",
 			in: session.Event{Type: session.EvTurnEnd, Seq: 12, Turn: 2,
-				TurnEnd: &session.TurnEndPayload{DurationMs: 4100,
+				TurnEnd: &session.TurnEndPayload{DurationMs: 4100, Estimated: true,
 					Usage: session.Usage{InputTokens: 1200, OutputTokens: 340, CacheReadTokens: 800, CacheWriteTokens: 100, ReasoningTokens: 40}}},
 			assert: func(t *testing.T, got *mecatlv1.Event) {
 				if got.GetType() != "turn.end" || got.GetTurn() != 2 {
@@ -261,8 +352,8 @@ func TestToProtoTable(t *testing.T) {
 				if te == nil {
 					t.Fatalf("turn.end missing turn_end payload: %+v", got)
 				}
-				if te.GetDurationMs() != 4100 {
-					t.Fatalf("duration_ms = %d, want 4100", te.GetDurationMs())
+				if te.GetDurationMs() != 4100 || !te.GetEstimated() {
+					t.Fatalf("turn_end = %+v, want duration 4100 and estimated", te)
 				}
 				u := te.GetUsage()
 				if u.GetInputTokens() != 1200 || u.GetOutputTokens() != 340 ||

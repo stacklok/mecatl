@@ -126,7 +126,7 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	}) {
 		t.Fatalf("usage projection = %#v", input.Usage)
 	}
-	if input.Context != (customization.Context{Used: customization.ContextAtom{Raw: 45_600, Human: "45.6K"}, Window: customization.ContextAtom{Raw: 200_000, Human: "200K"}, Percent: 22}) {
+	if input.Context != (customization.Context{Used: customization.ContextAtom{Raw: 45_600, Human: "45.6K"}, Window: customization.ContextAtom{Raw: 200_000, Human: "200K"}, Percent: 22, Known: true}) {
 		t.Fatalf("context projection = %#v", input.Context)
 	}
 	if input.Workspace != (customization.Workspace{Location: "local", Name: "status-work"}) {
@@ -140,6 +140,34 @@ func TestStatusCustomization_Scenario1_StatusInputProjectsLiveUIState(t *testing
 	}
 	if input.Clock.Now.IsZero() {
 		t.Fatal("clock projection is zero")
+	}
+}
+
+func TestStatusCustomization_Scenario1_StatusInputProjectsContextState(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		contextTokens    int64
+		contextUnknown   bool
+		contextEstimated bool
+		wantKnown        bool
+		wantEstimated    bool
+		wantHuman        string
+	}{
+		{name: "known estimated", contextTokens: 45_600, contextEstimated: true, wantKnown: true, wantEstimated: true, wantHuman: "~45.6K"},
+		{name: "unknown", contextUnknown: true, wantHuman: "?"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := New(Deps{Ctx: context.Background(), Theme: theme.New("aztec", theme.AztecPalette())})
+			m.resolvedSessionModel.ContextWindow = 200_000
+			m.contextTokens = test.contextTokens
+			m.contextUnknown = test.contextUnknown
+			m.contextEstimated = test.contextEstimated
+
+			context := m.statusLineSnapshot().Context
+			if context.Known != test.wantKnown || context.Estimated != test.wantEstimated || context.Used.Human != test.wantHuman {
+				t.Fatalf("context = %#v, want known=%t estimated=%t human=%q", context, test.wantKnown, test.wantEstimated, test.wantHuman)
+			}
+		})
 	}
 }
 

@@ -65,6 +65,17 @@ func contextAtom(raw int64) customization.ContextAtom {
 	return customization.ContextAtom{Raw: raw, Human: humanizeTokens(raw)}
 }
 
+func contextOccupancyAtom(raw int64, known, estimated bool) customization.ContextAtom {
+	if !known {
+		return customization.ContextAtom{Human: "?"}
+	}
+	atom := contextAtom(raw)
+	if estimated {
+		atom.Human = "~" + atom.Human
+	}
+	return atom
+}
+
 func delegationCountsFor(done bool, failed bool, stop string) customization.DelegationStateCounts {
 	if !done {
 		return customization.DelegationStateCounts{Running: 1}
@@ -151,8 +162,9 @@ func (m Model) submitStatusLine() {
 func (m Model) statusLineInput(now time.Time) customization.Input {
 	geometry := m.statusLineGeometry()
 	window := m.resolvedSessionModel.ContextWindow
+	contextKnown := !m.contextUnknown || m.contextTokens > 0
 	contextPercent := 0
-	if window > 0 {
+	if contextKnown && window > 0 {
 		contextPercent = int(m.contextTokens * 100 / window)
 	}
 	cachePercent := 0
@@ -201,7 +213,7 @@ func (m Model) statusLineInput(now time.Time) customization.Input {
 		Session: customization.Session{Title: m.sessionTitle, Handle: handle, Mode: mode, ReasoningEffort: m.resolvedSessionModel.ReasoningEffort},
 		Model:   customization.Model{ProviderID: m.resolvedSessionModel.ProviderID, ID: m.resolvedSessionModel.ModelID, DisplayName: m.headerModelLabel(), Route: m.providerRoute, ContextWindow: contextAtom(window)},
 		Usage:   customization.Usage{Input: usageAtom(m.usage.InputTokens), Output: usageAtom(m.usage.OutputTokens), CacheRead: usageAtom(m.usage.CacheReadTokens), CacheWrite: usageAtom(m.usage.CacheWriteTokens), CacheReadPercent: cachePercent},
-		Context: customization.Context{Used: contextAtom(m.contextTokens), Window: contextAtom(window), Percent: contextPercent}, Workspace: workspace,
+		Context: customization.Context{Used: contextOccupancyAtom(m.contextTokens, contextKnown, m.contextEstimated), Window: contextAtom(window), Percent: contextPercent, Known: contextKnown, Estimated: m.contextEstimated}, Workspace: workspace,
 		MainAgent:  customization.MainAgent{State: state, Activity: activity, Approval: approval},
 		Delegation: m.statusDelegation(),
 		Clock:      customization.Clock{Now: now},

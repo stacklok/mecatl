@@ -155,6 +155,13 @@ export interface SessionSnapshot {
   readonly title?: SessionTitle;
   readonly tokenUsage: Readonly<Record<string, SessionTokenUsage>>;
   readonly sessionCapabilities?: SessionCapabilities;
+  readonly latestContextOccupancy?: SessionContextOccupancy;
+}
+
+/** Display-only context meter data from the latest completed session turn. @public */
+export interface SessionContextOccupancy {
+  readonly inputTokens: bigint;
+  readonly estimated: boolean;
 }
 
 /** One human-displayable message in the authoritative session transcript. @public */
@@ -412,6 +419,14 @@ export function projectSessionSnapshot(
           sessionCapabilities: {
             audio: value.sessionCapabilities.audio,
             image: value.sessionCapabilities.image,
+          },
+        }),
+    ...(value.latestContextOccupancy === undefined
+      ? {}
+      : {
+          latestContextOccupancy: {
+            estimated: value.latestContextOccupancy.estimated,
+            inputTokens: value.latestContextOccupancy.inputTokens,
           },
         }),
     sessionId: value.sessionId,
