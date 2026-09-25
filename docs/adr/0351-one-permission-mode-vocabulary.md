@@ -82,7 +82,10 @@ new use; the flag is a parse plus a table lookup writing two existing fields.
 The scope split is REAL and must stay visible rather than being smoothed over: the posture half
 is process-wide and fixed at boot, the mode half is only a default that a session may later
 change. `--help`, the generated configuration reference, the help overlay, and the startup
-diagnostic all state which half a token sets.
+diagnostic all state which half a token sets. They also state that cycling the session mode
+never changes the posture half, and whose restart a posture change needs: the operator's own
+mecatui relaunch with the embedded server, or the server operator's `mecated` restart under
+`mecatui connect`.
 
 ### 3. Nothing becomes session-selectable
 
@@ -111,7 +114,9 @@ At the gate-free tier the mandated checker is still demoted to advisory by
 approve-once human ask, and fail-closed on checker failure, so a checker outage there is
 indistinguishable from a clean result. The requirement is kept anyway, for operator-visible
 findings, and BOTH the refusal message and the startup line state plainly that the checker is
-observability-only at that tier. Removing the demotion was considered and rejected as a
+observability-only at that tier. The startup line reports the checker as exactly one of
+`enforcing`, `advisory`, or `disabled`, so an advisory checker is never read as protection.
+Removing the demotion was considered and rejected as a
 separate architectural question: it would supersede ADR 0062 sub-decision B and make the
 gate-free tier no longer gate-free.
 
@@ -138,8 +143,11 @@ unchanged and a WARN names the fix.
 
 This is an explicit authority decision, not a convenience: it grants an autonomous approval
 capability by default, and it spends tokens per adjudication. It is therefore opt-OUT by an
-explicit flag value, stated in the startup line, and confined to headless allow-all tokens
-where the alternative is a silent denial.
+explicit flag value (`--subagent-ask-reviewer off`, mirroring `--guardrails off`), and
+confined to headless allow-all tokens where the alternative is a silent denial. The startup
+line says in plain words that a model may approve headless subagent permission requests and
+that each adjudication spends tokens, and narrates the reviewer separately from the guardrails
+checker, since the two serve different purposes.
 
 ## Consequences
 
@@ -152,6 +160,11 @@ The cost is a wider token list than a ladder would need, and a flag whose two ha
 different scopes, which the surfaces must keep stating rather than hiding. Nothing is lost:
 every combination expressible today remains expressible, and `trusted-accept-edits` is newly
 nameable.
+
+The outcome is launch-time configuration and discovery, not runtime selection of autonomy.
+Only the three session values stay interactive in the TUI; the four carrying a posture half
+need a restart of the process hosting the server, and no surface may present them as
+interactive modes.
 
 `engine/governance`, `engine/session`, the gRPC contract, and the SDK are untouched, so the
 ADR 0022 invariants that the rejected `ModeYolo` spike broke are not even in scope to regress.
