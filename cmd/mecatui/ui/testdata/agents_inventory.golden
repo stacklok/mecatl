@@ -3,19 +3,19 @@
 
 
 
-         ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-         ┃                                                                               ┃
-         ┃  Agent definitions                                                            ┃
-         ┃                                                                               ┃
-         ┃  scout                                                                        ┃
-         ┃    explore the codebase and report findings                                   ┃
-         ┃    model:gpt-5 · perm:plan · tools:Read,Grep,Glob                             ┃
-         ┃  writer                                                                       ┃
-         ┃    draft prose from the scout's notes                                         ┃
-         ┃                                                                               ┃
-         ┃  agent definitions route Subagent delegations · pgup/pgdn scroll · esc close  ┃
-         ┃                                                                               ┃
-         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Agent definitions                                                                               ┃
+┃                                                                                                  ┃
+┃  scout                                                                                           ┃
+┃    explore the codebase and report findings                                                      ┃
+┃    model:gpt-5 · perm:plan · tools:Read,Grep,Glob                                                ┃
+┃  writer                                                                                          ┃
+┃    draft prose from the scout's notes                                                            ┃
+┃                                                                                                  ┃
+┃  agent definitions route Subagent delegations · pgup/pgdn scroll · esc close                     ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

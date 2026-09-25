@@ -398,7 +398,7 @@ func TestAgentsInvKeySwallowsNonEsc(t *testing.T) {
 	if !handled {
 		t.Error("a non-esc key while the panel is open should be swallowed (handled=true)")
 	}
-	if mm2.(Model).agentsInv.scroll != 0 {
+	if agentsTestOffset(mm2.(Model).agentsInv.viewport) != 0 {
 		t.Error("a non-scroll key should not move the scroll offset")
 	}
 
@@ -412,8 +412,8 @@ func TestAgentsInvKeySwallowsNonEsc(t *testing.T) {
 	if m3.agentsInv.view != agentsInvPanel {
 		t.Error("pgdown should not close the panel")
 	}
-	if m3.agentsInv.scroll != 0 {
-		t.Errorf("a fitting inventory should clamp scroll at 0, got %d", m3.agentsInv.scroll)
+	if got := agentsTestOffset(m3.agentsInv.viewport); got != 0 {
+		t.Errorf("a fitting inventory should clamp scroll at 0, got %d", got)
 	}
 }
 
@@ -439,68 +439,74 @@ func TestAgentsInvScroll(t *testing.T) {
 	mm, cmd := m.runAgentsInv()
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if m.agentsInv.scroll != 0 {
-		t.Fatalf("initial scroll = %d, want 0", m.agentsInv.scroll)
-	}
-	// At the top: window is rows 1–14 (agent-00..agent-13); the tail is NOT visible.
+	// Rendering configures the pointer-owned viewport from available geometry.
 	top := stripANSIstr(m.View().Content)
+	window := m.agentsInv.viewport.Height()
+	if agentsTestOffset(m.agentsInv.viewport) != 0 {
+		t.Fatalf("initial scroll = %d, want 0", agentsTestOffset(m.agentsInv.viewport))
+	}
 	if !strings.Contains(top, "agent-00") || strings.Contains(top, "agent-29") {
 		t.Errorf("top window should show agent-00 and NOT agent-29, got:\n%s", top)
 	}
-	if !strings.Contains(top, "lines 1–14 of 30") {
-		t.Errorf("top indicator should read 'lines 1–14 of 30', got:\n%s", top)
+	topIndicator := fmt.Sprintf("lines 1–%d of 30", window)
+	if !strings.Contains(top, topIndicator) {
+		t.Errorf("top indicator should read %q, got:\n%s", topIndicator, top)
 	}
 
-	// Page down once: agent-00 leaves the top, agent-14 enters.
+	// One physical-line movement drops agent-00 and reveals the next tail row.
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
-	if m.agentsInv.scroll != 1 {
-		t.Errorf("scroll after pgdown = %d, want 1", m.agentsInv.scroll)
+	if agentsTestOffset(m.agentsInv.viewport) != 1 {
+		t.Errorf("scroll after pgdown = %d, want 1", agentsTestOffset(m.agentsInv.viewport))
 	}
 	pd := stripANSIstr(m.View().Content)
 	if strings.Contains(pd, "agent-00") {
 		t.Errorf("after pgdown the window should no longer show agent-00, got:\n%s", pd)
 	}
-	if !strings.Contains(pd, "agent-14") {
-		t.Errorf("after pgdown the window should reveal agent-14, got:\n%s", pd)
+	wantTail := fmt.Sprintf("agent-%02d", window)
+	if !strings.Contains(pd, wantTail) {
+		t.Errorf("after pgdown the window should reveal %s, got:\n%s", wantTail, pd)
 	}
-	if !strings.Contains(pd, "lines 2–15 of 30") {
-		t.Errorf("after pgdown the indicator should read 'lines 2–15 of 30', got:\n%s", pd)
+	movedIndicator := fmt.Sprintf("lines 2–%d of 30", window+1)
+	if !strings.Contains(pd, movedIndicator) {
+		t.Errorf("after pgdown the indicator should read %q, got:\n%s", movedIndicator, pd)
 	}
 
-	// Jump to bottom; max scroll = 30 - 14 = 16: the tail becomes visible.
+	// Jump to the physical endpoint; the tail becomes visible.
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = mm.(Model)
-	if m.agentsInv.scroll != 16 {
-		t.Errorf("scroll after End = %d, want 16 (30-14)", m.agentsInv.scroll)
+	maxOffset := 30 - window
+	if agentsTestOffset(m.agentsInv.viewport) != maxOffset {
+		t.Errorf("scroll after End = %d, want %d", agentsTestOffset(m.agentsInv.viewport), maxOffset)
 	}
 	bot := stripANSIstr(m.View().Content)
 	if !strings.Contains(bot, "agent-29") || strings.Contains(bot, "agent-00") {
 		t.Errorf("bottom window should show agent-29 and NOT agent-00, got:\n%s", bot)
 	}
-	if !strings.Contains(bot, "lines 17–30 of 30") {
-		t.Errorf("bottom indicator should read 'lines 17–30 of 30', got:\n%s", bot)
+	bottomIndicator := fmt.Sprintf("lines %d–30 of 30", maxOffset+1)
+	if !strings.Contains(bot, bottomIndicator) {
+		t.Errorf("bottom indicator should read %q, got:\n%s", bottomIndicator, bot)
 	}
 
-	// Pgdown past the end clamps.
+	// Further movement clamps at the endpoint.
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
-	if m.agentsInv.scroll != 16 {
-		t.Errorf("scroll clamps at 16, got %d", m.agentsInv.scroll)
+	if agentsTestOffset(m.agentsInv.viewport) != maxOffset {
+		t.Errorf("scroll clamps at %d, got %d", maxOffset, agentsTestOffset(m.agentsInv.viewport))
 	}
 
-	// Page up moves back (pins the ScrollU arm — removing it must fail here).
+	// Up moves back exactly one physical line.
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	m = mm.(Model)
-	if m.agentsInv.scroll != 15 {
-		t.Errorf("scroll after pgup = %d, want 15", m.agentsInv.scroll)
+	if agentsTestOffset(m.agentsInv.viewport) != maxOffset-1 {
+		t.Errorf("scroll after pgup = %d, want %d", agentsTestOffset(m.agentsInv.viewport), maxOffset-1)
 	}
 
 	// Home returns to the top.
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyHome})
 	m = mm.(Model)
-	if m.agentsInv.scroll != 0 {
-		t.Errorf("scroll after Home = %d, want 0", m.agentsInv.scroll)
+	if agentsTestOffset(m.agentsInv.viewport) != 0 {
+		t.Errorf("scroll after Home = %d, want 0", agentsTestOffset(m.agentsInv.viewport))
 	}
 
 	// A fresh inventory result resets a stale offset (never opens mid-list).
@@ -508,8 +514,8 @@ func TestAgentsInvScroll(t *testing.T) {
 	m = mm.(Model)
 	mFresh, _ := m.updateAgentsInvMsg(client.AgentsMsg{Agents: scrollAgents(30).agents})
 	m = mFresh.(Model)
-	if m.agentsInv.scroll != 0 {
-		t.Errorf("a fresh AgentsMsg should reset scroll to 0, got %d", m.agentsInv.scroll)
+	if agentsTestOffset(m.agentsInv.viewport) != 0 {
+		t.Errorf("a fresh AgentsMsg should reset scroll to 0, got %d", agentsTestOffset(m.agentsInv.viewport))
 	}
 
 	// esc still closes the scrolled panel.

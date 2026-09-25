@@ -5,16 +5,16 @@
 
 
 
-         ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-         ┃                                                                               ┃
-         ┃  Agent definitions                                                            ┃
-         ┃                                                                               ┃
-         ┃  agent definitions are not enabled on this server.                            ┃
-         ┃  Add .claude/agents/*.md (or pass --agents-dir) and reconnect.                ┃
-         ┃                                                                               ┃
-         ┃  agent definitions route Subagent delegations · pgup/pgdn scroll · esc close  ┃
-         ┃                                                                               ┃
-         ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Agent definitions                                                                               ┃
+┃                                                                                                  ┃
+┃  agent definitions are not enabled on this server.                                               ┃
+┃  Add .claude/agents/*.md (or pass --agents-dir) and reconnect.                                   ┃
+┃                                                                                                  ┃
+┃  agent definitions route Subagent delegations · pgup/pgdn scroll · esc close                     ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 
