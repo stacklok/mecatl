@@ -10,6 +10,8 @@ const destructiveTool = /\b(delete|remove|drop|revoke|destroy|purge|rm)\b/iu;
 export interface ApprovalRequest {
   args: string;
   askId: string;
+  /** Immutable identity from the permission.ask delivery, when its run is known. */
+  controlTarget?: { askId: string; runId: string; sessionId: string };
   reason: string;
   tool: string;
 }

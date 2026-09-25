@@ -390,6 +390,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [steerTrace, setSteerTrace] = useState<SteerTraceEntry[]>([]);
   const [showSteerTrace, setShowSteerTrace] = useState(false);
   const [controlPending, setControlPending] = useState(false);
+  const planVerdictInFlight = useRef(false);
   const planFollowController = useRef<AbortController | undefined>(undefined);
   const viewedSessionId = useRef(sessionId);
   const [titleCache, setTitleCache] = useState(() => new Map<string, SessionTitleRevision>());
@@ -1777,7 +1778,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         } else if (event.kind === "permission.ask") {
           const approval = permissionAsk(event.payload);
-          if (approval) setApprovals((current) => enqueueApproval(current, approval));
+          if (approval) {
+            const controlTarget =
+              owner.sessionId && event.runId
+                ? { askId: approval.askId, runId: event.runId, sessionId: owner.sessionId }
+                : undefined;
+            setApprovals((current) =>
+              enqueueApproval(current, controlTarget ? { ...approval, controlTarget } : approval),
+            );
+          }
         } else if (event.kind === "permission.retract") {
           const askId = permissionAskId(event.payload);
           setApprovals((current) => retractApproval(current, askId));
@@ -2077,9 +2086,21 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   }
 
   async function respondToPlan(verdict: PlanVerdict) {
-    const target = controlTarget(runTarget, sessionId);
-    if (!target || !approval || approval.tool !== "PresentPlan") return;
-    const askId = approval.askId;
+    if (approval?.tool !== "PresentPlan" || planVerdictInFlight.current) return;
+    const activeTarget = controlTarget(runTarget, sessionId);
+    const target = approval.controlTarget;
+    if (
+      !target ||
+      target.askId !== approval.askId ||
+      target.sessionId !== activeTarget?.sessionId ||
+      target.runId !== activeTarget?.runId ||
+      target.sessionId !== viewedSessionId.current
+    ) {
+      setError("This plan ask is stale. Refresh activity before deciding.");
+      return;
+    }
+    planVerdictInFlight.current = true;
+    const askId = target.askId;
     setControlPending(true);
     setError(undefined);
     try {
@@ -2121,6 +2142,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       if (viewedSessionId.current === target.sessionId) setError(errorMessage(caught));
     } finally {
       planFollowController.current = undefined;
+      planVerdictInFlight.current = false;
       setControlPending(false);
     }
   }
@@ -2625,9 +2647,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               onRespond={(verdict) => void respondToPlan(verdict)}
               unavailableReason={
                 exactPlanControlAvailability(runtime.data?.features).reason ??
-                (controlTarget(runTarget, sessionId)
+                (approval.controlTarget?.askId === approval.askId &&
+                approval.controlTarget?.sessionId === sessionId &&
+                approval.controlTarget?.runId === runTarget?.runId &&
+                runTarget?.sessionId === sessionId
                   ? undefined
-                  : "The exact plan control target is unavailable.")
+                  : "This plan ask is stale or its exact run is unavailable. Refresh activity.")
               }
             />
           ) : (

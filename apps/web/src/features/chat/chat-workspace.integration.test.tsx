@@ -542,6 +542,74 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(followSignal?.aborted).toBe(true);
   });
 
+  it("keeps a stale plan card read-only when a successor run reuses its ask ID", async () => {
+    const bff = new BffFixture(session("chat-a", "running"));
+    bff.runtimeFeatures = ["exact_plan_ask_control"];
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted("chat-a", "run-old"));
+      activity.send(
+        runEvent("permission.ask", "1", "", "run-old", {
+          args: '{"plan":"Original plan"}',
+          askId: "ask-reused",
+          reason: "Review the original plan",
+          tool: "PresentPlan",
+        }),
+      );
+      activity.send(runStarted("chat-a", "run-new"));
+      activity.send(
+        runEvent("permission.ask", "1", "", "run-new", {
+          args: '{"plan":"Successor plan"}',
+          askId: "ask-reused",
+          reason: "Review the successor plan",
+          tool: "PresentPlan",
+        }),
+      );
+    });
+    expect(await screen.findByText("Original plan")).toBeTruthy();
+    expect(screen.getByText(/plan ask is stale/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Approve & run" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Iterate" })).toBeNull();
+    expect(bff.requests.filter((request) => request.pathname.includes("/plan-asks/"))).toHaveLength(
+      0,
+    );
+  });
+
+  it("submits only one plan verdict while its acknowledgement is in flight", async () => {
+    const bff = new BffFixture(session("chat-a", "running"));
+    bff.runtimeFeatures = ["exact_plan_ask_control"];
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const planPath = "/api/v1/sessions/chat-a/runs/run-plan/plan-asks/ask-plan";
+    const acknowledgement = heldResponse();
+    bff.nextReplies.set(planPath, [acknowledgement.promise]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted("chat-a", "run-plan"));
+      activity.send(
+        runEvent("permission.ask", "1", "", "run-plan", {
+          args: '{"plan":"Do the work"}',
+          askId: "ask-plan",
+          reason: "Review the plan",
+          tool: "PresentPlan",
+        }),
+      );
+    });
+    const button = await screen.findByRole("button", { name: "Approve & run" });
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    await waitFor(() => expect(bff.requestsAt("POST", planPath)).toHaveLength(1));
+    await act(async () => {
+      acknowledgement.resolve(json({ code: "stale_run_control", detail: "stale" }, 409));
+    });
+  });
+
   it("does not treat a broken continuation as the earlier authorization park", async () => {
     const bff = new BffFixture(session("chat-a", "authorizing"));
     const activity = heldStream();
