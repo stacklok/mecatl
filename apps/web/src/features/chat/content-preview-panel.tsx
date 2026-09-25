@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useRef,
@@ -60,6 +61,7 @@ export function ContentPreviewPanel({
   authorizationDisabled = false,
   authorizationUncertain = false,
   canvas,
+  escapeManagedExternally = false,
   escapeHint = false,
   onAuthorizationOperation,
   onRefreshAuthorizationActivity,
@@ -71,6 +73,8 @@ export function ContentPreviewPanel({
   authorizationDisabled?: boolean;
   authorizationUncertain?: boolean;
   canvas: string;
+  /** The owning chat surface applies ask and run priority before closing this panel. */
+  escapeManagedExternally?: boolean;
   escapeHint?: boolean;
   onAuthorizationOperation?: (
     operation: AuthorizationOperation,
@@ -106,6 +110,7 @@ export function ContentPreviewPanel({
       authorizationDisabled={authorizationDisabled}
       authorizationUncertain={authorizationUncertain}
       canvas={canvas}
+      escapeManagedExternally={escapeManagedExternally}
       escapeHint={escapeHint}
       onAuthorizationOperation={onAuthorizationOperation}
       onRefreshAuthorizationActivity={onRefreshAuthorizationActivity}
@@ -121,6 +126,7 @@ function GenericPreviewPanel({
   authorizationDisabled,
   authorizationUncertain,
   canvas,
+  escapeManagedExternally,
   escapeHint,
   onAuthorizationOperation,
   onRefreshAuthorizationActivity,
@@ -132,6 +138,7 @@ function GenericPreviewPanel({
   authorizationDisabled: boolean;
   authorizationUncertain: boolean;
   canvas: string;
+  escapeManagedExternally: boolean;
   escapeHint: boolean;
   onAuthorizationOperation?: (
     operation: AuthorizationOperation,
@@ -167,6 +174,19 @@ function GenericPreviewPanel({
     target?.focus();
   }
 
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== "Escape" || escapeManagedExternally || event.defaultPrevented) return;
+    if (
+      document.querySelector(
+        '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]',
+      )
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+  }
+
   function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
     event.currentTarget.focus();
     event.preventDefault();
@@ -193,6 +213,7 @@ function GenericPreviewPanel({
       <aside
         aria-label={previewTitle(preview)}
         className="absolute inset-x-0 bottom-0 z-40 flex h-[94dvh] flex-col rounded-t-2xl border bg-background shadow-2xl min-[760px]:relative min-[760px]:inset-auto min-[760px]:order-3 min-[760px]:h-full min-[760px]:w-[var(--content-panel-width)] min-[760px]:shrink-0 min-[760px]:rounded-none min-[760px]:border-y-0 min-[760px]:border-r-0"
+        onKeyDown={handleKeyDown}
         style={{ "--content-panel-width": `${width.value}px` } as CSSProperties}
       >
         <button

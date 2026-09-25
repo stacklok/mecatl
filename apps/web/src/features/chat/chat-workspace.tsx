@@ -2919,6 +2919,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       </section>
       {displayedPreview && (
         <ContentPreviewPanel
+          escapeManagedExternally
           escapeHint={!escapeAsk}
           activity={{
             fallbackOpener: sessionActivityControl.current,
