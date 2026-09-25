@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -79,6 +80,59 @@ func TestDailyHarnessProbeSeparatesSharedAndPrivateObjectStores(t *testing.T) {
 	}
 }
 
+// Fork cleanup reports retained dirty worktrees through this unexported adapter
+// error. Match it exactly; transport, ownership, and malformed-result errors fail.
+const dailyDirtyChildRetained = "microvmd retained dirty unpublished placement for recovery"
+
+func registerDailyCleanup(t *testing.T, name string, cleanup func() error) func() {
+	t.Helper()
+	closeOnce := sync.OnceFunc(func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	})
+	t.Cleanup(closeOnce)
+	return closeOnce
+}
+
+func TestDailyCleanupRunsOnceInOwnershipOrder(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		var order []string
+		t.Run(fmt.Sprintf("restart=%t", restart), func(t *testing.T) {
+			register := func(name string) func() {
+				return registerDailyCleanup(t, name, func() error {
+					order = append(order, name)
+					return nil
+				})
+			}
+			register("daemon")
+			closeBuild := register("build")
+			registerDailyCleanup(t, "delete", func() error {
+				closeBuild()
+				order = append(order, "delete")
+				return nil
+			})
+			closeBinding := register("binding")
+			closeChild := register("child")
+			if !restart {
+				return // Early exit must still retire every owner before delete/stop.
+			}
+			closeChild()
+			closeBinding()
+			closeBuild()
+			order = append(order, "restart")
+			register("restarted-binding")
+		})
+		want := "child,binding,build,delete,daemon"
+		if restart {
+			want = "child,binding,build,restart,restarted-binding,delete,daemon"
+		}
+		if got := strings.Join(order, ","); got != want {
+			t.Fatalf("cleanup order = %s, want %s", got, want)
+		}
+	}
+}
+
 func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	switch {
 	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
@@ -108,7 +162,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 
 	source := filepath.Join(root, "source")
 	initE2ERepository(t, source)
-	ready, paths := prepareManagedRelease(t, ctx, root)
+	ready, paths := prepareManagedRelease(ctx, t, root)
 	manager := microvmmanager.New(paths, &microvmmanager.DefaultOperations{})
 	endpoint := "unix://" + paths.Socket
 	t.Cleanup(func() { stopManagedDaemon(t, paths) })
@@ -143,7 +197,9 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build harness with microVM deployment default: %v", err)
 	}
-	defer built.Close()
+	// Cleanup is LIFO: child and explicit binding owners, Build, logical delete,
+	// then daemon stop. Build.Close is once-guarded and also covers CreateSession failure.
+	t.Cleanup(built.Close)
 
 	// This is deliberately the ordinary no-selector API. The deployment, not the
 	// client, chooses microvm-local as the default placement.
@@ -151,11 +207,10 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normal CreateSession: %v", err)
 	}
-	defer func() {
-		if err := placement.Delete(context.WithoutCancel(ctx), sess); err != nil {
-			t.Errorf("delete exact microVM generation: %v", err)
-		}
-	}()
+	registerDailyCleanup(t, "delete exact microVM generation", func() error {
+		built.Close()
+		return placement.Delete(context.WithoutCancel(ctx), sess)
+	})
 	if sess.EnvironmentRef.Kind != "microvm" || sess.EnvironmentRef.ID == "" || sess.EnvironmentRef.Revision == "" {
 		t.Fatalf("CreateSession did not persist an exact microVM placement: %+v", sess.EnvironmentRef)
 	}
@@ -174,6 +229,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 			result = event.Result
 		}
 	}
+	built.Service.FinishRun(sess.ID, run)
 	if result == nil || result.Stop == session.StopError {
 		t.Fatalf("guest-backed harness operation did not complete: result=%+v", result)
 	}
@@ -193,6 +249,7 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reattach exact guest generation: %v", err)
 	}
+	closeBinding := registerDailyCleanup(t, "close exact guest binding", binding.Close)
 	data, err := binding.Environment.Workspace().Read(ctx, "journey.txt")
 	if err != nil || string(data) != "harness-change" {
 		t.Fatalf("guest workspace did not retain harness change: %q, %v", data, err)
@@ -210,19 +267,22 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fork post-boot logical child: %v", err)
 	}
-	defer func() {
-		if err := cleanupChild(); err != nil {
-			t.Errorf("cleanup merged logical child: %v", err)
+	closeChild := registerDailyCleanup(t, "cleanup merged logical child", func() error {
+		err := cleanupChild()
+		if err != nil && err.Error() == dailyDirtyChildRetained {
+			t.Log("merged child owner released; dirty worktree retained")
+			return nil
 		}
-	}()
-	childIdentity := mustGuestRun(t, ctx, child.CommandRunner(), "test \"$(id -u)\" = 65532 && printf child-change > child.txt && chmod 755 child.txt && stat -c '%u:%g:%a' child.txt 2>/dev/null || stat -f '%u:%g:%Lp' child.txt").Stdout
+		return err
+	})
+	childIdentity := mustGuestRun(ctx, t, child.CommandRunner(), "test \"$(id -u)\" = 65532 && printf child-change > child.txt && chmod 755 child.txt && stat -c '%u:%g:%a' child.txt 2>/dev/null || stat -f '%u:%g:%Lp' child.txt").Stdout
 	if !strings.Contains(childIdentity, "65532:65532:755") {
 		t.Fatalf("post-boot child ownership/mode = %q, want 65532:65532:755", childIdentity)
 	}
 	if err := placement.Merge(ctx, child, binding.Environment); err != nil {
 		t.Fatalf("merge non-conflicting isolated child: %v", err)
 	}
-	merged := mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "cat child.txt && (stat -c '%a' child.txt 2>/dev/null || stat -f '%Lp' child.txt)").Stdout
+	merged := mustGuestRun(ctx, t, binding.Environment.CommandRunner(), "cat child.txt && (stat -c '%a' child.txt 2>/dev/null || stat -f '%Lp' child.txt)").Stdout
 	if !strings.Contains(merged, "child-change") || !strings.Contains(merged, "755") {
 		t.Fatalf("parent did not read merged child bytes/mode: %q", merged)
 	}
@@ -231,21 +291,38 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fork conflicting logical child: %v", err)
 	}
-	defer func() { _ = cleanupConflict() }()
-	mustGuestRun(t, ctx, conflict.CommandRunner(), "printf child-conflict > tracked.txt")
-	mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "printf parent-conflict > tracked.txt")
+	closeConflict := registerDailyCleanup(t, "cleanup conflicting logical child", func() error {
+		err := cleanupConflict()
+		if err != nil && err.Error() == dailyDirtyChildRetained {
+			t.Log("conflicting child owner released; dirty worktree retained")
+			return nil
+		}
+		return err
+	})
+	mustGuestRun(ctx, t, conflict.CommandRunner(), "printf child-conflict > tracked.txt")
+	mustGuestRun(ctx, t, binding.Environment.CommandRunner(), "printf parent-conflict > tracked.txt")
 	if err := placement.Merge(ctx, conflict, binding.Environment); err == nil {
 		t.Fatal("conflicting isolated-child merge unexpectedly succeeded")
 	}
-	if got := mustGuestRun(t, ctx, conflict.CommandRunner(), "cat tracked.txt").Stdout; !strings.Contains(got, "child-conflict") {
+	if got := mustGuestRun(ctx, t, conflict.CommandRunner(), "cat tracked.txt").Stdout; !strings.Contains(got, "child-conflict") {
 		t.Fatalf("conflict did not preserve exact child: %q", got)
 	}
-	if got := mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "cat tracked.txt").Stdout; !strings.Contains(got, "parent-conflict") {
+	if got := mustGuestRun(ctx, t, binding.Environment.CommandRunner(), "cat tracked.txt").Stdout; !strings.Contains(got, "parent-conflict") {
 		t.Fatalf("conflicting merge changed parent: %q", got)
 	}
 
-	mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "printf '\\ndirty-after-restart' >> tracked.txt && printf staged-after-restart > staged.txt && git add staged.txt && printf untracked-after-restart > untracked.txt && mkdir -p /home/guest && printf rootfs-after-restart > /home/guest/restart-marker")
+	mustGuestRun(ctx, t, binding.Environment.CommandRunner(), "printf '\\ndirty-after-restart' >> tracked.txt && printf staged-after-restart > staged.txt && git add staged.txt && printf untracked-after-restart > untracked.txt && mkdir -p /home/guest && printf rootfs-after-restart > /home/guest/restart-marker")
 	beforeRestart := readOnlyRepositoryBootRecord(t, paths.StateDir)
+	// v4 acquisition sockets belong to this daemon lifetime. Retire children
+	// after checking merge/conflict evidence, then release all execution/source
+	// owners without deleting the dirty parent that the restart must preserve.
+	closeConflict()
+	closeChild()
+	closeBinding()
+	built.Close()
+	if t.Failed() {
+		t.Fatal("owner cleanup failed before daemon restart")
+	}
 	if err := (&microvmmanager.DefaultOperations{}).Stop(ctx, paths); err != nil {
 		t.Fatalf("stop managed microvmd for restart qualification: %v", err)
 	}
@@ -256,10 +333,11 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reattach exact placement after actual microvmd restart: %v", err)
 	}
+	registerDailyCleanup(t, "close restarted guest binding", restarted.Close)
 	if restarted.Environment.Ref() != sess.EnvironmentRef {
 		t.Fatalf("restart changed exact environment ref: got %+v want %+v", restarted.Environment.Ref(), sess.EnvironmentRef)
 	}
-	status := mustGuestRun(t, ctx, restarted.Environment.CommandRunner(), "git status --porcelain=v1 && printf '\\n--tracked--\\n' && cat tracked.txt && printf '\\n--staged--\\n' && cat staged.txt && printf '\\n--untracked--\\n' && cat untracked.txt && printf '\\n--rootfs--\\n' && cat /home/guest/restart-marker && printf '\\n--private-home--\\n' && cat \"$HOME/private/proof\" && printf '\\n--private-cache--\\n' && cat \"${XDG_CACHE_HOME:-$HOME/.cache}/mecatl/proof\" && printf '\\n--merged--\\n' && cat child.txt").Stdout
+	status := mustGuestRun(ctx, t, restarted.Environment.CommandRunner(), "git status --porcelain=v1 && printf '\\n--tracked--\\n' && cat tracked.txt && printf '\\n--staged--\\n' && cat staged.txt && printf '\\n--untracked--\\n' && cat untracked.txt && printf '\\n--rootfs--\\n' && cat /home/guest/restart-marker && printf '\\n--private-home--\\n' && cat \"$HOME/private/proof\" && printf '\\n--private-cache--\\n' && cat \"${XDG_CACHE_HOME:-$HOME/.cache}/mecatl/proof\" && printf '\\n--merged--\\n' && cat child.txt").Stdout
 	for _, preserved := range []string{" M tracked.txt", "A  staged.txt", "?? untracked.txt", "dirty-after-restart", "staged-after-restart", "untracked-after-restart", "rootfs-after-restart", "private", "cache", "child-change"} {
 		if !strings.Contains(status, preserved) {
 			t.Fatalf("microvmd restart did not preserve %q in guest state:\n%s", preserved, status)
@@ -270,18 +348,18 @@ func TestMicroVMDefaultPlacementDailyHarnessJourney(t *testing.T) {
 		t.Fatalf("restart did not establish new boot authority: before=%+v after=%+v", beforeRestart, afterRestart)
 	}
 	binding = restarted
-	pwd := mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "pwd").Stdout
+	pwd := mustGuestRun(ctx, t, binding.Environment.CommandRunner(), "pwd").Stdout
 	if !strings.HasPrefix(strings.TrimSpace(pwd), "/run/mecatl/repositories/") {
 		t.Fatalf("guest command ran outside its isolated repository worktree: %q", pwd)
 	}
 	if runtime.GOOS == "linux" {
-		mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "grep -q '^Groups:[[:space:]]*$' /proc/self/status")
+		mustGuestRun(ctx, t, binding.Environment.CommandRunner(), "grep -q '^Groups:[[:space:]]*$' /proc/self/status")
 	} else {
-		mustGuestRun(t, ctx, binding.Environment.CommandRunner(), "test \"$(id -u)\" = 65532")
+		mustGuestRun(ctx, t, binding.Environment.CommandRunner(), "test \"$(id -u)\" = 65532")
 	}
 }
 
-func prepareManagedRelease(t *testing.T, ctx context.Context, root string) (microvmmanager.ReadyRequest, microvmmanager.Paths) {
+func prepareManagedRelease(ctx context.Context, t *testing.T, root string) (microvmmanager.ReadyRequest, microvmmanager.Paths) {
 	t.Helper()
 	packageDir := requiredAbsoluteEnv(t, "MECATL_MICROVM_RELEASE_ASSETS")
 	bundleDir := filepath.Join(root, "release")
@@ -300,18 +378,18 @@ func prepareManagedRelease(t *testing.T, ctx context.Context, root string) (micr
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	releaseServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/gzip")
 		_, _ = w.Write(bundleData)
 	}))
-	t.Cleanup(server.Close)
+	t.Cleanup(releaseServer.Close)
 	certificate := filepath.Join(root, "release-ca.pem")
-	if err := os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+	if err := os.WriteFile(certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: releaseServer.Certificate().Raw}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	defaults, err := json.Marshal(map[string]any{platform: map[string]string{
-		"version": "e2e", "platform": platform, "url": server.URL + "/microvm-release.tar.gz",
+		"version": "e2e", "platform": platform, "url": releaseServer.URL + "/microvm-release.tar.gz",
 		"sha256": fmt.Sprintf("%x", sha256.Sum256(bundleData)), "policy_revision": microVME2EPolicy,
 		"certificate_identity": "https://github.com/stacklok/mecatl/.github/workflows/release.yml@refs/tags/e2e",
 		"oidc_issuer":          "https://token.actions.githubusercontent.com",
@@ -520,7 +598,7 @@ func archiveE2ETree(source, destination string) error {
 	return walkErr
 }
 
-func mustGuestRun(t *testing.T, ctx context.Context, runner tool.CommandRunner, command string) tool.CommandResult {
+func mustGuestRun(ctx context.Context, t *testing.T, runner tool.CommandRunner, command string) tool.CommandResult {
 	t.Helper()
 	result, err := runner.Run(ctx, command)
 	if err != nil || result.ExitCode != 0 {
