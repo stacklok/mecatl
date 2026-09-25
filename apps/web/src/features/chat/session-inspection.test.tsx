@@ -230,6 +230,43 @@ afterEach(() => {
 });
 
 describe("session inspection", () => {
+  it("keeps a diagnostic chat distinct from its inspect-only target", async () => {
+    const bff = new Bff();
+    bff.rows = [
+      {
+        ...row("child", false),
+        capabilities: {
+          ...row("child", false).capabilities,
+          publicChat: false,
+          publicChatReason: "inspect_only_kind",
+        },
+        debugTargetSessionId: "target",
+        kind: "debug",
+        title: "Diagnostic chat",
+      },
+      { ...row("target"), title: "Read-only target" },
+    ];
+    await mount(bff);
+    expect(await screen.findByRole("heading", { name: "Diagnostic chat" })).toBeTruthy();
+    expect(
+      screen.getByTitle("A read-only diagnostic chat; it never modifies its target.").textContent,
+    ).toContain("Debug");
+    expect(await screen.findByText("First saved row")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Message Mecatl" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(screen.queryByRole("dialog", { name: "Session details" })).toBeNull();
+    const inspectGroup = screen
+      .getByRole("heading", { name: "Inspect-only sessions", hidden: true })
+      .closest("section");
+    if (!inspectGroup) throw new Error("Inspect-only group missing");
+    expect(within(inspectGroup).getByText("Read-only target")).toBeTruthy();
+    expect(within(inspectGroup).queryByText("Diagnostic chat")).toBeNull();
+    expect(bff.calls("/api/v1/sessions/child/transcript")).toHaveLength(1);
+    expect(bff.calls("/api/v1/sessions/target/transcript")).toHaveLength(0);
+  });
+
   it.each(["awaiting_approval", "active_elsewhere"])(
     "keeps a temporarily blocked main chat visible for %s",
     async (reason) => {

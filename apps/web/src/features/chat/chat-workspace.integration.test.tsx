@@ -458,6 +458,53 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
   });
 
+  it("keeps activity open while Escape denies an ask, then restores its opener", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const permissionPath = "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-a";
+    bff.nextReplies.set(permissionPath, [Promise.resolve(new Response(null, { status: 204 }))]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(runEvent("user_prompt", "1", "Open delegated work"));
+      activity.send(
+        runEvent("tool.call", "2", "", "run-a", {
+          args: "{}",
+          id: "call-a",
+          name: "Subagent",
+        }),
+      );
+      activity.send(
+        runEvent("subagent.start", "3", "", "run-a", {
+          childId: "child-a",
+          goal: "Inspect",
+          parentCallId: "call-a",
+        }),
+      );
+      activity.send(
+        runEvent("permission.ask", "4", "", "run-a", { askId: "ask-a", tool: "Shell" }),
+      );
+    });
+    const opener = await screen.findByRole("button", { name: /Subagent child-a/u });
+    opener.focus();
+    fireEvent.click(opener);
+    const panel = await screen.findByRole("complementary", { name: "Session activity" });
+    expect(await within(panel).findByRole("heading", { name: "Subagent child-a" })).toBeTruthy();
+    expect(await screen.findByText("Permission required")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(bff.requestsAt("POST", permissionPath)).toHaveLength(1));
+    expect(bff.requestsAt("POST", permissionPath)[0]?.body).toEqual({ verdict: "deny" });
+    expect(screen.getByRole("complementary", { name: "Session activity" })).toBe(panel);
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Session activity" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+  });
+
   it("skips inspect-only rows in chat navigation", async () => {
     const inspect = {
       ...session("inspect"),

@@ -7,6 +7,7 @@ import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "./chat-state";
 import { ChatTranscript } from "./chat-transcript";
+import type { DelegationActivity } from "./delegation-card";
 import { MessageMinimap } from "./message-minimap";
 
 afterEach(cleanup);
@@ -17,13 +18,19 @@ const rows: ChatMessage[] = Array.from({ length: 30 }, (_, index) => ({
   role: index % 2 === 0 ? "user" : "assistant",
 }));
 
-function mount(messages = rows) {
+function mount(messages = rows, delegationsByMessageId?: Record<string, DelegationActivity[]>) {
   const scrollportRef = createRef<HTMLDivElement>();
   const navigate = vi.fn();
   const view = render(
     <div ref={scrollportRef}>
-      <ChatTranscript messages={messages} showToolCalls />
+      <ChatTranscript
+        delegationsByMessageId={delegationsByMessageId}
+        messages={messages}
+        onOpenActivity={() => {}}
+        showToolCalls
+      />
       <MessageMinimap
+        delegationsByMessageId={delegationsByMessageId}
         messages={messages}
         onNavigate={navigate}
         scrollportRef={scrollportRef}
@@ -47,6 +54,37 @@ function mount(messages = rows) {
 }
 
 describe("message minimap", () => {
+  it("navigates to an assistant row visible only through delegated activity", () => {
+    const messages: ChatMessage[] = [
+      { content: "Inspect", id: "prompt", role: "user" },
+      { content: "", id: "activity-row", role: "assistant" },
+    ];
+    const delegationsByMessageId: Record<string, DelegationActivity[]> = {
+      "activity-row": [
+        {
+          childId: "child-a",
+          family: "subagent",
+          historyIncomplete: false,
+          key: "run-a/call-a",
+          parentCallId: "call-a",
+          runId: "run-a",
+          sessionId: "chat-a",
+          startObserved: true,
+          state: "running",
+          trace: { entries: [], omitted: 0 },
+        },
+      ],
+    };
+    const { navigate, scrollTo } = mount(messages, delegationsByMessageId);
+    const activityRow = document.getElementById("chat-message-activity-row");
+    if (!activityRow) throw new Error("Activity-only transcript row missing");
+    expect(screen.getByRole("button", { name: /Subagent child-a/u })).toBeTruthy();
+    activityRow.getBoundingClientRect = () => ({ top: -1940 }) as DOMRect;
+    fireEvent.click(screen.getByRole("button", { name: /^Jump to message 2: assistant$/u }));
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 60 });
+    expect(navigate).toHaveBeenCalledWith("activity-row");
+  });
+
   it("scrolls an early minimap target into its own row", () => {
     const { scrollport, scrollTo } = mount();
     const early = document.getElementById("chat-message-row-2");

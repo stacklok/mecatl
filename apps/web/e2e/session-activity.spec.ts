@@ -162,12 +162,20 @@ function arrangeChat(offlineBff: OfflineBff) {
       items: [
         {
           capabilities: {
+            copyId: true,
+            copyIdReason: "",
             delete: false,
             deleteReason: "",
+            fork: true,
+            forkReason: "",
+            inspect: true,
+            inspectReason: "",
             publicChat: true,
             publicChatReason: "",
             rename: false,
             renameReason: "",
+            viewTranscript: true,
+            viewTranscriptReason: "",
           },
           createdAt: "2026-09-24T00:00:00Z",
           debugTargetSessionId: "",
@@ -176,6 +184,8 @@ function arrangeChat(offlineBff: OfflineBff) {
           modelId: "offline",
           state: running ? "running" : "idle",
           title: "Delegation journey",
+          titleProvenance: "",
+          titleRevision: "0",
           turns: 1,
           updatedAt: "2026-09-24T00:00:00Z",
         },
@@ -186,6 +196,7 @@ function arrangeChat(offlineBff: OfflineBff) {
   offlineBff.json("GET", "/api/v1/sessions/s1", {
     capabilities: { image: false, manualCompaction: false, modelSelection: false },
     id: "s1",
+    kind: "main",
     mode: "default",
     state: "running",
     usage: {
