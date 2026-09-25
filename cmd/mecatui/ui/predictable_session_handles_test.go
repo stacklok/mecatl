@@ -189,9 +189,7 @@ func testPredictableSessionHandle(t *testing.T, checks predictableSessionHandleC
 		loader := &fakeSessionTranscriptLoader{transcript: client.SessionTranscript{SessionID: "opaque-real-id", Complete: true}}
 		m := newScenario4Model(t, loader)
 		row := client.SessionListItem{ID: "opaque-real-id", Kind: client.SessionKindMain, Capabilities: client.SessionInventoryCapabilities{PublicChat: true, Inspect: true}}
-		ensureActiveSessions(&m).sessions = []client.SessionListItem{row}
-		ensureActiveSessions(&m).filtered = []client.SessionListItem{row}
-		ensureActiveSessions(&m).handles = sessionDisplayHandles(ensureActiveSessions(&m).filtered)
+		setSessionsInventoryRows(ensureActiveSessions(&m), []client.SessionListItem{row})
 		if strings.Contains(ensureActiveSessions(&m).handles[row.ID], row.ID) {
 			t.Fatalf("display handle %q unexpectedly embeds full id", ensureActiveSessions(&m).handles[row.ID])
 		}

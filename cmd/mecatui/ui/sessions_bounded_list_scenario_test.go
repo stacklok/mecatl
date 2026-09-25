@@ -33,10 +33,12 @@ func sessionsScenarioState(rows []client.SessionListItem) *sessionsState {
 	return &st
 }
 
-func sessionsScenarioKey(text string) tea.KeyPressMsg { return tea.KeyPressMsg{Code: rune(text[0]), Text: text} }
+func sessionsScenarioKey(text string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: rune(text[0]), Text: text}
+}
 
 func TestMecatuiSessionsBoundedList_Scenario1_GeometryPresentationAndIndicators(t *testing.T) {
-	for _, tc := range []struct{ width, height int }{{0, 10}, {20, 0}, {8, 3}, {24, 8}, {56, 20}} {
+	for _, tc := range []struct{ width, height int }{{0, 10}, {20, 0}, {2, 8}, {8, 3}, {24, 8}, {56, 20}} {
 		st := sessionsScenarioState(sessionsScenarioRows(20))
 		st.loadState = sessionsLoadingMore
 		got, _ := st.Render(tc.width, tc.height)
@@ -55,8 +57,8 @@ func TestMecatuiSessionsBoundedList_Scenario1_GeometryPresentationAndIndicators(
 				t.Fatalf("%dx%d rendered %d cells: %q", tc.width, tc.height, width, ansi.Strip(line))
 			}
 		}
-		if tc.height < 6 {
-			if st.list != nil || len(lines) != 1 || !strings.Contains(ansi.Strip(got), "close") {
+		if tc.height < 6 || tc.width < 4 {
+			if st.list != nil || len(lines) != 1 || tc.width >= 4 && !strings.Contains(ansi.Strip(got), "clo") {
 				t.Fatalf("%dx%d did not use Close-only compact fallback: %q list=%p", tc.width, tc.height, ansi.Strip(got), st.list)
 			}
 			continue
@@ -81,7 +83,9 @@ func TestMecatuiSessionsBoundedList_Scenario1_GeometryPresentationAndIndicators(
 }
 
 func boolInt(v bool) int {
-	if v { return 1 }
+	if v {
+		return 1
+	}
 	return 0
 }
 
@@ -98,22 +102,34 @@ func TestMecatuiSessionsBoundedList_Scenario1_NavigationPagingAndWheelOwnership(
 	_, _ = st.Render(24, 8)
 
 	st.HandleKey(sessionsScenarioKey("j"))
-	if st.list.Cursor() != 1 { t.Fatalf("rebound Down selected %d", st.list.Cursor()) }
+	if st.list.Cursor() != 1 {
+		t.Fatalf("rebound Down selected %d", st.list.Cursor())
+	}
 	st.HandleKey(sessionsScenarioKey("u"))
-	if st.list.Cursor() != 0 { t.Fatalf("rebound Up selected %d", st.list.Cursor()) }
+	if st.list.Cursor() != 0 {
+		t.Fatalf("rebound Up selected %d", st.list.Cursor())
+	}
 	beforeOffset := st.list.Offset()
 	st.HandleKey(sessionsScenarioKey("n"))
 	if st.list.Cursor() != 0 || st.list.Offset() <= beforeOffset {
 		t.Fatalf("page down skipped oversized selected segments: cursor=%d offset=%d", st.list.Cursor(), st.list.Offset())
 	}
-	for st.list.Cursor() == 0 { st.HandleKey(sessionsScenarioKey("n")) }
+	for st.list.Cursor() == 0 {
+		st.HandleKey(sessionsScenarioKey("n"))
+	}
 	st.HandleKey(sessionsScenarioKey("b"))
-	if st.list.Cursor() != len(st.filtered)-1 { t.Fatalf("rebound bottom selected %d", st.list.Cursor()) }
+	if st.list.Cursor() != len(st.filtered)-1 {
+		t.Fatalf("rebound bottom selected %d", st.list.Cursor())
+	}
 	st.HandleKey(sessionsScenarioKey("t"))
-	if st.list.Cursor() != 0 { t.Fatalf("rebound top selected %d", st.list.Cursor()) }
+	if st.list.Cursor() != 0 {
+		t.Fatalf("rebound top selected %d", st.list.Cursor())
+	}
 	st.HandleKey(sessionsScenarioKey("n"))
 	st.HandleKey(sessionsScenarioKey("p"))
-	if st.list.Cursor() != 0 || st.list.Offset() != 0 { t.Fatalf("rebound page up did not return oversized row to top: cursor=%d offset=%d", st.list.Cursor(), st.list.Offset()) }
+	if st.list.Cursor() != 0 || st.list.Offset() != 0 {
+		t.Fatalf("rebound page up did not return oversized row to top: cursor=%d offset=%d", st.list.Cursor(), st.list.Offset())
+	}
 
 	cursor, offset := st.list.Cursor(), st.list.Offset()
 	if _, handled := st.HandleWheel(tea.MouseWheelMsg{}); !handled || st.list.Cursor() != cursor || st.list.Offset() != offset {
@@ -123,7 +139,9 @@ func TestMecatuiSessionsBoundedList_Scenario1_NavigationPagingAndWheelOwnership(
 
 func TestMecatuiSessionsBoundedList_Scenario1_StableIdentityAcrossSurfaceRefreshes(t *testing.T) {
 	rows := sessionsScenarioRows(8)
-	for i := range rows { rows[i].Title = fmt.Sprintf("keep row %d", i) }
+	for i := range rows {
+		rows[i].Title = fmt.Sprintf("keep row %d", i)
+	}
 	st := sessionsScenarioState(rows)
 	_, _ = st.Render(24, 8)
 	st.list.SetCursor(4)
@@ -135,14 +153,29 @@ func TestMecatuiSessionsBoundedList_Scenario1_StableIdentityAcrossSurfaceRefresh
 	st.syncFilter()
 	st.sessions = append([]client.SessionListItem{{ID: "new", Title: "keep new", Kind: client.SessionKindMain}}, st.sessions...)
 	st.syncFilter()
-	if st.list.CursorID() != selected { t.Fatalf("filter/page append lost selected ID: %q", st.list.CursorID()) }
+	if st.list.CursorID() != selected {
+		t.Fatalf("filter/page append lost selected ID: %q", st.list.CursorID())
+	}
 	gotTop := st.list.View().Rows[0]
-	if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine { t.Fatalf("refresh lost top semantic anchor: got=%+v want=%+v", gotTop, top) }
+	if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine {
+		t.Fatalf("refresh lost top semantic anchor: got=%+v want=%+v", gotTop, top)
+	}
 
-	for i := range st.sessions { if st.sessions[i].ID == selected { st.sessions[i].Title = "keep renamed" } }
+	for i := range st.sessions {
+		if st.sessions[i].ID == selected {
+			st.sessions[i].Title = "keep renamed"
+		}
+	}
 	st.syncFilter()
+	resizeTop := st.list.View().Rows[0]
 	_, _ = st.Render(18, 8)
-	if st.list.CursorID() != selected { t.Fatalf("rename/resize lost selected ID: %q", st.list.CursorID()) }
+	if st.list.CursorID() != selected {
+		t.Fatalf("rename/resize lost selected ID: %q", st.list.CursorID())
+	}
+	resizedTop := st.list.View().Rows[0]
+	if resizedTop.ID != resizeTop.ID || resizedTop.ItemLine != resizeTop.ItemLine {
+		t.Fatalf("resize lost top semantic anchor: got=%+v want=%+v", resizedTop, resizeTop)
+	}
 
 	removedIndex := st.list.Cursor()
 	st.sessions = append(st.sessions[:removedIndex], st.sessions[removedIndex+1:]...)
@@ -150,12 +183,16 @@ func TestMecatuiSessionsBoundedList_Scenario1_StableIdentityAcrossSurfaceRefresh
 	replacement := st.list.CursorID()
 	st.sessions = append(st.sessions, client.SessionListItem{ID: selected, Title: "keep returned", Kind: client.SessionKindMain})
 	st.syncFilter()
-	if replacement == "" || st.list.CursorID() != replacement { t.Fatalf("removed selection resurrected: replacement=%q selected=%q", replacement, st.list.CursorID()) }
+	if replacement == "" || st.list.CursorID() != replacement {
+		t.Fatalf("removed selection resurrected: replacement=%q selected=%q", replacement, st.list.CursorID())
+	}
 
 	st.sessions = append(st.sessions, client.SessionListItem{ID: "scheduled", Title: "keep schedule", Kind: client.SessionKindScheduled})
 	st.nextTab()
 	st.syncFilter()
-	if st.list.Cursor() != 0 || st.list.CursorID() != "scheduled" { t.Fatalf("tab did not reset to first row: cursor=%d id=%q", st.list.Cursor(), st.list.CursorID()) }
+	if st.list.Cursor() != 0 || st.list.CursorID() != "scheduled" {
+		t.Fatalf("tab did not reset to first row: cursor=%d id=%q", st.list.Cursor(), st.list.CursorID())
+	}
 }
 
 func TestMecatuiSessionsBoundedList_Scenario1_PreservesActionsAndNonInventoryStates(t *testing.T) {
@@ -164,16 +201,28 @@ func TestMecatuiSessionsBoundedList_Scenario1_PreservesActionsAndNonInventorySta
 		_, _ = st.Render(60, 10)
 		st.list.SetCursor(1)
 		var msg tea.KeyPressMsg
-		if action == "enter" { msg = tea.KeyPressMsg{Code: tea.KeyEnter} } else { msg = sessionsScenarioKey(action) }
+		if action == "enter" {
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
+		} else {
+			msg = sessionsScenarioKey(action)
+		}
 		cmd, handled, _ := st.HandleKey(msg)
-		if !handled { t.Fatalf("action %q was not handled", action) }
+		if !handled {
+			t.Fatalf("action %q was not handled", action)
+		}
 		switch action {
 		case "y":
-			if got := cmd().(inventorySessionIDCopiedMsg).id; got != "opaque-01" { t.Fatalf("copy targeted %q", got) }
+			if got := cmd().(inventorySessionIDCopiedMsg).id; got != "opaque-01" {
+				t.Fatalf("copy targeted %q", got)
+			}
 		case "r", "d", "f":
-			if st.actionID != "opaque-01" { t.Fatalf("%s targeted %q", action, st.actionID) }
+			if st.actionID != "opaque-01" {
+				t.Fatalf("%s targeted %q", action, st.actionID)
+			}
 		case "v", "enter":
-			if st.selected.ID != "opaque-01" || cmd == nil { t.Fatalf("%s targeted %q cmd=%v", action, st.selected.ID, cmd != nil) }
+			if st.selected.ID != "opaque-01" || cmd == nil {
+				t.Fatalf("%s targeted %q cmd=%v", action, st.selected.ID, cmd != nil)
+			}
 		}
 	}
 
@@ -185,12 +234,25 @@ func TestMecatuiSessionsBoundedList_Scenario1_PreservesActionsAndNonInventorySta
 		st := sessionsScenarioState(sessionsScenarioRows(2))
 		setup(st)
 		_, _ = st.Render(60, 10)
-		if st.list != nil { t.Fatalf("non-inventory state constructed list: state=%+v", st) }
+		if st.list != nil {
+			t.Fatalf("non-inventory state constructed list: state=%+v", st)
+		}
+		st.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+		st.HandleKey(sessionsScenarioKey("d"))
+		if st.list != nil || st.confirmDelete || st.actionID != "" {
+			t.Fatal("non-inventory state routed list navigation or an inventory action")
+		}
 	}
 
 	compact := sessionsScenarioState(sessionsScenarioRows(2))
 	got, _ := compact.Render(12, 3)
-	if compact.list != nil || !strings.Contains(ansi.Strip(got), "close") { t.Fatalf("compact state=%q list=%p", ansi.Strip(got), compact.list) }
-	if cmd, _, _ := compact.HandleKey(sessionsScenarioKey("d")); cmd != nil || compact.confirmDelete || compact.actionID != "" { t.Fatal("compact fallback routed a normal action") }
-	if _, _, closed := compact.HandleKey(tea.KeyPressMsg{Code: tea.KeyEscape}); !closed { t.Fatal("compact fallback did not route Close") }
+	if compact.list != nil || !strings.Contains(ansi.Strip(got), "close") {
+		t.Fatalf("compact state=%q list=%p", ansi.Strip(got), compact.list)
+	}
+	if cmd, _, _ := compact.HandleKey(sessionsScenarioKey("d")); cmd != nil || compact.confirmDelete || compact.actionID != "" {
+		t.Fatal("compact fallback routed a normal action")
+	}
+	if _, _, closed := compact.HandleKey(tea.KeyPressMsg{Code: tea.KeyEscape}); !closed {
+		t.Fatal("compact fallback did not route Close")
+	}
 }

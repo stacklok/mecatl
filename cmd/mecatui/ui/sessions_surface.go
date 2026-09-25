@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 type sessionsTab int
@@ -303,7 +304,9 @@ type sessionsState struct {
 	filtered          []client.SessionListItem
 	handles           map[string]string
 	filter            textinput.Model
-	cursor            int
+	list              *bounded.List
+	rowBudget         int
+	compact           bool
 	selected          client.SessionListItem
 	inspect           bool
 	loadErr           error
@@ -352,8 +355,13 @@ func (*sessionsState) modalPlacement() modalPlacement {
 }
 
 func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
+	if width <= 0 || height <= 0 {
+		s.rowBudget, s.compact = 0, true
+		return "", nil
+	}
 	vpContent := ""
 	if s.view == sessionsTranscript {
+		s.compact = false
 		if s.transcriptRend == nil {
 			s.transcriptRend = newRenderer(s.deps.theme, s.deps.marks)
 		}
@@ -365,8 +373,9 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 			s.transcriptVP.GotoBottom()
 		}
 		vpContent = s.transcriptVP.View()
+		return renderSessionsTranscript(s.deps.theme, *s, s.activeSessionID, vpContent, s.deps.marks, width, height), nil
 	}
-	return renderSessionsOverlay(s.deps.theme, *s, s.deps.caps, s.activeSessionID, vpContent, s.deps.marks, width, height), nil
+	return renderSessionsPanelSized(s.deps.theme, s, s.deps.caps, s.deps.marks, width, height, s.activeSessionID), nil
 }
 
 func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
@@ -394,6 +403,12 @@ func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		s.transcriptStuck = s.transcriptVP.AtBottom()
 		return cmd, true, false
 	}
+	if s.compact {
+		if key.Matches(msg, s.deps.keys.Close) {
+			return nil, true, true
+		}
+		return nil, true, false
+	}
 	if cmd, handled := s.handleActionKey(msg); handled {
 		return cmd, true, false
 	}
@@ -415,11 +430,44 @@ func (s *sessionsState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 	return cmd, true, false
 }
 
+func (s *sessionsState) normalInventory() bool {
+	return s.tab != tabStorageHealth && s.maintenance == maintenanceNone && !s.renaming && !s.confirmDelete && !s.actionLoading &&
+		(!s.loading || s.loadState != sessionsInitialLoading && s.loadState != 0) && s.loadState != sessionsInitialPageError &&
+		(s.err == nil || len(s.sessions) > 0) && len(s.filtered) > 0
+}
+
+func (s *sessionsState) listControl() *bounded.List {
+	if s.list == nil {
+		s.list = new(bounded.List)
+	}
+	return s.list
+}
+
+func (s *sessionsState) syncList(current string) *bounded.List {
+	list := s.listControl()
+	items := make([]bounded.ListItem, 0, len(s.filtered))
+	for _, row := range s.filtered {
+		items = append(items, bounded.ListItem{
+			ID:          row.ID,
+			Text:        sessionRowText(row, s.handles[row.ID], row.ID == current, s.activityInventory),
+			StatusCells: [2]string{stateBadge(row.State)},
+		})
+	}
+	list.SetItems(items)
+	return list
+}
+
 func (s *sessionsState) selectedRow() (client.SessionListItem, bool) {
-	if s.cursor < 0 || s.cursor >= len(s.filtered) {
+	if len(s.filtered) == 0 {
 		return client.SessionListItem{}, false
 	}
-	return s.filtered[s.cursor], true
+	id := s.syncList(s.activeSessionID).CursorID()
+	for _, row := range s.filtered {
+		if row.ID == id {
+			return row, true
+		}
+	}
+	return client.SessionListItem{}, false
 }
 
 func (s *sessionsState) setNotice(reason client.CapabilityReason) {
@@ -443,6 +491,9 @@ func (s *sessionsState) handleActionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	if s.actionLoading || s.maintenance != maintenanceNone || s.tab == tabStorageHealth {
+		return nil, false
+	}
+	if !s.normalInventory() {
 		return nil, false
 	}
 	if msg.String() == "r" && (s.loadState == sessionsLaterPageError || s.loadState == sessionsInitialPageError || s.loadState == sessionsCancelled) {
@@ -616,33 +667,33 @@ func (s *sessionsState) handleNavigationKey(msg tea.KeyPressMsg) (handled bool, 
 	}
 	if key.Matches(msg, s.deps.keys.NextTab) {
 		s.nextTab()
-		s.cursor = 0
 		s.syncFilter()
+		if len(s.filtered) > 0 {
+			s.syncList(s.activeSessionID).SetCursor(0)
+		}
 		return true, false
 	}
-	switch msg.String() {
-	case keyMenuUp:
-		if s.cursor > 0 {
-			s.cursor--
-		}
-		return true, false
-	case keyMenuDown:
-		if s.cursor < len(s.filtered)-1 {
-			s.cursor++
-		}
-		return true, false
-	case "home":
-		if key.Matches(msg, s.deps.keys.ScrollTop) {
-			s.cursor = 0
-			return true, false
-		}
-	case "end":
-		if key.Matches(msg, s.deps.keys.ScrollBottom) {
-			s.cursor = clampBounded(len(s.filtered)-1, len(s.filtered))
-			return true, false
-		}
+	if !s.normalInventory() {
+		return false, false
 	}
-	return false, false
+	list := s.syncList(s.activeSessionID)
+	switch {
+	case key.Matches(msg, s.deps.keys.Up):
+		list.Move(bounded.LineUp)
+	case key.Matches(msg, s.deps.keys.Down):
+		list.Move(bounded.LineDown)
+	case key.Matches(msg, s.deps.keys.ScrollU):
+		list.Move(bounded.PageUp)
+	case key.Matches(msg, s.deps.keys.ScrollD):
+		list.Move(bounded.PageDown)
+	case key.Matches(msg, s.deps.keys.ScrollTop):
+		list.Move(bounded.Top)
+	case key.Matches(msg, s.deps.keys.ScrollBottom):
+		list.Move(bounded.End)
+	default:
+		return false, false
+	}
+	return true, false
 }
 
 func (s *sessionsState) nextTab() {
@@ -777,7 +828,7 @@ func (s *sessionsState) handleTranscriptLoaded(msg sessionTranscriptLoadedMsg) {
 
 func (s *sessionsState) handleSessionsListed(msg client.SessionsListedMsg) {
 	s.loading, s.loadState = false, sessionsComplete
-	selectedID := selectedSessionID(*s)
+	selectedID := selectedSessionID(s)
 	if msg.Err != nil {
 		s.err, s.loadState, s.sessions, s.filtered = msg.Err, sessionsInitialPageError, nil, nil
 		return
@@ -787,12 +838,7 @@ func (s *sessionsState) handleSessionsListed(msg client.SessionsListedMsg) {
 		selectedID = s.actionID
 	}
 	s.syncFilter()
-	for i := range s.filtered {
-		if s.filtered[i].ID == selectedID {
-			s.cursor = i
-			break
-		}
-	}
+	s.selectSessionID(selectedID)
 	s.actionID = ""
 }
 
@@ -861,8 +907,20 @@ func (s *sessionsState) syncFilter() {
 	tabbed := filterSessionsByTabWithActivity(s.sessions, s.tab, s.activityInventory)
 	s.handles = sessionDisplayHandles(tabbed)
 	s.filtered = filterSessions(tabbed, s.handles, s.filter.Value())
-	if s.cursor >= len(s.filtered) {
-		s.cursor = 0
+	if s.list != nil {
+		s.syncList(s.activeSessionID)
+	}
+}
+
+func (s *sessionsState) selectSessionID(id string) {
+	if s.list == nil || id == "" {
+		return
+	}
+	for i := range s.filtered {
+		if s.filtered[i].ID == id {
+			s.list.SetCursor(i)
+			return
+		}
 	}
 }
 
@@ -908,7 +966,7 @@ func (s *sessionsState) applyPage(msg client.SessionInventoryPageMsg) tea.Cmd {
 		}
 		return nil
 	}
-	selectedID := selectedSessionID(*s)
+	selectedID := selectedSessionID(s)
 	if s.actionID != "" {
 		selectedID = s.actionID
 	}
@@ -918,12 +976,7 @@ func (s *sessionsState) applyPage(msg client.SessionInventoryPageMsg) tea.Cmd {
 	}
 	s.sessions, s.err, s.loading = mergeSessionPages(s.sessions, msg.Page.Sessions, replace), nil, false
 	s.syncFilter()
-	for i := range s.filtered {
-		if s.filtered[i].ID == selectedID {
-			s.cursor = i
-			break
-		}
-	}
+	s.selectSessionID(selectedID)
 	s.nextCursor, s.actionID = msg.Page.NextCursor, ""
 	if s.nextCursor == "" {
 		s.loadState = sessionsComplete
@@ -1081,9 +1134,12 @@ func capabilityReasonText(reason client.CapabilityReason) string {
 		return "this action is unavailable"
 	}
 }
-func selectedSessionID(st sessionsState) string {
-	if st.cursor >= 0 && st.cursor < len(st.filtered) {
-		return st.filtered[st.cursor].ID
+func selectedSessionID(st *sessionsState) string {
+	if st.list != nil {
+		return st.list.CursorID()
+	}
+	if len(st.filtered) > 0 {
+		return st.filtered[0].ID
 	}
 	return ""
 }
@@ -1203,28 +1259,77 @@ func sessionsTabBar(th theme.Theme, tab sessionsTab, activityInventory, storageH
 	return strings.Join(parts, th.Style("muted").Render("  "))
 }
 
-func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys, width, _ int, currentID ...string) string {
+func renderSessionsPanel(th theme.Theme, st sessionsState, caps client.Capabilities, hk helpKeys, width, height int, currentID ...string) string {
 	current := ""
 	if len(currentID) > 0 {
 		current = currentID[0]
 	}
-	var b strings.Builder
+	return renderSessionsPanelSized(th, &st, caps, hk, width, height, current)
+}
+
+func renderSessionsPanelSized(th theme.Theme, st *sessionsState, caps client.Capabilities, hk helpKeys, width, height int, current string) string {
+	if width <= 0 || height <= 0 {
+		st.rowBudget, st.compact = 0, true
+		return ""
+	}
 	maintenance := caps.StorageHealth || caps.StorageCleanup
-	b.WriteString(sessionsTabBar(th, st.tab, st.activityInventory, maintenance) + "\n\n")
+	tab := sessionsTabBar(th, st.tab, st.activityInventory, maintenance)
 	if st.tab == tabStorageHealth {
-		b.WriteString(renderStorageHealth(th, st, caps, hk))
-		return b.String()
+		st.rowBudget, st.compact = 0, false
+		return boundedSessionsPanel([]string{tab, "", renderStorageHealth(th, *st, caps, hk)}, width, height)
 	}
-	if rendered, ok := renderSessionsPanelState(th, st, hk); ok {
-		b.WriteString(rendered)
-		return b.String()
+	if rendered, ok := renderSessionsPanelState(th, *st, hk); ok {
+		st.rowBudget, st.compact = 0, false
+		return boundedSessionsPanel([]string{tab, "", rendered}, width, height)
 	}
-	renderSessionRows(&b, th, st, current, width)
-	if status := sessionsPaginationStatus(st); status != "" {
-		b.WriteString(th.Style("muted").Render(status) + "\n")
+
+	status := sessionsPaginationStatus(*st)
+	fixed := 4
+	if status != "" {
+		fixed++
 	}
-	b.WriteString("\n" + th.Style("muted").Render(sessionActionsHint(st, hk)))
-	return b.String()
+	st.rowBudget = min(sessionsVisibleRows, height-fixed)
+	if st.rowBudget < 1 || width < 4 {
+		st.rowBudget, st.compact = 0, true
+		closeHint := hk.closeOnly
+		if closeHint == "" {
+			closeHint = "esc"
+		}
+		return boundedDisplayLine(closeHint+": close", width)
+	}
+	st.compact = false
+	list := st.syncList(current)
+	list.SetGeometry(width, st.rowBudget, 2, bounded.Wrap)
+	view := list.ViewWithIndicators(st.rowBudget, list.RevealPending())
+	lines := []string{tab, ""}
+	if view.Above > 0 {
+		lines = append(lines, th.Style("muted").Render(fmt.Sprintf("↑ %d items", view.Above)))
+	}
+	for _, row := range view.Rows {
+		presentation := presentListRow(row, th.Style("accent"), th.Style("muted"))
+		lines = append(lines, presentation.Style.Render(presentation.Text))
+	}
+	if view.Below > 0 {
+		lines = append(lines, th.Style("muted").Render(fmt.Sprintf("↓ %d items", view.Below)))
+	}
+	if status != "" {
+		lines = append(lines, th.Style("muted").Render(status))
+	}
+	lines = append(lines, "", th.Style("muted").Render(sessionActionsHint(st, hk)))
+	return boundedSessionsPanel(lines, width, height)
+}
+
+func boundedSessionsPanel(parts []string, width, height int) string {
+	lines := make([]string, 0, height)
+	for _, part := range parts {
+		for _, line := range strings.Split(part, "\n") {
+			if len(lines) == height {
+				return strings.Join(lines, "\n")
+			}
+			lines = append(lines, boundedDisplayLine(line, width))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 const unavailableText = "unavailable"
@@ -1390,49 +1495,34 @@ func sessionsPaginationStatus(st sessionsState) string {
 	}
 }
 
-func renderSessionRows(b *strings.Builder, th theme.Theme, st sessionsState, current string, width int) {
-	start, end := scrollWindow(st.cursor, len(st.filtered), sessionsVisibleRows)
-	for i := start; i < end; i++ {
-		s := st.filtered[i]
-		marker := "  "
-		if i == st.cursor {
-			marker = "▶ "
-		}
-		label := s.Title
-		if st.activityInventory && s.UsageState == client.SessionActivityDraft {
-			label = "New — no messages"
-		} else if label == "" {
-			label = "untitled"
-		}
-		line := marker + stateBadge(s.State) + " " + relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + terminaltext.Sanitize(label)
-		if handle := st.handles[s.ID]; handle != "" {
-			line += "  " + handle
-		}
-		if s.ModelID != "" {
-			line += "  (" + terminaltext.Sanitize(s.ModelID) + ")"
-		}
-		if s.Kind == client.SessionKindUnknown {
-			line += "  [Legacy session — inspect only]"
-		}
-		if s.ID == current {
-			line += "  [current]"
-		}
-		if s.Kind == client.SessionKindTeamMember && s.Relationship.MemberName != "" {
-			line += "  [member " + terminaltext.Sanitize(s.Relationship.MemberName) + "]"
-		}
-		style := th.Style("muted")
-		if i == st.cursor {
-			style = th.Style("accent")
-		}
-		b.WriteString(renderToolCardText(style, line, width) + "\n")
+func sessionRowText(s client.SessionListItem, handle string, current, activityInventory bool) string {
+	label := s.Title
+	if activityInventory && s.UsageState == client.SessionActivityDraft {
+		label = "New — no messages"
+	} else if label == "" {
+		label = "untitled"
 	}
+	line := relativeTime(s.ModifiedAt) + " " + strconv.Itoa(int(s.Turns)) + "t " + terminaltext.SanitizeSingleLine(label)
+	if handle != "" {
+		line += "  " + handle
+	}
+	if s.ModelID != "" {
+		line += "  (" + terminaltext.SanitizeSingleLine(s.ModelID) + ")"
+	}
+	if s.Kind == client.SessionKindUnknown {
+		line += "  [Legacy session — inspect only]"
+	}
+	if current {
+		line += "  [current]"
+	}
+	if s.Kind == client.SessionKindTeamMember && s.Relationship.MemberName != "" {
+		line += "  [member " + terminaltext.SanitizeSingleLine(s.Relationship.MemberName) + "]"
+	}
+	return line
 }
 
-func sessionActionsHint(st sessionsState, hk helpKeys) string {
-	selected := client.SessionListItem{}
-	if st.cursor >= 0 && st.cursor < len(st.filtered) {
-		selected = st.filtered[st.cursor]
-	}
+func sessionActionsHint(st *sessionsState, hk helpKeys) string {
+	selected, _ := st.selectedRow()
 	action := "unavailable"
 	if selected.Capabilities.PublicChat {
 		action = "continue"
