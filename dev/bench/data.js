@@ -275002,6 +275002,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790339588517,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e2718feb93ede5c94ccb78915de2c4a5bf0e0e1",
+          "message": "feat(studio): align chat transcript and composer (#1886)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T14:37:13+02:00",
+          "tree_id": "e1012c38e4e3e229f438f4def0c8d838152cc0ca",
+          "url": "https://github.com/stacklok/mecatl/commit/7e2718feb93ede5c94ccb78915de2c4a5bf0e0e1"
+        },
+        "date": 1790340562181,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -360540,6 +360579,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790340558871,
+  "lastUpdate": 1790340563697,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
