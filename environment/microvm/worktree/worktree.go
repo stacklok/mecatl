@@ -392,6 +392,9 @@ func createCapturedWorktree(ctx context.Context, source, worktree, branch string
 	if err := materializeUntracked(worktree, capture.state.untracked); err != nil {
 		return fmt.Errorf("worktree: materialize untracked files: %w", err)
 	}
+	if err := restoreCapturedPermissions(worktree, capture.state.tracked, capture.state.untracked); err != nil {
+		return fmt.Errorf("worktree: restore captured file permissions: %w", err)
+	}
 	return nil
 }
 
@@ -670,6 +673,7 @@ type capturedFile struct {
 
 type state struct {
 	digest    []byte
+	tracked   []capturedFile
 	untracked []capturedFile
 }
 
@@ -722,10 +726,13 @@ func captureStateBounded(ctx context.Context, root, captureDir string, budget *c
 		return state{}, err
 	}
 	sort.Strings(paths)
+	tracked := make([]capturedFile, 0, len(paths))
 	for _, path := range paths {
-		if _, err := readCaptured(root, path, true, "", budget, h); err != nil {
+		file, err := readCaptured(root, path, true, "", budget, h)
+		if err != nil {
 			return state{}, err
 		}
+		tracked = append(tracked, file)
 	}
 
 	var untrackedPaths []string
@@ -755,7 +762,7 @@ func captureStateBounded(ctx context.Context, root, captureDir string, budget *c
 		}
 		untracked = append(untracked, file)
 	}
-	return state{digest: h.Sum(nil), untracked: untracked}, nil
+	return state{digest: h.Sum(nil), tracked: tracked, untracked: untracked}, nil
 }
 
 func forEachZeroRecord(path string, visit func([]byte) error) error {
@@ -872,6 +879,32 @@ func materializeUntracked(root string, files []capturedFile) error {
 		err = errors.Join(err, outputClose(output), input.Close())
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func restoreCapturedPermissions(root string, groups ...[]capturedFile) error {
+	workspace, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = workspace.Close() }()
+	for _, files := range groups {
+		for _, file := range files {
+			if file.mode == 0 || !file.mode.IsRegular() {
+				continue
+			}
+			info, err := workspace.Lstat(filepath.FromSlash(file.path))
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("captured regular file %q changed type", file.path)
+			}
+			if err := workspace.Chmod(filepath.FromSlash(file.path), file.mode.Perm()); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

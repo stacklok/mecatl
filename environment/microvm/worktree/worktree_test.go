@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestPrepareExtractsCommittedDirectories(t *testing.T) {
@@ -235,6 +237,72 @@ func TestMicroVMEnvironments_Scenario3_SourceStateCaptureIsExactOrFails(t *testi
 		if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("failed capture left provisional path %q: %v", path, statErr)
 		}
+	}
+}
+
+func TestPreparePreservesCapturedPermissionsAcrossUmask(t *testing.T) {
+	requireGit(t)
+	oldUmask := unix.Umask(0o077)
+	t.Cleanup(func() { unix.Umask(oldUmask) })
+
+	source := newRepository(t)
+	files := []struct {
+		path string
+		mode os.FileMode
+	}{
+		{path: "private.txt", mode: 0o600},
+		{path: "group.txt", mode: 0o640},
+		{path: "run.sh", mode: 0o750},
+	}
+	for _, file := range files {
+		path := filepath.Join(source, file.path)
+		writeTestFile(t, path, []byte(file.path+"\n"), file.mode)
+		if err := os.Chmod(path, file.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("private.txt", filepath.Join(source, "tracked-link")); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(source, "removed.txt"), []byte("removed\n"), 0o600)
+	gitTest(t, source, nil, "add", "private.txt", "group.txt", "run.sh", "tracked-link", "removed.txt")
+	gitTest(t, source, nil, "commit", "-qm", "capture file permissions")
+	if err := os.Remove(filepath.Join(source, "removed.txt")); err != nil {
+		t.Fatal(err)
+	}
+	untracked := filepath.Join(source, "untracked.txt")
+	writeTestFile(t, untracked, []byte("untracked\n"), 0o640)
+	if err := os.Chmod(untracked, 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	unix.Umask(0o022)
+	prepared, err := New().Prepare(context.Background(), Request{
+		Source: source, WorktreePath: filepath.Join(canonicalTestTempDir(t), "session-worktree"),
+		MetadataPath: filepath.Join(canonicalTestTempDir(t), "guest-git"), Branch: "mecatl/permissions",
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	t.Cleanup(func() { _ = prepared.Cleanup(context.Background()) })
+
+	for _, file := range append(files, struct {
+		path string
+		mode os.FileMode
+	}{path: "untracked.txt", mode: 0o640}) {
+		info, statErr := os.Lstat(filepath.Join(prepared.WorktreePath, file.path))
+		if statErr != nil {
+			t.Fatalf("inspect %q: %v", file.path, statErr)
+		}
+		if got := info.Mode().Perm(); got != file.mode.Perm() {
+			t.Errorf("mode for %q = %04o, want %04o", file.path, got, file.mode.Perm())
+		}
+	}
+	if info, statErr := os.Lstat(filepath.Join(prepared.WorktreePath, "tracked-link")); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("tracked symlink = %v, %v", info, statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(prepared.WorktreePath, "removed.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("removed tracked file remains: %v", statErr)
 	}
 }
 
