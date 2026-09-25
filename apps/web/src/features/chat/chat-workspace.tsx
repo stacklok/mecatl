@@ -390,6 +390,22 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [clearDraftSignal, setClearDraftSignal] = useState(0);
   const [escapeClearHint, setEscapeClearHint] = useState(false);
   const workspaceRoot = useRef<HTMLDivElement>(null);
+  const chatOptionsTrigger = useRef<HTMLButtonElement>(null);
+  const chatOptionsEscapeSession = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const clearPending = () => {
+      chatOptionsEscapeSession.current = undefined;
+    };
+    const clearOnOtherKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") clearPending();
+    };
+    document.addEventListener("pointerdown", clearPending, true);
+    document.addEventListener("keydown", clearOnOtherKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", clearPending, true);
+      document.removeEventListener("keydown", clearOnOtherKey, true);
+    };
+  }, []);
   const panelOpener = useRef<HTMLElement | null>(null);
   const panelWasOpen = useRef(false);
   const [seedText, setSeedText] = useState<string | undefined>(arrivalSeed.seed?.text);
@@ -2417,6 +2433,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     navigationKey: sessionId,
     ownsFocus: (target) => {
       const node = target instanceof Node ? target : document.activeElement;
+      if (chatOptionsEscapeSession.current !== undefined) {
+        const sameSession = chatOptionsEscapeSession.current === sessionId;
+        chatOptionsEscapeSession.current = undefined;
+        if (sameSession && node === document.body) return true;
+      }
       return Boolean(
         node &&
           workspaceRoot.current?.contains(node) &&
@@ -2544,11 +2565,26 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           {sessionId && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button aria-label="Chat options" size="icon" variant="ghost">
+                <Button
+                  aria-label="Chat options"
+                  ref={chatOptionsTrigger}
+                  size="icon"
+                  variant="ghost"
+                >
                   <MoreHorizontal aria-hidden="true" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuContent
+                align="end"
+                className="w-52"
+                onEscapeKeyDown={() => {
+                  chatOptionsEscapeSession.current = sessionId;
+                }}
+                onCloseAutoFocus={(event) => {
+                  event.preventDefault();
+                  chatOptionsTrigger.current?.focus();
+                }}
+              >
                 {usageLines.length > 0 && (
                   <div className="mb-1 border-b px-2 py-1.5">
                     <p className="text-xs font-medium text-muted-foreground">Token usage</p>

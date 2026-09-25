@@ -312,8 +312,12 @@ test("approves and denies exact asks through the browser journey", async ({
   await page.getByRole("menuitem", { name: /Show Tools|Hide Tools/ }).focus();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Chat options" })).toBeFocused();
   await expect(page.getByRole("region", { name: "Permission required: Read" })).toBeVisible();
   expect(offlineBff.requestsFor("POST", escapePath)).toHaveLength(0);
+  // Mobile browsers can briefly move focus to body after closing a portaled menu.
+  await page.getByRole("button", { name: "Chat options" }).evaluate((button) => button.blur());
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
   await page.keyboard.press("Escape");
   await expect.poll(() => verdicts.get(escapePath)).toBe(1);
   expect(offlineBff.requestsFor("POST", escapePath)[0]?.postDataJSON()).toEqual({
