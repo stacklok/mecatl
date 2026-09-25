@@ -1091,9 +1091,9 @@ func (r *Run) RetractPermissionAsk(askID string) bool {
 // router (a non-interactive or child run never surfaces). The router auto-removes the
 // entry on the routed verdict (childAskRouter.route), so there is no explicit
 // unregister on the resolution path.
-func (r *Run) registerChildAsk(askID string, child *Run) {
+func (r *Run) registerChildAsk(ask session.PendingAsk, child *Run, turn int) {
 	if r.childAsks != nil {
-		r.childAsks.registerChild(askID, child)
+		r.childAsks.registerSurfaced(ask, child, turn)
 	}
 }
 
@@ -3235,7 +3235,7 @@ var childDrainGrace = 1 * time.Second
 // I3b note: the background-pending nudge must be checked in finishTurnNoTools
 // BEFORE its clean-terminal calls — by the time this hook runs, the children it
 // would ask about are already cancelled and the registry sealed.
-func (*Engine) drainChildren(ctx context.Context, r *Run) {
+func (e *Engine) drainChildren(ctx context.Context, r *Run) {
 	joins := r.children.cancelLiveBackground()
 	if len(joins) > 0 {
 		if pending := joinChildren(joins, childDrainCap); len(pending) > 0 {
@@ -3259,6 +3259,10 @@ func (*Engine) drainChildren(ctx context.Context, r *Run) {
 				}
 			}
 		}
+	}
+	if r.childAsks != nil {
+		r.children.sealWithFinal(r.childAsks.closeEvents, func(ev session.Event) { e.emit(r, ev) })
+		return
 	}
 	r.children.seal()
 }

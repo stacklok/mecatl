@@ -394,12 +394,14 @@ type HookPayload struct {
 // approval record (the EvPermissionAsk it follows is the request half).
 //
 // NO-LEAK CONTRACT (gauntlet #7): it carries the tool NAME, the verdict string,
-// the askID, the gated tool-call id, and the allow-always flag — and NOTHING ELSE.
+// the askID, an optional gated tool-call id, and the allow-always flag — and NOTHING ELSE.
 // It NEVER carries the raw tool args (those can quote secrets) nor the deny-reason
 // body (which can quote a sensitive command preview). A consumer that needs to
-// correlate a verdict back to a tool call uses Call (the opaque tool-call id, also
-// implicitly inside AskID) against the conversation history, never an arg payload
-// on this event.
+// correlate a root verdict back to a tool call uses Call (the opaque tool-call id,
+// also implicitly inside AskID) against the conversation history, never an arg
+// payload on this event. A child ask projected onto a parent has an empty Call:
+// child and parent provider call IDs can collide, and parent replay must not
+// learn a rule from an unrelated parent call.
 type ApprovalPayload struct {
 	// AskID is the id of the resolved permission ask (the same id carried on the
 	// EvPermissionAsk that preceded this verdict and on the wire ResumeApproval).
@@ -417,7 +419,8 @@ type ApprovalPayload struct {
 	// so surfacing it directly opens no new leak surface. It is the durable,
 	// grammar-free correlation handle a 3b permstore-replay consumer uses to find the
 	// gated ToolCall in the loaded conversation and re-derive its rule from the real
-	// args (which stay in the session history, never on this event).
+	// args (which stay in the session history, never on this event). Empty for a
+	// child approval projected onto the parent run.
 	Call ToolCallID
 	// AllowAlways mirrors (Verdict == VerdictStringAllowAlways): the verdict ASKED
 	// the harness to learn a per-session allow rule. It is deliberately NOT named

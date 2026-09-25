@@ -101,6 +101,11 @@ type parentCaps struct {
 	// "branch-2"`) the parent frames the surfaced ask with; empty keeps the legacy
 	// generic "subagent" framing.
 	surfaceAsk func(askID, childID string, child *Run, ask session.PendingAsk, requester string)
+	// emitChildApprovals flushes accepted surfaced-ask verdicts onto the parent
+	// stream from a child drain, outside the server's verdict-submission locks.
+	// A terminal child event also flushes a verdict whose cancelled await never
+	// emitted its own EvApproval.
+	emitChildApprovals func(child *Run)
 	// children is the parent run's child-run registry, handed down DIRECTLY — it is
 	// an agent-package type, so passing the handle has zero layering cost (unlike
 	// surfaceAsk, which stays a closure because it genuinely composes router
@@ -4200,6 +4205,7 @@ func drainChildObserved(run *Run, emit func(session.Event), parentCallID, childI
 			}
 		}
 	}
+	posture.emitChildApprovals(run)
 	return finalText, stop, cause, usage, toolCount
 }
 
@@ -4340,6 +4346,12 @@ type childPosture struct {
 	askLabel string
 }
 
+func (p childPosture) emitChildApprovals(run *Run) {
+	if p.caps.emitChildApprovals != nil {
+		p.caps.emitChildApprovals(run)
+	}
+}
+
 // childAutoDenyMessage is the ACCURATE message a headless (non-interactive) subagent's
 // auto-denied ask carries — NOT the misleading "denied by user … client approval
 // required" of the interactive path. It names the real cause (a non-interactive subagent
@@ -4428,6 +4440,9 @@ func childReviewedDenyMessage(reason, verdictReason string) string {
 func handleChildEvent(run *Run, ev session.Event, posture childPosture) (text string, stop session.StopReason, isResult bool) {
 	if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
 		resolveChildAsk(run, *ev.Ask, posture)
+	}
+	if ev.Type == session.EvApproval || ev.Type == session.EvResult {
+		posture.emitChildApprovals(run)
 	}
 	if ev.Type == session.EvResult && ev.Result != nil {
 		return ev.Result.Text, ev.Result.Stop, true

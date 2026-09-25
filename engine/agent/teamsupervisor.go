@@ -1779,6 +1779,7 @@ func (s *Supervisor) driveOneTurn(ctx context.Context, m *memberRT, prompt strin
 		case <-s.caps.hardAbort:
 		}
 	}
+	posture.emitChildApprovals(run)
 	return text, stop, usage
 }
 

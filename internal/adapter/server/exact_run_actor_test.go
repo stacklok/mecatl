@@ -56,6 +56,78 @@ func exactRunActorService(t *testing.T, scoped bool, turns ...mockllm.Turn) (*se
 	return svc, log
 }
 
+// TestADR_0204_ExactChildApprovalUsesVerdictCaller exercises the parent relay:
+// the child ask and its verdict are both recorded under the exact parent run,
+// with the verdict attributed to the caller who submitted it.
+func TestADR_0204_ExactChildApprovalUsesVerdictCaller(t *testing.T) {
+	store := memstore.New()
+	log := memstore.NewEventLog()
+	childCatalog := tool.NewCatalog()
+	childCatalog.MustRegister(&scriptTool{name: "Shell", readOnly: false, content: "ran"})
+	childLLM := mockllm.New(
+		mockllm.ToolCallTurn(call("collision", "Shell", `{"command":"cat $(zap)"}`)),
+		mockllm.TextTurn("child finished"),
+	)
+	child := agent.NewEngine(agent.Deps{LLM: childLLM, Catalog: childCatalog,
+		Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "child-model"})
+	parentCatalog := tool.NewCatalog()
+	parentCatalog.MustRegister(newServerTestSubagent(child))
+	parentLLM := mockllm.New(
+		mockllm.ToolCallTurn(call("collision", "Subagent", `{"prompt":"run it"}`)),
+		mockllm.TextTurn("parent finished"),
+	)
+	parent := agent.NewEngine(agent.Deps{LLM: parentLLM, Catalog: parentCatalog,
+		Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "parent-model", Interactive: true, Store: store})
+	svc, err := newPlacementTestService(server.Config{Engine: parent, Store: store, EventLog: log,
+		Now: func() time.Time { return time.Unix(0, 0) }, DefaultCapabilities: parentLLM.Capabilities()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	starter := session.WithPrincipal(t.Context(), alice)
+	verdictCaller := session.WithPrincipal(t.Context(), bob)
+	sess, err := svc.CreateSession(starter, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRunContent(starter, sess.ID, "go", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := server.NewRunEventRecorder(context.WithoutCancel(starter), svc, sess.ID)
+	var askID string
+	for ev := range run.Events() {
+		recorder.Observe(ev)
+		if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+			askID = ev.Ask.AskID
+			if ev.RunID != run.RunID() || ev.Ask.Call != "collision" {
+				t.Fatalf("surfaced ask = %+v, run = %q", ev.Ask, ev.RunID)
+			}
+			break
+		}
+	}
+	if askID == "" {
+		t.Fatal("child ask did not surface")
+	}
+	svc.Persist(starter, sess.ID)
+	if _, err := svc.ResolveRunAsk(verdictCaller, sess.ID, run.RunID(), askID, session.VerdictAllowAlways); err != nil {
+		t.Fatal(err)
+	}
+	for ev := range run.Events() {
+		recorder.Observe(ev)
+	}
+	recorder.Close()
+	svc.FinishRun(sess.ID, run)
+	assertExactApprovalActor(t, log, sess.ID, run.RunID(), askID, bob)
+	for _, ev := range readEventLog(t, log, sess.ID) {
+		if ev.Type == session.EvApproval && ev.Approval != nil && ev.Approval.AskID == askID {
+			if ev.Approval.Call != "" || ev.Approval.Tool != "Shell" || !ev.Approval.AllowAlways {
+				t.Fatalf("unsafe child approval correlation: %+v", ev.Approval)
+			}
+		}
+	}
+}
+
 // TestADR_0204_ExactRunApprovalUsesVerdictCaller pins actor attribution for
 // live ordinary and guardrail-scoped controls through the real gRPC relay.
 // The direct case proves an absent verdict caller does not inherit the starter.

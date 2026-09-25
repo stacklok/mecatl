@@ -98,6 +98,66 @@ func TestSDKRunControls_Scenario3_AtomicOrdinaryAskResolution(t *testing.T) {
 	})
 }
 
+// TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait deterministically
+// models cancellation after the verdict entered the child's buffered channel,
+// before the child could emit EvApproval. The terminal drain must still publish
+// exactly one parent approval and must not retract an answered ask.
+func TestSurfacedChildAcceptedVerdictSurvivesCancelledAwait(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		verdict   session.ApprovalVerdict
+		guardrail bool
+	}{
+		{name: "ordinary allow", verdict: session.VerdictAllowOnce},
+		{name: "ordinary deny", verdict: session.VerdictDeny},
+		{name: "scoped guardrail", verdict: session.VerdictAllowOnce, guardrail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &Run{childAsks: newChildAskRouter(), children: newChildRunRegistry()}
+			child := &Run{asks: newAskRegistry()}
+			ask := session.PendingAsk{AskID: "child-ask", Tool: "Shell", Call: "collision", Origin: session.ApprovalOriginPermission}
+			if tc.guardrail {
+				ask.Origin = session.ApprovalOriginHookGuardrail
+				ask.Guardrail = &session.GuardrailPendingScope{ReviewID: "review", Kind: session.GuardrailApprovalAction}
+			}
+			verdicts := child.asks.registerAsk(ask)
+			parent.childAsks.registerSurfaced(ask, child, 7)
+			var emitted []session.Event
+			parent.children.emit = func(ev session.Event) { emitted = append(emitted, ev) }
+			posture := childPosture{caps: parentCaps{emitChildApprovals: func(child *Run) {
+				parent.children.emitAccepted(func() []session.Event { return parent.childAsks.takeAccepted(child) }, parent.children.emit)
+			}}}
+			if tc.guardrail {
+				wrong := ApprovalResolution{AskID: ask.AskID, ReviewID: "wrong", Kind: session.GuardrailApprovalAction, Verdict: tc.verdict}
+				if err := parent.ResolveApproval(wrong); err == nil {
+					t.Fatal("wrong guardrail review was accepted")
+				}
+				if got := parent.childAsks.takeAccepted(child); len(got) != 0 {
+					t.Fatalf("rejected verdict recorded approval: %+v", got)
+				}
+				valid := ApprovalResolution{AskID: ask.AskID, ReviewID: "review", Kind: session.GuardrailApprovalAction, Verdict: tc.verdict}
+				if err := parent.ResolveApproval(valid); err != nil {
+					t.Fatal(err)
+				}
+			} else if got := parent.ResolveOrdinaryAsk(ask.AskID, tc.verdict); got != AskResolutionResolved {
+				t.Fatalf("ordinary result = %v, want resolved", got)
+			}
+			// The buffered verdict was accepted, but the cancelled child never
+			// consumes it or emits its own approval before its terminal result.
+			if got := len(verdicts); got != 1 {
+				t.Fatalf("buffered verdicts = %d, want one", got)
+			}
+			handleChildEvent(child, session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}}, posture)
+			parent.children.retractAsksVia(parent.unregisterChildAsk, []string{ask.AskID})
+			if len(emitted) != 1 || emitted[0].Type != session.EvApproval || emitted[0].Turn != 7 ||
+				emitted[0].Approval == nil || emitted[0].Approval.AskID != ask.AskID ||
+				emitted[0].Approval.Verdict != session.VerdictString(tc.verdict) || emitted[0].Approval.Call != "" {
+				t.Fatalf("terminal child events = %+v, want one safe parent approval", emitted)
+			}
+		})
+	}
+}
+
 func resolveConcurrently(run *Run, askID string, verdict session.ApprovalVerdict, callers int) <-chan AskResolution {
 	start := make(chan struct{})
 	outcomes := make(chan AskResolution, callers)

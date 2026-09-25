@@ -2011,10 +2011,14 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		}
 	}
 	if interactive {
+		caps.emitChildApprovals = func(child *Run) {
+			r.children.emitAccepted(func() []session.Event { return r.childAsks.takeAccepted(child) },
+				func(ev session.Event) { e.emit(r, ev) })
+		}
 		caps.surfaceAsk = func(askID, childID string, child *Run, ask session.PendingAsk, requesterLabel string) {
 			// Register BEFORE emitting so a fast ResumeApproval cannot race ahead of
 			// registration (mirror askRegistry.register-before-emit).
-			r.registerChildAsk(askID, child)
+			r.registerChildAsk(ask, child, turnIdx)
 			// Record ask OWNERSHIP at this single surfacing seam (all three delegation
 			// families thread their child session id through childPosture.childID), so
 			// a later CancelChild can retract the parked ask. recordAsk no-ops for an

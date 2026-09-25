@@ -898,6 +898,28 @@ func (g *childRunRegistry) seal() {
 	g.emitMu.Unlock()
 }
 
+// sealWithFinal closes child-ask routing and emits its last approvals or
+// retractions in the same emitMu section that seals the stream. The final
+// emitter is the parent Run's ordinary emit: abortEmits has already closed the
+// child-only abort signal, so using g.emit would drop a final event under
+// transient backpressure. The parent terminal uses the same emitter next.
+func (g *childRunRegistry) sealWithFinal(final func() []session.Event, emitFinal func(session.Event)) {
+	g.abortEmits()
+	g.emitMu.Lock()
+	defer g.emitMu.Unlock()
+	if g.sealed {
+		return
+	}
+	if final != nil {
+		for _, ev := range final() {
+			if emitFinal != nil {
+				emitFinal(ev)
+			}
+		}
+	}
+	g.sealed = true
+}
+
 // safeEmit publishes one event on the parent stream through the seal guard: the
 // sealed check AND the send happen inside one emitMu section (no TOCTOU against
 // seal/close — A4a); the entries mutex is NOT held here, so a send waiting on
@@ -917,6 +939,22 @@ func (g *childRunRegistry) safeEmit(ev session.Event) {
 		return
 	}
 	g.emit(ev)
+}
+
+// emitAccepted takes queued child-ask approvals only while the parent stream is
+// still open. Taking under emitMu uses the same emitMu → router-mu lock order as
+// retractAsksVia, then releases router-mu before any send. The parent emitter
+// uses parent terminal backpressure rather than the child-only abort signal, so
+// an accepted verdict survives transiently full streams even during drain.
+func (g *childRunRegistry) emitAccepted(take func() []session.Event, emitApproval func(session.Event)) {
+	g.emitMu.Lock()
+	defer g.emitMu.Unlock()
+	if g.sealed || take == nil || emitApproval == nil {
+		return
+	}
+	for _, ev := range take() {
+		emitApproval(ev)
+	}
 }
 
 // emitRetract publishes a permission.retract event for one withdrawn askID on
