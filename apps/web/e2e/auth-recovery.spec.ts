@@ -173,6 +173,131 @@ function setup(offlineBff: OfflineBff, initial: Partial<OfflineState> = {}): Off
 
 const draftRoute = "/workspace/chat?sessionId=s1#draft";
 
+for (const signIn of ["popup", "new tab"] as const) {
+  test(`large seeded link stays in the original tab through ${signIn} sign-in until explicit Send`, async ({
+    offlineBff,
+    page,
+  }) => {
+    const state = setup(offlineBff, { signedIn: false });
+    const seed = `Review ${"x".repeat(3_000)}`;
+    const arrival = `/workspace/chat?sessionId=s1&prompt=${encodeURIComponent(seed)}&send=1`;
+    offlineBff.on("GET", "/api/v1/auth/login", (request) => {
+      const url = new URL(request.url());
+      const returnTo = url.searchParams.get("return_to");
+      expect(returnTo).toBe("/workspace/chat?sessionId=s1");
+      expect(returnTo?.length).toBeLessThanOrEqual(2_048);
+      state.signedIn = true;
+      return url.searchParams.get("flow") === "popup"
+        ? {
+            body: '<!doctype html><html data-result="success"><title>Signed in</title><script src="/api/v1/auth/callback.js" defer></script></html>',
+            contentType: "text/html",
+          }
+        : { headers: { Location: returnTo ?? "/" }, status: 302 };
+    });
+
+    await page.goto(arrival);
+    await expect(page.getByRole("button", { name: "Sign in to Mecatl" })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("prompt")).toBe(seed);
+    expect(state.runWrites).toBe(0);
+    if (signIn === "new tab") {
+      await page.evaluate(() => {
+        window.open = () => null;
+      });
+      await page.getByRole("button", { name: "Sign in to Mecatl" }).click();
+      const opened = page.waitForEvent("popup");
+      await page.getByRole("link", { name: "Open sign-in in a new tab" }).first().click();
+      const tab = await opened;
+      await expect(tab).toHaveURL(/\/workspace\/chat\?sessionId=s1$/);
+      await tab.close();
+      await page.bringToFront();
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    } else {
+      const opened = page.waitForEvent("popup");
+      await page.getByRole("button", { name: "Sign in to Mecatl" }).click();
+      await opened;
+    }
+    const confirmation = page.getByRole("dialog", { name: "Send this prompt?" });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText(seed);
+    await expect(confirmation).toContainText("Alice chat");
+    await expect(confirmation).toContainText("offline");
+    await expect(confirmation).toContainText("Manual");
+    expect(new URL(page.url()).searchParams.get("sessionId")).toBe("s1");
+    expect(new URL(page.url()).searchParams.has("prompt")).toBe(false);
+    expect(state.runWrites).toBe(0);
+    await confirmation.getByRole("button", { name: "Send prompt" }).click();
+    await expect.poll(() => state.runWrites).toBe(1);
+  });
+}
+
+test("seed confirmation and composer remain in the viewport at 320, 500, and 1280 px", async ({
+  offlineBff,
+  page,
+}) => {
+  setup(offlineBff);
+  await page.goto("/workspace/chat?sessionId=s1&prompt=Review%20this&send=1");
+  const confirmation = page.getByRole("dialog", { name: "Send this prompt?" });
+  for (const width of [320, 500, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation.getByRole("button", { name: "Send prompt" })).toBeVisible();
+    const bounds = await confirmation.boundingBox();
+    if (!bounds) throw new Error("Seed confirmation has no visible bounds");
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+  }
+  await confirmation.getByRole("button", { name: "Edit prompt" }).click();
+  await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toBeVisible();
+});
+
+test("returning after 20 seconds shows one verified offline notice without persisting it", async ({
+  offlineBff,
+  page,
+}) => {
+  setup(offlineBff);
+  let offline = false;
+  offlineBff.on("GET", "/api/v1/runtime", () => ({
+    body: JSON.stringify({
+      capabilities: { image: false, posture: "managed" },
+      connection: offline ? "offline" : "online",
+    }),
+    contentType: "application/json",
+  }));
+  await page.clock.install({ time: new Date("2026-09-24T12:00:00Z") });
+  await page.goto("/workspace/chat?sessionId=s1");
+  await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+  const storageBefore = await page.evaluate(() => ({
+    local: Object.keys(localStorage).sort(),
+    session: Object.keys(sessionStorage).sort(),
+  }));
+  // Chromium headless keeps background pages visible, so drive the document's
+  // visibility API while exercising the real rendered app and BFF requests.
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.clock.fastForward(20_000);
+  offline = true;
+  offlineBff.json("GET", "/api/v1/sessions", { status: 503 }, 503);
+  offlineBff.json("GET", "/api/v1/sessions/s1", { status: 503 }, 503);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.getByText("Mecatl is offline.")).toBeVisible();
+  expect(
+    await page.evaluate(() => ({
+      local: Object.keys(localStorage).sort(),
+      session: Object.keys(sessionStorage).sort(),
+    })),
+  ).toEqual(storageBefore);
+  await page.reload();
+  await expect(page.getByText("Mecatl is offline.")).toHaveCount(0);
+});
+
 async function expireWrite(page: import("@playwright/test").Page, state: OfflineState) {
   state.expireNextWrite = true;
   await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Keep this unsent draft");

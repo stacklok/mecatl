@@ -478,10 +478,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         ]);
         const refreshed =
           connection.isSuccess &&
-          inventory.isSuccess &&
-          detail.isSuccess &&
-          viewedSessionId.current === sessionId;
-        const row = inventory.data?.items.find((item) => item.id === sessionId);
+          viewedSessionId.current === sessionId &&
+          (connection.data?.connection === "offline" || (inventory.isSuccess && detail.isSuccess));
+        const row = inventory.isSuccess
+          ? inventory.data.items.find((item) => item.id === sessionId)
+          : undefined;
         if (
           !awayTracker.current.isCurrentReturn(returnGeneration) ||
           document.visibilityState === "hidden" ||
@@ -489,7 +490,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         ) {
           return;
         }
-        lastInventoryRow.current = row;
+        if (inventory.isSuccess) lastInventoryRow.current = row;
         if (refreshed && !activeRun.current && isActiveSessionState(row?.state)) {
           setReconnectGeneration((current) => current + 1);
         }
@@ -507,7 +508,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             refreshed,
             sessionId,
           },
-          Date.now(),
+          now,
           returnGeneration,
         );
         if (!notice || viewedSessionId.current !== sessionId) return;
@@ -585,6 +586,33 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       }
     : undefined;
   const usageLines = displayedDetail ? usageMenuLines(displayedDetail.usage) : [];
+  const seedModel = sessionId ? displayedDetail?.model : draftConfiguration.model;
+  const seedModelId = seedModel?.id || (sessionId ? selectedSession?.modelId : undefined);
+  const seedModelLabel = seedModelId
+    ? (models.find(
+        (model) =>
+          model.id === seedModelId &&
+          (!seedModel?.providerId || model.providerId === seedModel.providerId),
+      )?.label ?? seedModelId)
+    : "Automatic";
+  const seedMode = sessionId ? displayedDetail?.mode : draftConfiguration.mode;
+  const seedContext = {
+    target: sessionId ? (selectedSession?.title ?? "Loading chat") : "New chat",
+    model: seedModelLabel,
+    mode:
+      seedMode === "default"
+        ? "Manual"
+        : seedMode === "plan"
+          ? "Plan"
+          : seedMode === "acceptEdits"
+            ? "Accept edits"
+            : "Loading permission mode",
+    toolAccess: sessionId
+      ? undefined
+      : draftConfiguration.toolAccess === "all"
+        ? "All"
+        : "No filesystem",
+  };
 
   // Attachment lifetime is deliberately keyed only to session identity and its watchable state.
   // biome-ignore lint/correctness/useExhaustiveDependencies: helpers and QueryClient are stable for this lifetime
@@ -1857,8 +1885,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             !(statusFacts.phase === "closed" && controlTarget(runTarget, sessionId)) &&
             !watchable &&
             !createSession.isPending &&
-            (!sessionId || Boolean(selectedSession))
+            (!sessionId || (Boolean(selectedSession) && sessionDetail.isSuccess))
           }
+          seedContext={seedContext}
           seedRequiresConfirmation={seedRequiresConfirmation}
           seedText={seedText}
           working={

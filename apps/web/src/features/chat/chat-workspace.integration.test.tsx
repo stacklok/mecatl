@@ -9,7 +9,7 @@ import type {
   SessionTranscriptResponse,
 } from "@mecatl-studio/contracts";
 import { client } from "@mecatl-studio/contracts/client";
-import { getRuntimeOptions } from "@mecatl-studio/contracts/query";
+import { getRuntimeOptions, listSessionsQueryKey } from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
@@ -709,6 +709,31 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.queryByText("Completed")).toBeNull();
   });
 
+  it("uses fresh inventory to replace a legacy title with revision zero", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    window.localStorage.setItem(
+      "studio.chat.folders",
+      JSON.stringify({
+        assignments: { "chat-a": "project-folder" },
+        folders: [{ id: "project-folder", name: "Project" }],
+      }),
+    );
+    startPollingClock();
+    const mounted = await mountConnectedWorkspace(bff, "chat-a");
+    expect(screen.getByRole("heading", { name: "Chat chat-a" })).toBeTruthy();
+    expect(screen.getAllByText("Project").length).toBeGreaterThan(0);
+    bff.rows.set("chat-a", { ...session("chat-a"), title: "Renamed legacy title" });
+
+    await advanceClock(20_000);
+    expect(bff.requestsAt("GET", "/api/v1/sessions")).toHaveLength(2);
+    expect(mounted.queryClient.getQueryData(listSessionsQueryKey())).toMatchObject({
+      items: [{ title: "Renamed legacy title" }],
+    });
+    expect(await screen.findByRole("heading", { name: "Renamed legacy title" })).toBeTruthy();
+    expect(screen.getAllByText("Renamed legacy title")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Renamed legacy title idle" })).toBeTruthy();
+  });
+
   it("adopts a late title and one recorded delivery on the next visible 20-second poll", async () => {
     const bff = new BffFixture(session("chat-a"));
     startPollingClock();
@@ -983,6 +1008,48 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.queryByText("This chat is idle.")).toBeNull();
     await setVisibility("visible");
     expect(screen.queryByText("This chat is idle.")).toBeNull();
+  });
+
+  it("measures hidden time at return before a slow refresh", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    await mountConnectedWorkspace(bff, "chat-a");
+    startClock();
+    const setVisibility = controlVisibility();
+    await setVisibility("hidden");
+    await advanceClock(19_999);
+    const runtime = heldResponse();
+    const inventory = heldResponse();
+    const detail = heldResponse();
+    bff.nextReplies.set("/api/v1/runtime", [runtime.promise]);
+    bff.nextReplies.set("/api/v1/sessions", [inventory.promise]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [detail.promise]);
+
+    await setVisibility("visible");
+    await advanceClock(1);
+    await act(async () => {
+      runtime.resolve(runtimeResponse());
+      inventory.resolve(json({ complete: true, items: [...bff.rows.values()] }));
+      detail.resolve(detailResponse("chat-a"));
+    });
+    expect(screen.queryByText("This chat is idle.")).toBeNull();
+  });
+
+  it("shows a verified offline notice when chat refreshes fail", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    await mountConnectedWorkspace(bff, "chat-a");
+    startClock();
+    const setVisibility = controlVisibility();
+    await setVisibility("hidden");
+    await advanceClock(20_000);
+    bff.runtimeConnection = "offline";
+    bff.nextReplies.set("/api/v1/sessions", [Promise.resolve(json({ status: 503 }, 503))]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [Promise.resolve(json({ status: 503 }, 503))]);
+
+    await setVisibility("visible");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Mecatl is offline.")).toBeTruthy();
   });
 
   it("suppresses a return notice after a failed inventory refresh", async () => {

@@ -99,10 +99,18 @@ interface ChatComposerProps {
   ) => Promise<boolean>;
   safetyLevel?: string;
   seedCanConfirm?: boolean;
+  seedContext?: SeedConfirmationContext;
   seedRequiresConfirmation?: boolean;
   seedText?: string;
   working?: boolean;
   workingBehavior?: EnterSendBehavior;
+}
+
+export interface SeedConfirmationContext {
+  model: string;
+  mode: string;
+  target: string;
+  toolAccess?: string;
 }
 
 export type ComposerEnterAction = "send" | "queue" | "steer" | "newline";
@@ -118,6 +126,7 @@ export function ChatComposer({
   onSend,
   safetyLevel = "managed",
   seedCanConfirm = true,
+  seedContext,
   seedRequiresConfirmation = false,
   seedText,
   working = false,
@@ -538,6 +547,20 @@ export function ChatComposer({
               This link filled the composer. Review the text before starting a run.
             </DialogDescription>
           </DialogHeader>
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+            <dt className="text-muted-foreground">Chat</dt>
+            <dd className="min-w-0 break-words">{seedContext?.target ?? "New chat"}</dd>
+            <dt className="text-muted-foreground">Model</dt>
+            <dd className="min-w-0 break-words">{seedContext?.model ?? "Automatic"}</dd>
+            <dt className="text-muted-foreground">Permission mode</dt>
+            <dd className="min-w-0 break-words">{seedContext?.mode ?? "Manual"}</dd>
+            {seedContext?.toolAccess && (
+              <>
+                <dt className="text-muted-foreground">Tool access</dt>
+                <dd className="min-w-0 break-words">{seedContext.toolAccess}</dd>
+              </>
+            )}
+          </dl>
           <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border bg-muted/30 p-3 text-sm">
             {seedConfirmation}
           </p>

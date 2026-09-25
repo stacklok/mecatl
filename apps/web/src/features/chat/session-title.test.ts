@@ -33,10 +33,7 @@ describe("session title adoption", () => {
       adoptSessionTitle(renamed, { ...generated, title: "", titleRevision: "9999999999999999" }),
     ).toEqual(renamed);
     expect(adoptSessionTitle(renamed, { ...generated, titleRevision: "0" })).toEqual(renamed);
-    expect(adoptSessionTitle(undefined, { ...generated, titleRevision: "0" })).toEqual({
-      ...generated,
-      titleRevision: "0",
-    });
+    expect(adoptSessionTitle(undefined, { ...generated, titleRevision: "0" })).toBeUndefined();
   });
 
   it("adopts a JSON-safe title event without converting its revision to a number", () => {

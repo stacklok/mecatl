@@ -14,6 +14,9 @@ export function adoptSessionTitle(
   if (!candidate.title.trim() || !/^(0|[1-9]\d*)$/.test(candidate.titleRevision)) {
     return current;
   }
+  // Legacy titles have no comparable revision. Read them from each fresh
+  // inventory instead of pinning the first observed value in the cache.
+  if (candidate.titleRevision === "0") return current;
   if (current === undefined) return candidate;
   if (current.id !== candidate.id) return current;
   if (BigInt(candidate.titleRevision) > BigInt(current.titleRevision)) return candidate;

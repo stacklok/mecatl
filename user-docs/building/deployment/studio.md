@@ -152,8 +152,11 @@ candidate leaves the message in the composer.
 
 Starter prompts fill the composer for you to review. A link with `?prompt=` also
 fills it without starting a run. If the link includes `send=1`, Studio shows the
-prompt and waits for you to select **Send prompt** or **Edit prompt**. Opening
-or reloading the link never sends it automatically.
+prompt, target chat, model, and permission mode before you select **Send prompt**
+or **Edit prompt**. For a new chat, it also shows tool access. Opening or
+reloading the link never sends it automatically. If you need to sign in first,
+keep the original tab open. Its prompt stays there while the popup or new tab
+completes sign-in.
 
 If the selected model supports images, use **Attach images** to add up to 16
 images to one message. Each image can be at most 10 MiB, with a combined limit

@@ -20,7 +20,19 @@ import {
 import { useChatFolders } from "../chat/chat-folders";
 import { useLocalCanvas } from "../chat/local-canvas";
 import { registerThreadSession, useThreadMap, useThreadSessionIds } from "../chat/thread-map";
-import { AuthGate } from "./auth-gate";
+import { AuthGate, authLoginUrl } from "./auth-gate";
+
+it("keeps a large arrival seed in its original tab instead of return_to", () => {
+  const returnTo = `/workspace/chat?sessionId=s1&prompt=${"x".repeat(3_000)}&send=1#draft`;
+  const login = new URL(authLoginUrl(returnTo, true), "https://studio.example");
+  expect(login.searchParams.get("return_to")).toBe("/workspace/chat?sessionId=s1#draft");
+  expect(login.searchParams.get("flow")).toBe("popup");
+  const otherRoute = new URL(
+    authLoginUrl("/workspace/search?prompt=example&send=1"),
+    "https://studio.example",
+  );
+  expect(otherRoute.searchParams.get("return_to")).toBe("/workspace/search?prompt=example&send=1");
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

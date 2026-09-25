@@ -35,9 +35,19 @@ function currentLoginUrl(popup: boolean): string {
   return authLoginUrl(returnTo, popup);
 }
 
-/** Keep the full requested browser URL through the interactive sign-in round trip. */
+/** Keep the route while the arrival seed stays in the initiating tab. */
 export function authLoginUrl(returnTo: string, popup = false) {
-  const query = new URLSearchParams({ return_to: returnTo });
+  // The arrival prompt belongs to the initiating tab. A login popup or new
+  // tab returns to the chat route without carrying the seed through the
+  // server's bounded return_to parameter.
+  const target = new URL(returnTo, "https://studio.invalid");
+  if (target.pathname === "/workspace/chat") {
+    target.searchParams.delete("prompt");
+    target.searchParams.delete("send");
+  }
+  const query = new URLSearchParams({
+    return_to: `${target.pathname}${target.search}${target.hash}`,
+  });
   if (popup) query.set("flow", "popup");
   return `/api/v1/auth/login?${query}`;
 }

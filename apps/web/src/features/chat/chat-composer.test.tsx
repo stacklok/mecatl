@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer, type DraftChatConfiguration, resolveComposerAction } from "./chat-composer";
@@ -135,12 +135,16 @@ describe("chat composer", () => {
         disabled
         onSeedConsumed={onSeedConsumed}
         onSend={onSend}
+        seedContext={{ model: "Current model", mode: "Manual", target: "Alice chat" }}
         seedRequiresConfirmation
         seedText="Review this change"
       />,
     );
     expect(onSeedConsumed).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("dialog", { name: "Send this prompt?" })).toBeTruthy();
+    const existingConfirmation = screen.getByRole("dialog", { name: "Send this prompt?" });
+    expect(within(existingConfirmation).getByText("Alice chat")).toBeTruthy();
+    expect(within(existingConfirmation).getByText("Current model")).toBeTruthy();
+    expect(within(existingConfirmation).getByText("Manual")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send prompt" }).hasAttribute("disabled")).toBe(true);
     expect(onSend).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Edit prompt" }));
@@ -152,11 +156,22 @@ describe("chat composer", () => {
       <ChatComposer
         onSeedConsumed={onSeedConsumed}
         onSend={onSend}
+        seedContext={{
+          model: "Automatic",
+          mode: "Plan",
+          target: "New chat",
+          toolAccess: "No filesystem",
+        }}
         seedRequiresConfirmation
         seedText="Another prompt"
       />,
     );
     expect(onSend).not.toHaveBeenCalled();
+    const draftConfirmation = screen.getByRole("dialog", { name: "Send this prompt?" });
+    expect(within(draftConfirmation).getByText("New chat")).toBeTruthy();
+    expect(within(draftConfirmation).getByText("Automatic")).toBeTruthy();
+    expect(within(draftConfirmation).getByText("Plan")).toBeTruthy();
+    expect(within(draftConfirmation).getByText("No filesystem")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Send prompt" }));
     await waitFor(() => expect(onSend).toHaveBeenCalledWith("Another prompt", "send", []));
   });
