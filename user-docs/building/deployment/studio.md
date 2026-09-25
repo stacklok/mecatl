@@ -198,7 +198,9 @@ create a return notice.
 When a [scheduled task](/features/scheduled-tasks.md) delivers a start or
 completion note to this chat, the transcript shows the recorded note with its
 schedule and fire attribution. The note body appears as plain text. A task's
-fire history alone does not add a note to the chat.
+fire history alone does not add a note to the chat. An open, visible chat checks
+saved history while idle, so a short delivery's reply and turns added from
+another client appear even when their live activity was missed.
 
 ## Try it locally with Compose
 

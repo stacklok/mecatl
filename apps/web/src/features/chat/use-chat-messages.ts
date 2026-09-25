@@ -3,7 +3,7 @@
 import type { SessionTranscriptResponse } from "@mecatl-studio/contracts";
 import { useEffect, useRef, useState } from "react";
 import { type ChatMessage, messagesFromTranscript } from "./chat-state";
-import { mergeRecordedDeliveryMessages } from "./use-delivery-follow";
+import { reconcileRecordedMessages } from "./use-delivery-follow";
 
 /** Owns the visible rows across session switches and saved transcript refreshes. */
 export function useChatMessages(
@@ -30,7 +30,7 @@ export function useChatMessages(
         loadedTranscriptSession.current = sessionId;
         return saved;
       }
-      return mergeRecordedDeliveryMessages(current, saved);
+      return reconcileRecordedMessages(current, saved);
     });
   }, [isRunning, sessionId, transcript]);
 

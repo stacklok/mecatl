@@ -3,18 +3,17 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "./chat-state";
 import {
-  mergeRecordedDeliveryMessages,
-  type RecordedDeliveryMessage,
-  shouldCheckDeliveryAfterInventory,
+  reconcileRecordedMessages,
+  shouldRefreshTranscriptAfterInventory,
 } from "./use-delivery-follow";
 
 const previous = { id: "chat-a", updatedAt: "2026-09-24T12:00:00.000Z" };
 const advanced = { id: "chat-a", updatedAt: "2026-09-24T12:00:20.000Z" };
 
 describe("delivery follow", () => {
-  it("finds a short recorded delivery after inventory changes", () => {
+  it("merges a recorded delivery and its reply after inventory changes", () => {
     expect(
-      shouldCheckDeliveryAfterInventory({
+      shouldRefreshTranscriptAfterInventory({
         connected: true,
         idle: true,
         next: advanced,
@@ -23,7 +22,7 @@ describe("delivery follow", () => {
         visible: true,
       }),
     ).toBe(true);
-    const liveStart: RecordedDeliveryMessage = {
+    const liveStart: ChatMessage = {
       content: "Task started",
       delivery: { fireId: "fire-1", kind: "started", scheduleName: "Daily" },
       id: "live-start",
@@ -31,18 +30,25 @@ describe("delivery follow", () => {
       tools: [{ args: "{}", id: "tool-1", name: "Read", output: "live detail" }],
     };
     const liveAnswer: ChatMessage = {
-      content: "A richer live response",
+      content: "The scheduled answer",
       id: "live-answer",
       reasoning: "Looked at the file",
       role: "assistant",
+      tools: [{ args: "{}", id: "tool-1", name: "Read", output: "live detail" }],
     };
     const current = [liveStart, liveAnswer];
-    const transcript: RecordedDeliveryMessage[] = [
+    const transcript: ChatMessage[] = [
       {
         content: "Task started",
         delivery: { fireId: "fire-1", kind: "started", scheduleName: "Daily" },
         id: "transcript-start",
         role: "user",
+      },
+      {
+        content: "The scheduled answer",
+        id: "transcript-answer",
+        role: "assistant",
+        tools: [{ args: "{}", id: "tool-1", name: "Read", output: "saved detail" }],
       },
       {
         content: "Task completed",
@@ -51,13 +57,90 @@ describe("delivery follow", () => {
         role: "user",
       },
       { content: "An ordinary user message", id: "ordinary", role: "user" },
+      { content: "Another client's answer", id: "other-answer", role: "assistant" },
     ];
-    const merged = mergeRecordedDeliveryMessages(current, transcript);
-    expect(merged).toEqual([liveStart, liveAnswer, transcript[1]]);
+    const merged = reconcileRecordedMessages(current, transcript);
+    expect(merged).toEqual([liveStart, liveAnswer, transcript[2], transcript[3], transcript[4]]);
     expect(merged[0]).toBe(liveStart);
     expect(merged[1]).toBe(liveAnswer);
-    expect(mergeRecordedDeliveryMessages(merged, transcript)).toBe(merged);
-    expect(mergeRecordedDeliveryMessages([], transcript)).toEqual(transcript.slice(0, 2));
+    expect(reconcileRecordedMessages(merged, transcript)).toBe(merged);
+    expect(reconcileRecordedMessages([], transcript)).toEqual(transcript);
+  });
+
+  it("matches repeated ordinary turns by occurrence and keeps saved order", () => {
+    const first = { content: "Repeat", id: "live-first", role: "user" };
+    const second = { content: "Repeat", id: "live-second", role: "user" };
+    const saved = [
+      { content: "Repeat", id: "saved-first", role: "user" },
+      { content: "New answer", id: "saved-answer", role: "assistant" },
+      { content: "Repeat", id: "saved-second", role: "user" },
+    ];
+    const merged = reconcileRecordedMessages([first, second], saved);
+    expect(merged).toEqual([first, saved[1], second]);
+    expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
+  });
+
+  it("fills a matched live row with its recorded tool result", () => {
+    const live: ChatMessage = {
+      content: "Answer",
+      id: "live-answer",
+      reasoning: "Live reasoning",
+      role: "assistant",
+      tools: [{ args: "{}", id: "read-1", name: "Read" }],
+    };
+    const saved: ChatMessage = {
+      content: "Answer",
+      id: "saved-answer",
+      role: "assistant",
+      tools: [{ args: "{}", id: "read-1", name: "Read", output: "File contents" }],
+    };
+    expect(reconcileRecordedMessages([live], [saved])).toEqual([{ ...live, tools: saved.tools }]);
+  });
+
+  it("keeps a matched row's render ID unique when a saved turn arrives before it", () => {
+    const existing = { content: "Earlier answer", id: "transcript-0", role: "assistant" };
+    const saved = [
+      { content: "New prompt", id: "transcript-0", role: "user" },
+      { content: "Earlier answer", id: "transcript-1", role: "assistant" },
+    ];
+    const merged = reconcileRecordedMessages([existing], saved);
+    expect(merged.map((message) => message.content)).toEqual(["New prompt", "Earlier answer"]);
+    expect(merged[1]).toBe(existing);
+    expect(new Set(merged.map((message) => message.id)).size).toBe(2);
+    expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
+  });
+
+  it("keeps an unmatched live turn until it appears in saved history", () => {
+    const live: ChatMessage = {
+      content: "The just-finished answer",
+      id: "live-answer",
+      reasoning: "Live detail",
+      role: "assistant",
+    };
+    expect(reconcileRecordedMessages([live], [])).toEqual([live]);
+    expect(
+      reconcileRecordedMessages(
+        [live],
+        [{ content: "The just-finished answer", id: "transcript-0", role: "assistant" }],
+      ),
+    ).toEqual([live]);
+  });
+
+  it("completes a partial live assistant after the same saved prompt", () => {
+    const prompt = { content: "Summarize", id: "live-prompt", role: "user" };
+    const partial: ChatMessage = {
+      content: "The answer is",
+      id: "live-answer",
+      reasoning: "Live reasoning",
+      role: "assistant",
+    };
+    const saved = [
+      { content: "Summarize", id: "transcript-0", role: "user" },
+      { content: "The answer is complete", id: "transcript-1", role: "assistant" },
+    ];
+    const merged = reconcileRecordedMessages([prompt, partial], saved);
+    expect(merged).toEqual([prompt, { ...partial, content: "The answer is complete" }]);
+    expect(new Set(merged.map((message) => message.id)).size).toBe(2);
   });
 
   it("checks only an idle, visible, connected row for the same open chat", () => {
@@ -69,17 +152,17 @@ describe("delivery follow", () => {
       sessionId: "chat-a",
       visible: true,
     };
-    expect(shouldCheckDeliveryAfterInventory({ ...facts, idle: false })).toBe(false);
-    expect(shouldCheckDeliveryAfterInventory({ ...facts, visible: false })).toBe(false);
-    expect(shouldCheckDeliveryAfterInventory({ ...facts, connected: false })).toBe(false);
-    expect(shouldCheckDeliveryAfterInventory({ ...facts, sessionId: "chat-b" })).toBe(false);
-    expect(shouldCheckDeliveryAfterInventory({ ...facts, previous: advanced })).toBe(false);
+    expect(shouldRefreshTranscriptAfterInventory({ ...facts, idle: false })).toBe(false);
+    expect(shouldRefreshTranscriptAfterInventory({ ...facts, visible: false })).toBe(false);
+    expect(shouldRefreshTranscriptAfterInventory({ ...facts, connected: false })).toBe(false);
+    expect(shouldRefreshTranscriptAfterInventory({ ...facts, sessionId: "chat-b" })).toBe(false);
+    expect(shouldRefreshTranscriptAfterInventory({ ...facts, previous: advanced })).toBe(false);
     expect(
-      shouldCheckDeliveryAfterInventory({
+      shouldRefreshTranscriptAfterInventory({
         ...facts,
         next: { ...advanced, updatedAt: "2026-09-24T11:59:00.000Z" },
       }),
     ).toBe(false);
-    expect(shouldCheckDeliveryAfterInventory({ ...facts, previous: undefined })).toBe(false);
+    expect(shouldRefreshTranscriptAfterInventory({ ...facts, previous: undefined })).toBe(false);
   });
 });

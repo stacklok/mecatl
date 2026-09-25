@@ -183,7 +183,7 @@ import {
 import { type ToolActivity, ToolActivityList } from "./tool-activity";
 import { formatTurnStat, usageMenuLines } from "./turn-stats";
 import { useChatMessages } from "./use-chat-messages";
-import { shouldCheckDeliveryAfterInventory } from "./use-delivery-follow";
+import { shouldRefreshTranscriptAfterInventory } from "./use-delivery-follow";
 import { useLatestChatAutoOpen } from "./use-latest-chat-auto-open";
 
 /** A pending destructive confirmation, rendered as one shared AlertDialog. */
@@ -407,8 +407,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   // origin chat may have received a short scheduled delivery between polls.
   useEffect(() => {
     if (!sessionId || !visible || runtime.data?.connection !== "online") return;
+    const inventoryQueryKey = listSessionsQueryKey();
+    const transcriptQueryKey = getSessionTranscriptOptions({ path: { sessionId } }).queryKey;
     const interval = window.setInterval(() => {
       if (document.visibilityState === "hidden" || viewedSessionId.current !== sessionId) return;
+      if (queryClient.isFetching({ exact: true, queryKey: inventoryQueryKey })) return;
       void (async () => {
         const result = await sessions.refetch();
         if (!result.isSuccess || viewedSessionId.current !== sessionId) return;
@@ -416,21 +419,31 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         const previous = lastInventoryRow.current;
         lastInventoryRow.current = next;
         if (
-          shouldCheckDeliveryAfterInventory({
+          shouldRefreshTranscriptAfterInventory({
             connected: runtime.data?.connection === "online",
             idle: !activeRun.current && !isActiveSessionState(next?.state),
+            lastTranscriptCheckAt: queryClient.getQueryState(transcriptQueryKey)?.dataUpdatedAt,
             next,
+            now: Date.now(),
             previous,
             sessionId,
             visible: document.visibilityState !== "hidden",
           })
         ) {
+          if (queryClient.isFetching({ exact: true, queryKey: transcriptQueryKey })) return;
           await transcript.refetch();
         }
       })();
     }, 20_000);
     return () => window.clearInterval(interval);
-  }, [runtime.data?.connection, sessionId, sessions.refetch, transcript.refetch, visible]);
+  }, [
+    queryClient,
+    runtime.data?.connection,
+    sessionId,
+    sessions.refetch,
+    transcript.refetch,
+    visible,
+  ]);
 
   useEffect(() => {
     if (!sessionId) return;

@@ -756,6 +756,153 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(document.querySelectorAll("[data-delivery-note]")).toHaveLength(1);
   });
 
+  it("shows the recorded reply and another client's turns in an idle open chat", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    startPollingClock();
+    await mountConnectedWorkspace(bff, "chat-a");
+    bff.rows.set("chat-a", { ...session("chat-a"), updatedAt: "2026-09-24T12:00:20.000Z" });
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        {
+          delivery: { fireId: "fire-1", kind: "started", scheduleName: "Daily report" },
+          images: [],
+          role: "user",
+          text: "Scheduled prompt",
+          toolCalls: [],
+        },
+        {
+          images: [],
+          role: "assistant",
+          text: "Scheduled answer",
+          toolCalls: [{ args: "{}", id: "read-1", name: "Read" }],
+        },
+        {
+          images: [],
+          role: "tool",
+          text: "",
+          toolCalls: [],
+          toolResult: { callId: "read-1", content: "File contents", isError: false },
+        },
+        { images: [], role: "user", text: "Question from elsewhere", toolCalls: [] },
+        { images: [], role: "assistant", text: "Answer from elsewhere", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
+
+    await advanceClock(20_000);
+    expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2);
+    expect(await screen.findByText("Scheduled prompt")).toBeTruthy();
+    expect(screen.getByText("Scheduled answer")).toBeTruthy();
+    expect(screen.getByText("Question from elsewhere")).toBeTruthy();
+    expect(screen.getByText("Answer from elsewhere")).toBeTruthy();
+    expect(document.querySelectorAll("[data-delivery-note]")).toHaveLength(1);
+    expect(screen.getAllByText("Scheduled answer")).toHaveLength(1);
+    await user.click(screen.getAllByRole("button", { name: "Chat options" })[0] as HTMLElement);
+    await user.click(screen.getByRole("menuitem", { name: "Show Tools" }));
+    expect(screen.getByText("Tool: Read")).toBeTruthy();
+    expect(screen.getByText("File contents")).toBeTruthy();
+  });
+
+  it.each(["unchanged", "missing", "incomplete"])(
+    "checks a %s inventory's transcript at the 60-second safety poll",
+    async (inventory) => {
+      const bff = new BffFixture(session("chat-a"));
+      startPollingClock();
+      await mountConnectedWorkspace(bff, "chat-a");
+      await advanceClock(40_000);
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(1);
+      if (inventory !== "unchanged") {
+        bff.nextReplies.set("/api/v1/sessions", [
+          Promise.resolve(
+            json({
+              complete: inventory !== "incomplete",
+              items: inventory === "missing" ? [] : [session("chat-a")],
+            }),
+          ),
+        ]);
+      }
+      bff.transcripts.set("chat-a", {
+        complete: true,
+        messages: [
+          {
+            delivery: { fireId: "short-fire", kind: "completed", scheduleName: "Daily report" },
+            images: [],
+            role: "user",
+            text: "Recorded output",
+            toolCalls: [],
+          },
+          { images: [], role: "assistant", text: "Short fire reply", toolCalls: [] },
+        ],
+        sessionId: "chat-a",
+      });
+
+      await advanceClock(20_000);
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2);
+      expect(await screen.findByText("Recorded output")).toBeTruthy();
+      expect(screen.getByText("Short fire reply")).toBeTruthy();
+      expect(document.querySelectorAll("[data-delivery-note]")).toHaveLength(1);
+      await advanceClock(20_000);
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2);
+    },
+  );
+
+  it("does not overlap inventory or transcript poll requests", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    startPollingClock();
+    await mountConnectedWorkspace(bff, "chat-a");
+    const pendingInventory = heldResponse();
+    bff.nextReplies.set("/api/v1/sessions", [pendingInventory.promise]);
+    await advanceClock(40_000);
+    expect(bff.requestsAt("GET", "/api/v1/sessions")).toHaveLength(2);
+    await act(async () =>
+      pendingInventory.resolve(json({ complete: true, items: [session("chat-a")] })),
+    );
+
+    const pendingTranscript = heldResponse();
+    bff.nextReplies.set("/api/v1/sessions/chat-a/transcript", [pendingTranscript.promise]);
+    await advanceClock(20_000);
+    expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2);
+    await advanceClock(20_000);
+    expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2);
+    await act(async () =>
+      pendingTranscript.resolve(json({ complete: true, messages: [], sessionId: "chat-a" })),
+    );
+  });
+
+  it("keeps rendered message anchors unique when a saved turn arrives before old history", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "assistant", text: "Earlier answer", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    startPollingClock();
+    await mountConnectedWorkspace(bff, "chat-a");
+    expect(await screen.findByText("Earlier answer")).toBeTruthy();
+    const oldAnchor = screen.getByText("Earlier answer").closest("article")?.id;
+    expect(oldAnchor).toBe("chat-message-transcript-0");
+
+    bff.rows.set("chat-a", { ...session("chat-a"), updatedAt: "2026-09-24T12:00:20.000Z" });
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        { images: [], role: "user", text: "Inserted prompt", toolCalls: [] },
+        { images: [], role: "assistant", text: "Earlier answer", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
+    await advanceClock(20_000);
+    expect(await screen.findByText("Inserted prompt")).toBeTruthy();
+    expect(screen.getByText("Earlier answer").closest("article")?.id).toBe(oldAnchor);
+    const anchors = [...document.querySelectorAll("article[id^='chat-message-']")].map(
+      (row) => row.id,
+    );
+    expect(anchors).toHaveLength(2);
+    expect(new Set(anchors).size).toBe(anchors.length);
+  });
+
   it("stops inventory polling while hidden", async () => {
     const bff = new BffFixture(session("chat-a"));
     startPollingClock();
