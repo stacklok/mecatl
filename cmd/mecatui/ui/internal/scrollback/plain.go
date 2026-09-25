@@ -64,12 +64,7 @@ func (p PlainCards) RetractLatestNotice(text string) bool {
 		if !ok || notice.Text != text {
 			continue
 		}
-		c.cards = append(c.cards[:i:i], c.cards[i+1:]...)
-		for callID, index := range c.calls {
-			if index > i {
-				c.calls[callID] = index - 1
-			}
-		}
+		c.removeCard(i)
 		return true
 	}
 	return false

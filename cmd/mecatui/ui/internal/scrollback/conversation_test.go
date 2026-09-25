@@ -37,6 +37,33 @@ func TestMecatuiTypedScrollbackModel_Scenario1_StableIdentityAndImmutableSnapsho
 	}
 }
 
+func TestMessageCards_RemoveUserPreservesOtherCardsAndCallIndexes(t *testing.T) {
+	var c Conversation
+	userID := c.Messages().AddUser(UserInput{Text: "optimistic prompt"})
+	toolID := c.Tools().Add(ToolCall{ID: "read", Name: "Read"})
+	c.Notices().AddNotice("unrelated notice")
+
+	if !c.Messages().RemoveUser(userID) {
+		t.Fatal("remove optimistic user card")
+	}
+	if c.Len() != 2 {
+		t.Fatalf("cards = %d, want 2", c.Len())
+	}
+	if got := c.SnapshotAt(0).ID; got != toolID {
+		t.Fatalf("first remaining card ID = %d, want tool ID %d", got, toolID)
+	}
+	if _, ok := c.SnapshotAt(1).Payload.(NoticeCardSnapshot); !ok {
+		t.Fatalf("second remaining payload = %T, want NoticeCardSnapshot", c.SnapshotAt(1).Payload)
+	}
+	if !c.Tools().Resolve("read", ToolResult{Body: "contents"}) {
+		t.Fatal("resolve tool after user removal")
+	}
+	tool := c.SnapshotAt(0).Payload.(ToolCardSnapshot)
+	if !tool.Resolved || tool.Result.Body != "contents" {
+		t.Fatalf("tool after removal = %+v, want resolved contents", tool)
+	}
+}
+
 func TestMecatuiTypedScrollbackModel_Scenario1_PayloadFamiliesAreSpecialized(t *testing.T) {
 	var c Conversation
 	c.Tools().Add(ToolCall{ID: "ordinary", Name: "Read"})

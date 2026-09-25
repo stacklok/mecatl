@@ -3530,9 +3530,9 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.promptRecovery = &promptRecovery{text: text, sessionID: m.sessionID, streamGen: m.streamGen + 1}
 	}
 	if len(media.Descriptors) > 0 {
-		m.conv.addUserWithMedia(text, media.Descriptors)
+		m.admissionSubmission.blockID = m.conv.addUserWithMedia(text, media.Descriptors)
 	} else {
-		m.conv.addUser(text)
+		m.admissionSubmission.blockID = m.conv.addUser(text)
 	}
 	// Seed the session title set-once from the first genuine prompt (mirrors the
 	// server's session.SetTitle: the FIRST non-empty prompt sticks, later prompts

@@ -299,8 +299,8 @@ func (c *conversation) recordFileChange(path string) {
 func (c *conversation) isEmpty() bool { return c.scrollback.Len() == 0 }
 
 // addUser appends a text-only user-prompt block.
-func (c *conversation) addUser(text string) {
-	c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text})
+func (c *conversation) addUser(text string) scrollback.BlockID {
+	return c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text})
 }
 
 // addUserWithMedia appends a user-prompt block carrying media-part placeholders.
@@ -308,8 +308,8 @@ func (c *conversation) addUser(text string) {
 // (inline)" / "audio/wav (url)"); the renderer shows each as a "📎 …" line below
 // the text so a multimodal prompt is never silently rendered as text-only. With
 // no media it is equivalent to addUser.
-func (c *conversation) addUserWithMedia(text string, media []string) {
-	c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text, Media: media})
+func (c *conversation) addUserWithMedia(text string, media []string) scrollback.BlockID {
+	return c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text, Media: media})
 }
 
 // startAssistant opens a fresh, empty assistant block to accumulate deltas into.

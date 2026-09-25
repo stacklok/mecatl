@@ -103,23 +103,51 @@ func TestProviderModelDiscovery_Scenario5_TruthfulSafeStartupError(t *testing.T)
 			t.Errorf("unsafe/untruthful copy %q in:\n%s", bad, view)
 		}
 	}
-	if m.sessionID != "existing" || len(m.conv.blocks) != 2 {
-		t.Fatalf("lost transcript/binding: %q, %d blocks", m.sessionID, len(m.conv.blocks))
+	if m.sessionID != "existing" || m.conv.scrollback.Len() != 2 {
+		t.Fatalf("lost transcript/binding: %q, %d cards", m.sessionID, m.conv.scrollback.Len())
+	}
+}
+
+func TestAdmissionRejection_RemovesOnlyOptimisticUserCard(t *testing.T) {
+	m, _ := admissionModel(t, false)
+	m.conv.addNotice("before submission")
+	beforeID := m.conv.scrollback.SnapshotAt(0).ID
+	m.prompt.Rewrite("optimistic prompt")
+	m = submitAdmission(t, m)
+	optimisticID := m.admissionSubmission.blockID
+	if optimisticID == 0 {
+		t.Fatal("submission did not retain its optimistic user-card identity")
+	}
+	m.conv.addNotice("unrelated while awaiting admission")
+	unrelatedID := m.conv.scrollback.SnapshotAt(2).ID
+
+	m = rejectAdmission(t, m)
+	if m.conv.scrollback.Len() != 2 {
+		t.Fatalf("cards after rejection = %d, want 2", m.conv.scrollback.Len())
+	}
+	got := m.conv.testBlocks()
+	if got[0].ID != beforeID || got[1].ID != unrelatedID {
+		t.Fatalf("remaining card IDs = [%d %d], want [%d %d]", got[0].ID, got[1].ID, beforeID, unrelatedID)
+	}
+	for _, card := range got {
+		if card.ID == optimisticID {
+			t.Fatal("rejection retained optimistic user card")
+		}
 	}
 }
 
 func TestProviderModelDiscovery_Scenario5_TranscriptDraftAndExplicitRetry(t *testing.T) {
 	m, send := admissionModel(t, true)
-	prior := append([]block(nil), m.conv.blocks...)
+	prior := m.conv.testBlocks()
 	m.prompt.Rewrite("  exact prepared request  ")
 	m = submitAdmission(t, m)
 	want := promptBytes(t, send, 0)
 	m = rejectAdmission(t, m)
 	assertAdmissionRetained(t, m, true)
-	if !reflect.DeepEqual(m.conv.blocks, prior) {
+	if !reflect.DeepEqual(m.conv.testBlocks(), prior) {
 		t.Fatal("rejection changed adopted transcript")
 	}
-	if len(send.frames()) != 1 || len(m.conv.blocks) != 2 {
+	if len(send.frames()) != 1 || m.conv.scrollback.Len() != 2 {
 		t.Fatal("automatic replay or optimistic row survived rejection")
 	}
 	m.prompt.Rewrite("newer follow-up")
@@ -132,7 +160,7 @@ func TestProviderModelDiscovery_Scenario5_TranscriptDraftAndExplicitRetry(t *tes
 	}
 	m = applyAll(m, streamMsg{gen: m.streamGen, msg: client.SessionInitMsg{}})
 	assertAdmissionRetained(t, m, false)
-	if len(m.conv.blocks) != 3 || len(send.frames()) != 2 {
+	if m.conv.scrollback.Len() != 3 || len(send.frames()) != 2 {
 		t.Fatal("successful retry duplicated prompt row/send")
 	}
 	m = m.endRun("")
@@ -306,7 +334,7 @@ func TestProviderModelDiscovery_Scenario5_NewSessionAndUnrelatedErrors(t *testin
 		m.stagedMedia = map[string]stagedAttachment{"[Image #1]": {mime: "image/png", data: []byte("new session image")}}
 		m = rejectAdmission(t, submitAdmission(t, m))
 		assertAdmissionRetained(t, m, true)
-		if len(m.conv.blocks) != 0 {
+		if m.conv.scrollback.Len() != 0 {
 			t.Fatal("rejected optimistic row remains")
 		}
 		m = admissionKey(m, tea.KeyPressMsg{Code: 'r', Text: "r"})
@@ -420,7 +448,7 @@ func TestProviderModelDiscovery_Scenario5_RetentionBoundsAndCleanup(t *testing.T
 							t.Fatal("retry copied or misbound retained record")
 						}
 					}
-					if len(send.frames()) != 4 || len(m.conv.blocks) != 0 {
+					if len(send.frames()) != 4 || m.conv.scrollback.Len() != 0 {
 						t.Fatal("retry accumulated rows or replayed automatically")
 					}
 					m = admissionKey(m, tea.KeyPressMsg{Code: 'd', Text: "d"})

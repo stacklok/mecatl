@@ -124,6 +124,18 @@ func (c *Conversation) replace(i int, payload PayloadSnapshot) bool {
 	return true
 }
 
+func (c *Conversation) removeCard(i int) {
+	c.cards = append(c.cards[:i:i], c.cards[i+1:]...)
+	for callID, index := range c.calls {
+		switch {
+		case index == i:
+			delete(c.calls, callID)
+		case index > i:
+			c.calls[callID] = index - 1
+		}
+	}
+}
+
 func (c *Conversation) call(id string) (int, bool) {
 	i, ok := c.calls[id]
 	return i, ok
