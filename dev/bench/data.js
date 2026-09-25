@@ -248522,6 +248522,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790340557640,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "32535bf8e6731fbb8ef40c8086f84c5840815a2d",
+          "message": "test(app): eliminate real waits in durable learning tests (#1933)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T15:46:14+03:00",
+          "tree_id": "409bfaa99c0c3f4609726506d2f9974a2771c201",
+          "url": "https://github.com/stacklok/mecatl/commit/32535bf8e6731fbb8ef40c8086f84c5840815a2d"
+        },
+        "date": 1790341253482,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -361017,6 +361051,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790341250270,
+  "lastUpdate": 1790341254348,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
