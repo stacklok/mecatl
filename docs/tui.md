@@ -26,6 +26,11 @@ and the command entry point. Keep server decisions on the server and render its
 reported state rather than inferring authority, resolved models, or placement in
 the client.
 
+Precommit provider recovery belongs to the server's active run, not a client-side
+terminal retry loop. Keep failed-step retry an explicit `/retry` action; see
+[provider resilience](architecture/observability.md#reliability--provider-resilience)
+for the recovery policy and lifetime.
+
 A new interaction should follow the same event and capability boundaries as an
 existing one: do not show an unavailable control as if it were actionable, and
 do not substitute a client guess for a server-confirmed result. See the

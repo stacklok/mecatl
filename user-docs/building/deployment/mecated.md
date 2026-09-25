@@ -261,14 +261,14 @@ See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat
 
 |Flag|Default|Notes|
 |-|-|-|
-|`--llm-per-attempt-timeout`|`300s`|Bounds **establishing** the stream only (connect + first chunk). Does not cut an actively-streaming turn|
-|`--llm-stream-idle-timeout`|`180s`|Max idle gap between chunks after the first arrives. A stall exceeding this is terminal and not retried|
-|`--llm-max-attempts`|`3`|Max stream-establish attempts (initial call + retries)|
-|`--llm-breaker-threshold`|`5`|Consecutive LLM failures that open the circuit breaker; `0` disables|
-|`--llm-breaker-cooldown`|`30s`|How long the breaker stays open before half-opening|
+|`--llm-recovery-budget`|`30m`|Maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting|
+|`--llm-max-attempts`|`60`|Maximum model-stream attempts for one precommit step, including the initial call|
+|`--llm-per-attempt-timeout`|`300s`|Bounds connection and the first raw chunk. It does not interrupt an active stream|
+|`--llm-stream-idle-timeout`|`180s`|Maximum gap between raw chunks after activity starts. A precommit stall can recover; a visible stream failure is terminal|
+|`--llm-breaker-threshold`|`5`|Consecutive transient establishment failures that open the circuit breaker; `0` disables it|
+|`--llm-breaker-cooldown`|`30s`|How long the breaker remains open before one half-open probe|
 
-The per-attempt timeout stops after the first chunk. The stream-idle timeout
-then bounds gaps between chunks without limiting an active turn.
+The server applies this policy to each model step. It retries only before semantic output becomes visible, so it does not replay completed tool calls or visible assistant text. These command-line flags are the only recovery-policy configuration; `settings.yaml` has no equivalent key.
 
 ### Provider and model
 

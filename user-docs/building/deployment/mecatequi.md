@@ -246,6 +246,10 @@ corrupt both.
 |`--max-run-tokens`|`0` (unlimited)|Input and output token limit for each run. The parent and every child apply this limit to their own run, so their combined usage can exceed it. Crossing the limit produces `stop_reason: budget`.|
 |`--max-team-tokens`|`0` (unlimited)|Separate team-round aggregate token ceiling, not a per-engine run ceiling. When crossed, it prevents new team rounds; the current round and lead synthesis still complete. It does not enforce or report a cross-tree aggregate outside that team.|
 |`--max-turns`|`0` (deployment default)|Turn cap for this run. `0` inherits the composition default.|
+|`--llm-recovery-budget`|`30m`|Maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting.|
+|`--llm-max-attempts`|`60`|Maximum model-stream attempts for one precommit step, including the initial call.|
+
+For recovery semantics shared with the daemon and Kubernetes deployment, see [LLM resilience](/building/deployment/mecated.md#llm-resilience).
 
 ### Provider keys
 
