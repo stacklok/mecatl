@@ -298,9 +298,9 @@ reading the entire PDF into memory:
 import { createReadStream } from 'node:fs';
 import { pdfPart, textPart } from '@stacklok-oss/mecatl-sdk';
 
-const uploaded = await session.uploadPdf(
+const uploaded = await session.uploadArtifact(
   createReadStream(new URL('./report.pdf', import.meta.url)),
-  { name: 'report.pdf' }
+  { name: 'report.pdf', mimeType: 'application/pdf' }
 );
 const run = await session.run([
   textPart('Summarize the attached report'),
@@ -310,27 +310,30 @@ const run = await session.run([
 console.log((await run.result()).text);
 ```
 
-In a browser, pass a `Blob` or `File` to `uploadPdf()` and supply a safe filename
-in `name`. The returned `PdfPromptPart` can also go directly into a prompt.
-`pdfPart(id)` rebuilds a part from an ID your application retained for the
-same session. An upload that has not been used in a saved prompt becomes
-unusable after 24 hours. PDF parts use artifact IDs instead of inline bytes or
-remote URLs. Each PDF is limited to 20 MiB.
+In a browser, pass a `Blob` or `File` to `uploadArtifact()` with a safe filename
+and `mimeType: 'application/pdf'`. It returns `UploadedArtifact` metadata:
+`artifactId`, `name`, `mimeType`, `size`, and `sha256`. Pass its ID to
+`pdfPart(id)` to create a prompt part for the same session. An upload that has
+not been used in a saved prompt becomes unusable after 24 hours. PDF parts use
+artifact IDs instead of inline bytes or remote URLs. Each PDF is limited to
+20 MiB; other MIME types are rejected.
 
 PDF prompts require the session's selected model to advertise PDF input and a
 native provider adapter that sends it. Native OpenAI Responses and Anthropic
-Messages support this path for qualified models. The SDK checks the echoed
-session capability; the server validates the artifact and model again before
-calling the provider. You can also send a PDF part through
+Messages support this path for qualified models. The SDK checks the server's
+artifact capability for transfers and the session's PDF capability for prompt
+use; the server validates the artifact and model again before calling the
+provider. You can also send a PDF part through
 `session.controls(runId).steer()`. The live `run.steer()` method accepts text
 only. A provider can impose a limit below 20 MiB and reject the model call
 after a successful upload. ACP and scheduled prompts do not accept PDF parts.
 
 When a tool returns PDF bytes as an `application/pdf` embedded resource, its
-`tool.result` event contains a PDF artifact block with `artifactId`, `name`,
-`size`, and `sha256`. Use that ID with `session.downloadPdf()` to stream the
-bytes. For example, a Node.js application can write the first PDF block from a
-separate run to a file when the session has a PDF-producing tool:
+`tool.result` event contains an artifact block with `artifactId`, `name`,
+`mimeType`, `size`, and `sha256`. Use that ID with
+`session.downloadArtifact()` to stream the bytes. For example, a Node.js
+application can write the first PDF block from a separate run to a file when
+the session has a PDF-producing tool:
 
 ```ts
 import { createWriteStream } from 'node:fs';
@@ -344,11 +347,13 @@ let saved = false;
 for await (const event of downloadRun) {
   if (event.kind !== 'tool.result') continue;
   if (saved) continue;
-  const pdf = event.payload.blocks.find((block) => block.kind === 7);
+  const pdf = event.payload.blocks.find(
+    (block) => block.kind === 7 && block.mimeType === 'application/pdf'
+  );
   if (pdf === undefined) continue;
 
   await pipeline(
-    Readable.from(session.downloadPdf(pdf.artifactId)),
+    Readable.from(session.downloadArtifact(pdf.artifactId)),
     createWriteStream('./tool-output.pdf', { flags: 'wx' })
   );
   console.log(pdf.name, pdf.size, pdf.sha256);
@@ -357,13 +362,13 @@ for await (const event of downloadRun) {
 ```
 
 Each `Run` can be consumed only once, by event iteration or `result()`.
-`downloadPdf()` starts its request when you consume the iterator. Pass an
+`downloadArtifact()` starts its request when you consume the iterator. Pass an
 `AbortSignal` in its request options to cancel an active download; ending
 iteration early also closes the response body. HTTP and gRPC both stream PDF
 uploads and downloads. You can compare the saved file with the block's `size`
 and `sha256` when you need to verify it. Artifact IDs are scoped to the
 owning session; another session cannot use them. On `mecak8s`, an operator must
-[configure PDF artifact storage](/building/deployment/mecak8s.md#store-pdf-artifacts)
+[configure artifact storage](/building/deployment/mecak8s.md#store-session-artifacts)
 before the server advertises this capability. Local `mecated` does not provide
 PDF artifact storage in this release. An older server returns a typed
 `UnsupportedFeatureError` for these SDK methods.

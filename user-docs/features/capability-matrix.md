@@ -34,7 +34,7 @@ durable storage. A connected client uses the server's capabilities.
 |gRPC API|✓|✓|Private Unix socket|
 |HTTP/SSE API|✓|✓|No|
 |Durable state|Optional configured backend|Redis-backed when configured|JSONL store by default|
-|SDK PDF artifact upload and download|Unavailable|With Redis and a private S3-compatible bucket|Unavailable|
+|SDK artifact upload and download (`application/pdf` only)|Unavailable|With Redis and a private S3-compatible bucket|Unavailable|
 |Kubernetes leases and drain handling|No|✓|No|
 |Interactive permission approvals|Opt|Headless by default|✓|
 |ACP editor integration|✓, `mecated acp` only|No|No|

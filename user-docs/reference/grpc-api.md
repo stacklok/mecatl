@@ -58,8 +58,8 @@ semantic-version protocol.
 |-|-|-|
 |`CreateSession(CreateSessionRequest) → CreateSessionResponse`|unary|allocate a server-side session, return its id|
 |`GetSession(GetSessionRequest) → GetSessionResponse`|unary|snapshot of an existing session, including authoritative title/provenance, title-generation lifecycle, and canonical durable token usage when present|
-|`UploadPdf(stream UploadPdfRequest) → UploadPdfResponse`|client-stream|upload a PDF to an owned session; one metadata frame followed by nonempty byte chunks; returns its private artifact ID, safe name, size, and SHA-256|
-|`DownloadPdf(DownloadPdfRequest) → stream DownloadPdfResponse`|server-stream|download an owned session's PDF artifact as ordered byte chunks|
+|`UploadArtifact(stream UploadArtifactRequest) → UploadArtifactResponse`|client-stream|upload an artifact to an owned session; one metadata frame followed by nonempty byte chunks; returns its private ID, safe name, MIME type, size, and SHA-256|
+|`DownloadArtifact(DownloadArtifactRequest) → stream DownloadArtifactResponse`|server-stream|download an owned session's artifact as ordered byte chunks|
 |`RenameSession(RenameSessionRequest) → RenameSessionResponse`|unary|replace an owned idle main session's title and mark its provenance operator-authored; this permanently disables automatic title generation; ownership, kind, state, liveness, and lease are revalidated at execution|
 |`DeleteSession(DeleteSessionRequest) → DeleteSessionResponse`|unary|permanently remove an owned idle main session snapshot and store-managed sidecars; the same execution-time gates apply|
 |`CompactSession(CompactSessionRequest) → CompactSessionResponse`|unary|force one configured compaction pass on an owned main chat at an idle or terminal boundary; creates no conversation turn and returns `compacted` to distinguish a rewrite from a successful no-op|
@@ -72,17 +72,17 @@ semantic-version protocol.
 |`WatchSessionEvents(WatchSessionEventsRequest) → stream WatchSessionEventsResponse`|server-stream|**durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)): replay from an opaque `cursor` (empty = the beginning), then keep following as the run appends. Each frame is `{event, cursor, phase}`; `phase` is an OPEN STRING (`replay`/`live`/`gap`) — tolerate an unknown value. Exactly one PHASE-ONLY `live` frame (no `event`) marks the replay→live boundary, so a client renders the transcript and shows a live view WITHOUT waiting for the next event, which on an idle session may never arrive. A `gap` frame (also event-less) marks a position whose durable append is known to have failed. Optional `run_id` narrows delivery to one run; gap frames are delivered either way. Relays the FULL timeline like `StreamSessionEvents`, log-only kinds included. Errors: `watch_unsupported` (`UNIMPLEMENTED`) when the log has no cursor seam, `no_event_log` (`UNIMPLEMENTED`), `cursor_malformed` (`INVALID_ARGUMENT`), `cursor_expired` (`FAILED_PRECONDITION` — restart from the beginning), `watch_lagging` (`RESOURCE_EXHAUSTED` — **resumable**, reconnect with your last cursor), `activity_gap` (`DATA_LOSS`)|
 |`ListSessions(ListSessionsRequest) → ListSessionsResponse`|unary|the stored-session inventory — picker metadata (id, timestamps, state, turns, model id; no conversation content), sorted most-recently-active first; an empty list when the store does not implement `PrunableStore`|
 
-PDF uploads begin with `UploadPdfMetadata{session_id, name, mime_type}` and then
-send chunks of at most 256 KiB. The total is at most 20 MiB; `mime_type` is
-`application/pdf`. The server validates the PDF and computes the returned
-SHA-256. `DownloadPdfRequest{session_id, artifact_id}` streams chunks of at most
-256 KiB. Both RPCs require ownership of the exact session, and an artifact ID
-alone grants no access. They are available when the deployment advertises
-`ServerCapabilities.pdf_artifacts`. See the
+Artifact uploads begin with `UploadArtifactMetadata{session_id, name, mime_type}`
+and then send chunks of at most 256 KiB. Only `application/pdf` is accepted;
+each PDF is limited to 20 MiB. The server validates the PDF and computes the
+returned SHA-256. `DownloadArtifactRequest{session_id, artifact_id}` streams
+chunks of at most 256 KiB. Both RPCs require ownership of the exact session,
+and an artifact ID alone grants no access. They are available when the
+deployment advertises `ServerCapabilities.artifacts`. See the
 [SDK session guide](/building/typescript-sdk/sessions-and-runs.md#send-and-receive-pdf-artifacts)
 for client calls.
 
-Recognized PDF tool results carry a `ContentBlock.KIND_PDF_ARTIFACT` with the
+Recognized PDF tool results carry a `ContentBlock.KIND_ARTIFACT` with the
 artifact ID, name, size, SHA-256, and `application/pdf`; the block contains no
 inline bytes or remote URL.
 

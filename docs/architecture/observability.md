@@ -227,12 +227,13 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   `mecatl:tools:`, metadata, lineage, and ledger keys. Incompatible values at
   those keys fail validation; there is no inventory scan, adoption job, or
   migration path.
-  With PDF artifact storage enabled in `mecak8s`, a private S3-compatible bucket
-  owns PDF bytes. Redis snapshots and events retain artifact IDs and bounded
-  metadata, while staging markers and a deletion outbox make interrupted writes
-  and session deletion recoverable. The object writer reserves a marker before
-  upload; successful snapshot saves commit referenced uploads. Reconciliation
-  checks session and fork leases and rereads the authoritative snapshot before
+  With artifact storage enabled in `mecak8s`, a private S3-compatible bucket
+  owns the bytes, with only `application/pdf` accepted. Redis snapshots and
+  events retain artifact IDs and bounded metadata, while staging markers and
+  a deletion outbox make interrupted writes and session deletion recoverable.
+  The object writer reserves a marker before upload; successful snapshot saves
+  commit referenced uploads. Reconciliation checks session and fork leases and
+  rereads the authoritative snapshot before
   removing an unused object. Snapshot deletion enqueues prefix cleanup in the
   same Redis transaction, so a deleted session cannot start a new download.
   For jsonlstore, Save, Delete,

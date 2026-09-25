@@ -52,8 +52,8 @@ You need:
 - A TLS certificate and key for the `mecak8s` Service, unless an
   operator-controlled gateway terminates TLS.
 - Credentials for an LLM provider.
-- For SDK PDF input and downloads, a private S3-compatible bucket accessible
-  from every agent pod.
+- For SDK artifact transfers (`application/pdf` only), a private S3-compatible
+  bucket accessible from every agent pod.
 
 The chart creates the ServiceAccount and namespace-scoped permissions for
 Kubernetes Leases. It does not create production Redis, TLS Secrets, provider
@@ -128,8 +128,9 @@ endpoints and filenames with values for your environment.
 The default Deployment name is `<RELEASE>-mecak8s`. Set `fullnameOverride` in
 the values file if you need a fixed name.
 
-PDF upload and download are optional. To enable them, follow
-[Store PDF artifacts](#store-pdf-artifacts) after the base deployment works.
+Artifact upload and download are optional and accept only PDFs. To enable them,
+follow [Store session artifacts](#store-session-artifacts) after the base
+deployment works.
 
 ## Deployment defaults
 
@@ -141,7 +142,7 @@ PDF upload and download are optional. To enable them, follow
 |Posture|Headless with `auto` permissions|
 |Session state|Redis|
 |Session ownership|Kubernetes Leases|
-|PDF artifacts|Disabled until an S3-compatible store is configured|
+|Session artifacts (PDF only)|Disabled until an S3-compatible store is configured|
 |Filesystem|No filesystem access|
 |Network binds|Pod network on `0.0.0.0`|
 |Metrics and OpenTelemetry|Opt-in|
@@ -212,8 +213,8 @@ API:
 |-|-|
 |Session snapshots, retention, and cleanup|Redis|
 |Durable event log and resume cursors|Redis Streams|
-|PDF metadata, upload staging, and deletion outbox (when enabled)|Redis|
-|PDF bytes (when enabled)|Private S3-compatible object store|
+|Artifact metadata, upload staging, and deletion outbox (when enabled)|Redis|
+|Artifact bytes (`application/pdf` only, when enabled)|Private S3-compatible object store|
 |Single-writer session lease|Kubernetes `coordination.k8s.io` Lease|
 
 ### Inspect the event log
@@ -281,12 +282,12 @@ security postures:
 The chart reserves its security-posture annotations; `podAnnotations` cannot
 override them.
 
-### Store PDF artifacts
+### Store session artifacts
 
 Configure a private S3-compatible bucket dedicated to this `mecak8s`
-installation when SDK clients need to upload PDFs or download PDFs returned by
-tools. Every replica uses the same bucket. Add the following values to your
-deployment file:
+installation when SDK clients upload PDFs for prompts or download PDFs from
+tool results. Only `application/pdf` is accepted. Every replica uses the same
+bucket. Add the following values to your deployment file:
 
 ```yaml
 artifacts:
@@ -323,7 +324,7 @@ the successor session; Clear starts without them. Session deletion and
 retention pruning block new downloads immediately, then remove objects through
 restart-safe cleanup.
 
-Without a configured store, the server advertises no PDF artifact capability
+Without a configured store, the server advertises no artifact capability
 and rejects PDF prompt input. Existing embedded PDF tool results keep their
 legacy inline limit and handling, which can store their bytes in Redis. The
 [TypeScript SDK session guide](/building/typescript-sdk/sessions-and-runs.md#send-and-receive-pdf-artifacts)

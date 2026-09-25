@@ -67,8 +67,8 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions`|`{mode?, limits?, provider_id?, model_id?, profile?, mcp_servers?}`; `profile` omitted = server default, `"no-fs"` = explicit attenuation|`201` `{session_id, placement}` where placement is bounded display metadata; no path or exact private ref|
 |`GET /v1/sessions`|—|`200` `{sessions: [...]}` — path-free stored-session inventory|
 |`GET /v1/sessions/{id}`|—|`200` authoritative session snapshot, including title/provenance, title-generation lifecycle, and canonical durable token usage when present|
-|`POST /v1/sessions/{id}/pdfs?name=<FILENAME>`|streamed `application/pdf` body; percent-encode the safe basename in `name`|`201` `{artifact_id, name, size, sha256}` for a PDF owned by the session; 20 MiB maximum|
-|`GET /v1/sessions/{id}/pdfs/{artifact_id}`|—|`200` streamed `application/pdf`; `Cache-Control: private, no-store` and a safe attachment filename; ownership is checked before bytes are sent|
+|`POST /v1/sessions/{id}/artifacts?name=<FILENAME>`|streamed `application/pdf` body; percent-encode the safe basename in `name`|`201` `{artifact_id, name, size, sha256, mime_type}` for a PDF owned by the session; 20 MiB maximum|
+|`GET /v1/sessions/{id}/artifacts/{artifact_id}`|—|`200` streamed `application/pdf`; `Cache-Control: private, no-store` and a safe attachment filename; ownership is checked before bytes are sent|
 |`GET /v1/sessions/{id}/events`|—|`200` `text/event-stream` — replay a session's durable event log (including `session.title` changes and the log-only `approval`/`compaction_archive`/`user_prompt` a live prompt stream skips). A replayed `user_prompt.synthetic` value of `true` identifies a server-authored continuation; absent/false means genuine or legacy-unknown. Never infer origin from text. Empty for an unknown id; `501` when no durable `EventLog` is wired|
 |`GET /v1/sessions/{id}/watch?cursor=&run_id=`|—|`200` `text/event-stream` — **durable replay-then-follow** ([ADR 0250](https://github.com/stacklok/mecatl/blob/main/docs/adr/0250-durable-cursors-and-watch.md)). Each `data:` frame is `{event, cursor, phase}` (NOT a bare Event like `/events`); `phase` is an open string `replay`/`live`/`gap`. Exactly one event-less `live` frame marks the replay→live boundary; an event-less `gap` frame marks a failed durable append. `cursor` is opaque — empty means the beginning; hand back the last one you PROCESSED to resume. Optional `run_id` narrows delivery to one run; a cursor is **scoped to the `run_id` it was issued under** — resume with the same filter, or from the beginning, since a filtered watch's position advances past the records it dropped. The stream STAYS OPEN (unlike `/events`, which ends). `501` when no durable `EventLog` or no cursor seam, `404` when the caller may not read the session, `400` for a delegation-child session id. A **cursor fault is not a status code on this route**: the cursor is decoded after the `200` is committed, so a malformed or expired cursor arrives as the same terminal frame everything else does (`cursor_malformed` / `cursor_expired`); over gRPC it is a status. A mid-stream fault arrives as a final SSE frame tagged `event: error` whose `data:` line carries `{"code","error"}` — `watch_lagging` is **resumable** (reconnect with your last cursor), `activity_gap` means recorded events are missing|
 |`POST /v1/sessions/{id}/rename`|`{title}`|`200` updated session snapshot with operator title provenance; `412` when kind/state/liveness gates reject the stale action, `409` when another replica holds the session lease|
@@ -88,6 +88,12 @@ forward compatibility. `build_id` is not a semantic-version API.
 |`POST /v1/sessions/{id}/cancel-steer`|optional `{message_id?, expected_run_id?}`|`200` `{outcome, message_id?}`|
 |`POST /v1/sessions/{id}/clear`|`{"worktree_selector":"..."}` optional|`201` `{session_id, placement}` — distinct empty-history successor; omitted selector inherits exact source placement|
 |`POST /v1/sessions/{id}/fork`|optional `{title, reasoning_effort, provider_id, model_id, worktree_selector}`|`201` `{session_id, placement}` — history-carrying successor; omitted selector inherits exact placement, supplied selector must be fresh and source-scoped; all overrides resolve atomically|
+
+Artifact transfers are available when `ServerCapabilities.artifacts` is true
+and require ownership of the exact session. Only `application/pdf` is accepted.
+Recognized PDF tool results use blocks with `kind: 7` (`KIND_ARTIFACT`),
+`artifact_id`, `name`, `mime_type`, `size`, and `sha256`; they carry no inline PDF
+bytes or remote URL.
 
 When durable-follower admission is full, the watch route retains its HTTP 200
 response and emits a terminal `event: error` frame with code
