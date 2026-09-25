@@ -104,6 +104,73 @@ func TestFooterHealRaceThenHeal(t *testing.T) {
 	}
 }
 
+// TestFooterStartupResumeHealsProvisionalWindow proves startup adoption starts the
+// same correlated refetch as a normal session bind. The snapshot's occupancy is
+// already authoritative and must survive the denominator-only refresh.
+func TestFooterStartupResumeHealsProvisionalWindow(t *testing.T) {
+	const sessionID = "resumed-session"
+	const occupancy = int64(40000)
+	conv := &fakeConv{
+		recv: &fakeRecver{}, send: &fakeSender{},
+		getSessionResults: []client.ResolvedModel{
+			{ProviderID: "openrouter", ModelID: "openai/gpt-5.5", ContextWindow: 1_050_000},
+		},
+	}
+	m := newTestModelFromDeps(Deps{
+		Session: conv, Conv: conv,
+		Theme: theme.New("aztec", theme.AztecPalette()), Ctx: t.Context(), NoAltScreen: true,
+		Resume: &client.ResumeSelection{
+			Row: client.SessionListItem{ID: sessionID},
+			Snapshot: client.SessionSnapshot{
+				ResolvedModel:    client.ResolvedModel{ProviderID: "openrouter", ModelID: "openai/gpt-5.5"},
+				Usage:            client.Usage{InputTokens: 12345, OutputTokens: 678},
+				ContextOccupancy: &client.ContextOccupancy{InputTokens: occupancy},
+			},
+		},
+	})
+	m.width = 160
+
+	if got := m.contextWindow(); got != 0 {
+		t.Fatalf("resumed contextWindow() = %d, want provisional 0", got)
+	}
+	if foot := footerStr(m); !strings.Contains(foot, "ctx 40K") || strings.Contains(foot, "/") {
+		t.Fatalf("resumed footer = %q, want bare occupancy before refresh", foot)
+	}
+
+	updated, cmd := m.Update(startupResumeReadyMsg{})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("startup resume did not schedule resolved-model refresh")
+	}
+	var refreshed client.ResolvedModelMsg
+	for _, msg := range flattenBatch(cmd) {
+		if result, ok := msg.(client.ResolvedModelMsg); ok {
+			refreshed = result
+		}
+	}
+	if refreshed.SessionID != sessionID {
+		t.Fatalf("refresh session = %q, want %q", refreshed.SessionID, sessionID)
+	}
+	if n := conv.getSessionCalls(); n != 1 {
+		t.Fatalf("GetSession called %d times during startup resume, want 1", n)
+	}
+
+	updated, _ = m.Update(refreshed)
+	m = updated.(Model)
+	if got := m.contextWindow(); got != 1_050_000 {
+		t.Fatalf("healed contextWindow() = %d, want 1,050,000", got)
+	}
+	if got := m.contextTokens; got != occupancy {
+		t.Fatalf("refresh replaced resumed occupancy: got %d, want %d", got, occupancy)
+	}
+	if got := m.usage; got != (client.Usage{InputTokens: 12345, OutputTokens: 678}) {
+		t.Fatalf("refresh replaced resumed usage: got %+v", got)
+	}
+	if foot := footerStr(m); !strings.Contains(foot, "40K/1.1M") {
+		t.Fatalf("healed footer = %q, want visible meter without input", foot)
+	}
+}
+
 // TestFooterHealStopsRefetchingOnceKnown proves the refetch is BOUNDED: once the
 // window is known (non-zero) the turn-end gate skips the RPC entirely — it fires at
 // most until the first heal lands, never on every turn forever.
