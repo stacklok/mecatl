@@ -1369,11 +1369,12 @@ type runState struct {
 	// engine so a delayed relay never snapshots a concurrently-resuming session.
 	// Backend calls admitted before invalidation may still complete.
 	persistMu sync.Mutex
-	// These fields are guarded by persistMu. The resolution fields close the
-	// delivery race when a control reaches a run before its relay persists the ask.
-	// exactApprovalContexts carries only accepted exact verdicts to their
-	// matching appends; in-stream resolutions never add an entry.
+	// These fields are guarded by persistMu. They close the delivery race when a
+	// control reaches a detached/background run after the engine emitted an ask but
+	// before its relay starts Persist. exactApprovalContexts carries only accepted
+	// exact verdicts to their matching appends; in-stream resolutions never add one.
 	resolvedAskID         string
+	awaitingAskID         string
 	exactApprovalContexts map[string]context.Context
 	acceptedApproval      *agent.ApprovalResolution
 	cancelSignaled        bool
@@ -1385,8 +1386,11 @@ type runState struct {
 	// exact plan verdicts and excludes in-stream plan verdicts on that run.
 	serverOwnedPlanContinuation bool
 	// preserveDurable prevents a shutdown-cancelled local awaiting run from
-	// overwriting the already-durable PendingAsk handoff point.
+	// overwriting the already-durable PendingAsk handoff point. preservedAskID is
+	// guarded by persistMu and identifies the matching retraction that belongs to
+	// that process-local shutdown.
 	preserveDurable atomic.Bool
+	preservedAskID  string
 	settled         chan struct{}
 	settledOnce     sync.Once
 	// removeCapabilityOnSettle retains denial when normal teardown releases a
@@ -3465,7 +3469,11 @@ func (s *Service) snapshotDrainState() (map[session.SessionID]*runState, []sessi
 		s.mu.Lock()
 		current := s.runs[id] == st
 		if current {
-			if st.awaiting.Load() {
+			// A caller control that crossed persistMu first owns the disposition.
+			// Preserve only an unresolved, successfully persisted handoff that
+			// shutdown itself is about to cancel in memory.
+			if st.awaiting.Load() && st.awaitingAskID != "" && !st.cancelSignaled && st.resolvedAskID == "" {
+				st.preservedAskID = st.awaitingAskID
 				st.preserveDurable.Store(true)
 			}
 			st.cancelSignaled = true
@@ -7329,6 +7337,11 @@ func (s *Service) Persist(ctx context.Context, id session.SessionID) {
 		return
 	}
 	s.persistRun(ctx, id, st)
+	if st.awaiting.Load() {
+		if ask, pending := st.sess.PendingAsk(); pending {
+			st.awaitingAskID = ask.AskID
+		}
+	}
 }
 
 // persistPermissionAsk is Persist with control-event correlation. A detached
@@ -7361,6 +7374,9 @@ func (s *Service) persistPermissionAsk(ctx context.Context, id session.SessionID
 		return
 	}
 	s.persistRun(ctx, id, st)
+	if st.awaiting.Load() {
+		st.awaitingAskID = askID
+	}
 }
 
 func (s *Service) persistRun(ctx context.Context, id session.SessionID, st *runState) {
@@ -7436,6 +7452,43 @@ func (s *Service) finishRelayRun(ctx context.Context, id session.SessionID, run 
 func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev session.Event) error {
 	if s.cfg.EventLog == nil {
 		return nil
+	}
+
+	// A matching live run crosses the same lifecycle barrier as drain. An append
+	// admitted before the freeze completes normally; after the freeze, only the
+	// shutdown-local cancellation projection of the preserved ask is omitted.
+	// The live wire remains unchanged.
+	var lifecycle *runState
+	if ev.RunID != "" {
+		s.mu.Lock()
+		candidate := s.runs[id]
+		s.mu.Unlock()
+		if candidate != nil {
+			candidate.persistMu.Lock()
+			s.mu.Lock()
+			current := s.runs[id] == candidate && candidate.run != nil && candidate.run.RunID() == ev.RunID
+			s.mu.Unlock()
+			if current {
+				lifecycle = candidate
+			} else {
+				candidate.persistMu.Unlock()
+			}
+		}
+	}
+	if lifecycle != nil {
+		defer lifecycle.persistMu.Unlock()
+		if lifecycle.preserveDurable.Load() {
+			switch ev.Type {
+			case session.EvResult:
+				if ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+					return nil
+				}
+			case session.EvPermissionRetract:
+				if ev.Ask != nil && ev.Ask.AskID == lifecycle.preservedAskID {
+					return nil
+				}
+			}
+		}
 	}
 	if !s.mutationLeaseHeld(id) {
 		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
@@ -7517,6 +7570,7 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 		if st != nil {
 			st.persistMu.Lock()
 			st.awaiting.Store(false)
+			st.awaitingAskID = ""
 			st.persistMu.Unlock()
 		}
 	}
