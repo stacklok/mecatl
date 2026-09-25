@@ -69,7 +69,7 @@ It does not authorize runtime changes before merge.
       SessionID             session.SessionID
       Principal             *session.Principal
       Profile               string
-      AcquireExecutionFiles func(context.Context) (tool.Workspace, func() error, error)
+      AcquireExecutionWorkspace func(context.Context) (tool.Workspace, func() error, error)
   }
 
   type HarnessSourceScopeKind uint8
@@ -88,7 +88,8 @@ It does not authorize runtime changes before merge.
       ID             HarnessSourceID
       Scope          HarnessSourceScopeKind
       Provenance     HarnessProvenancePolicy
-      ExecutionFiles bool
+      // UsesExecutionWorkspace declares this source's workspace dependency; it neither enables it nor grants authority.
+      UsesExecutionWorkspace bool
       Bind           func(context.Context, HarnessSourceScope) (T, func() error, error)
   }
 
@@ -124,10 +125,11 @@ It does not authorize runtime changes before merge.
   placement does not replace that anchor. A nil cleanup is valid when there is nothing to close;
   non-nil cleanup must be idempotent.
 
-  `ExecutionFiles` defaults to false. It is a trusted registration property, not a public or YAML
+  `UsesExecutionWorkspace` defaults to false. It declares a source workspace dependency; it is a
+  trusted registration property, not operator enablement, an authority grant, a public or YAML
   selector, and is valid only for principal scope with fixed `project` provenance; incompatible
   registrations fail startup. Only a selected, admitted registration with this property receives
-  `AcquireExecutionFiles`; process, disabled,
+  `AcquireExecutionWorkspace`; process, disabled,
   unselected, and other registrations receive nil. The callback accepts no session, root, or
   environment selector. It lazily acquires the exact server-authorized source workspace as a
   read-only view, with no runner and no execution `ReadLedger`, and returns a source-owned release.
