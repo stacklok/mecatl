@@ -249596,6 +249596,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790343062349,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d8f5b1f987acb4e5a2bbfcb95d47ff378bf4a563",
+          "message": "test(app): eliminate real ToolHive probe deadline wait (#1937)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T16:57:01+03:00",
+          "tree_id": "5eff2b460509583a6a4cee0ea833469d028279ed",
+          "url": "https://github.com/stacklok/mecatl/commit/d8f5b1f987acb4e5a2bbfcb95d47ff378bf4a563"
+        },
+        "date": 1790345408813,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -362550,6 +362584,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790345405361,
+  "lastUpdate": 1790345409986,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
