@@ -17,16 +17,18 @@ import (
 func TestForkMalformedResponseNeverDeletesUnprovenChild(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		safe   bool
 		mutate func(*binding, *lifecycleResponse)
 	}{
 		{
-			name: "existing sibling with repeated label and malformed payload",
+			name: "canonical child with malformed payload",
+			safe: true,
 			mutate: func(_ *binding, response *lifecycleResponse) {
 				response.Payload = json.RawMessage(`{"malformed":true}`)
 			},
 		},
 		{name: "foreign owner", mutate: func(b *binding, _ *lifecycleResponse) { b.Owner = "foreign" }},
-		{name: "wrong expected session", mutate: func(b *binding, _ *lifecycleResponse) { b.SessionID = "session:other-label" }},
+		{name: "wrong expected session", safe: true, mutate: func(b *binding, _ *lifecycleResponse) { b.SessionID = "session:other-label" }},
 		{name: "parent ref", mutate: func(b *binding, _ *lifecycleResponse) { b.Ref = "logical-parent@7"; b.EnvironmentID = "logical-parent" }},
 		{name: "foreign generation", mutate: func(b *binding, _ *lifecycleResponse) { b.Generation = 8; b.Ref = "logical-child@8" }},
 	} {
@@ -52,7 +54,11 @@ func TestForkMalformedResponseNeverDeletesUnprovenChild(t *testing.T) {
 				_ = writeFrame(conn, response)
 				if readFrame(conn, &request) == nil {
 					requests <- request
-					_ = writeFrame(conn, lifecycleResponse{Binding: response.Binding, AcquisitionID: request.AcquisitionID})
+					terminal := lifecycleResponse{Binding: response.Binding, AcquisitionID: request.AcquisitionID}
+					if request.Operation == "child-delete" {
+						terminal.Payload = mustJSON(t, DeleteResult{})
+					}
+					_ = writeFrame(conn, terminal)
 				}
 				_ = conn.Close()
 			}()
@@ -62,8 +68,14 @@ func TestForkMalformedResponseNeverDeletesUnprovenChild(t *testing.T) {
 			}
 			parentClaim := binding{Owner: "local", SessionID: "session", EnvironmentID: "logical-parent", Ref: "logical-parent@7", Generation: 7}
 			_, _, _, forkErr := client.Fork(t.Context(), client.environment(refForBinding(parentClaim), parentClaim), "branch")
-			if forkErr == nil || !strings.Contains(forkErr.Error(), "microvmd fork returned an invalid child binding") ||
-				!strings.Contains(forkErr.Error(), "automatic cleanup was not authorized") || !strings.Contains(forkErr.Error(), "mecated microvm status") {
+			if forkErr == nil || !strings.Contains(forkErr.Error(), "microvmd fork returned an invalid child binding") {
+				t.Fatalf("Fork error = %v", forkErr)
+			}
+			if tc.safe {
+				if !strings.Contains(forkErr.Error(), "automatic cleanup of the exact new placement completed") {
+					t.Fatalf("Fork error = %v, want exact child cleanup", forkErr)
+				}
+			} else if !strings.Contains(forkErr.Error(), "automatic cleanup was not authorized") || !strings.Contains(forkErr.Error(), "mecated microvm status") {
 				t.Fatalf("Fork error = %v, want conservative recovery guidance", forkErr)
 			}
 			first := <-requests
@@ -72,8 +84,12 @@ func TestForkMalformedResponseNeverDeletesUnprovenChild(t *testing.T) {
 			}
 			select {
 			case request := <-requests:
-				if request.Operation != "detach" {
-					t.Fatalf("malformed response triggered destructive %q of existing sibling %+v", request.Operation, request.Binding)
+				want := "detach"
+				if tc.safe {
+					want = "child-delete"
+				}
+				if request.Operation != want {
+					t.Fatalf("malformed response terminal operation = %q, want %q for %+v", request.Operation, want, request.Binding)
 				}
 			case <-time.After(100 * time.Millisecond):
 				t.Fatal("malformed retained acquisition was not released")
@@ -98,7 +114,8 @@ func TestForkCleanupDetachesFromCancelledParent(t *testing.T) {
 		_ = writeFrame(conn, lifecycleResponse{Binding: child, AcquisitionID: "0123456789abcdef0123456789abcdef"})
 		_ = readFrame(conn, &request)
 		cleaned <- request.Binding
-		_ = writeFrame(conn, lifecycleResponse{Binding: request.Binding, AcquisitionID: request.AcquisitionID})
+		payload, _ := json.Marshal(DeleteResult{})
+		_ = writeFrame(conn, lifecycleResponse{Binding: request.Binding, AcquisitionID: request.AcquisitionID, Payload: payload})
 		_ = conn.Close()
 	}()
 	client, _ := New("unix://" + socket)

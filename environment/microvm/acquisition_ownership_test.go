@@ -2,6 +2,7 @@ package microvm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -203,9 +205,9 @@ func TestMicroVMAcquisitionOwnershipIsExactAndIdempotent(t *testing.T) {
 	deadline := time.After(time.Second)
 	for {
 		pinFixture.daemon.ownershipMu.Lock()
-		closing := pinFixture.daemon.refOwnership[pinFixture.binding.Ref].closing
+		phase := pinFixture.daemon.refOwnership[pinFixture.binding].phase
 		pinFixture.daemon.ownershipMu.Unlock()
-		if closing {
+		if phase == refPhaseDetaching {
 			break
 		}
 		select {
@@ -459,6 +461,125 @@ func TestMicroVMFinalDetachFailureCannotCloseReplacement(t *testing.T) {
 	if failedGuest.calls.Load() != 2 {
 		t.Fatalf("pending teardown reconciliation calls = %d, want 2", failedGuest.calls.Load())
 	}
+}
+
+func TestForkOperationPinEndsBeforeChildOwnerLifetime(t *testing.T) {
+	fixture := newRepositoryAttachmentFixture(t)
+	attachment := fixture.attachPersisted(t)
+	binding := fixture.composition.Attachments.records[attachment.Environment.Ref().ID].binding
+	auth, err := control.NewService(control.ServiceConfig{AccountUID: 1000, PeerAuthenticator: controltest.StaticPeerAuthenticator{UID: 1000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := NewDaemon(DaemonConfig{Control: auth, RepositoryAttachments: fixture.composition.Attachments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon.repositoryBindings[binding.Ref] = repositoryDaemonBinding{binding: binding}
+	ownedFixture := ownershipFixture{daemon: daemon, binding: binding}
+	parent := acquireTestOwner(t, ownedFixture)
+
+	serverConn, childConn := net.Pipe()
+	childDone := make(chan error, 1)
+	go func() {
+		childDone <- daemon.ServeConn(t.Context(), serverConn)
+		_ = serverConn.Close()
+	}()
+	codec := control.NewCodec(control.DefaultMaxMessageBytes)
+	payload, err := json.Marshal(ChildForkPayload{Label: "pin-scope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := codec.Write(childConn, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleFork, Binding: binding, AcquisitionID: parent.id, Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	var child LifecycleResponse
+	if err := codec.Read(childConn, &child); err != nil || child.ErrorCode != "" || len(child.AcquisitionID) != 32 {
+		t.Fatalf("fork response = %+v, %v", child, err)
+	}
+	daemon.ownershipMu.Lock()
+	parentPins := daemon.refOwnership[binding].pins
+	daemon.ownershipMu.Unlock()
+	if parentPins != 0 {
+		t.Fatalf("parent remained pinned for child owner lifetime: %d", parentPins)
+	}
+	if response := closeTestOwner(t, ownedFixture, parent); response.ErrorCode != "" {
+		t.Fatalf("parent close while child retained = %+v", response)
+	}
+	if err := codec.Write(childConn, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleChildDelete, Binding: child.Binding, AcquisitionID: child.AcquisitionID}); err != nil {
+		t.Fatal(err)
+	}
+	var deleted LifecycleResponse
+	if err := codec.Read(childConn, &deleted); err != nil || deleted.ErrorCode != "" {
+		t.Fatalf("child cleanup = %+v, %v", deleted, err)
+	}
+	_ = childConn.Close()
+	if err := <-childDone; err != nil {
+		t.Fatalf("child owner handler = %v", err)
+	}
+}
+
+func TestConcurrentFirstResolvesSerializeRuntimeRegistration(t *testing.T) {
+	fixture := newRepositoryAttachmentFixture(t)
+	attachment := fixture.attachPersisted(t)
+	binding := fixture.composition.Attachments.records[attachment.Environment.Ref().ID].binding
+	if err := fixture.composition.Attachments.Detach(attachment.Environment.Ref()); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := control.NewService(control.ServiceConfig{AccountUID: 1000, PeerAuthenticator: controltest.StaticPeerAuthenticator{UID: 1000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	daemon, err := NewDaemon(DaemonConfig{Control: auth, RepositoryAttachments: fixture.composition.Attachments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		conn     net.Conn
+		response LifecycleResponse
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var handlers sync.WaitGroup
+	for range 2 {
+		serverConn, clientConn := net.Pipe()
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			_ = daemon.ServeConn(t.Context(), serverConn)
+			_ = serverConn.Close()
+		}()
+		go func() {
+			<-start
+			codec := control.NewCodec(control.DefaultMaxMessageBytes)
+			request := LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleResolve, Binding: binding, Provision: &ProvisionRequest{Owner: binding.Owner, SessionID: binding.SessionID, SourceCheckout: fixture.repository}}
+			if writeErr := codec.Write(clientConn, request); writeErr != nil {
+				results <- result{conn: clientConn, err: writeErr}
+				return
+			}
+			var response LifecycleResponse
+			readErr := codec.Read(clientConn, &response)
+			results <- result{conn: clientConn, response: response, err: readErr}
+		}()
+	}
+	close(start)
+	owners := make([]retainedTestOwner, 0, 2)
+	for range 2 {
+		got := <-results
+		if got.err != nil || got.response.ErrorCode != "" || got.response.Binding != binding || len(got.response.AcquisitionID) != 32 {
+			t.Fatalf("concurrent first resolve = %+v, %v", got.response, got.err)
+		}
+		owners = append(owners, retainedTestOwner{conn: got.conn, id: got.response.AcquisitionID})
+	}
+	ownedFixture := ownershipFixture{daemon: daemon, binding: binding}
+	if response := closeTestOwner(t, ownedFixture, owners[0]); response.ErrorCode != "" {
+		t.Fatalf("first concurrent owner release = %+v", response)
+	}
+	if response := closeTestOwner(t, ownedFixture, owners[1]); response.ErrorCode != "" {
+		t.Fatalf("second concurrent owner release = %+v", response)
+	}
+	handlers.Wait()
 }
 
 func TestMicroVMLifecycleV4RejectsUnsafeLegacyOwnership(t *testing.T) {

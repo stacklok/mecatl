@@ -223,12 +223,24 @@ type lifecycleAcquisition struct {
 	conn    net.Conn
 }
 
+type lifecycleRefPhase uint8
+
+const (
+	refPhaseActive lifecycleRefPhase = iota
+	refPhaseAcquiring
+	refPhaseDetaching
+	refPhasePendingDetach
+	refPhaseDeleting
+	refPhasePendingDelete
+	refPhaseReconciling
+)
+
 type lifecycleRefOwnership struct {
-	owners      map[string]struct{}
-	pins        int
-	closing     bool
-	reconciling bool
-	drained     chan struct{}
+	owners  map[string]struct{}
+	pins    int
+	phase   lifecycleRefPhase
+	changed chan struct{}
+	drained chan struct{}
 }
 
 var errAcquisitionInUse = errors.New("microvmd acquisition is in use")
@@ -246,7 +258,7 @@ type Daemon struct {
 	repositoryBindings    map[string]repositoryDaemonBinding
 	ownershipMu           sync.Mutex
 	acquisitions          map[string]lifecycleAcquisition
-	refOwnership          map[string]*lifecycleRefOwnership
+	refOwnership          map[control.Binding]*lifecycleRefOwnership
 	inventoryKey          [sha256.Size]byte
 	shutdown              chan struct{}
 	shutdownOnce          sync.Once
@@ -263,7 +275,7 @@ func NewDaemon(cfg DaemonConfig) (*Daemon, error) {
 		repositoryStartupErr: cfg.RepositoryStartupError,
 		repositoryBindings:   make(map[string]repositoryDaemonBinding),
 		acquisitions:         make(map[string]lifecycleAcquisition),
-		refOwnership:         make(map[string]*lifecycleRefOwnership),
+		refOwnership:         make(map[control.Binding]*lifecycleRefOwnership),
 		shutdown:             make(chan struct{}),
 	}
 	if _, err := rand.Read(daemon.inventoryKey[:]); err != nil {
@@ -355,7 +367,7 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 		response = d.handleAuthenticated(requestCtx, request)
 	}
 	if deleteGate {
-		d.finishUnownedDeletion(request.Binding)
+		d.finishUnownedDeletion(request.Binding, response.Err)
 	}
 	if err := write(response); err != nil {
 		return newLifecycleServeError(request.Operation, "transport", err)
@@ -399,12 +411,24 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 		if err != nil {
 			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
 		}
-		defer unpin()
+		defer func() {
+			if unpin != nil {
+				unpin()
+			}
+		}()
 	}
+	reservedResolve := false
 	if request.Operation == LifecycleResolve {
-		if err := d.reconcilePendingDetach(ctx, request.Binding); err != nil {
+		var err error
+		reservedResolve, err = d.beginResolve(ctx, request.Binding)
+		if err != nil {
 			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
 		}
+		defer func() {
+			if reservedResolve {
+				d.abortResolve(request.Binding)
+			}
+		}()
 	}
 
 	acquireCtx, cancelAcquire := context.WithCancel(ctx)
@@ -425,13 +449,19 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 	}()
 
 	response := d.handleAuthenticated(acquireCtx, request)
+	if unpin != nil {
+		unpin()
+		unpin = nil
+	}
 	if response.Err != nil {
 		return d.writeServeResponse(codec, conn, request.Operation, response)
 	}
 	select {
 	case early := <-read:
 		if request.Operation == LifecycleCreate || request.Operation == LifecycleFork {
-			_, _ = d.repositoryOperation(context.WithoutCancel(ctx), LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDelete, Binding: response.Binding})
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), repositoryRollbackTimeout)
+			_, _ = d.repositoryOperation(cleanupCtx, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDelete, Binding: response.Binding})
+			cancel()
 		}
 		if early.err != nil {
 			return newLifecycleServeError(request.Operation, "transport", early.err)
@@ -445,6 +475,7 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 	if err != nil {
 		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
 	}
+	reservedResolve = false
 	response.AcquisitionID = id
 	if err := codec.Write(conn, response); err != nil {
 		destroy := request.Operation == LifecycleCreate || request.Operation == LifecycleFork
@@ -475,29 +506,82 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 	return d.writeServeResponse(codec, conn, terminal.Operation, terminalResponse)
 }
 
-func (d *Daemon) reconcilePendingDetach(ctx context.Context, binding control.Binding) error {
-	d.ownershipMu.Lock()
-	state := d.refOwnership[binding.Ref]
-	if state == nil || !state.closing {
-		d.ownershipMu.Unlock()
-		return nil
+func notifyRefState(state *lifecycleRefOwnership) {
+	if state.changed != nil {
+		close(state.changed)
 	}
-	if state.reconciling || len(state.owners) != 0 || state.pins != 0 {
-		d.ownershipMu.Unlock()
-		return control.ErrBindingMismatch
-	}
-	state.reconciling = true
-	d.ownershipMu.Unlock()
+	state.changed = make(chan struct{})
+}
 
-	_, err := d.repositoryOperation(ctx, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDetach, Binding: binding})
+func (d *Daemon) beginResolve(ctx context.Context, binding control.Binding) (bool, error) {
+	if err := claimValidate(binding); err != nil {
+		return false, control.ErrBindingMismatch
+	}
+	for {
+		d.ownershipMu.Lock()
+		state := d.refOwnership[binding]
+		if state == nil {
+			d.refOwnership[binding] = &lifecycleRefOwnership{owners: make(map[string]struct{}), phase: refPhaseAcquiring, changed: make(chan struct{})}
+			d.ownershipMu.Unlock()
+			return true, nil
+		}
+		switch state.phase {
+		case refPhaseActive:
+			d.ownershipMu.Unlock()
+			return false, nil
+		case refPhasePendingDelete:
+			d.ownershipMu.Unlock()
+			return false, control.ErrBindingMismatch
+		case refPhasePendingDetach:
+			if state.pins != 0 {
+				changed := state.changed
+				d.ownershipMu.Unlock()
+				select {
+				case <-changed:
+					continue
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
+			}
+			state.phase = refPhaseReconciling
+			notifyRefState(state)
+			d.ownershipMu.Unlock()
+			_, err := d.repositoryOperation(ctx, LifecycleRequest{Version: LifecycleProtocolVersion, Operation: LifecycleDetach, Binding: binding})
+			d.ownershipMu.Lock()
+			if d.refOwnership[binding] == state {
+				if err == nil {
+					delete(d.refOwnership, binding)
+					close(state.changed)
+				} else {
+					state.phase = refPhasePendingDetach
+					notifyRefState(state)
+				}
+			}
+			d.ownershipMu.Unlock()
+			if err != nil {
+				return false, err
+			}
+		case refPhaseAcquiring, refPhaseDetaching, refPhaseDeleting, refPhaseReconciling:
+			changed := state.changed
+			d.ownershipMu.Unlock()
+			select {
+			case <-changed:
+				continue
+			case <-ctx.Done():
+				return false, ctx.Err()
+			}
+		}
+	}
+}
+
+func (d *Daemon) abortResolve(binding control.Binding) {
 	d.ownershipMu.Lock()
-	if err == nil {
-		delete(d.refOwnership, binding.Ref)
-	} else {
-		state.reconciling = false
+	state := d.refOwnership[binding]
+	if state != nil && state.phase == refPhaseAcquiring && len(state.owners) == 0 && state.pins == 0 {
+		delete(d.refOwnership, binding)
+		close(state.changed)
 	}
 	d.ownershipMu.Unlock()
-	return err
 }
 
 func (d *Daemon) publishAcquisition(conn net.Conn, binding control.Binding) (string, error) {
@@ -515,14 +599,16 @@ func (d *Daemon) publishAcquisition(conn net.Conn, binding control.Binding) (str
 			d.ownershipMu.Unlock()
 			continue
 		}
-		state := d.refOwnership[binding.Ref]
-		if state != nil && state.closing {
+		state := d.refOwnership[binding]
+		if state == nil {
+			state = &lifecycleRefOwnership{owners: make(map[string]struct{}), phase: refPhaseActive, changed: make(chan struct{})}
+			d.refOwnership[binding] = state
+		} else if state.phase == refPhaseAcquiring {
+			state.phase = refPhaseActive
+			notifyRefState(state)
+		} else if state.phase != refPhaseActive {
 			d.ownershipMu.Unlock()
 			return "", control.ErrBindingMismatch
-		}
-		if state == nil {
-			state = &lifecycleRefOwnership{owners: make(map[string]struct{})}
-			d.refOwnership[binding.Ref] = state
 		}
 		state.owners[id] = struct{}{}
 		d.acquisitions[id] = lifecycleAcquisition{binding: binding, conn: conn}
@@ -537,8 +623,8 @@ func (d *Daemon) pinAcquisition(binding control.Binding, id string) (func(), err
 	}
 	d.ownershipMu.Lock()
 	acquisition, ok := d.acquisitions[id]
-	state := d.refOwnership[binding.Ref]
-	if !ok || acquisition.binding != binding || state == nil || state.closing {
+	state := d.refOwnership[binding]
+	if !ok || acquisition.binding != binding || state == nil || state.phase != refPhaseActive {
 		d.ownershipMu.Unlock()
 		return nil, control.ErrBindingMismatch
 	}
@@ -553,31 +639,42 @@ func (d *Daemon) pinAcquisition(binding control.Binding, id string) (func(), err
 				close(state.drained)
 				state.drained = nil
 			}
+			notifyRefState(state)
 			d.ownershipMu.Unlock()
 		})
 	}, nil
 }
 
 func (d *Daemon) beginUnownedDeletion(binding control.Binding) error {
+	if err := claimValidate(binding); err != nil {
+		return control.ErrBindingMismatch
+	}
 	d.ownershipMu.Lock()
 	defer d.ownershipMu.Unlock()
-	state := d.refOwnership[binding.Ref]
-	if state != nil && (len(state.owners) != 0 || state.pins != 0 || state.closing) {
+	state := d.refOwnership[binding]
+	if state != nil && (len(state.owners) != 0 || state.pins != 0 || state.phase != refPhaseActive) {
 		return errAcquisitionInUse
 	}
 	if state == nil {
-		state = &lifecycleRefOwnership{owners: make(map[string]struct{})}
-		d.refOwnership[binding.Ref] = state
+		state = &lifecycleRefOwnership{owners: make(map[string]struct{}), changed: make(chan struct{})}
+		d.refOwnership[binding] = state
 	}
-	state.closing = true
+	state.phase = refPhaseDeleting
+	notifyRefState(state)
 	return nil
 }
 
-func (d *Daemon) finishUnownedDeletion(binding control.Binding) {
+func (d *Daemon) finishUnownedDeletion(binding control.Binding, err error) {
 	d.ownershipMu.Lock()
-	state := d.refOwnership[binding.Ref]
-	if state != nil && len(state.owners) == 0 && state.pins == 0 {
-		delete(d.refOwnership, binding.Ref)
+	state := d.refOwnership[binding]
+	if state != nil && len(state.owners) == 0 && state.pins == 0 && state.phase == refPhaseDeleting {
+		if err == nil {
+			delete(d.refOwnership, binding)
+			close(state.changed)
+		} else {
+			state.phase = refPhasePendingDelete
+			notifyRefState(state)
+		}
 	}
 	d.ownershipMu.Unlock()
 }
@@ -585,27 +682,31 @@ func (d *Daemon) finishUnownedDeletion(binding control.Binding) {
 func (d *Daemon) releaseAcquisition(ctx context.Context, conn net.Conn, binding control.Binding, id string, destroy bool) (LifecycleResponse, error) {
 	d.ownershipMu.Lock()
 	acquisition, ok := d.acquisitions[id]
-	state := d.refOwnership[binding.Ref]
-	if !ok || acquisition.binding != binding || acquisition.conn != conn || state == nil {
+	state := d.refOwnership[binding]
+	if !ok || acquisition.binding != binding || acquisition.conn != conn || state == nil || state.phase != refPhaseActive {
 		d.ownershipMu.Unlock()
 		return LifecycleResponse{}, control.ErrBindingMismatch
 	}
 	delete(d.acquisitions, id)
 	delete(state.owners, id)
-	inUse := false
 	if destroy && len(state.owners) != 0 {
 		d.ownershipMu.Unlock()
 		return LifecycleResponse{}, errAcquisitionInUse
 	}
-	if destroy && state.pins != 0 {
+	inUse := destroy && state.pins != 0
+	if inUse {
 		destroy = false
-		inUse = true
 	}
 	if len(state.owners) != 0 {
 		d.ownershipMu.Unlock()
 		return LifecycleResponse{}, nil
 	}
-	state.closing = true
+	if destroy {
+		state.phase = refPhaseDeleting
+	} else {
+		state.phase = refPhaseDetaching
+	}
+	notifyRefState(state)
 	if state.pins != 0 {
 		state.drained = make(chan struct{})
 		drained := state.drained
@@ -613,6 +714,12 @@ func (d *Daemon) releaseAcquisition(ctx context.Context, conn net.Conn, binding 
 		select {
 		case <-drained:
 		case <-ctx.Done():
+			d.ownershipMu.Lock()
+			if d.refOwnership[binding] == state {
+				state.phase = refPhasePendingDetach
+				notifyRefState(state)
+			}
+			d.ownershipMu.Unlock()
 			return LifecycleResponse{}, ctx.Err()
 		}
 	} else {
@@ -625,10 +732,17 @@ func (d *Daemon) releaseAcquisition(ctx context.Context, conn net.Conn, binding 
 	}
 	response, err := d.repositoryOperation(ctx, request)
 	d.ownershipMu.Lock()
-	if err == nil {
-		delete(d.refOwnership, binding.Ref)
-	} else {
-		state.closing = true
+	if d.refOwnership[binding] == state {
+		if err == nil {
+			delete(d.refOwnership, binding)
+			close(state.changed)
+		} else if destroy {
+			state.phase = refPhasePendingDelete
+			notifyRefState(state)
+		} else {
+			state.phase = refPhasePendingDetach
+			notifyRefState(state)
+		}
 	}
 	d.ownershipMu.Unlock()
 	if err == nil && inUse {

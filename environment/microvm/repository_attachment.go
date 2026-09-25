@@ -135,7 +135,7 @@ func (m *RepositoryAttachmentManager) Reattach(ctx context.Context, request Logi
 	}
 	m.mu.Lock()
 	record := m.records[ref.ID]
-	if string(ref.Kind) != Kind || record == nil || record.deleted || record.binding.Ref != ref.ID || record.binding.Owner != request.Owner {
+	if string(ref.Kind) != Kind || record == nil || record.deleted || record.deleting || record.binding.Ref != ref.ID || record.binding.Owner != request.Owner {
 		m.mu.Unlock()
 		return nil, control.ErrBindingMismatch
 	}

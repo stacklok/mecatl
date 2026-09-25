@@ -115,12 +115,13 @@ type lifecycleResponse struct {
 // Client speaks the authenticated local management protocol. Authentication is
 // performed by microvmd from kernel peer credentials before it decodes a frame.
 type Client struct {
-	endpoint       string
-	sourceCheckout string
-	profile        string
-	scope          server.PlacementScope
-	readiness      func(context.Context) error
-	cleanupTimeout time.Duration
+	endpoint                   string
+	sourceCheckout             string
+	profile                    string
+	scope                      server.PlacementScope
+	readiness                  func(context.Context) error
+	cleanupTimeout             time.Duration
+	acquisitionResponseDecoded func()
 }
 
 type acquisition struct {
@@ -160,6 +161,21 @@ func (a *acquisition) terminal(operation string) error {
 		}
 		if response.Binding != a.binding || response.AcquisitionID != a.id {
 			a.err = errors.New("microvmd terminal response changed acquisition")
+			return
+		}
+		if operation == "delete" || operation == "child-delete" {
+			var result DeleteResult
+			if len(response.Payload) == 0 {
+				a.err = errors.New("microvmd terminal cleanup omitted result; cleanup status is unknown")
+				return
+			}
+			if err := json.Unmarshal(response.Payload, &result); err != nil {
+				a.err = fmt.Errorf("decode microvmd terminal cleanup result: %w", err)
+				return
+			}
+			if result.WorktreeRetained {
+				a.err = errRollbackRetained
+			}
 		}
 	})
 	return a.err
@@ -277,7 +293,11 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 		safeCleanupTarget := response.Binding.Owner == owner && response.Binding.SessionID == placementID &&
 			strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding)
 		if safeCleanupTarget {
-			return server.PlacementBinding{}, invalidPlacementResponseError(err, c.boundedRollbackPlacement(ctx, response.Binding))
+			cleanup := func() error { return c.boundedRollbackPlacement(ctx, response.Binding) }
+			if ownerConn != nil {
+				cleanup = func() error { return ownerConn.terminal("delete") }
+			}
+			return server.PlacementBinding{}, invalidPlacementResponseError(err, cleanup())
 		}
 		return server.PlacementBinding{}, unsafePlacementResponseError(err)
 	}
@@ -653,16 +673,27 @@ func (c *Client) Fork(ctx context.Context, base tool.Environment, label string) 
 		return tool.Environment{}, nil, "", err
 	}
 	response, childOwner, err := c.acquire(ctx, lifecycleRequest{Version: protocolVersion, Operation: "fork", Binding: claim, AcquisitionID: parentOwner.id, Payload: payload})
+	safeChild := response.Binding.Owner == claim.Owner && response.Binding.Generation == claim.Generation &&
+		response.Binding.Ref != claim.Ref && strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding)
 	if err != nil {
-		return tool.Environment{}, nil, "", err
+		if safeChild && validAcquisitionID(response.AcquisitionID) {
+			cleanup := func() error { return c.boundedRollbackPlacement(ctx, response.Binding) }
+			if childOwner != nil {
+				cleanup = func() error { return childOwner.terminal("child-delete") }
+			}
+			return tool.Environment{}, nil, "", invalidPlacementResponseError(err, cleanup())
+		}
+		return tool.Environment{}, nil, "", unsafePlacementResponseError(err)
 	}
-	validChild := response.Binding.Owner == claim.Owner && response.Binding.SessionID == claim.SessionID+":"+label &&
-		response.Binding.Generation == claim.Generation && response.Binding.Ref != claim.Ref &&
-		strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding) &&
+	validChild := safeChild && response.Binding.SessionID == claim.SessionID+":"+label &&
 		response.Created == nil && response.Stream == nil && len(response.Payload) == 0
 	if !validChild {
+		primary := errors.New("microvmd fork returned an invalid child binding")
+		if safeChild {
+			return tool.Environment{}, nil, "", invalidPlacementResponseError(primary, childOwner.terminal("child-delete"))
+		}
 		_ = childOwner.terminal("detach")
-		return tool.Environment{}, nil, "", unsafePlacementResponseError(errors.New("microvmd fork returned an invalid child binding"))
+		return tool.Environment{}, nil, "", unsafePlacementResponseError(primary)
 	}
 	childRef := refForBinding(response.Binding)
 	child := c.environment(childRef, response.Binding, childOwner)
@@ -739,6 +770,14 @@ func acquisitionID(owner *acquisition) string {
 	return owner.id
 }
 
+func validAcquisitionID(id string) bool {
+	if len(id) != 32 || id != strings.ToLower(id) {
+		return false
+	}
+	_, err := hex.DecodeString(id)
+	return err == nil
+}
+
 func (c *Client) acquire(ctx context.Context, request lifecycleRequest) (lifecycleResponse, *acquisition, error) {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", c.endpoint)
@@ -768,19 +807,24 @@ func (c *Client) acquire(ctx context.Context, request lifecycleRequest) (lifecyc
 		_ = conn.Close()
 		return lifecycleResponse{}, nil, fmt.Errorf("microvmd %s: %s", response.ErrorCode, response.ErrorText)
 	}
-	if len(response.AcquisitionID) != 32 || response.AcquisitionID != strings.ToLower(response.AcquisitionID) {
+	if !validAcquisitionID(response.AcquisitionID) {
 		stopCancel()
 		_ = conn.Close()
 		return response, nil, errors.New("microvmd returned an invalid acquisition ID")
 	}
-	if _, err := hex.DecodeString(response.AcquisitionID); err != nil {
-		stopCancel()
+	if c.acquisitionResponseDecoded != nil {
+		c.acquisitionResponseDecoded()
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if stopCancel() {
+			return response, &acquisition{client: c, conn: conn, binding: response.Binding, id: response.AcquisitionID}, ctxErr
+		}
 		_ = conn.Close()
-		return response, nil, errors.New("microvmd returned an invalid acquisition ID")
+		return response, nil, ctxErr
 	}
 	if !stopCancel() {
 		_ = conn.Close()
-		return lifecycleResponse{}, nil, ctx.Err()
+		return response, nil, ctx.Err()
 	}
 	return response, &acquisition{client: c, conn: conn, binding: response.Binding, id: response.AcquisitionID}, nil
 }

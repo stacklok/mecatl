@@ -62,6 +62,7 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 	}()
 	var handlers sync.WaitGroup
 	var connections sync.Map
+	var admission sync.Mutex
 	defer func() {
 		cancelServe()
 		handlers.Wait()
@@ -69,10 +70,12 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 	go func() {
 		<-serveCtx.Done()
 		_ = listener.Close()
+		admission.Lock()
 		connections.Range(func(key, _ any) bool {
 			_ = key.(net.Conn).Close()
 			return true
 		})
+		admission.Unlock()
 	}()
 	for {
 		conn, err := listener.Accept()
@@ -82,7 +85,14 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 			}
 			return err
 		}
+		admission.Lock()
 		connections.Store(conn, struct{}{})
+		if serveCtx.Err() != nil {
+			_ = conn.Close()
+			connections.Delete(conn)
+			admission.Unlock()
+			continue
+		}
 		handlers.Add(1)
 		go func() {
 			defer handlers.Done()
@@ -92,5 +102,6 @@ func (d *RuntimeDaemon) Serve(ctx context.Context, listener net.Listener) (retEr
 				d.observer.LifecycleRequestFailed(err)
 			}
 		}()
+		admission.Unlock()
 	}
 }
