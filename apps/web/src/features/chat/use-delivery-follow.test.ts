@@ -80,6 +80,49 @@ describe("delivery follow", () => {
     expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
   });
 
+  it("matches renamed image prompts by occurrence and keeps the live attachment", () => {
+    const first: ChatMessage = {
+      content: "",
+      id: "live-first",
+      images: [{ data: "Zmlyc3Q=", id: "upload-first", mimeType: "image/png", name: "first.png" }],
+      role: "user",
+    };
+    const second: ChatMessage = {
+      content: "",
+      id: "live-second",
+      images: [
+        { data: "c2Vjb25k", id: "upload-second", mimeType: "image/png", name: "second.png" },
+      ],
+      role: "user",
+    };
+    const saved: ChatMessage[] = [
+      {
+        content: "",
+        id: "transcript-0",
+        images: [
+          { data: "Zmlyc3Q=", id: "transcript-0-image-0", mimeType: "image/png", name: "Image 1" },
+        ],
+        role: "user",
+      },
+      { content: "First answer", id: "transcript-1", role: "assistant" },
+      {
+        content: "",
+        id: "transcript-2",
+        images: [
+          { data: "c2Vjb25k", id: "transcript-2-image-0", mimeType: "image/png", name: "Image 1" },
+        ],
+        role: "user",
+      },
+    ];
+
+    const merged = reconcileRecordedMessages([first, second], saved);
+    expect(merged).toEqual([first, saved[1], second]);
+    expect(merged.filter((message) => message.role === "user")).toHaveLength(2);
+    expect(merged[0]).toBe(first);
+    expect(merged[2]).toBe(second);
+    expect(reconcileRecordedMessages(merged, saved)).toBe(merged);
+  });
+
   it("fills a matched live row with its recorded tool result", () => {
     const live: ChatMessage = {
       content: "Answer",

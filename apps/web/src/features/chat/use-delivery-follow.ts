@@ -48,10 +48,11 @@ function matchKey(message: ChatMessage): string {
   if (delivery) return `delivery:${delivery}`;
   // This is an occurrence match, not a durable identity. Render-local IDs,
   // tool output, reasoning, and image data can differ from saved projections.
+  // The BFF also renames uploaded files to "Image 1", etc. on transcript reads.
   return `ordinary:${JSON.stringify([
     message.role,
     message.content,
-    message.images?.map(({ mimeType, name }) => [mimeType, name]) ?? [],
+    message.images?.map(({ mimeType }) => mimeType) ?? [],
   ])}`;
 }
 

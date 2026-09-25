@@ -618,36 +618,69 @@ describe("mounted chat workspace BFF boundary", () => {
   });
 
   it("reattaches across two bounded cursors without duplicating replayed turns", async () => {
+    const user = userEvent.setup();
     const bff = new BffFixture(session("chat-a", "running"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        { images: [], role: "user", text: "first prompt", toolCalls: [] },
+        {
+          images: [],
+          role: "assistant",
+          text: "first answer",
+          toolCalls: [{ args: "{}", id: "read-1", name: "Read" }],
+        },
+        {
+          images: [],
+          role: "tool",
+          text: "",
+          toolCalls: [],
+          toolResult: { callId: "read-1", content: "File contents", isError: false },
+        },
+        { images: [], role: "user", text: "second prompt", toolCalls: [] },
+        { images: [], role: "assistant", text: "second answer", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
     const continuation = heldStream();
     bff.activityResponses.set("", [
       completedStream(
         runEvent("user_prompt", "1", "first prompt"),
         runEvent("message.delta", "2", "first answer"),
-        { cursor: "cursor-2", reason: "bound", type: "run.truncated" },
-      ),
-    ]);
-    bff.activityResponses.set("cursor-2", [
-      completedStream(
-        runEvent("message.delta", "2", "first answer"),
-        runEvent("result", "3", "", "run-a", { stop: "end_turn" }),
-        runEvent("user_prompt", "4", "second prompt", "run-b"),
+        runEvent("tool.call", "3", "", "run-a", { args: "{}", id: "read-1", name: "Read" }),
+        runEvent("tool.result", "4", "", "run-a", {
+          callId: "read-1",
+          content: "File contents",
+          isError: false,
+        }),
         { cursor: "cursor-4", reason: "bound", type: "run.truncated" },
       ),
     ]);
-    bff.activityResponses.set("cursor-4", [continuation.response]);
+    bff.activityResponses.set("cursor-4", [
+      completedStream(
+        runEvent("tool.result", "4", "", "run-a", {
+          callId: "read-1",
+          content: "File contents",
+          isError: false,
+        }),
+        runEvent("result", "5", "", "run-a", { stop: "end_turn" }),
+        runEvent("user_prompt", "6", "second prompt", "run-b"),
+        { cursor: "cursor-6", reason: "bound", type: "run.truncated" },
+      ),
+    ]);
+    bff.activityResponses.set("cursor-6", [continuation.response]);
     await mountWorkspace(bff, "chat-a");
     await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(3));
     expect(bff.requestsFor("GET", "/activity").map((request) => request.search)).toEqual([
       "",
-      "?resumeFrom=cursor-2",
       "?resumeFrom=cursor-4",
+      "?resumeFrom=cursor-6",
     ]);
     await act(async () =>
-      continuation.send(runEvent("user_prompt", "4", "second prompt", "run-b")),
+      continuation.send(runEvent("user_prompt", "6", "second prompt", "run-b")),
     );
     await act(async () =>
-      continuation.send(runEvent("message.delta", "5", "second answer", "run-b")),
+      continuation.send(runEvent("message.delta", "7", "second answer", "run-b")),
     );
     await waitFor(() => expect(screen.getAllByText("second answer")).toHaveLength(1));
     expect(screen.getByText(/replaying older activity first/i)).toBeTruthy();
@@ -662,11 +695,90 @@ describe("mounted chat workspace BFF boundary", () => {
 
     bff.rows.set("chat-a", session("chat-a"));
     await act(async () => {
-      continuation.send(runEvent("result", "6", "", "run-b", { stop: "end_turn" }));
+      continuation.send(runEvent("result", "8", "", "run-b", { stop: "end_turn" }));
       continuation.close();
     });
     await waitFor(() => expect(screen.queryByText(/replaying older activity first/i)).toBeNull());
     expect(bff.requestsFor("GET", "/transcript").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("first prompt")).toHaveLength(1);
+    expect(screen.getAllByText("first answer")).toHaveLength(1);
+    expect(screen.getAllByText("second prompt")).toHaveLength(1);
+    expect(screen.getAllByText("second answer")).toHaveLength(1);
+    await user.click(screen.getAllByRole("button", { name: "Chat options" })[0] as HTMLElement);
+    await user.click(screen.getByRole("menuitem", { name: "Show Tools" }));
+    expect(screen.getAllByText("Tool: Read")).toHaveLength(1);
+    expect(screen.getAllByText("File contents")).toHaveLength(1);
+  });
+
+  it("reconciles an uploaded image with its saved transcript name after run and idle refresh", async () => {
+    const user = userEvent.setup();
+    const bff = new BffFixture(session("chat-a"));
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(
+        detailResponse("chat-a", "idle", {
+          capabilities: { image: true, manualCompaction: false, modelSelection: false },
+        }),
+      ),
+    ]);
+    const run = heldStream();
+    bff.runResponses.push(run.response);
+    startPollingClock();
+    await mountConnectedWorkspace(bff, "chat-a");
+    await user.upload(
+      await screen.findByLabelText("Choose images to attach"),
+      new File(["image data"], "picture.png", { type: "image/png" }),
+    );
+    await waitFor(() => expect(screen.getByText("picture.png")).toBeTruthy());
+    typePrompt("Describe this image");
+    expect(
+      (screen.getByRole("button", { name: "Send message" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(
+      screen.getAllByText("Describe this image").filter((node) => node.closest("article")),
+    ).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Preview picture.png" })).toHaveLength(2);
+
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        {
+          images: [{ data: "aW1hZ2UgZGF0YQ==", mimeType: "image/png", name: "Image 1" }],
+          role: "user",
+          text: "Describe this image",
+          toolCalls: [],
+        },
+        { images: [], role: "assistant", text: "A picture", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
+    await act(async () => {
+      run.send(runStarted());
+      run.send(runEvent("message.delta", "1", "A picture"));
+      run.send(runEvent("result", "2", "", "run-a", { stop: "end_turn" }));
+      run.close();
+    });
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/runs")[0]?.body).toEqual({
+      images: [{ data: "aW1hZ2UgZGF0YQ==", mimeType: "image/png", name: "picture.png" }],
+      prompt: "Describe this image",
+    });
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2),
+    );
+    await waitFor(() => expect(screen.getAllByText("Describe this image")).toHaveLength(1));
+    expect(screen.getAllByText("A picture")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Preview picture.png" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Preview Image 1" })).toBeNull();
+
+    bff.rows.set("chat-a", { ...session("chat-a"), updatedAt: "2026-09-24T12:00:20.000Z" });
+    await advanceClock(20_000);
+    expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(3);
+    expect(screen.getAllByText("Describe this image")).toHaveLength(1);
+    expect(screen.getAllByText("A picture")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Preview picture.png" })).toHaveLength(1);
   });
 
   it("parks a queued prompt and reports missing history after a durable gap", async () => {
