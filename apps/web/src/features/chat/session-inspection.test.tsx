@@ -141,8 +141,8 @@ class Bff {
     if (path === "/api/v1/sessions/child")
       return json({
         id: "child",
-        kind: "child",
-        state: "completed",
+        kind: this.rows.find((item) => item.id === "child")?.kind ?? "child",
+        state: this.rows.find((item) => item.id === "child")?.state ?? "completed",
         mode: "default",
         model: {
           id: "model-a",
@@ -227,6 +227,31 @@ afterEach(() => {
 });
 
 describe("session inspection", () => {
+  it.each(["awaiting_approval", "active_elsewhere"])(
+    "keeps a temporarily blocked main chat visible for %s",
+    async (reason) => {
+      const bff = new Bff();
+      bff.rows = [
+        {
+          ...row("child", false),
+          capabilities: {
+            ...row("child", false).capabilities,
+            fork: false,
+            forkReason: reason,
+            publicChat: false,
+            publicChatReason: reason,
+          },
+        },
+      ];
+      await mount(bff);
+      expect(await screen.findByText("First saved row")).toBeTruthy();
+      const composer = screen.getByRole("textbox", { name: "Message Mecatl" });
+      expect(composer).toHaveProperty("disabled", true);
+      expect(screen.queryByText("This session is unavailable as a chat.")).toBeNull();
+      expect(bff.calls("/api/v1/sessions/child/transcript")).toHaveLength(1);
+    },
+  );
+
   it("opens inspect only session without a composer", async () => {
     const bff = new Bff();
     await mount(bff);
@@ -323,6 +348,13 @@ describe("session inspection", () => {
     });
     await waitFor(() => expect(bff.worktreeCalls).toBe(2));
     expect(screen.getByText(/selection is stale/i)).toBeTruthy();
+    expect(within(picker).getByRole("radio", { name: /Feature/ })).toHaveProperty("checked", false);
+    expect(
+      within(picker).getByRole("button", { name: "Fork in selected worktree" }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      within(picker).getByRole("button", { name: "Clear in selected worktree" }),
+    ).toHaveProperty("disabled", true);
     expect(bff.calls("/api/v1/sessions/child/fork")).toHaveLength(1);
     expect(mounted.router.state.location.search).toMatchObject({ sessionId: "child" });
   });

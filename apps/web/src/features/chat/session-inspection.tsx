@@ -24,7 +24,13 @@ export function isInspectOnlySession(session: SessionSummaryResponse): boolean {
 }
 
 export function isProvenChatSession(session: SessionSummaryResponse): boolean {
-  return session.capabilities.publicChat || Boolean(session.debugTargetSessionId);
+  return (
+    session.capabilities.publicChat ||
+    Boolean(session.debugTargetSessionId) ||
+    (session.kind === "main" &&
+      (session.capabilities.publicChatReason === "awaiting_approval" ||
+        session.capabilities.publicChatReason === "active_elsewhere"))
+  );
 }
 
 interface SessionInspectionProps {

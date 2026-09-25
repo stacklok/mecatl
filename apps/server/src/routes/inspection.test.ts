@@ -18,6 +18,77 @@ const withInspection = (client: Client, capabilities = { soul: true, worktrees: 
   });
 
 describe("inspection routes", () => {
+  it("uses each authenticated request's credential for both SDK inspections", async () => {
+    let activeCredential: string | undefined;
+    const observed: { credential?: string; operation: string }[] = [];
+    const get = vi.fn(async () => {
+      observed.push({ credential: activeCredential, operation: "soul" });
+      return {
+        soul: {
+          content: "",
+          drifted: false,
+          present: false,
+          provenance: 0,
+          sha256: "",
+          sizeBytes: 0n,
+          trusted: false,
+        },
+      };
+    });
+    const list = vi.fn(async () => {
+      observed.push({ credential: activeCredential, operation: "worktrees" });
+      return { worktrees: [] };
+    });
+    const authentication = {
+      credential: async (context: { req: { header: (name: string) => string | undefined } }) => {
+        const token = context.req.header("cookie")?.match(/studio_access=([^;]+)/)?.[1];
+        return token
+          ? {
+              credential: {
+                accessToken: token,
+                expiresAt: Number.MAX_SAFE_INTEGER,
+                subject: "test-user",
+                tokenType: "Bearer" as const,
+              },
+              status: "authenticated" as const,
+            }
+          : { status: "anonymous" as const };
+      },
+    } as unknown as AuthenticationService;
+    const runtime = fakeRuntime({
+      client: { soul: { get }, worktrees: { list } } as unknown as Client,
+      runWithCredential: async (credential, operation) => {
+        activeCredential = credential;
+        try {
+          return await operation();
+        } finally {
+          activeCredential = undefined;
+        }
+      },
+      snapshot: () => ({
+        ...sampleSnapshot(),
+        capabilities: { ...sampleCapabilities(), soul: true, worktrees: true },
+      }),
+    });
+    const app = createApp({ authentication, runtime });
+
+    expect(
+      (await app.request("/api/v1/soul", { headers: { cookie: "studio_access=one" } })).status,
+    ).toBe(200);
+    expect(
+      (
+        await app.request("/api/v1/sessions/source/worktrees", {
+          headers: { cookie: "studio_access=two" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(observed).toEqual([
+      { credential: "one", operation: "soul" },
+      { credential: "two", operation: "worktrees" },
+    ]);
+    expect(activeCredential).toBeUndefined();
+  });
+
   it("projects a connection scoped soul snapshot", async () => {
     const get = vi.fn().mockResolvedValue({
       soul: {

@@ -110,6 +110,19 @@ test("an early minimap marker reaches its own row without moving the page", asyn
   await expect(second).toHaveAttribute("aria-current", "location");
   for (const width of [320, 500, 1280]) {
     await page.setViewportSize({ width, height: 800 });
+    const mobileTarget = minimap.getByRole("button", { name: /^Jump to message 3:/ });
+    await mobileTarget.focus();
+    await mobileTarget.press("Space");
+    await expect(mobileTarget).toHaveAttribute("aria-current", "location");
+    const composer = page.getByRole("textbox", { name: "Message Mecatl" });
+    await expect(composer).toBeVisible();
+    const minimapBounds = await minimap.boundingBox();
+    const composerBounds = await composer.boundingBox();
+    expect(minimapBounds).not.toBeNull();
+    expect(composerBounds).not.toBeNull();
+    expect((minimapBounds?.y ?? 0) + (minimapBounds?.height ?? 0)).toBeLessThanOrEqual(
+      (composerBounds?.y ?? 0) + 2,
+    );
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       width,
     );

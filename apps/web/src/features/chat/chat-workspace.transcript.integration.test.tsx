@@ -192,6 +192,40 @@ afterEach(() => {
 });
 
 describe("mounted transcript streaming", () => {
+  it("keeps the chosen canvas panel mounted through a live delivery", async () => {
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    fireEvent.click(screen.getByRole("button", { name: "Open local canvas" }));
+    const panel = screen.getByRole("complementary", { name: "Local canvas" });
+    const body = screen.getByTestId("side-panel-body");
+    fireEvent.change(screen.getByRole("textbox", { name: "Local canvas" }), {
+      target: { value: "# Saved note" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    const edit = screen.getByRole("button", { name: "Edit" });
+    edit.focus();
+    body.scrollTop = 64;
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resize panel" }), {
+      key: "ArrowLeft",
+    });
+    const width = panel.style.getPropertyValue("--content-panel-width");
+
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A new live turn"));
+      activity.send(runEvent("message.delta", 2, "Live answer"));
+    });
+    expect(await screen.findByText("Live answer")).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+    expect(screen.getByTestId("side-panel-body")).toBe(body);
+    expect(screen.getByText("Saved note")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Edit" })).toBe(edit);
+    expect(document.activeElement).toBe(edit);
+    expect(body.scrollTop).toBe(64);
+    expect(panel.style.getPropertyValue("--content-panel-width")).toBe(width);
+  });
+
   it("keeps a minimap selection above the bottom during live deltas", async () => {
     const bff = new ActivityFixture();
     const activity = heldStream();

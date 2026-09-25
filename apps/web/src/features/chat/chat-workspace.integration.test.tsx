@@ -414,6 +414,72 @@ afterEach(() => {
 });
 
 describe("mounted chat workspace BFF boundary", () => {
+  it("consumes selection and a pending ask before closing the side panel", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const permissionPath = "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-a";
+    bff.nextReplies.set(permissionPath, [Promise.resolve(new Response(null, { status: 204 }))]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    fireEvent.click(screen.getByRole("button", { name: "Open local canvas" }));
+    const panel = screen.getByRole("complementary", { name: "Local canvas" });
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(runEvent("user_prompt", "1", "Selected prompt"));
+      activity.send(
+        runEvent("permission.ask", "2", "", "run-a", {
+          askId: "ask-a",
+          tool: "Shell",
+        }),
+      );
+    });
+    expect(await screen.findByText("Permission required")).toBeTruthy();
+    const selection = window.getSelection();
+    const prompt = screen.getByText("Selected prompt");
+    const range = document.createRange();
+    range.selectNodeContents(prompt);
+    selection?.addRange(range);
+    expect(selection?.toString()).toBe("Selected prompt");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(selection?.toString()).toBe("");
+    expect(bff.requestsAt("POST", permissionPath)).toHaveLength(0);
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(bff.requestsAt("POST", permissionPath)).toHaveLength(1));
+    expect(bff.requestsAt("POST", permissionPath)[0]?.body).toEqual({ verdict: "deny" });
+    await waitFor(() => expect(screen.queryByText("Permission required")).toBeNull());
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Local canvas" })).toBeNull();
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+  });
+
+  it("skips inspect-only rows in chat navigation", async () => {
+    const inspect = {
+      ...session("inspect"),
+      capabilities: {
+        ...session("inspect").capabilities,
+        publicChat: false,
+        publicChatReason: "inspect_only_kind",
+      },
+      kind: "child",
+      title: "Inspect-only child",
+    };
+    const bff = new BffFixture(session("chat-a"), inspect, session("chat-b"));
+    await mountWorkspace(bff, "chat-a");
+    expect(
+      screen.getByRole("heading", { name: "Inspect-only sessions", hidden: true }),
+    ).toBeTruthy();
+    screen.getByRole("button", { name: "Chat options" }).focus();
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(await screen.findByRole("heading", { name: "Chat chat-b" })).toBeTruthy();
+    expect(bff.requestsAt("GET", "/api/v1/sessions/inspect/transcript")).toHaveLength(0);
+  });
+
   it("does not treat a broken continuation as the earlier authorization park", async () => {
     const bff = new BffFixture(session("chat-a", "authorizing"));
     const activity = heldStream();

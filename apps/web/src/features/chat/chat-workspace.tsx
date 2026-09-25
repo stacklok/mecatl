@@ -103,7 +103,7 @@ import {
   useUserDisplayName,
 } from "../../lib/profile-preferences";
 import { useAuthRecovery } from "../auth/auth-recovery-context";
-import { useShortcut } from "../shortcuts/shortcut-provider";
+import { useShortcut, useShortcutSuppression } from "../shortcuts/shortcut-provider";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import {
   type AuthorizationHandoff,
@@ -439,9 +439,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   );
   const navigationOrder = useMemo(
     () =>
-      groupSessions(visibleSessionItems, chatFolders.state).flatMap((group) =>
-        group.items.map((session) => session.id),
-      ),
+      groupSessions(
+        visibleSessionItems.filter((session) => !isInspectOnlySession(session)),
+        chatFolders.state,
+      ).flatMap((group) => group.items.map((session) => session.id)),
     [chatFolders.state, visibleSessionItems],
   );
   const latestChat = useMemo(
@@ -1083,7 +1084,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   }
 
   async function forkStandaloneChat() {
-    if (!sessionId || !displayedDetail?.model) return;
+    if (!sessionId || !selectedSession?.capabilities.fork || !displayedDetail?.model) return;
     setError(undefined);
     setNotice("Forking this conversation…");
     try {
@@ -1104,7 +1105,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   }
 
   async function clearStandaloneChat() {
-    if (!sessionId) return;
+    if (!sessionId || !selectedSession?.capabilities.fork) return;
     setError(undefined);
     setNotice("Clearing this conversation…");
     try {
@@ -1399,6 +1400,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     action: ComposerEnterAction,
     images: ImageAttachment[],
   ) {
+    if (sessionId && !selectedSession?.capabilities.publicChat) return false;
     if (recovery.phase !== "ready") {
       setNotice("Verify your sign-in before sending this draft.");
       return false;
@@ -2268,8 +2270,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (selectedSession && isProvenChatSession(selectedSession)) void clearStandaloneChat();
   });
   useShortcut("chat.expandDetails", () => setExpandDetails(!expandDetails));
+  useShortcutSuppression(inspectionOpen || Boolean(confirmPrompt) || Boolean(textPrompt));
   useShortcut("close.esc", () => {
-    if (contentPreview) setContentPreview(undefined);
+    const selection = window.getSelection();
+    if (selectionAction || selection?.toString()) {
+      selection?.removeAllRanges();
+      setSelectionAction(undefined);
+    } else if (approval) {
+      if (!controlPending) void respondToApproval("deny");
+    } else if (contentPreview) setContentPreview(undefined);
     else if (sidebarOpen) setSidebarOpen(false);
     else if (isRunning) void stopRun();
   });
@@ -2450,14 +2459,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                     Copy session ID
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    disabled={forkSession.isPending || !displayedDetail?.model}
+                    disabled={
+                      forkSession.isPending ||
+                      !displayedDetail?.model ||
+                      !selectedSession?.capabilities.fork
+                    }
                     onSelect={() => void forkStandaloneChat()}
                   >
                     <GitFork aria-hidden="true" />
                     Fork chat
                   </DropdownMenuItem>
                   <DropdownMenuItem
-                    disabled={clearSession.isPending}
+                    disabled={clearSession.isPending || !selectedSession?.capabilities.fork}
                     onSelect={() => void clearStandaloneChat()}
                   >
                     <Eraser aria-hidden="true" />
@@ -2758,7 +2771,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             <ChatSessionControls
               compacting={compactSession.isPending}
               detail={displayedDetail}
-              disabled={isRunning}
+              disabled={isRunning || !selectedSession?.capabilities.publicChat}
               forking={forkSession.isPending}
               modePending={setMode.isPending}
               models={models}
@@ -2775,7 +2788,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           />
           <ChatComposer
             configuration={sessionId ? undefined : draftConfiguration}
-            disabled={createSession.isPending}
+            disabled={
+              createSession.isPending ||
+              Boolean(sessionId && !selectedSession?.capabilities.publicChat)
+            }
             imageAttachmentsSupported={imageAttachmentsSupported}
             models={models}
             onConfigurationChange={setDraftConfiguration}
@@ -2794,6 +2810,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               !(statusFacts.phase === "closed" && controlTarget(runTarget, sessionId)) &&
               !watchable &&
               !createSession.isPending &&
+              (!sessionId || selectedSession?.capabilities.publicChat === true) &&
               (!sessionId || (Boolean(selectedSession) && sessionDetail.isSuccess))
             }
             seedContext={seedContext}
