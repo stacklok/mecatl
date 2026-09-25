@@ -43,6 +43,12 @@ service BrokerService {
   rpc AuthorizationStatus(AuthorizationStatusRequest) returns (AuthorizationStatusResponse);
   // CancelAuthorization cancels a ref; retry/replay remains process- and lease-bound.
   rpc CancelAuthorization(CancelAuthorizationRequest) returns (CancelAuthorizationResponse);
+  // BeginWorkspaceEnrollment starts eligible attachment pre-prompt enrollment.
+  rpc BeginWorkspaceEnrollment(BeginWorkspaceEnrollmentRequest) returns (BeginWorkspaceEnrollmentResponse);
+  // ObserveWorkspaceEnrollment reads an exact enrollment ref without renewing its lease.
+  rpc ObserveWorkspaceEnrollment(ObserveWorkspaceEnrollmentRequest) returns (ObserveWorkspaceEnrollmentResponse);
+  // CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
+  rpc CancelWorkspaceEnrollment(CancelWorkspaceEnrollmentRequest) returns (CancelWorkspaceEnrollmentResponse);
 }
 
 // BrokerErrorReason is the closed structured reason vocabulary in BrokerErrorDetail.
@@ -93,6 +99,8 @@ message AttachResponse {
   repeated ToolDescriptor tools = 4;
   // Current random broker incarnation to pin; stale values are rejected.
   string broker_incarnation = 5;
+  // Whether pre-prompt workspace enrollment is supported by this attachment.
+  bool workspace_enrollment = 6;
 }
 
 // CommitRequest targets current attachment lifecycle state.
@@ -301,4 +309,64 @@ message CancelAuthorizationRequest {
 message CancelAuthorizationResponse {
   // Unknown outcome values fail closed.
   string outcome = 1;
+}
+
+// WorkspaceRef identifies an expiring attachment-bound pre-prompt enrollment flow.
+message WorkspaceRef {
+  // Opaque sensitive enrollment identity, never a path or durable post-lease ID.
+  string id = 1;
+  // Bitset of external services needed before enrollment is connected.
+  uint32 required_services = 2;
+  // Absolute expiry after which clients must stop using this ref.
+  google.protobuf.Timestamp expires_at = 3;
+}
+// BeginWorkspaceEnrollmentRequest starts enrollment for an eligible attachment.
+message BeginWorkspaceEnrollmentRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// BeginWorkspaceEnrollmentResponse supplies opaque ref plus browser presentation.
+message BeginWorkspaceEnrollmentResponse {
+  // Attachment-bound opaque enrollment ref.
+  WorkspaceRef ref = 1;
+  // Valid UTF-8 sensitive browser URL, not a filesystem location.
+  string url = 2;
+}
+// ObserveWorkspaceEnrollmentRequest reads an exact enrollment before prompting.
+message ObserveWorkspaceEnrollmentRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque enrollment ref.
+  WorkspaceRef ref = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// ObserveWorkspaceEnrollmentResponse reports enrollment status and resulting tools.
+message ObserveWorkspaceEnrollmentResponse {
+  // Authoritative ref echo, including expiry.
+  WorkspaceRef ref = 1;
+  // Validated enrollment status; unknown values fail closed.
+  string status = 2;
+  // Descriptor snapshot when connected.
+  repeated ToolDescriptor tools = 3;
+}
+// CancelWorkspaceEnrollmentRequest cancels exact pre-prompt enrollment.
+message CancelWorkspaceEnrollmentRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque enrollment ref.
+  WorkspaceRef ref = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// CancelWorkspaceEnrollmentResponse reports final enrollment status and tools.
+message CancelWorkspaceEnrollmentResponse {
+  // Authoritative ref echo, including expiry.
+  WorkspaceRef ref = 1;
+  // Validated final status; unknown values fail closed.
+  string status = 2;
+  // Descriptor snapshot if final state is connected.
+  repeated ToolDescriptor tools = 3;
 }

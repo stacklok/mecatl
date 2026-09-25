@@ -19,17 +19,20 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BrokerService_Attach_FullMethodName               = "/mecatl.broker.v1.BrokerService/Attach"
-	BrokerService_Commit_FullMethodName               = "/mecatl.broker.v1.BrokerService/Commit"
-	BrokerService_Abort_FullMethodName                = "/mecatl.broker.v1.BrokerService/Abort"
-	BrokerService_Close_FullMethodName                = "/mecatl.broker.v1.BrokerService/Close"
-	BrokerService_Delete_FullMethodName               = "/mecatl.broker.v1.BrokerService/Delete"
-	BrokerService_Execute_FullMethodName              = "/mecatl.broker.v1.BrokerService/Execute"
-	BrokerService_RequestAuthorization_FullMethodName = "/mecatl.broker.v1.BrokerService/RequestAuthorization"
-	BrokerService_AbortAuthorization_FullMethodName   = "/mecatl.broker.v1.BrokerService/AbortAuthorization"
-	BrokerService_PresentAuthorization_FullMethodName = "/mecatl.broker.v1.BrokerService/PresentAuthorization"
-	BrokerService_AuthorizationStatus_FullMethodName  = "/mecatl.broker.v1.BrokerService/AuthorizationStatus"
-	BrokerService_CancelAuthorization_FullMethodName  = "/mecatl.broker.v1.BrokerService/CancelAuthorization"
+	BrokerService_Attach_FullMethodName                     = "/mecatl.broker.v1.BrokerService/Attach"
+	BrokerService_Commit_FullMethodName                     = "/mecatl.broker.v1.BrokerService/Commit"
+	BrokerService_Abort_FullMethodName                      = "/mecatl.broker.v1.BrokerService/Abort"
+	BrokerService_Close_FullMethodName                      = "/mecatl.broker.v1.BrokerService/Close"
+	BrokerService_Delete_FullMethodName                     = "/mecatl.broker.v1.BrokerService/Delete"
+	BrokerService_Execute_FullMethodName                    = "/mecatl.broker.v1.BrokerService/Execute"
+	BrokerService_RequestAuthorization_FullMethodName       = "/mecatl.broker.v1.BrokerService/RequestAuthorization"
+	BrokerService_AbortAuthorization_FullMethodName         = "/mecatl.broker.v1.BrokerService/AbortAuthorization"
+	BrokerService_PresentAuthorization_FullMethodName       = "/mecatl.broker.v1.BrokerService/PresentAuthorization"
+	BrokerService_AuthorizationStatus_FullMethodName        = "/mecatl.broker.v1.BrokerService/AuthorizationStatus"
+	BrokerService_CancelAuthorization_FullMethodName        = "/mecatl.broker.v1.BrokerService/CancelAuthorization"
+	BrokerService_BeginWorkspaceEnrollment_FullMethodName   = "/mecatl.broker.v1.BrokerService/BeginWorkspaceEnrollment"
+	BrokerService_ObserveWorkspaceEnrollment_FullMethodName = "/mecatl.broker.v1.BrokerService/ObserveWorkspaceEnrollment"
+	BrokerService_CancelWorkspaceEnrollment_FullMethodName  = "/mecatl.broker.v1.BrokerService/CancelWorkspaceEnrollment"
 )
 
 // BrokerServiceClient is the client API for BrokerService service.
@@ -73,6 +76,12 @@ type BrokerServiceClient interface {
 	AuthorizationStatus(ctx context.Context, in *AuthorizationStatusRequest, opts ...grpc.CallOption) (*AuthorizationStatusResponse, error)
 	// CancelAuthorization cancels a ref; retry/replay remains process- and lease-bound.
 	CancelAuthorization(ctx context.Context, in *CancelAuthorizationRequest, opts ...grpc.CallOption) (*CancelAuthorizationResponse, error)
+	// BeginWorkspaceEnrollment starts eligible attachment pre-prompt enrollment.
+	BeginWorkspaceEnrollment(ctx context.Context, in *BeginWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*BeginWorkspaceEnrollmentResponse, error)
+	// ObserveWorkspaceEnrollment reads an exact enrollment ref without renewing its lease.
+	ObserveWorkspaceEnrollment(ctx context.Context, in *ObserveWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*ObserveWorkspaceEnrollmentResponse, error)
+	// CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
+	CancelWorkspaceEnrollment(ctx context.Context, in *CancelWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*CancelWorkspaceEnrollmentResponse, error)
 }
 
 type brokerServiceClient struct {
@@ -193,6 +202,36 @@ func (c *brokerServiceClient) CancelAuthorization(ctx context.Context, in *Cance
 	return out, nil
 }
 
+func (c *brokerServiceClient) BeginWorkspaceEnrollment(ctx context.Context, in *BeginWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*BeginWorkspaceEnrollmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BeginWorkspaceEnrollmentResponse)
+	err := c.cc.Invoke(ctx, BrokerService_BeginWorkspaceEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) ObserveWorkspaceEnrollment(ctx context.Context, in *ObserveWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*ObserveWorkspaceEnrollmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ObserveWorkspaceEnrollmentResponse)
+	err := c.cc.Invoke(ctx, BrokerService_ObserveWorkspaceEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) CancelWorkspaceEnrollment(ctx context.Context, in *CancelWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*CancelWorkspaceEnrollmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelWorkspaceEnrollmentResponse)
+	err := c.cc.Invoke(ctx, BrokerService_CancelWorkspaceEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BrokerServiceServer is the server API for BrokerService service.
 // All implementations must embed UnimplementedBrokerServiceServer
 // for forward compatibility.
@@ -234,6 +273,12 @@ type BrokerServiceServer interface {
 	AuthorizationStatus(context.Context, *AuthorizationStatusRequest) (*AuthorizationStatusResponse, error)
 	// CancelAuthorization cancels a ref; retry/replay remains process- and lease-bound.
 	CancelAuthorization(context.Context, *CancelAuthorizationRequest) (*CancelAuthorizationResponse, error)
+	// BeginWorkspaceEnrollment starts eligible attachment pre-prompt enrollment.
+	BeginWorkspaceEnrollment(context.Context, *BeginWorkspaceEnrollmentRequest) (*BeginWorkspaceEnrollmentResponse, error)
+	// ObserveWorkspaceEnrollment reads an exact enrollment ref without renewing its lease.
+	ObserveWorkspaceEnrollment(context.Context, *ObserveWorkspaceEnrollmentRequest) (*ObserveWorkspaceEnrollmentResponse, error)
+	// CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
+	CancelWorkspaceEnrollment(context.Context, *CancelWorkspaceEnrollmentRequest) (*CancelWorkspaceEnrollmentResponse, error)
 	mustEmbedUnimplementedBrokerServiceServer()
 }
 
@@ -276,6 +321,15 @@ func (UnimplementedBrokerServiceServer) AuthorizationStatus(context.Context, *Au
 }
 func (UnimplementedBrokerServiceServer) CancelAuthorization(context.Context, *CancelAuthorizationRequest) (*CancelAuthorizationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelAuthorization not implemented")
+}
+func (UnimplementedBrokerServiceServer) BeginWorkspaceEnrollment(context.Context, *BeginWorkspaceEnrollmentRequest) (*BeginWorkspaceEnrollmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BeginWorkspaceEnrollment not implemented")
+}
+func (UnimplementedBrokerServiceServer) ObserveWorkspaceEnrollment(context.Context, *ObserveWorkspaceEnrollmentRequest) (*ObserveWorkspaceEnrollmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ObserveWorkspaceEnrollment not implemented")
+}
+func (UnimplementedBrokerServiceServer) CancelWorkspaceEnrollment(context.Context, *CancelWorkspaceEnrollmentRequest) (*CancelWorkspaceEnrollmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelWorkspaceEnrollment not implemented")
 }
 func (UnimplementedBrokerServiceServer) mustEmbedUnimplementedBrokerServiceServer() {}
 func (UnimplementedBrokerServiceServer) testEmbeddedByValue()                       {}
@@ -496,6 +550,60 @@ func _BrokerService_CancelAuthorization_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BrokerService_BeginWorkspaceEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BeginWorkspaceEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).BeginWorkspaceEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_BeginWorkspaceEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).BeginWorkspaceEnrollment(ctx, req.(*BeginWorkspaceEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_ObserveWorkspaceEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ObserveWorkspaceEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).ObserveWorkspaceEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_ObserveWorkspaceEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).ObserveWorkspaceEnrollment(ctx, req.(*ObserveWorkspaceEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_CancelWorkspaceEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelWorkspaceEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).CancelWorkspaceEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_CancelWorkspaceEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).CancelWorkspaceEnrollment(ctx, req.(*CancelWorkspaceEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BrokerService_ServiceDesc is the grpc.ServiceDesc for BrokerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -546,6 +654,18 @@ var BrokerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelAuthorization",
 			Handler:    _BrokerService_CancelAuthorization_Handler,
+		},
+		{
+			MethodName: "BeginWorkspaceEnrollment",
+			Handler:    _BrokerService_BeginWorkspaceEnrollment_Handler,
+		},
+		{
+			MethodName: "ObserveWorkspaceEnrollment",
+			Handler:    _BrokerService_ObserveWorkspaceEnrollment_Handler,
+		},
+		{
+			MethodName: "CancelWorkspaceEnrollment",
+			Handler:    _BrokerService_CancelWorkspaceEnrollment_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
