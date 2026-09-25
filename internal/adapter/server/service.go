@@ -2734,6 +2734,7 @@ func (s *Service) CompatibilityInfo(ctx context.Context) *mecatlv1.GetCompatibil
 // the advertisement and the refusal from disagreeing.
 func (s *Service) featureScope() FeatureScope {
 	return FeatureScope{
+		ExactPlanAskControl:      s.cfg.EventLog != nil,
 		ClientMCPOnCreate:        s.cfg.ClientMCPOnCreate,
 		SessionActivityInventory: port.SupportsActivityProjection(s.cfg.Store),
 	}
@@ -4706,6 +4707,9 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	}
 	if err := admitRunPurpose(sess, purpose); err != nil {
 		return nil, err
+	}
+	if serverOwnedPlanContinuation && s.cfg.EventLog == nil {
+		return nil, ErrNoEventLog
 	}
 	if _, pending := sess.FailedStepRetryPending(); pending {
 		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)

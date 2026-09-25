@@ -34,7 +34,7 @@ func exactPlanService(t *testing.T, store *memstore.Store, llm *mockllm.Provider
 	cat := tool.NewCatalog()
 	cat.MustRegister(agent.NewPresentPlanTool())
 	eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model", Interactive: true, Store: store})
-	cfg := server.Config{Engine: eng, Store: store, LeaseOwner: "exact-plan-test", LeaseTTL: time.Hour, LeaseRenewInterval: 30 * time.Minute, Now: func() time.Time { return time.Unix(0, 0) }}
+	cfg := server.Config{Engine: eng, Store: store, EventLog: memstore.NewEventLog(), LeaseOwner: "exact-plan-test", LeaseTTL: time.Hour, LeaseRenewInterval: 30 * time.Minute, Now: func() time.Time { return time.Unix(0, 0) }}
 	if lease != nil {
 		cfg.SessionLease = lease
 	}
@@ -69,6 +69,50 @@ func waitExactPlanProceed(t *testing.T, svc *server.Service, id session.SessionI
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("approved plan did not complete exactly one fresh proceed run")
+}
+
+// TestADR_0362_ExactPlanControlRequiresDurableEventLog keeps a deployment
+// without durable failure recording from accepting a server-owned plan verdict.
+func TestADR_0362_ExactPlanControlRequiresDurableEventLog(t *testing.T) {
+	store := memstore.New()
+	parked := makePlanControlSession(t, "exact-plan-no-event-log")
+	if err := store.Save(t.Context(), parked); err != nil {
+		t.Fatal(err)
+	}
+	llm := mockllm.New(mockllm.TextTurn("must not execute"))
+	cat := tool.NewCatalog()
+	cat.MustRegister(agent.NewPresentPlanTool())
+	eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model", Interactive: true, Store: store})
+	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	if containsString(svc.CompatibilityInfo(t.Context()).GetFeatures(), server.FeatureExactPlanAskControl) {
+		t.Fatal("exact plan control advertised without durable failure recording")
+	}
+	if _, err := svc.ResolvePlanAsk(t.Context(), parked.ID, parked.RunID(), "plan-ask", session.VerdictAllowOnce); !errors.Is(err, server.ErrNoEventLog) {
+		t.Fatalf("restored exact verdict without EventLog = %v, want ErrNoEventLog", err)
+	}
+	got, err := svc.GetSession(t.Context(), parked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, ok := got.PendingAsk()
+	if got.State != session.StateAwaiting || !ok || ask.AskID != "plan-ask" || got.RunID() != parked.RunID() || llm.Calls() != 0 {
+		t.Fatalf("refused verdict changed restored ask: state=%s pending=%+v ok=%t run=%q model calls=%d", got.State, ask, ok, got.RunID(), llm.Calls())
+	}
+
+	fresh, err := svc.CreateSession(t.Context(), session.ModePlan, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartInteractiveRunContentWithPlanContinuation(t.Context(), fresh.ID, "make a plan", nil); !errors.Is(err, server.ErrNoEventLog) {
+		t.Fatalf("opted-in run without EventLog = %v, want ErrNoEventLog", err)
+	}
+	if llm.Calls() != 0 {
+		t.Fatalf("refused opted-in run reached model %d times", llm.Calls())
+	}
 }
 
 // TestADR_0362_LiveAndRestoredExactPlanAsk proves exact authority and
@@ -324,7 +368,7 @@ func TestStudioPlanAsk_Scenario2_DuplicateAndStaleVerdicts(t *testing.T) {
 		cat := tool.NewCatalog()
 		cat.MustRegister(agent.NewPresentPlanTool())
 		eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model", Interactive: true, Store: store})
-		svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, OwnershipEnforced: true, Now: func() time.Time { return time.Unix(0, 0) }})
+		svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: memstore.NewEventLog(), OwnershipEnforced: true, Now: func() time.Time { return time.Unix(0, 0) }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -677,7 +721,7 @@ func TestStudioPlanAsk_ContinuationOwnershipAndFailure(t *testing.T) {
 		release := make(chan struct{})
 		var releaseOnce sync.Once
 		var admissions atomic.Int32
-		svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, AwaitContextWindow: func(context.Context, string, string) error {
+		svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: memstore.NewEventLog(), AwaitContextWindow: func(context.Context, string, string) error {
 			if admissions.Add(1) == 2 {
 				close(entered)
 				<-release
@@ -927,7 +971,7 @@ func TestADR_0362_HeadlessAutoApproveUsesExactOwnership(t *testing.T) {
 		LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(allowRules(), nil),
 		Model: "test-model", Interactive: false, PlanModeAutoApprove: true, Store: store,
 	})
-	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, PlanModeAutoApprove: true})
+	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: memstore.NewEventLog(), PlanModeAutoApprove: true})
 	if err != nil {
 		t.Fatal(err)
 	}

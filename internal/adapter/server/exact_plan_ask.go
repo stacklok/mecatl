@@ -43,6 +43,11 @@ func (s *Service) ResolvePlanAsk(ctx context.Context, id session.SessionID, expe
 	if _, err := s.GetSession(ctx, id); err != nil {
 		return RunAskAcknowledgement{}, err
 	}
+	// An accepted allow may later need to report a known continuation-start
+	// failure. Refuse before consuming the ask when that report cannot be durable.
+	if s.cfg.EventLog == nil {
+		return RunAskAcknowledgement{}, ErrNoEventLog
+	}
 	generation := s.captureRunEntryGeneration(id)
 	if s.draining.Load() {
 		return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
@@ -296,6 +301,13 @@ func (s *Service) recordPlanContinuationFailure(ctx context.Context, id session.
 		},
 	}
 	logCtx := context.WithoutCancel(ctx)
+	// appendEvent intentionally treats a nil EventLog as a no-op for ordinary
+	// relay events. A continuation failure may only be published after a real
+	// durable append, so this caller must reject the nil-log case explicitly.
+	if s.cfg.EventLog == nil {
+		s.cfg.Diagnostics.Log(logCtx, port.LevelWarn, "plan continuation failure event could not be recorded", "session", string(id))
+		return
+	}
 	if err := s.appendEvent(logCtx, id, ev); err != nil {
 		// A lost lease forbids both durable mutation and an unrecorded claim of
 		// failure. The successor owner may still start the continuation.
