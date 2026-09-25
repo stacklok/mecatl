@@ -75,7 +75,7 @@ func (t TeamCards) Start(callID string, start TeamStart) bool {
 	start.Lanes = cloneTeamLanes(start.Lanes)
 	switch payload := c.cards[i].payload.(type) {
 	case ToolCardSnapshot:
-		if payload.Call.Name != "Team" {
+		if payload.Resolved || payload.Call.Name != "Team" {
 			return false
 		}
 		return c.replace(i, TeamCardSnapshot{

@@ -102,6 +102,53 @@ func TestMecatuiTypedScrollbackModel_Scenario1_InvalidTransitionsAreNoOps(t *tes
 	}
 }
 
+func TestMecatuiTypedScrollbackModel_Scenario2_LateDelegationStartDoesNotSpecializeResolvedTool(t *testing.T) {
+	tests := []struct {
+		name  string
+		call  ToolCall
+		start func(*Conversation) bool
+	}{
+		{
+			name: "subagent",
+			call: ToolCall{ID: "sub", Name: "Subagent"},
+			start: func(c *Conversation) bool {
+				return c.Subagents().Start("sub", SubagentStart{ChildID: "child"})
+			},
+		},
+		{
+			name: "team",
+			call: ToolCall{ID: "team", Name: "Team"},
+			start: func(c *Conversation) bool {
+				return c.Teams().Start("team", TeamStart{TeamID: "team-1"})
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var c Conversation
+			c.Tools().Add(test.call)
+			result := ToolResult{Body: "complete"}
+			if !c.Tools().Resolve(test.call.ID, result) {
+				t.Fatal("resolve tool")
+			}
+			before := c.SnapshotAt(0)
+
+			if test.start(&c) {
+				t.Fatal("late delegation start specialized resolved tool")
+			}
+			after := c.SnapshotAt(0)
+			tool, ok := after.Payload.(ToolCardSnapshot)
+			if !ok || !tool.Resolved || !reflect.DeepEqual(tool.Result, result) {
+				t.Fatalf("payload = %#v, want resolved ordinary tool with %#v", after.Payload, result)
+			}
+			if after.Payload.Kind() != before.Payload.Kind() || after.Revision != before.Revision {
+				t.Fatalf("kind/revision = %v/%d, want %v/%d", after.Payload.Kind(), after.Revision, before.Payload.Kind(), before.Revision)
+			}
+		})
+	}
+}
+
 func TestConversationMetadataAtAndSnapshotForCall(t *testing.T) {
 	var c Conversation
 	c.Messages().AddUser(UserInput{Text: "hello"})

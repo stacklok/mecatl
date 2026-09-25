@@ -81,7 +81,7 @@ func (s SubagentCards) Start(callID string, start SubagentStart) bool {
 	start = cloneSubagentStart(start)
 	switch payload := c.cards[i].payload.(type) {
 	case ToolCardSnapshot:
-		if payload.Call.Name != "Subagent" {
+		if payload.Resolved || payload.Call.Name != "Subagent" {
 			return false
 		}
 		return c.replace(i, SubagentCardSnapshot{
