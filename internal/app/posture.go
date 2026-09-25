@@ -260,6 +260,9 @@ func foldOperatorPosture(cfg Config) Config {
 		return cfg
 	}
 	cfg.Posture = parsePosture(yamlPosture)
+	cfg.diag().Log(context.Background(), port.LevelWarn,
+		"posture: the settings.yaml posture: key is DEPRECATED; use permissionMode: instead (ADR 0365)",
+		"posture", yamlPosture)
 	return cfg
 }
 
