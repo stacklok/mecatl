@@ -2483,7 +2483,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	// idempotent on this same key, so a retry cannot allocate a second environment.
 	request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
 	var retryRequest *createRequest
-	if !generatedID {
+	if !generatedID || s.cfg.MCPBroker != nil || s.cfg.SessionContextEngine != nil {
 		retryRequest = &request
 		existing, release, err := s.reserveSessionID(ctx, opts.id, owner, request)
 		if err != nil {

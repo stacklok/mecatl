@@ -3270,9 +3270,6 @@ func remoteSessionConfiguration(cfg Config, profile server.SessionProfile, works
 	if !cfg.RemoteExecution || profile == server.ProfileNoFS {
 		return workspace, false, instructions, policy
 	}
-	if variants, ok := instructions.(sessionInstructionSet); ok {
-		instructions = variants.remote
-	}
 	if variants, ok := policy.(sessionPermissionPolicies); ok {
 		policy = variants.remote
 	}
@@ -4566,15 +4563,6 @@ func (p sessionPermissionPolicies) Evaluate(ctx context.Context, id session.Sess
 }
 func (p sessionPermissionPolicies) Learn(id session.SessionID, call session.ToolCall) {
 	p.standard.Learn(id, call)
-}
-
-type sessionInstructionSet struct {
-	standard prompt.InstructionAssembler
-	remote   prompt.InstructionAssembler
-}
-
-func (s sessionInstructionSet) Assemble(ctx context.Context) ([]session.Message, error) {
-	return s.standard.Assemble(ctx)
 }
 
 // buildInstructionAssembler composes the ephemeral turn-0 instruction fragments:
@@ -8611,13 +8599,12 @@ func applyRedisWorkspacePosture(pc prompt.Config, enabled bool) prompt.Config {
 
 const workspaceRootForPrompt = "/workspace"
 
-const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills, commands, schedules, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
+const remoteExecutionPostureNote = "This session uses a persistent remote Kubernetes workspace. Use the filesystem tools and foreground Shell for work in /workspace. Local project instructions, rules, project-scoped skills and commands, schedules, SkillDraft, Parallel, Team, and Subagent delegation are unavailable; explicitly selected independent commands, operator-global skills, MCP, memory, and web tools remain available. Never assume harness-local files are part of this workspace."
 
 func applyRemoteExecutionPosture(deps agent.Deps, enabled bool) agent.Deps {
 	if !enabled {
 		return deps
 	}
-	deps.CommandExpander = prompt.NoopExpander{}
 	pc := &deps.PromptConfig
 	pc.Env.Cwd, pc.Env.Shell, pc.Env.GitStatus = workspaceRootForPrompt, "remote foreground shell", ""
 	if pc.Role == "" {

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -34,10 +34,15 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
-type recordingExecutor struct{ calls atomic.Int64 }
+type recordingExecutor struct {
+	mu         sync.Mutex
+	operations []executionenv.Operation
+}
 
 func (e *recordingExecutor) Execute(_ context.Context, _ string, req executionenv.ExecutorRequest) (executionenv.ExecutorResponse, error) {
-	e.calls.Add(1)
+	e.mu.Lock()
+	e.operations = append(e.operations, req.Operation)
+	e.mu.Unlock()
 	switch req.Operation {
 	case executionenv.OpFileResolveAuthority:
 		return executionenv.ExecutorResponse{FileResponse: executionenv.FileResponse{AuthorityTarget: "/workspace/main.go", AuthorityWorkspace: "/workspace"}}, nil
@@ -143,8 +148,12 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 	if !utf8.ValidString(streamedShellResult) || !strings.Contains(streamedShellResult, "out�") || !strings.Contains(streamedShellResult, "err�") || modelShellResult != streamedShellResult {
 		t.Fatalf("private protobuf bytes were not repaired identically for client/model: stream=%q model=%q", streamedShellResult, modelShellResult)
 	}
-	if executor.calls.Load() != 2 {
-		t.Fatalf("executor calls=%d, want read+shell", executor.calls.Load())
+	executor.mu.Lock()
+	operations := append([]executionenv.Operation(nil), executor.operations...)
+	executor.mu.Unlock()
+	wantOperations := []executionenv.Operation{executionenv.OpFileRead, executionenv.OpCommandStart}
+	if !reflect.DeepEqual(operations, wantOperations) {
+		t.Fatalf("executor operations=%v, want %v", operations, wantOperations)
 	}
 	if _, err := svc.StartRunContent(ctx, sess.ID, "early", nil); err == nil {
 		t.Fatal("replacement run acquired before relay release")

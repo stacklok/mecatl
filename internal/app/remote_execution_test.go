@@ -194,9 +194,17 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 	writeSkill(t, filepath.Join(xdg, "mecatl/skills"), "operator-skill", "Operator skill", "OPERATOR_SKILL_BODY")
 	localProject := t.TempDir()
 	initTestRepo(t, localProject)
-	localSnapshotSeen := false
+	if err := os.WriteFile(filepath.Join(localProject, "AGENTS.md"), []byte("LOCAL_PROJECT_MARKER_DO_NOT_LOAD\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeProjectRule(t, localProject, "project-rule", "LOCAL_RULE_MARKER_DO_NOT_LOAD\n")
+	localSnapshotSeen, localProjectSeen, localRuleSeen := false, false, false
 	localLLM := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
 		localSnapshotSeen = strings.Contains(req.System.Render(), "initial commit") && strings.Contains(req.System.Render(), "<git-status>")
+		for _, message := range req.Messages {
+			localProjectSeen = localProjectSeen || strings.Contains(message.Text, "LOCAL_PROJECT_MARKER")
+			localRuleSeen = localRuleSeen || strings.Contains(message.Text, "LOCAL_RULE_MARKER")
+		}
 	})}, mockllm.TextTurn("local done"))
 	local, err := buildIsolated(t, t.Context(), Config{MockProvider: localLLM, Workspace: localProject, TrustProject: true, NoSoul: true, Shell: "/bin/sh"})
 	if err != nil {
@@ -214,8 +222,8 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 	for range localRun.Events() {
 	}
 	local.Service.FinishRun(localSession.ID, localRun)
-	if !localSnapshotSeen {
-		t.Fatal("local factory omitted the test repository's Git snapshot")
+	if !localSnapshotSeen || !localProjectSeen || !localRuleSeen {
+		t.Fatal("local factory omitted the positive-control Git snapshot, instructions, or rules")
 	}
 	ws := memfs.NewWorkspace(localProject)
 	if _, err := ws.CreateFile(context.Background(), "AGENTS.md", []byte("REMOTE_PROJECT_MARKER_DO_NOT_LOAD")); err != nil {
@@ -242,10 +250,6 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 		mockllm.TextTurn(""),
 		mockllm.TextTurn("done"),
 	)
-	if err := os.WriteFile(filepath.Join(localProject, "AGENTS.md"), []byte("LOCAL_PROJECT_MARKER_DO_NOT_LOAD\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	writeProjectRule(t, localProject, "project-rule", "LOCAL_RULE_MARKER_DO_NOT_LOAD\n")
 	writeSkill(t, filepath.Join(localProject, ".mecatl/skills"), "project-only", "LOCAL_SKILL_MARKER_DO_NOT_LOAD", "LOCAL_SKILL_BODY_DO_NOT_LOAD")
 	commandDir := filepath.Join(localProject, ".claude", "commands")
 	if err := os.MkdirAll(commandDir, 0o700); err != nil {
@@ -265,8 +269,8 @@ func TestRemoteExecutionRealFactoryCarriesPostureAndAttenuatedCatalog(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if commands, err := built.Service.ListCommandsForSession(ctx, sess.ID); err != nil || len(commands) != 0 {
-		t.Fatalf("remote command discovery fell back locally: %v, %v", commands, err)
+	if commands, err := built.Service.ListCommandsForSession(ctx, sess.ID); err != nil || len(commands) != 1 || commands[0].Name != "operator-skill" {
+		t.Fatalf("remote command discovery must retain only the operator-global skill: %v, %v", commands, err)
 	}
 	if _, err := built.Service.ListWorktreesForSession(ctx, sess.ID); !errors.Is(err, server.ErrPlacementUnavailable) {
 		t.Fatalf("remote worktree discovery did not reject unsupported placement: %v", err)
