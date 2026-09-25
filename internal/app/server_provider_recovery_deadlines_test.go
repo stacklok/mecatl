@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/scheduler"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 	"github.com/stacklok/mecatl/provider/openai"
@@ -101,7 +101,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 	})
 	for _, policy := range []string{"warn", "fail"} {
 		for _, shorter := range []bool{false, true} {
-			name := policy + "/default30s"
+			name := policy + "/reviewer deadline"
 			if shorter {
 				name = policy + "/shorter caller"
 			}
@@ -139,15 +139,21 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 					return srv.Client().Transport.RoundTrip(r)
 				})}
 				entry := newOpenAICompatEntry(cfg, providerOpenAI, "test", srv.URL+"/v1", openai.WithHTTPClient(client))
-				hooks := buildGuardrailsHooks(cfg, regForTest(entry.provider, providerOpenAI, cfg.Model), entry.provider, providerOpenAI, cfg.Model, hookexec.New(nil), nil)
-				done := make(chan governance.HookOutcome, 1)
+				reviewer := buildGuardrailsActionReviewer(cfg, regForTest(entry.provider, providerOpenAI, cfg.Model), entry.provider, providerOpenAI, nil)
+				req := reviewRequestWithoutEvidence()
+				req.Job = agent.ReviewJobAction
+				req.Event = governance.HookEvent{Phase: governance.PhasePreToolUse, SessionID: "session-1", CallID: "write-1", Tool: "Write", Input: []byte(`{"path":"x","content":"x"}`)}
+				req.EffectiveCall = session.NewToolCall("write-1", "Write", req.Event.Input)
+				req.Caller.Capabilities = []string{"Write"}
+				type reviewOutcome struct {
+					result agent.ToolReviewResult
+					err    error
+				}
+				done := make(chan reviewOutcome, 1)
 				started := time.Now()
 				go func() {
-					out, err := hooks.Run(ctx, governance.HookEvent{Phase: governance.PhasePreToolUse, Tool: "Write", Input: []byte(`{"path":"x","content":"x"}`)})
-					if err != nil {
-						t.Errorf("hook runner: %v", err)
-					}
-					done <- out
+					out, err := reviewer.Review(ctx, req, nil)
+					done <- reviewOutcome{result: out, err: err}
 				}()
 				select {
 				case deadline := <-deadlineSeen:
@@ -156,8 +162,8 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 						if !deadline.Equal(want) {
 							t.Errorf("caller deadline=%v want %v", deadline, want)
 						}
-					} else if delta := deadline.Sub(started); delta < 29*time.Second || delta > 31*time.Second {
-						t.Errorf("auxiliary deadline=%v want 30s", delta)
+					} else if delta := deadline.Sub(started); delta < reviewTotalDeadline-time.Second || delta > reviewTotalDeadline+time.Second {
+						t.Errorf("auxiliary deadline=%v want %s", delta, reviewTotalDeadline)
 					}
 				case <-time.After(2 * time.Second):
 					t.Fatal("guardrail did not call provider")
@@ -167,11 +173,15 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				awaitRecovery(guard, t, probe, "guardrail half-open recovery probe")
 				if !shorter {
 					cancel()
-				} // verify the 30s bound without sleeping for it.
+				} // Verify the reviewer's bound without waiting for it to expire.
 				select {
 				case out := <-done:
-					if out.Block != (policy == "fail") {
-						t.Errorf("guardrail down policy=%s outcome=%+v", policy, out)
+					if out.err == nil || out.result.Assessment != agent.ReviewUnresolved {
+						t.Fatalf("guardrail cancellation result=%+v err=%v", out.result, out.err)
+					}
+					applies, enforce := reviewer.(agent.ReviewPolicyProvider).GuardrailReviewPolicy("Write", agent.ReviewJobAction, true)
+					if !applies || enforce != (policy == "fail") {
+						t.Errorf("guardrail down policy=%s applies=%v enforce=%v", policy, applies, enforce)
 					}
 				case <-guard.Done():
 					cancel()
