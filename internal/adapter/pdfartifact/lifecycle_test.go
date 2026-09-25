@@ -16,10 +16,10 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 )
 
-// TestADR_0360_PDFBytesStayOutsideSessionState examines the Redis snapshot
+// TestADR_0367_PDFBytesStayOutsideSessionState examines the Redis snapshot
 // and event stream after the same externalization used by prompt and tool
 // paths. The probes below confirm that both surfaces catch planted leakage.
-func TestADR_0360_PDFBytesStayOutsideSessionState(t *testing.T) {
+func TestADR_0367_PDFBytesStayOutsideSessionState(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)

@@ -2842,7 +2842,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, fmt.Errorf("build service: %w", err)
 	}
-	modelSwap = svc
 	pdfReconcileClose := startArtifactReconcile(ctx, artifactStore, svc, sessionLease, leaseOwner, cfg.diag())
 
 	// Bootstrap, one-shot startup, picker demand and run admission share the

@@ -79,8 +79,8 @@ func (p pdfReplicaTool) Execute(_ context.Context, call session.ToolCall, _ tool
 
 func pdfReplicaRegistry(provider port.LLMProvider, model string) *providerRegistry {
 	reg := regForTest(provider, providerOpenAI, model)
-	reg.meta = newLiveMetaStore()
-	reg.meta.Swap(map[string][]modelEntry{
+	reg.meta = newMetadataFixture()
+	reg.meta.setMetadataFixture(map[string][]modelEntry{
 		providerOpenAI: {{ID: model, InputModalities: []string{"text", "pdf"}}},
 	})
 	return reg

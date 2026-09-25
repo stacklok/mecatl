@@ -91,8 +91,8 @@ describe("RPC transport catalog", () => {
     expect(transport.calls).toHaveLength(Object.keys(RPC_CATALOG).length);
     expect(transport.calls).toContain("ListGuardrailCoverage");
     expect(transport.calls).toContain("GetGuardrailReviewDetail");
-    expect(transport.calls).toContain("UploadPdf");
-    expect(transport.calls).toContain("DownloadPdf");
+    expect(transport.calls).toContain("UploadArtifact");
+    expect(transport.calls).toContain("DownloadArtifact");
     expect(transport.calls.sort()).toEqual(
       Object.values(RPC_CATALOG)
         .map(({ method }) => method)

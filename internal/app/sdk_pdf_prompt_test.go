@@ -48,8 +48,8 @@ func TestSDKPDFArtifacts_Scenario1_RejectInvalidOrUnauthorized(t *testing.T) {
 			} else {
 				entry = newAnthropicEntryFor(cfg, tc.id, "test-key", tc.baseURL, newLiveMetaStore(), false)
 			}
-			reg := &providerRegistry{entries: map[string]providerEntry{tc.id: entry}, defaultID: tc.id, defaultModel: model, meta: newLiveMetaStore()}
-			reg.meta.Swap(map[string][]modelEntry{tc.id: {{ID: model, InputModalities: []string{"text", "pdf"}}, {ID: "text-only", InputModalities: []string{"text"}}}})
+			reg := &providerRegistry{entries: map[string]providerEntry{tc.id: entry}, defaultID: tc.id, defaultModel: model, meta: newMetadataFixture()}
+			reg.meta.setMetadataFixture(map[string][]modelEntry{tc.id: {{ID: model, InputModalities: []string{"text", "pdf"}}, {ID: "text-only", InputModalities: []string{"text"}}}})
 			if got := entry.provider.Capabilities().PDF; got != tc.wantPDF {
 				t.Fatalf("initial adapter PDF capability = %t, want %t", got, tc.wantPDF)
 			}
@@ -96,8 +96,8 @@ func TestSDKPDFArtifacts_Scenario1_UploadPromptProvider(t *testing.T) {
 	})}
 	cfg := Config{Model: model, LLMMaxAttempts: 1, artifacts: artifacts}
 	entry := newOpenAICompatEntry(cfg, providerOpenAI, "test-key", "", openai.WithHTTPClient(client))
-	reg := &providerRegistry{entries: map[string]providerEntry{providerOpenAI: entry}, defaultID: providerOpenAI, defaultModel: model, meta: newLiveMetaStore()}
-	reg.meta.Swap(map[string][]modelEntry{providerOpenAI: {{ID: model, InputModalities: []string{"text", "pdf"}}}})
+	reg := &providerRegistry{entries: map[string]providerEntry{providerOpenAI: entry}, defaultID: providerOpenAI, defaultModel: model, meta: newMetadataFixture()}
+	reg.meta.setMetadataFixture(map[string][]modelEntry{providerOpenAI: {{ID: model, InputModalities: []string{"text", "pdf"}}}})
 	reg.remintEntry(providerOpenAI, model)
 	entry, _ = reg.Lookup(providerOpenAI)
 	if got := modelCapability(reg, providerOpenAI, model); !got.PDF {
@@ -165,8 +165,8 @@ func TestSDKPDFArtifacts_Scenario1_SystemPromptAffordance(t *testing.T) {
 				mockllm.WithRequestObserver(func(req port.LLMRequest) { captured, invoked = req, true }),
 			}, mockllm.TextTurn("ok"))
 			reg := regForTest(provider, providerOpenAI, model)
-			meta := newLiveMetaStore()
-			meta.Swap(map[string][]modelEntry{providerOpenAI: {{ID: model, InputModalities: tc.modalities}}})
+			meta := newMetadataFixture()
+			meta.setMetadataFixture(map[string][]modelEntry{providerOpenAI: {{ID: model, InputModalities: tc.modalities}}})
 			reg.meta = meta
 			factory := sessionEngineFactory(Config{Model: model, artifacts: &pdfLifecycleFixture{}}, reg, provider, memstore.New(),
 				permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
