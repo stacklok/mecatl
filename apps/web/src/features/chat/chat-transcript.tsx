@@ -63,7 +63,11 @@ function TranscriptRow({
   userName,
 }: TranscriptRowProps) {
   const user = message.role === "user";
-  const label = user ? userName : agentName;
+  const label = message.delivery
+    ? `Scheduled task ${message.delivery.scheduleName}`
+    : user
+      ? userName
+      : agentName;
   const hasContent =
     message.content ||
     message.delivery ||

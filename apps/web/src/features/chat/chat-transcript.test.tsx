@@ -78,7 +78,7 @@ describe("chat transcript", () => {
     expect(html).not.toContain('id="chat-message-empty"');
   });
 
-  it("renders a recorded scheduled delivery as inert plain text", () => {
+  it("TestStudioChatTranscriptComposer_Scenario7_AttributesRecordedDeliveryToTask", () => {
     const html = renderToStaticMarkup(
       <ChatTranscript
         messages={[
@@ -95,9 +95,13 @@ describe("chat transcript", () => {
           },
         ]}
         showToolCalls
+        userName="Sam"
       />,
     );
     expect(html).toContain('data-delivery-note="true"');
+    expect(html).toContain('aria-label="Scheduled task Daily &lt;task&gt; message"');
+    expect(html).toContain(">Scheduled task Daily &lt;task&gt;</h3>");
+    expect(html).not.toContain('aria-label="Sam message"');
     expect(html).toContain("Daily &lt;task&gt;");
     expect(html).toContain("**literal**");
     expect(html).not.toContain("<script");
