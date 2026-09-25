@@ -251386,6 +251386,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790364055327,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b1132929dd9a3d881dbf059fb2b508bd1964b862",
+          "message": "docs: include user-docs in matlatl and use local documentation links (#1934)\n\nCo-authored-by: mecatl <mecatl@users.noreply.github.com>",
+          "timestamp": "2026-09-25T22:44:16+03:00",
+          "tree_id": "f25d36c06820d26e9fb9ec2d2222f6c03930acc9",
+          "url": "https://github.com/stacklok/mecatl/commit/b1132929dd9a3d881dbf059fb2b508bd1964b862"
+        },
+        "date": 1790366172725,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -365105,6 +365139,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790366169615,
+  "lastUpdate": 1790366174053,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
