@@ -141,6 +141,7 @@ describe("shared side panel frame", () => {
     client.setQueryData(getSessionDetailOptions({ path: { sessionId: "thread-1" } }).queryKey, {
       capabilities: { image: false, manualCompaction: false, modelSelection: false },
       id: "thread-1",
+      kind: "main",
       mode: "default",
       state: "idle",
       usage: {

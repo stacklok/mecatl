@@ -136,10 +136,26 @@ function runEvent(
 
 function session(id: string, state = "idle") {
   return {
-    capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+    capabilities: {
+      copyId: true,
+      copyIdReason: "",
+      delete: true,
+      deleteReason: "",
+      fork: true,
+      forkReason: "",
+      inspect: true,
+      inspectReason: "",
+      publicChat: true,
+      publicChatReason: "",
+      rename: true,
+      renameReason: "",
+      viewTranscript: true,
+      viewTranscriptReason: "",
+    },
     createdAt: "2026-09-24T12:00:00.000Z",
     debugTargetSessionId: "",
     id,
+    kind: "main",
     modelId: "test-model",
     state,
     title: `Chat ${id}`,

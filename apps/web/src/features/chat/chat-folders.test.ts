@@ -94,10 +94,26 @@ describe("chat folders", () => {
 
   it("keeps folder order and recency-buckets unfiled chats", () => {
     const session = (id: string, updatedAt: string): SessionSummaryResponse => ({
-      capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+      capabilities: {
+        copyId: true,
+        copyIdReason: "",
+        delete: true,
+        deleteReason: "",
+        fork: true,
+        forkReason: "",
+        inspect: true,
+        inspectReason: "",
+        publicChat: true,
+        publicChatReason: "",
+        rename: true,
+        renameReason: "",
+        viewTranscript: true,
+        viewTranscriptReason: "",
+      },
       createdAt: updatedAt,
       debugTargetSessionId: "",
       id,
+      kind: "main",
       modelId: "",
       state: "idle",
       title: id,

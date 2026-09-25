@@ -185,6 +185,7 @@ import {
   type RunTarget,
   runStreamEnd,
 } from "./run-stream";
+import { isInspectOnlySession, isProvenChatSession, SessionInspection } from "./session-inspection";
 import { ChatsMenuButton, SessionSidebar } from "./session-sidebar";
 import {
   adoptSessionTitle,
@@ -317,11 +318,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const sessions = useQuery(listSessionsOptions());
+  // A row proved during this mounted account/session view survives a transient
+  // inventory poll that omits it. A direct URL starts without this proof.
+  const lastInventoryRow = useRef<SessionSummaryResponse | undefined>(undefined);
   const runtime = useQuery(getRuntimeOptions());
   const runtimeSettings = useQuery(getRuntimeSettingsOptions());
+  const inventorySession =
+    sessions.data?.items.find((item) => item.id === sessionId) ??
+    (lastInventoryRow.current?.id === sessionId ? lastInventoryRow.current : undefined);
+  const provenChat = !sessionId || (inventorySession && isProvenChatSession(inventorySession));
   const transcript = useQuery({
     ...getSessionTranscriptOptions({ path: { sessionId: sessionId ?? "" } }),
-    enabled: Boolean(sessionId),
+    enabled: Boolean(sessionId && provenChat),
   });
   const sessionDetail = useQuery({
     ...getSessionDetailOptions({ path: { sessionId: sessionId ?? "" } }),
@@ -364,6 +372,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   >(undefined);
   const [, setAuthorizationUncertainEpoch] = useState(0);
   const [authorizationBusy, setAuthorizationBusy] = useState<string>();
+  const [inspectionOpen, setInspectionOpen] = useState(false);
   const [selectionAction, setSelectionAction] = useState<SelectionAction>();
   const [confirmPrompt, setConfirmPrompt] = useState<ConfirmPrompt>();
   const [textPrompt, setTextPrompt] = useState<TextPrompt>();
@@ -501,6 +510,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
     setContentPreview(undefined);
+    setInspectionOpen(false);
+    setConfirmPrompt(undefined);
+    setTextPrompt(undefined);
     setSelectionAction(undefined);
     if (!activeRun.current || activeRun.current.sessionId !== sessionId)
       setStatusFacts({ phase: "idle" });
@@ -527,7 +539,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     return () => window.cancelAnimationFrame(frame);
   }, [atTranscriptBottom, messages]);
 
-  const selectedSession = titledSessionItems.find((session) => session.id === sessionId);
+  const selectedSession =
+    titledSessionItems.find((session) => session.id === sessionId) ?? inventorySession;
+  const inspectOnlySelected = Boolean(selectedSession && isInspectOnlySession(selectedSession));
+  const inspectOnlyTarget = inspectOnlySelected ? sessionId : undefined;
+  useEffect(() => {
+    if (inspectOnlyTarget) setInspectionOpen(true);
+  }, [inspectOnlyTarget]);
   const chatStatus = deriveChatStatus({
     ...statusFacts,
     approvals,
@@ -535,8 +553,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   });
 
   useEffect(() => {
-    if (!sessionId || lastInventoryRow.current?.id === sessionId) return;
-    lastInventoryRow.current = sessions.data?.items.find((item) => item.id === sessionId);
+    if (!sessionId) {
+      lastInventoryRow.current = undefined;
+      return;
+    }
+    const row = sessions.data?.items.find((item) => item.id === sessionId);
+    if (row) lastInventoryRow.current = row;
   }, [sessionId, sessions.data?.items]);
 
   // The inventory is the authority for titles and for deciding whether an idle
@@ -553,7 +575,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         if (!result.isSuccess || viewedSessionId.current !== sessionId) return;
         const next = result.data.items.find((item) => item.id === sessionId);
         const previous = lastInventoryRow.current;
-        lastInventoryRow.current = next;
+        if (next) lastInventoryRow.current = next;
         if (
           shouldRefreshTranscriptAfterInventory({
             connected: runtime.data?.connection === "online",
@@ -626,7 +648,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         ) {
           return;
         }
-        if (inventory.isSuccess) lastInventoryRow.current = row;
+        if (row) lastInventoryRow.current = row;
         if (refreshed && !activeRun.current && isActiveSessionState(row?.state)) {
           setReconnectGeneration((current) => current + 1);
         }
@@ -709,7 +731,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         label: model.displayName,
         providerId: model.providerId,
       })) ?? [];
-  const watchable = isActiveSessionState(selectedSession?.state);
+  const watchable =
+    Boolean(selectedSession && isProvenChatSession(selectedSession)) &&
+    isActiveSessionState(selectedSession?.state);
   const settledState = selectedSession?.state ?? sessionDetail.data?.state;
   const settled =
     settledState === "idle" ||
@@ -2234,10 +2258,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (latestChat) void selectSession(latestChat.id);
   });
   useShortcut("chat.copyId", () => {
-    if (sessionId) void navigator.clipboard.writeText(sessionId);
+    if (sessionId && selectedSession?.capabilities.copyId)
+      void navigator.clipboard.writeText(sessionId);
   });
-  useShortcut("chat.fork", () => void forkStandaloneChat());
-  useShortcut("chat.clear", () => void clearStandaloneChat());
+  useShortcut("chat.fork", () => {
+    if (selectedSession && isProvenChatSession(selectedSession)) void forkStandaloneChat();
+  });
+  useShortcut("chat.clear", () => {
+    if (selectedSession && isProvenChatSession(selectedSession)) void clearStandaloneChat();
+  });
   useShortcut("chat.expandDetails", () => setExpandDetails(!expandDetails));
   useShortcut("close.esc", () => {
     if (contentPreview) setContentPreview(undefined);
@@ -2308,444 +2337,495 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         side={sessionListSide}
       />
 
-      <section className="relative flex min-w-0 flex-1 flex-col bg-background">
-        <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
-          <ChatsMenuButton
-            onClick={() => {
-              setSidebarHidden(false);
-              setSidebarOpen(true);
-            }}
-            showOnDesktop={sidebarHidden}
-          />
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+      {sessionId && (!selectedSession || !isProvenChatSession(selectedSession)) ? (
+        <section className="flex min-w-0 flex-1 flex-col bg-background">
+          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
+            <ChatsMenuButton
+              onClick={() => {
+                setSidebarHidden(false);
+                setSidebarOpen(true);
+              }}
+              showOnDesktop={sidebarHidden}
+            />
             <h1 className="truncate text-sm font-semibold">
-              {selectedSession?.title ?? "New chat"}
+              {selectedSession?.title ?? "Loading session…"}
             </h1>
-            {selectedSession?.debugTargetSessionId && (
-              <Badge
-                title="A read-only diagnostic chat; it never modifies its target."
-                variant="info"
-              >
-                <Bug aria-hidden="true" />
-                Debug
-              </Badge>
-            )}
-          </div>
-          <Button
-            aria-label="Open session activity"
-            disabled={!sessionId}
-            onClick={(event) => {
-              activityOpener.current = event.currentTarget;
-              activityOpenerFocus.current = undefined;
-              setActivityFocus(undefined);
-              setActivityFocusRequest((value) => value + 1);
-              setContentPreview({ kind: "activity" });
-            }}
-            ref={sessionActivityControl}
-            size="sm"
-            variant="ghost"
-          >
-            <ListTodo aria-hidden="true" />
-            <span className="hidden sm:inline">Activity</span>
-          </Button>
-          <Button
-            aria-label="Open local canvas"
-            onClick={() => setContentPreview({ kind: "canvas" })}
-            size="sm"
-            variant="ghost"
-          >
-            <NotebookPen aria-hidden="true" />
-            <span className="hidden sm:inline">Canvas</span>
-          </Button>
-          {sessionId && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button aria-label="Chat options" size="icon" variant="ghost">
-                  <MoreHorizontal aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                {usageLines.length > 0 && (
-                  <div className="mb-1 border-b px-2 py-1.5">
-                    <p className="text-xs font-medium text-muted-foreground">Token usage</p>
-                    {usageLines.map((line) => (
-                      <p className="text-sm tabular-nums" key={line}>
-                        {line}
-                      </p>
-                    ))}
-                  </div>
-                )}
-                <DropdownMenuItem onSelect={() => setShowToolCalls(!showToolCalls)}>
-                  <Wrench aria-hidden="true" />
-                  {showToolCalls ? "Hide Tools" : "Show Tools"}
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setExpandDetails(!expandDetails)}>
-                  <ListTree aria-hidden="true" />
-                  {expandDetails ? "Collapse details" : "Expand details"}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(sessionId)}>
-                  <Copy aria-hidden="true" />
-                  Copy session ID
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={forkSession.isPending || !displayedDetail?.model}
-                  onSelect={() => void forkStandaloneChat()}
-                >
-                  <GitFork aria-hidden="true" />
-                  Fork chat
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={clearSession.isPending}
-                  onSelect={() => void clearStandaloneChat()}
-                >
-                  <Eraser aria-hidden="true" />
-                  Clear conversation
-                </DropdownMenuItem>
-                {runtime.data?.capabilities.sessionDebug && (
-                  <DropdownMenuItem
-                    disabled={createSession.isPending}
-                    onSelect={() => {
-                      setConfirmPrompt({
-                        confirmLabel: "Send evidence & debug",
-                        description: DEBUG_SESSION_CONSENT,
-                        onConfirm: () => void startDebugSession(sessionId),
-                        title: `Debug with AI: “${selectedSession?.title}”?`,
-                      });
-                    }}
-                  >
-                    <Bug aria-hidden="true" />
-                    Debug with AI
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  disabled={selectedSession && !selectedSession.capabilities.rename}
-                  onSelect={() => {
-                    openTextPrompt({
-                      confirmLabel: "Rename",
-                      initialValue: selectedSession?.title ?? "",
-                      label: "Chat name",
-                      onConfirm: (title) => {
-                        void renameChat(sessionId, title);
-                      },
-                      title: "Rename chat",
-                    });
-                  }}
-                  title={selectedSession?.capabilities.renameReason || undefined}
-                >
-                  <Pencil aria-hidden="true" />
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  disabled={selectedSession && !selectedSession.capabilities.delete}
-                  onSelect={() => {
-                    setConfirmPrompt({
-                      description: "This cannot be undone.",
-                      onConfirm: () => {
-                        void deleteSession
-                          .mutateAsync({ path: { sessionId } })
-                          .then(async () => {
-                            await queryClient.invalidateQueries({
-                              queryKey: listSessionsQueryKey(),
-                            });
-                            await navigate({
-                              search: { sessionId: undefined },
-                              to: "/workspace/chat",
-                            });
-                          })
-                          .catch((caught) => setError(errorMessage(caught)));
-                      },
-                      title: `Delete “${selectedSession?.title}”?`,
-                    });
-                  }}
-                  title={selectedSession?.capabilities.deleteReason || undefined}
-                >
-                  <Trash2 aria-hidden="true" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          </header>
+          {selectedSession && isInspectOnlySession(selectedSession) ? (
+            <div className="m-auto flex flex-col items-center gap-3 p-6 text-center">
+              <p className="text-sm text-muted-foreground">Inspect-only session · Read-only</p>
+              <Button onClick={() => setInspectionOpen(true)} variant="outline">
+                Session details
+              </Button>
+            </div>
+          ) : (
+            <p className="m-auto text-sm text-muted-foreground">
+              {sessions.isPending ? "Checking session…" : "This session is unavailable as a chat."}
+            </p>
           )}
-          {(isRunning ||
-            (statusFacts.phase === "closed" && controlTarget(runTarget, sessionId))) && (
-            <div className="flex items-center gap-2">
-              {isRunning && (
-                <Badge variant="success">
-                  {statusFacts.authorizationPending
-                    ? "Waiting for authorization"
-                    : reattached
-                      ? "Reconnected to run"
-                      : "Mecatl is working"}
+        </section>
+      ) : (
+        <section className="relative flex min-w-0 flex-1 flex-col bg-background">
+          <header className="flex h-16 shrink-0 items-center gap-3 border-b px-4 sm:px-6">
+            <ChatsMenuButton
+              onClick={() => {
+                setSidebarHidden(false);
+                setSidebarOpen(true);
+              }}
+              showOnDesktop={sidebarHidden}
+            />
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <h1 className="truncate text-sm font-semibold">
+                {selectedSession?.title ?? "New chat"}
+              </h1>
+              {selectedSession?.debugTargetSessionId && (
+                <Badge
+                  title="A read-only diagnostic chat; it never modifies its target."
+                  variant="info"
+                >
+                  <Bug aria-hidden="true" />
+                  Debug
                 </Badge>
               )}
-              {controlTarget(runTarget, sessionId) && (
+            </div>
+            <Button
+              aria-label="Open session activity"
+              disabled={!sessionId}
+              onClick={(event) => {
+                activityOpener.current = event.currentTarget;
+                activityOpenerFocus.current = undefined;
+                setActivityFocus(undefined);
+                setActivityFocusRequest((value) => value + 1);
+                setContentPreview({ kind: "activity" });
+              }}
+              ref={sessionActivityControl}
+              size="sm"
+              variant="ghost"
+            >
+              <ListTodo aria-hidden="true" />
+              <span className="hidden sm:inline">Activity</span>
+            </Button>
+            <Button
+              aria-label="Open local canvas"
+              onClick={() => setContentPreview({ kind: "canvas" })}
+              size="sm"
+              variant="ghost"
+            >
+              <NotebookPen aria-hidden="true" />
+              <span className="hidden sm:inline">Canvas</span>
+            </Button>
+            {sessionId && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button aria-label="Chat options" size="icon" variant="ghost">
+                    <MoreHorizontal aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuItem onSelect={() => setInspectionOpen(true)}>
+                    <ListTree aria-hidden="true" />
+                    Inspect session
+                  </DropdownMenuItem>
+                  {usageLines.length > 0 && (
+                    <div className="mb-1 border-b px-2 py-1.5">
+                      <p className="text-xs font-medium text-muted-foreground">Token usage</p>
+                      {usageLines.map((line) => (
+                        <p className="text-sm tabular-nums" key={line}>
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  <DropdownMenuItem onSelect={() => setShowToolCalls(!showToolCalls)}>
+                    <Wrench aria-hidden="true" />
+                    {showToolCalls ? "Hide Tools" : "Show Tools"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setExpandDetails(!expandDetails)}>
+                    <ListTree aria-hidden="true" />
+                    {expandDetails ? "Collapse details" : "Expand details"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(sessionId)}>
+                    <Copy aria-hidden="true" />
+                    Copy session ID
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={forkSession.isPending || !displayedDetail?.model}
+                    onSelect={() => void forkStandaloneChat()}
+                  >
+                    <GitFork aria-hidden="true" />
+                    Fork chat
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={clearSession.isPending}
+                    onSelect={() => void clearStandaloneChat()}
+                  >
+                    <Eraser aria-hidden="true" />
+                    Clear conversation
+                  </DropdownMenuItem>
+                  {runtime.data?.capabilities.sessionDebug && (
+                    <DropdownMenuItem
+                      disabled={createSession.isPending}
+                      onSelect={() => {
+                        setConfirmPrompt({
+                          confirmLabel: "Send evidence & debug",
+                          description: DEBUG_SESSION_CONSENT,
+                          onConfirm: () => void startDebugSession(sessionId),
+                          title: `Debug with AI: “${selectedSession?.title}”?`,
+                        });
+                      }}
+                    >
+                      <Bug aria-hidden="true" />
+                      Debug with AI
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={selectedSession && !selectedSession.capabilities.rename}
+                    onSelect={() => {
+                      openTextPrompt({
+                        confirmLabel: "Rename",
+                        initialValue: selectedSession?.title ?? "",
+                        label: "Chat name",
+                        onConfirm: (title) => {
+                          void renameChat(sessionId, title);
+                        },
+                        title: "Rename chat",
+                      });
+                    }}
+                    title={selectedSession?.capabilities.renameReason || undefined}
+                  >
+                    <Pencil aria-hidden="true" />
+                    Rename
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    disabled={selectedSession && !selectedSession.capabilities.delete}
+                    onSelect={() => {
+                      setConfirmPrompt({
+                        description: "This cannot be undone.",
+                        onConfirm: () => {
+                          void deleteSession
+                            .mutateAsync({ path: { sessionId } })
+                            .then(async () => {
+                              await queryClient.invalidateQueries({
+                                queryKey: listSessionsQueryKey(),
+                              });
+                              await navigate({
+                                search: { sessionId: undefined },
+                                to: "/workspace/chat",
+                              });
+                            })
+                            .catch((caught) => setError(errorMessage(caught)));
+                        },
+                        title: `Delete “${selectedSession?.title}”?`,
+                      });
+                    }}
+                    title={selectedSession?.capabilities.deleteReason || undefined}
+                  >
+                    <Trash2 aria-hidden="true" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {(isRunning ||
+              (statusFacts.phase === "closed" && controlTarget(runTarget, sessionId))) && (
+              <div className="flex items-center gap-2">
+                {isRunning && (
+                  <Badge variant="success">
+                    {statusFacts.authorizationPending
+                      ? "Waiting for authorization"
+                      : reattached
+                        ? "Reconnected to run"
+                        : "Mecatl is working"}
+                  </Badge>
+                )}
+                {controlTarget(runTarget, sessionId) && (
+                  <Button
+                    disabled={controlPending}
+                    onClick={() => void stopRun()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <Square aria-hidden="true" className="fill-current" />
+                    Stop
+                  </Button>
+                )}
+              </div>
+            )}
+          </header>
+
+          <div className="relative min-h-0 flex-1">
+            <section
+              aria-label="Conversation transcript"
+              className="h-full min-h-0 overflow-y-auto"
+              onKeyDown={(event) => {
+                if (
+                  ["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "].includes(
+                    event.key,
+                  )
+                ) {
+                  minimapNavigation.current = false;
+                }
+              }}
+              onPointerDown={() => {
+                minimapNavigation.current = false;
+              }}
+              onPointerUp={captureTranscriptSelection}
+              onScroll={(event) => {
+                setSelectionAction(undefined);
+                if (minimapNavigation.current) return;
+                const element = event.currentTarget;
+                setAtTranscriptBottom(isNearTranscriptBottom(element));
+              }}
+              onTouchMove={() => {
+                minimapNavigation.current = false;
+              }}
+              onWheel={() => {
+                minimapNavigation.current = false;
+              }}
+              ref={transcriptScroll}
+            >
+              <div className="mx-auto flex min-h-full max-w-3xl flex-col py-8 pl-4 pr-12 sm:pl-6 sm:pr-12">
+                {transcript.isPending && sessionId && !isRunning ? (
+                  <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
+                ) : messages.length === 0 ? (
+                  <div className="m-auto flex flex-col items-center">
+                    <DraftGreeting
+                      onPickSeed={(seed) => {
+                        setSeedRequiresConfirmation(false);
+                        setSeedText(seed);
+                      }}
+                    />
+                    {!sessionId && (
+                      <ContinueLatestChip latest={latestChat} onContinue={selectSession} />
+                    )}
+                  </div>
+                ) : (
+                  <ChatTranscript
+                    agentName={agentName}
+                    delegationsByMessageId={delegationPlacement.byMessageId}
+                    legacyThreadSessionIdForMessage={(message) => {
+                      const key = matchingThreadKeyForMessage(
+                        message,
+                        transcript.data,
+                        threadAssociations,
+                      );
+                      return key ? threadAssociations.legacyCandidates[key]?.sessionId : undefined;
+                    }}
+                    messages={messages}
+                    onOpenActivity={(focus, opener) => {
+                      activityOpener.current = opener;
+                      activityOpenerFocus.current = focus;
+                      setActivityFocus(focus);
+                      setActivityFocusRequest((value) => value + 1);
+                      setContentPreview({ kind: "activity" });
+                    }}
+                    onOpenThread={(message) => void openSideThread(message)}
+                    onRelinkThread={(message) => void relinkOlderThread(message)}
+                    onReviewAuthorization={(authorization) =>
+                      setContentPreview({ authorization, kind: "authorization" })
+                    }
+                    onPreviewImage={(image) =>
+                      setContentPreview({ file: imagePreview(image, true), kind: "file" })
+                    }
+                    onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                    showToolCalls={showToolCalls}
+                    streamingMessageId={
+                      isRunning && messages.at(-1)?.role === "assistant"
+                        ? messages.at(-1)?.id
+                        : undefined
+                    }
+                    threadDisabled={forkSession.isPending}
+                    threadSessionIdForMessage={(message) => {
+                      const key = matchingThreadKeyForMessage(
+                        message,
+                        transcript.data,
+                        threadAssociations,
+                      );
+                      return key ? threadAssociations.byKey[key]?.sessionId : undefined;
+                    }}
+                    userName={userName}
+                  />
+                )}
+                {delegationPlacement.unanchored.length > 0 && (
+                  <DelegationCardRow
+                    activities={delegationPlacement.unanchored}
+                    onOpen={(focus, opener) => {
+                      activityOpener.current = opener;
+                      activityOpenerFocus.current = focus;
+                      setActivityFocus(focus);
+                      setActivityFocusRequest((value) => value + 1);
+                      setContentPreview({ kind: "activity" });
+                    }}
+                  />
+                )}
+              </div>
+            </section>
+            <MessageMinimap
+              delegationsByMessageId={delegationPlacement.byMessageId}
+              key={sessionId ?? "draft"}
+              messages={messages}
+              onNavigate={() => {
+                minimapNavigation.current = true;
+                setAtTranscriptBottom(false);
+              }}
+              scrollportRef={transcriptScroll}
+              sessionId={sessionId}
+              showToolCalls={showToolCalls}
+              streamingMessageId={
+                isRunning && messages.at(-1)?.role === "assistant" ? messages.at(-1)?.id : undefined
+              }
+            />
+          </div>
+
+          {!atTranscriptBottom && (
+            <Button
+              aria-label="Scroll to latest message"
+              className="absolute bottom-32 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg"
+              onClick={() => {
+                minimapNavigation.current = false;
+                const element = transcriptScroll.current;
+                element?.scrollTo({ behavior: "smooth", top: element.scrollHeight });
+                setAtTranscriptBottom(true);
+              }}
+              size="icon"
+              variant="secondary"
+            >
+              <ArrowDown aria-hidden="true" />
+            </Button>
+          )}
+
+          {chatStatus && (
+            <div className="mx-auto mb-2 w-[calc(100%-2rem)] max-w-3xl">
+              <ChatStatus status={chatStatus} />
+            </div>
+          )}
+          {returnNotice && (
+            <div
+              className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg border bg-background px-3 py-2 text-sm"
+              role="status"
+            >
+              {returnNotice}
+            </div>
+          )}
+          {error && (
+            <div className="mx-auto mb-3 flex w-[calc(100%-2rem)] max-w-3xl items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-foreground">
+              <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+              {error}
+              {watchable && !isRunning && (
                 <Button
-                  disabled={controlPending}
-                  onClick={() => void stopRun()}
+                  disabled={protectedRequestsPaused()}
+                  onClick={() => {
+                    setError(undefined);
+                    setReattachEpoch((epoch) => epoch + 1);
+                  }}
                   size="sm"
                   variant="outline"
                 >
-                  <Square aria-hidden="true" className="fill-current" />
-                  Stop
+                  Retry stream
                 </Button>
               )}
             </div>
           )}
-        </header>
-
-        <div className="relative min-h-0 flex-1">
-          <section
-            aria-label="Conversation transcript"
-            className="h-full min-h-0 overflow-y-auto"
-            onKeyDown={(event) => {
-              if (
-                ["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "].includes(
-                  event.key,
-                )
-              ) {
-                minimapNavigation.current = false;
-              }
-            }}
-            onPointerDown={() => {
-              minimapNavigation.current = false;
-            }}
-            onPointerUp={captureTranscriptSelection}
-            onScroll={(event) => {
-              setSelectionAction(undefined);
-              if (minimapNavigation.current) return;
-              const element = event.currentTarget;
-              setAtTranscriptBottom(isNearTranscriptBottom(element));
-            }}
-            onTouchMove={() => {
-              minimapNavigation.current = false;
-            }}
-            onWheel={() => {
-              minimapNavigation.current = false;
-            }}
-            ref={transcriptScroll}
-          >
-            <div className="mx-auto flex min-h-full max-w-3xl flex-col py-8 pl-4 pr-12 sm:pl-6 sm:pr-12">
-              {transcript.isPending && sessionId && !isRunning ? (
-                <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
-              ) : messages.length === 0 ? (
-                <div className="m-auto flex flex-col items-center">
-                  <DraftGreeting
-                    onPickSeed={(seed) => {
-                      setSeedRequiresConfirmation(false);
-                      setSeedText(seed);
-                    }}
-                  />
-                  {!sessionId && (
-                    <ContinueLatestChip latest={latestChat} onContinue={selectSession} />
-                  )}
-                </div>
-              ) : (
-                <ChatTranscript
-                  agentName={agentName}
-                  delegationsByMessageId={delegationPlacement.byMessageId}
-                  legacyThreadSessionIdForMessage={(message) => {
-                    const key = matchingThreadKeyForMessage(
-                      message,
-                      transcript.data,
-                      threadAssociations,
-                    );
-                    return key ? threadAssociations.legacyCandidates[key]?.sessionId : undefined;
-                  }}
-                  messages={messages}
-                  onOpenActivity={(focus, opener) => {
-                    activityOpener.current = opener;
-                    activityOpenerFocus.current = focus;
-                    setActivityFocus(focus);
-                    setActivityFocusRequest((value) => value + 1);
-                    setContentPreview({ kind: "activity" });
-                  }}
-                  onOpenThread={(message) => void openSideThread(message)}
-                  onRelinkThread={(message) => void relinkOlderThread(message)}
-                  onReviewAuthorization={(authorization) =>
-                    setContentPreview({ authorization, kind: "authorization" })
-                  }
-                  onPreviewImage={(image) =>
-                    setContentPreview({ file: imagePreview(image, true), kind: "file" })
-                  }
-                  onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
-                  showToolCalls={showToolCalls}
-                  streamingMessageId={
-                    isRunning && messages.at(-1)?.role === "assistant"
-                      ? messages.at(-1)?.id
-                      : undefined
-                  }
-                  threadDisabled={forkSession.isPending}
-                  threadSessionIdForMessage={(message) => {
-                    const key = matchingThreadKeyForMessage(
-                      message,
-                      transcript.data,
-                      threadAssociations,
-                    );
-                    return key ? threadAssociations.byKey[key]?.sessionId : undefined;
-                  }}
-                  userName={userName}
-                />
-              )}
-              {delegationPlacement.unanchored.length > 0 && (
-                <DelegationCardRow
-                  activities={delegationPlacement.unanchored}
-                  onOpen={(focus, opener) => {
-                    activityOpener.current = opener;
-                    activityOpenerFocus.current = focus;
-                    setActivityFocus(focus);
-                    setActivityFocusRequest((value) => value + 1);
-                    setContentPreview({ kind: "activity" });
-                  }}
-                />
-              )}
+          {notice && (
+            <div className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg bg-success/10 px-3 py-2 text-sm text-foreground">
+              {notice}
             </div>
-          </section>
-          <MessageMinimap
-            delegationsByMessageId={delegationPlacement.byMessageId}
-            key={sessionId ?? "draft"}
-            messages={messages}
-            onNavigate={() => {
-              minimapNavigation.current = true;
-              setAtTranscriptBottom(false);
-            }}
-            scrollportRef={transcriptScroll}
-            sessionId={sessionId}
-            showToolCalls={showToolCalls}
-            streamingMessageId={
-              isRunning && messages.at(-1)?.role === "assistant" ? messages.at(-1)?.id : undefined
-            }
+          )}
+          {approval && (
+            <ApprovalPanel
+              approval={approval}
+              disabled={controlPending}
+              onRespond={(verdict) => void respondToApproval(verdict)}
+              position={1}
+              total={approvals.length}
+            />
+          )}
+          {failedRun && (
+            <RunFailurePanel
+              failure={failedRun}
+              onDismiss={() => {
+                setFailedRun(undefined);
+                if (sessionId) clearFailedRun(sessionId);
+              }}
+              onRetry={() => void retryFailedRun()}
+              retrying={isRunning}
+            />
+          )}
+          {sessionId && displayedDetail && (
+            <ChatSessionControls
+              compacting={compactSession.isPending}
+              detail={displayedDetail}
+              disabled={isRunning}
+              forking={forkSession.isPending}
+              modePending={setMode.isPending}
+              models={models}
+              onCompact={() => void compactConversation()}
+              onFork={(model, effort) => void forkConversation(model, effort)}
+              onModeChange={(mode) => void changeMode(mode)}
+              safetyLevel={runtime.data?.capabilities.posture}
+            />
+          )}
+          <QueuedMessageList
+            items={queuedMessages.items}
+            onDelete={queuedMessages.remove}
+            onEdit={queuedMessages.update}
           />
-        </div>
-
-        {!atTranscriptBottom && (
-          <Button
-            aria-label="Scroll to latest message"
-            className="absolute bottom-32 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg"
-            onClick={() => {
-              minimapNavigation.current = false;
-              const element = transcriptScroll.current;
-              element?.scrollTo({ behavior: "smooth", top: element.scrollHeight });
-              setAtTranscriptBottom(true);
-            }}
-            size="icon"
-            variant="secondary"
-          >
-            <ArrowDown aria-hidden="true" />
-          </Button>
-        )}
-
-        {chatStatus && (
-          <div className="mx-auto mb-2 w-[calc(100%-2rem)] max-w-3xl">
-            <ChatStatus status={chatStatus} />
-          </div>
-        )}
-        {returnNotice && (
-          <div
-            className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg border bg-background px-3 py-2 text-sm"
-            role="status"
-          >
-            {returnNotice}
-          </div>
-        )}
-        {error && (
-          <div className="mx-auto mb-3 flex w-[calc(100%-2rem)] max-w-3xl items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-foreground">
-            <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-            {error}
-            {watchable && !isRunning && (
-              <Button
-                disabled={protectedRequestsPaused()}
-                onClick={() => {
-                  setError(undefined);
-                  setReattachEpoch((epoch) => epoch + 1);
-                }}
-                size="sm"
-                variant="outline"
-              >
-                Retry stream
-              </Button>
-            )}
-          </div>
-        )}
-        {notice && (
-          <div className="mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-lg bg-success/10 px-3 py-2 text-sm text-foreground">
-            {notice}
-          </div>
-        )}
-        {approval && (
-          <ApprovalPanel
-            approval={approval}
-            disabled={controlPending}
-            onRespond={(verdict) => void respondToApproval(verdict)}
-            position={1}
-            total={approvals.length}
-          />
-        )}
-        {failedRun && (
-          <RunFailurePanel
-            failure={failedRun}
-            onDismiss={() => {
-              setFailedRun(undefined);
-              if (sessionId) clearFailedRun(sessionId);
-            }}
-            onRetry={() => void retryFailedRun()}
-            retrying={isRunning}
-          />
-        )}
-        {sessionId && displayedDetail && (
-          <ChatSessionControls
-            compacting={compactSession.isPending}
-            detail={displayedDetail}
-            disabled={isRunning}
-            forking={forkSession.isPending}
-            modePending={setMode.isPending}
+          <ChatComposer
+            configuration={sessionId ? undefined : draftConfiguration}
+            disabled={createSession.isPending}
+            imageAttachmentsSupported={imageAttachmentsSupported}
             models={models}
-            onCompact={() => void compactConversation()}
-            onFork={(model, effort) => void forkConversation(model, effort)}
-            onModeChange={(mode) => void changeMode(mode)}
+            onConfigurationChange={setDraftConfiguration}
+            onPreviewImage={(image) =>
+              setContentPreview({ file: imagePreview(image, false), kind: "file" })
+            }
+            onSeedConsumed={() => {
+              setSeedText(undefined);
+              setSeedRequiresConfirmation(false);
+            }}
+            onSend={handleComposerSend}
             safetyLevel={runtime.data?.capabilities.posture}
+            seedCanConfirm={
+              runtime.data?.connection === "online" &&
+              !isRunning &&
+              !(statusFacts.phase === "closed" && controlTarget(runTarget, sessionId)) &&
+              !watchable &&
+              !createSession.isPending &&
+              (!sessionId || (Boolean(selectedSession) && sessionDetail.isSuccess))
+            }
+            seedContext={seedContext}
+            seedRequiresConfirmation={seedRequiresConfirmation}
+            seedText={seedText}
+            working={
+              isRunning ||
+              (statusFacts.phase === "closed" && Boolean(controlTarget(runTarget, sessionId)))
+            }
+            workingBehavior={enterSendBehavior}
           />
-        )}
-        <QueuedMessageList
-          items={queuedMessages.items}
-          onDelete={queuedMessages.remove}
-          onEdit={queuedMessages.update}
-        />
-        <ChatComposer
-          configuration={sessionId ? undefined : draftConfiguration}
-          disabled={createSession.isPending}
-          imageAttachmentsSupported={imageAttachmentsSupported}
-          models={models}
-          onConfigurationChange={setDraftConfiguration}
-          onPreviewImage={(image) =>
-            setContentPreview({ file: imagePreview(image, false), kind: "file" })
-          }
-          onSeedConsumed={() => {
-            setSeedText(undefined);
-            setSeedRequiresConfirmation(false);
+        </section>
+      )}
+      {selectedSession && inspectionOpen && (
+        <SessionInspection
+          key={selectedSession.id}
+          onClose={() => setInspectionOpen(false)}
+          onDebug={(targetId) => {
+            if (targetId !== sessionId || !runtime.data?.capabilities.sessionDebug) return;
+            setConfirmPrompt({
+              confirmLabel: "Send evidence & debug",
+              description: DEBUG_SESSION_CONSENT,
+              onConfirm: () => void startDebugSession(targetId),
+              title: `Debug with AI: “${selectedSession.title}”?`,
+            });
           }}
-          onSend={handleComposerSend}
-          safetyLevel={runtime.data?.capabilities.posture}
-          seedCanConfirm={
-            runtime.data?.connection === "online" &&
-            !isRunning &&
-            !(statusFacts.phase === "closed" && controlTarget(runTarget, sessionId)) &&
-            !watchable &&
-            !createSession.isPending &&
-            (!sessionId || (Boolean(selectedSession) && sessionDetail.isSuccess))
-          }
-          seedContext={seedContext}
-          seedRequiresConfirmation={seedRequiresConfirmation}
-          seedText={seedText}
-          working={
-            isRunning ||
-            (statusFacts.phase === "closed" && Boolean(controlTarget(runTarget, sessionId)))
-          }
-          workingBehavior={enterSendBehavior}
+          onOpenSuccessor={(id) => void selectSession(id)}
+          runtime={runtime.data}
+          session={selectedSession}
         />
-      </section>
-      {displayedPreview && (
+      )}
+      {displayedPreview && provenChat && (
         <ContentPreviewPanel
           activity={{
             fallbackOpener: sessionActivityControl.current,
