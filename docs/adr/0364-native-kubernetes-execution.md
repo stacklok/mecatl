@@ -165,8 +165,11 @@ The first slice provisions a blank/PVC-backed workspace that existing filesystem
 foreground Shell and has no warm pools or automatic idle suspension. Harness context is not selected by
 that execution placement. Mecak8s registers independently configured deployment/operator/API instruction
 and command sources, and the shared operator-tier HarnessContext policy admits, orders, and resolves them.
-Configured instruction markers reach model requests, and configured commands reach listing and slash
-expansion even when the execution provider is unavailable or execution is `no-fs`.
+Configured instruction markers reach model requests, and configured commands reach slash invocation,
+only after a healthy provider completes exact Attach and AcquireRun, or for `no-fs` execution; command
+discovery and listing do not require an execution run. During a provider outage, only independent
+discovery/listing remains available on an already-started Service with a stored authorized session.
+Startup validation remains fail-closed, and execution never falls back locally.
 
 PVC-backed context is deliberately unselected in this slice. Conflicting AGENTS or commands planted in the
 PVC cannot enter context assembly or discovery and cannot cause a context-acquisition or provider request.
