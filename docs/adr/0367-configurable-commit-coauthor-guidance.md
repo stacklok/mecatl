@@ -1,4 +1,4 @@
-# ADR 0362 — Operator-configurable standard commit co-author guidance
+# ADR 0367 — Operator-configurable standard commit co-author guidance
 
 - Status: Proposed
 - Date: 2026-09-25

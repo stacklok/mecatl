@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — adds an operator-owned, default-on configuration contract that changes standard root-prompt behavior across main and delegated engines.
-**Decision record:** [ADR 0362](../adr/0362-configurable-commit-coauthor-guidance.md)
+**Decision record:** [ADR 0367](../adr/0367-configurable-commit-coauthor-guidance.md)
 **Phase:** prompt provenance
 **Status:** proposed, 2026-09-25. Derived from [stacklok/mecatl#1595](https://github.com/stacklok/mecatl/issues/1595).
 **Delivery:** Split. The operator configuration, prompt-composition, and delegated-agent inheritance contract need review before implementation.
@@ -33,7 +33,7 @@ None — issue #1595 defines the exact trailer, default-on behavior, and operato
 
 ### Scenario 1 — Default standard prompt directs canonical attribution
 
-The standard prompt builder emits the canonical commit-trailer direction in its stable system-prompt prefix when the setting is absent or enabled. It does not add a second commit-message construction path. [ADR 0362](../adr/0362-configurable-commit-coauthor-guidance.md) records this placement against the standard system-prompt path described by [the agent loop](../architecture/agent-loop.md).
+The standard prompt builder emits the canonical commit-trailer direction in its stable system-prompt prefix when the setting is absent or enabled. It does not add a second commit-message construction path. [ADR 0367](../adr/0367-configurable-commit-coauthor-guidance.md) records this placement against the standard system-prompt path described by [the agent loop](../architecture/agent-loop.md).
 
 **Acceptance:**
 - AC1.1: An enabled standard prompt instructs a committing agent to append exactly `Co-authored-by: Mecatl <noreply@mecatl.dev>`.
@@ -43,7 +43,7 @@ The standard prompt builder emits the canonical commit-trailer direction in its 
 
 ### Scenario 2 — Operator opt-out is strict and repository-safe
 
-The user-global settings schema recognizes the `system_prompt` subtree strictly and resolves its default as enabled. Explicit `--permission-config` files are the existing highest-precedence operator input; project files cannot disable the guidance. [ADR 0362](../adr/0362-configurable-commit-coauthor-guidance.md) makes the operator/project authority boundary durable.
+The user-global settings schema recognizes the `system_prompt` subtree strictly and resolves its default as enabled. Explicit `--permission-config` files are the existing highest-precedence operator input; project files cannot disable the guidance. [ADR 0367](../adr/0367-configurable-commit-coauthor-guidance.md) makes the operator/project authority boundary durable.
 
 **Acceptance:**
 - AC2.1: `system_prompt.commit_coauthor: false` in either the operator-global settings file or an explicit `--permission-config` file removes the standard guidance; an explicit file takes precedence over the conventional global file.
@@ -55,7 +55,7 @@ The user-global settings schema recognizes the `system_prompt` subtree strictly 
 
 ### Scenario 3 — Shared composition covers main and delegated engines
 
-Composition supplies the resolved setting to all engines that use the standard builder, so a delegated agent sees the same default guidance as its parent. A host that supplies its own complete `PromptBuilder` retains ownership of its prompt. This preserves the engine dependency and composition boundary in [AGENTS.md](../../AGENTS.md) and is recorded by [ADR 0362](../adr/0362-configurable-commit-coauthor-guidance.md).
+Composition supplies the resolved setting to all engines that use the standard builder, so a delegated agent sees the same default guidance as its parent. A host that supplies its own complete `PromptBuilder` retains ownership of its prompt. This preserves the engine dependency and composition boundary in [AGENTS.md](../../AGENTS.md) and is recorded by [ADR 0367](../adr/0367-configurable-commit-coauthor-guidance.md).
 
 **Acceptance:**
 - AC3.1: A real composed main engine receives the enabled standard guidance.
