@@ -40,6 +40,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 			NoSoul:             true,
 			AgentsConventional: true,
 			Posture:            PostureAuto,
+			GuardrailsDisabled: true,
 			Headless:           true, // a headless root does NOT grant ingestion via the ladder
 			// TrustProject stays FALSE — the operator did not pass --trust-project.
 			Diagnostics: diag.diag,
@@ -69,6 +70,7 @@ func TestHeadlessAutoWithoutTrustProjectSuppressesProjectAgentDefs(t *testing.T)
 			NoSoul:             true,
 			AgentsConventional: true,
 			Posture:            PostureAuto,
+			GuardrailsDisabled: true,
 			Headless:           true,
 			TrustProject:       true, // the explicit opt-in admits ingestion on the headless root
 			Diagnostics:        nil,  // port.NopDiagnostics via nil
