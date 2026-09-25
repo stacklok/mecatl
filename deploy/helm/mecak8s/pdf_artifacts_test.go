@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPDFArtifactStorage_HelmValues(t *testing.T) {
+func TestArtifactStorage_HelmValues(t *testing.T) {
 	baseline, err := helm(t, "template", "pdf", ".", "--set", "redis.endpoint=redis.example:6379", "--set", "redis.caKey=", "--set", "mockProvider=true")
 	if err != nil {
 		t.Fatal(err, baseline)

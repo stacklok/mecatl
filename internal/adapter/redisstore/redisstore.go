@@ -127,13 +127,13 @@ var (
 // ToolCallRecorder. Every operation leases one replaceable client generation;
 // the manager lock is held only for acquisition/publication, never Redis I/O.
 type Store struct {
-	clients             *clientGenerations
-	followers           *followerRegistry
-	reload              *reloadLifecycle
-	diagnostics         port.Diagnostics
-	closeGrace          time.Duration
-	closeOnce           sync.Once
-	pdfArtifactsEnabled bool
+	clients          *clientGenerations
+	followers        *followerRegistry
+	reload           *reloadLifecycle
+	diagnostics      port.Diagnostics
+	closeGrace       time.Duration
+	closeOnce        sync.Once
+	artifactsEnabled bool
 
 	metadataWorkObserver func(metadataWorkKind)
 }
@@ -167,9 +167,9 @@ type Config struct {
 	// iterators. Zero selects the default of 32.
 	MaxFollowers int
 	Diagnostics  port.Diagnostics
-	// PDFArtifactsEnabled atomically enqueues private object-prefix cleanup
+	// ArtifactsEnabled atomically enqueues private object-prefix cleanup
 	// with each successful session deletion. It is opt-in for mecak8s.
-	PDFArtifactsEnabled bool
+	ArtifactsEnabled bool
 }
 
 // New connects to a plaintext, unauthenticated Redis broker. It is retained for
@@ -215,7 +215,7 @@ func newWithConfig(cfg Config, deps storeDependencies) (*Store, error) {
 	}
 	st := &Store{
 		clients: newClientGenerationsPair(pair), followers: newFollowerRegistry(maxFollowers), diagnostics: diagnostics,
-		closeGrace: deps.closeGrace, pdfArtifactsEnabled: cfg.PDFArtifactsEnabled,
+		closeGrace: deps.closeGrace, artifactsEnabled: cfg.ArtifactsEnabled,
 	}
 	initClient, release, err := st.clients.acquire()
 	if err != nil {
@@ -578,7 +578,7 @@ func (st *Store) DeleteSessionIfUnchanged(ctx context.Context, expected port.Ses
 		return false, err
 	}
 	defer release()
-	deleted, err := deleteSessionIfMetadataUnchanged(ctx, client, expected, st.pdfArtifactsEnabled)
+	deleted, err := deleteSessionIfMetadataUnchanged(ctx, client, expected, st.artifactsEnabled)
 	if err != nil {
 		return false, fmt.Errorf("redisstore: conditional delete: %w", err)
 	}
@@ -593,7 +593,7 @@ func (st *Store) Delete(ctx context.Context, id session.SessionID) error {
 		return err
 	}
 	defer release()
-	if err := deleteSessionAndMetadata(ctx, client, id, st.pdfArtifactsEnabled); err != nil {
+	if err := deleteSessionAndMetadata(ctx, client, id, st.artifactsEnabled); err != nil {
 		return fmt.Errorf("redisstore: delete %q: %w", id, err)
 	}
 	return nil

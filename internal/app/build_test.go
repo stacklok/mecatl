@@ -236,8 +236,8 @@ func TestRequestManifestGatePropagatesToEveryEngineShape(t *testing.T) {
 
 func TestPDFResultProcessorPropagatesToEveryEngineShape(t *testing.T) {
 	provider, store, policy, hooks, mcpP, instr := depsTestFixture(t)
-	processor := pdfResultProcessorFixture{}
-	cfg := Config{Model: "model", pdfResultProcessor: processor}
+	processor := artifactResultProcessorFixture{}
+	cfg := Config{Model: "model", artifactResultProcessor: processor}
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
 	for name, deps := range map[string]agent.Deps{
 		"main":           baseEngineDeps(cfg, reg, provider, store, policy, hooks, mcpP, instr),

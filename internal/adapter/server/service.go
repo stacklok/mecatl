@@ -291,12 +291,12 @@ type Config struct {
 	// SessionCleared drops process-local state tied to a source session after a
 	// successful ClearSession successor publication. nil is inert.
 	SessionCleared func(session.SessionID)
-	// PDFArtifacts owns private session-scoped PDF objects. Nil disables uploads.
-	PDFArtifacts PDFArtifactLifecycle
-	// PDFUploadReceiveTimeout bounds a gRPC upload from its first receive,
+	// Artifacts owns private session-scoped PDF objects. Nil disables uploads.
+	Artifacts ArtifactLifecycle
+	// ArtifactUploadReceiveTimeout bounds a gRPC upload from its first receive,
 	// including an idle authenticated stream before metadata arrives.
 	// Zero selects the default receive lifetime.
-	PDFUploadReceiveTimeout time.Duration
+	ArtifactUploadReceiveTimeout time.Duration
 	// StorageManagementAuthorized gates process-wide storage health. A nil
 	// authorizer disables the management capability. It must be derived from the
 	// trusted request context, never request-supplied owner data.
@@ -2695,7 +2695,7 @@ func (s *Service) capabilities() *mecatlv1.ServerCapabilities {
 		Skills:            has(skills.ToolName),
 		Shell:             has(tool.ShellToolName),
 		Image:             pcaps.Image,
-		PdfArtifacts:      s.cfg.PDFArtifacts != nil,
+		Artifacts:         s.cfg.Artifacts != nil,
 		Audio:             pcaps.Audio,
 		Posture:           s.cfg.Posture,
 		Worktrees:         s.placementDiscoveryAvailable(),

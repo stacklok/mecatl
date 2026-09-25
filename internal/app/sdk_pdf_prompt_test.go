@@ -41,7 +41,7 @@ func TestSDKPDFArtifacts_Scenario1_RejectInvalidOrUnauthorized(t *testing.T) {
 		{name: "OpenRouter Messages", id: providerOpenRouterAnthropic, baseURL: "https://openrouter.ai/api/v1", native: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{Model: model, pdfArtifacts: &pdfLifecycleFixture{}}
+			cfg := Config{Model: model, artifacts: &pdfLifecycleFixture{}}
 			var entry providerEntry
 			if tc.native {
 				entry = newOpenAICompatEntry(cfg, tc.id, "test-key", tc.baseURL)
@@ -77,7 +77,7 @@ func TestSDKPDFArtifacts_Scenario1_UploadPromptProvider(t *testing.T) {
 	const model = "test/pdf-model"
 	pdf := []byte("%PDF-1.7\nunique-pdf-payload\n%%EOF")
 	artifacts := &pdfLifecycleFixture{}
-	meta, err := artifacts.Stage(context.Background(), "s-pdf", "report.pdf", bytes.NewReader(pdf))
+	meta, err := artifacts.Stage(context.Background(), "s-pdf", "report.pdf", "application/pdf", bytes.NewReader(pdf))
 	if err != nil || meta.ID == "" || meta.Size != int64(len(pdf)) || len(meta.SHA256) != 64 {
 		t.Fatalf("stage = %+v, %v", meta, err)
 	}
@@ -94,7 +94,7 @@ func TestSDKPDFArtifacts_Scenario1_UploadPromptProvider(t *testing.T) {
 			`data: {"type":"response.completed","sequence_number":1,"response":{"status":"completed"}}` + "\n\n"
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
 	})}
-	cfg := Config{Model: model, LLMMaxAttempts: 1, pdfArtifacts: artifacts}
+	cfg := Config{Model: model, LLMMaxAttempts: 1, artifacts: artifacts}
 	entry := newOpenAICompatEntry(cfg, providerOpenAI, "test-key", "", openai.WithHTTPClient(client))
 	reg := &providerRegistry{entries: map[string]providerEntry{providerOpenAI: entry}, defaultID: providerOpenAI, defaultModel: model, meta: newLiveMetaStore()}
 	reg.meta.Swap(map[string][]modelEntry{providerOpenAI: {{ID: model, InputModalities: []string{"text", "pdf"}}}})
@@ -168,7 +168,7 @@ func TestSDKPDFArtifacts_Scenario1_SystemPromptAffordance(t *testing.T) {
 			meta := newLiveMetaStore()
 			meta.Swap(map[string][]modelEntry{providerOpenAI: {{ID: model, InputModalities: tc.modalities}}})
 			reg.meta = meta
-			factory := sessionEngineFactory(Config{Model: model, pdfArtifacts: &pdfLifecycleFixture{}}, reg, provider, memstore.New(),
+			factory := sessionEngineFactory(Config{Model: model, artifacts: &pdfLifecycleFixture{}}, reg, provider, memstore.New(),
 				permpolicy.NewPolicy(defaultRules(), nil), hookexec.New(nil), nil,
 				prompt.RootAssembler{}, catalogAssets{}, nil)
 			res, err := factory(context.Background(), server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)

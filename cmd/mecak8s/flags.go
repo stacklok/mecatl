@@ -698,7 +698,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		RedisAllowPlaintext:    cfg.redisAllowPlaintext,
 		RedisFollowPoolSize:    cfg.redisFollowPoolSize,
 		RedisMaxFollowers:      cfg.redisMaxFollowers,
-		PDFArtifactS3:          pdfartifact.S3Config{Bucket: cfg.artifactS3Bucket, Region: cfg.artifactS3Region, Endpoint: cfg.artifactS3Endpoint},
+		ArtifactS3:             pdfartifact.S3Config{Bucket: cfg.artifactS3Bucket, Region: cfg.artifactS3Region, Endpoint: cfg.artifactS3Endpoint},
 		LearningStoreURL:       cfg.learningStoreURL,
 		DriverAuthToken:        cfg.driverAuthToken,
 		DriverTLS:              cfg.driverTLS,

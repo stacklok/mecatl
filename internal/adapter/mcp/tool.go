@@ -175,7 +175,7 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 	}
 
 	modelStr, blocks := mapContent(res.Content)
-	if t.server.cfg.PDFArtifactResults && hasOversizedPDFBlob(blocks) {
+	if t.server.cfg.ArtifactResults && hasOversizedPDFBlob(blocks) {
 		return session.NewToolError(in.ID, "PDF tool result exceeds the 20 MiB limit"), nil
 	}
 
@@ -228,7 +228,7 @@ func (t *remoteTool) Execute(ctx context.Context, in session.ToolCall, _ tool.En
 	// Content stays bounded by toolkit.MaxOutputBytes while the clamp reason
 	// survives.
 	parts := blocks
-	parts, content = boundPDFBlobs(parts, content, t.server.cfg.PDFArtifactResults)
+	parts, content = boundPDFBlobs(parts, content, t.server.cfg.ArtifactResults)
 	if err := session.ValidateToolResultParts(parts); err != nil {
 		var note string
 		parts, note = clampToolResultParts(parts, err)

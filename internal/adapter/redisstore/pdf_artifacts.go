@@ -16,21 +16,23 @@ import (
 )
 
 const (
-	pdfArtifactKeyPrefix    = "mecatl:pdf-artifacts:"
-	pdfDeletionOutboxKey    = "mecatl:pdf-artifacts:delete-outbox"
-	pdfActiveUploadPrefix   = "mecatl:pdf-upload-active:"
-	pdfForkSourcePrefix     = "mecatl:pdf-fork-source:"
-	maxPDFRecordsPerSession = 1024
+	artifactPDFMIMEType          = "application/pdf"
+	artifactKeyPrefix            = "mecatl:artifacts:"
+	artifactDeletionOutboxKey    = "mecatl:artifacts:delete-outbox"
+	artifactActiveUploadPrefix   = "mecatl:artifact-upload-active:"
+	artifactForkSourcePrefix     = "mecatl:artifact-fork-source:"
+	maxArtifactRecordsPerSession = 1024
 	// Stage has a 30-minute request deadline. Redis's own TTL clock provides
 	// another five minutes for cancellation and multipart abort to settle.
-	pdfActiveUploadSeconds = 35 * 60
+	artifactActiveUploadSeconds = 35 * 60
 )
 
-// PDFRecord is small Redis metadata. Object keys and PDF bytes are derived or
+// ArtifactRecord is small Redis metadata. Object keys and PDF bytes are derived or
 // held outside Redis; neither is a field in this record.
-type PDFRecord struct {
+type ArtifactRecord struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
+	MIMEType  string    `json:"mime_type"`
 	Size      int64     `json:"size"`
 	SHA256    string    `json:"sha256"`
 	State     string    `json:"state"`
@@ -38,21 +40,21 @@ type PDFRecord struct {
 }
 
 const (
-	// PDFStaging means an object write has been reserved but is not usable.
-	PDFStaging = "staging"
-	// PDFReady means an object is usable but not yet snapshot-committed.
-	PDFReady = "ready"
-	// PDFCommitted means an authoritative snapshot references this object.
-	PDFCommitted = "committed"
+	// ArtifactStaging means an object write has been reserved but is not usable.
+	ArtifactStaging = "staging"
+	// ArtifactReady means an object is usable but not yet snapshot-committed.
+	ArtifactReady = "ready"
+	// ArtifactCommitted means an authoritative snapshot references this object.
+	ArtifactCommitted = "committed"
 )
 
-func pdfArtifactKey(id session.SessionID) string { return pdfArtifactKeyPrefix + string(id) }
-func pdfActiveUploadKey(id session.SessionID, artifactID string) string {
-	return pdfActiveUploadPrefix + string(id) + ":" + artifactID
+func artifactKey(id session.SessionID) string { return artifactKeyPrefix + string(id) }
+func artifactActiveUploadKey(id session.SessionID, artifactID string) string {
+	return artifactActiveUploadPrefix + string(id) + ":" + artifactID
 }
-func pdfForkSourceKey(id session.SessionID) string { return pdfForkSourcePrefix + string(id) }
+func artifactForkSourceKey(id session.SessionID) string { return artifactForkSourcePrefix + string(id) }
 
-var pdfReserveScript = redis.NewScript(`
+var artifactReserveScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('HLEN', KEYS[2]) >= tonumber(ARGV[3]) then return -1 end
 if redis.call('HSETNX', KEYS[2], ARGV[1], ARGV[2]) == 0 then return -1 end
@@ -60,35 +62,35 @@ redis.call('SET', KEYS[3], '1', 'EX', ARGV[4])
 return 1
 `)
 
-// ReservePDF writes the staging marker before the caller starts an object
+// ReserveArtifact writes the staging marker before the caller starts an object
 // upload. It refuses a deleted session and caps per-session metadata growth.
-func (st *Store) ReservePDF(ctx context.Context, id session.SessionID, record PDFRecord) error {
-	if record.ID == "" || record.State != PDFStaging || len(record.Name) == 0 || len(record.Name) > 4*255 {
-		return errors.New("pdf artifact: invalid staging metadata")
+func (st *Store) ReserveArtifact(ctx context.Context, id session.SessionID, record ArtifactRecord) error {
+	if record.ID == "" || record.State != ArtifactStaging || record.MIMEType != artifactPDFMIMEType || len(record.Name) == 0 || len(record.Name) > 4*255 {
+		return errors.New("artifact: invalid staging metadata")
 	}
 	data, err := json.Marshal(record)
 	if err != nil {
-		return errors.New("pdf artifact: invalid staging metadata")
+		return errors.New("artifact: invalid staging metadata")
 	}
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	result, err := pdfReserveScript.Run(ctx, client, []string{sessionKey(id), pdfArtifactKey(id), pdfActiveUploadKey(id, record.ID)}, record.ID, data, maxPDFRecordsPerSession, pdfActiveUploadSeconds).Int()
+	result, err := artifactReserveScript.Run(ctx, client, []string{sessionKey(id), artifactKey(id), artifactActiveUploadKey(id, record.ID)}, record.ID, data, maxArtifactRecordsPerSession, artifactActiveUploadSeconds).Int()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	if result == 0 {
-		return errors.New("pdf artifact: session unavailable")
+		return errors.New("artifact: session unavailable")
 	}
 	if result != 1 {
-		return errors.New("pdf artifact: metadata limit reached")
+		return errors.New("artifact: metadata limit reached")
 	}
 	return nil
 }
 
-var pdfReserveForkScript = redis.NewScript(`
+var artifactReserveForkScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 or redis.call('EXISTS', KEYS[2]) ~= 0 then return 0 end
 local outbox_type = redis.call('TYPE', KEYS[6]).ok
 if outbox_type ~= 'none' and outbox_type ~= 'zset' then return -2 end
@@ -102,31 +104,31 @@ redis.call('ZADD', KEYS[6], 'NX', ARGV[7], ARGV[6])
 return 1
 `)
 
-// ReserveForkPDF durably stages a successor copy before its object write.
+// ReserveForkArtifact durably stages a successor copy before its object write.
 // The source snapshot must exist and the successor snapshot must not exist yet.
-func (st *Store) ReserveForkPDF(ctx context.Context, source, target session.SessionID, record PDFRecord) error {
-	if source == "" || target == "" || source == target || record.ID == "" || record.State != PDFStaging || record.CreatedAt.IsZero() || len(record.Name) == 0 || len(record.Name) > 4*255 {
-		return errors.New("pdf artifact: invalid fork staging metadata")
+func (st *Store) ReserveForkArtifact(ctx context.Context, source, target session.SessionID, record ArtifactRecord) error {
+	if source == "" || target == "" || source == target || record.ID == "" || record.State != ArtifactStaging || record.MIMEType != artifactPDFMIMEType || record.CreatedAt.IsZero() || len(record.Name) == 0 || len(record.Name) > 4*255 {
+		return errors.New("artifact: invalid fork staging metadata")
 	}
 	data, err := json.Marshal(record)
 	if err != nil {
-		return errors.New("pdf artifact: invalid fork staging metadata")
+		return errors.New("artifact: invalid fork staging metadata")
 	}
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	result, err := pdfReserveForkScript.Run(ctx, client,
-		[]string{sessionKey(source), sessionKey(target), pdfArtifactKey(target), pdfActiveUploadKey(target, record.ID), pdfForkSourceKey(target), pdfDeletionOutboxKey},
-		record.ID, data, maxPDFRecordsPerSession, pdfActiveUploadSeconds, string(source), string(target), record.CreatedAt.Unix()).Int()
+	result, err := artifactReserveForkScript.Run(ctx, client,
+		[]string{sessionKey(source), sessionKey(target), artifactKey(target), artifactActiveUploadKey(target, record.ID), artifactForkSourceKey(target), artifactDeletionOutboxKey},
+		record.ID, data, maxArtifactRecordsPerSession, artifactActiveUploadSeconds, string(source), string(target), record.CreatedAt.Unix()).Int()
 	if err != nil || result != 1 {
-		return errors.New("pdf artifact: fork staging unavailable")
+		return errors.New("artifact: fork staging unavailable")
 	}
 	return nil
 }
 
-var pdfPublishScript = redis.NewScript(`
+var artifactPublishScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 0 then return 0 end
 redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
@@ -134,31 +136,31 @@ redis.call('DEL', KEYS[3])
 return 1
 `)
 
-// PublishPDF makes a validated, fully written object available for lookup.
-func (st *Store) PublishPDF(ctx context.Context, id session.SessionID, record PDFRecord) error {
-	if record.ID == "" || record.State != PDFReady || record.Size <= 0 || len(record.SHA256) != 64 {
-		return errors.New("pdf artifact: invalid metadata")
+// PublishArtifact makes a validated, fully written object available for lookup.
+func (st *Store) PublishArtifact(ctx context.Context, id session.SessionID, record ArtifactRecord) error {
+	if record.ID == "" || record.State != ArtifactReady || record.MIMEType != artifactPDFMIMEType || record.Size <= 0 || len(record.SHA256) != 64 {
+		return errors.New("artifact: invalid metadata")
 	}
 	data, err := json.Marshal(record)
 	if err != nil {
-		return errors.New("pdf artifact: invalid metadata")
+		return errors.New("artifact: invalid metadata")
 	}
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	result, err := pdfPublishScript.Run(ctx, client, []string{sessionKey(id), pdfArtifactKey(id), pdfActiveUploadKey(id, record.ID)}, record.ID, data).Int()
+	result, err := artifactPublishScript.Run(ctx, client, []string{sessionKey(id), artifactKey(id), artifactActiveUploadKey(id, record.ID)}, record.ID, data).Int()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	if result != 1 {
-		return errors.New("pdf artifact: session unavailable")
+		return errors.New("artifact: session unavailable")
 	}
 	return nil
 }
 
-var pdfPublishForkScript = redis.NewScript(`
+var artifactPublishForkScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) ~= 0 then return 0 end
 if redis.call('GET', KEYS[3]) ~= ARGV[3] then return 0 end
 if redis.call('HEXISTS', KEYS[2], ARGV[1]) == 0 then return 0 end
@@ -166,98 +168,98 @@ redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
 return 1
 `)
 
-// PublishForkPDF marks a verified private copy ready before the successor is
+// PublishForkArtifact marks a verified private copy ready before the successor is
 // published. Its active marker remains until publication or orphan cleanup.
-func (st *Store) PublishForkPDF(ctx context.Context, source, target session.SessionID, record PDFRecord) error {
-	if record.ID == "" || record.State != PDFReady || record.Size <= 0 || len(record.SHA256) != 64 {
-		return errors.New("pdf artifact: invalid fork metadata")
+func (st *Store) PublishForkArtifact(ctx context.Context, source, target session.SessionID, record ArtifactRecord) error {
+	if record.ID == "" || record.State != ArtifactReady || record.MIMEType != artifactPDFMIMEType || record.Size <= 0 || len(record.SHA256) != 64 {
+		return errors.New("artifact: invalid fork metadata")
 	}
 	data, err := json.Marshal(record)
 	if err != nil {
-		return errors.New("pdf artifact: invalid fork metadata")
+		return errors.New("artifact: invalid fork metadata")
 	}
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	result, err := pdfPublishForkScript.Run(ctx, client,
-		[]string{sessionKey(target), pdfArtifactKey(target), pdfForkSourceKey(target)},
+	result, err := artifactPublishForkScript.Run(ctx, client,
+		[]string{sessionKey(target), artifactKey(target), artifactForkSourceKey(target)},
 		record.ID, data, string(source)).Int()
 	if err != nil || result != 1 {
-		return errors.New("pdf artifact: fork publication unavailable")
+		return errors.New("artifact: fork publication unavailable")
 	}
 	return nil
 }
 
-var pdfLoadScript = redis.NewScript(`
+var artifactLoadScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then return nil end
 return redis.call('HGET', KEYS[2], ARGV[1])
 `)
 
-// PDFRecordForSession atomically checks that the snapshot still exists before
+// ArtifactRecordForSession atomically checks that the snapshot still exists before
 // resolving metadata. The artifact ID itself grants no authority.
-func (st *Store) PDFRecordForSession(ctx context.Context, id session.SessionID, artifactID string) (PDFRecord, bool, error) {
+func (st *Store) ArtifactRecordForSession(ctx context.Context, id session.SessionID, artifactID string) (ArtifactRecord, bool, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return PDFRecord{}, false, errors.New("pdf artifact: metadata unavailable")
+		return ArtifactRecord{}, false, errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	raw, err := pdfLoadScript.Run(ctx, client, []string{sessionKey(id), pdfArtifactKey(id)}, artifactID).Text()
+	raw, err := artifactLoadScript.Run(ctx, client, []string{sessionKey(id), artifactKey(id)}, artifactID).Text()
 	if errors.Is(err, redis.Nil) {
-		return PDFRecord{}, false, nil
+		return ArtifactRecord{}, false, nil
 	}
 	if err != nil {
-		return PDFRecord{}, false, errors.New("pdf artifact: metadata unavailable")
+		return ArtifactRecord{}, false, errors.New("artifact: metadata unavailable")
 	}
-	var record PDFRecord
-	if json.Unmarshal([]byte(raw), &record) != nil || record.ID != artifactID {
-		return PDFRecord{}, false, errors.New("pdf artifact: corrupt metadata")
+	var record ArtifactRecord
+	if json.Unmarshal([]byte(raw), &record) != nil || record.ID != artifactID || record.MIMEType != artifactPDFMIMEType {
+		return ArtifactRecord{}, false, errors.New("artifact: corrupt metadata")
 	}
 	return record, true, nil
 }
 
-// CommitPDFRecords marks the IDs referenced by an already-saved prompt. A
+// CommitArtifactRecords marks the IDs referenced by an already-saved prompt. A
 // failed marker update is recoverable because the snapshot is authoritative.
-func (st *Store) CommitPDFRecords(ctx context.Context, id session.SessionID, artifactIDs []string) error {
+func (st *Store) CommitArtifactRecords(ctx context.Context, id session.SessionID, artifactIDs []string) error {
 	for _, artifactID := range artifactIDs {
-		record, ok, err := st.PDFRecordForSession(ctx, id, artifactID)
+		record, ok, err := st.ArtifactRecordForSession(ctx, id, artifactID)
 		if err != nil {
 			return err
 		}
-		if !ok || record.State == PDFStaging {
-			return errors.New("pdf artifact: reference unavailable")
+		if !ok || record.State == ArtifactStaging {
+			return errors.New("artifact: reference unavailable")
 		}
-		if record.State == PDFCommitted {
+		if record.State == ArtifactCommitted {
 			continue
 		}
-		record.State = PDFCommitted
+		record.State = ArtifactCommitted
 		data, err := json.Marshal(record)
 		if err != nil {
-			return errors.New("pdf artifact: invalid metadata")
+			return errors.New("artifact: invalid metadata")
 		}
 		client, release, err := st.clients.acquire()
 		if err != nil {
-			return errors.New("pdf artifact: metadata unavailable")
+			return errors.New("artifact: metadata unavailable")
 		}
-		result, err := pdfPublishScript.Run(ctx, client, []string{sessionKey(id), pdfArtifactKey(id), pdfActiveUploadKey(id, artifactID)}, artifactID, data).Int()
+		result, err := artifactPublishScript.Run(ctx, client, []string{sessionKey(id), artifactKey(id), artifactActiveUploadKey(id, artifactID)}, artifactID, data).Int()
 		release()
 		if err != nil {
-			return errors.New("pdf artifact: metadata unavailable")
+			return errors.New("artifact: metadata unavailable")
 		}
 		if result != 1 {
-			return errors.New("pdf artifact: session unavailable")
+			return errors.New("artifact: session unavailable")
 		}
 	}
 	return nil
 }
 
-// PDFReferencedInSnapshot checks typed PDF parts in the authoritative snapshot.
+// ArtifactReferencedInSnapshot checks typed PDF parts in the authoritative snapshot.
 // A corrupt snapshot is an error, so reconciliation cannot delete uncertain data.
-func (st *Store) PDFReferencedInSnapshot(ctx context.Context, id session.SessionID, artifactID string) (bool, error) {
+func (st *Store) ArtifactReferencedInSnapshot(ctx context.Context, id session.SessionID, artifactID string) (bool, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return false, errors.New("pdf artifact: metadata unavailable")
+		return false, errors.New("artifact: metadata unavailable")
 	}
 	defer release()
 	blob, err := client.HGet(ctx, sessionKey(id), fieldBlob).Bytes()
@@ -265,11 +267,11 @@ func (st *Store) PDFReferencedInSnapshot(ctx context.Context, id session.Session
 		return false, nil
 	}
 	if err != nil {
-		return false, errors.New("pdf artifact: metadata unavailable")
+		return false, errors.New("artifact: metadata unavailable")
 	}
 	restored, err := sessnap.Unmarshal(blob)
 	if err != nil || restored.ID != id {
-		return false, errors.New("pdf artifact: corrupt snapshot")
+		return false, errors.New("artifact: corrupt snapshot")
 	}
 	for _, message := range restored.Conversation.Messages {
 		if message.Role == session.RoleUser {
@@ -281,7 +283,7 @@ func (st *Store) PDFReferencedInSnapshot(ctx context.Context, id session.Session
 		}
 		if message.Role == session.RoleTool && message.ToolResult != nil {
 			for _, part := range message.ToolResult.Parts {
-				if part.BlockKind == session.BlockPDFArtifact && part.ArtifactID == artifactID {
+				if part.BlockKind == session.BlockArtifact && part.ArtifactID == artifactID {
 					return true, nil
 				}
 			}
@@ -290,40 +292,40 @@ func (st *Store) PDFReferencedInSnapshot(ctx context.Context, id session.Session
 	return false, nil
 }
 
-// PDFSessionExists is used before prefix cleanup. A Redis outage returns an
+// ArtifactSessionExists is used before prefix cleanup. A Redis outage returns an
 // error so the caller retries instead of deleting an uncertain live object.
-func (st *Store) PDFSessionExists(ctx context.Context, id session.SessionID) (bool, error) {
+func (st *Store) ArtifactSessionExists(ctx context.Context, id session.SessionID) (bool, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return false, errors.New("pdf artifact: metadata unavailable")
+		return false, errors.New("artifact: metadata unavailable")
 	}
 	defer release()
 	n, err := client.Exists(ctx, sessionKey(id)).Result()
 	if err != nil {
-		return false, errors.New("pdf artifact: metadata unavailable")
+		return false, errors.New("artifact: metadata unavailable")
 	}
 	return n != 0, nil
 }
 
-// PDFPendingForkSource returns the source whose lease protects an unpublished
+// ArtifactPendingForkSource returns the source whose lease protects an unpublished
 // successor. The mapping stays durable until publication or prefix cleanup.
-func (st *Store) PDFPendingForkSource(ctx context.Context, target session.SessionID) (session.SessionID, bool, error) {
+func (st *Store) ArtifactPendingForkSource(ctx context.Context, target session.SessionID) (session.SessionID, bool, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return "", false, errors.New("pdf artifact: metadata unavailable")
+		return "", false, errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	value, err := client.Get(ctx, pdfForkSourceKey(target)).Result()
+	value, err := client.Get(ctx, artifactForkSourceKey(target)).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", false, nil
 	}
 	if err != nil || value == "" {
-		return "", false, errors.New("pdf artifact: fork source unavailable")
+		return "", false, errors.New("artifact: fork source unavailable")
 	}
 	return session.SessionID(value), true, nil
 }
 
-var pdfFinishForkScript = redis.NewScript(`
+var artifactFinishForkScript = redis.NewScript(`
 if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 if redis.call('EXISTS', KEYS[2]) == 0 then return 1 end
 local outbox_type = redis.call('TYPE', KEYS[3]).ok
@@ -333,46 +335,46 @@ redis.call('ZREM', KEYS[3], ARGV[1])
 return 1
 `)
 
-// FinishPDFFork removes prepublication cleanup intent only after an
+// FinishArtifactFork removes prepublication cleanup intent only after an
 // authoritative successor snapshot exists.
-func (st *Store) FinishPDFFork(ctx context.Context, target session.SessionID) error {
+func (st *Store) FinishArtifactFork(ctx context.Context, target session.SessionID) error {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	result, err := pdfFinishForkScript.Run(ctx, client,
-		[]string{sessionKey(target), pdfForkSourceKey(target), pdfDeletionOutboxKey}, string(target)).Int()
+	result, err := artifactFinishForkScript.Run(ctx, client,
+		[]string{sessionKey(target), artifactForkSourceKey(target), artifactDeletionOutboxKey}, string(target)).Int()
 	if err != nil || result != 1 {
-		return errors.New("pdf artifact: fork cleanup intent unavailable")
+		return errors.New("artifact: fork cleanup intent unavailable")
 	}
 	return nil
 }
 
-// PDFHasActiveStage protects an object write that began before session
+// ArtifactHasActiveStage protects an object write that began before session
 // deletion or successor publication. The active key uses Redis's TTL clock,
 // avoiding pod clock skew. The metadata hash remains after deletion.
-func (st *Store) PDFHasActiveStage(ctx context.Context, id session.SessionID) (bool, error) {
+func (st *Store) ArtifactHasActiveStage(ctx context.Context, id session.SessionID) (bool, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return false, errors.New("pdf artifact: metadata unavailable")
+		return false, errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	values, err := client.HGetAll(ctx, pdfArtifactKey(id)).Result()
+	values, err := client.HGetAll(ctx, artifactKey(id)).Result()
 	if err != nil {
-		return false, errors.New("pdf artifact: metadata unavailable")
+		return false, errors.New("artifact: metadata unavailable")
 	}
 	for _, raw := range values {
-		var record PDFRecord
+		var record ArtifactRecord
 		if json.Unmarshal([]byte(raw), &record) != nil {
-			return false, errors.New("pdf artifact: corrupt metadata")
+			return false, errors.New("artifact: corrupt metadata")
 		}
 		if record.ID == "" || record.CreatedAt.IsZero() {
-			return false, errors.New("pdf artifact: corrupt metadata")
+			return false, errors.New("artifact: corrupt metadata")
 		}
-		active, err := client.Exists(ctx, pdfActiveUploadKey(id, record.ID)).Result()
+		active, err := client.Exists(ctx, artifactActiveUploadKey(id, record.ID)).Result()
 		if err != nil {
-			return false, errors.New("pdf artifact: metadata unavailable")
+			return false, errors.New("artifact: metadata unavailable")
 		}
 		if active != 0 {
 			return true, nil
@@ -381,33 +383,33 @@ func (st *Store) PDFHasActiveStage(ctx context.Context, id session.SessionID) (b
 	return false, nil
 }
 
-// PDFRecords iterates one metadata record at a time. The per-session reserve
+// ArtifactRecords iterates one metadata record at a time. The per-session reserve
 // limit bounds each hash and the Redis SCAN cursor bounds each fetch.
-func (st *Store) PDFRecords(ctx context.Context) iter.Seq2[struct {
+func (st *Store) ArtifactRecords(ctx context.Context) iter.Seq2[struct {
 	SessionID session.SessionID
-	Record    PDFRecord
+	Record    ArtifactRecord
 }, error] {
 	return func(yield func(struct {
 		SessionID session.SessionID
-		Record    PDFRecord
+		Record    ArtifactRecord
 	}, error) bool) {
 		type entry = struct {
 			SessionID session.SessionID
-			Record    PDFRecord
+			Record    ArtifactRecord
 		}
 		client, release, err := st.clients.acquire()
 		if err != nil {
-			yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
+			yield(entry{}, errors.New("artifact: metadata unavailable"))
 			return
 		}
 		defer release()
-		scan := client.Scan(ctx, 0, pdfArtifactKeyPrefix+"*", 100).Iterator()
+		scan := client.Scan(ctx, 0, artifactKeyPrefix+"*", 100).Iterator()
 		for scan.Next(ctx) {
 			key := scan.Val()
-			if key == pdfDeletionOutboxKey {
+			if key == artifactDeletionOutboxKey {
 				continue
 			}
-			id := session.SessionID(strings.TrimPrefix(key, pdfArtifactKeyPrefix))
+			id := session.SessionID(strings.TrimPrefix(key, artifactKeyPrefix))
 			if id == "" {
 				continue
 			}
@@ -416,15 +418,15 @@ func (st *Store) PDFRecords(ctx context.Context) iter.Seq2[struct {
 				field := fields.Val()
 				if !fields.Next(ctx) {
 					if fields.Err() != nil {
-						yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
+						yield(entry{}, errors.New("artifact: metadata unavailable"))
 					} else {
-						yield(entry{}, errors.New("pdf artifact: corrupt metadata"))
+						yield(entry{}, errors.New("artifact: corrupt metadata"))
 					}
 					return
 				}
-				var rec PDFRecord
-				if json.Unmarshal([]byte(fields.Val()), &rec) != nil || rec.ID != field {
-					yield(entry{}, errors.New("pdf artifact: corrupt metadata"))
+				var rec ArtifactRecord
+				if json.Unmarshal([]byte(fields.Val()), &rec) != nil || rec.ID != field || rec.MIMEType != artifactPDFMIMEType {
+					yield(entry{}, errors.New("artifact: corrupt metadata"))
 					return
 				}
 				if !yield(entry{id, rec}, nil) {
@@ -432,45 +434,45 @@ func (st *Store) PDFRecords(ctx context.Context) iter.Seq2[struct {
 				}
 			}
 			if fields.Err() != nil {
-				yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
+				yield(entry{}, errors.New("artifact: metadata unavailable"))
 				return
 			}
 		}
 		if scan.Err() != nil {
-			yield(entry{}, errors.New("pdf artifact: metadata unavailable"))
+			yield(entry{}, errors.New("artifact: metadata unavailable"))
 		}
 	}
 }
 
-var pdfDeleteRecordScript = redis.NewScript(`
+var artifactDeleteRecordScript = redis.NewScript(`
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('DEL', KEYS[2])
 return 1
 `)
 
-// DeletePDFRecord removes unreferenced metadata after its private object is gone.
-func (st *Store) DeletePDFRecord(ctx context.Context, id session.SessionID, artifactID string) error {
+// DeleteArtifactRecord removes unreferenced metadata after its private object is gone.
+func (st *Store) DeleteArtifactRecord(ctx context.Context, id session.SessionID, artifactID string) error {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	if err := pdfDeleteRecordScript.Run(ctx, client, []string{pdfArtifactKey(id), pdfActiveUploadKey(id, artifactID)}, artifactID).Err(); err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+	if err := artifactDeleteRecordScript.Run(ctx, client, []string{artifactKey(id), artifactActiveUploadKey(id, artifactID)}, artifactID).Err(); err != nil {
+		return errors.New("artifact: metadata unavailable")
 	}
 	return nil
 }
 
-// PDFDeletionBatch returns only outbox members older than the age grace.
-func (st *Store) PDFDeletionBatch(ctx context.Context, now time.Time) ([]session.SessionID, error) {
+// ArtifactDeletionBatch returns only outbox members older than the age grace.
+func (st *Store) ArtifactDeletionBatch(ctx context.Context, now time.Time) ([]session.SessionID, error) {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return nil, errors.New("pdf artifact: metadata unavailable")
+		return nil, errors.New("artifact: metadata unavailable")
 	}
 	defer release()
-	values, err := client.ZRangeByScore(ctx, pdfDeletionOutboxKey, &redis.ZRangeBy{Min: "-inf", Max: strconv.FormatInt(now.Add(-5*time.Minute).Unix(), 10), Count: 100}).Result()
+	values, err := client.ZRangeByScore(ctx, artifactDeletionOutboxKey, &redis.ZRangeBy{Min: "-inf", Max: strconv.FormatInt(now.Add(-5*time.Minute).Unix(), 10), Count: 100}).Result()
 	if err != nil {
-		return nil, errors.New("pdf artifact: metadata unavailable")
+		return nil, errors.New("artifact: metadata unavailable")
 	}
 	out := make([]session.SessionID, len(values))
 	for i, value := range values {
@@ -488,18 +490,18 @@ redis.call('ZREM', KEYS[4], ARGV[1])
 return 1
 `)
 
-// FinishPDFDeletion clears metadata and durable cleanup intent after the
+// FinishArtifactDeletion clears metadata and durable cleanup intent after the
 // private prefix is gone and the authoritative snapshot is absent.
-func (st *Store) FinishPDFDeletion(ctx context.Context, id session.SessionID) error {
+func (st *Store) FinishArtifactDeletion(ctx context.Context, id session.SessionID) error {
 	client, release, err := st.clients.acquire()
 	if err != nil {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	defer release()
 	result, err := pdfFinishDeletionScript.Run(ctx, client,
-		[]string{sessionKey(id), pdfArtifactKey(id), pdfForkSourceKey(id), pdfDeletionOutboxKey}, string(id)).Int()
+		[]string{sessionKey(id), artifactKey(id), artifactForkSourceKey(id), artifactDeletionOutboxKey}, string(id)).Int()
 	if err != nil || result != 1 {
-		return errors.New("pdf artifact: metadata unavailable")
+		return errors.New("artifact: metadata unavailable")
 	}
 	return nil
 }

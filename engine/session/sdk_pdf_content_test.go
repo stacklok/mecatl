@@ -25,7 +25,7 @@ func TestPDFContentMetadataValidation(t *testing.T) {
 			if _, err := NewPDFContent(tc.id, tc.file, tc.size, tc.sha); err == nil {
 				t.Fatal("invalid PDF content metadata accepted")
 			}
-			if _, err := NewPDFArtifactBlock(tc.id, tc.file, tc.size, tc.sha); err == nil {
+			if _, err := NewArtifactBlock(tc.id, tc.file, "application/pdf", tc.size, tc.sha); err == nil {
 				t.Fatal("invalid PDF artifact block metadata accepted")
 			}
 		})
@@ -37,15 +37,31 @@ func TestPDFContentMetadataValidation(t *testing.T) {
 	if pdf.MIMEType != "application/pdf" || pdf.ArtifactID != "id" || pdf.SHA256 != sha || len(pdf.Data) != 0 || pdf.URL != "" {
 		t.Fatalf("PDF prompt must contain bounded reference metadata only: %+v", pdf)
 	}
-	block, err := NewPDFArtifactBlock("id", "x.pdf", 1, sha)
+	block, err := NewArtifactBlock("id", "x.pdf", "application/pdf", 1, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if block.BlockKind != BlockPDFArtifact || block.Kind != "" || block.MIMEType != "application/pdf" || len(block.Data) != 0 || block.URL != "" || block.ArtifactID != "id" {
+	if block.BlockKind != BlockArtifact || block.Kind != "" || block.MIMEType != "application/pdf" || len(block.Data) != 0 || block.URL != "" || block.ArtifactID != "id" {
 		t.Fatalf("PDF block must contain bounded reference metadata only: %+v", block)
 	}
 	if err := ValidateToolResultParts([]Content{NewTextBlock("before"), block}); err != nil {
 		t.Fatalf("reference-only PDF result block rejected: %v", err)
+	}
+}
+
+func TestArtifactBlock_PDFOnlyMetadata(t *testing.T) {
+	sha := strings.Repeat("a", 64)
+	block, err := NewArtifactBlock("opaque-id", "report.pdf", "application/pdf", 123, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if block.BlockKind != BlockArtifact || block.MIMEType != "application/pdf" ||
+		block.ArtifactID != "opaque-id" || block.Name != "report.pdf" ||
+		block.Size != 123 || block.SHA256 != sha || len(block.Data) != 0 || block.URL != "" {
+		t.Fatalf("artifact block metadata = %+v", block)
+	}
+	if _, err := NewArtifactBlock("opaque-id", "report.txt", "text/plain", 123, sha); err == nil {
+		t.Fatal("non-PDF MIME type accepted")
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-func TestPDFArtifactStorage_Flags(t *testing.T) {
+func TestArtifactStorage_Flags(t *testing.T) {
 	for _, argv := range [][]string{
 		{"--redis-url=redis:6379", "--artifact-s3-bucket=private-pdf"},
 		{"--redis-url=redis:6379", "--artifact-s3-region=eu-west-1"},
@@ -24,7 +24,7 @@ func TestPDFArtifactStorage_Flags(t *testing.T) {
 	if cfg.artifactS3Bucket != "private-pdf" || cfg.artifactS3Region != "eu-west-1" || cfg.artifactS3Endpoint != "https://minio.example:9000" {
 		t.Fatalf("parsed S3 flags = %+v", cfg)
 	}
-	projected := appConfig(cfg, port.NopDiagnostics{}, observability{}).PDFArtifactS3
+	projected := appConfig(cfg, port.NopDiagnostics{}, observability{}).ArtifactS3
 	if projected.Bucket != cfg.artifactS3Bucket || projected.Region != cfg.artifactS3Region || projected.Endpoint != cfg.artifactS3Endpoint {
 		t.Fatalf("S3 flags lost by appConfig: %+v", projected)
 	}

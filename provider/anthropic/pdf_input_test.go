@@ -45,7 +45,7 @@ func setPDFStringField(t *testing.T, part *session.Content, name, value string) 
 	field.SetString(value)
 }
 
-func pdfArtifactID(t *testing.T, part session.Content) string {
+func artifactID(t *testing.T, part session.Content) string {
 	t.Helper()
 	requirePDFEngine(t)
 	return reflect.ValueOf(part).FieldByName("ArtifactID").String()
@@ -107,7 +107,7 @@ func TestPDFInputMessagesFixture(t *testing.T) {
 	if parts[2].Type != "document" || parts[2].Source.Type != "base64" || parts[2].Source.MediaType != "application/pdf" || parts[2].Source.Data != base64.StdEncoding.EncodeToString(pdf.Data) {
 		t.Fatalf("PDF document = %+v, want base64 fixture bytes", parts[2])
 	}
-	if strings.Contains(string(raw), pdfArtifactID(t, pdf)) {
+	if strings.Contains(string(raw), artifactID(t, pdf)) {
 		t.Fatalf("private artifact ID leaked into provider request: %s", raw)
 	}
 }

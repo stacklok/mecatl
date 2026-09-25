@@ -41,7 +41,7 @@ func newPDFDownloadFixture(t *testing.T, objects pdfartifact.ObjectStore, owners
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func newPDFDownloadFixture(t *testing.T, objects pdfartifact.ObjectStore, owners
 	svc, err := newPlacementTeamTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
 		Store:  metadata, PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
-		PDFArtifacts: pdfartifact.New(metadata, objects), DefaultCapabilities: port.ProviderCapabilities{PDF: true},
+		Artifacts: pdfartifact.New(metadata, objects), DefaultCapabilities: port.ProviderCapabilities{PDF: true},
 		OwnershipEnforced: ownership,
 	})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestSDKPDFArtifacts_Scenario3_StreamDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := pdfDownloadBytes()
-	meta, err := svc.UploadPdf(t.Context(), created.ID, "report.pdf", bytes.NewReader(want))
+	meta, err := svc.UploadArtifact(t.Context(), created.ID, "report.pdf", "application/pdf", bytes.NewReader(want))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestSDKPDFArtifacts_Scenario3_StreamDownload(t *testing.T) {
 
 	client, closeClient := dialGRPC(t, svc)
 	defer closeClient()
-	stream, err := client.DownloadPdf(t.Context(), &mecatlv1.DownloadPdfRequest{SessionId: string(created.ID), ArtifactId: meta.ID})
+	stream, err := client.DownloadArtifact(t.Context(), &mecatlv1.DownloadArtifactRequest{SessionId: string(created.ID), ArtifactId: meta.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestSDKPDFArtifacts_Scenario3_StreamDownload(t *testing.T) {
 	}
 
 	writer := &pdfChunkWriter{header: make(http.Header)}
-	request := httptest.NewRequest(http.MethodGet, "/v1/sessions/pdf-download/pdfs/"+meta.ID, nil)
+	request := httptest.NewRequest(http.MethodGet, "/v1/sessions/pdf-download/artifacts/"+meta.ID, nil)
 	server.NewHTTPHandler(svc).ServeHTTP(writer, request)
 	if writer.status != http.StatusOK || writer.header.Get("Content-Type") != "application/pdf" || writer.header.Get("Cache-Control") != "private, no-store" || writer.header.Get("Content-Disposition") != `attachment; filename="report.pdf"` {
 		t.Fatalf("HTTP status=%d headers=%v", writer.status, writer.header)
@@ -127,7 +127,7 @@ func TestPDFDownloadHTTPRejectsCorruptObjectCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta, err := svc.UploadPdf(t.Context(), created.ID, "report.pdf", bytes.NewReader(pdfDownloadBytes()))
+	meta, err := svc.UploadArtifact(t.Context(), created.ID, "report.pdf", "application/pdf", bytes.NewReader(pdfDownloadBytes()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestPDFDownloadHTTPRejectsCorruptObjectCompletion(t *testing.T) {
 	}
 	httpServer := httptest.NewServer(server.NewHTTPHandler(svc))
 	defer httpServer.Close()
-	response, err := httpServer.Client().Get(httpServer.URL + "/v1/sessions/pdf-corrupt/pdfs/" + meta.ID)
+	response, err := httpServer.Client().Get(httpServer.URL + "/v1/sessions/pdf-corrupt/artifacts/" + meta.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestSDKPDFArtifacts_Scenario3_OwnershipAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta, err := svc.UploadPdf(alice, owned.ID, "report.pdf", bytes.NewReader(pdfDownloadBytes()))
+	meta, err := svc.UploadArtifact(alice, owned.ID, "report.pdf", "application/pdf", bytes.NewReader(pdfDownloadBytes()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestSDKPDFArtifacts_Scenario3_OwnershipAndCancellation(t *testing.T) {
 		{"unknown artifact", alice, owned.ID, strings.Repeat("a", 48)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, reader, err := svc.DownloadPdf(test.ctx, test.id, test.artifact)
+			_, reader, err := svc.DownloadArtifact(test.ctx, test.id, test.artifact)
 			if reader != nil {
 				_ = reader.Close()
 				t.Fatal("unauthorized download opened a reader")
@@ -210,7 +210,7 @@ func TestSDKPDFArtifacts_Scenario3_OwnershipAndCancellation(t *testing.T) {
 		t.Fatalf("rejected downloads opened %d object readers", objects.openCount())
 	}
 	unauthorized := httptest.NewRecorder()
-	unauthorizedRequest := httptest.NewRequest(http.MethodGet, "/v1/sessions/pdf-owned/pdfs/"+meta.ID, nil).WithContext(bob)
+	unauthorizedRequest := httptest.NewRequest(http.MethodGet, "/v1/sessions/pdf-owned/artifacts/"+meta.ID, nil).WithContext(bob)
 	server.NewHTTPHandler(svc).ServeHTTP(unauthorized, unauthorizedRequest)
 	if unauthorized.Code != http.StatusNotFound || bytes.Contains(unauthorized.Body.Bytes(), []byte("%PDF-")) || objects.openCount() != 0 {
 		t.Fatalf("foreign HTTP download status=%d opened=%d", unauthorized.Code, objects.openCount())
@@ -221,7 +221,7 @@ func TestSDKPDFArtifacts_Scenario3_OwnershipAndCancellation(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		request := httptest.NewRequest(http.MethodGet, "/v1/sessions/pdf-owned/pdfs/"+meta.ID, nil).WithContext(ctx)
+		request := httptest.NewRequest(http.MethodGet, "/v1/sessions/pdf-owned/artifacts/"+meta.ID, nil).WithContext(ctx)
 		server.NewHTTPHandler(svc).ServeHTTP(writer, request)
 	}()
 	select {
@@ -244,7 +244,7 @@ func TestSDKPDFArtifacts_Scenario3_OwnershipAndCancellation(t *testing.T) {
 		t.Fatalf("cancelled stream wrote %d chunks", len(writer.chunks))
 	}
 
-	meta2, reader, err := svc.DownloadPdf(alice, owned.ID, meta.ID)
+	meta2, reader, err := svc.DownloadArtifact(alice, owned.ID, meta.ID)
 	if err != nil || meta2.ID != meta.ID {
 		t.Fatalf("authorized open = %+v, %v", meta2, err)
 	}
@@ -256,7 +256,7 @@ func TestSDKPDFArtifacts_Scenario3_OwnershipAndCancellation(t *testing.T) {
 	if err != nil || !bytes.Equal(remaining, pdfDownloadBytes()) {
 		t.Fatalf("authorized stream after deletion: %v, bytes=%d", err, len(remaining))
 	}
-	_, reader, err = svc.DownloadPdf(alice, owned.ID, meta.ID)
+	_, reader, err = svc.DownloadArtifact(alice, owned.ID, meta.ID)
 	if reader != nil {
 		_ = reader.Close()
 		t.Fatal("deleted session opened a reader")
@@ -279,7 +279,7 @@ func testPDFGRPCDownloadCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta, err := svc.UploadPdf(owner, created.ID, "report.pdf", bytes.NewReader(pdfDownloadBytes()))
+	meta, err := svc.UploadArtifact(owner, created.ID, "report.pdf", "application/pdf", bytes.NewReader(pdfDownloadBytes()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func testPDFGRPCDownloadCancellation(t *testing.T) {
 	finished := make(chan struct{})
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer(grpc.ChainStreamInterceptor(auth.StreamInterceptor(), func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if info.FullMethod != mecatlv1.HarnessService_DownloadPdf_FullMethodName {
+		if info.FullMethod != mecatlv1.HarnessService_DownloadArtifact_FullMethodName {
 			return handler(srv, stream)
 		}
 		defer close(finished)
@@ -308,7 +308,7 @@ func testPDFGRPCDownloadCancellation(t *testing.T) {
 	defer func() { _ = conn.Close(); gs.Stop(); _ = lis.Close() }()
 	ctx, cancel := context.WithCancel(bearerCtx(t.Context(), "alice-token"))
 	defer cancel()
-	stream, err := mecatlv1.NewHarnessServiceClient(conn).DownloadPdf(ctx, &mecatlv1.DownloadPdfRequest{SessionId: string(created.ID), ArtifactId: meta.ID})
+	stream, err := mecatlv1.NewHarnessServiceClient(conn).DownloadArtifact(ctx, &mecatlv1.DownloadArtifactRequest{SessionId: string(created.ID), ArtifactId: meta.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ type pdfTrackedServerStream struct {
 func (s *pdfTrackedServerStream) SendMsg(msg any) error {
 	err := s.ServerStream.SendMsg(msg)
 	if err == nil {
-		if _, ok := msg.(*mecatlv1.DownloadPdfResponse); ok {
+		if _, ok := msg.(*mecatlv1.DownloadArtifactResponse); ok {
 			s.sent.Add(1)
 		}
 	}

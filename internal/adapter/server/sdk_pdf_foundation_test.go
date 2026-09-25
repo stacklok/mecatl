@@ -35,24 +35,30 @@ func TestSDKPDFArtifacts_FoundationContentWire(t *testing.T) {
 	if _, err := contentFromProto(pb); err == nil {
 		t.Fatal("client-supplied PDF metadata was accepted")
 	}
-	block, err := session.NewPDFArtifactBlock("opaque-id", "report.pdf", 123, sha)
+	block, err := session.NewArtifactBlock("opaque-id", "report.pdf", "application/pdf", 123, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
 	blocks := blocksToProto([]session.Content{block})
-	if len(blocks) != 1 || blocks[0].GetKind() != mecatlv1.ContentBlock_KIND_PDF_ARTIFACT || blocks[0].GetArtifactId() != "opaque-id" {
+	if len(blocks) != 1 || blocks[0].GetKind() != mecatlv1.ContentBlock_KIND_ARTIFACT || blocks[0].GetArtifactId() != "opaque-id" || blocks[0].GetMimeType() != "application/pdf" {
 		t.Fatalf("PDF result block wire projection lost reference: %+v", blocks)
 	}
-	if got := blocksFromProto(blocks); len(got) != 1 || got[0].BlockKind != session.BlockPDFArtifact || got[0].SHA256 != sha || len(got[0].Data) != 0 || got[0].URL != "" {
+	if got := blocksFromProto(blocks); len(got) != 1 || got[0].BlockKind != session.BlockArtifact || got[0].SHA256 != sha || len(got[0].Data) != 0 || got[0].URL != "" {
 		t.Fatalf("PDF result block roundtrip = %+v", got)
 	}
 	if got := toProtoSession(session.New("s", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now()), ResolvedModel{}, nil, port.ProviderCapabilities{PDF: true}).GetSessionCapabilities().GetPdf(); !got {
 		t.Fatal("session capability projection dropped PDF")
 	}
 	service := mecatlv1.File_mecatl_v1_harness_proto.Services().ByName("HarnessService")
-	for _, name := range []protoreflect.Name{"UploadPdf", "DownloadPdf"} {
+	for _, name := range []protoreflect.Name{"UploadArtifact", "DownloadArtifact"} {
 		if service.Methods().ByName(name) == nil {
 			t.Fatalf("generated service lacks %s", name)
 		}
+	}
+	if field := (&mecatlv1.UploadArtifactResponse{}).ProtoReflect().Descriptor().Fields().ByName("mime_type"); field == nil || field.Number() != 5 {
+		t.Fatalf("upload response MIME field = %v, want number 5", field)
+	}
+	if field := (&mecatlv1.ServerCapabilities{}).ProtoReflect().Descriptor().Fields().ByName("artifacts"); field == nil || field.Number() != 31 {
+		t.Fatalf("artifact deployment capability = %v, want number 31", field)
 	}
 }

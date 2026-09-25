@@ -106,7 +106,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	t.Cleanup(mr.Close)
 	newMetadata := func() *redisstore.Store {
 		t.Helper()
-		store, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+		store, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,16 +134,16 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	}, mockllm.ToolCallTurn(session.NewToolCall(callID, "PDF", json.RawMessage(`{}`))), mockllm.TextTurn("created"))
 	firstCfg := Config{
 		Model: model, UserModelDir: t.TempDir(), NoSoul: true,
-		pdfArtifacts: firstArtifacts, pdfResultProcessor: pdfartifact.ResultProcessor{Artifacts: firstArtifacts},
+		artifacts: firstArtifacts, artifactResultProcessor: pdfartifact.ResultProcessor{Artifacts: firstArtifacts},
 	}
 	firstFactory := sessionEngineFactoryWithTools(firstCfg, pdfReplicaRegistry(firstProvider, model), firstProvider,
-		pdfPromptRedisStore{Store: firstMetadata, artifacts: firstArtifacts},
+		artifactPromptRedisStore{Store: firstMetadata, artifacts: firstArtifacts},
 		permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), hookexec.New(nil), nil,
 		prompt.RootAssembler{}, catalogAssets{}, nil)
 	first, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
-		Store:  pdfServiceStore(firstMetadata, firstArtifacts), EventLog: firstMetadata,
-		PDFArtifacts: firstArtifacts, OwnershipEnforced: true,
+		Store:  artifactServiceStore(firstMetadata, firstArtifacts), EventLog: firstMetadata,
+		Artifacts: firstArtifacts, OwnershipEnforced: true,
 		SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 			return firstFactory(ctx, sel, specs, profile, workspace, mode, []tool.Tool{pdfReplicaTool{pdf: toolPDF}})
 		},
@@ -157,7 +157,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	promptArtifact, err := first.UploadPdf(owner, source.ID, "prompt.pdf", bytes.NewReader(promptPDF))
+	promptArtifact, err := first.UploadArtifact(owner, source.ID, "prompt.pdf", "application/pdf", bytes.NewReader(promptPDF))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	steerArtifact, err := first.UploadPdf(owner, source.ID, "steer.pdf", bytes.NewReader(steerPDF))
+	steerArtifact, err := first.UploadArtifact(owner, source.ID, "steer.pdf", "application/pdf", bytes.NewReader(steerPDF))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record, ok, err := firstMetadata.PDFRecordForSession(owner, source.ID, steerArtifact.ID); err != nil || !ok || record.State != redisstore.PDFReady {
+	if record, ok, err := firstMetadata.ArtifactRecordForSession(owner, source.ID, steerArtifact.ID); err != nil || !ok || record.State != redisstore.ArtifactReady {
 		t.Fatalf("uploaded steer PDF state = %+v, present=%t, err=%v; want ready before recording", record, ok, err)
 	}
 	run, err := first.StartRunContent(owner, source.ID, "read the attached PDF", []session.Content{promptPart})
@@ -217,11 +217,11 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if !sawSteerPrompt || !sawSteerEcho {
 		t.Fatalf("live PDF steer was not recorded and echoed as the same reference: prompt=%t echo=%t", sawSteerPrompt, sawSteerEcho)
 	}
-	if record, ok, err := firstMetadata.PDFRecordForSession(owner, source.ID, steerArtifact.ID); err != nil || !ok || record.State != redisstore.PDFCommitted {
+	if record, ok, err := firstMetadata.ArtifactRecordForSession(owner, source.ID, steerArtifact.ID); err != nil || !ok || record.State != redisstore.ArtifactCommitted {
 		t.Fatalf("recorded steer PDF state = %+v, present=%t, err=%v; want committed", record, ok, err)
 	}
 	if result.CallID != callID || result.IsError || len(result.Parts) != 2 ||
-		result.Parts[1].BlockKind != session.BlockPDFArtifact || result.Parts[1].ArtifactID == "" {
+		result.Parts[1].BlockKind != session.BlockArtifact || result.Parts[1].ArtifactID == "" {
 		t.Fatalf("replica A did not externalize its actual tool result: %+v", result)
 	}
 	toolID := result.Parts[1].ArtifactID
@@ -273,17 +273,17 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	}, mockllm.TextTurn("replayed"))
 	secondCfg := Config{
 		Model: model, UserModelDir: t.TempDir(), NoSoul: true,
-		pdfArtifacts: secondArtifacts, pdfResultProcessor: pdfartifact.ResultProcessor{Artifacts: secondArtifacts},
+		artifacts: secondArtifacts, artifactResultProcessor: pdfartifact.ResultProcessor{Artifacts: secondArtifacts},
 	}
 	selectedFactory := sessionEngineFactory(secondCfg, pdfReplicaRegistry(secondProvider, model), secondProvider,
-		pdfPromptRedisStore{Store: secondMetadata, artifacts: secondArtifacts},
+		artifactPromptRedisStore{Store: secondMetadata, artifacts: secondArtifacts},
 		permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), hookexec.New(nil), nil,
 		prompt.RootAssembler{}, catalogAssets{}, nil)
 	var selected int
 	second, err := newTestServerService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
-		Store:  pdfServiceStore(secondMetadata, secondArtifacts), EventLog: secondMetadata,
-		PDFArtifacts: secondArtifacts, OwnershipEnforced: true,
+		Store:  artifactServiceStore(secondMetadata, secondArtifacts), EventLog: secondMetadata,
+		Artifacts: secondArtifacts, OwnershipEnforced: true,
 		SessionEngine: func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode) (server.SessionEngineResult, error) {
 			if sel.ProviderID != providerOpenAI || sel.ModelID != model {
 				t.Errorf("replica B selected %q/%q, want %q/%q", sel.ProviderID, sel.ModelID, providerOpenAI, model)
@@ -320,7 +320,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		}
 		if message.ToolResult != nil && message.ToolResult.CallID == callID {
 			for _, part := range message.ToolResult.Parts {
-				if part.BlockKind == session.BlockPDFArtifact && part.ArtifactID == toolID && len(part.Data) == 0 {
+				if part.BlockKind == session.BlockArtifact && part.ArtifactID == toolID && len(part.Data) == 0 {
 					replayedTool = true
 				}
 			}
@@ -330,7 +330,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 		t.Fatalf("replica B model replay missed PDF reference: prompt=%t steer=%t tool=%t messages=%+v",
 			replayedPrompt, replayedSteer, replayedTool, replay.Messages)
 	}
-	_, reader, err := second.DownloadPdf(owner, source.ID, toolID)
+	_, reader, err := second.DownloadArtifact(owner, source.ID, toolID)
 	if err != nil {
 		t.Fatalf("replica B tool PDF download: %v", err)
 	}

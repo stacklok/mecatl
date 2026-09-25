@@ -13,13 +13,13 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestPDFArtifactStorage_SnapshotReferencesTyped(t *testing.T) {
+func TestArtifactStorage_SnapshotReferencesTyped(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	st, err := NewWithConfig(Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	st, err := NewWithConfig(Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,9 +39,9 @@ func TestPDFArtifactStorage_SnapshotReferencesTyped(t *testing.T) {
 	}
 	assertReference := func(artifactID string, want bool) {
 		t.Helper()
-		got, err := st.PDFReferencedInSnapshot(t.Context(), id, artifactID)
+		got, err := st.ArtifactReferencedInSnapshot(t.Context(), id, artifactID)
 		if err != nil || got != want {
-			t.Fatalf("PDFReferencedInSnapshot(%q) = %v, %v; want %v", artifactID, got, err, want)
+			t.Fatalf("ArtifactReferencedInSnapshot(%q) = %v, %v; want %v", artifactID, got, err, want)
 		}
 	}
 	assertReference(promptID, false)
@@ -58,7 +58,7 @@ func TestPDFArtifactStorage_SnapshotReferencesTyped(t *testing.T) {
 	}
 	assertReference(promptID, true)
 
-	toolPart, err := session.NewPDFArtifactBlock(toolID, "result.pdf", 8, sha)
+	toolPart, err := session.NewArtifactBlock(toolID, "result.pdf", "application/pdf", 8, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestPDFArtifactStorage_SnapshotReferencesTyped(t *testing.T) {
 	if err := st.testClient().HSet(t.Context(), sessionKey(id), fieldBlob, "{").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.PDFReferencedInSnapshot(t.Context(), id, promptID); err == nil {
+	if _, err := st.ArtifactReferencedInSnapshot(t.Context(), id, promptID); err == nil {
 		t.Fatal("corrupt authoritative snapshot allowed reconciliation to proceed")
 	}
 	other := session.New("other-session", session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC))
@@ -94,18 +94,18 @@ func TestPDFArtifactStorage_SnapshotReferencesTyped(t *testing.T) {
 	if err := st.testClient().HSet(t.Context(), sessionKey(id), fieldBlob, wrongBlob).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.PDFReferencedInSnapshot(t.Context(), id, promptID); err == nil {
+	if _, err := st.ArtifactReferencedInSnapshot(t.Context(), id, promptID); err == nil {
 		t.Fatal("snapshot with mismatched session identity allowed reconciliation to proceed")
 	}
 }
 
-func TestPDFArtifactStorage_PDFRecordsCursorAndErrors(t *testing.T) {
+func TestArtifactStorage_ArtifactRecordsCursorAndErrors(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	st, err := NewWithConfig(Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	st, err := NewWithConfig(Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,17 +114,17 @@ func TestPDFArtifactStorage_PDFRecordsCursorAndErrors(t *testing.T) {
 	fields := make(map[string]any, 125)
 	for i := range 125 {
 		artifactID := fmt.Sprintf("%048x", i)
-		wire, err := json.Marshal(PDFRecord{ID: artifactID, Name: "test.pdf", State: PDFReady, CreatedAt: time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)})
+		wire, err := json.Marshal(ArtifactRecord{ID: artifactID, Name: "test.pdf", MIMEType: "application/pdf", State: ArtifactReady, CreatedAt: time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		fields[artifactID] = wire
 	}
-	if err := st.testClient().HSet(t.Context(), pdfArtifactKey(id), fields).Err(); err != nil {
+	if err := st.testClient().HSet(t.Context(), artifactKey(id), fields).Err(); err != nil {
 		t.Fatal(err)
 	}
 	seen := make(map[string]bool, len(fields))
-	for entry, err := range st.PDFRecords(t.Context()) {
+	for entry, err := range st.ArtifactRecords(t.Context()) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,11 +136,11 @@ func TestPDFArtifactStorage_PDFRecordsCursorAndErrors(t *testing.T) {
 	if len(seen) != len(fields) {
 		t.Fatalf("iterated %d PDF records, want %d", len(seen), len(fields))
 	}
-	if err := st.testClient().HSet(t.Context(), pdfArtifactKey(id), "broken", "{").Err(); err != nil {
+	if err := st.testClient().HSet(t.Context(), artifactKey(id), "broken", "{").Err(); err != nil {
 		t.Fatal(err)
 	}
 	foundError := false
-	for _, err := range st.PDFRecords(t.Context()) {
+	for _, err := range st.ArtifactRecords(t.Context()) {
 		if err != nil {
 			foundError = true
 			break
@@ -152,7 +152,7 @@ func TestPDFArtifactStorage_PDFRecordsCursorAndErrors(t *testing.T) {
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	foundError = false
-	for _, err := range st.PDFRecords(cancelled) {
+	for _, err := range st.ArtifactRecords(cancelled) {
 		if err != nil {
 			foundError = true
 			break

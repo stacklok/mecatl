@@ -252,14 +252,14 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	var forkObjectsPending, forkPublished bool
 	if copyHistory {
 		references, hasPDFPrompt := successorPDFReferences(created.Conversation.Messages)
-		if hasPDFPrompt && (s.cfg.PDFArtifacts == nil || !s.sessionCapabilitiesFor(created).PDF) {
+		if hasPDFPrompt && (s.cfg.Artifacts == nil || !s.sessionCapabilitiesFor(created).PDF) {
 			cleanupEngine()
 			return "", fmt.Errorf("%w: selected model does not accept inherited PDF input", ErrInvalidArgument)
 		}
 		if len(references) != 0 {
-			if s.cfg.PDFArtifacts == nil {
+			if s.cfg.Artifacts == nil {
 				cleanupEngine()
-				return "", ErrPDFArtifactsUnavailable
+				return "", ErrArtifactsUnavailable
 			}
 			forkObjectsPending = true
 			defer func() {
@@ -268,12 +268,12 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 				}
 				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(mutationCtx), engineCloseTimeout)
 				defer cancel()
-				if discardErr := s.cfg.PDFArtifacts.DiscardUnpublished(cleanupCtx, created.ID); discardErr != nil {
+				if discardErr := s.cfg.Artifacts.DiscardUnpublished(cleanupCtx, created.ID); discardErr != nil {
 					s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "discard unpublished PDF fork failed",
 						"session", string(created.ID))
 				}
 			}()
-			rewritten, copyErr := s.cfg.PDFArtifacts.CopyFork(mutationCtx, source.ID, created.ID, created.Conversation.Messages)
+			rewritten, copyErr := s.cfg.Artifacts.CopyFork(mutationCtx, source.ID, created.ID, created.Conversation.Messages)
 			if copyErr != nil {
 				cleanupEngine()
 				return "", copyErr
@@ -308,7 +308,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		references, _ := successorPDFReferences(created.Conversation.Messages)
 		// The snapshot is authoritative if a marker update fails. Reconciliation
 		// repairs ready records and clears prepublication cleanup intent.
-		if err := s.cfg.PDFArtifacts.CommitPrompt(mutationCtx, created.ID, references); err != nil {
+		if err := s.cfg.Artifacts.CommitPrompt(mutationCtx, created.ID, references); err != nil {
 			s.cfg.Diagnostics.Log(context.WithoutCancel(ctx), port.LevelWarn, "commit PDF fork references failed",
 				"session", string(created.ID))
 		}
@@ -345,7 +345,7 @@ func successorPDFReferences(history []session.Message) ([]string, bool) {
 		}
 		if message.ToolResult != nil {
 			for _, part := range message.ToolResult.Parts {
-				if part.BlockKind == session.BlockPDFArtifact {
+				if part.BlockKind == session.BlockArtifact {
 					add(part.ArtifactID)
 				}
 			}

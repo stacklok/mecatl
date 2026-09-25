@@ -35,10 +35,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   result before audit, event emission, and session recording. A processing
   failure becomes a bounded tool error with the original call ID. Added (minor).
 
-- **Session-owned PDF content references** — adds `session.MediaPDF`,
-  `session.BlockPDFArtifact`, validated PDF content and artifact-block constructors,
-  reference metadata on `session.Content`, and `port.ProviderCapabilities.PDF`.
-  PDF tool-result blocks retain a model-visible filename and size summary.
+- **Session-owned artifact references with PDF input** — adds
+  `session.MediaPDF`, `session.BlockArtifact`, `session.NewPDFContent`, and
+  `session.NewArtifactBlock` with a MIME type argument. Artifact blocks accept
+  only `application/pdf` in this release. Reference metadata lives on
+  `session.Content`, and `port.ProviderCapabilities.PDF` gates PDF input.
+  Artifact tool-result blocks retain a model-visible filename and size summary.
   Added (minor).
 
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,

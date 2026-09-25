@@ -48,7 +48,7 @@ func pdfMetadata(part session.Content) (string, bool) {
 		return "", false
 	}
 	id, digest := idField.String(), digestField.String()
-	if part.Kind != pdfMediaKind || !validPDFArtifactID(id) ||
+	if part.Kind != pdfMediaKind || !validArtifactID(id) ||
 		!validPDFName(part.Name) || part.Size <= 0 || part.Size > maxPDFBytes ||
 		!validPDFDigest(digest) {
 		return "", false
@@ -56,7 +56,7 @@ func pdfMetadata(part session.Content) (string, bool) {
 	return digest, true
 }
 
-func validPDFArtifactID(id string) bool {
+func validArtifactID(id string) bool {
 	if len(id) == 0 || len(id) > 128 {
 		return false
 	}

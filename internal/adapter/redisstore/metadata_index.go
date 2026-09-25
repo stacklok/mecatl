@@ -298,7 +298,7 @@ return 1
 func deleteSessionAndMetadata(ctx context.Context, client redis.UniversalClient, id session.SessionID, pdfEnabled bool) error {
 	stamp := time.Now().UTC()
 	return deleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), redisLineageRecordPartition(id), redisLineageRecordPartition(id), redisLineageOrderPartition(redisLineageRecordPartition(id)), ledgerKey(id), pdfDeletionOutboxKey},
+		[]string{sessionKey(id), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(id), eventsKey(id), metadataRebuildGenerationKey, eventsGenerationKey(id), redisLineageRecordPartition(id), redisLineageRecordPartition(id), redisLineageOrderPartition(redisLineageRecordPartition(id)), ledgerKey(id), artifactDeletionOutboxKey},
 		metadataGlobalScope, metadataOwnerIndexBase, string(id), stamp.Format(time.RFC3339Nano), redisBool(pdfEnabled), stamp.Unix(),
 	).Err()
 }
@@ -360,7 +360,7 @@ func deleteSessionIfMetadataUnchanged(ctx context.Context, client redis.Universa
 		return false, err
 	}
 	result, err := conditionalDeleteMetadataScript.Run(ctx, client,
-		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageOrderPartition(redisLineageRecordPartition(expected.ID)), ledgerKey(expected.ID), pdfDeletionOutboxKey},
+		[]string{sessionKey(expected.ID), metadataGlobalIndexKey, metadataGenerationKey, toolsKey(expected.ID), eventsKey(expected.ID), metadataRebuildGenerationKey, eventsGenerationKey(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageRecordPartition(expected.ID), redisLineageOrderPartition(redisLineageRecordPartition(expected.ID)), ledgerKey(expected.ID), artifactDeletionOutboxKey},
 		member, metadataGlobalScope, metadataOwnerIndexBase, string(expected.ID), time.Now().UTC().Format(time.RFC3339Nano), redisBool(pdfEnabled), time.Now().UTC().Unix(),
 	).Int()
 	return result == 1, err

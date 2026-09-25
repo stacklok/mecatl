@@ -19,40 +19,40 @@ import (
 
 type pdfLifecycleFixture struct {
 	data      []byte
-	metadata  server.PDFArtifact
+	metadata  server.Artifact
 	openedFor session.SessionID
 	committed []string
 }
 
-type pdfResultProcessorFixture struct{}
+type artifactResultProcessorFixture struct{}
 
-func (pdfResultProcessorFixture) ProcessToolResult(_ context.Context, _ session.SessionID, result session.ToolResult) (session.ToolResult, error) {
+func (artifactResultProcessorFixture) ProcessToolResult(_ context.Context, _ session.SessionID, result session.ToolResult) (session.ToolResult, error) {
 	return result, nil
 }
 
-func (f *pdfLifecycleFixture) Stage(_ context.Context, id session.SessionID, name string, source io.Reader) (server.PDFArtifact, error) {
+func (f *pdfLifecycleFixture) Stage(_ context.Context, id session.SessionID, name, mimeType string, source io.Reader) (server.Artifact, error) {
 	if id != "s-pdf" {
-		return server.PDFArtifact{}, server.ErrNotFound
+		return server.Artifact{}, server.ErrNotFound
 	}
 	data, err := io.ReadAll(source)
 	if err != nil {
-		return server.PDFArtifact{}, err
+		return server.Artifact{}, err
 	}
 	digest := sha256.Sum256(data)
 	f.data = data
-	f.metadata = server.PDFArtifact{ID: strings.Repeat("f", 48), Name: name, Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:])}
+	f.metadata = server.Artifact{ID: strings.Repeat("f", 48), Name: name, MIMEType: mimeType, Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:])}
 	return f.metadata, nil
 }
-func (f *pdfLifecycleFixture) Resolve(_ context.Context, id session.SessionID, artifactID string) (server.PDFArtifact, error) {
+func (f *pdfLifecycleFixture) Resolve(_ context.Context, id session.SessionID, artifactID string) (server.Artifact, error) {
 	if id != "s-pdf" || artifactID != f.metadata.ID {
-		return server.PDFArtifact{}, server.ErrNotFound
+		return server.Artifact{}, server.ErrNotFound
 	}
 	return f.metadata, nil
 }
-func (f *pdfLifecycleFixture) Open(ctx context.Context, id session.SessionID, artifactID string) (server.PDFArtifact, io.ReadCloser, error) {
+func (f *pdfLifecycleFixture) Open(ctx context.Context, id session.SessionID, artifactID string) (server.Artifact, io.ReadCloser, error) {
 	meta, err := f.Resolve(ctx, id, artifactID)
 	if err != nil {
-		return server.PDFArtifact{}, nil, err
+		return server.Artifact{}, nil, err
 	}
 	f.openedFor = id
 	return meta, io.NopCloser(bytes.NewReader(f.data)), nil
@@ -73,7 +73,7 @@ func TestPDFReferenceProviderCopiesOnlyModelRequest(t *testing.T) {
 	data := []byte("%PDF-1.7\n%%EOF")
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
-	fixture := &pdfLifecycleFixture{data: data, metadata: server.PDFArtifact{ID: "artifact", Name: "report.pdf", Size: int64(len(data)), SHA256: digest}}
+	fixture := &pdfLifecycleFixture{data: data, metadata: server.Artifact{ID: "artifact", Name: "report.pdf", MIMEType: "application/pdf", Size: int64(len(data)), SHA256: digest}}
 	part, err := session.NewPDFContent("artifact", "report.pdf", int64(len(data)), digest)
 	if err != nil {
 		t.Fatal(err)
@@ -107,8 +107,8 @@ func TestPDFPromptCommitStoreMarksSuccessfulSnapshot(t *testing.T) {
 	}
 	sess := session.New("s-pdf", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Now())
 	sess.Conversation.Append(session.NewUserMessageWithParts("read", []session.Content{part}))
-	fixture := &pdfLifecycleFixture{metadata: server.PDFArtifact{ID: "artifact", Name: "report.pdf", Size: 14, SHA256: digest}}
-	store := pdfPromptCommitStore{SessionStore: memstore.New(), artifacts: fixture}
+	fixture := &pdfLifecycleFixture{metadata: server.Artifact{ID: "artifact", Name: "report.pdf", MIMEType: "application/pdf", Size: 14, SHA256: digest}}
+	store := artifactPromptCommitStore{SessionStore: memstore.New(), artifacts: fixture}
 	if err := store.Save(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
@@ -123,10 +123,10 @@ func TestPDFPromptCommitStoreMarksSuccessfulSnapshot(t *testing.T) {
 	}
 }
 
-func TestPDFArtifactBuildRejectsMissingResultProcessor(t *testing.T) {
+func TestArtifactBuildRejectsMissingResultProcessor(t *testing.T) {
 	built, err := buildIsolated(t, t.Context(), Config{
 		Workspace: t.TempDir(), Model: "mock", UseMock: true, NoSoul: true,
-		pdfArtifacts: &pdfLifecycleFixture{},
+		artifacts: &pdfLifecycleFixture{},
 	})
 	if built != nil {
 		built.Close()

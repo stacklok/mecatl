@@ -99,7 +99,7 @@ func assertArtifactViews(t *testing.T, pdf []byte, views ...session.ToolResult) 
 	encoded := base64.StdEncoding.EncodeToString(pdf)
 	var id string
 	for index, view := range views {
-		if view.CallID != "call-1" || view.IsError || len(view.Parts) != 3 || view.Parts[1].BlockKind != session.BlockPDFArtifact {
+		if view.CallID != "call-1" || view.IsError || len(view.Parts) != 3 || view.Parts[1].BlockKind != session.BlockArtifact {
 			t.Fatalf("view %d = %+v", index, view)
 		}
 		block := view.Parts[1]

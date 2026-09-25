@@ -81,8 +81,8 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/retry", h.retryWorkspaceEnrollment},
 		{"POST /v1/sessions/{id}/workspace-enrollment/{enrollment_id}/cancel", h.cancelWorkspaceEnrollment},
 		{"POST /v1/sessions/{id}/prompt", h.prompt},
-		{"POST /v1/sessions/{id}/pdfs", h.uploadPDF},
-		{"GET /v1/sessions/{id}/pdfs/{artifact_id}", h.downloadPDF},
+		{"POST /v1/sessions/{id}/artifacts", h.uploadArtifact},
+		{"GET /v1/sessions/{id}/artifacts/{artifact_id}", h.downloadArtifact},
 		{"POST /v1/sessions/{id}/retry", h.retry},
 		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
@@ -458,7 +458,7 @@ func toContentParts(parts []promptContentBody) ([]session.Content, error) {
 		var kind session.MediaKind
 		switch p.Kind {
 		case string(session.MediaPDF):
-			if p.MimeType != pdfMIMEType || len(p.Data) != 0 || p.URL != "" || p.Name != "" || p.Size != 0 || p.SHA256 != "" || !validPDFArtifactID(p.ArtifactID) {
+			if p.MimeType != pdfMIMEType || len(p.Data) != 0 || p.URL != "" || p.Name != "" || p.Size != 0 || p.SHA256 != "" || !validArtifactID(p.ArtifactID) {
 				return nil, fmt.Errorf("parts[%d]: invalid PDF artifact reference", i)
 			}
 			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: pdfMIMEType, ArtifactID: p.ArtifactID})

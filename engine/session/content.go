@@ -84,8 +84,8 @@ const (
 	// BlockStructuredContent carries a JSON-stringified structured payload as a
 	// text block — the backward-compat mirror of the legacy TextContent path.
 	BlockStructuredContent BlockKind = "structured"
-	// BlockPDFArtifact is a downloadable session-owned PDF reference.
-	BlockPDFArtifact BlockKind = "pdf_artifact"
+	// BlockArtifact is a downloadable session-owned artifact reference.
+	BlockArtifact BlockKind = "artifact"
 )
 
 // Content is an immutable value object. It serves TWO roles, distinguished by
@@ -139,7 +139,7 @@ type Content struct {
 	Description string `json:"Description,omitempty"`
 	// Size is the resource byte size for a BlockResourceLink (advisory).
 	Size int64 `json:"Size,omitempty"`
-	// ArtifactID identifies a private session-owned PDF; it grants no access by itself.
+	// ArtifactID identifies a private session-owned artifact; it grants no access by itself.
 	ArtifactID string `json:"ArtifactID,omitempty"`
 	// SHA256 is the lowercase hexadecimal digest of the stored PDF bytes.
 	SHA256 string `json:"SHA256,omitempty"`
@@ -230,12 +230,16 @@ func NewPDFContent(id, name string, size int64, sha256 string) (Content, error) 
 	return Content{Kind: MediaPDF, MIMEType: "application/pdf", ArtifactID: id, Name: name, Size: size, SHA256: sha256}, nil
 }
 
-// NewPDFArtifactBlock builds a downloadable, reference-only PDF tool-result block.
-func NewPDFArtifactBlock(id, name string, size int64, sha256 string) (Content, error) {
+// NewArtifactBlock builds a downloadable, reference-only tool-result block.
+// PDF is the only supported artifact MIME type in this release.
+func NewArtifactBlock(id, name, mimeType string, size int64, sha256 string) (Content, error) {
+	if mimeType != "application/pdf" {
+		return Content{}, fmt.Errorf("%w: artifact MIME type is unsupported", ErrInvalidContent)
+	}
 	if err := validatePDFMetadata(id, name, size, sha256); err != nil {
 		return Content{}, err
 	}
-	return Content{BlockKind: BlockPDFArtifact, MIMEType: "application/pdf", ArtifactID: id, Name: name, Size: size, SHA256: sha256}, nil
+	return Content{BlockKind: BlockArtifact, MIMEType: mimeType, ArtifactID: id, Name: name, Size: size, SHA256: sha256}, nil
 }
 
 func validatePDFMetadata(id, name string, size int64, sha256 string) error {
@@ -424,7 +428,7 @@ func ValidateToolResultParts(parts []Content) error {
 			}
 			binaryTotal += n
 			nonPDFTotal += n
-		case BlockResourceLink, BlockPDFArtifact:
+		case BlockResourceLink, BlockArtifact:
 			// Reference only — no inline bytes.
 		case "":
 			// A legacy media part on a tool result is unexpected but harmless
@@ -456,7 +460,7 @@ func ValidateToolResultParts(parts []Content) error {
 // tool-result rendering cannot drift.
 func ToolBlockText(b Content) string {
 	switch b.BlockKind {
-	case BlockPDFArtifact:
+	case BlockArtifact:
 		return fmt.Sprintf("PDF artifact: %s (%d bytes)", b.Name, b.Size)
 	case BlockResourceLink:
 		if b.Title != "" {

@@ -23,7 +23,7 @@ var errPDFRequestUnavailable = errors.New("PDF artifact is unavailable for the s
 // history and persisted snapshots retain reference-only PDF parts.
 type pdfReferenceProvider struct {
 	inner     port.LLMProvider
-	artifacts server.PDFArtifactLifecycle
+	artifacts server.ArtifactLifecycle
 }
 
 func (p pdfReferenceProvider) Capabilities() port.ProviderCapabilities {
@@ -72,7 +72,7 @@ func (p pdfReferenceProvider) hydratePDFPart(ctx context.Context, part session.C
 	}
 	data, readErr := io.ReadAll(io.LimitReader(reader, pdfartifact.MaxPDFBytes+1))
 	closeErr := reader.Close()
-	if readErr != nil || closeErr != nil || len(data) == 0 || len(data) > pdfartifact.MaxPDFBytes || int64(len(data)) != meta.Size || part.Name != meta.Name || part.Size != meta.Size || part.SHA256 != meta.SHA256 {
+	if readErr != nil || closeErr != nil || len(data) == 0 || len(data) > pdfartifact.MaxPDFBytes || int64(len(data)) != meta.Size || meta.MIMEType != "application/pdf" || part.Name != meta.Name || part.Size != meta.Size || part.SHA256 != meta.SHA256 {
 		return session.Content{}, errPDFRequestUnavailable
 	}
 	digest := sha256.Sum256(data)
@@ -83,29 +83,29 @@ func (p pdfReferenceProvider) hydratePDFPart(ctx context.Context, part session.C
 	return part, nil
 }
 
-// pdfPromptCommitStore decorates the engine's guarded store. It only needs the
+// artifactPromptCommitStore decorates the engine's guarded store. It only needs the
 // base SessionStore interface because engine persistence calls Save/Load.
-type pdfPromptCommitStore struct {
+type artifactPromptCommitStore struct {
 	port.SessionStore
-	artifacts server.PDFArtifactLifecycle
+	artifacts server.ArtifactLifecycle
 }
 
-func (s pdfPromptCommitStore) Save(ctx context.Context, sess *session.Session) error {
-	return saveAndCommitPDFPrompt(ctx, s.SessionStore, sess, s.artifacts)
+func (s artifactPromptCommitStore) Save(ctx context.Context, sess *session.Session) error {
+	return saveAndCommitArtifactPrompt(ctx, s.SessionStore, sess, s.artifacts)
 }
 
-// pdfPromptRedisStore keeps Redis's optional interfaces visible to Service
+// artifactPromptRedisStore keeps Redis's optional interfaces visible to Service
 // while adding the same post-save marker update to service-owned writes.
-type pdfPromptRedisStore struct {
+type artifactPromptRedisStore struct {
 	*redisstore.Store
-	artifacts server.PDFArtifactLifecycle
+	artifacts server.ArtifactLifecycle
 }
 
-func (s pdfPromptRedisStore) Save(ctx context.Context, sess *session.Session) error {
-	return saveAndCommitPDFPrompt(ctx, s.Store, sess, s.artifacts)
+func (s artifactPromptRedisStore) Save(ctx context.Context, sess *session.Session) error {
+	return saveAndCommitArtifactPrompt(ctx, s.Store, sess, s.artifacts)
 }
 
-func saveAndCommitPDFPrompt(ctx context.Context, store port.SessionStore, sess *session.Session, artifacts server.PDFArtifactLifecycle) error {
+func saveAndCommitArtifactPrompt(ctx context.Context, store port.SessionStore, sess *session.Session, artifacts server.ArtifactLifecycle) error {
 	current := pdfPromptRefs(sess)
 	var previous map[string]struct{}
 	if len(current) != 0 {
@@ -151,7 +151,7 @@ func pdfPromptRefs(sess *session.Session) map[string]struct{} {
 	return seen
 }
 
-func pdfServiceStore(store port.SessionStore, artifacts server.PDFArtifactLifecycle) port.SessionStore {
+func artifactServiceStore(store port.SessionStore, artifacts server.ArtifactLifecycle) port.SessionStore {
 	if artifacts == nil {
 		return store
 	}
@@ -159,20 +159,20 @@ func pdfServiceStore(store port.SessionStore, artifacts server.PDFArtifactLifecy
 	if !ok {
 		return store
 	}
-	return pdfPromptRedisStore{Store: redis, artifacts: artifacts}
+	return artifactPromptRedisStore{Store: redis, artifacts: artifacts}
 }
 
 func configuredPDFModelCapability(cfg Config, reg *providerRegistry, providerID, modelID string) port.ProviderCapabilities {
 	caps := modelCapability(reg, providerID, modelID)
-	if cfg.pdfArtifacts == nil || providerID != providerOpenAI && providerID != providerAnthropic {
+	if cfg.artifacts == nil || providerID != providerOpenAI && providerID != providerAnthropic {
 		caps.PDF = false
 	}
 	return caps
 }
 
-func buildPDFArtifactStore(ctx context.Context, cfg Config, store port.SessionStore, lease port.SessionLease) (*pdfartifact.Store, error) {
-	if cfg.PDFArtifactS3.Bucket == "" {
-		if cfg.PDFArtifactS3.Region != "" || cfg.PDFArtifactS3.Endpoint != "" {
+func buildArtifactStore(ctx context.Context, cfg Config, store port.SessionStore, lease port.SessionLease) (*pdfartifact.Store, error) {
+	if cfg.ArtifactS3.Bucket == "" {
+		if cfg.ArtifactS3.Region != "" || cfg.ArtifactS3.Endpoint != "" {
 			return nil, errors.New("PDF artifact S3 bucket is required")
 		}
 		return nil, nil
@@ -181,14 +181,14 @@ func buildPDFArtifactStore(ctx context.Context, cfg Config, store port.SessionSt
 	if !ok || lease == nil {
 		return nil, errors.New("PDF artifacts require Redis metadata and a session lease")
 	}
-	objects, err := pdfartifact.NewS3(ctx, cfg.PDFArtifactS3)
+	objects, err := pdfartifact.NewS3(ctx, cfg.ArtifactS3)
 	if err != nil {
 		return nil, errors.New("PDF artifact S3 configuration is unavailable")
 	}
 	return pdfartifact.New(metadata, objects), nil
 }
 
-func startPDFArtifactReconcile(parent context.Context, store *pdfartifact.Store, svc *server.Service, lease port.SessionLease, leaseOwner string, diag port.Diagnostics) func() {
+func startArtifactReconcile(parent context.Context, store *pdfartifact.Store, svc *server.Service, lease port.SessionLease, leaseOwner string, diag port.Diagnostics) func() {
 	if store == nil {
 		return func() {}
 	}

@@ -65,12 +65,12 @@ service HarnessService {
   rpc ListGuardrailCoverage(ListGuardrailCoverageRequest) returns (ListGuardrailCoverageResponse);
   rpc GetGuardrailReviewDetail(GetGuardrailReviewDetailRequest) returns (GetGuardrailReviewDetailResponse);
 
-  // UploadPdf stages a session-owned PDF from one metadata frame followed by
-  // bounded nonempty byte chunks. The server validates and publishes the object.
-  rpc UploadPdf(stream UploadPdfRequest) returns (UploadPdfResponse);
+  // UploadArtifact stages a session-owned artifact from one metadata frame
+  // followed by bounded nonempty byte chunks. Only PDF is supported in v1.
+  rpc UploadArtifact(stream UploadArtifactRequest) returns (UploadArtifactResponse);
 
-  // DownloadPdf streams one previously published, owned PDF artifact.
-  rpc DownloadPdf(DownloadPdfRequest) returns (stream DownloadPdfResponse);
+  // DownloadArtifact streams one previously published, owned artifact.
+  rpc DownloadArtifact(DownloadArtifactRequest) returns (stream DownloadArtifactResponse);
 
   // GetSessionTranscript returns the authoritative, snapshot-derived human
   // transcript for one owned session. It is read-only and does not use EventLog.
@@ -812,8 +812,8 @@ message ServerCapabilities {
   // mcp_refresh is true when direct/global MCP source reconciliation is wired.
   // It is mutually exclusive with workspace_enrollment in a valid deployment.
   bool mcp_refresh = 30;
-  // pdf_artifacts is true when this deployment can store and serve private PDFs.
-  bool pdf_artifacts = 31;
+  // artifacts is true when this deployment can store and serve private artifacts.
+  bool artifacts = 31;
 }
 
 // ListSessionMcpConnectorsRequest names an owned, broker-bound session.
@@ -1509,8 +1509,8 @@ message ContentBlock {
     KIND_EMBEDDED_RESOURCE = 5;
     // KIND_STRUCTURED_CONTENT is a JSON structured-content block.
     KIND_STRUCTURED_CONTENT = 6;
-    // KIND_PDF_ARTIFACT is a reference to a session-owned PDF result.
-    KIND_PDF_ARTIFACT = 7;
+    // KIND_ARTIFACT is a reference to a session-owned result artifact.
+    KIND_ARTIFACT = 7;
   }
   // kind is the block kind.
   Kind kind = 1;
@@ -3926,32 +3926,33 @@ message WorkspaceEnrollment {
   string presentation_url = 4;
 }
 
-// UploadPdfMetadata is the first frame of a PDF upload.
-message UploadPdfMetadata {
+// UploadArtifactMetadata is the first frame of an artifact upload.
+message UploadArtifactMetadata {
   string session_id = 1;
   string name = 2;
   string mime_type = 3;
 }
 
-message UploadPdfRequest {
+message UploadArtifactRequest {
   oneof payload {
-    UploadPdfMetadata metadata = 1;
+    UploadArtifactMetadata metadata = 1;
     bytes chunk = 2;
   }
 }
 
-message UploadPdfResponse {
+message UploadArtifactResponse {
   string artifact_id = 1;
   string name = 2;
   int64 size = 3;
   string sha256 = 4;
+  string mime_type = 5;
 }
 
-message DownloadPdfRequest {
+message DownloadArtifactRequest {
   string session_id = 1;
   string artifact_id = 2;
 }
 
-message DownloadPdfResponse {
+message DownloadArtifactResponse {
   bytes chunk = 1;
 }

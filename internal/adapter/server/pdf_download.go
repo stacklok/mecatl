@@ -8,10 +8,10 @@ import (
 	"sync"
 )
 
-// streamPDF bounds each transport frame and verifies the immutable object's
+// streamArtifact bounds each transport frame and verifies the immutable object's
 // size and digest before reporting a successful completion. It closes the
 // reader on completion or cancellation, including a blocked Read.
-func streamPDF(ctx context.Context, meta PDFArtifact, reader io.ReadCloser, send func([]byte) error) error {
+func streamArtifact(ctx context.Context, meta Artifact, reader io.ReadCloser, send func([]byte) error) error {
 	var closeOnce sync.Once
 	closeReader := func() { closeOnce.Do(func() { _ = reader.Close() }) }
 	stopClose := context.AfterFunc(ctx, closeReader)

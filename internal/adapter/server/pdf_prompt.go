@@ -26,8 +26,8 @@ func (s *Service) resolvePDFPromptParts(ctx context.Context, sess *session.Sessi
 	if !hasPDFPromptPart(parts) {
 		return parts, nil
 	}
-	if s.cfg.PDFArtifacts == nil {
-		return nil, ErrPDFArtifactsUnavailable
+	if s.cfg.Artifacts == nil {
+		return nil, ErrArtifactsUnavailable
 	}
 	if !s.sessionCapabilitiesFor(sess).PDF {
 		return nil, fmt.Errorf("%w: selected model does not accept PDF input", ErrInvalidArgument)
@@ -37,14 +37,17 @@ func (s *Service) resolvePDFPromptParts(ctx context.Context, sess *session.Sessi
 		if part.Kind != session.MediaPDF {
 			continue
 		}
-		if part.BlockKind != "" || part.MIMEType != pdfMIMEType || len(part.Data) != 0 || part.URL != "" || !validPDFArtifactID(part.ArtifactID) {
+		if part.BlockKind != "" || part.MIMEType != pdfMIMEType || len(part.Data) != 0 || part.URL != "" || !validArtifactID(part.ArtifactID) {
 			return nil, fmt.Errorf("%w: invalid PDF artifact reference", ErrInvalidArgument)
 		}
-		meta, err := s.cfg.PDFArtifacts.Resolve(ctx, sess.ID, part.ArtifactID)
+		meta, err := s.cfg.Artifacts.Resolve(ctx, sess.ID, part.ArtifactID)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return nil, ErrNotFound
 			}
+			return nil, ErrInternal
+		}
+		if meta.MIMEType != pdfMIMEType {
 			return nil, ErrInternal
 		}
 		resolved, err := session.NewPDFContent(meta.ID, meta.Name, meta.Size, meta.SHA256)

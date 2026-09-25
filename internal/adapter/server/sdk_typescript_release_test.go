@@ -303,8 +303,8 @@ func TestSDKTypescriptRelease_Scenario1_StreamingShapeParity(t *testing.T) {
 	}
 
 	wantSentinels := map[string]string{
-		"HarnessService.UploadPdf":           "client_streaming",
-		"HarnessService.DownloadPdf":         "server_streaming",
+		"HarnessService.UploadArtifact":      "client_streaming",
+		"HarnessService.DownloadArtifact":    "server_streaming",
 		"HarnessService.ApprovePlan":         "server_streaming",
 		"HarnessService.Converse":            "bidi_streaming",
 		"HarnessService.RunTeam":             "server_streaming",

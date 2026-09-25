@@ -231,9 +231,9 @@ func newS3HTTPFixture(t *testing.T) (*S3Objects, *s3HTTPFixture) {
 	return objects, fixture
 }
 
-func TestPDFArtifactStorage_S3AdapterRequests(t *testing.T) {
+func TestArtifactStorage_S3AdapterRequests(t *testing.T) {
 	objects, fixture := newS3HTTPFixture(t)
-	const key = "pdf/v1/session/report.pdf"
+	const key = "artifacts/v1/session/report.pdf"
 	want := []byte("%PDF-1.7\nfixture\n%%EOF")
 	if err := objects.Put(t.Context(), key, bytes.NewReader(want)); err != nil {
 		t.Fatalf("SDK PutObject: %v", err)
@@ -247,14 +247,14 @@ func TestPDFArtifactStorage_S3AdapterRequests(t *testing.T) {
 	if readErr != nil || closeErr != nil || !bytes.Equal(got, want) {
 		t.Fatalf("streamed object = %q, read %v, close %v", got, readErr, closeErr)
 	}
-	keys, err := objects.ListPrefix(t.Context(), "pdf/v1/session/")
+	keys, err := objects.ListPrefix(t.Context(), "artifacts/v1/session/")
 	if err != nil || !slices.Equal(keys, []string{key}) {
 		t.Fatalf("SDK ListObjectsV2 = %v, %v", keys, err)
 	}
 	if err := objects.Delete(t.Context(), key); err != nil {
 		t.Fatalf("SDK DeleteObject: %v", err)
 	}
-	keys, err = objects.ListPrefix(t.Context(), "pdf/v1/session/")
+	keys, err = objects.ListPrefix(t.Context(), "artifacts/v1/session/")
 	if err != nil || len(keys) != 0 {
 		t.Fatalf("objects after delete = %v, %v", keys, err)
 	}
@@ -266,10 +266,10 @@ func TestPDFArtifactStorage_S3AdapterRequests(t *testing.T) {
 	}
 }
 
-func TestPDFArtifactStorage_S3MultipartAndCancellation(t *testing.T) {
+func TestArtifactStorage_S3MultipartAndCancellation(t *testing.T) {
 	objects, fixture := newS3HTTPFixture(t)
 	large := bytes.Repeat([]byte("p"), 5<<20+1)
-	const key = "pdf/v1/session/large.pdf"
+	const key = "artifacts/v1/session/large.pdf"
 	if err := objects.Put(t.Context(), key, bytes.NewReader(large)); err != nil {
 		t.Fatalf("SDK multipart upload: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestPDFArtifactStorage_S3MultipartAndCancellation(t *testing.T) {
 	}
 	fixture.mu.Lock()
 	started, completed := fixture.multipartCount, fixture.completeCount
-	fixture.blockKey = "pdf/v1/session/cancelled.pdf"
+	fixture.blockKey = "artifacts/v1/session/cancelled.pdf"
 	fixture.partStarted = make(chan struct{})
 	fixture.partRelease = make(chan struct{})
 	partStarted := fixture.partStarted
@@ -297,7 +297,7 @@ func TestPDFArtifactStorage_S3MultipartAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- objects.Put(ctx, "pdf/v1/session/cancelled.pdf", bytes.NewReader(large)) }()
+	go func() { done <- objects.Put(ctx, "artifacts/v1/session/cancelled.pdf", bytes.NewReader(large)) }()
 	select {
 	case <-partStarted:
 	case <-time.After(10 * time.Second):

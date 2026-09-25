@@ -196,10 +196,10 @@ type Config struct {
 	// event-follow path. Zero retains redisstore's defaults for non-CLI callers.
 	RedisFollowPoolSize int
 	RedisMaxFollowers   int
-	// PDFArtifactS3 enables private PDFs with Redis metadata and S3-compatible objects.
-	PDFArtifactS3              pdfartifact.S3Config
-	pdfArtifacts               server.PDFArtifactLifecycle
-	pdfResultProcessor         port.ToolResultProcessor
+	// ArtifactS3 enables private PDFs with Redis metadata and S3-compatible objects.
+	ArtifactS3                 pdfartifact.S3Config
+	artifacts                  server.ArtifactLifecycle
+	artifactResultProcessor    port.ToolResultProcessor
 	Shell                      string
 	NoShell                    bool
 	commandEnvironmentInherit  []string
@@ -2050,17 +2050,17 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		commandConnClose()
 		return nil, err
 	}
-	pdfStore, err := buildPDFArtifactStore(ctx, cfg, store, sessionLease)
+	artifactStore, err := buildArtifactStore(ctx, cfg, store, sessionLease)
 	if err != nil {
 		storeClose()
 		commandConnClose()
 		return nil, err
 	}
-	if pdfStore != nil {
-		cfg.pdfArtifacts = pdfStore
-		cfg.pdfResultProcessor = pdfartifact.ResultProcessor{Artifacts: pdfStore}
+	if artifactStore != nil {
+		cfg.artifacts = artifactStore
+		cfg.artifactResultProcessor = pdfartifact.ResultProcessor{Artifacts: artifactStore}
 	}
-	if cfg.pdfArtifacts != nil && cfg.pdfResultProcessor == nil {
+	if cfg.artifacts != nil && cfg.artifactResultProcessor == nil {
 		storeClose()
 		commandConnClose()
 		return nil, errors.New("PDF artifact storage requires a tool-result processor")
@@ -2096,10 +2096,10 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// The gate covers operation admission; backend calls already admitted may
 	// complete after a declared loss.
 	engineStore := mutationCapability.GuardStore(store)
-	if cfg.pdfArtifacts != nil {
-		engineStore = pdfPromptCommitStore{SessionStore: engineStore, artifacts: cfg.pdfArtifacts}
+	if cfg.artifacts != nil {
+		engineStore = artifactPromptCommitStore{SessionStore: engineStore, artifacts: cfg.artifacts}
 		if provider != nil {
-			provider = pdfReferenceProvider{inner: provider, artifacts: cfg.pdfArtifacts}
+			provider = pdfReferenceProvider{inner: provider, artifacts: cfg.artifacts}
 		}
 	}
 	cfg.ToolCallRecorder = mutationCapability.GuardToolCallRecorder(cfg.ToolCallRecorder)
@@ -2358,8 +2358,8 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			return 0, false
 		},
 		SharedEngineRevision: assets.sharedEngineRevision,
-		Store:                pdfServiceStore(store, cfg.pdfArtifacts),
-		PDFArtifacts:         cfg.pdfArtifacts,
+		Store:                artifactServiceStore(store, cfg.artifacts),
+		Artifacts:            cfg.artifacts,
 		SessionCleared: func(id session.SessionID) {
 			if assets.guardrailGrants != nil {
 				assets.guardrailGrants.ClearSession(string(id))
@@ -2843,7 +2843,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, fmt.Errorf("build service: %w", err)
 	}
 	modelSwap = svc
-	pdfReconcileClose := startPDFArtifactReconcile(ctx, pdfStore, svc, sessionLease, leaseOwner, cfg.diag())
+	pdfReconcileClose := startArtifactReconcile(ctx, artifactStore, svc, sessionLease, leaseOwner, cfg.diag())
 
 	// Bootstrap, one-shot startup, picker demand and run admission share the
 	// same owner. Startup skips completed attempts and native authentication;
@@ -3361,8 +3361,8 @@ func sessionEngineFactoryWithTools(
 				resolvedProvider = entry.remint(resolvedEffort, sessionCaps)
 			}
 		}
-		if cfg.pdfArtifacts != nil {
-			resolvedProvider = pdfReferenceProvider{inner: resolvedProvider, artifacts: cfg.pdfArtifacts}
+		if cfg.artifacts != nil {
+			resolvedProvider = pdfReferenceProvider{inner: resolvedProvider, artifacts: cfg.artifacts}
 		}
 		// The compaction window is the LIVE-FIRST resolver over the resolved
 		// (provider, model) — the SAME reg.windowResolver the shared and child engines
@@ -3393,7 +3393,7 @@ func sessionEngineFactoryWithTools(
 		}
 		var mgr *mcp.Manager
 		if len(specs) > 0 {
-			specs = withPDFArtifactResults(specs, cfg.pdfArtifacts != nil)
+			specs = withArtifactResults(specs, cfg.artifacts != nil)
 			m, err := mcp.NewManager(ctx, specs, onError, cfg.diag())
 			if err != nil {
 				// Best-effort HERE, by design: every server failed and the session still
@@ -4114,16 +4114,16 @@ func buildSessionStore(cfg Config) (port.SessionStore, port.EventLog, func(), er
 
 func redisStoreConfig(cfg Config) redisstore.Config {
 	return redisstore.Config{
-		Addr:                cfg.RedisURL,
-		UsernameFile:        cfg.RedisUsernameFile,
-		PasswordFile:        cfg.RedisPasswordFile,
-		CAFile:              cfg.RedisTLSCAFile,
-		TLS:                 cfg.RedisTLS,
-		AllowPlaintext:      cfg.RedisAllowPlaintext,
-		FollowPoolSize:      cfg.RedisFollowPoolSize,
-		MaxFollowers:        cfg.RedisMaxFollowers,
-		PDFArtifactsEnabled: cfg.PDFArtifactS3.Bucket != "",
-		Diagnostics:         cfg.diag(),
+		Addr:             cfg.RedisURL,
+		UsernameFile:     cfg.RedisUsernameFile,
+		PasswordFile:     cfg.RedisPasswordFile,
+		CAFile:           cfg.RedisTLSCAFile,
+		TLS:              cfg.RedisTLS,
+		AllowPlaintext:   cfg.RedisAllowPlaintext,
+		FollowPoolSize:   cfg.RedisFollowPoolSize,
+		MaxFollowers:     cfg.RedisMaxFollowers,
+		ArtifactsEnabled: cfg.ArtifactS3.Bucket != "",
+		Diagnostics:      cfg.diag(),
 	}
 }
 
@@ -4830,7 +4830,7 @@ func engineDepsForProvider(
 		Policy:              policy,
 		AuthorityEvaluator:  cfg.authorityEvaluator,
 		Hooks:               hooks,
-		ToolResultProcessor: cfg.pdfResultProcessor,
+		ToolResultProcessor: cfg.artifactResultProcessor,
 		Instructions:        instructions,
 		// Persist mid-run transitions (tool results, terminal state) so a durable
 		// store (StoreDir) holds current state. The Service additionally persists on
@@ -6877,7 +6877,7 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		Policy:              childPermPolicy(cfg),
 		AuthorityEvaluator:  cfg.authorityEvaluator,
 		Hooks:               hooks,
-		ToolResultProcessor: cfg.pdfResultProcessor,
+		ToolResultProcessor: cfg.artifactResultProcessor,
 		PromptConfig:        pc,
 		Model:               model,
 		// Diagnostics is LIVE for child engines (correlated by session + the agent

@@ -105,10 +105,10 @@ const AuthorizationFailed AuthorizationStatus = "failed"
 const AuthorizationGranted AuthorizationStatus = "granted"
 const AuthorizationInterrupted AuthorizationStatus = "interrupted"
 const AuthorizationPending AuthorizationStatus = "pending"
+const BlockArtifact BlockKind = "artifact"
 const BlockAudio BlockKind = "audio"
 const BlockEmbeddedResource BlockKind = "embedded_resource"
 const BlockImage BlockKind = "image"
-const BlockPDFArtifact BlockKind = "pdf_artifact"
 const BlockResourceLink BlockKind = "resource_link"
 const BlockStructuredContent BlockKind = "structured"
 const BlockText BlockKind = "text"
@@ -286,6 +286,7 @@ func IsSynthesisedSummary(text string) bool
 func LegacyIncarnationID(id SessionID, createdAtUnixNano int64, owner *Principal) IncarnationID
 func NetworkCorrelationDigest(kind string, value string) (string, bool)
 func New(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time) *Session
+func NewArtifactBlock(id string, name string, mimeType string, size int64, sha256 string) (Content, error)
 func NewAssistantMessage(text string, reasoning string, calls []ToolCall) Message
 func NewAudioContent(mime string, data []byte) (Content, error)
 func NewAudioURLContent(mime string, rawURL string) (Content, error)
@@ -296,7 +297,6 @@ func NewEmbeddedResourceBlock(uri string, mimeType string, text string, blob []b
 func NewImageContent(mime string, data []byte) (Content, error)
 func NewImageURLContent(mime string, rawURL string) (Content, error)
 func NewIncarnationID() IncarnationID
-func NewPDFArtifactBlock(id string, name string, size int64, sha256 string) (Content, error)
 func NewPDFContent(id string, name string, size int64, sha256 string) (Content, error)
 func NewParallelBranch(id SessionID, mode PermissionMode, ref EnvironmentRef, limits Limits, createdAt time.Time, parent SessionID, parentIncarnation IncarnationID, call ToolCallID, branchIndex int) (*Session, error)
 func NewResourceLinkBlock(uri string, name string, title string, description string, mimeType string, size int64, audience []string) Content

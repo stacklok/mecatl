@@ -25,7 +25,7 @@ func TestADR_0360_PDFBytesStayOutsideSessionState(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestADR_0360_PDFBytesStayOutsideSessionState(t *testing.T) {
 	artifacts := New(metadata, objects)
 	promptBytes := []byte("%PDF-1.7\nprompt-private-6380\n%%EOF")
 	toolBytes := []byte("%PDF-1.7\ntool-private-9361\n%%EOF")
-	prompt, err := artifacts.Stage(t.Context(), id, "prompt.pdf", bytes.NewReader(promptBytes))
+	prompt, err := artifacts.Stage(t.Context(), id, "prompt.pdf", "application/pdf", bytes.NewReader(promptBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestADR_0360_PDFBytesStayOutsideSessionState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Parts) != 3 || result.Parts[1].BlockKind != session.BlockPDFArtifact {
+	if len(result.Parts) != 3 || result.Parts[1].BlockKind != session.BlockArtifact {
 		t.Fatalf("tool result was not externalized: %+v", result)
 	}
 	history := []session.Message{
@@ -151,12 +151,12 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = metadata.Close() })
-	const source, fork = session.SessionID("pdf-source"), session.SessionID("pdf-fork")
+	const source, fork = session.SessionID("pdf-source"), session.SessionID("artifact-fork")
 	if err := metadata.Save(t.Context(), session.New(source, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now())); err != nil {
 		t.Fatal(err)
 	}
@@ -164,11 +164,11 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	storage := New(metadata, objects)
 	promptBytes := []byte("%PDF-1.7\nprompt-secret\n%%EOF")
 	toolBytes := []byte("%PDF-1.7\ntool-secret\n%%EOF")
-	prompt, err := storage.Stage(t.Context(), source, "prompt.pdf", bytes.NewReader(promptBytes))
+	prompt, err := storage.Stage(t.Context(), source, "prompt.pdf", "application/pdf", bytes.NewReader(promptBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool, err := storage.Stage(t.Context(), source, "tool.pdf", bytes.NewReader(toolBytes))
+	tool, err := storage.Stage(t.Context(), source, "tool.pdf", "application/pdf", bytes.NewReader(toolBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolPart, err := session.NewPDFArtifactBlock(tool.ID, tool.Name, tool.Size, tool.SHA256)
+	toolPart, err := session.NewArtifactBlock(tool.ID, tool.Name, "application/pdf", tool.Size, tool.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,11 +216,11 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	// A pod can stop after copying but before publishing the successor. The
 	// durable outbox survives it, while an active source lease protects the
 	// unpublished copy from another replica's cleanup pass.
-	if _, err := mr.ZAdd("mecatl:pdf-artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(fork)); err != nil {
+	if _, err := mr.ZAdd("mecatl:artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(fork)); err != nil {
 		t.Fatal(err)
 	}
 	mr.FastForward(36 * time.Minute) // expire the active-write TTL without sleeping
-	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	if len(objects.data) != 2 {
 		t.Fatalf("abandoned fork cleanup removed wrong objects: %d remain", len(objects.data))
 	}
-	if pending, err := restartedMetadata.PDFDeletionBatch(t.Context(), time.Now()); err != nil || len(pending) != 0 {
+	if pending, err := restartedMetadata.ArtifactDeletionBatch(t.Context(), time.Now()); err != nil || len(pending) != 0 {
 		t.Fatalf("abandoned fork outbox after cleanup = %v, %v", pending, err)
 	}
 }
@@ -268,13 +268,13 @@ func (o *deleteOnceObjects) Delete(ctx context.Context, key string) error {
 	return o.memoryObjects.Delete(ctx, key)
 }
 
-func TestPDFArtifactStorage_DeletionAndRetentionRevokeAndReconcile(t *testing.T) {
+func TestArtifactStorage_DeletionAndRetentionRevokeAndReconcile(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestPDFArtifactStorage_DeletionAndRetentionRevokeAndReconcile(t *testing.T)
 		if err := metadata.Save(t.Context(), session.New(id, session.ModeAccept, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/work", Revision: "in-tree-v1"}, session.Limits{}, time.Now())); err != nil {
 			t.Fatal(err)
 		}
-		artifact, err := storage.Stage(t.Context(), id, "report.pdf", bytes.NewReader([]byte("%PDF-1.7\nretained-private\n%%EOF")))
+		artifact, err := storage.Stage(t.Context(), id, "report.pdf", "application/pdf", bytes.NewReader([]byte("%PDF-1.7\nretained-private\n%%EOF")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -321,13 +321,13 @@ func TestPDFArtifactStorage_DeletionAndRetentionRevokeAndReconcile(t *testing.T)
 		if _, ok := objects.data[artifacts[id].key]; !ok {
 			t.Fatalf("object disappeared before durable cleanup of %q", id)
 		}
-		if _, err := mr.ZAdd("mecatl:pdf-artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(id)); err != nil {
+		if _, err := mr.ZAdd("mecatl:artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(id)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// New client and lifecycle instance emulate a replacement pod draining
 	// deletion and retention intent after both snapshots have disappeared.
-	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,18 +340,18 @@ func TestPDFArtifactStorage_DeletionAndRetentionRevokeAndReconcile(t *testing.T)
 	if len(objects.data) != 0 {
 		t.Fatalf("deleted session objects survived reconciliation: %d", len(objects.data))
 	}
-	if pending, err := restartedMetadata.PDFDeletionBatch(t.Context(), time.Now()); err != nil || len(pending) != 0 {
+	if pending, err := restartedMetadata.ArtifactDeletionBatch(t.Context(), time.Now()); err != nil || len(pending) != 0 {
 		t.Fatalf("deletion outbox after cleanup = %v, %v", pending, err)
 	}
 }
 
-func TestPDFArtifactStorage_InFlightForkSurvivesOutboxPass(t *testing.T) {
+func TestArtifactStorage_InFlightForkSurvivesOutboxPass(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestPDFArtifactStorage_InFlightForkSurvivesOutboxPass(t *testing.T) {
 	}
 	objects := &memoryObjects{data: make(map[string][]byte)}
 	storage := New(metadata, objects)
-	meta, err := storage.Stage(t.Context(), source, "report.pdf", bytes.NewReader([]byte("%PDF-1.7\nprivate-fork-copy\n%%EOF")))
+	meta, err := storage.Stage(t.Context(), source, "report.pdf", "application/pdf", bytes.NewReader([]byte("%PDF-1.7\nprivate-fork-copy\n%%EOF")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestPDFArtifactStorage_InFlightForkSurvivesOutboxPass(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("fork object write did not start")
 	}
-	if _, err := mr.ZAdd("mecatl:pdf-artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(fork)); err != nil {
+	if _, err := mr.ZAdd("mecatl:artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(fork)); err != nil {
 		t.Fatal(err)
 	}
 	if err := copying.Reconcile(t.Context()); err != nil {
@@ -409,7 +409,7 @@ func TestPDFArtifactStorage_InFlightForkSurvivesOutboxPass(t *testing.T) {
 		t.Fatal("settled fork copy did not publish a private object")
 	}
 	mr.FastForward(36 * time.Minute)
-	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,13 +424,13 @@ func TestPDFArtifactStorage_InFlightForkSurvivesOutboxPass(t *testing.T) {
 	}
 }
 
-func TestPDFArtifactStorage_PublishedForkSnapshotProtectsReadyCopy(t *testing.T) {
+func TestArtifactStorage_PublishedForkSnapshotProtectsReadyCopy(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestPDFArtifactStorage_PublishedForkSnapshotProtectsReadyCopy(t *testing.T)
 	objects := &memoryObjects{data: make(map[string][]byte)}
 	storage := New(metadata, objects)
 	want := []byte("%PDF-1.7\npublished-fork-private\n%%EOF")
-	meta, err := storage.Stage(t.Context(), source, "report.pdf", bytes.NewReader(want))
+	meta, err := storage.Stage(t.Context(), source, "report.pdf", "application/pdf", bytes.NewReader(want))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,11 +464,11 @@ func TestPDFArtifactStorage_PublishedForkSnapshotProtectsReadyCopy(t *testing.T)
 	}
 	// Omit CommitPrompt to emulate a Redis marker-update failure after the
 	// authoritative successor snapshot was saved.
-	if _, err := mr.ZAdd("mecatl:pdf-artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(fork)); err != nil {
+	if _, err := mr.ZAdd("mecatl:artifacts:delete-outbox", float64(time.Now().Add(-10*time.Minute).Unix()), string(fork)); err != nil {
 		t.Fatal(err)
 	}
 	mr.FastForward(36 * time.Minute)
-	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	restartedMetadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,15 +488,15 @@ func TestPDFArtifactStorage_PublishedForkSnapshotProtectsReadyCopy(t *testing.T)
 	if readErr != nil || !bytes.Equal(got, want) {
 		t.Fatalf("published fork PDF changed: size=%d err=%v", len(got), readErr)
 	}
-	if _, pending, err := restartedMetadata.PDFPendingForkSource(t.Context(), fork); err != nil || pending {
+	if _, pending, err := restartedMetadata.ArtifactPendingForkSource(t.Context(), fork); err != nil || pending {
 		t.Fatalf("published fork still has cleanup intent: pending=%t err=%v", pending, err)
 	}
 	restarted.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
 	if err := restarted.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	record, ok, err := restartedMetadata.PDFRecordForSession(t.Context(), fork, privateID)
-	if err != nil || !ok || record.State != redisstore.PDFCommitted {
+	record, ok, err := restartedMetadata.ArtifactRecordForSession(t.Context(), fork, privateID)
+	if err != nil || !ok || record.State != redisstore.ArtifactCommitted {
 		t.Fatalf("published fork marker was not repaired: record=%+v ok=%t err=%v", record, ok, err)
 	}
 }

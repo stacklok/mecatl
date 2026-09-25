@@ -217,10 +217,10 @@ func (b *CandidateListBudget) Stats() (entries, pages, bytes int) {
 // ServerConfig describes a single remote MCP server to connect to over the
 // Streamable HTTP transport.
 type ServerConfig struct {
-	// PDFArtifactResults permits application/pdf embedded-resource blobs up to
+	// ArtifactResults permits application/pdf embedded-resource blobs up to
 	// 20 MiB to reach the server-owned result processor. The default keeps the
 	// legacy 10 MiB inline block cap when artifact storage is disabled.
-	PDFArtifactResults bool
+	ArtifactResults bool
 	// Name is a short, stable identifier for the server. It becomes the
 	// <server> segment of every wrapped tool's namespaced name, so it should be
 	// unique across the configured servers and contain no "__" sequence.

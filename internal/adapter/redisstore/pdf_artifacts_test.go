@@ -11,13 +11,13 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestPDFArtifactStorage_DeletionOutbox(t *testing.T) {
+func TestArtifactStorage_DeletionOutbox(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	st, err := NewWithConfig(Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	st, err := NewWithConfig(Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestPDFArtifactStorage_DeletionOutbox(t *testing.T) {
 	if err := st.Delete(ctx, "direct"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.testClient().ZScore(ctx, pdfDeletionOutboxKey, "direct").Result(); err != nil {
+	if _, err := st.testClient().ZScore(ctx, artifactDeletionOutboxKey, "direct").Result(); err != nil {
 		t.Fatalf("direct delete missing durable outbox: %v", err)
 	}
 	saved("conditional")
@@ -54,7 +54,7 @@ func TestPDFArtifactStorage_DeletionOutbox(t *testing.T) {
 	if err != nil || !deleted {
 		t.Fatalf("conditional deletion = %v, %v", deleted, err)
 	}
-	if _, err := st.testClient().ZScore(ctx, pdfDeletionOutboxKey, "conditional").Result(); err != nil {
+	if _, err := st.testClient().ZScore(ctx, artifactDeletionOutboxKey, "conditional").Result(); err != nil {
 		t.Fatalf("conditional delete missing durable outbox: %v", err)
 	}
 	// A stale conditional delete must not enqueue cleanup for a live session.
@@ -80,14 +80,14 @@ func TestPDFArtifactStorage_DeletionOutbox(t *testing.T) {
 	if err != nil || deleted {
 		t.Fatalf("stale deletion = %v, %v", deleted, err)
 	}
-	if _, err := st.testClient().ZScore(ctx, pdfDeletionOutboxKey, "stale").Result(); err == nil {
+	if _, err := st.testClient().ZScore(ctx, artifactDeletionOutboxKey, "stale").Result(); err == nil {
 		t.Fatal("stale deletion enqueued cleanup")
 	}
 	// A malformed outbox must fail before removing the authoritative snapshot.
-	if err := st.testClient().Del(ctx, pdfDeletionOutboxKey).Err(); err != nil {
+	if err := st.testClient().Del(ctx, artifactDeletionOutboxKey).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.testClient().Set(ctx, pdfDeletionOutboxKey, "wrong-type", 0).Err(); err != nil {
+	if err := st.testClient().Set(ctx, artifactDeletionOutboxKey, "wrong-type", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
 	saved("outbox-unavailable")
@@ -99,7 +99,7 @@ func TestPDFArtifactStorage_DeletionOutbox(t *testing.T) {
 	}
 }
 
-func TestPDFArtifactStorage_DisabledDeleteKeepsLegacyShape(t *testing.T) {
+func TestArtifactStorage_DisabledDeleteKeepsLegacyShape(t *testing.T) {
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestPDFArtifactStorage_DisabledDeleteKeepsLegacyShape(t *testing.T) {
 	if err := st.Delete(ctx, "legacy"); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := st.testClient().Exists(ctx, pdfDeletionOutboxKey).Result(); err != nil || n != 0 {
+	if n, err := st.testClient().Exists(ctx, artifactDeletionOutboxKey).Result(); err != nil || n != 0 {
 		t.Fatalf("disabled delete created PDF outbox: exists=%d err=%v", n, err)
 	}
 }

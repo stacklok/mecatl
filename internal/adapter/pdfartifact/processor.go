@@ -20,7 +20,7 @@ var errPDFResultUnsafe = errors.New("PDF tool result cannot be externalized")
 // ResultProcessor replaces PDF embedded-resource blobs with private artifact
 // references after post-tool hooks have selected the effective result.
 type ResultProcessor struct {
-	Artifacts server.PDFArtifactLifecycle
+	Artifacts server.ArtifactLifecycle
 }
 
 var _ port.ToolResultProcessor = ResultProcessor{}
@@ -62,11 +62,11 @@ func (p ResultProcessor) ProcessToolResult(ctx context.Context, id session.Sessi
 	result.Parts = append([]session.Content(nil), result.Parts...)
 	for _, index := range pdfIndexes {
 		block := result.Parts[index]
-		meta, err := p.Artifacts.Stage(ctx, id, toolResultPDFName, bytes.NewReader(block.Data))
+		meta, err := p.Artifacts.Stage(ctx, id, toolResultPDFName, "application/pdf", bytes.NewReader(block.Data))
 		if err != nil {
 			return session.ToolResult{}, errPDFResultUnsafe
 		}
-		reference, err := session.NewPDFArtifactBlock(meta.ID, meta.Name, meta.Size, meta.SHA256)
+		reference, err := session.NewArtifactBlock(meta.ID, meta.Name, meta.MIMEType, meta.Size, meta.SHA256)
 		if err != nil {
 			return session.ToolResult{}, errPDFResultUnsafe
 		}
@@ -134,7 +134,7 @@ func boundedPDFResultSummary(parts []session.Content) (string, bool) {
 		if text == "" {
 			continue
 		}
-		if block.BlockKind == session.BlockPDFArtifact {
+		if block.BlockKind == session.BlockArtifact {
 			pdf = append(pdf, text)
 		} else {
 			other = append(other, text)

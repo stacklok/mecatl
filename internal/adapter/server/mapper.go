@@ -56,7 +56,7 @@ func contentFromProto(parts []*mecatlv1.Content) ([]session.Content, error) {
 		case mecatlv1.Content_KIND_AUDIO:
 			kind = session.MediaAudio
 		case mecatlv1.Content_KIND_PDF:
-			if p.GetMimeType() != pdfMIMEType || len(p.GetData()) != 0 || p.GetUrl() != "" || p.GetName() != "" || p.GetSize() != 0 || p.GetSha256() != "" || !validPDFArtifactID(p.GetArtifactId()) {
+			if p.GetMimeType() != pdfMIMEType || len(p.GetData()) != 0 || p.GetUrl() != "" || p.GetName() != "" || p.GetSize() != 0 || p.GetSha256() != "" || !validArtifactID(p.GetArtifactId()) {
 				return nil, fmt.Errorf("prompt parts[%d]: invalid PDF artifact reference", i)
 			}
 			out = append(out, session.Content{Kind: session.MediaPDF, MIMEType: pdfMIMEType, ArtifactID: p.GetArtifactId()})
@@ -110,7 +110,7 @@ func contentToProto(parts []session.Content) []*mecatlv1.Content {
 	return out
 }
 
-func validPDFArtifactID(id string) bool {
+func validArtifactID(id string) bool {
 	if len(id) == 0 || len(id) > 128 {
 		return false
 	}
@@ -767,8 +767,8 @@ func blockKindToProto(k session.BlockKind) mecatlv1.ContentBlock_Kind {
 		return mecatlv1.ContentBlock_KIND_EMBEDDED_RESOURCE
 	case session.BlockStructuredContent:
 		return mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT
-	case session.BlockPDFArtifact:
-		return mecatlv1.ContentBlock_KIND_PDF_ARTIFACT
+	case session.BlockArtifact:
+		return mecatlv1.ContentBlock_KIND_ARTIFACT
 	default:
 		return mecatlv1.ContentBlock_KIND_UNSPECIFIED
 	}
@@ -789,8 +789,8 @@ func blockKindFromProto(k mecatlv1.ContentBlock_Kind) session.BlockKind {
 		return session.BlockEmbeddedResource
 	case mecatlv1.ContentBlock_KIND_STRUCTURED_CONTENT:
 		return session.BlockStructuredContent
-	case mecatlv1.ContentBlock_KIND_PDF_ARTIFACT:
-		return session.BlockPDFArtifact
+	case mecatlv1.ContentBlock_KIND_ARTIFACT:
+		return session.BlockArtifact
 	default:
 		return ""
 	}

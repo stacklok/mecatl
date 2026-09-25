@@ -45,7 +45,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	t.Cleanup(mr.Close)
 	newMetadata := func() *redisstore.Store {
 		t.Helper()
-		metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+		metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	first, err := newPlacementTeamTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()}),
 		Store:  firstMetadata, PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
-		PDFArtifacts: firstArtifacts, DefaultCapabilities: port.ProviderCapabilities{PDF: true},
+		Artifacts: firstArtifacts, DefaultCapabilities: port.ProviderCapabilities{PDF: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	}
 	promptBytes := []byte("%PDF-1.7\nreplica-prompt-6748\n%%EOF")
 	toolBytes := []byte("%PDF-1.7\nreplica-tool-9765\n%%EOF")
-	prompt, err := first.UploadPdf(t.Context(), source.ID, "prompt.pdf", bytes.NewReader(promptBytes))
+	prompt, err := first.UploadArtifact(t.Context(), source.ID, "prompt.pdf", "application/pdf", bytes.NewReader(promptBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Parts) != 1 || result.Parts[0].BlockKind != session.BlockPDFArtifact {
+	if len(result.Parts) != 1 || result.Parts[0].BlockKind != session.BlockArtifact {
 		t.Fatalf("tool PDF was not externalized: %+v", result)
 	}
 	if err := source.SeedHistory([]session.Message{
@@ -107,7 +107,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	second, err := newPlacementTestService(server.Config{
 		Engine: agent.NewEngine(agent.Deps{LLM: provider, Catalog: tool.NewCatalog()}),
 		Store:  secondMetadata, PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
-		PDFArtifacts: secondArtifacts, DefaultCapabilities: port.ProviderCapabilities{PDF: true},
+		Artifacts: secondArtifacts, DefaultCapabilities: port.ProviderCapabilities{PDF: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestSDKPDFArtifacts_Scenario4_FailoverReferenceOnly(t *testing.T) {
 	if replay.Messages[2].ToolResult == nil || len(replay.Messages[2].ToolResult.Parts) != 1 || replay.Messages[2].ToolResult.Parts[0].ArtifactID != result.Parts[0].ArtifactID {
 		t.Fatalf("replica B did not replay the tool PDF reference: %+v", replay.Messages)
 	}
-	_, reader, err := second.DownloadPdf(t.Context(), source.ID, result.Parts[0].ArtifactID)
+	_, reader, err := second.DownloadArtifact(t.Context(), source.ID, result.Parts[0].ArtifactID)
 	if err != nil {
 		t.Fatalf("replica B tool PDF download: %v", err)
 	}
@@ -147,19 +147,19 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = metadata.Close() })
 	objects := &pdfFailCopyObjects{pdfMemoryObjects: &pdfMemoryObjects{data: make(map[string][]byte)}}
 	artifacts := pdfartifact.New(metadata, objects)
-	ids := []session.SessionID{"pdf-fork", "pdf-clear", "pdf-rejected", "pdf-failed"}
+	ids := []session.SessionID{"artifact-fork", "pdf-clear", "pdf-rejected", "pdf-failed"}
 	engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog()})
 	svc, err := newPlacementTeamTestService(server.Config{
 		Engine: engine, Store: metadata, PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
-		NewID:        func() session.SessionID { id := ids[0]; ids = ids[1:]; return id },
-		PDFArtifacts: artifacts, DefaultCapabilities: port.ProviderCapabilities{PDF: true},
+		NewID:     func() session.SessionID { id := ids[0]; ids = ids[1:]; return id },
+		Artifacts: artifacts, DefaultCapabilities: port.ProviderCapabilities{PDF: true},
 		ResolveCapabilities: func(_, model string, _ session.PermissionMode) port.ProviderCapabilities {
 			return port.ProviderCapabilities{PDF: model != "text-only"}
 		},
@@ -177,11 +177,11 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	}
 	promptBytes := []byte("%PDF-1.7\nprompt-private\n%%EOF")
 	toolBytes := []byte("%PDF-1.7\ntool-private\n%%EOF")
-	prompt, err := svc.UploadPdf(t.Context(), source.ID, "prompt.pdf", bytes.NewReader(promptBytes))
+	prompt, err := svc.UploadArtifact(t.Context(), source.ID, "prompt.pdf", "application/pdf", bytes.NewReader(promptBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolPDF, err := svc.UploadPdf(t.Context(), source.ID, "tool.pdf", bytes.NewReader(toolBytes))
+	toolPDF, err := svc.UploadArtifact(t.Context(), source.ID, "tool.pdf", "application/pdf", bytes.NewReader(toolBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolPart, err := session.NewPDFArtifactBlock(toolPDF.ID, toolPDF.Name, toolPDF.Size, toolPDF.SHA256)
+	toolPart, err := session.NewArtifactBlock(toolPDF.ID, toolPDF.Name, "application/pdf", toolPDF.Size, toolPDF.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	}{
 		{id: forkPrompt, want: promptBytes}, {id: forkTool, want: toolBytes},
 	} {
-		_, reader, err := svc.DownloadPdf(t.Context(), forkID, tc.id)
+		_, reader, err := svc.DownloadArtifact(t.Context(), forkID, tc.id)
 		if err != nil {
 			t.Fatalf("fork download %q: %v", tc.id, err)
 		}
@@ -237,7 +237,7 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 		if readErr != nil || !bytes.Equal(got, tc.want) {
 			t.Fatalf("fork download %q = %q, %v", tc.id, got, readErr)
 		}
-		if _, reader, err := svc.DownloadPdf(t.Context(), source.ID, tc.id); reader != nil || !errors.Is(err, server.ErrNotFound) {
+		if _, reader, err := svc.DownloadArtifact(t.Context(), source.ID, tc.id); reader != nil || !errors.Is(err, server.ErrNotFound) {
 			if reader != nil {
 				_ = reader.Close()
 			}
@@ -261,14 +261,14 @@ func TestSDKPDFArtifacts_Scenario4_ForkAndCleanup(t *testing.T) {
 	if _, err := svc.ForkSessionSuccessor(t.Context(), server.ForkSuccessorRequest{Source: source.ID, ProviderID: "provider", ModelID: "text-only"}); !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("PDF prompt fork to text-only model = %v, want invalid argument", err)
 	}
-	if exists, err := metadata.PDFSessionExists(t.Context(), "pdf-rejected"); err != nil || exists || len(objects.data) != 4 {
+	if exists, err := metadata.ArtifactSessionExists(t.Context(), "pdf-rejected"); err != nil || exists || len(objects.data) != 4 {
 		t.Fatalf("rejected fork published or copied: exists=%t objects=%d err=%v", exists, len(objects.data), err)
 	}
 	objects.failAt = objects.puts + 2 // fail after one private copy has landed
 	if _, err := svc.ForkSessionSuccessor(t.Context(), server.ForkSuccessorRequest{Source: source.ID}); err == nil {
 		t.Fatal("fork succeeded after a partial private-copy failure")
 	}
-	if exists, err := metadata.PDFSessionExists(t.Context(), "pdf-failed"); err != nil || exists || len(objects.data) != 4 {
+	if exists, err := metadata.ArtifactSessionExists(t.Context(), "pdf-failed"); err != nil || exists || len(objects.data) != 4 {
 		t.Fatalf("failed fork retained a snapshot or private objects: exists=%t objects=%d err=%v", exists, len(objects.data), err)
 	}
 }

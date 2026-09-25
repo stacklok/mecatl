@@ -16,7 +16,7 @@ import (
 
 func callPDFTool(t *testing.T, url, serverName, toolName string, enabled bool) session.ToolResult {
 	t.Helper()
-	s := connectTest(t, ServerConfig{Name: serverName, URL: url, PDFArtifactResults: enabled})
+	s := connectTest(t, ServerConfig{Name: serverName, URL: url, ArtifactResults: enabled})
 	tl := toolsByName(s.Tools())["mcp__"+serverName+"__"+toolName]
 	if tl == nil {
 		t.Fatalf("tool %q not advertised", toolName)
@@ -64,7 +64,7 @@ func TestSDKPDFArtifacts_Scenario2_MCPAndReplay(t *testing.T) {
 		legacyAtLimit.Parts[1].Text != "after limit PDF" || !strings.Contains(legacyAtLimit.Content, "exceeds the inline byte cap") {
 		t.Fatalf("storage-disabled mixed result did not retain legacy clamp: isError=%v parts=%d content=%q", legacyAtLimit.IsError, len(legacyAtLimit.Parts), legacyAtLimit.Content)
 	}
-	block, err := session.NewPDFArtifactBlock("pdf-id", "artifact.pdf", int64(len(pdf)), strings.Repeat("a", 64))
+	block, err := session.NewArtifactBlock("pdf-id", "artifact.pdf", "application/pdf", int64(len(pdf)), strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
 	}

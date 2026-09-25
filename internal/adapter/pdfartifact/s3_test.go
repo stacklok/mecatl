@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestPDFArtifactStorage_S3Config(t *testing.T) {
+func TestArtifactStorage_S3Config(t *testing.T) {
 	for _, cfg := range []S3Config{
 		{Bucket: "private-pdf"},
 		{Region: "eu-west-1"},

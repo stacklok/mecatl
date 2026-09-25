@@ -7,8 +7,8 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-func TestPDFArtifactBlockRoutesAsText(t *testing.T) {
-	block, err := session.NewPDFArtifactBlock("pdf-id", "tool.pdf", 42, strings.Repeat("a", 64))
+func TestArtifactBlockRoutesAsText(t *testing.T) {
+	block, err := session.NewArtifactBlock("pdf-id", "tool.pdf", "application/pdf", 42, strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
 	}

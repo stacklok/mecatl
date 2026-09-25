@@ -18,22 +18,22 @@ import (
 )
 
 type pdfPromptLifecycle struct {
-	meta     server.PDFArtifact
+	meta     server.Artifact
 	resolved int
 }
 
-func (*pdfPromptLifecycle) Stage(context.Context, session.SessionID, string, io.Reader) (server.PDFArtifact, error) {
-	return server.PDFArtifact{}, nil
+func (*pdfPromptLifecycle) Stage(context.Context, session.SessionID, string, string, io.Reader) (server.Artifact, error) {
+	return server.Artifact{}, nil
 }
-func (p *pdfPromptLifecycle) Resolve(_ context.Context, id session.SessionID, artifactID string) (server.PDFArtifact, error) {
+func (p *pdfPromptLifecycle) Resolve(_ context.Context, id session.SessionID, artifactID string) (server.Artifact, error) {
 	p.resolved++
 	if id != "s-pdf" || artifactID != p.meta.ID {
-		return server.PDFArtifact{}, server.ErrNotFound
+		return server.Artifact{}, server.ErrNotFound
 	}
 	return p.meta, nil
 }
-func (*pdfPromptLifecycle) Open(context.Context, session.SessionID, string) (server.PDFArtifact, io.ReadCloser, error) {
-	return server.PDFArtifact{}, nil, errors.New("unused")
+func (*pdfPromptLifecycle) Open(context.Context, session.SessionID, string) (server.Artifact, io.ReadCloser, error) {
+	return server.Artifact{}, nil, errors.New("unused")
 }
 func (*pdfPromptLifecycle) CommitPrompt(context.Context, session.SessionID, []string) error {
 	return nil
@@ -46,13 +46,13 @@ func (*pdfPromptLifecycle) Reconcile(context.Context) error                     
 
 func TestPDFPromptReferencesResolveBeforeRecording(t *testing.T) {
 	const digest = "acffdf49b58d86b2a91341e976081848a03823302662a85d8ec0b27d89e8db75"
-	lifecycle := &pdfPromptLifecycle{meta: server.PDFArtifact{ID: "artifact", Name: "report.pdf", Size: 14, SHA256: digest}}
+	lifecycle := &pdfPromptLifecycle{meta: server.Artifact{ID: "artifact", Name: "report.pdf", MIMEType: "application/pdf", Size: 14, SHA256: digest}}
 	llm := mockllm.New(mockllm.TextTurn("done"))
 	store := memstore.New()
 	engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(allowRules(), nil), Store: store})
 	svc, err := newPlacementTeamTestService(server.Config{
 		Engine: engine, Store: store, PlacementProvider: testPlacementProvider{}, PlacementScope: "test",
-		NewID: func() session.SessionID { return "s-pdf" }, PDFArtifacts: lifecycle,
+		NewID: func() session.SessionID { return "s-pdf" }, Artifacts: lifecycle,
 		DefaultCapabilities: port.ProviderCapabilities{PDF: true},
 	})
 	if err != nil {

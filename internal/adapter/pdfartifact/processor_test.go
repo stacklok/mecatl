@@ -29,7 +29,7 @@ func newResultProcessorStore(t *testing.T, objects ObjectStore) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(mr.Close)
-	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, PDFArtifactsEnabled: true})
+	metadata, err := redisstore.NewWithConfig(redisstore.Config{Addr: mr.Addr(), AllowPlaintext: true, ArtifactsEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestSDKPDFArtifacts_Scenario2_ExternalizeEffectiveResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CallID != "call-1" || got.IsError || len(got.Parts) != 3 || got.Parts[1].BlockKind != session.BlockPDFArtifact {
+	if got.CallID != "call-1" || got.IsError || len(got.Parts) != 3 || got.Parts[1].BlockKind != session.BlockArtifact {
 		t.Fatalf("processed result = %+v", got)
 	}
 	block := got.Parts[1]
@@ -90,7 +90,7 @@ func TestSDKPDFArtifacts_Scenario2_ExternalizeEffectiveResult(t *testing.T) {
 			t.Fatalf("processor rejected mixed 20 MiB PDF: callID=%q isError=%v parts=%d err=%v", got.CallID, got.IsError, len(got.Parts), err)
 		}
 		block := got.Parts[1]
-		if block.BlockKind != session.BlockPDFArtifact || block.Size != MaxPDFBytes || len(block.Data) != 0 || len(objects.data) != 1 ||
+		if block.BlockKind != session.BlockArtifact || block.Size != MaxPDFBytes || len(block.Data) != 0 || len(objects.data) != 1 ||
 			!strings.Contains(got.Content, "plain before PDF") || !strings.Contains(got.Content, "PDF artifact: artifact.pdf") ||
 			!strings.Contains(got.Content, "plain after PDF") || strings.Contains(got.Content, "%PDF-") {
 			t.Fatalf("processor boundary lost artifact or summary: block=%+v objects=%d summary=%q", block, len(objects.data), got.Content)
@@ -105,7 +105,7 @@ func TestSDKPDFArtifacts_Scenario2_ExternalizeEffectiveResult(t *testing.T) {
 			{BlockKind: session.BlockEmbeddedResource, MIMEType: "application/pdf", Data: pdf},
 		})
 		got, err := (ResultProcessor{Artifacts: store}).ProcessToolResult(t.Context(), "pdf-result-owner", input)
-		if err != nil || len(got.Parts) != 3 || got.Parts[0].BlockKind != session.BlockPDFArtifact || got.Parts[2].BlockKind != session.BlockPDFArtifact || got.Parts[0].ArtifactID == got.Parts[2].ArtifactID || len(objects.data) != 2 {
+		if err != nil || len(got.Parts) != 3 || got.Parts[0].BlockKind != session.BlockArtifact || got.Parts[2].BlockKind != session.BlockArtifact || got.Parts[0].ArtifactID == got.Parts[2].ArtifactID || len(objects.data) != 2 {
 			t.Fatalf("two PDF blocks = %+v, %v; stored=%d", got, err, len(objects.data))
 		}
 	})
@@ -271,7 +271,7 @@ func TestPDFResultProcessorMCPMetadataCopies(t *testing.T) {
 				})
 			httpSrv := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return srv }, nil))
 			t.Cleanup(httpSrv.Close)
-			remote, err := mcp.Connect(t.Context(), mcp.ServerConfig{Name: "pdfmetadata", URL: httpSrv.URL, PDFArtifactResults: true}, nil)
+			remote, err := mcp.Connect(t.Context(), mcp.ServerConfig{Name: "pdfmetadata", URL: httpSrv.URL, ArtifactResults: true}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

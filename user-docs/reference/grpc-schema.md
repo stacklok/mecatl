@@ -37,8 +37,8 @@ the bidi Converse stream that drives one agent run.
 | **RPC:** `GetSession`<br />**Request:** `GetSessionRequest`<br />**Response:** `GetSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSession">GetSession returns a snapshot of an existing session.</GrpcDescription> |
 | **RPC:** `ListGuardrailCoverage`<br />**Request:** `ListGuardrailCoverageRequest`<br />**Response:** `ListGuardrailCoverageResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
 | **RPC:** `GetGuardrailReviewDetail`<br />**Request:** `GetGuardrailReviewDetailRequest`<br />**Response:** `GetGuardrailReviewDetailResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No |  |
-| **RPC:** `UploadPdf`<br />**Request:** `UploadPdfRequest`<br />**Response:** `UploadPdfResponse` | <span className="grpc-mobile-label">Client streaming</span>Yes | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="UploadPdf">UploadPdf stages a session-owned PDF from one metadata frame followed by bounded nonempty byte chunks. The server validates and publishes the object.</GrpcDescription> |
-| **RPC:** `DownloadPdf`<br />**Request:** `DownloadPdfRequest`<br />**Response:** `DownloadPdfResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>Yes | <span className="grpc-mobile-label">Description</span><GrpcDescription name="DownloadPdf">DownloadPdf streams one previously published, owned PDF artifact.</GrpcDescription> |
+| **RPC:** `UploadArtifact`<br />**Request:** `UploadArtifactRequest`<br />**Response:** `UploadArtifactResponse` | <span className="grpc-mobile-label">Client streaming</span>Yes | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="UploadArtifact">UploadArtifact stages a session-owned artifact from one metadata frame followed by bounded nonempty byte chunks. Only PDF is supported in v1.</GrpcDescription> |
+| **RPC:** `DownloadArtifact`<br />**Request:** `DownloadArtifactRequest`<br />**Response:** `DownloadArtifactResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>Yes | <span className="grpc-mobile-label">Description</span><GrpcDescription name="DownloadArtifact">DownloadArtifact streams one previously published, owned artifact.</GrpcDescription> |
 | **RPC:** `GetSessionTranscript`<br />**Request:** `GetSessionTranscriptRequest`<br />**Response:** `GetSessionTranscriptResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="GetSessionTranscript">GetSessionTranscript returns the authoritative, snapshot-derived human transcript for one owned session. It is read-only and does not use EventLog.</GrpcDescription> |
 | **RPC:** `SetMode`<br />**Request:** `SetModeRequest`<br />**Response:** `SetModeResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="SetMode">SetMode changes an existing session&#39;s permission posture. The session aggregate remains authoritative: a mid-turn change is rejected with InvalidArgument, so clients that want &#34;next prompt&#34; semantics must defer and retry once idle.</GrpcDescription> |
 | **RPC:** `CloseSession`<br />**Request:** `CloseSessionRequest`<br />**Response:** `CloseSessionResponse` | <span className="grpc-mobile-label">Client streaming</span>No | <span className="grpc-mobile-label">Server streaming</span>No | <span className="grpc-mobile-label">Description</span><GrpcDescription name="CloseSession">CloseSession ends a session and releases its server-side resources (learned permission rules, bound placement, and any per-session engine). Idempotent: closing an unknown or already-closed session via the wire returns NotFound only for a never-created id; an already-released session succeeds.</GrpcDescription> |
@@ -874,7 +874,7 @@ This message has no fields.
 
 
 
-#### `mecatl.v1.DownloadPdfRequest`
+#### `mecatl.v1.DownloadArtifactRequest`
 
 
 
@@ -886,7 +886,7 @@ This message has no fields.
 
 
 
-#### `mecatl.v1.DownloadPdfResponse`
+#### `mecatl.v1.DownloadArtifactResponse`
 
 
 
@@ -2943,7 +2943,7 @@ old clients ignore and new clients reading an old server see as false.
 | `workspace_enrollment` | `bool` |  |  | workspace_enrollment is true when protected workspace services must be admitted as one complete bundle before the first prompt. |
 | `mcp_connector_status` | `bool` |  |  | mcp_connector_status requires a wired broker inspector, enforced ownership and a verified caller. It does not enable direct MCP resources or prompts. |
 | `mcp_refresh` | `bool` |  |  | mcp_refresh is true when direct/global MCP source reconciliation is wired. It is mutually exclusive with workspace_enrollment in a valid deployment. |
-| `pdf_artifacts` | `bool` |  |  | pdf_artifacts is true when this deployment can store and serve private PDFs. |
+| `artifacts` | `bool` |  |  | artifacts is true when this deployment can store and serve private artifacts. |
 
 
 
@@ -3690,9 +3690,9 @@ overloading the shared Event fields.
 
 
 
-#### `mecatl.v1.UploadPdfMetadata`
+#### `mecatl.v1.UploadArtifactMetadata`
 
-UploadPdfMetadata is the first frame of a PDF upload.
+UploadArtifactMetadata is the first frame of an artifact upload.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
@@ -3703,19 +3703,19 @@ UploadPdfMetadata is the first frame of a PDF upload.
 
 
 
-#### `mecatl.v1.UploadPdfRequest`
+#### `mecatl.v1.UploadArtifactRequest`
 
 
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `metadata` | `UploadPdfMetadata` |  | `payload` |  |
+| `metadata` | `UploadArtifactMetadata` |  | `payload` |  |
 | `chunk` | `bytes` |  | `payload` |  |
 
 
 
 
-#### `mecatl.v1.UploadPdfResponse`
+#### `mecatl.v1.UploadArtifactResponse`
 
 
 
@@ -3725,6 +3725,7 @@ UploadPdfMetadata is the first frame of a PDF upload.
 | `name` | `string` |  |  |  |
 | `size` | `int64` |  |  |  |
 | `sha256` | `string` |  |  |  |
+| `mime_type` | `string` |  |  |  |
 
 
 
@@ -3930,7 +3931,7 @@ Kind discriminates the block kind.
 | `KIND_RESOURCE_LINK` | `4` | KIND_RESOURCE_LINK is a reference to an MCP resource by URI. |
 | `KIND_EMBEDDED_RESOURCE` | `5` | KIND_EMBEDDED_RESOURCE is an embedded MCP resource (text or blob). |
 | `KIND_STRUCTURED_CONTENT` | `6` | KIND_STRUCTURED_CONTENT is a JSON structured-content block. |
-| `KIND_PDF_ARTIFACT` | `7` | KIND_PDF_ARTIFACT is a reference to a session-owned PDF result. |
+| `KIND_ARTIFACT` | `7` | KIND_ARTIFACT is a reference to a session-owned result artifact. |
 
 #### `mecatl.v1.GuardrailApprovalKind`
 

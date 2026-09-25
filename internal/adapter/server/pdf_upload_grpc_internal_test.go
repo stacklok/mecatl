@@ -8,7 +8,7 @@ import (
 )
 
 // TestPDFUploadGRPCDefaultReceiveTimeout pairs the real service's zero-value
-// configuration with the receive bound used by UploadPdf. The transport tests
+// configuration with the receive bound used by UploadArtifact. The transport tests
 // exercise expiry with a short explicit timeout.
 func TestPDFUploadGRPCDefaultReceiveTimeout(t *testing.T) {
 	svc, err := NewService(Config{
@@ -19,7 +19,7 @@ func TestPDFUploadGRPCDefaultReceiveTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Close()
-	if got := pdfUploadReceiveTimeout(svc.cfg.PDFUploadReceiveTimeout); got != 30*time.Minute {
+	if got := artifactUploadReceiveTimeout(svc.cfg.ArtifactUploadReceiveTimeout); got != 30*time.Minute {
 		t.Fatalf("zero-config gRPC PDF upload receive timeout = %s, want finite 30m bound", got)
 	}
 }
