@@ -177,7 +177,7 @@ func TestFireStartPersistsInFlightRecord(t *testing.T) {
 	}
 }
 
-// TestFireWallClockDeadlineTerminatesWithStopTimeout is the issue #386 Phase 3
+// TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines is the issue #386 Phase 3
 // Task D gate (b): a fire whose LLM blocks past the per-fire wall-clock deadline
 // terminates with StopTimeout (NOT StopCancelled — a caller must distinguish
 // "timed out" from a user cancel) + an honest Err naming the timeout duration,
@@ -189,7 +189,7 @@ func TestFireStartPersistsInFlightRecord(t *testing.T) {
 // It overrides the package-level defaultFireTimeout to a small value so the
 // timeout fires within the test budget, and runs the fire on blockingFireProvider
 // (streams nothing until the run is cancelled). Fully offline.
-func TestFireWallClockDeadlineTerminatesWithStopTimeout(t *testing.T) {
+func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
 	workspace := t.TempDir()

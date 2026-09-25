@@ -1010,6 +1010,7 @@ func newOpenAICompatEntry(cfg Config, id, key, baseURL string, extra ...openai.O
 		var llm port.LLMProvider = openai.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
+			RecoveryBudget:    cfg.LLMRecoveryBudget,
 			BaseBackoff:       llmBaseBackoff,
 			MaxBackoff:        llmMaxBackoff,
 			PerAttemptTimeout: cfg.LLMPerAttemptTimeout,
@@ -1085,6 +1086,7 @@ func newOpenCodeEntry(cfg Config, id, key, baseURL string, extra ...openaichat.O
 		var llm port.LLMProvider = openaichat.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
+			RecoveryBudget:    cfg.LLMRecoveryBudget,
 			BaseBackoff:       llmBaseBackoff,
 			MaxBackoff:        llmMaxBackoff,
 			PerAttemptTimeout: cfg.LLMPerAttemptTimeout,
@@ -1205,6 +1207,7 @@ func newAnthropicEntryFor(cfg Config, id, key, baseURL string, meta *liveMetaSto
 		var llm port.LLMProvider = anthropic.New(opts...)
 		return llmresilience.Wrap(llm, llmresilience.Config{
 			MaxAttempts:       cfg.LLMMaxAttempts,
+			RecoveryBudget:    cfg.LLMRecoveryBudget,
 			BaseBackoff:       llmBaseBackoff,
 			MaxBackoff:        llmMaxBackoff,
 			PerAttemptTimeout: cfg.LLMPerAttemptTimeout,

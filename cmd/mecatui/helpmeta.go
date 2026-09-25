@@ -111,6 +111,8 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"anthropic-cache-ttl":   {group: groupProvider, common: false, local: true, connect: false},
 
 	// ── LLM resilience (embedded-only) ────────────────────────────────────
+	"llm-max-attempts":        {group: groupLLMResilience, common: false, local: true, connect: false},
+	"llm-recovery-budget":     {group: groupLLMResilience, common: false, local: true, connect: false},
 	"llm-per-attempt-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},
 	"llm-stream-idle-timeout": {group: groupLLMResilience, common: false, local: true, connect: false},
 	"context-window-override": {group: groupLLMResilience, common: false, local: true, connect: false},
