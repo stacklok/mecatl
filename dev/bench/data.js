@@ -276987,6 +276987,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790345413251,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b09f573ac9fc64a2df79c0db52f13ba83dc26d56",
+          "message": "feat(studio): add exact plan control and authorization review prerequisite (#1909)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T17:10:24+02:00",
+          "tree_id": "41ce38658c7f69ef8de6dd5e0228adfe0ea2bbc5",
+          "url": "https://github.com/stacklok/mecatl/commit/b09f573ac9fc64a2df79c0db52f13ba83dc26d56"
+        },
+        "date": 1790349707150,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3277,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 71,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1156,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -363095,6 +363134,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790349704297,
+  "lastUpdate": 1790349707884,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
