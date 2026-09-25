@@ -5228,7 +5228,7 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 	st.sess = sess
 	s.mu.Unlock()
 	st.persistMu.Unlock()
-	engine, env, _, err := s.engineAndEnvironmentFor(requestLeaseCtx, sess)
+	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(requestLeaseCtx, sess)
 	if err != nil {
 		return RunAskAcknowledgement{}, err
 	}
@@ -5267,7 +5267,7 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 		st.persistMu.Unlock()
 	}
 	run, err := s.promoteDetachedRunAdmission(ctx, id, st, stopRun, func() *agent.Run {
-		return engine.ResumeApproval(rootedRunContext(ownedLeaseCtx, sess, env), sess, env, resolution.AskID, resolution.Verdict)
+		return engine.ResumeApproval(rootedRunContext(ownedLeaseCtx, sess, governanceRoot), sess, env, resolution.AskID, resolution.Verdict)
 	})
 	if err != nil {
 		if scoped {
@@ -8511,9 +8511,9 @@ func randomID() session.SessionID {
 
 // rootedRunContext is the context every server run entry hands to the engine: the
 // authoritative session becomes the causal root (overwriting anything the caller's
-// ctx carried, ADR 0360) and memory writes bind to the session's workspace.
-func rootedRunContext(ctx context.Context, sess *session.Session, env tool.Environment) context.Context {
-	return memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), env.Workspace().Root())
+// ctx carried, ADR 0360) and memory writes bind to the session's governance root.
+func rootedRunContext(ctx context.Context, sess *session.Session, governanceRoot string) context.Context {
+	return memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
 }
 
 // --- MCP inspection ----------------------------------------------------------
