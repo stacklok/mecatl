@@ -247806,6 +247806,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790338702868,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c28406fdd15a68fa089625b8ad9daaffa900db2",
+          "message": "feat: correlate provider requests with the root session (#1883)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T15:21:48+03:00",
+          "tree_id": "0e126827686e759a8cec7baeb67fbe8c90baf395",
+          "url": "https://github.com/stacklok/mecatl/commit/4c28406fdd15a68fa089625b8ad9daaffa900db2"
+        },
+        "date": 1790339583838,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -359995,6 +360029,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790339581014,
+  "lastUpdate": 1790339585457,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
