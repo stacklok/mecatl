@@ -340,6 +340,7 @@ describe("session inspection", () => {
       expect(screen.queryByRole("button", { name, hidden: true })).toBeNull();
     }
     expect(bff.calls("/api/v1/sessions/child/transcript")).toHaveLength(0);
+    expect(bff.calls("/api/v1/sessions/child/activity")).toHaveLength(0);
     fireEvent.click(within(details).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("textbox", { name: "Message Mecatl", hidden: true })).toBeNull();
 

@@ -23,7 +23,7 @@ export function ConnectionStatusBanner({
 
   return (
     <div
-      className="flex min-h-11 min-w-0 w-full shrink-0 flex-wrap items-center gap-2 bg-warning py-2 pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] text-xs font-medium text-warning-foreground"
+      className="relative z-[60] flex min-h-11 min-w-0 w-full shrink-0 flex-wrap items-center gap-2 bg-warning py-2 pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] text-xs font-medium text-warning-foreground"
       role="status"
     >
       <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0" />
