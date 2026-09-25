@@ -177,6 +177,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		}
 		bcfg := escapeCfg(t, f, PostureAuto, turns...)
 		bcfg.GuardrailsModel = "checker-model"
+		bcfg.GuardrailsDisabled = false // escapeCfg declares off; this test configures a checker instead
 		bcfg.GuardrailsEscape = true
 		built, err := buildIsolated(t, context.Background(), bcfg)
 		if err != nil {
@@ -202,6 +203,7 @@ func TestPathEscapePosture_GuardrailRoutedEscape(t *testing.T) {
 		f := setupEscapeFS(t)
 		bcfg := escapeCfg(t, f, PostureAuto, readEscapeTurns(f.target)...)
 		bcfg.GuardrailsModel = "checker-model"
+		bcfg.GuardrailsDisabled = false // escapeCfg declares off; this test configures a checker instead
 		// Isolate the escape-route assertion from the contextual guardrails' default inbound Read
 		// coverage: an explicit unrelated rule keeps guardrails enabled without
 		// reviewing this Read result through the ordinary tool boundary.

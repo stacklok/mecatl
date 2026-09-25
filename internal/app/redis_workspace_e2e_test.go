@@ -234,6 +234,7 @@ func TestRedisWorkspaceExternalLookingListDirNeverFallsBackToHost(t *testing.T) 
 		MockProvider:        provider,
 		NoSoul:              true,
 		Posture:             PostureYolo,
+		GuardrailsDisabled:  true,
 		PostureFlagSet:      true,
 	})
 	if err != nil {
