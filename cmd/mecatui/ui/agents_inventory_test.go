@@ -188,8 +188,13 @@ func TestAgentsInvPanelLoadingRender(t *testing.T) {
 // handled=false for a non-AgentsMsg, so Update falls through.
 func TestUpdateAgentsInvMsgFallThrough(t *testing.T) {
 	m := newAgentsInvModel(t, sampleAgents(), client.Capabilities{Agents: true})
+	m.agentsInv = agentsInvState{view: agentsInvPanel, generation: 1, loading: true}
 	if _, handled := m.updateAgentsInvMsg(tea.KeyPressMsg{Code: tea.KeyEnter}); handled {
 		t.Error("updateAgentsInvMsg should not handle a non-AgentsMsg")
+	}
+	updated, handled := m.updateAgentsInvMsg(client.AgentsMsg{Agents: []client.Agent{{Name: "unbound"}}})
+	if handled || len(updated.(Model).agentsInv.agents) != 0 || !updated.(Model).agentsInv.loading {
+		t.Fatal("bare AgentsMsg mutated the current open")
 	}
 }
 
@@ -200,7 +205,7 @@ func TestUpdateAgentsInvMsgSuccessAndError(t *testing.T) {
 	m := newAgentsInvModel(t, sampleAgents(), client.Capabilities{Agents: true})
 	m.agentsInv = agentsInvState{view: agentsInvPanel, loading: true}
 
-	mOK, handled := m.updateAgentsInvMsg(client.AgentsMsg{Agents: []client.Agent{{Name: "scout"}}})
+	mOK, handled := m.updateAgentsInvMsg(agentsInvResultMsg{generation: m.agentsInv.generation, result: client.AgentsMsg{Agents: []client.Agent{{Name: "scout"}}}})
 	if !handled {
 		t.Fatal("a success AgentsMsg should be handled")
 	}
@@ -212,12 +217,12 @@ func TestUpdateAgentsInvMsgSuccessAndError(t *testing.T) {
 		t.Fatalf("agents = %#v, want one scout", m.agentsInv.agents)
 	}
 
-	mErr, _ := m.updateAgentsInvMsg(client.AgentsMsg{Err: errors.New("boom")})
+	mErr, _ := m.updateAgentsInvMsg(agentsInvResultMsg{generation: m.agentsInv.generation, result: client.AgentsMsg{Err: errors.New("boom")}})
 	m = mErr.(Model)
 	if m.agentsInv.err == nil {
 		t.Fatal("an error AgentsMsg should record the error")
 	}
-	mOK2, _ := m.updateAgentsInvMsg(client.AgentsMsg{Agents: []client.Agent{{Name: "x"}}})
+	mOK2, _ := m.updateAgentsInvMsg(agentsInvResultMsg{generation: m.agentsInv.generation, result: client.AgentsMsg{Agents: []client.Agent{{Name: "x"}}}})
 	m = mOK2.(Model)
 	if m.agentsInv.err != nil {
 		t.Errorf("a success result should clear the prior error, got %v", m.agentsInv.err)
@@ -512,7 +517,7 @@ func TestAgentsInvScroll(t *testing.T) {
 	// A fresh inventory result resets a stale offset (never opens mid-list).
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyEnd})
 	m = mm.(Model)
-	mFresh, _ := m.updateAgentsInvMsg(client.AgentsMsg{Agents: scrollAgents(30).agents})
+	mFresh, _ := m.updateAgentsInvMsg(agentsInvResultMsg{generation: m.agentsInv.generation, result: client.AgentsMsg{Agents: scrollAgents(30).agents}})
 	m = mFresh.(Model)
 	if agentsTestOffset(m.agentsInv.viewport) != 0 {
 		t.Errorf("a fresh AgentsMsg should reset scroll to 0, got %d", agentsTestOffset(m.agentsInv.viewport))

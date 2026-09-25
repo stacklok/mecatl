@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -133,13 +134,24 @@ func TestMecatuiAgentInventoryBoundedViewport_Scenario1_CompactFallbackAndNonpos
 		st := agentsInvState{view: agentsInvPanel, agents: inventoryFixture(4)}
 		out := renderAgentsInvOverlay(th, st, client.Capabilities{Agents: true}, defaultHelpKeys(), size[0], size[1])
 		assertAgentsInventoryFits(t, out, size[0], size[1])
-		if st.viewport != nil {
-			t.Fatalf("compact %v constructed a viewport", size)
-		}
 		if strings.Contains(ansi.Strip(out), "Agent definitions") || !strings.Contains(ansi.Strip(out), "esc") && size[0] >= 3 {
 			t.Fatalf("compact %v was not close-only: %q", size, ansi.Strip(out))
 		}
 	}
+	m := newAgentsInvModel(t, sampleAgents(), client.Capabilities{Agents: true})
+	opened, cmd := m.openAgentsInv()
+	m = feedCmd(t, opened.(Model), cmd)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 10, Height: 3})
+	m = updated.(Model)
+	_ = m.View()
+	if m.agentsInv.viewport != nil {
+		t.Fatalf("compact model retained browsable viewport: %#v", m.agentsInv.viewport)
+	}
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if updated.(Model).agentsInv.viewport != nil {
+		t.Fatal("compact input constructed a browsable viewport")
+	}
+
 	for _, size := range [][2]int{{0, 10}, {-1, 10}, {10, 0}, {10, -1}} {
 		if got := renderAgentsInvOverlay(th, agentsInvState{view: agentsInvPanel}, client.Capabilities{}, defaultHelpKeys(), size[0], size[1]); got != "" {
 			t.Fatalf("geometry %v rendered %q, want empty", size, ansi.Strip(got))
@@ -201,12 +213,12 @@ func TestMecatuiAgentInventoryBoundedViewport_Scenario2_NonInventoryStatesClearB
 
 	errorModel := base
 	errorModel.agentsInv = stale
-	errorResult, _ := errorModel.updateAgentsInvMsg(client.AgentsMsg{Err: errors.New("boom")})
+	errorResult, _ := errorModel.updateAgentsInvMsg(agentsInvResultMsg{generation: errorModel.agentsInv.generation, result: client.AgentsMsg{Err: errors.New("boom")}})
 	errorModel = errorResult.(Model)
 
 	emptyModel := base
 	emptyModel.agentsInv = stale
-	emptyResult, _ := emptyModel.updateAgentsInvMsg(client.AgentsMsg{})
+	emptyResult, _ := emptyModel.updateAgentsInvMsg(agentsInvResultMsg{generation: emptyModel.agentsInv.generation, result: client.AgentsMsg{}})
 	emptyModel = emptyResult.(Model)
 
 	cases := []struct {

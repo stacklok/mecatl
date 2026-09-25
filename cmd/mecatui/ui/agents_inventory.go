@@ -141,15 +141,19 @@ func (m Model) onAgentsInvKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 // configureAgentsInvViewport applies the same measured geometry used by the
 // renderer and returns the ANSI-safe physical rows navigation moves over.
 func (m *Model) configureAgentsInvViewport() []string {
-	if m.agentsInv.viewport == nil || len(m.agentsInv.agents) == 0 || m.agentsInv.loading || m.agentsInv.err != nil {
+	if len(m.agentsInv.agents) == 0 || m.agentsInv.loading || m.agentsInv.err != nil {
+		m.agentsInv.viewport = nil
 		return nil
 	}
 	layout := newAgentsInvLayout(m.deps.Theme, m.helpKeyMarkings(), m.width, m.vp.Height())
 	rows := agentsInvRowLines(m.deps.Theme, m.agentsInv.agents, layout.bodyWidth)
 	height, ok := layout.viewportHeight(len(rows))
 	if !ok {
-		m.agentsInv.viewport.SetGeometry(0, 0, 0, bounded.Clip)
+		m.agentsInv.viewport = nil
 		return nil
+	}
+	if m.agentsInv.viewport == nil {
+		m.agentsInv.viewport = newAgentsInvViewport()
 	}
 	m.agentsInv.viewport.SetGeometry(layout.bodyWidth, height, 0, bounded.Clip)
 	m.agentsInv.viewport.Clamp(len(rows))
@@ -161,20 +165,14 @@ func (m *Model) configureAgentsInvViewport() []string {
 // model + handled flag; handled=false for any other message so Update can fall
 // through.
 func (m Model) updateAgentsInvMsg(msg tea.Msg) (tea.Model, bool) {
-	var am client.AgentsMsg
-	switch result := msg.(type) {
-	case agentsInvResultMsg:
-		if m.agentsInv.view != agentsInvPanel || result.generation != m.agentsInv.generation {
-			return m, true
-		}
-		am = result.result
-	case client.AgentsMsg:
-		// Direct messages keep focused reducer tests concise. Production requests
-		// always arrive through agentsInvResultMsg above.
-		am = result
-	default:
+	result, ok := msg.(agentsInvResultMsg)
+	if !ok {
 		return m, false
 	}
+	if m.agentsInv.view != agentsInvPanel || result.generation != m.agentsInv.generation {
+		return m, true
+	}
+	am := result.result
 	m.agentsInv.loading = false
 	if am.Err != nil {
 		m.agentsInv.err = am.Err
@@ -184,11 +182,8 @@ func (m Model) updateAgentsInvMsg(msg tea.Msg) (tea.Model, bool) {
 	}
 	m.agentsInv.err = nil
 	m.agentsInv.agents = am.Agents
-	if len(am.Agents) == 0 {
-		m.agentsInv.viewport = nil
-	} else {
-		m.agentsInv.viewport = newAgentsInvViewport()
-	}
+	m.agentsInv.viewport = nil
+	m.configureAgentsInvViewport()
 	return m, true
 }
 

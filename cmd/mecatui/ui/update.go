@@ -1980,6 +1980,7 @@ func (m Model) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	// the header arithmetic are GONE; the heights are measured via lipgloss.Height of
 	// the rendered regions in chrome().
 	m.relayout()
+	m.configureAgentsInvViewport()
 	m.clampHelpScroll()
 	m.clampAgentsDetailScroll()
 	if widthChanged && m.vp.Height() == viewportHeight {
@@ -4165,6 +4166,9 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 // re-discriminates the concrete mouse type here, where the dispatch logically
 // belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.agentsInv.view != agentsInvNone {
+		return m, nil
+	}
 	switch msg := msg.(type) {
 	case tea.MouseWheelMsg:
 		return m.onMouseWheel(msg)

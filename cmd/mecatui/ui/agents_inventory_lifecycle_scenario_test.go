@@ -129,14 +129,25 @@ func TestMecatuiAgentInventoryBoundedViewport_Scenario3_RemappablePhysicalLineNa
 
 func TestMecatuiAgentInventoryBoundedViewport_Scenario3_ReadOnlyInputOwnership(t *testing.T) {
 	m := newAgentsInvModel(t, sampleAgents(), client.Capabilities{Agents: true})
+	m.vp.SetContent(strings.Repeat("conversation\n", 100))
 	opened, cmd := m.openAgentsInv()
 	m = feedCmd(t, opened.(Model), cmd)
 	for _, msg := range []tea.KeyPressMsg{{Code: tea.KeyEnter}, {Code: 'x'}, {Code: tea.KeyTab}} {
-		updated, _, handled := m.onAgentsInvKey(msg)
-		if !handled {
-			t.Fatalf("%v escaped the open overlay", msg)
-		}
+		updated, _ := m.Update(msg)
 		m = updated.(Model)
+	}
+	beforeOffset := m.vp.YOffset()
+	for _, msg := range []tea.Msg{
+		tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1},
+		tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 1},
+		tea.MouseMotionMsg{Button: tea.MouseLeft, X: 2, Y: 2},
+		tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 2, Y: 2},
+	} {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+	if got := m.vp.YOffset(); got != beforeOffset {
+		t.Fatalf("overlay input changed hidden conversation offset from %d to %d", beforeOffset, got)
 	}
 	if m.agentsInv.view != agentsInvPanel || m.team.view != teamNone || m.modal != nil || m.sel.active || m.prompt.Value() != "" || m.prompt.Focused() {
 		t.Fatalf("read-only input changed ownership: inventory=%v team=%v modal=%T selection=%v prompt=%q focused=%v", m.agentsInv.view, m.team.view, m.modal, m.sel.active, m.prompt.Value(), m.prompt.Focused())
