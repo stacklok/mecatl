@@ -167,6 +167,20 @@ func configureMicroVMExecution(cfg Config, egress microvmmanager.GuestEgressSele
 	cfg.HarnessCommandSources = slices.Clone(cfg.HarnessCommandSources)
 	cfg.EnvironmentForkers = maps.Clone(cfg.EnvironmentForkers)
 	cfg.EnvironmentMergers = maps.Clone(cfg.EnvironmentMergers)
+	registerRepositorySources(&cfg)
+	if cfg.EnvironmentForkers == nil {
+		cfg.EnvironmentForkers = make(map[session.EnvironmentKind]tool.EnvironmentForker)
+	}
+	if cfg.EnvironmentMergers == nil {
+		cfg.EnvironmentMergers = make(map[session.EnvironmentKind]tool.EnvironmentMerger)
+	}
+	kind := session.EnvironmentKind("microvm")
+	cfg.EnvironmentForkers[kind] = provider
+	cfg.EnvironmentMergers[kind] = provider
+	return cfg, nil
+}
+
+func registerRepositorySources(cfg *Config) {
 	cfg.HarnessInstructionSources = append(cfg.HarnessInstructionSources, HarnessSourceRegistration[prompt.InstructionAssembler]{
 		ID: "repository", Scope: HarnessSourceScopePrincipal,
 		Provenance: HarnessProvenancePolicy{Fixed: harnessProjectTier}, UsesExecutionWorkspace: true,
@@ -195,16 +209,6 @@ func configureMicroVMExecution(cfg Config, egress microvmmanager.GuestEgressSele
 			return prompt.NewDirCommandExpander(workspace), release, nil
 		},
 	})
-	if cfg.EnvironmentForkers == nil {
-		cfg.EnvironmentForkers = make(map[session.EnvironmentKind]tool.EnvironmentForker)
-	}
-	if cfg.EnvironmentMergers == nil {
-		cfg.EnvironmentMergers = make(map[session.EnvironmentKind]tool.EnvironmentMerger)
-	}
-	kind := session.EnvironmentKind("microvm")
-	cfg.EnvironmentForkers[kind] = provider
-	cfg.EnvironmentMergers[kind] = provider
-	return cfg, nil
 }
 
 func publicMicroVMReadinessError(err error, fallback microvmmanager.ReadinessStage) error {

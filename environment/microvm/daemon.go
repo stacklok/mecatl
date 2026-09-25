@@ -306,7 +306,7 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	if d == nil || d.control == nil {
 		return errors.New("microvmd lifecycle service is not configured")
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopCancel()
 	if err := d.control.Authenticate(conn); err != nil {
@@ -320,40 +320,19 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	if request.Version != LifecycleProtocolVersion {
 		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(errLifecycleProtocol))
 	}
-	if request.Operation == LifecycleCreate || request.Operation == LifecycleResolve || request.Operation == LifecycleFork {
+	if isAcquisitionOperation(request.Operation) {
 		return d.serveAcquisition(ctx, conn, codec, request)
 	}
-	if request.Operation == LifecycleDetach || request.Operation == LifecycleChildDelete || (request.Operation == LifecycleDelete && request.AcquisitionID != "") {
+	if rejectsAcquisitionRelease(request) {
 		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(control.ErrBindingMismatch))
 	}
 
-	var unpin func()
-	deleteGate := false
-	if request.AcquisitionID != "" {
-		var err error
-		unpin, err = d.pinAcquisition(request.Binding, request.AcquisitionID)
-		if err != nil {
-			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
-		}
+	unpin, deleteGate, err := d.prepareAuthenticatedRequest(request)
+	if unpin != nil {
 		defer unpin()
-		if request.Operation == LifecycleMerge {
-			var payload ChildMergePayload
-			if json.Unmarshal(request.Payload, &payload) != nil || payload.ChildAcquisitionID == "" {
-				return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(errLifecycleProtocol))
-			}
-			unpinChild, pinErr := d.pinAcquisition(payload.Child, payload.ChildAcquisitionID)
-			if pinErr != nil {
-				return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(pinErr))
-			}
-			defer unpinChild()
-		}
-	} else if operationRequiresAcquisition(request.Operation) {
-		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(control.ErrBindingMismatch))
-	} else if request.Operation == LifecycleDelete {
-		if err := d.beginUnownedDeletion(request.Binding); err != nil {
-			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
-		}
-		deleteGate = true
+	}
+	if err != nil {
+		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
 	}
 
 	requestCtx, cancel := context.WithCancel(ctx)
@@ -387,6 +366,49 @@ func (d *Daemon) ServeConn(ctx context.Context, conn net.Conn) error {
 	return nil
 }
 
+func (d *Daemon) prepareAuthenticatedRequest(request LifecycleRequest) (func(), bool, error) {
+	if request.AcquisitionID == "" {
+		if operationRequiresAcquisition(request.Operation) {
+			return nil, false, control.ErrBindingMismatch
+		}
+		if request.Operation != LifecycleDelete {
+			return nil, false, nil
+		}
+		if err := d.beginUnownedDeletion(request.Binding); err != nil {
+			return nil, false, err
+		}
+		return nil, true, nil
+	}
+	unpin, err := d.pinAcquisition(request.Binding, request.AcquisitionID)
+	if err != nil {
+		return nil, false, err
+	}
+	if request.Operation != LifecycleMerge {
+		return unpin, false, nil
+	}
+	var payload ChildMergePayload
+	if json.Unmarshal(request.Payload, &payload) != nil || payload.ChildAcquisitionID == "" {
+		return unpin, false, errLifecycleProtocol
+	}
+	unpinChild, err := d.pinAcquisition(payload.Child, payload.ChildAcquisitionID)
+	if err != nil {
+		return unpin, false, err
+	}
+	return func() {
+		unpinChild()
+		unpin()
+	}, false, nil
+}
+
+func isAcquisitionOperation(operation LifecycleOperation) bool {
+	return operation == LifecycleCreate || operation == LifecycleResolve || operation == LifecycleFork
+}
+
+func rejectsAcquisitionRelease(request LifecycleRequest) bool {
+	return request.Operation == LifecycleDetach || request.Operation == LifecycleChildDelete ||
+		(request.Operation == LifecycleDelete && request.AcquisitionID != "")
+}
+
 func operationRequiresAcquisition(operation LifecycleOperation) bool {
 	switch operation {
 	case LifecycleWorkspace, LifecycleExec, LifecycleMerge:
@@ -396,7 +418,7 @@ func operationRequiresAcquisition(operation LifecycleOperation) bool {
 	}
 }
 
-func (d *Daemon) writeServeResponse(codec control.Codec, conn net.Conn, operation LifecycleOperation, response LifecycleResponse) error {
+func (*Daemon) writeServeResponse(codec control.Codec, conn net.Conn, operation LifecycleOperation, response LifecycleResponse) error {
 	if err := codec.Write(conn, response); err != nil {
 		return newLifecycleServeError(operation, "transport", err)
 	}
@@ -406,23 +428,46 @@ func (d *Daemon) writeServeResponse(codec control.Codec, conn net.Conn, operatio
 	return nil
 }
 
+func (d *Daemon) notifyBeforeAcquisitionPublish(ctx context.Context) {
+	if d.beforeAcquisitionPublish != nil {
+		d.beforeAcquisitionPublish(ctx)
+	}
+}
+
+func (d *Daemon) prepareAcquisition(request LifecycleRequest) (func(), error) {
+	if invalidAcquisitionRequest(request) {
+		return nil, control.ErrBindingMismatch
+	}
+	if request.Operation != LifecycleFork {
+		return nil, nil
+	}
+	return d.pinAcquisition(request.Binding, request.AcquisitionID)
+}
+
+func invalidAcquisitionRequest(request LifecycleRequest) bool {
+	return (request.Operation == LifecycleCreate || request.Operation == LifecycleResolve) && request.AcquisitionID != ""
+}
+
+func createsPlacement(operation LifecycleOperation) bool {
+	return operation == LifecycleCreate || operation == LifecycleFork
+}
+
+func validTerminalAcquisitionRequest(request LifecycleRequest, binding control.Binding, acquisitionID string) bool {
+	return request.Version == LifecycleProtocolVersion && request.Binding == binding && request.AcquisitionID == acquisitionID &&
+		(request.Operation == LifecycleDetach || request.Operation == LifecycleDelete || request.Operation == LifecycleChildDelete) &&
+		request.Provision == nil && len(request.Payload) == 0
+}
+
 func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec control.Codec, request LifecycleRequest) (retErr error) {
-	if (request.Operation == LifecycleCreate || request.Operation == LifecycleResolve) && request.AcquisitionID != "" {
-		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(control.ErrBindingMismatch))
+	unpin, err := d.prepareAcquisition(request)
+	if err != nil {
+		return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
 	}
-	var unpin func()
-	if request.Operation == LifecycleFork {
-		var err error
-		unpin, err = d.pinAcquisition(request.Binding, request.AcquisitionID)
-		if err != nil {
-			return d.writeServeResponse(codec, conn, request.Operation, lifecycleFailure(err))
+	defer func() {
+		if unpin != nil {
+			unpin()
 		}
-		defer func() {
-			if unpin != nil {
-				unpin()
-			}
-		}()
-	}
+	}()
 	acquireCtx, cancelAcquire := context.WithCancel(ctx)
 	defer cancelAcquire()
 	type readResult struct {
@@ -465,12 +510,10 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 	if response.Err != nil {
 		return d.writeServeResponse(codec, conn, request.Operation, response)
 	}
-	if d.beforeAcquisitionPublish != nil {
-		d.beforeAcquisitionPublish(acquireCtx)
-	}
+	d.notifyBeforeAcquisitionPublish(acquireCtx)
 	published := false
 	defer func() {
-		if !published && (request.Operation == LifecycleCreate || request.Operation == LifecycleFork) {
+		if !published && createsPlacement(request.Operation) {
 			cleanupErr := d.beginUnownedDeletion(response.Binding)
 			if cleanupErr == nil {
 				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), repositoryRollbackTimeout)
@@ -499,7 +542,7 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 	reservedResolve = false
 	response.AcquisitionID = id
 	if err := codec.Write(conn, response); err != nil {
-		destroy := request.Operation == LifecycleCreate || request.Operation == LifecycleFork
+		destroy := createsPlacement(request.Operation)
 		_, _ = d.releaseAcquisition(ctx, conn, response.Binding, id, destroy)
 		return newLifecycleServeError(request.Operation, "transport", err)
 	}
@@ -513,8 +556,7 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 		return nil
 	}
 	terminal := terminalResult.request
-	if terminal.Version != LifecycleProtocolVersion || terminal.Binding != response.Binding || terminal.AcquisitionID != id ||
-		(terminal.Operation != LifecycleDetach && terminal.Operation != LifecycleDelete && terminal.Operation != LifecycleChildDelete) || terminal.Provision != nil || len(terminal.Payload) != 0 {
+	if !validTerminalAcquisitionRequest(terminal, response.Binding, id) {
 		_, _ = d.releaseAcquisition(ctx, conn, response.Binding, id, false)
 		return d.writeServeResponse(codec, conn, terminal.Operation, lifecycleFailure(control.ErrBindingMismatch))
 	}

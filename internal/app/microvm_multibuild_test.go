@@ -74,7 +74,7 @@ func (b *multiBuildBackend) Start(_ context.Context, launch microvm.GoMicroVMLau
 	contract := guestexec.DefaultRuntimeContract()
 	contract.Identity = identity
 	hostMount := launch.Mounts[0].HostPath
-	server, err := guestagent.NewRepositoryServer(guestagent.RepositoryServerConfig{
+	guestServer, err := guestagent.NewRepositoryServer(guestagent.RepositoryServerConfig{
 		Owner: launch.RepositoryOwner, RepositoryKey: launch.RepositoryKey, VMID: launch.VMID,
 		Endpoint: launch.Endpoint, Generation: launch.Generation, PlacementGeneration: launch.PlacementGeneration,
 		AuthorityKey: launch.CapabilityKey, WorkloadIdentity: identity, RuntimeContract: contract,
@@ -95,7 +95,7 @@ func (b *multiBuildBackend) Start(_ context.Context, launch microvm.GoMicroVMLau
 	}
 	status := microvm.RuntimeStatus{Live: true, Generation: launch.Generation, VMID: launch.VMID, PID: 4242, ProcessIdentity: "offline-vm", Endpoint: launch.Endpoint}
 	b.mu.Lock()
-	b.server = server
+	b.server = guestServer
 	b.starts++
 	b.mu.Unlock()
 	return multiBuildVM{status: status}, nil
@@ -103,14 +103,14 @@ func (b *multiBuildBackend) Start(_ context.Context, launch microvm.GoMicroVMLau
 
 func (b *multiBuildBackend) dial(ctx context.Context, _ string) (io.ReadWriteCloser, error) {
 	b.mu.Lock()
-	server := b.server
+	guestServer := b.server
 	b.mu.Unlock()
-	if server == nil {
+	if guestServer == nil {
 		return nil, errors.New("repository guest is not booted")
 	}
 	host, guest := net.Pipe()
 	go func() {
-		_ = server.ServeAuthenticated(ctx, guest)
+		_ = guestServer.ServeAuthenticated(ctx, guest)
 		_ = guest.Close()
 	}()
 	return host, nil
@@ -242,7 +242,7 @@ func newMultiBuildFixture(t *testing.T) *multiBuildFixture {
 	return &multiBuildFixture{repository: repository, composition: composition, backend: backend, verified: verified, endpoint: "unix://" + socket}
 }
 
-func (f *multiBuildFixture) build(t *testing.T, ctx context.Context, checkout, storeDir string, turns ...mockllm.Turn) (*Built, *microvmadapter.Client, *[]port.LLMRequest) {
+func (f *multiBuildFixture) build(ctx context.Context, t *testing.T, checkout, storeDir string, turns ...mockllm.Turn) (*Built, *microvmadapter.Client, *[]port.LLMRequest) {
 	t.Helper()
 	settings := filepath.Join(t.TempDir(), "settings.yaml")
 	mbWriteFile(t, settings, "harness_context:\n  enabled_sources: [repository]\n  kinds:\n    instructions: {sources: [repository], mode: combine}\n    commands: {sources: [repository], mode: combine}\n    rules: {sources: [], mode: combine}\n    skills: {sources: [], mode: combine}\n    agent_defs: {sources: [], mode: combine}\npermissions:\n  allow: [Read, Shell]\n", 0o600)
@@ -269,7 +269,7 @@ func (f *multiBuildFixture) build(t *testing.T, ctx context.Context, checkout, s
 	return built, cfg.PlacementProvider.(*microvmadapter.Client), &requests
 }
 
-func (f *multiBuildFixture) placement(t *testing.T, client *microvmadapter.Client, sess *session.Session) microvmadapter.InventoryEntry {
+func (*multiBuildFixture) placement(t *testing.T, client *microvmadapter.Client, sess *session.Session) microvmadapter.InventoryEntry {
 	t.Helper()
 	owner, err := json.Marshal([2]string{sess.Owner.Issuer, sess.Owner.Subject})
 	if err != nil {
@@ -309,7 +309,7 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 			turnsA := []mockllm.Turn{mockllm.TextTurn("a-context"), mockllm.ToolCallTurn(session.ToolCall{ID: "read-a", Name: "Read", Args: []byte(`{"path":"tracked.txt"}`)}), mockllm.TextTurn("a-after-close")}
 			turnsB := []mockllm.Turn{mockllm.TextTurn("b-context"), mockllm.ToolCallTurn(session.ToolCall{ID: "shell-b", Name: "Shell", Args: []byte(`{"command":"cat tracked.txt"}`)}), mockllm.TextTurn("b-after-close")}
 			storeDir := t.TempDir()
-			first, firstClient, firstRequests := fixture.build(t, ctx, fixture.repository, storeDir, turnsA...)
+			first, firstClient, firstRequests := fixture.build(ctx, t, fixture.repository, storeDir, turnsA...)
 			t.Cleanup(first.Close)
 			one, err := first.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 			if err != nil {
@@ -319,7 +319,7 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 			mbWriteFile(t, filepath.Join(checkoutB, "tracked.txt"), "HOST-B\n", 0o644)
 			mbWriteFile(t, filepath.Join(checkoutB, "AGENTS.md"), "SOURCE-B", 0o644)
 			mbWriteFile(t, filepath.Join(checkoutB, ".mecatl/commands/which.md"), "COMMAND-B", 0o644)
-			second, _, secondRequests := fixture.build(t, ctx, checkoutB, storeDir, turnsB...)
+			second, _, secondRequests := fixture.build(ctx, t, checkoutB, storeDir, turnsB...)
 			t.Cleanup(second.Close)
 			two, err := second.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
 			if err != nil {
@@ -387,9 +387,9 @@ func TestMicroVMCrossBuildScheduleClosePreservesOrigin(t *testing.T) {
 	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "test", Subject: "local-operator", GrantType: session.GrantTypeUser})
 	fixture := newMultiBuildFixture(t)
 	storeDir := t.TempDir()
-	leader, _, leaderRequests := fixture.build(t, ctx, fixture.repository, storeDir, mockllm.TextTurn("fire complete"))
+	leader, _, leaderRequests := fixture.build(ctx, t, fixture.repository, storeDir, mockllm.TextTurn("fire complete"))
 	t.Cleanup(leader.Close)
-	originBuild, originClient, originRequests := fixture.build(t, ctx, fixture.repository, storeDir,
+	originBuild, originClient, originRequests := fixture.build(ctx, t, fixture.repository, storeDir,
 		mockllm.ToolCallTurn(session.ToolCall{ID: "origin-read", Name: "Read", Args: []byte(`{"path":"tracked.txt"}`)}),
 		mockllm.TextTurn("origin still complete"))
 	t.Cleanup(originBuild.Close)

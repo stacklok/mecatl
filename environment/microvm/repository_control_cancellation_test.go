@@ -23,7 +23,7 @@ func (s *stallControlReply) Write(p []byte) (int, error) {
 		close(s.stalled)
 		// Authentication already completed. A broken guest never sends the mutation reply.
 		var probe [1]byte
-		_, err := s.Conn.Read(probe[:])
+		_, err := s.Read(probe[:])
 		return 0, err
 	}
 	return s.Conn.Write(p)

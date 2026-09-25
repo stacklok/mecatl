@@ -41,6 +41,8 @@ const (
 	cleanupPhaseTimeout                             = 5 * time.Second
 	kindMicroVM                                     = session.EnvironmentKind("microvm")
 	publicGuestRoot                                 = "/workspace"
+	operationDelete                                 = "delete"
+	operationChildDelete                            = "child-delete"
 	repositoryLogicalRootUnavailableCategory        = "repository_logical_root_unavailable"
 )
 
@@ -164,7 +166,7 @@ func (a *acquisition) terminal(operation string) error {
 			a.err = errors.New("microvmd terminal response changed acquisition")
 			return
 		}
-		if operation == "delete" || operation == "child-delete" {
+		if operation == operationDelete || operation == operationChildDelete {
 			var result DeleteResult
 			if len(response.Payload) == 0 {
 				a.err = errors.New("microvmd terminal cleanup omitted result; cleanup status is unknown")
@@ -299,7 +301,7 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 		if safeCleanupTarget {
 			cleanup := func() error { return c.boundedRollbackPlacement(ctx, response.Binding) }
 			if ownerConn != nil {
-				cleanup = func() error { return ownerConn.terminal("delete") }
+				cleanup = func() error { return ownerConn.terminal(operationDelete) }
 			}
 			return server.PlacementBinding{}, invalidPlacementResponseError(err, cleanup())
 		}
@@ -311,11 +313,9 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 	safeCleanupTarget := response.Binding.Owner == owner && response.Binding.SessionID == placementID &&
 		strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding)
 	primary := errors.New("microvmd create returned incomplete or inconsistent placement metadata")
-	if response.Created == nil || response.Created.Ref.Kind != string(kindMicroVM) || response.Created.Ref.ID != response.Binding.Ref ||
-		response.Created.Generation != response.Binding.Generation || response.Created.HostWorktree == "" || response.Created.GuestRoot != publicGuestRoot ||
-		response.Created.Profile != c.profile || response.Created.GuestEgress == "" || response.Created.HostEgress == "" {
+	if !validCreatedPlacement(response.Created, response.Binding, c.profile) {
 		if safeCleanupTarget {
-			return server.PlacementBinding{}, invalidPlacementResponseError(primary, ownerConn.terminal("delete"))
+			return server.PlacementBinding{}, invalidPlacementResponseError(primary, ownerConn.terminal(operationDelete))
 		}
 		_ = ownerConn.terminal("detach")
 		return server.PlacementBinding{}, unsafePlacementResponseError(primary)
@@ -328,8 +328,14 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 	return c.placementBinding(ref, response.Binding, ownerConn, ownerConn), nil
 }
 
+func validCreatedPlacement(created *created, claim binding, profile string) bool {
+	return created != nil && created.Ref.Kind == string(kindMicroVM) && created.Ref.ID == claim.Ref &&
+		created.Generation == claim.Generation && created.HostWorktree != "" && created.GuestRoot == publicGuestRoot &&
+		created.Profile == profile && created.GuestEgress != "" && created.HostEgress != ""
+}
+
 func (c *Client) rollbackPlacement(ctx context.Context, claim binding) error {
-	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "delete", Binding: claim})
+	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: operationDelete, Binding: claim})
 	if err != nil {
 		return err
 	}
@@ -383,7 +389,7 @@ func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, own
 		Metadata:       server.PlacementMetadata{Kind: string(kindMicroVM), Label: "Local microVM", Revision: ref.Revision},
 	}
 	if rollback != nil {
-		binding.Rollback = func() error { return rollback.terminal("delete") }
+		binding.Rollback = func() error { return rollback.terminal(operationDelete) }
 	}
 	return binding
 }
@@ -598,7 +604,7 @@ func (c *Client) DeleteGeneration(ctx context.Context, claim GenerationBinding) 
 	if claim.Owner == "" || claim.SessionID == "" || claim.EnvironmentID == "" || claim.Ref == "" || claim.Generation == 0 {
 		return DeleteResult{}, errors.New("microvmd delete requires a complete generation binding")
 	}
-	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "delete", Binding: binding(claim)})
+	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: operationDelete, Binding: binding(claim)})
 	if err != nil {
 		return DeleteResult{}, err
 	}
@@ -653,7 +659,7 @@ func (c *Client) DeletePlacement(ctx context.Context, request server.PlacementDe
 	if err != nil {
 		return server.PlacementDeleteResult{}, server.ErrPlacementNotFound
 	}
-	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: "delete", Binding: claim})
+	response, err := c.call(ctx, lifecycleRequest{Version: protocolVersion, Operation: operationDelete, Binding: claim})
 	if err != nil {
 		return server.PlacementDeleteResult{}, err
 	}
