@@ -118,6 +118,7 @@ import {
   type ComposerModelOption,
   type DraftChatConfiguration,
 } from "./chat-composer";
+import { useChatEscape } from "./chat-escape";
 import { groupSessions, useChatFolders } from "./chat-folders";
 import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
@@ -384,6 +385,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [ordinaryVerdictEpoch, setOrdinaryVerdictEpoch] = useState(0);
   const [failedRun, setFailedRun] = useState<RunFailure>();
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
+  const [composerDraftPresent, setComposerDraftPresent] = useState(false);
+  const [clearDraftSignal, setClearDraftSignal] = useState(0);
+  const [escapeClearHint, setEscapeClearHint] = useState(false);
+  const workspaceRoot = useRef<HTMLDivElement>(null);
+  const panelOpener = useRef<HTMLElement | null>(null);
+  const panelWasOpen = useRef(false);
   const [seedText, setSeedText] = useState<string | undefined>(arrivalSeed.seed?.text);
   const [seedRequiresConfirmation, setSeedRequiresConfirmation] = useState(
     arrivalSeed.seed?.requiresConfirmation ?? false,
@@ -728,6 +735,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
               ) ?? contentPreview.authorization,
         }
       : contentPreview;
+  useEffect(() => {
+    if (contentPreview && !panelWasOpen.current) {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && !focused.closest('[data-chat-surface="thread"]'))
+        panelOpener.current = focused;
+    } else if (!contentPreview) {
+      panelOpener.current = null;
+    }
+    panelWasOpen.current = Boolean(contentPreview);
+  }, [contentPreview]);
   const models: ComposerModelOption[] =
     runtimeSettings.data?.models
       .filter((model) => !disabledModels.has(modelPreferenceId(model)))
@@ -2360,14 +2377,59 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   useShortcut("chat.fork", () => void forkStandaloneChat());
   useShortcut("chat.clear", () => void clearStandaloneChat());
   useShortcut("chat.expandDetails", () => setExpandDetails(!expandDetails));
-  useShortcut("close.esc", () => {
-    if (contentPreview) setContentPreview(undefined);
-    else if (sidebarOpen) setSidebarOpen(false);
-    else if (isRunning) void stopRun();
+  const escapeAsk =
+    approvals.find((candidate) => {
+      const target = candidate.controlTarget;
+      return target?.sessionId === sessionId && target?.runId === runTarget?.runId;
+    }) ?? approvals.find((candidate) => candidate.controlTarget?.sessionId === sessionId);
+  useChatEscape({
+    active: true,
+    askAvailable: escapeAsk
+      ? escapeAsk.tool === "PresentPlan"
+        ? !planApprovalDisabled(escapeAsk)
+        : !ordinaryApprovalDisabled(escapeAsk)
+      : false,
+    draft: composerDraftPresent,
+    onClearDraft: () => setClearDraftSignal((value) => value + 1),
+    onClosePanel: () => {
+      if (contentPreview) {
+        setContentPreview(undefined);
+        const opener = panelOpener.current;
+        if (opener?.isConnected) opener.focus();
+      } else setSidebarOpen(false);
+    },
+    onDenyAsk: () => {
+      if (escapeAsk) void respondToApproval(escapeAsk, "deny");
+    },
+    onHintChange: setEscapeClearHint,
+    onIteratePlan: () => {
+      if (escapeAsk) void respondToPlan(escapeAsk, "iterate");
+    },
+    onStopRun: () => void stopRun(),
+    onUnavailablePlan: () =>
+      setError(
+        escapeAsk
+          ? (planUnavailableReason(escapeAsk) ??
+              "Exact plan verdict is unavailable. Refresh activity.")
+          : "Exact plan verdict is unavailable.",
+      ),
+    navigationKey: sessionId,
+    ownsFocus: (target) => {
+      const node = target instanceof Node ? target : document.activeElement;
+      return Boolean(
+        node &&
+          workspaceRoot.current?.contains(node) &&
+          !(node instanceof Element && node.closest('[data-chat-surface="thread"]')),
+      );
+    },
+    panelOpen: Boolean(contentPreview || sidebarOpen),
+    pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
+    planAvailable: escapeAsk?.tool === "PresentPlan" && !planUnavailableReason(escapeAsk),
+    runActive: isRunning && Boolean(controlTarget(runTarget, sessionId)),
   });
 
   return (
-    <div className="relative flex h-full min-w-0">
+    <div className="relative flex h-full min-w-0" ref={workspaceRoot}>
       <SessionSidebar
         collapsed={sidebarHidden}
         creating={createSession.isPending || isRunning}
@@ -2794,11 +2856,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           onEdit={queuedMessages.update}
         />
         <ChatComposer
+          clearDraftSignal={clearDraftSignal}
           configuration={sessionId ? undefined : draftConfiguration}
           disabled={createSession.isPending}
           imageAttachmentsSupported={imageAttachmentsSupported}
           models={models}
           onConfigurationChange={setDraftConfiguration}
+          onDraftChange={setComposerDraftPresent}
           onPreviewImage={(image) =>
             setContentPreview({ file: imagePreview(image, false), kind: "file" })
           }
@@ -2825,6 +2889,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
           workingBehavior={enterSendBehavior}
         />
+        {escapeClearHint && (
+          <p className="mx-auto mb-2 max-w-3xl px-4 text-xs text-muted-foreground" role="status">
+            Press Escape again to clear the unsent draft.
+          </p>
+        )}
       </section>
       {displayedPreview && (
         <ContentPreviewPanel

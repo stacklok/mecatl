@@ -189,13 +189,6 @@ function GenericPreviewPanel({
         aria-label={previewTitle(preview)}
         className="absolute inset-x-0 bottom-0 z-40 flex h-[94dvh] flex-col rounded-t-2xl border bg-background shadow-2xl min-[760px]:relative min-[760px]:inset-auto min-[760px]:order-3 min-[760px]:h-full min-[760px]:w-[var(--content-panel-width)] min-[760px]:shrink-0 min-[760px]:rounded-none min-[760px]:border-y-0 min-[760px]:border-r-0"
         style={{ "--content-panel-width": `${width.value}px` } as CSSProperties}
-        onKeyDown={(event) => {
-          if (preview.kind === "activity" && event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            close();
-          }
-        }}
       >
         <button
           aria-label="Resize preview panel"

@@ -61,6 +61,7 @@ import {
 import { useAuthRecovery } from "../auth/auth-recovery-context";
 import { ApprovalPanel, type ApprovalRequest, type ApprovalVerdict } from "./approval-panel";
 import type { ComposerModelOption } from "./chat-composer";
+import { useChatEscape } from "./chat-escape";
 import {
   applyRunDelivery,
   approvalKey,
@@ -117,6 +118,8 @@ export function SideThreadPanel({
   const [maximized, setMaximized] = useState(false);
   const [showTools, setShowTools] = useState(true);
   const [prompt, setPrompt] = useState("");
+  const [escapeClearHint, setEscapeClearHint] = useState(false);
+  const threadRoot = useRef<HTMLElement>(null);
   const forkSession = useMutation(forkSessionMutation());
   const sessionDetail = useQuery(getSessionDetailOptions({ path: { sessionId: activeSessionId } }));
   const runtimeSettings = useQuery(getRuntimeSettingsOptions());
@@ -140,6 +143,40 @@ export function SideThreadPanel({
         providerId: candidate.providerId,
       })) ?? [];
   const busy = run.isRunning || forkSession.isPending;
+  const escapeAsk =
+    run.approvals.find(
+      (approval) =>
+        approval.controlTarget?.sessionId === activeSessionId &&
+        approval.controlTarget.runId === run.runId,
+    ) ?? run.approvals.find((approval) => approval.controlTarget?.sessionId === activeSessionId);
+  useChatEscape({
+    active: true,
+    askAvailable: escapeAsk ? !run.approvalDisabled(escapeAsk) : false,
+    draft: Boolean(prompt),
+    onClearDraft: () => setPrompt(""),
+    onClosePanel: onClose,
+    onDenyAsk: () => {
+      if (escapeAsk) void run.respondToApproval(escapeAsk, "deny");
+    },
+    onHintChange: setEscapeClearHint,
+    onIteratePlan: () => {
+      if (escapeAsk) void run.respondToPlan(escapeAsk, "iterate");
+    },
+    onStopRun: () => void run.stopRun(),
+    onUnavailablePlan: () =>
+      run.setError(
+        escapeAsk
+          ? (run.planUnavailableReason(escapeAsk) ??
+              "Exact plan verdict is unavailable. Refresh activity.")
+          : "Exact plan verdict is unavailable.",
+      ),
+    navigationKey: activeSessionId,
+    ownsFocus: (target) => target instanceof Node && Boolean(threadRoot.current?.contains(target)),
+    panelOpen: false,
+    pendingAsk: escapeAsk?.tool === "PresentPlan" ? "plan" : escapeAsk ? "ordinary" : "none",
+    planAvailable: escapeAsk?.tool === "PresentPlan" && !run.planUnavailableReason(escapeAsk),
+    runActive: run.isRunning && Boolean(run.runId),
+  });
 
   function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
     event.currentTarget.focus();
@@ -211,6 +248,7 @@ export function SideThreadPanel({
       />
       <aside
         aria-label="Thread"
+        data-chat-surface="thread"
         className={
           maximized
             ? "fixed inset-0 z-50 flex flex-col bg-background"
@@ -219,6 +257,7 @@ export function SideThreadPanel({
         style={
           maximized ? undefined : ({ "--content-panel-width": `${width.value}px` } as CSSProperties)
         }
+        ref={threadRoot}
       >
         {!maximized && (
           <button
@@ -412,6 +451,11 @@ export function SideThreadPanel({
             </div>
           </div>
         </form>
+        {escapeClearHint && (
+          <p className="px-4 pb-2 text-xs text-muted-foreground" role="status">
+            Press Escape again to clear the unsent draft.
+          </p>
+        )}
         {/* Hidden without a deployment model inventory: see the note in
             chat-composer.tsx. */}
         {models.length > 0 ? (

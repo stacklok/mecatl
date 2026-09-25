@@ -85,11 +85,13 @@ export interface DraftChatConfiguration {
 }
 
 interface ChatComposerProps {
+  clearDraftSignal?: number;
   configuration?: DraftChatConfiguration;
   disabled?: boolean;
   imageAttachmentsSupported?: boolean;
   models?: ComposerModelOption[];
   onConfigurationChange?: (configuration: DraftChatConfiguration) => void;
+  onDraftChange?: (present: boolean) => void;
   onPreviewImage?: (image: ImageAttachment) => void;
   onSeedConsumed?: () => void;
   onSend: (
@@ -116,11 +118,13 @@ export interface SeedConfirmationContext {
 export type ComposerEnterAction = "send" | "queue" | "steer" | "newline";
 
 export function ChatComposer({
+  clearDraftSignal = 0,
   configuration,
   disabled = false,
   imageAttachmentsSupported = false,
   models = [],
   onConfigurationChange,
+  onDraftChange,
   onPreviewImage,
   onSeedConsumed,
   onSend,
@@ -151,6 +155,17 @@ export function ChatComposer({
   const textarea = useRef<HTMLTextAreaElement>(null);
   const updatePrompt = useCallback((value: string) => setPrompt(value), []);
   const voice = useVoiceInput(prompt, updatePrompt);
+
+  useEffect(() => {
+    onDraftChange?.(Boolean(prompt || images.length));
+  }, [prompt, images.length, onDraftChange]);
+  useEffect(() => {
+    if (!clearDraftSignal) return;
+    setPrompt("");
+    setImages([]);
+    setAttachmentError("");
+    setSeedConfirmation(undefined);
+  }, [clearDraftSignal]);
 
   // A starter-prompt chip seeds the draft text without sending it — the
   // caller clears seedText (onSeedConsumed) once applied so re-clicking the
