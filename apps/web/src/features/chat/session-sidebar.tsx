@@ -13,6 +13,7 @@ import { Input } from "../../components/ui/input";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import { cn } from "../../lib/utils";
 import { type ChatFolder, type ChatFolderState, groupSessions } from "./chat-folders";
+import { isInspectOnlySession } from "./session-inspection";
 
 interface SessionSidebarProps {
   collapsed: boolean;
@@ -36,7 +37,12 @@ interface SessionSidebarProps {
 }
 
 export function SessionSidebar(props: SessionSidebarProps) {
-  const groups = groupSessions(props.items, props.folders);
+  const chats = props.items.filter((item) => !isInspectOnlySession(item));
+  const inspectOnly = props.items.filter(isInspectOnlySession);
+  const groups = groupSessions(chats, props.folders);
+  if (inspectOnly.length > 0) {
+    groups.push({ id: "inspect-only", items: inspectOnly, label: "Inspect-only sessions" });
+  }
   const width = usePanelWidth("chatList");
 
   function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -257,32 +263,38 @@ function SessionRow({
         </span>
       </button>
       <div className="flex opacity-100 min-[760px]:opacity-0 min-[760px]:group-hover:opacity-100 min-[760px]:group-focus-within:opacity-100">
-        <FolderPicker
-          folders={folders}
-          onCreate={onCreateFolder}
-          onMove={onMoveToFolder}
-          session={session}
-        />
-        <button
-          aria-label={`Rename ${session.title}`}
-          className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
-          disabled={!session.capabilities.rename || renaming}
-          onClick={() => setEditing(true)}
-          title={session.capabilities.renameReason || "Rename chat"}
-          type="button"
-        >
-          <Pencil aria-hidden="true" className="size-3.5" />
-        </button>
-        <button
-          aria-label={`Delete ${session.title}`}
-          className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-destructive disabled:opacity-40"
-          disabled={!session.capabilities.delete || deleting}
-          onClick={onDelete}
-          title={session.capabilities.deleteReason || "Delete chat"}
-          type="button"
-        >
-          <Trash2 aria-hidden="true" className="size-3.5" />
-        </button>
+        {!isInspectOnlySession(session) && (
+          <FolderPicker
+            folders={folders}
+            onCreate={onCreateFolder}
+            onMove={onMoveToFolder}
+            session={session}
+          />
+        )}
+        {!isInspectOnlySession(session) && (
+          <button
+            aria-label={`Rename ${session.title}`}
+            className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
+            disabled={!session.capabilities.rename || renaming}
+            onClick={() => setEditing(true)}
+            title={session.capabilities.renameReason || "Rename chat"}
+            type="button"
+          >
+            <Pencil aria-hidden="true" className="size-3.5" />
+          </button>
+        )}
+        {!isInspectOnlySession(session) && (
+          <button
+            aria-label={`Delete ${session.title}`}
+            className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-destructive disabled:opacity-40"
+            disabled={!session.capabilities.delete || deleting}
+            onClick={onDelete}
+            title={session.capabilities.deleteReason || "Delete chat"}
+            type="button"
+          >
+            <Trash2 aria-hidden="true" className="size-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );
