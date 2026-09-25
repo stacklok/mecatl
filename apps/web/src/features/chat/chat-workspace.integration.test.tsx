@@ -1010,6 +1010,60 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.queryByText("This chat is idle.")).toBeNull();
   });
 
+  it("reports a result delivered to this tab while it was hidden", async () => {
+    const bff = new BffFixture(session("chat-a", "running"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => activity.send(runStarted()));
+    startClock();
+    const setVisibility = controlVisibility();
+    await setVisibility("hidden");
+    await advanceClock(20_000);
+    bff.rows.set("chat-a", session("chat-a"));
+    await act(async () =>
+      activity.send(runEvent("result", "2", "", "run-a", { stop: "end_turn" })),
+    );
+    await setVisibility("visible");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText("The run finished while you were away.")).toBeTruthy();
+  });
+
+  it("does not attribute an approval received after return to the hidden interval", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => activity.send(runStarted()));
+    startClock();
+    const setVisibility = controlVisibility();
+    await setVisibility("hidden");
+    await advanceClock(20_000);
+    bff.rows.set("chat-a", session("chat-a"));
+    const runtime = heldResponse();
+    const inventory = heldResponse();
+    const detail = heldResponse();
+    bff.nextReplies.set("/api/v1/runtime", [runtime.promise]);
+    bff.nextReplies.set("/api/v1/sessions", [inventory.promise]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [detail.promise]);
+
+    await setVisibility("visible");
+    await act(async () =>
+      activity.send(runEvent("approval", "2", "", "run-a", { askId: "ask-1" })),
+    );
+    await act(async () => {
+      runtime.resolve(runtimeResponse());
+      inventory.resolve(json({ complete: true, items: [...bff.rows.values()] }));
+      detail.resolve(detailResponse("chat-a"));
+    });
+    expect(screen.getByText("This chat is idle.")).toBeTruthy();
+    expect(screen.queryByText("An approval was resolved while you were away.")).toBeNull();
+  });
+
   it("measures hidden time at return before a slow refresh", async () => {
     const bff = new BffFixture(session("chat-a"));
     await mountConnectedWorkspace(bff, "chat-a");

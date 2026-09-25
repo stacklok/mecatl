@@ -19,14 +19,17 @@ export interface ReturnNotice {
   text: string;
 }
 
+interface HiddenSnapshot {
+  atMs: number;
+  facts: AwayFacts;
+  sawApprovalResolved: boolean;
+  sawResult: boolean;
+}
+
 export class AwayNoticeTracker {
   #generation = 0;
-  #hidden?: {
-    atMs: number;
-    facts: AwayFacts;
-    sawApprovalResolved: boolean;
-    sawResult: boolean;
-  };
+  #hidden?: HiddenSnapshot;
+  #returning?: HiddenSnapshot;
 
   hide(facts: AwayFacts, atMs: number): void {
     if (this.#hidden) return;
@@ -36,6 +39,7 @@ export class AwayNoticeTracker {
   /** A second hide starts a fresh interval and invalidates an unfinished return refresh. */
   restartHide(facts: AwayFacts, atMs: number): void {
     this.#generation += 1;
+    this.#returning = undefined;
     this.#hidden = {
       atMs,
       facts,
@@ -53,10 +57,14 @@ export class AwayNoticeTracker {
   clear(): void {
     this.#generation += 1;
     this.#hidden = undefined;
+    this.#returning = undefined;
   }
 
   beginReturn(): number {
     this.#generation += 1;
+    // Freeze the evidence at visibility return, before asynchronous refetches.
+    this.#returning = this.#hidden;
+    this.#hidden = undefined;
     return this.#generation;
   }
 
@@ -66,8 +74,8 @@ export class AwayNoticeTracker {
 
   resume(facts: RefreshedAwayFacts, atMs: number, generation: number): ReturnNotice | undefined {
     if (generation !== this.#generation) return undefined;
-    const hidden = this.#hidden;
-    this.#hidden = undefined;
+    const hidden = this.#returning;
+    this.#returning = undefined;
     if (
       !hidden ||
       !facts.refreshed ||

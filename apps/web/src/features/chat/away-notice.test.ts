@@ -34,6 +34,19 @@ describe("same-tab return notice", () => {
     });
   });
 
+  it("freezes result and approval evidence when visibility returns", () => {
+    const tracker = new AwayNoticeTracker();
+    tracker.hide({ connection: "online", phase: "working", sessionId: "chat-1" }, 0);
+    const resultReturn = tracker.beginReturn();
+    tracker.record("chat-1", "result");
+    expect(tracker.resume(onlineIdle, 20_000, resultReturn)?.text).toBe("This chat is idle.");
+
+    tracker.hide({ connection: "online", phase: "awaiting", sessionId: "chat-1" }, 30_000);
+    const approvalReturn = tracker.beginReturn();
+    tracker.record("chat-1", "approval-resolved");
+    expect(tracker.resume(onlineIdle, 50_000, approvalReturn)?.text).toBe("This chat is idle.");
+  });
+
   it("requires 20 seconds, a matching chat, and refreshed facts", () => {
     const tracker = new AwayNoticeTracker();
     tracker.hide({ connection: "online", phase: "working", sessionId: "chat-1" }, 0);
