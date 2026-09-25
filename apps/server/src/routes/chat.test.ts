@@ -7,9 +7,10 @@ import {
   type RunStreamEvent,
   type StartRunRequest,
 } from "@mecatl-studio/contracts";
-import { type Client, MecatlError } from "@stacklok-oss/mecatl-sdk";
+import { type Client, MecatlError, ProtocolError } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app";
+import type { AuthenticationService } from "../auth/service";
 import { type ActivityDelivery, type ChatService, createMecatlChatService } from "../mecatl/chat";
 import { csrfHeaders } from "../testing/fakes";
 
@@ -20,6 +21,10 @@ const chat = {
   async *activity(sessionId: string): AsyncIterable<ActivityDelivery> {
     yield { delivery: { runId: "run-attached", sessionId, type: "run.started" } };
   },
+  async authorizationPresentation() {
+    return "https://issuer.example/authorize";
+  },
+  async *authorizationFlow(): AsyncIterable<RunStreamEvent> {},
   async cancelRun() {
     return true;
   },
@@ -115,6 +120,12 @@ const chat = {
 
 const app = createApp({ chat });
 
+const sameOriginNavigation = {
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "same-origin",
+};
+
 /** Sends the bootstrap's same-origin + double-submit CSRF pair on every mutation. */
 const request = (input: string, init?: RequestInit) => {
   const method = init?.method?.toUpperCase() ?? "GET";
@@ -126,6 +137,216 @@ const request = (input: string, init?: RequestInit) => {
 };
 
 describe("chat routes", () => {
+  it("keeps authorization recheck and cancel scoped to the handoff", async () => {
+    const presentation = vi
+      .fn()
+      .mockResolvedValueOnce("https://issuer.example/authorize?token=secret")
+      .mockResolvedValueOnce("https://issuer.example/authorize?token=fresh");
+    const event = (kind: string, runId: string, seq: bigint, payload: object) => ({
+      kind,
+      payload,
+      runId,
+      seq,
+      text: "",
+      turn: 1,
+    });
+    const authorization = (status: string) => ({
+      authorizationId: "auth-7",
+      callId: "call-7",
+      displayName: "Calendar",
+      status,
+    });
+    let recheckCalls = 0;
+    const recheck = vi.fn(() => {
+      const attempt = ++recheckCalls;
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (attempt === 2) {
+            yield event("authorization.required", "", 5n, authorization("pending"));
+            return;
+          }
+          yield event("authorization.resolved", "", 1n, authorization("granted"));
+          yield event("authorization.resolved", "run-next", 2n, authorization("granted"));
+          yield event("permission.ask", "run-next", 3n, {
+            askId: "ask-next",
+            args: "{}",
+            reason: "Proceed",
+            tool: "Read",
+          });
+          yield event("result", "run-next", 4n, { stop: "end_turn", text: "Done" });
+        },
+      };
+    });
+    const cancel = vi.fn(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield event("authorization.resolved", "", 5n, authorization("cancelled"));
+      },
+    }));
+    const mcpAuthorization = vi.fn().mockReturnValue({ presentation, recheck, cancel });
+    const get = vi.fn().mockResolvedValue({ mcpAuthorization });
+    const resolvePermission = vi.fn().mockResolvedValue(true);
+    const scoped = createApp({
+      chat: {
+        ...createMecatlChatService({ sessions: { get } } as unknown as Client),
+        resolvePermission,
+      },
+    });
+    const scopedRequest = (path: string, method = "GET") =>
+      scoped.request(path, {
+        headers: method === "POST" ? csrfHeaders() : sameOriginNavigation,
+        method,
+      });
+    const path = "/api/v1/sessions/session-1/authorizations/auth-7";
+
+    const opened = await scopedRequest(`${path}/presentation`);
+    expect(opened.status).toBe(302);
+    expect(opened.headers.get("location")).toBe("https://issuer.example/authorize?token=secret");
+    expect(opened.headers.get("cache-control")).toBe("no-store");
+    expect(opened.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(await opened.text()).not.toContain("token=secret");
+    const refreshed = await scopedRequest(`${path}/presentation`);
+    expect(refreshed.headers.get("location")).toBe("https://issuer.example/authorize?token=fresh");
+
+    const withControlCharacters = createApp({
+      chat: {
+        ...chat,
+        authorizationPresentation: async () => "https://issuer.example/authorize\u0000",
+      },
+    });
+    const normalized = await withControlCharacters.request(`${path}/presentation`, {
+      headers: sameOriginNavigation,
+    });
+    expect(normalized.status).toBe(302);
+    expect(normalized.headers.get("location")).toBe("https://issuer.example/authorize");
+
+    const checked = await scopedRequest(`${path}/recheck`, "POST");
+    expect(checked.status).toBe(200);
+    expect(checked.headers.get("content-type")).toContain("text/event-stream");
+    const checkedBody = await checked.text();
+    expect(checkedBody).toContain("event: run.started");
+    expect(checkedBody).toContain('"runId":"run-next"');
+    expect(checkedBody).toContain('"kind":"authorization.resolved"');
+    expect(checkedBody).toContain('"kind":"permission.ask"');
+    const stillPending = await scopedRequest(`${path}/recheck`, "POST");
+    const pendingBody = await stillPending.text();
+    expect(pendingBody).toContain('"kind":"authorization.required"');
+    expect(pendingBody).not.toContain("event: run.started");
+
+    const denied = await scoped.request(
+      "/api/v1/sessions/session-1/runs/run-next/permissions/ask-next",
+      {
+        body: JSON.stringify({ verdict: "deny" }),
+        headers: csrfHeaders("t", { "Content-Type": "application/json" }),
+        method: "POST",
+      },
+    );
+    expect(denied.status).toBe(204);
+    expect(resolvePermission).toHaveBeenCalledWith("session-1", "run-next", "ask-next", "deny");
+
+    const cancelled = await scopedRequest(`${path}/cancel`, "POST");
+    expect(cancelled.status).toBe(200);
+    expect(await cancelled.text()).toContain('"status":"cancelled"');
+    expect(get).toHaveBeenCalledWith("session-1", { signal: expect.any(AbortSignal) });
+    expect(mcpAuthorization).toHaveBeenCalledWith("auth-7");
+    expect(presentation).toHaveBeenCalledTimes(2);
+    expect(recheck).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(recheck).toHaveBeenCalledWith({}, { signal: expect.any(AbortSignal) });
+    expect(cancel).toHaveBeenCalledWith({}, { signal: expect.any(AbortSignal) });
+
+    const unsafe = createApp({
+      chat: { ...chat, authorizationPresentation: async () => "javascript:alert(1)" },
+    });
+    const refused = await unsafe.request(`${path}/presentation`, {
+      headers: sameOriginNavigation,
+    });
+    expect(refused.status).toBe(502);
+    expect(refused.headers.get("location")).toBeNull();
+
+    const sdkRejected = createApp({
+      chat: {
+        ...chat,
+        authorizationPresentation: async () => {
+          throw new ProtocolError("The MCP authorization presentation URL is malformed", {
+            transport: "local",
+          });
+        },
+      },
+    });
+    const rejected = await sdkRejected.request(`${path}/presentation`, {
+      headers: sameOriginNavigation,
+    });
+    expect(rejected.status).toBe(502);
+    expect(rejected.headers.get("location")).toBeNull();
+  });
+
+  it("opens authorization only from a same-origin browser navigation", async () => {
+    const presentation = vi.fn(async () => "https://issuer.example/authorize?token=secret");
+    const authentication: AuthenticationService = {
+      clear: () => undefined,
+      completeLogin: async () => {
+        throw new Error("unused");
+      },
+      credential: async (context) =>
+        context.req.header("cookie")?.includes("studio_access=session-cookie")
+          ? {
+              credential: {
+                accessToken: "test-access-token",
+                expiresAt: Number.MAX_SAFE_INTEGER,
+                subject: "test-user",
+                tokenType: "Bearer" as const,
+              },
+              status: "authenticated" as const,
+            }
+          : { status: "anonymous" as const },
+      logout: async () => undefined,
+      noteLoginComplete: () => undefined,
+      noteLoginFailure: () => undefined,
+      save: async () => undefined,
+      signInRequired: async () => true,
+      startLogin: async () => "https://issuer.example/authorize",
+    };
+    const guarded = createApp({
+      authentication,
+      chat: { ...chat, authorizationPresentation: presentation },
+      security: { publicUrl: new URL("https://studio.example") },
+    });
+    const path =
+      "https://studio.example/api/v1/sessions/session-1/authorizations/auth-7/presentation";
+    const cookie = "studio_access=session-cookie; studio_csrf=t";
+
+    const opened = await guarded.request(path, {
+      headers: { ...sameOriginNavigation, Cookie: cookie },
+    });
+    expect(opened.status).toBe(302);
+    expect(opened.headers.get("location")).toBe("https://issuer.example/authorize?token=secret");
+    expect(presentation).toHaveBeenCalledOnce();
+
+    const rejectedHeaders: Record<string, string>[] = [
+      { "Sec-Fetch-Site": "cross-site" },
+      { "Sec-Fetch-Site": "same-site" },
+      { "Sec-Fetch-Site": "none" },
+      {},
+      { Origin: "https://other.example", "Sec-Fetch-Site": "same-origin" },
+    ];
+    for (const headers of rejectedHeaders) {
+      const requestHeaders = new Headers(headers);
+      requestHeaders.set("Cookie", cookie);
+      requestHeaders.set("Sec-Fetch-Dest", "document");
+      requestHeaders.set("Sec-Fetch-Mode", "navigate");
+      const rejected = await guarded.request(path, {
+        headers: requestHeaders,
+      });
+      expect(rejected.status).toBe(403);
+      expect(rejected.headers.get("location")).toBeNull();
+      expect(rejected.headers.get("cache-control")).toBe("no-store");
+      const body = await rejected.text();
+      expect(body).not.toContain("token=secret");
+      expect(JSON.parse(body)).toMatchObject({ code: "cross_site_request" });
+    }
+    expect(presentation).toHaveBeenCalledOnce();
+  });
+
   it("lists sessions through the product contract", async () => {
     const response = await request("/api/v1/sessions");
 

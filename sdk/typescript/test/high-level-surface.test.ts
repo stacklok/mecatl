@@ -62,6 +62,7 @@ const HIGH_LEVEL_SURFACE = {
   "HarnessService.ForkSession": { kind: "namespace", operation: "Client.sessions.fork" },
   "HarnessService.Converse": { kind: "session", operation: "Session.run" },
   "HarnessService.ResolveRunAsk": { kind: "lifecycle", operation: "RunControls.resolveAsk" },
+  "HarnessService.ResolvePlanAsk": { kind: "lifecycle", operation: "RunControls.resolvePlanAsk" },
   "HarnessService.CancelRun": { kind: "lifecycle", operation: "RunControls.cancel" },
   "HarnessService.SteerRun": { kind: "lifecycle", operation: "RunControls.steer" },
   "HarnessService.CancelRunSteer": { kind: "lifecycle", operation: "RunControls.cancelSteer" },

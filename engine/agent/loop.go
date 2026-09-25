@@ -580,6 +580,8 @@ const (
 	// AskResolutionPlanOriginated means the ask belongs to the dedicated plan
 	// resolution choreography and remains pending.
 	AskResolutionPlanOriginated
+	// AskResolutionNotPlan means the pending ask is ordinary and was not consumed.
+	AskResolutionNotPlan
 )
 
 // Run is the handle to one in-flight prompt. It exposes the Event stream plus the
@@ -1038,8 +1040,10 @@ func (r *Run) Approve(askID string, v session.ApprovalVerdict) error {
 	if r == nil || askID == "" {
 		return errors.New("approval requires a non-empty ask id")
 	}
-	if r.childAsks != nil && r.childAsks.route(askID, v) {
-		return nil
+	if r.childAsks != nil {
+		if owned, err := r.childAsks.routeResolution(ApprovalResolution{AskID: askID, Verdict: v}); owned {
+			return err
+		}
 	}
 	return r.asks.resolveChecked(askID, approval{verdict: v}, func(ask session.PendingAsk) error {
 		if ask.Guardrail != nil && ask.Guardrail.Kind == session.GuardrailApprovalResultRelease {
@@ -1065,6 +1069,12 @@ func (r *Run) ResolveOrdinaryAsk(askID string, v session.ApprovalVerdict) AskRes
 	return r.asks.resolveOrdinary(askID, v)
 }
 
+// ResolvePlanAsk atomically consumes only a root plan-originated pending ask.
+// A child ask cannot authorize the root plan, regardless of its tool name.
+func (r *Run) ResolvePlanAsk(askID string, verdict session.ApprovalVerdict) AskResolution {
+	return r.asks.resolvePlan(askID, verdict)
+}
+
 // RetractPermissionAsk withdraws this run's own pending permission ask without
 // resolving it and emits one permission.retract event. It returns false when the
 // ask is unknown or already resolved. The run remains parked until its host
@@ -1081,11 +1091,11 @@ func (r *Run) RetractPermissionAsk(askID string) bool {
 // registerChildAsk records a surfaced child ask in this run's router so a later
 // Approve(askID) is routed to the owning child. It is a no-op when this run has no
 // router (a non-interactive or child run never surfaces). The router auto-removes the
-// entry on the routed verdict (childAskRouter.route), so there is no explicit
-// unregister on the resolution path.
-func (r *Run) registerChildAsk(askID string, child *Run) {
+// entry on an accepted verdict, so there is no explicit unregister on the
+// resolution path. A stale child verdict leaves the route for terminal retract.
+func (r *Run) registerChildAsk(ask session.PendingAsk, child *Run, turn int) {
 	if r.childAsks != nil {
-		r.childAsks.registerChild(askID, child)
+		r.childAsks.registerSurfaced(ask, child, turn)
 	}
 }
 
@@ -1671,15 +1681,15 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	r.children = newChildRunRegistry()
 	r.children.liveness = e.deps.SessionLiveness
 	r.children.emit = func(ev session.Event) {
-		if r.emitOrAbort(ev, r.children.emitAbort) && e.deps.Sink != nil {
-			e.deps.Sink.Emit(r.ctx, ev)
+		if sequenced, delivered := r.emitOrAbortSequenced(ev, r.children.emitAbort); delivered {
+			e.mirrorEvent(r, sequenced)
 		}
 	}
 	// unregisterAsk is the answered-vs-pending gate for ask retraction at a
 	// child's registry terminal (markDoneResult — the chokepoint every
 	// ctx-driven unwind funnels through) and the drain's abandoned sweep:
-	// route() removes an ANSWERED ask's router entry, so only an unregister that
-	// genuinely removed one (a still-pending surfaced ask) draws a
+	// An accepted resolution removes an ANSWERED ask's router entry, so only
+	// an unregister that removed a still-pending surfaced ask draws a
 	// permission.retract. A headless/child run installs no router, so every
 	// unregister reports false and no retract is ever emitted — correct:
 	// nothing was ever surfaced.
@@ -3157,22 +3167,31 @@ func (r *Run) emitChecked(ev session.Event) (session.Event, bool) {
 // emit: delivery is deterministic whenever the buffer has room, so the abort
 // arms only ever claim a send that would genuinely park.
 func (r *Run) emitOrAbort(ev session.Event, abort <-chan struct{}) bool {
+	_, delivered := r.emitOrAbortSequenced(ev, abort)
+	return delivered
+}
+
+// emitOrAbortSequenced returns the exact stamped event handed to the parent
+// channel so a delivered child approval can be mirrored byte-for-byte to the
+// EventSink while the child registry's emit mutex is held. This preserves
+// approval-before-terminal order in both the stream and sink.
+func (r *Run) emitOrAbortSequenced(ev session.Event, abort <-chan struct{}) (session.Event, bool) {
 	ev.Seq = r.seq.Add(1)
 	// Same stamp as emit — see the note there. These two are the ONLY sites a run
 	// hands an event outward, which is what makes the guarantee structural.
 	ev.RunID = r.runID
 	select {
 	case r.events <- ev:
-		return true
+		return ev, true
 	default:
 	}
 	select {
 	case r.events <- ev:
-		return true
+		return ev, true
 	case <-abort:
-		return false
+		return ev, false
 	case <-r.hardAbort:
-		return false
+		return ev, false
 	}
 }
 
@@ -3227,7 +3246,7 @@ var childDrainGrace = 1 * time.Second
 // I3b note: the background-pending nudge must be checked in finishTurnNoTools
 // BEFORE its clean-terminal calls — by the time this hook runs, the children it
 // would ask about are already cancelled and the registry sealed.
-func (*Engine) drainChildren(ctx context.Context, r *Run) {
+func (e *Engine) drainChildren(ctx context.Context, r *Run) {
 	joins := r.children.cancelLiveBackground()
 	if len(joins) > 0 {
 		if pending := joinChildren(joins, childDrainCap); len(pending) > 0 {
@@ -3251,6 +3270,12 @@ func (*Engine) drainChildren(ctx context.Context, r *Run) {
 				}
 			}
 		}
+	}
+	if r.childAsks != nil {
+		for _, ev := range r.children.sealWithFinal(r.childAsks.closeEvents) {
+			e.emit(r, ev)
+		}
+		return
 	}
 	r.children.seal()
 }

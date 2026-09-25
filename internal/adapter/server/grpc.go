@@ -321,6 +321,28 @@ func (h *HarnessServer) ResolveRunAsk(ctx context.Context, req *mecatlv1.Resolve
 	return &mecatlv1.ResolveRunAskResponse{RunId: ack.RunID, AskId: ack.AskID}, nil
 }
 
+// ResolvePlanAsk resolves one plan-originated permission ask on the exact run.
+func (h *HarnessServer) ResolvePlanAsk(ctx context.Context, req *mecatlv1.ResolvePlanAskRequest) (*mecatlv1.ResolvePlanAskResponse, error) {
+	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
+		return nil, err
+	}
+	if req.GetSessionId() == "" || req.GetExpectedRunId() == "" || req.GetAskId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id, expected_run_id, and ask_id are required")
+	}
+	switch req.GetVerdict() {
+	case mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY,
+		mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE,
+		mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ALWAYS:
+	default:
+		return nil, status.Error(codes.InvalidArgument, "verdict must be deny, allow_once, or allow_always")
+	}
+	ack, err := h.svc.ResolvePlanAsk(ctx, session.SessionID(req.GetSessionId()), req.GetExpectedRunId(), req.GetAskId(), verdictFromResumeApproval(req.GetVerdict()))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &mecatlv1.ResolvePlanAskResponse{RunId: ack.RunID, AskId: ack.AskID}, nil
+}
+
 // CancelRun cancels the exact addressed live run.
 func (h *HarnessServer) CancelRun(ctx context.Context, req *mecatlv1.CancelRunRequest) (*mecatlv1.CancelRunResponse, error) {
 	if err := validateGRPCSessionAffinity(ctx, req.GetSessionId()); err != nil {
@@ -497,7 +519,12 @@ func (h *HarnessServer) startConverse(ctx context.Context, first *mecatlv1.Conve
 		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
 			return "", nil, false, err
 		}
-		run, err := h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
+		var run *agent.Run
+		if prompt.GetServerOwnedPlanContinuation() {
+			run, err = h.svc.StartInteractiveRunContentWithPlanContinuation(ctx, id, prompt.GetText(), parts)
+		} else {
+			run, err = h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
+		}
 		if err != nil {
 			return "", nil, false, toStatus(err)
 		}

@@ -49,6 +49,12 @@ export interface RunOptions {
   onPermissionAsk?: PermissionAskResponder;
   /** Automatically answers only plan-originated PresentPlan asks. */
   onPlanApproval?: PlanApprovalResponder;
+  /**
+   * Lets the server start the proceed run after an exact plan-ask approval.
+   * Defaults to false. True requires `exact_plan_ask_control`, excludes
+   * `onPlanApproval`, and is rejected by `Session.retry()`.
+   */
+  serverOwnedPlanContinuation?: boolean;
 }
 
 /** The terminal outcome of a consumed run. Server-declared stops are values, not errors. @public */
@@ -115,7 +121,8 @@ export interface Run extends AsyncIterable<Event> {
    * acceptance; use `Session.controls(runId).resolveAsk()` when an acknowledged
    * control operation is required.
    * @throws `PermissionAskAlreadyResolvedError` when the ask is no longer pending.
-   * @throws `InvalidStateError` when used for a plan-approval ask.
+   * @throws `InvalidStateError` when used for a plan-approval ask. An opted-in
+   * server-owned run uses `Session.controls(runId).resolvePlanAsk()` instead.
    */
   resolveAsk(askId: string, verdict: PermissionVerdict): Promise<void>;
   /**
@@ -172,6 +179,7 @@ export class RunImpl implements Run {
   readonly #knownAsks = new Set<string>();
   readonly #onPermissionAsk: PermissionAskResponder | undefined;
   readonly #onPlanApproval: PlanApprovalResponder | undefined;
+  readonly #serverOwnedPlanContinuation: boolean;
   readonly #operations: RunOperations;
   readonly #pendingAsks = new Map<string, PendingAsk>();
   #consumption: ConsumptionMode | undefined;
@@ -197,6 +205,7 @@ export class RunImpl implements Run {
     this.#operations = operations;
     this.#onPermissionAsk = options.onPermissionAsk;
     this.#onPlanApproval = options.onPlanApproval;
+    this.#serverOwnedPlanContinuation = options.serverOwnedPlanContinuation === true;
     this.#observe(this.#first);
   }
 
@@ -210,7 +219,11 @@ export class RunImpl implements Run {
     }
     if (pending.plan) {
       throw new InvalidStateError(
-        `Plan approval ask ${askId} must be resolved through onPlanApproval`,
+        `Plan approval ask ${askId} must be resolved through ${
+          this.#serverOwnedPlanContinuation
+            ? "Session.controls(runId).resolvePlanAsk()"
+            : "onPlanApproval"
+        }`,
         { transport: this.#operations.transportKind },
       );
     }

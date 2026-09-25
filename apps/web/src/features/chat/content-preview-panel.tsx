@@ -1,10 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { Braces, FileText, NotebookPen, PanelRightClose, Pencil, ScanEye } from "lucide-react";
+import {
+  Braces,
+  FileText,
+  NotebookPen,
+  PanelRightClose,
+  Pencil,
+  ScanEye,
+  ShieldCheck,
+} from "lucide-react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
+import {
+  type AuthorizationHandoff,
+  type AuthorizationOperation,
+  AuthorizationReview,
+} from "./authorization-review";
 import { HighlightedCode } from "./code-highlight";
 import type { LocalFilePreview } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
@@ -12,6 +25,7 @@ import { SideThreadPanel } from "./side-thread-panel";
 import type { ToolActivity } from "./tool-activity";
 
 export type ContentPreview =
+  | { authorization: AuthorizationHandoff; kind: "authorization" }
   | { file: LocalFilePreview; kind: "file" }
   | { kind: "tool"; tool: ToolActivity }
   | { kind: "canvas" }
@@ -21,12 +35,23 @@ export type ContentPreview =
 type StaticPreview = Exclude<ContentPreview, { kind: "thread" }>;
 
 export function ContentPreviewPanel({
+  authorizationDisabled = false,
+  authorizationUncertain = false,
   canvas,
+  onAuthorizationOperation,
+  onRefreshAuthorizationActivity,
   onCanvasChange,
   onClose,
   preview,
 }: {
+  authorizationDisabled?: boolean;
+  authorizationUncertain?: boolean;
   canvas: string;
+  onAuthorizationOperation?: (
+    operation: AuthorizationOperation,
+    authorization: AuthorizationHandoff,
+  ) => Promise<void>;
+  onRefreshAuthorizationActivity?: (authorization: AuthorizationHandoff) => void;
   onCanvasChange: (value: string) => void;
   onClose: () => void;
   preview: ContentPreview;
@@ -52,7 +77,11 @@ export function ContentPreviewPanel({
   }
   return (
     <GenericPreviewPanel
+      authorizationDisabled={authorizationDisabled}
+      authorizationUncertain={authorizationUncertain}
       canvas={canvas}
+      onAuthorizationOperation={onAuthorizationOperation}
+      onRefreshAuthorizationActivity={onRefreshAuthorizationActivity}
       onCanvasChange={onCanvasChange}
       onClose={onClose}
       preview={preview}
@@ -61,12 +90,23 @@ export function ContentPreviewPanel({
 }
 
 function GenericPreviewPanel({
+  authorizationDisabled,
+  authorizationUncertain,
   canvas,
+  onAuthorizationOperation,
+  onRefreshAuthorizationActivity,
   onCanvasChange,
   onClose,
   preview,
 }: {
+  authorizationDisabled: boolean;
+  authorizationUncertain: boolean;
   canvas: string;
+  onAuthorizationOperation?: (
+    operation: AuthorizationOperation,
+    authorization: AuthorizationHandoff,
+  ) => Promise<void>;
+  onRefreshAuthorizationActivity?: (authorization: AuthorizationHandoff) => void;
   onCanvasChange: (value: string) => void;
   onClose: () => void;
   preview: StaticPreview;
@@ -115,7 +155,9 @@ function GenericPreviewPanel({
           type="button"
         />
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          {preview.kind === "canvas" ? (
+          {preview.kind === "authorization" ? (
+            <ShieldCheck aria-hidden="true" className="size-4 text-brand-ink" />
+          ) : preview.kind === "canvas" ? (
             <NotebookPen aria-hidden="true" className="size-4 text-brand-ink" />
           ) : preview.kind === "tool" ? (
             <Braces aria-hidden="true" className="size-4 text-brand-ink" />
@@ -128,7 +170,16 @@ function GenericPreviewPanel({
           </Button>
         </header>
         <div className="min-h-0 flex-1 overflow-auto">
-          {preview.kind === "canvas" ? (
+          {preview.kind === "authorization" ? (
+            <AuthorizationReview
+              key={`${preview.authorization.sessionId}\u0000${preview.authorization.authorizationId}\u0000${authorizationUncertain}`}
+              authorization={preview.authorization}
+              disabled={authorizationDisabled || !onAuthorizationOperation}
+              uncertain={authorizationUncertain}
+              onOperate={onAuthorizationOperation ?? (async () => undefined)}
+              onRefreshActivity={onRefreshAuthorizationActivity}
+            />
+          ) : preview.kind === "canvas" ? (
             <LocalCanvasEditor onChange={onCanvasChange} value={canvas} />
           ) : preview.kind === "tool" ? (
             <ToolResultPreview tool={preview.tool} />
@@ -252,6 +303,7 @@ function FilePreviewContent({ file }: { file: LocalFilePreview }) {
 }
 
 function previewTitle(preview: StaticPreview) {
+  if (preview.kind === "authorization") return "Authorization review";
   if (preview.kind === "canvas") return "Local canvas";
   if (preview.kind === "tool") return `${preview.tool.name} result`;
   return preview.file.name;

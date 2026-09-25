@@ -2011,10 +2011,25 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 		}
 	}
 	if interactive {
+		caps.emitChildApprovals = func(child *Run) {
+			r.children.emitAccepted(
+				func() []session.Event { return r.childAsks.takeAccepted(child) },
+				func(ev session.Event) bool {
+					sequenced, delivered := r.emitOrAbortSequenced(ev, r.children.emitAbort)
+					if delivered {
+						// The parent terminal waits on emitMu, so its sink mirror cannot
+						// overtake this already-delivered approval.
+						e.mirrorEvent(r, sequenced)
+					}
+					return delivered
+				},
+				func(events []session.Event) { r.childAsks.requeueAccepted(child, events) },
+			)
+		}
 		caps.surfaceAsk = func(askID, childID string, child *Run, ask session.PendingAsk, requesterLabel string) {
 			// Register BEFORE emitting so a fast ResumeApproval cannot race ahead of
 			// registration (mirror askRegistry.register-before-emit).
-			r.registerChildAsk(askID, child)
+			r.registerChildAsk(ask, child, turnIdx)
 			// Record ask OWNERSHIP at this single surfacing seam (all three delegation
 			// families thread their child session id through childPosture.childID), so
 			// a later CancelChild can retract the parked ask. recordAsk no-ops for an
@@ -2317,6 +2332,10 @@ func (e *Engine) openCard(r *Run, turnIdx int, c session.ToolCall) {
 // surface; the sink is an optional secondary relay.
 func (e *Engine) emit(r *Run, ev session.Event) {
 	sequenced := r.emit(ev)
+	e.mirrorEvent(r, sequenced)
+}
+
+func (e *Engine) mirrorEvent(r *Run, sequenced session.Event) {
 	if e.deps.Sink != nil {
 		ctx := r.ctx
 		if ctx == nil {

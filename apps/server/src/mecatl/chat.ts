@@ -16,6 +16,7 @@ import {
   type Event,
   type EventUsage,
   imagePart,
+  type McpAuthorizationOperation,
   MecatlError,
   type PermissionVerdict,
   type Run,
@@ -52,6 +53,17 @@ export interface ActivityDelivery {
 
 export interface ChatService {
   activity(sessionId: string, request: ActivityRequest): AsyncIterable<ActivityDelivery>;
+  authorizationPresentation(
+    sessionId: string,
+    authorizationId: string,
+    signal?: AbortSignal,
+  ): Promise<string>;
+  authorizationFlow(
+    sessionId: string,
+    authorizationId: string,
+    operation: McpAuthorizationOperation,
+    signal: AbortSignal,
+  ): AsyncIterable<RunStreamEvent>;
   cancelRun(sessionId: string, runId: string): Promise<boolean>;
   /**
    * Creates an empty-history successor session, replacing this one's
@@ -172,6 +184,32 @@ export function createMecatlChatService(client: Client): ChatService {
         throw error;
       } finally {
         await activity.close().catch(() => undefined);
+      }
+    },
+
+    async authorizationPresentation(sessionId, authorizationId, signal) {
+      const session = await client.sessions.get(sessionId, { signal });
+      // The SDK validates the fresh absolute HTTP(S) URL. Do not keep it in a
+      // BFF cache or turn it into an embedded browser resource.
+      return session.mcpAuthorization(authorizationId).presentation({ signal });
+    },
+
+    async *authorizationFlow(sessionId, authorizationId, operation, signal) {
+      const session = await client.sessions.get(sessionId, { signal });
+      const authorization = session.mcpAuthorization(authorizationId);
+      const flow =
+        operation === "recheck"
+          ? authorization.recheck({}, { signal })
+          : authorization.cancel({}, { signal });
+      let continuationRunId = "";
+      for await (const event of flow) {
+        // The first status event has no run ID. A later non-empty ID belongs
+        // to the continuation, and is the exact run ordinary asks can target.
+        if (event.runId && event.runId !== continuationRunId) {
+          continuationRunId = event.runId;
+          yield { runId: event.runId, sessionId, type: "run.started" };
+        }
+        yield { event: serializeEvent(event), type: "run.event" };
       }
     },
 

@@ -85,6 +85,7 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 		{"POST /v1/sessions/{id}/plan:approve", h.approvePlan},
 		{"POST /v1/sessions/{id}/cancel-child", h.cancelChild},
 		{"POST /v1/sessions/{id}/controls/resolve-ask", h.resolveRunAsk},
+		{"POST /v1/sessions/{id}/controls/resolve-plan-ask", h.resolvePlanAsk},
 		{"POST /v1/sessions/{id}/controls/cancel", h.cancelRun},
 		{"POST /v1/sessions/{id}/controls/steer", h.steerRun},
 		{"POST /v1/sessions/{id}/controls/cancel-steer", h.cancelRunSteer},
@@ -417,7 +418,8 @@ type modeBody struct {
 }
 
 type promptBody struct {
-	Text string `json:"text"`
+	Text                        string `json:"text"`
+	ServerOwnedPlanContinuation bool   `json:"server_owned_plan_continuation,omitempty"`
 	// Parts carries non-text media (image/audio) alongside the text. Each part
 	// names its kind ("image"/"audio"), mime type, and EITHER base64 data OR a url.
 	Parts []promptContentBody `json:"parts,omitempty"`
@@ -952,7 +954,13 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	var run *agent.Run
+	var err error
+	if body.ServerOwnedPlanContinuation {
+		run, err = h.svc.StartInteractiveRunContentWithPlanContinuation(r.Context(), id, body.Text, parts)
+	} else {
+		run, err = h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1405,6 +1413,25 @@ func (h *HTTPHandler) resolveRunAsk(w http.ResponseWriter, r *http.Request) {
 	} else {
 		ack, err = h.svc.ResolveRunAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
 	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resolveRunAskResponse(ack))
+}
+
+// resolvePlanAsk is the strict acknowledgement-only HTTP mirror of ResolvePlanAsk.
+func (h *HTTPHandler) resolvePlanAsk(w http.ResponseWriter, r *http.Request) {
+	var body resolveRunAskBody
+	if !decodeStrictRunControlJSON(w, r, &body) {
+		return
+	}
+	verdict, ok := strictRunAskVerdict(body.Verdict)
+	if body.ExpectedRunID == "" || body.AskID == "" || !ok {
+		writeError(w, http.StatusBadRequest, "expected_run_id, ask_id, and a valid verdict are required")
+		return
+	}
+	ack, err := h.svc.ResolvePlanAsk(r.Context(), session.SessionID(r.PathValue("id")), body.ExpectedRunID, body.AskID, verdict)
 	if err != nil {
 		writeServiceError(w, err)
 		return

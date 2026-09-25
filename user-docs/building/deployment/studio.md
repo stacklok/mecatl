@@ -184,6 +184,20 @@ Use **Stop** to cancel the active run. If a run fails and offers **Retry**, that
 action retries the failed run without sending the prompt again. Image messages
 can be sent after the current run ends.
 
+If a tool needs external authorization, select **Review authorization** in the
+chat. Select **Open authorization** to complete the external step in a
+new tab, then return to Studio and select **Recheck**. The panel shows the
+observed status. **Cancel authorization** ends the pending handoff. Opening the
+external page alone does not grant access, and closing the review panel leaves
+the handoff pending. Open the page from the Studio panel. The Studio
+authorization link rejects address-bar navigation and links from other sites.
+
+If Studio cannot confirm a **Recheck** or **Cancel authorization** result, the
+panel disables both actions. Select **Refresh activity** to check for a later
+status from the same handoff. A new pending status restores the actions; a
+resolved status updates the panel. If no later status appears, the outcome
+remains uncertain and the actions stay disabled.
+
 Folders, queued messages, and account preferences survive a reload for the same
 account. Studio clears them when you sign out or switch accounts. The device
 theme and palette remain.

@@ -45,8 +45,9 @@ func planApprovalService(t *testing.T, llm *mockllm.Provider, rules []governance
 		Store:       store, // auto-save terminals so the resumed run's StateCompleted persists for the continuation
 	})
 	svc, err := newPlacementTestService(server.Config{
-		Engine: engine,
-		Store:  store,
+		Engine:   engine,
+		Store:    store,
+		EventLog: memstore.NewEventLog(),
 
 		Now:                 func() time.Time { return time.Unix(0, 0) },
 		DefaultCapabilities: llm.Capabilities(),

@@ -10,6 +10,7 @@ import {
   forkSessionResponseSchema,
   listSessionsResponseSchema,
   problemDetailsSchema,
+  type RunStreamEvent,
   renameSessionRequestSchema,
   renameSessionResponseSchema,
   resolvePermissionRequestSchema,
@@ -21,6 +22,7 @@ import {
   startRunRequestSchema,
   steerRunRequestSchema,
 } from "@mecatl-studio/contracts";
+import { ProtocolError } from "@stacklok-oss/mecatl-sdk";
 import { streamSSE } from "hono/streaming";
 import type { ActivityLimits } from "../config.js";
 import type { AppEnv } from "../http/env.js";
@@ -51,6 +53,13 @@ const permissionParameters = runParameters.extend({
     .string()
     .min(1)
     .openapi({ param: { in: "path", name: "askId" } }),
+});
+
+const authorizationParameters = sessionParameters.extend({
+  authorizationId: z
+    .string()
+    .min(1)
+    .openapi({ param: { in: "path", name: "authorizationId" } }),
 });
 
 const unavailableResponse = {
@@ -363,6 +372,47 @@ const resolvePermissionRoute = createRoute({
   },
 });
 
+const authorizationPresentationRoute = createRoute({
+  method: "get",
+  operationId: "getAuthorizationPresentation",
+  path: "/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/presentation",
+  request: { params: authorizationParameters },
+  responses: {
+    302: { description: "Redirect to a fresh external authorization page." },
+    403: { ...errorResponse, description: "Open the authorization page from the Studio origin." },
+    502: errorResponse,
+    503: unavailableResponse,
+  },
+});
+
+const recheckAuthorizationRoute = createRoute({
+  method: "post",
+  operationId: "recheckAuthorization",
+  path: "/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/recheck",
+  request: { params: authorizationParameters },
+  responses: {
+    200: {
+      content: { "text/event-stream": { schema: runStreamEventSchema } },
+      description: "Authorization recheck and any continuation, in the run event stream.",
+    },
+    503: unavailableResponse,
+  },
+});
+
+const cancelAuthorizationRoute = createRoute({
+  method: "post",
+  operationId: "cancelAuthorization",
+  path: "/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/cancel",
+  request: { params: authorizationParameters },
+  responses: {
+    200: {
+      content: { "text/event-stream": { schema: runStreamEventSchema } },
+      description: "Authorization cancellation and any continuation, in the run event stream.",
+    },
+    503: unavailableResponse,
+  },
+});
+
 /**
  * Bounds concurrent activity streams per session, per replica. Replay is the
  * expensive half of the activity route, so a browser that reattaches in a loop
@@ -392,6 +442,24 @@ export function registerChatRoutes(
 ) {
   const { maxStreams, replayMax } = limits;
   const streams = activityStreamGate(maxStreams);
+  const streamRunEvents = (
+    context: Parameters<typeof problem>[0],
+    source: (signal: AbortSignal) => AsyncIterable<RunStreamEvent>,
+  ) =>
+    streamSSE(context, async (stream) => {
+      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
+      stream.onAbort(abort);
+      try {
+        for await (const delivery of source(controller.signal)) {
+          await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
+        }
+      } catch (error) {
+        const delivery = runError(error);
+        await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
+      } finally {
+        unlink();
+      }
+    });
   app.openapi(listSessionsRoute, async (context) => {
     if (chat === undefined) {
       return unavailable(context);
@@ -445,24 +513,7 @@ export function registerChatRoutes(
     const { sessionId } = context.req.valid("param");
     const request = context.req.valid("json");
 
-    return streamSSE(context, async (stream) => {
-      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
-      stream.onAbort(abort);
-
-      try {
-        for await (const event of chat.run(sessionId, request, controller.signal)) {
-          await stream.writeSSE({
-            data: JSON.stringify(event),
-            event: event.type,
-          });
-        }
-      } catch (error) {
-        const event = runError(error);
-        await stream.writeSSE({ data: JSON.stringify(event), event: event.type });
-      } finally {
-        unlink();
-      }
-    });
+    return streamRunEvents(context, (signal) => chat.run(sessionId, request, signal));
   });
 
   app.openapi(watchSessionActivityRoute, async (context) => {
@@ -579,21 +630,7 @@ export function registerChatRoutes(
   app.openapi(retrySessionRoute, async (context) => {
     if (chat === undefined) return unavailable(context);
     const { sessionId } = context.req.valid("param");
-    return streamSSE(context, async (stream) => {
-      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
-      stream.onAbort(abort);
-
-      try {
-        for await (const delivery of chat.retry(sessionId, controller.signal)) {
-          await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
-        }
-      } catch (error) {
-        const delivery = runError(error);
-        await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
-      } finally {
-        unlink();
-      }
-    });
+    return streamRunEvents(context, (signal) => chat.retry(sessionId, signal));
   });
 
   app.openapi(cancelRunRoute, async (context) => {
@@ -629,6 +666,57 @@ export function registerChatRoutes(
       return staleRun(context);
     }
     return context.body(null, 204);
+  });
+
+  app.openapi(authorizationPresentationRoute, async (context) => {
+    if (chat === undefined) return unavailable(context);
+    const { sessionId, authorizationId } = context.req.valid("param");
+    let url: string;
+    try {
+      url = await chat.authorizationPresentation(
+        sessionId,
+        authorizationId,
+        context.req.raw.signal,
+      );
+    } catch (error) {
+      // The SDK reports a malformed daemon URL as a protocol error. It is an
+      // upstream presentation failure, never a browser redirect or a 500.
+      if (error instanceof ProtocolError) return invalidPresentation(context);
+      throw error;
+    }
+    // The SDK rejects invalid presentation URLs. Keep the redirect boundary
+    // strict even if a future ChatService implementation changes that promise.
+    let destination: URL;
+    try {
+      destination = new URL(url);
+    } catch {
+      return invalidPresentation(context);
+    }
+    if (
+      (destination.protocol !== "http:" && destination.protocol !== "https:") ||
+      !destination.hostname
+    ) {
+      return invalidPresentation(context);
+    }
+    context.header("Cache-Control", "no-store");
+    context.header("Referrer-Policy", "no-referrer");
+    return context.redirect(destination.href, 302);
+  });
+
+  app.openapi(recheckAuthorizationRoute, (context) => {
+    if (chat === undefined) return unavailable(context);
+    const { sessionId, authorizationId } = context.req.valid("param");
+    return streamRunEvents(context, (signal) =>
+      chat.authorizationFlow(sessionId, authorizationId, "recheck", signal),
+    );
+  });
+
+  app.openapi(cancelAuthorizationRoute, (context) => {
+    if (chat === undefined) return unavailable(context);
+    const { sessionId, authorizationId } = context.req.valid("param");
+    return streamRunEvents(context, (signal) =>
+      chat.authorizationFlow(sessionId, authorizationId, "cancel", signal),
+    );
   });
 }
 
@@ -674,5 +762,15 @@ function staleRun(context: Parameters<typeof problem>[0]) {
     "stale_run_control",
     "Run is no longer active",
     "This control belongs to a run that has already ended or is no longer connected.",
+  );
+}
+
+function invalidPresentation(context: Parameters<typeof problem>[0]) {
+  return problem(
+    context,
+    502,
+    "invalid_authorization_presentation",
+    "Authorization page unavailable",
+    "The authorization page address was not a valid HTTP(S) URL.",
   );
 }

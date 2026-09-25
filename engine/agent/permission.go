@@ -79,6 +79,26 @@ func (r *askRegistry) resolveOrdinary(askID string, v session.ApprovalVerdict) A
 	return AskResolutionResolved
 }
 
+// resolvePlan checks provenance and consumes the verdict at one lock point.
+func (r *askRegistry) resolvePlan(askID string, verdict session.ApprovalVerdict) AskResolution {
+	r.mu.Lock()
+	ch, ok := r.pending[askID]
+	ask := r.scopes[askID]
+	if !ok {
+		r.mu.Unlock()
+		return AskResolutionNotPending
+	}
+	if ask.Origin != session.ApprovalOriginPlan || ask.Guardrail != nil {
+		r.mu.Unlock()
+		return AskResolutionNotPlan
+	}
+	delete(r.pending, askID)
+	delete(r.scopes, askID)
+	r.mu.Unlock()
+	ch <- approval{verdict: verdict}
+	return AskResolutionResolved
+}
+
 // resolveWith delivers a full approval (verdict + optional accurate deny message) for
 // askID. It is the message-bearing variant resolve delegates to; the headless subagent
 // auto-deny uses it to carry childAutoDenyMessage so the model sees the accurate cause
@@ -131,16 +151,25 @@ func (r *askRegistry) discard(askID string) bool {
 // own askIDs — the parent consults the router FIRST and falls through to its own
 // registry on a miss. It is owned by the parent Run (one per interactive parent run);
 // child Runs never surface further (subagents cannot recurse), so they carry no router.
-// It is safe for concurrent use: register/unregister/route may be called from the
-// drain/forwarder goroutine, the readControl goroutine, and the child's own loop.
+// It is safe for concurrent use: registration, resolution, and retraction may
+// run in the drain/forwarder goroutine, readControl goroutine, or child's loop.
 type childAskRouter struct {
-	mu      sync.Mutex
-	byAskID map[string]*Run
+	mu       sync.Mutex
+	byAskID  map[string]childAskRoute
+	accepted map[*Run][]session.Event
+	closed   bool
+}
+
+type childAskRoute struct {
+	child    *Run
+	turn     int
+	approval session.ApprovalPayload
+	surfaced bool
 }
 
 // newChildAskRouter constructs an empty router.
 func newChildAskRouter() *childAskRouter {
-	return &childAskRouter{byAskID: make(map[string]*Run)}
+	return &childAskRouter{byAskID: make(map[string]childAskRoute), accepted: make(map[*Run][]session.Event)}
 }
 
 // registerChild records that askID is owned by child, BEFORE the parent emits the
@@ -148,37 +177,42 @@ func newChildAskRouter() *childAskRouter {
 // (mirrors askRegistry.register-before-emit).
 func (r *childAskRouter) registerChild(askID string, child *Run) {
 	r.mu.Lock()
-	r.byAskID[askID] = child
+	if !r.closed {
+		r.byAskID[askID] = childAskRoute{child: child}
+	}
 	r.mu.Unlock()
 }
 
-// route delivers verdict v to the child that owns askID and returns true; it returns
-// false (the parent then resolves its own ask) when askID is unknown. The owning child
-// is unregistered on a hit so a stale verdict cannot resolve a later ask. child.Approve
-// is itself idempotent and safe on an already-resolved/unknown id, so a verdict that
-// arrives after the child moved on is a harmless no-op.
-func (r *childAskRouter) route(askID string, v session.ApprovalVerdict) bool {
-	owned, _ := r.routeResolution(ApprovalResolution{AskID: askID, Verdict: v})
-	return owned
+// registerSurfaced retains only the metadata the parent may safely record on
+// verdict acceptance. The child call ID is deliberately omitted: it can collide
+// with a call in the parent conversation and must never drive parent rule replay.
+func (r *childAskRouter) registerSurfaced(ask session.PendingAsk, child *Run, turn int) {
+	r.mu.Lock()
+	if !r.closed {
+		r.byAskID[ask.AskID] = childAskRoute{child: child, turn: turn, surfaced: true,
+			approval: session.ApprovalPayload{AskID: ask.AskID, Tool: ask.Tool, Origin: ask.Origin}}
+	}
+	r.mu.Unlock()
 }
 
 func (r *childAskRouter) routeResolution(resolution ApprovalResolution) (bool, error) {
+	// Child runs have no child router. ResolveApproval takes only their ask
+	// registry mutex and sends to a capacity-one channel; it never emits to the
+	// parent. Keeping router.mu across that short submit makes acceptance atomic
+	// with retraction and marker recording. Parent emissions take emitMu first,
+	// then router.mu, only after this method returns.
 	r.mu.Lock()
-	child, ok := r.byAskID[resolution.AskID]
-	if ok {
-		delete(r.byAskID, resolution.AskID)
-	}
-	r.mu.Unlock()
+	defer r.mu.Unlock()
+	route, ok := r.byAskID[resolution.AskID]
 	if !ok {
 		return false, nil
 	}
-	if err := child.ResolveApproval(resolution); err != nil {
-		// A validation failure leaves the child's ask pending, so restore routing.
-		r.mu.Lock()
-		r.byAskID[resolution.AskID] = child
-		r.mu.Unlock()
+	if err := route.child.ResolveApproval(resolution); err != nil {
+		// A validation failure leaves both the child ask and route pending.
 		return true, err
 	}
+	delete(r.byAskID, resolution.AskID)
+	r.recordAccepted(route, resolution.Verdict)
 	return true, nil
 }
 
@@ -189,24 +223,90 @@ func (r *childAskRouter) routeResolution(resolution ApprovalResolution) (bool, e
 // miss even when the child ask was resolved concurrently.
 func (r *childAskRouter) resolveOrdinary(askID string, v session.ApprovalVerdict) (result AskResolution, found bool) {
 	r.mu.Lock()
-	child, ok := r.byAskID[askID]
+	route, ok := r.byAskID[askID]
 	if !ok {
 		r.mu.Unlock()
 		return AskResolutionNotPending, false
 	}
 
-	result = child.asks.resolveOrdinary(askID, v)
-	if result != AskResolutionPlanOriginated {
+	result = route.child.asks.resolveOrdinary(askID, v)
+	// A child may have cancelled its await before this verdict reached it. Keep
+	// that unresolved route for the child's terminal retraction; only an
+	// accepted verdict consumes the parent's retract gate.
+	if result == AskResolutionResolved {
 		delete(r.byAskID, askID)
+		r.recordAccepted(route, v)
 	}
 	r.mu.Unlock()
 	return result, true
 }
 
+// recordAccepted runs under mu after the child registry consumes a real verdict.
+// A child drain later emits the parent event without holding this mutex or the
+// server's control locks, including when cancellation prevents the child's own
+// EvApproval.
+func (r *childAskRouter) recordAccepted(route childAskRoute, verdict session.ApprovalVerdict) {
+	if !route.surfaced {
+		return
+	}
+	payload := route.approval
+	payload.Verdict = session.VerdictString(verdict)
+	payload.AllowAlways = verdict == session.VerdictAllowAlways
+	r.accepted[route.child] = append(r.accepted[route.child], session.Event{
+		Type: session.EvApproval, Turn: route.turn, Approval: &payload,
+	})
+}
+
+func (r *childAskRouter) takeAccepted(child *Run) []session.Event {
+	r.mu.Lock()
+	events := r.accepted[child]
+	delete(r.accepted, child)
+	r.mu.Unlock()
+	return events
+}
+
+func (r *childAskRouter) requeueAccepted(child *Run, events []session.Event) {
+	if len(events) == 0 {
+		return
+	}
+	r.mu.Lock()
+	// A later accepted ask on this child may have arrived while the first
+	// send was parked. Restore the older verdicts ahead of those later ones.
+	r.accepted[child] = append(events, r.accepted[child]...)
+	r.mu.Unlock()
+}
+
+// closeEvents is the parent's final answer to every still-routed ask. It runs
+// under childRunRegistry.emitMu immediately before stream seal: accepted
+// verdicts become approvals, and any pending routes become retractions. A
+// verdict racing this lock either lands in accepted before close or is rejected
+// after close; no answer can appear in the sweep-to-seal gap.
+func (r *childAskRouter) closeEvents() []session.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	var events []session.Event
+	for child, queued := range r.accepted {
+		events = append(events, queued...)
+		delete(r.accepted, child)
+	}
+	for id, route := range r.byAskID {
+		if route.surfaced {
+			events = append(events, session.Event{Type: session.EvPermissionRetract,
+				Ask: &session.PendingAsk{AskID: id}})
+		}
+		delete(r.byAskID, id)
+	}
+	return events
+}
+
 // unregister drops a surfaced child ask from the router without routing a
 // verdict, reporting whether an entry was actually removed (a locked
 // check-and-delete). The bool is the ANSWERED-vs-PENDING gate the retraction
-// paths key on: route() already deletes an answered ask's entry, so false
+// paths key on: an accepted resolution deletes an answered ask's entry, so false
 // means the verdict was routed (or the ask never surfaced) and the caller
 // must NOT emit a permission.retract — the client already resolved its modal.
 // The retraction paths (childRunRegistry.retractAsks, reached from

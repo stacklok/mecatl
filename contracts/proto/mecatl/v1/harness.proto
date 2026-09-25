@@ -110,6 +110,9 @@ service HarnessService {
   // run without opening or owning its event stream.
   rpc ResolveRunAsk(ResolveRunAskRequest) returns (ResolveRunAskResponse);
 
+  // ResolvePlanAsk acknowledges a verdict for one exact plan-originated ask.
+  rpc ResolvePlanAsk(ResolvePlanAskRequest) returns (ResolvePlanAskResponse);
+
   // CancelRun cancels the exact addressed live run without opening Converse.
   rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
 
@@ -1532,6 +1535,9 @@ message Prompt {
   string text = 2;
   // parts carries non-text media (image/audio) alongside the text.
   repeated Content parts = 3;
+  // server_owned_plan_continuation opts this run into exact plan-ask controls
+  // and makes the daemon responsible for starting its approved proceed run.
+  bool server_owned_plan_continuation = 4;
 }
 
 // ResumeApproval releases a paused permission.ask, allowing or denying the
@@ -1733,6 +1739,20 @@ message ResolveRunAskResponse {
   string ask_id = 2;
 }
 
+// ResolvePlanAskRequest addresses one plan-originated ask on one exact run.
+message ResolvePlanAskRequest {
+  string session_id = 1 [(buf.validate.field).string.min_len = 1];
+  string expected_run_id = 2 [(buf.validate.field).string.min_len = 1];
+  string ask_id = 3 [(buf.validate.field).string.min_len = 1];
+  ApprovalVerdict verdict = 4 [(buf.validate.field).enum = {in: [1, 2, 3]}];
+}
+
+// ResolvePlanAskResponse acknowledges only the accepted run/ask correlation.
+message ResolvePlanAskResponse {
+  string run_id = 1;
+  string ask_id = 2;
+}
+
 // CancelRunRequest addresses one exact live run.
 message CancelRunRequest {
   string session_id = 1 [(buf.validate.field).string.min_len = 1];
@@ -1839,6 +1859,13 @@ message Authorization {
   google.protobuf.Timestamp expires_at = 3;
   string status = 4;
   string display_name = 5;
+}
+
+// PlanContinuationFailure correlates a known failed server-owned proceed start.
+// No execution run exists, so Event.run_id is empty.
+message PlanContinuationFailure {
+  string plan_run_id = 1;
+  string ask_id = 2;
 }
 
 // Event mirrors the domain session.Event one-for-one. `type` is the string
@@ -1956,6 +1983,9 @@ message Event {
   // approval ask whose submitted control was rejected and carries only a stable
   // machine category; raw arguments and refusal rationale never enter it.
   ControlRefused control_refused = 25;
+  // plan_continuation_failure is a session-scoped, content-safe indication
+  // that an accepted plan allow could not start its proceed run.
+  PlanContinuationFailure plan_continuation_failure = 26;
 }
 
 // ControlRefused is the metadata-only acknowledgement for a rejected in-stream
@@ -2646,6 +2676,9 @@ message PermissionAsk {
   // reason explains why approval is required.
   string reason = 4;
   GuardrailApprovalScope guardrail = 5;
+  // call_id is the exact durable tool-call ID for presentation correlation.
+  // Absence means no tool-row attachment can be proven.
+  optional string call_id = 6;
 }
 
 // RetryDisposition is the neutral causal retry classification of a failed model

@@ -1393,6 +1393,198 @@ export type ResolveRunPermissionResponses = {
 
 export type ResolveRunPermissionResponse = ResolveRunPermissionResponses[keyof ResolveRunPermissionResponses];
 
+export type GetAuthorizationPresentationData = {
+    body?: never;
+    path: {
+        sessionId: string;
+        authorizationId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/presentation';
+};
+
+export type GetAuthorizationPresentationErrors = {
+    /**
+     * Open the authorization page from the Studio origin.
+     */
+    403: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The request could not be completed.
+     */
+    502: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type GetAuthorizationPresentationError = GetAuthorizationPresentationErrors[keyof GetAuthorizationPresentationErrors];
+
+export type RecheckAuthorizationData = {
+    body?: never;
+    path: {
+        sessionId: string;
+        authorizationId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/recheck';
+};
+
+export type RecheckAuthorizationErrors = {
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type RecheckAuthorizationError = RecheckAuthorizationErrors[keyof RecheckAuthorizationErrors];
+
+export type RecheckAuthorizationResponses = {
+    /**
+     * Authorization recheck and any continuation, in the run event stream.
+     */
+    200: {
+        runId: string;
+        sessionId: string;
+        type: 'run.started';
+    } | {
+        event: {
+            delivery?: {
+                fireId: string;
+                kind: 'started' | 'completed';
+                scheduleName: string;
+                stop?: string;
+            };
+            kind: string;
+            payload?: unknown;
+            raw?: unknown;
+            runId: string;
+            seq: string;
+            text: string;
+            turn: number;
+            unknown: boolean;
+            usage?: {
+                cacheReadTokens: string;
+                cacheWriteTokens: string;
+                inputTokens: string;
+                outputTokens: string;
+                reasoningTokens: string;
+            };
+        };
+        type: 'run.event';
+    } | {
+        cursor: string;
+        reason: 'bound' | 'gap';
+        type: 'run.truncated';
+    } | {
+        code: string;
+        message: string;
+        type: 'run.error';
+    };
+};
+
+export type RecheckAuthorizationResponse = RecheckAuthorizationResponses[keyof RecheckAuthorizationResponses];
+
+export type CancelAuthorizationData = {
+    body?: never;
+    path: {
+        sessionId: string;
+        authorizationId: string;
+    };
+    query?: never;
+    url: '/api/v1/sessions/{sessionId}/authorizations/{authorizationId}/cancel';
+};
+
+export type CancelAuthorizationErrors = {
+    /**
+     * The Mecatl runtime is unavailable.
+     */
+    503: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+};
+
+export type CancelAuthorizationError = CancelAuthorizationErrors[keyof CancelAuthorizationErrors];
+
+export type CancelAuthorizationResponses = {
+    /**
+     * Authorization cancellation and any continuation, in the run event stream.
+     */
+    200: {
+        runId: string;
+        sessionId: string;
+        type: 'run.started';
+    } | {
+        event: {
+            delivery?: {
+                fireId: string;
+                kind: 'started' | 'completed';
+                scheduleName: string;
+                stop?: string;
+            };
+            kind: string;
+            payload?: unknown;
+            raw?: unknown;
+            runId: string;
+            seq: string;
+            text: string;
+            turn: number;
+            unknown: boolean;
+            usage?: {
+                cacheReadTokens: string;
+                cacheWriteTokens: string;
+                inputTokens: string;
+                outputTokens: string;
+                reasoningTokens: string;
+            };
+        };
+        type: 'run.event';
+    } | {
+        cursor: string;
+        reason: 'bound' | 'gap';
+        type: 'run.truncated';
+    } | {
+        code: string;
+        message: string;
+        type: 'run.error';
+    };
+};
+
+export type CancelAuthorizationResponse = CancelAuthorizationResponses[keyof CancelAuthorizationResponses];
+
 export type ListSchedulesData = {
     body?: never;
     path?: never;

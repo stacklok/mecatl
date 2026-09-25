@@ -83,6 +83,7 @@ import {
   projectServerCompatibility,
   type Server,
   type ServerCompatibility,
+  ServerFeature,
 } from "./server.js";
 import {
   projectSessionSnapshot,
@@ -830,6 +831,27 @@ class SessionImpl implements Session {
   ): Promise<Run> {
     this.#assertRunAvailable();
     const encoded = encodePrompt(prompt, this.#promptCapabilities);
+    if (options.serverOwnedPlanContinuation === true) {
+      if (options.onPlanApproval !== undefined) {
+        throw new InvalidStateError("Server-owned plan continuation cannot use onPlanApproval", {
+          transport: this.#operations.transportKind,
+        });
+      }
+      // Reserve admission before awaiting compatibility; another run must not
+      // pass the local busy check while this one is still preflighting.
+      this.#busy = true;
+      try {
+        const features = await this.#operations.features(requestOptions);
+        if (!features.has(ServerFeature.ExactPlanAskControl)) {
+          throw new UnsupportedFeatureError(ServerFeature.ExactPlanAskControl, {
+            transport: this.#operations.transportKind,
+          });
+        }
+      } catch (error) {
+        this.#busy = false;
+        throw error;
+      }
+    }
     return this.#startRun(
       {
         kind: {
@@ -845,6 +867,9 @@ class SessionImpl implements Session {
             ),
             sessionId: this.id,
             text: encoded.text,
+            ...(options.serverOwnedPlanContinuation === true
+              ? { serverOwnedPlanContinuation: true }
+              : {}),
           },
         },
       },
@@ -855,6 +880,11 @@ class SessionImpl implements Session {
 
   async retry(options: RunOptions = {}, requestOptions?: RequestOptions): Promise<Run> {
     this.#assertRunAvailable();
+    if (options.serverOwnedPlanContinuation === true) {
+      throw new InvalidStateError("retry() cannot opt into server-owned plan continuation", {
+        transport: this.#operations.transportKind,
+      });
+    }
     return this.#startRun(
       { kind: { case: "retry", value: { sessionId: this.id } } },
       options,

@@ -18,6 +18,18 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   causal session identity across nested runs without changing active session
   identity. Added (minor).
 
+- **Plan continuation failure correlation** — adds
+  `session.EvPlanContinuationFailed` and
+  `session.PlanContinuationFailurePayload` for a session-scoped, content-safe
+  signal when an approved plan cannot start its server-owned proceed run while
+  the daemon still holds the session lease. Added (minor).
+
+- **Exact plan-ask resolution** — adds `agent.Run.ResolvePlanAsk` and
+  `agent.AskResolutionNotPlan`. The new method consumes only a root
+  plan-originated ask and reports ordinary asks without changing them.
+  `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
+  Added (minor).
+
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
   snapshots on Subagent, Parallel, and Team-member start payloads. Added (minor).

@@ -152,6 +152,9 @@ const (
 	// EvAuthorizationResolved closes a previously required authorization lifecycle
 	// after its matching tool result has been durably recorded.
 	EvAuthorizationResolved EventType = "authorization.resolved"
+	// EvPlanContinuationFailed records a known server-owned proceed-start failure
+	// after the approved plan run has already emitted its terminal result.
+	EvPlanContinuationFailed EventType = "plan.continuation_failed"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
 	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
@@ -391,12 +394,14 @@ type HookPayload struct {
 // approval record (the EvPermissionAsk it follows is the request half).
 //
 // NO-LEAK CONTRACT (gauntlet #7): it carries the tool NAME, the verdict string,
-// the askID, the gated tool-call id, and the allow-always flag — and NOTHING ELSE.
+// the askID, an optional gated tool-call id, and the allow-always flag — and NOTHING ELSE.
 // It NEVER carries the raw tool args (those can quote secrets) nor the deny-reason
 // body (which can quote a sensitive command preview). A consumer that needs to
-// correlate a verdict back to a tool call uses Call (the opaque tool-call id, also
-// implicitly inside AskID) against the conversation history, never an arg payload
-// on this event.
+// correlate a root verdict back to a tool call uses Call (the opaque tool-call id,
+// also implicitly inside AskID) against the conversation history, never an arg
+// payload on this event. A child ask projected onto a parent has an empty Call:
+// child and parent provider call IDs can collide, and parent replay must not
+// learn a rule from an unrelated parent call.
 type ApprovalPayload struct {
 	// AskID is the id of the resolved permission ask (the same id carried on the
 	// EvPermissionAsk that preceded this verdict and on the wire ResumeApproval).
@@ -414,7 +419,8 @@ type ApprovalPayload struct {
 	// so surfacing it directly opens no new leak surface. It is the durable,
 	// grammar-free correlation handle a 3b permstore-replay consumer uses to find the
 	// gated ToolCall in the loaded conversation and re-derive its rule from the real
-	// args (which stay in the session history, never on this event).
+	// args (which stay in the session history, never on this event). Empty for a
+	// child approval projected onto the parent run.
 	Call ToolCallID
 	// AllowAlways mirrors (Verdict == VerdictStringAllowAlways): the verdict ASKED
 	// the harness to learn a per-session allow rule. It is deliberately NOT named
@@ -1462,6 +1468,14 @@ type AuthorizationPayload struct {
 	Status          AuthorizationStatus
 }
 
+// PlanContinuationFailurePayload safely correlates a known failed proceed start
+// to the approved plan ask. The failed execution run never began, so this event
+// remains session-scoped and contains no prompt, error, or tool arguments.
+type PlanContinuationFailurePayload struct {
+	PlanRunID string
+	AskID     string
+}
+
 // Valid reports whether the payload uses the bounded authorization identifier
 // grammar, has a non-zero expiry, and carries a closed lifecycle status.
 func (p AuthorizationPayload) Valid() bool {
@@ -1522,6 +1536,9 @@ type Event struct {
 	// It contains only safe lifecycle correlation; private continuation state and
 	// sensitive tool or backend data never enter the event.
 	Authorization *AuthorizationPayload
+	// PlanContinuationFailure is set on EvPlanContinuationFailed and carries
+	// only the approved plan's run and ask IDs.
+	PlanContinuationFailure *PlanContinuationFailurePayload
 	// Result is set on EvResult.
 	Result *ResultPayload
 	// TurnEnd is set on EvTurnEnd (this turn's usage + elapsed time).

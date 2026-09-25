@@ -69,6 +69,7 @@ var sessionMutationInventory = map[string]SessionMutationEntry{
 	"repairRunningSession":                  {SessionMutationLeaseProven, "run-entry crash repair executes only after acquisition and persists through saveSession"},
 	"deleteSessionFamily":                   {SessionMutationLeaseProven, "single pre-backend family-delete gate revalidates the exact held session lease"},
 	"appendEvent":                           {SessionMutationLeaseProven, "relay event append is admitted only while the registered run or management mutation holds the lease"},
+	"recordPlanContinuationFailure":         {SessionMutationLeaseProven, "known failed proceed start appends through appendEvent's held-lease gate; publication follows only a successful append"},
 	"persistTitle":                          {SessionMutationLeaseProven, "title claim and completion hold the session mutation lease through snapshot persistence and publication"},
 	"publishTitle":                          {SessionMutationLeaseProven, "called only by persistTitle after a lease-owned snapshot save"},
 	"engine/agent/dispatch.go:ToolCall":     {SessionMutationLeaseProven, "tool-call recording occurs only inside a Service-admitted run that already owns the session lease; engine remains lease-unaware"},

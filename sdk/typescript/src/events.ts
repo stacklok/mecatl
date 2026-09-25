@@ -23,6 +23,7 @@ export const MECATL_EVENT_KINDS = [
   "parallel.start",
   "permission.ask",
   "permission.retract",
+  "plan.continuation_failed",
   "provider.route",
   "reasoning.delta",
   "recover_notice",
@@ -109,8 +110,22 @@ export interface PermissionAskEventPayload {
   readonly args: string;
   readonly askId: string;
   readonly guardrail?: GuardrailApprovalScope | undefined;
+  /** Exact tool-call ID when supplied by the server; presentation correlation only. */
+  readonly callId?: string;
   readonly reason: string;
   readonly tool: string;
+}
+
+/**
+ * Safe correlation for a known failure to start the approved plan's proceed run.
+ * The session-scoped event has an empty envelope run ID.
+ * @public
+ */
+export interface PlanContinuationFailureEventPayload {
+  /** Run ID of the approved plan whose proceed run failed to start. */
+  readonly planRunId: string;
+  /** ID of the approved plan ask on that run. */
+  readonly askId: string;
 }
 
 /** Canonical retry classifications carried by model-retry and result payloads. @public */
@@ -413,6 +428,7 @@ export interface EventPayloads {
   readonly "parallel.start": ParallelEventPayload;
   readonly "permission.ask": PermissionAskEventPayload;
   readonly "permission.retract": PermissionAskEventPayload;
+  readonly "plan.continuation_failed": PlanContinuationFailureEventPayload;
   readonly "provider.route": undefined;
   readonly "reasoning.delta": undefined;
   readonly recover_notice: undefined;
@@ -548,6 +564,7 @@ function payload(
       return {
         args: ask.args,
         askId: ask.askId,
+        ...(ask.callId ? { callId: ask.callId } : {}),
         guardrail:
           guardrail === undefined
             ? undefined
@@ -565,6 +582,10 @@ function payload(
         reason: ask.reason,
         tool: ask.tool,
       };
+    }
+    case "plan.continuation_failed": {
+      const failure = required(event.planContinuationFailure, kind, transport);
+      return { planRunId: failure.planRunId, askId: failure.askId };
     }
     case "result":
       return required(event.result, kind, transport);

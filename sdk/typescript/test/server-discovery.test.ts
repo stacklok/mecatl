@@ -258,6 +258,7 @@ describe("SDK server discovery", () => {
     expect([...result.features]).toEqual([ServerFeature.ServerInfo, "future_feature"]);
     expect(result.capabilities.posture).toBe("future-posture");
     expect(ServerFeature).toEqual({
+      ExactPlanAskControl: "exact_plan_ask_control",
       HttpSteer: "http_steer",
       McpServersOnCreate: "mcp_servers_on_create",
       PromptFreeControls: "prompt_free_controls",
@@ -914,6 +915,7 @@ describe("SDK server discovery", () => {
         "readonly providerId?: string;",
       ]);
       expect(reportBlock(report, "const ServerFeature:")).toEqual([
+        'readonly ExactPlanAskControl: "exact_plan_ask_control";',
         'readonly HttpSteer: "http_steer";',
         'readonly McpServersOnCreate: "mcp_servers_on_create";',
         'readonly PromptFreeControls: "prompt_free_controls";',

@@ -5,6 +5,7 @@ import { stopReasonDescription } from "./stop-reason-chip";
 
 export interface ChatStatusFacts {
   approvals?: readonly { askId: string }[];
+  authorizationPending?: boolean;
   failure?: RunFailure;
   phase: "idle" | "sending" | "following" | "closed";
   runId?: string;
@@ -43,6 +44,9 @@ export function deriveChatStatus(facts: ChatStatusFacts): ChatRunStatus | undefi
   }
   if (facts.phase === "closed") {
     return { kind: "uncertain", label: "Unknown outcome — reconnect to check this run" };
+  }
+  if (facts.authorizationPending) {
+    return { kind: "waiting", label: "Waiting for authorization" };
   }
   if (
     facts.phase === "following" &&

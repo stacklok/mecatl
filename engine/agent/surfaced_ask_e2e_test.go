@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,78 @@ import (
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 )
+
+// TestSurfacedChildApprovalRecordsParentVerdict pins the durable correlation for
+// a child ask projected onto the parent. The parent and child deliberately use
+// the same provider call ID: a projected approval must not let parent-session
+// replay learn a rule from that unrelated parent call.
+func TestSurfacedChildApprovalRecordsParentVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict session.ApprovalVerdict
+	}{
+		{name: "allow once", verdict: session.VerdictAllowOnce},
+		{name: "allow always", verdict: session.VerdictAllowAlways},
+		{name: "deny", verdict: session.VerdictDeny},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bash := &fakeShell{}
+			child := shellChildEngine(mockllm.New(
+				mockllm.ToolCallTurn(toolCall("collision", "Shell", `{"command":"cat $(zap)"}`)),
+				mockllm.TextTurn("child finished"),
+			), bash)
+			task := agent.NewSubagentTool(child, agent.WithChildForker(&recordingSubagentForker{}))
+			parent := interactiveEngine(t, agent.Deps{LLM: mockllm.New(
+				mockllm.ToolCallTurn(toolCall("collision", "Subagent", `{"prompt":"run it"}`)),
+				mockllm.TextTurn("parent finished"),
+			), Catalog: catalogWith(t, task)})
+			run := parent.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+			var ask *session.PendingAsk
+			events := drainApproving(run, tc.verdict, func(ev session.Event) {
+				if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+					copied := *ev.Ask
+					ask = &copied
+				}
+			})
+			if ask == nil || ask.Call != "collision" {
+				t.Fatalf("surfaced ask = %+v, want child call collision", ask)
+			}
+			approvals, results, approvalIndex, resultIndex := 0, 0, -1, -1
+			for i, ev := range events {
+				if ev.Type == session.EvResult {
+					results++
+					resultIndex = i
+				}
+				if ev.Type == session.EvPermissionRetract && ev.Ask != nil && ev.Ask.AskID == ask.AskID {
+					t.Fatal("answered child ask was retracted")
+				}
+				if ev.Type != session.EvApproval || ev.Approval == nil || ev.Approval.AskID != ask.AskID {
+					continue
+				}
+				approvals++
+				approvalIndex = i
+				if ev.RunID != run.RunID() || ev.Approval.Verdict != session.VerdictString(tc.verdict) ||
+					ev.Approval.Tool != ask.Tool || ev.Approval.Origin != ask.Origin ||
+					ev.Approval.AllowAlways != (tc.verdict == session.VerdictAllowAlways) || ev.Approval.Call != "" {
+					t.Fatalf("parent approval = %+v, run = %q; ask = %+v", ev.Approval, ev.RunID, ask)
+				}
+				encoded, err := json.Marshal(ev.Approval)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(encoded), "cat $(zap)") || strings.Contains(string(encoded), ask.Reason) {
+					t.Fatalf("approval leaked child arguments or reason: %s", encoded)
+				}
+			}
+			if approvals != 1 {
+				t.Fatalf("parent approvals for surfaced ask = %d, want one", approvals)
+			}
+			if results != 1 || resultIndex <= approvalIndex {
+				t.Fatalf("parent results = %d, approval index = %d, result index = %d; want one result after approval", results, approvalIndex, resultIndex)
+			}
+		})
+	}
+}
 
 // TestE2E_SurfacedAskAllowed drives a REAL interactive parent Engine whose Subagent child
 // (isolated, but with a substitution that is NOT worktree-auto-approvable) surfaces a

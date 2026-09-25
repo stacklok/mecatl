@@ -63,6 +63,22 @@ describe("decideTruncation", () => {
 });
 
 describe("runStreamEnd", () => {
+  it("settles an authorization handoff but leaves an incomplete continuation uncertain", () => {
+    expect(runStreamEnd({ sawResult: false, authorizationStatus: true }, false)).toEqual({
+      kind: "authorization",
+    });
+    expect(
+      runStreamEnd(
+        { sawResult: false, authorizationStatus: true, continuationStarted: true },
+        false,
+      ),
+    ).toEqual({ kind: "uncertain" });
+    expect(
+      runStreamEnd({ sawResult: false, authorizationPark: true, continuationStarted: true }, false),
+    ).toEqual({ kind: "authorization" });
+    expect(drainsQueue({ kind: "authorization" }, "chat-a", "chat-a", false)).toBe(false);
+  });
+
   it("reports no failure for a stream the view stopped following", () => {
     expect(runStreamEnd({ sawResult: false }, true)).toEqual({ kind: "unfollowed" });
   });
@@ -90,6 +106,16 @@ describe("runStreamEnd", () => {
 });
 
 describe("bounded replay", () => {
+  it("keeps separate session-scoped authorization statuses with the same run-local sequence", () => {
+    const accepts = createActivityDeduplicator();
+    const status = (kind: string): RunStreamEvent => ({
+      event: { kind, runId: "", seq: "0", text: "", turn: 0, unknown: false },
+      type: "run.event",
+    });
+    expect(accepts(status("authorization.resolved"))).toBe(true);
+    expect(accepts(status("authorization.required"))).toBe(true);
+  });
+
   it("continues bounded replay without duplicate messages", () => {
     const accepts = createActivityDeduplicator();
     const options = {

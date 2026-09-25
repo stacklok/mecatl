@@ -27,6 +27,7 @@ func TestSDKRunControls_Scenario1_ProtobufContract(t *testing.T) {
 		output protoreflect.FullName
 	}{
 		{"ResolveRunAsk", "mecatl.v1.ResolveRunAskRequest", "mecatl.v1.ResolveRunAskResponse"},
+		{"ResolvePlanAsk", "mecatl.v1.ResolvePlanAskRequest", "mecatl.v1.ResolvePlanAskResponse"},
 		{"CancelRun", "mecatl.v1.CancelRunRequest", "mecatl.v1.CancelRunResponse"},
 		{"SteerRun", "mecatl.v1.SteerRunRequest", "mecatl.v1.SteerRunResponse"},
 		{"CancelRunSteer", "mecatl.v1.CancelRunSteerRequest", "mecatl.v1.CancelRunSteerResponse"},
@@ -49,6 +50,7 @@ func TestSDKRunControls_Scenario1_ProtobufContract(t *testing.T) {
 	assertRunControlMessageOrder(t, messages,
 		"SteerCancel",
 		"ResolveRunAskRequest", "ResolveRunAskResponse",
+		"ResolvePlanAskRequest", "ResolvePlanAskResponse",
 		"CancelRunRequest", "CancelRunResponse",
 		"SteerRunRequest", "SteerRunResponse",
 		"CancelRunSteerRequest", "CancelRunSteerResponse",
@@ -69,6 +71,21 @@ func TestSDKRunControls_Scenario1_ProtobufContract(t *testing.T) {
 	assertEnumIn(t, resolveRequest, "verdict", 1, 2, 3)
 
 	assertRunControlFields(t, requireRunControlMessage(t, messages, "ResolveRunAskResponse"), map[protoreflect.Name]runControlField{
+		"run_id": {number: 1, kind: protoreflect.StringKind},
+		"ask_id": {number: 2, kind: protoreflect.StringKind},
+	})
+	planRequest := requireRunControlMessage(t, messages, "ResolvePlanAskRequest")
+	assertRunControlFields(t, planRequest, map[protoreflect.Name]runControlField{
+		"session_id":      {number: 1, kind: protoreflect.StringKind},
+		"expected_run_id": {number: 2, kind: protoreflect.StringKind},
+		"ask_id":          {number: 3, kind: protoreflect.StringKind},
+		"verdict":         {number: 4, kind: protoreflect.EnumKind, typeName: "mecatl.v1.ApprovalVerdict"},
+	})
+	assertStringMinLen(t, planRequest, "session_id", 1)
+	assertStringMinLen(t, planRequest, "expected_run_id", 1)
+	assertStringMinLen(t, planRequest, "ask_id", 1)
+	assertEnumIn(t, planRequest, "verdict", 1, 2, 3)
+	assertRunControlFields(t, requireRunControlMessage(t, messages, "ResolvePlanAskResponse"), map[protoreflect.Name]runControlField{
 		"run_id": {number: 1, kind: protoreflect.StringKind},
 		"ask_id": {number: 2, kind: protoreflect.StringKind},
 	})
