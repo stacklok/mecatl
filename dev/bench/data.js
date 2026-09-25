@@ -276590,6 +276590,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790343066250,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d8f5b1f987acb4e5a2bbfcb95d47ff378bf4a563",
+          "message": "test(app): eliminate real ToolHive probe deadline wait (#1937)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T16:57:01+03:00",
+          "tree_id": "5eff2b460509583a6a4cee0ea833469d028279ed",
+          "url": "https://github.com/stacklok/mecatl/commit/d8f5b1f987acb4e5a2bbfcb95d47ff378bf4a563"
+        },
+        "date": 1790345413251,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3320.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -362584,6 +362623,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790345409986,
+  "lastUpdate": 1790345414279,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
