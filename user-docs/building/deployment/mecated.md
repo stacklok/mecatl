@@ -268,7 +268,12 @@ See [Scheduled tasks](/building/what-you-get/scheduled-tasks.md) for the in-chat
 |`--llm-breaker-threshold`|`5`|Consecutive transient establishment failures that open the circuit breaker; `0` disables it|
 |`--llm-breaker-cooldown`|`30s`|How long the breaker remains open before one half-open probe|
 
-The server applies this policy to each model step. It retries only before semantic output becomes visible, so it does not replay completed tool calls or visible assistant text. These command-line flags are the only recovery-policy configuration; `settings.yaml` has no equivalent key.
+The server applies this policy to each model step. It retries only before
+semantic output becomes visible, so it does not replay completed tool calls or
+visible assistant text. These command-line flags are the only recovery-policy
+configuration; `settings.yaml` has no equivalent key. Review the
+[per-step limits and provider-cost implications](/features/choose-models.md#a-provider-error-ended-a-model-step)
+before raising either default.
 
 ### Provider and model
 

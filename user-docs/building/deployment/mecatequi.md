@@ -249,7 +249,11 @@ corrupt both.
 |`--llm-recovery-budget`|`30m`|Maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting.|
 |`--llm-max-attempts`|`60`|Maximum model-stream attempts for one precommit step, including the initial call.|
 
-For recovery semantics shared with the daemon and Kubernetes deployment, see [LLM resilience](/building/deployment/mecated.md#llm-resilience).
+For shared recovery semantics and cost implications, see
+[provider recovery limits and cost](/features/choose-models.md#a-provider-error-ended-a-model-step).
+The daemon's
+[LLM resilience reference](/building/deployment/mecated.md#llm-resilience) lists
+the remaining tuning flags.
 
 ### Provider keys
 

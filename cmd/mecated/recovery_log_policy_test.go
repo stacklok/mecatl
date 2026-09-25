@@ -14,3 +14,7 @@ func TestServerProviderRecovery_Scenario7_HostLogDeliveryPolicy(t *testing.T) {
 	}
 	recoveryhost.Daemon(t, []string{"--metrics-addr=", "--flight-recorder=false"})
 }
+
+func TestServerProviderRecovery_Scenario6_NoDetachedOrRestartContinuation(t *testing.T) {
+	recoveryhost.DaemonShutdown(t, []string{"--metrics-addr=", "--flight-recorder=false"})
+}

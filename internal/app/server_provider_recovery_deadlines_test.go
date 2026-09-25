@@ -40,6 +40,9 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 		}))
 		defer func() { cancel(); srv.Close() }()
 		cfg := recoveryAppConfig(t, srv.URL)
+		cfg.LLMBreakerCooldown = 1200 * time.Millisecond
+		signals := recoverySignals{wait: make(chan struct{}, 4)}
+		cfg.Diagnostics = signals
 		built, err := buildIsolated(t, ctx, cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -51,12 +54,12 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 		}
 		schedules := store.ScheduleStore()
 		const name = "recover-with-deadline"
-		fireStart := time.Now().Add(-200 * time.Millisecond)
+		fireStart := time.Now()
 		if defaultFireTimeout != 30*time.Minute {
 			t.Fatalf("default fire timeout=%v", defaultFireTimeout)
 		}
 		if err := schedules.Save(ctx, port.Schedule{
-			Spec: port.ScheduleSpec{Name: name, Prompt: "recover", FireTimeout: time.Second,
+			Spec: port.ScheduleSpec{Name: name, Prompt: "recover", FireTimeout: 2 * time.Second,
 				EnvironmentRef: configuredLocalPlacementRef(cfg.Workspace), PlacementScope: string(defaultPlacementScope),
 				Trigger: port.TriggerSpec{OneShot: fireStart}},
 			State: port.ScheduleState{Enabled: true, NextFireAt: fireStart},
@@ -69,6 +72,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 		if err != nil {
 			t.Fatal(err)
 		}
+		awaitRecovery(t, ctx, signals.wait, "scheduled recovery wait")
 		awaitRecovery(t, ctx, probe, "recovering scheduled provider probe")
 		awaitRecovery(t, ctx, stopped, "schedule timeout canceling provider")
 		if calls.Load() != 2 || fire.Stop != session.StopTimeout {
@@ -78,7 +82,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 		if err != nil {
 			t.Fatal(err)
 		}
-		if recorded.Stop != session.StopTimeout || !recorded.StartedAt.Equal(fireStart) || !recorded.Deadline.Equal(fireStart.Add(time.Second)) {
+		if recorded.Stop != session.StopTimeout || !recorded.StartedAt.Equal(fireStart) || !recorded.Deadline.Equal(fireStart.Add(2*time.Second)) {
 			t.Fatalf("deadline slid from fire start or terminal was lost: %+v", recorded)
 		}
 	})
