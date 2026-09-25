@@ -410,7 +410,7 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum schedules started concurrently in one scheduler tick")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "Maximum attempts to establish an LLM stream, including the initial attempt")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
 	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "Maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "Timeout for connecting to an LLM stream and receiving its first chunk. Does not stop an active stream; zero disables the timeout")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. A longer gap ends the turn; zero disables the timeout")

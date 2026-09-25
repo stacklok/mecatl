@@ -567,11 +567,10 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 | `--context-window-override` | `0` | **embedded** server: global context-window token override for both compaction and the footer denominator. `0` keeps exact operator `models.context_windows` → live metadata → models.dev catalog → 128K fallback resolution. Rejected in `connect` mode; configure the external `mecated` instead |
 | `--subagent-model` | – (inherits `--model`) | **embedded** server: global default model for every Subagent / Parallel-branch / team-member child that does not pin its own model (the `CLAUDE_CODE_SUBAGENT_MODEL` analogue); the Parallel judge stays on the session model. Same provider as the session; an unresolvable id **fails startup** |
 | `--llm-recovery-budget` | `30m` | **embedded only:** maximum time recovering one precommit model step after its first retryable failure or breaker rejection. `0` disables additional waiting |
-| `--llm-max-attempts` | `60` | **embedded only:** maximum model-stream attempts for one precommit step, including the initial call |
+| `--llm-max-attempts` | `60` | **embedded only:** maximum attempts for one precommit model step, including the initial request; see [provider recovery limits and cost](https://mecatl.dev/docs/features/choose-models#a-provider-error-ended-a-model-step) |
 | `--llm-per-attempt-timeout` | `300s` | **embedded only:** maximum time to connect and receive the first raw response chunk; `0` disables the timeout |
 | `--llm-stream-idle-timeout` | `180s` | **embedded only:** maximum pause between raw response chunks; `0` disables the timeout |
 | `--anthropic-base-url` | – | native Anthropic API base URL override for the **embedded** server (compatible/proxy endpoints; key from `ANTHROPIC_API_KEY`) |
-
 | `--openai-base-url` | – | OpenAI base URL override for the **embedded** server |
 | `--openrouter-base-url` | – | OpenRouter base URL override for the **embedded** server (default `https://openrouter.ai/api/v1`) |
 | `--api-key-file` | – (auto) | **embedded** server: path to the YAML credentials file (`providers.<name>.api_key`, or the experimental `providers.openai-codex.oauth` snapshot); overrides `$XDG_CONFIG_HOME/mecatl/auth.yaml`. Environment wins for API-key providers; Codex has no env alias. See [the exact schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials) |

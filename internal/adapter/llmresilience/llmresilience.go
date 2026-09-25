@@ -1032,11 +1032,11 @@ func (p *resilientProvider) pullTentativeWithIdle(
 		if cancel != nil {
 			cancel()
 		}
-		<-results
+		r := <-results
 		p.diag().Log(context.Background(), port.LevelInfo, "llm stream stalled (idle timeout) before semantic commit",
 			"model", model,
 			"idle", p.cfg.StreamIdleTimeout)
-		return port.Chunk{}, true, &StreamIdleError{Idle: p.cfg.StreamIdleTimeout}
+		return r.chunk, true, &StreamIdleError{Idle: p.cfg.StreamIdleTimeout}
 	}
 }
 

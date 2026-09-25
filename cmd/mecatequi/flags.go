@@ -323,7 +323,7 @@ func configureFlags(fs *flag.FlagSet, f *flags) {
 	fs.IntVar(&f.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens per run. Child agents inherit the limit. Crossing it ends with stop_reason=budget. Default: 0, unlimited.")
 	fs.IntVar(&f.maxTeamTokens, "max-team-tokens", 0, "Cumulative input and output token budget for a team, checked between rounds. Default: 0, unlimited.")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "Maximum model calls for the run. Crossing the limit ends with stop_reason=max_turns. Default: 0, use the deployment default.")
-	fs.IntVar(&f.llmMaxAttempts, "llm-max-attempts", 60, "Maximum attempts to establish an LLM stream, including the initial attempt.")
+	fs.IntVar(&f.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
 	fs.DurationVar(&f.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "Maximum time spent recovering a model step before semantic output.")
 
 	fs.BoolVar(&f.headless, "headless", true, "Run without a human approver. Unresolved child subagent, team member, and branch permission requests are denied or sent to --subagent-ask-reviewer. Default: true. Set false to surface child permission requests. Because mecatequi has no approval interface, a surfaced request cancels the run.")

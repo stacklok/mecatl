@@ -529,8 +529,9 @@ extraArgs:
 
 The server retries a model step only before semantic output is visible. A visible
 failure remains terminal, so a model does not rerun completed tool calls or
-visible assistant text. See [LLM resilience](/building/deployment/mecated.md#llm-resilience)
-for the policy and the remaining resilience flags.
+visible assistant text. See [provider recovery limits and cost](/features/choose-models.md#a-provider-error-ended-a-model-step)
+for the per-step billing implications, and [LLM resilience](/building/deployment/mecated.md#llm-resilience)
+for the remaining resilience flags.
 
 ### Mount trusted skills, agents, and rules
 

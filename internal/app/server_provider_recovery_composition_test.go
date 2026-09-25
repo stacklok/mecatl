@@ -17,6 +17,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
@@ -47,6 +48,103 @@ func (r *recoveryToolRecorder) ToolCall(id session.SessionID, call session.ToolC
 		defer r.mu.Unlock()
 		r.writes++
 		r.writeSession = id
+	}
+}
+
+func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly_ComposedSecrecy(t *testing.T) {
+	const sentinel = "RECOVERY-RAW-SECRET-7c91"
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	calls := 0
+	positiveControl := false
+	var laterRequests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls > 1 {
+			laterRequests = append(laterRequests, string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch calls {
+		case 1:
+			w.Header().Set("X-Raw-Secret", sentinel)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprintf(w, `{"error":{"code":"server_error","message":"unavailable","raw_secret":%q}}`, sentinel)
+			positiveControl = true
+		case 2:
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeRecoveryToolTurn(w, "glob-after-recovery", "Glob", `{"pattern":"*"}`)
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeRecoveryTextTurn(w, "recovered without projection")
+		}
+	}))
+	defer srv.Close()
+	diag := &recordingDiag{}
+	cfg := recoveryAppConfig(t, srv.URL)
+	cfg.Diagnostics = diag
+	cfg.LLMBreakerThreshold = 5
+	built, err := buildIsolated(t, ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay := httptest.NewServer(server.NewHTTPHandler(built.Service))
+	var streamed []sseEvent
+	resultSeen := false
+	promptOverHTTP(t, relay.URL, string(sess.ID), "recover safely", func(event sseEvent) {
+		streamed = append(streamed, event)
+		resultSeen = resultSeen || event.Type == string(session.EvResult)
+	})
+	relay.Close()
+	if !resultSeen {
+		t.Fatal("composed relay produced no terminal result")
+	}
+	built.Close()
+	store, err := jsonlstore.New(cfg.StoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Load(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged []session.Event
+	loggedUsage := false
+	loggedTerminal := false
+	for event, readErr := range store.Read(ctx, sess.ID) {
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		logged = append(logged, event)
+		if event.Result != nil && event.Result.Usage.InputTokens == 2 && event.Result.Usage.OutputTokens == 2 {
+			loggedUsage = true
+			loggedTerminal = event.Result.Stop == session.StopEndTurn && event.Result.Text == "recovered without projection"
+		}
+	}
+	wantUsage := session.Usage{InputTokens: 2, OutputTokens: 2}
+	if persisted.UsageFor(session.UsageKindMain) != wantUsage || !loggedUsage || !loggedTerminal {
+		t.Fatalf("persisted usage=%+v logged_usage=%v logged_terminal=%v, want %+v", persisted.UsageFor(session.UsageKindMain), loggedUsage, loggedTerminal, wantUsage)
+	}
+	mu.Lock()
+	projection := fmt.Sprint(streamed, logged, persisted.Conversation.Messages, persisted.TokenUsageSnapshot(), diag.msgs, diag.attrs, laterRequests)
+	controlsOK := positiveControl && calls == 3 && len(laterRequests) == 2
+	mu.Unlock()
+	if !controlsOK {
+		t.Fatalf("secrecy controls not exercised: positive=%v calls=%d later=%d", positiveControl, calls, len(laterRequests))
+	}
+	if strings.Contains(projection, sentinel) {
+		t.Fatalf("raw provider response projected into composed surfaces: %s", projection)
 	}
 }
 

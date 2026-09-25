@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -62,6 +63,42 @@ func TestServerProviderRecovery_Scenario1_VisibleFailureNeverReplays(t *testing.
 }
 
 func TestServerProviderRecovery_Scenario1_TentativeAssemblyAndDiscardedUsageExactlyOnce(t *testing.T) {
+	t.Run("idle timeout drains final usage", func(t *testing.T) {
+		usage := session.Usage{InputTokens: 7, OutputTokens: 3}
+		var calls atomic.Int32
+		inner := recoveryProviderFunc(func(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+			if calls.Add(1) > 1 {
+				return func(yield func(port.Chunk, error) bool) {
+					yield(port.Chunk{Kind: port.ChunkText, Text: "ok"}, nil)
+					yield(port.Chunk{Kind: port.ChunkDone}, nil)
+				}, nil
+			}
+			return func(yield func(port.Chunk, error) bool) {
+				if !yield(port.Chunk{Kind: port.ChunkReasoning, Text: "discard me"}, nil) {
+					return
+				}
+				<-ctx.Done()
+				yield(port.Chunk{Kind: port.ChunkUsage, Usage: &usage}, nil)
+			}, nil
+		})
+		cfg := recoveryConfig(2, time.Second)
+		cfg.StreamIdleTimeout = time.Millisecond
+		got, err := recoveryDrain(t, Wrap(inner, cfg), context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := session.Usage{}
+		for _, chunk := range got {
+			total = total.Add(discardedChunkUsage(chunk))
+			if chunk.Kind == port.ChunkReasoning {
+				t.Fatalf("discarded reasoning escaped: %+v", chunk)
+			}
+		}
+		if total != usage || calls.Load() != 2 {
+			t.Fatalf("usage=%+v calls=%d, want usage=%+v calls=2", total, calls.Load(), usage)
+		}
+	})
+
 	for _, outcome := range []string{"success", "exhaustion", "cancellation"} {
 		t.Run(outcome, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -229,6 +266,42 @@ func TestServerProviderRecovery_Scenario4_NonSlidingBudgetAndActualCallCap(t *te
 }
 
 func TestServerProviderRecovery_Scenario4_RecoveryDeadlineCannotCancelVisibleStream(t *testing.T) {
+	for _, kind := range []port.ChunkKind{port.ChunkText, port.ChunkDone} {
+		for i := range 50 {
+			t.Run(fmt.Sprintf("contended commit %d/%d", kind, i), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					ready := time.After(time.Second)
+					var calls atomic.Int32
+					inner := recoveryProviderFunc(func(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+						if calls.Add(1) == 1 {
+							return nil, apiErr(503)
+						}
+						return func(yield func(port.Chunk, error) bool) {
+							select {
+							case <-ready:
+								yield(port.Chunk{Kind: kind, Text: "visible"}, nil)
+							case <-ctx.Done():
+							}
+						}, nil
+					})
+					got, err := recoveryDrain(t, Wrap(inner, recoveryConfig(2, time.Second)), context.Background())
+					if err == nil {
+						if len(got) != 1 || got[0].Kind != kind {
+							t.Fatalf("winning commit duplicated or lost output: %+v", got)
+						}
+					} else {
+						requirePrecommitRetryable(t, err)
+						if len(got) != 0 || errors.Is(err, context.Canceled) {
+							t.Fatalf("winning expiry leaked output or caller disposition: got=%+v err=%v", got, err)
+						}
+					}
+					if calls.Load() != 2 {
+						t.Fatalf("calls=%d want 2", calls.Load())
+					}
+				})
+			})
+		}
+	}
 	for _, kind := range []port.ChunkKind{port.ChunkText, port.ChunkDone} {
 		t.Run(fmt.Sprint("expiry wins ", kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)

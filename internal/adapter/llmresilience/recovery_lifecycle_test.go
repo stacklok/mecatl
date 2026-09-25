@@ -7,6 +7,7 @@ import (
 	"iter"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -147,6 +148,32 @@ func TestServerProviderRecovery_Scenario3_ProbeReleaseAndStaleGenerationIsolatio
 }
 
 func TestServerProviderRecovery_Scenario4_CancellationAndTerminalClassification(t *testing.T) {
+	for i := range 50 {
+		t.Run(fmt.Sprintf("simultaneous caller cancel and budget expiry %d", i), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var calls int
+				inner := recoveryProviderFunc(func(attemptCtx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+					calls++
+					if calls == 1 {
+						return nil, apiErr(503)
+					}
+					return func(func(port.Chunk, error) bool) {
+						<-attemptCtx.Done()
+						cancel()
+					}, nil
+				})
+				_, err := recoveryDrain(t, Wrap(inner, recoveryConfig(2, time.Second)), ctx)
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("simultaneous caller cancellation lost to local expiry: %v", err)
+				}
+				if calls != 2 {
+					t.Fatalf("calls=%d want 2", calls)
+				}
+			})
+		})
+	}
 	t.Run("budget expires while another probe owns admission", func(t *testing.T) {
 		cfg := recoveryConfig(1, 15*time.Millisecond)
 		cfg.BreakerThreshold = 1

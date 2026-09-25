@@ -582,6 +582,13 @@ session to ask the server to retry the failed step without duplicating your
 prompt. A failure after visible output is terminal and is not automatically
 replayed, because the model might otherwise repeat visible text or tool calls.
 
+Each model step defaults to a 30-minute recovery window and at most 60 wrapper
+calls, including the initial request. Extra provider calls can be billed even
+when Mecatl discards their precommit output. These limits apply separately to
+each model step, so they are not a task-wide spending ceiling. Engine token
+budgets are checked at turn boundaries, not between wrapper calls within one
+step.
+
 For an embedded terminal session, set `--llm-recovery-budget` and
 `--llm-max-attempts` when starting `mecatui`. In `connect` mode, the remote
 server owns these values. Daemon, Kubernetes, and CI configuration is described

@@ -436,7 +436,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "embedded server only: shell used to execute Shell-tool commands; empty disables Shell")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "embedded server only: disable the Shell tool (shell-less mode)")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "queue mid-turn input as a follow-up instead of steering the active run")
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts to establish a model stream, including the initial attempt")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
 	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "maximum time to connect and receive the first model response chunk; 0 disables the timeout")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "maximum pause between model response chunks; 0 disables the timeout")
