@@ -229,6 +229,14 @@ interface UncertainAuthorization {
   continuation: AuthorizationContinuation;
 }
 
+interface AuthorizationActivityCursor {
+  authorizationId: string;
+  callId: string;
+  cursor: string;
+  runId: string;
+  sessionId: string;
+}
+
 /** A pending single-line text prompt, rendered as one shared Dialog. */
 interface TextPrompt {
   confirmLabel: string;
@@ -282,7 +290,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [contentPreview, setContentPreview] = useState<ContentPreview>();
   const authorizationFlows = useRef(new Set<string>());
   const authorizationUncertain = useRef(new Map<string, UncertainAuthorization>());
-  const latestActivityCursor = useRef<{ cursor: string; sessionId: string } | undefined>(undefined);
+  const authorizationActivityCursor = useRef<AuthorizationActivityCursor | undefined>(undefined);
   const activityRefresh = useRef<
     { authorizationId: string; callId: string; cursor: string; sessionId: string } | undefined
   >(undefined);
@@ -387,7 +395,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     viewedSessionId.current = sessionId;
     activityRefresh.current = undefined;
-    latestActivityCursor.current = undefined;
+    authorizationActivityCursor.current = undefined;
     // A run belongs to one session: leaving it stops its stream here, so its
     // asks, controls, and queue can never act on the chat the user opened.
     const owner = activeRun.current;
@@ -1184,15 +1192,37 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       onSseError: captureSseFailure(streamFailure),
       onSseEvent: ({ data, id }) => {
         if (
-          id &&
-          data &&
-          typeof data === "object" &&
-          data.type === "run.event" &&
-          owner.sessionId &&
-          ownsChatView(owner, activeRun.current, viewedSessionId.current)
-        ) {
-          latestActivityCursor.current = { cursor: id, sessionId: owner.sessionId };
-        }
+          !id ||
+          data?.type !== "run.event" ||
+          data.event.kind !== "authorization.required" ||
+          !owner.sessionId ||
+          !ownsChatView(owner, activeRun.current, viewedSessionId.current)
+        )
+          return;
+        const payload = payloadRecord(data.event.payload);
+        if (
+          typeof payload?.authorizationId !== "string" ||
+          typeof payload.callId !== "string" ||
+          payload.status !== "pending"
+        )
+          return;
+        const previous = authorizationActivityCursor.current;
+        // A later status may omit runId. It can advance a cursor only when
+        // it matches an already identified handoff.
+        if (
+          !data.event.runId &&
+          (previous?.sessionId !== owner.sessionId ||
+            previous.authorizationId !== payload.authorizationId ||
+            previous.callId !== payload.callId)
+        )
+          return;
+        authorizationActivityCursor.current = {
+          authorizationId: payload.authorizationId,
+          callId: payload.callId,
+          cursor: id,
+          runId: data.event.runId || previous?.runId || "",
+          sessionId: owner.sessionId,
+        };
       },
       path: { sessionId: owner.sessionId ?? "" },
       query: resumeFrom ? { resumeFrom } : undefined,
@@ -1558,16 +1588,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (authorizationFlows.current.size > 0) return;
     authorizationFlows.current.add(key);
     setAuthorizationBusy(key);
+    const observed = authorizationActivityCursor.current;
     let beforeCursor =
-      latestActivityCursor.current?.sessionId === authorization.sessionId
-        ? latestActivityCursor.current.cursor
+      observed?.sessionId === authorization.sessionId &&
+      observed.runId === authorization.runId &&
+      observed.authorizationId === authorization.authorizationId &&
+      observed.callId === authorization.callId
+        ? observed.cursor
         : undefined;
     if (!beforeCursor) {
-      const checkpoint = await authorizationCheckpoint(authorization);
-      beforeCursor =
-        latestActivityCursor.current?.sessionId === authorization.sessionId
-          ? latestActivityCursor.current.cursor
-          : checkpoint;
+      beforeCursor = await authorizationCheckpoint(authorization);
       if (!beforeCursor) {
         authorizationFlows.current.delete(key);
         setAuthorizationBusy((current) => (current === key ? undefined : current));
@@ -1576,6 +1606,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         );
         return;
       }
+      authorizationActivityCursor.current = {
+        authorizationId: authorization.authorizationId,
+        callId: authorization.callId,
+        cursor: beforeCursor,
+        runId: authorization.runId,
+        sessionId: authorization.sessionId,
+      };
     }
 
     // The previous activity reader only follows this view. Aborting it does

@@ -952,6 +952,108 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(within(review).queryByRole("alert")).toBeNull();
   });
 
+  it("keeps a cursorless handoff uncertain when refresh replays its pre-control status", async () => {
+    window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+    const bff = new BffFixture(session("chat-a", "authorizing"));
+    const initialActivity = heldStream();
+    const checkpoint = heldStream();
+    const replayFromOldCursor = heldStream();
+    const refreshFromHandoff = heldStream();
+    const required = runEvent("authorization.required", "2", "", "run-a", {
+      authorizationId: "auth-1",
+      callId: "call-1",
+      displayName: "Calendar connector",
+      status: "pending",
+    });
+    checkpoint.send(required, "handoff-cursor");
+    checkpoint.close();
+    bff.activityResponses.set("", [initialActivity.response, checkpoint.response]);
+    bff.activityResponses.set("old-cursor", [replayFromOldCursor.response]);
+    bff.activityResponses.set("handoff-cursor", [refreshFromHandoff.response]);
+    const run = heldStream();
+    bff.runResponses.push(run.response);
+    const control = heldStream();
+    const recheckPath = "/api/v1/sessions/chat-a/authorizations/auth-1/recheck";
+    const cancelPath = "/api/v1/sessions/chat-a/authorizations/auth-1/cancel";
+    bff.nextReplies.set(recheckPath, [Promise.resolve(control.response)]);
+
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    bff.rows.set("chat-a", session("chat-a", "idle"));
+    await act(async () => {
+      initialActivity.send(runEvent("session.title", "1", "", "", {}), "old-cursor");
+      initialActivity.close();
+    });
+    typePrompt("Use Calendar");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Send message" }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(bff.requestsFor("POST", "/runs")).toHaveLength(1));
+    await act(async () => {
+      run.send(runStarted());
+      run.send(
+        runEvent("tool.call", "1", "", "run-a", { args: "{}", id: "call-1", name: "Calendar" }),
+      );
+      run.send(required);
+      run.close();
+    });
+    const row = (await screen.findByText("Tool: Calendar")).closest("li");
+    if (!row) throw new Error("Tool row missing");
+    fireEvent.click(within(row).getByRole("button", { name: "Review authorization" }));
+    const review = screen.getByRole("complementary", { name: "Authorization review" });
+    fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
+    await waitFor(() => expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1));
+    await act(async () => {
+      control.send({ type: "run.error", message: "response lost" } as RunStreamEvent);
+      control.close();
+    });
+    await waitFor(() => expect(within(review).getByRole("alert")).toBeTruthy());
+
+    fireEvent.click(within(review).getByRole("button", { name: "Refresh activity" }));
+    await waitFor(() =>
+      expect(bff.requestsFor("GET", "/activity").some((request) => request.search)).toBe(true),
+    );
+    const refresh = bff.requestsFor("GET", "/activity").at(-1);
+    // The server can replay the original required event from the older cursor.
+    // A refresh from the exact handoff cursor has no post-control status yet.
+    if (refresh?.search === "?resumeFrom=old-cursor") {
+      await act(async () => replayFromOldCursor.send(required, "handoff-cursor"));
+    }
+    expect(within(review).getByRole("button", { name: "Recheck" }).hasAttribute("disabled")).toBe(
+      true,
+    );
+    expect(
+      within(review).getByRole("button", { name: "Cancel authorization" }).hasAttribute("disabled"),
+    ).toBe(true);
+    expect(refresh?.search).toBe("?resumeFrom=handoff-cursor");
+    fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
+    fireEvent.click(within(review).getByRole("button", { name: "Cancel authorization" }));
+    expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1);
+    expect(bff.requestsAt("POST", cancelPath)).toHaveLength(0);
+    await act(async () => {
+      refreshFromHandoff.send(
+        runEvent("authorization.required", "3", "", "", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "pending",
+        }),
+        "after-control",
+      );
+    });
+    await waitFor(() =>
+      expect(within(review).getByRole("button", { name: "Recheck" }).hasAttribute("disabled")).toBe(
+        false,
+      ),
+    );
+    expect(
+      within(review).getByRole("button", { name: "Cancel authorization" }).hasAttribute("disabled"),
+    ).toBe(false);
+  });
+
   it("does not duplicate continuation rows when refresh replays a failed control stream", async () => {
     window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
     const bff = new BffFixture(session("chat-a", "authorizing"));
