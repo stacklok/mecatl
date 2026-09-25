@@ -15,7 +15,9 @@ as it arrives. Tool calls appear as compact cards; Edit and Write cards include
 their diff.
 
 Focus a tool card and press `ctrl+t` to view its complete arguments and output.
-Press `ctrl+t` again to return to the preview.
+Press `ctrl+t` again to return to the preview. You can change the number of
+collapsed result rows in
+[Customize mecatui](./customization.md#set-the-collapsed-tool-result-preview-size).
 
 ## Attach a local file
 

@@ -401,24 +401,19 @@ func TestToolCardFrameHardwrapsLongCollapsedArgumentRowsRegression(t *testing.T)
 		t.Fatalf("provenance rows = %d, rendered lines = %d", got, want)
 	}
 
-	offset := 0
-	argumentRows := 0
-	for i, row := range frame.provenance {
-		if row.region != conversationRegionArguments {
-			continue
+	for _, row := range frame.provenance {
+		if row.region == conversationRegionArguments {
+			t.Fatal("collapsed argument summary must be header chrome, not an arguments region")
 		}
-		if !row.text {
-			t.Fatal("argument row is not semantic text")
-		}
-		text, _ := selectionRowText(frame, row, frame.lines[i])
-		if row.sourceOffset != offset {
-			t.Fatalf("argument source offset = %d, want %d for %q", row.sourceOffset, offset, text)
-		}
-		offset += graphemeCount(text)
-		argumentRows++
 	}
-	if argumentRows < 2 {
-		t.Fatalf("long collapsed argument rendered in %d rows, want hard-wrapped rows", argumentRows)
+	contentRows := 0
+	for _, line := range frame.lines {
+		if strings.Contains(stripANSIstr(line), "review-batch") {
+			contentRows++
+		}
+	}
+	if contentRows != 1 {
+		t.Fatalf("collapsed argument header rendered in %d rows, want one", contentRows)
 	}
 }
 
@@ -477,13 +472,16 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 			}
 			seen[provenance.blockID][provenance.region] = true
 		}
+		for _, block := range c.blocks {
+			if seen[block.id][conversationRegionArguments] {
+				t.Fatalf("width %d: collapsed block %d retained an arguments provenance row", width, block.id)
+			}
+		}
 		for _, tc := range []struct {
 			blockID uint64
 			region  regionKind
 			name    string
 		}{
-			{c.blocks[0].id, conversationRegionArguments, "unresolved arguments"},
-			{c.blocks[1].id, conversationRegionArguments, "resolved arguments"},
 			{c.blocks[1].id, conversationRegionResult, "resolved result"},
 		} {
 			if !seen[tc.blockID][tc.region] {

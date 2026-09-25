@@ -136,6 +136,16 @@ func TestMecatuiFunctionalConversationCards_Scenario2_ToolVariantsPreserveWidthA
 						}
 						return r
 					}, want)
+					if width.width == 1 && !expanded {
+						glyph := "…"
+						if variant.block.resolved {
+							glyph = "✓"
+						}
+						if !strings.HasPrefix(compact, glyph) {
+							t.Errorf("tiny collapsed card must preserve its status glyph, got %q", compact)
+						}
+						continue
+					}
 					if !strings.Contains(compact, compactWant) {
 						t.Errorf("expanded=%v output lost %q:\n%s", expanded, want, stripANSIstr(out))
 					}

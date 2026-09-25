@@ -1,12 +1,3 @@
 ╭───────────────────────────────────────────────────────────────────────────────────────────────╮
-│ … CustomSearch                                                                                │
-│ path: "cmd/mecatui"                                                                           │
-│ query: "func main"                                                                            │
-│ alpha: 1                                                                                      │
-│ bravo: 2                                                                                      │
-│ charlie: 3                                                                                    │
-│ delta: 4                                                                                      │
-│ description: 5.1 KB / 72 lines · "## Context…"                                                │
-│ echo: 5                                                                                       │
-│   … +3 more keys · ctrl+t expand                                                              │
+│ … CustomSearch · path: "cmd/mecatui" · query: "func main" · alpha: 1 · bravo: 2 · …           │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────╯

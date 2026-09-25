@@ -234,6 +234,10 @@ type Deps struct {
 	// main.go populates it with client.NewClipboard().
 	Clipboard client.Clipboard
 	Theme     theme.Theme
+	// CollapsedToolResultRows is the launch-time display-row budget for resolved
+	// results in collapsed active-conversation tool cards. Zero selects the shipped
+	// default. Stored-transcript and specialized surfaces do not consume it.
+	CollapsedToolResultRows int
 
 	// homeDir is a package-private test seam for resolving the local process home
 	// used by @~/ attachments. Production leaves it nil and uses os.UserHomeDir.
@@ -1070,7 +1074,7 @@ func New(deps Deps) Model {
 	m := Model{
 		deps:             deps,
 		keys:             keys,
-		rend:             newRenderer(th, hk),
+		rend:             newRenderer(th, hk, deps.CollapsedToolResultRows),
 		hits:             &hitRegions{},
 		metrics:          &renderedSurfaceMetrics{},
 		phase:            phaseConnecting,
