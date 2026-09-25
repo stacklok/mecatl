@@ -273811,6 +273811,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790332403847,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8d1c32d6e07574ab8980e7efbf007a6b4273195",
+          "message": "test(app): remove real reconciliation cooldown waits (#1923)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T14:09:29+03:00",
+          "tree_id": "d6d85c85db82ee9666d70a84f0cfe56a8c413156",
+          "url": "https://github.com/stacklok/mecatl/commit/c8d1c32d6e07574ab8980e7efbf007a6b4273195"
+        },
+        "date": 1790335256740,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3325,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 118,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -359007,6 +359046,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790335253729,
+  "lastUpdate": 1790335258297,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
