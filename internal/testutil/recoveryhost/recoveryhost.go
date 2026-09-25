@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -28,6 +29,7 @@ type Fixture struct {
 	Calls  atomic.Int32
 }
 
+// ShutdownFixture serves a failed request followed by a probe that remains active until its request is canceled.
 type ShutdownFixture struct {
 	Server  *httptest.Server
 	Calls   atomic.Int32
@@ -236,6 +238,18 @@ func Daemon(t *testing.T, extra []string) {
 	}
 }
 
+func awaitShutdownRequest(ctx context.Context, t *testing.T, requestDone <-chan error) {
+	t.Helper()
+	select {
+	case requestErr := <-requestDone:
+		if requestErr != nil && !errors.Is(requestErr, context.Canceled) && !errors.Is(requestErr, io.ErrUnexpectedEOF) {
+			t.Fatalf("client request ended with unexpected read error: %v", requestErr)
+		}
+	case <-ctx.Done():
+		t.Fatal("client request did not settle after host shutdown")
+	}
+}
+
 // DaemonShutdown proves the actual command process cancels an established
 // recovery probe and that a fresh process sharing its store stays idle.
 func DaemonShutdown(t *testing.T, extra []string) {
@@ -245,7 +259,7 @@ func DaemonShutdown(t *testing.T, extra []string) {
 	storeDir := filepath.Join(root, "store")
 	start := func(addr string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
 		args := []string{"--model=gpt-5", "--openai-base-url=" + f.Server.URL + "/v1", "--toolhive-llm=false", "--product-metrics=false",
-			"--llm-max-attempts=3", "--llm-recovery-budget=5s", "--llm-breaker-threshold=1", "--llm-breaker-cooldown=20ms",
+			"--llm-max-attempts=3", "--llm-recovery-budget=1m", "--llm-breaker-threshold=1", "--llm-breaker-cooldown=20ms",
 			"--grpc-addr=127.0.0.1:0", "--http-addr=" + addr, "--workspace=" + root, "--store-dir=" + storeDir,
 			"--no-soul", "--no-user-model", "--user-model-dir=" + filepath.Join(root, "usermodel"),
 			"--permissions-conventional=false", "--agents-conventional=false", "--posture=strict", "--no-shell"}
@@ -267,9 +281,9 @@ func DaemonShutdown(t *testing.T, extra []string) {
 		_ = listener.Close()
 		return addr
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: time.Minute}
 
 	addr := freeAddr()
 	first, firstOut, firstErr := start(addr)
@@ -287,8 +301,9 @@ func DaemonShutdown(t *testing.T, extra []string) {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err == nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			err = resp.Body.Close()
+			_, readErr := io.Copy(io.Discard, resp.Body)
+			closeErr := resp.Body.Close()
+			err = errors.Join(readErr, closeErr)
 		}
 		requestDone <- err
 	}()
@@ -300,9 +315,11 @@ func DaemonShutdown(t *testing.T, extra []string) {
 	if err := first.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
+	shutdownCtx, stopShutdown := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopShutdown()
 	select {
 	case <-f.Stopped:
-	case <-ctx.Done():
+	case <-shutdownCtx.Done():
 		_ = first.Process.Kill()
 		_ = first.Wait()
 		joined = true
@@ -312,11 +329,7 @@ func DaemonShutdown(t *testing.T, extra []string) {
 		t.Fatalf("first daemon exit: %v stderr=%s stdout=%s", err, firstErr, firstOut)
 	}
 	joined = true
-	select {
-	case <-requestDone:
-	case <-ctx.Done():
-		t.Fatal("client request did not settle after host shutdown")
-	}
+	awaitShutdownRequest(shutdownCtx, t, requestDone)
 	if f.Calls.Load() != 2 {
 		t.Fatalf("provider calls at shutdown=%d want 2", f.Calls.Load())
 	}

@@ -24,10 +24,11 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		var calls atomic.Int32
-		probe, stopped := make(chan struct{}), make(chan struct{})
+		probe, stopped, firstFailed := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.Copy(io.Discard, r.Body)
 			if calls.Add(1) == 1 {
+				close(firstFailed)
 				writeRecoveryFailure(w)
 				return
 			}
@@ -40,9 +41,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 		}))
 		defer func() { cancel(); srv.Close() }()
 		cfg := recoveryAppConfig(t, srv.URL)
-		cfg.LLMBreakerCooldown = 1200 * time.Millisecond
-		signals := recoverySignals{wait: make(chan struct{}, 4)}
-		cfg.Diagnostics = signals
+		cfg.LLMBreakerCooldown = 20 * time.Millisecond
 		built, err := buildIsolated(t, ctx, cfg)
 		if err != nil {
 			t.Fatal(err)
@@ -68,13 +67,27 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 		}
 		sched := scheduler.New(scheduler.Config{Store: schedules, Clock: wallclock.Clock{}, Fire: makeFireFunc(built.Service, schedules, defaultFireTimeout, nil)})
 		defer sched.Stop()
-		fire, err := sched.FireNow(ctx, name, fireStart)
-		if err != nil {
+		fireDone := make(chan port.ScheduleFire, 1)
+		fireErr := make(chan error, 1)
+		go func() {
+			fire, err := sched.FireNow(ctx, name, fireStart)
+			if err != nil {
+				fireErr <- err
+				return
+			}
+			fireDone <- fire
+		}()
+		awaitRecovery(ctx, t, firstFailed, "scheduled provider failure")
+		awaitRecovery(ctx, t, probe, "recovering scheduled provider probe")
+		awaitRecovery(ctx, t, stopped, "schedule timeout canceling provider")
+		var fire port.ScheduleFire
+		select {
+		case fire = <-fireDone:
+		case err := <-fireErr:
 			t.Fatal(err)
+		case <-ctx.Done():
+			t.Fatal("scheduled fire did not finish after its injected deadline")
 		}
-		awaitRecovery(t, ctx, signals.wait, "scheduled recovery wait")
-		awaitRecovery(t, ctx, probe, "recovering scheduled provider probe")
-		awaitRecovery(t, ctx, stopped, "schedule timeout canceling provider")
 		if calls.Load() != 2 || fire.Stop != session.StopTimeout {
 			t.Fatalf("scheduled recovery calls=%d stop=%s error=%s", calls.Load(), fire.Stop, fire.Err)
 		}
@@ -151,7 +164,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 				}
 				guard, stopGuard := context.WithTimeout(t.Context(), 3*time.Second)
 				defer stopGuard()
-				awaitRecovery(t, guard, probe, "guardrail half-open recovery probe")
+				awaitRecovery(guard, t, probe, "guardrail half-open recovery probe")
 				if !shorter {
 					cancel()
 				} // verify the 30s bound without sleeping for it.
@@ -164,7 +177,7 @@ func TestServerProviderRecovery_Scenario4_ShorterAuxiliaryAndScheduleDeadlines(t
 					cancel()
 					t.Fatal("guardrail recovery bypassed caller deadline")
 				}
-				awaitRecovery(t, guard, stopped, "guardrail canceled HTTP call")
+				awaitRecovery(guard, t, stopped, "guardrail canceled HTTP call")
 				if calls.Load() != 2 {
 					t.Fatalf("guardrail actual calls=%d want failure + probe", calls.Load())
 				}
@@ -242,7 +255,7 @@ func TestServerProviderRecovery_Scenario5_TUINoTerminalAutoRetryAndScheduleNoRea
 				}
 				done <- fire
 			}()
-			awaitRecovery(t, ctx, probe, "scheduled recovering probe")
+			awaitRecovery(ctx, t, probe, "scheduled recovering probe")
 			sched.RunOnceForTest(ctx) // exercise the real rearm scan while recovery is live.
 			active, err := schedules.Load(ctx, scheduleName)
 			if err != nil {

@@ -164,7 +164,7 @@ func TestServerProviderRecovery_Scenario4_CancellationAndTerminalClassification(
 						cancel()
 					}, nil
 				})
-				_, err := recoveryDrain(t, Wrap(inner, recoveryConfig(2, time.Second)), ctx)
+				_, err := recoveryDrain(ctx, t, Wrap(inner, recoveryConfig(2, time.Second)))
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("simultaneous caller cancellation lost to local expiry: %v", err)
 				}
@@ -227,7 +227,7 @@ func TestServerProviderRecovery_Scenario4_CancellationAndTerminalClassification(
 			f := &fakeProvider{steps: []step{{outerErr: tc.err}}}
 			cfg := recoveryConfig(5, time.Second)
 			cfg.Classifier = tc.classifier
-			_, err := recoveryDrain(t, Wrap(f, cfg), context.Background())
+			_, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
 			if !errors.Is(err, tc.err) || f.Calls() != 1 {
 				t.Fatalf("err=%v calls=%d", err, f.Calls())
 			}
@@ -256,7 +256,7 @@ func TestServerProviderRecovery_Scenario4_CancellationAndTerminalClassification(
 			cfg.Clock = clock.Now
 			cfg.BreakerThreshold = 2
 			p := Wrap(f, cfg).(*resilientProvider)
-			_, err := recoveryDrain(t, p, ctx)
+			_, err := recoveryDrain(ctx, t, p)
 			if !errors.Is(err, expected) {
 				t.Fatalf("err=%v want %v", err, expected)
 			}
@@ -303,7 +303,7 @@ func TestServerProviderRecovery_Scenario7_SanitizedOperationalLogsAndStableAttem
 			}
 			var observed []session.NetworkAttemptPayload
 			ctx = port.WithAttemptObserver(ctx, func(o session.NetworkAttemptPayload) { observed = append(observed, o) })
-			got, err := recoveryDrain(t, p, ctx)
+			got, err := recoveryDrain(ctx, t, p)
 			if mode == "recovered" {
 				if err != nil {
 					t.Fatal(err)
@@ -375,7 +375,7 @@ func TestRecoveryBudgetStartsBeforeHealthDiagnostics(t *testing.T) {
 	cfg.Clock = clock.Now
 	cfg.BreakerThreshold = 1
 	cfg.Diagnostics = &advanceHealthDiag{recordingDiag: &recordingDiag{}, clock: clock}
-	_, err := recoveryDrain(t, Wrap(f, cfg), context.Background())
+	_, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
 	requirePrecommitRetryable(t, err)
 	if f.Calls() != 1 {
 		t.Fatalf("calls=%d, budget slid past health log", f.Calls())
@@ -409,7 +409,7 @@ func TestRecoveryHalfOpenWaitIsOperationallyVisibleAndCancellable(t *testing.T) 
 		t.Fatal(rejection)
 	}
 	defer lease.release()
-	_, err := recoveryDrain(t, p, ctx)
+	_, err := recoveryDrain(ctx, t, p)
 	if !errors.Is(err, context.Canceled) || f.Calls() != 0 {
 		t.Fatalf("err=%v calls=%d", err, f.Calls())
 	}
@@ -427,7 +427,7 @@ func TestRecoveryFirstChunkTimeoutRetainsReceivedUsage(t *testing.T) {
 	f := &fakeProvider{steps: []step{{chunks: []port.Chunk{{Kind: port.ChunkUsage, Usage: &usage}}, firstChunkAfterCancel: true}, {chunks: textTurn("ok")}}}
 	cfg := recoveryConfig(2, time.Second)
 	cfg.PerAttemptTimeout = 10 * time.Millisecond
-	got, err := recoveryDrain(t, Wrap(f, cfg), context.Background())
+	got, err := recoveryDrain(context.Background(), t, Wrap(f, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestRecoveryTerminalCancellationDominatesDuringDiagnostic(t *testing.T) {
 	cfg := recoveryConfig(2, time.Second)
 	cfg.Diagnostics = &terminalCancelDiag{recordingDiag: &recordingDiag{}, cancel: cancel}
 	f := &fakeProvider{steps: []step{{outerErr: recoveryHintError{apiErr(429), time.Now().Add(time.Hour)}}}}
-	_, err := recoveryDrain(t, Wrap(f, cfg), ctx)
+	_, err := recoveryDrain(ctx, t, Wrap(f, cfg))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v want caller cancellation", err)
 	}
@@ -479,7 +479,7 @@ func TestRecoveryVisibleCallerCancellationIsHealthNeutral(t *testing.T) {
 	cfg := recoveryConfig(2, time.Second)
 	cfg.BreakerThreshold = 1
 	p := Wrap(inner, cfg).(*resilientProvider)
-	_, _ = recoveryDrain(t, p, ctx)
+	_, _ = recoveryDrain(ctx, t, p)
 	if p.breaker.open || p.breaker.consecutiveFailures != 0 {
 		t.Fatal("visible caller cancellation changed provider health")
 	}

@@ -51,100 +51,199 @@ func (r *recoveryToolRecorder) ToolCall(id session.SessionID, call session.ToolC
 	}
 }
 
+type recoverySecrecyProjection struct {
+	RawSSE         string
+	DurableEvents  []session.Event
+	PersistedState json.RawMessage
+	Diagnostics    []any
+	ModelRequests  []string
+}
+
+func marshalRecoveryProjection(t *testing.T, projection recoverySecrecyProjection) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func recoveryTerminalFromSSE(t *testing.T, raw []byte) session.ResultPayload {
+	t.Helper()
+	for _, line := range strings.Split(string(raw), "\n") {
+		data, ok := strings.CutPrefix(strings.TrimSpace(line), "data: ")
+		if !ok {
+			continue
+		}
+		var event struct {
+			Type   string                 `json:"type"`
+			Result *session.ResultPayload `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatalf("decode full SSE event: %v", err)
+		}
+		if event.Type == string(session.EvResult) && event.Result != nil {
+			return *event.Result
+		}
+	}
+	t.Fatal("full SSE body contained no terminal result")
+	return session.ResultPayload{}
+}
+
+func recoveryPromptRawSSE(ctx context.Context, t *testing.T, baseURL string, id session.SessionID) []byte {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/v1/sessions/"+string(id)+"/prompt", strings.NewReader(`{"text":"recover safely"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("drain SSE through terminal: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || len(raw) == 0 {
+		t.Fatalf("SSE status=%d body=%q", resp.StatusCode, raw)
+	}
+	return raw
+}
+
 func TestServerProviderRecovery_Scenario2_EffectiveDelayNeverRetriesEarly_ComposedSecrecy(t *testing.T) {
 	const sentinel = "RECOVERY-RAW-SECRET-7c91"
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	var mu sync.Mutex
-	calls := 0
-	positiveControl := false
-	var laterRequests []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Error(err)
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		calls++
-		if calls > 1 {
-			laterRequests = append(laterRequests, string(body))
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch calls {
-		case 1:
-			w.Header().Set("X-Raw-Secret", sentinel)
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprintf(w, `{"error":{"code":"server_error","message":"unavailable","raw_secret":%q}}`, sentinel)
-			positiveControl = true
-		case 2:
-			w.Header().Set("Content-Type", "text/event-stream")
-			writeRecoveryToolTurn(w, "glob-after-recovery", "Glob", `{"pattern":"*"}`)
-		default:
-			w.Header().Set("Content-Type", "text/event-stream")
-			writeRecoveryTextTurn(w, "recovered without projection")
-		}
-	}))
-	defer srv.Close()
-	diag := &recordingDiag{}
-	cfg := recoveryAppConfig(t, srv.URL)
-	cfg.Diagnostics = diag
-	cfg.LLMBreakerThreshold = 5
-	built, err := buildIsolated(t, ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer built.Close()
-	sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	relay := httptest.NewServer(server.NewHTTPHandler(built.Service))
-	var streamed []sseEvent
-	resultSeen := false
-	promptOverHTTP(t, relay.URL, string(sess.ID), "recover safely", func(event sseEvent) {
-		streamed = append(streamed, event)
-		resultSeen = resultSeen || event.Type == string(session.EvResult)
-	})
-	relay.Close()
-	if !resultSeen {
-		t.Fatal("composed relay produced no terminal result")
-	}
-	built.Close()
-	store, err := jsonlstore.New(cfg.StoreDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	persisted, err := store.Load(ctx, sess.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var logged []session.Event
-	loggedUsage := false
-	loggedTerminal := false
-	for event, readErr := range store.Read(ctx, sess.ID) {
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		logged = append(logged, event)
-		if event.Result != nil && event.Result.Usage.InputTokens == 2 && event.Result.Usage.OutputTokens == 2 {
-			loggedUsage = true
-			loggedTerminal = event.Result.Stop == session.StopEndTurn && event.Result.Text == "recovered without projection"
-		}
-	}
-	wantUsage := session.Usage{InputTokens: 2, OutputTokens: 2}
-	if persisted.UsageFor(session.UsageKindMain) != wantUsage || !loggedUsage || !loggedTerminal {
-		t.Fatalf("persisted usage=%+v logged_usage=%v logged_terminal=%v, want %+v", persisted.UsageFor(session.UsageKindMain), loggedUsage, loggedTerminal, wantUsage)
-	}
-	mu.Lock()
-	projection := fmt.Sprint(streamed, logged, persisted.Conversation.Messages, persisted.TokenUsageSnapshot(), diag.msgs, diag.attrs, laterRequests)
-	controlsOK := positiveControl && calls == 3 && len(laterRequests) == 2
-	mu.Unlock()
-	if !controlsOK {
-		t.Fatalf("secrecy controls not exercised: positive=%v calls=%d later=%d", positiveControl, calls, len(laterRequests))
-	}
-	if strings.Contains(projection, sentinel) {
-		t.Fatalf("raw provider response projected into composed surfaces: %s", projection)
+	for _, outcome := range []string{"successful recovery", "terminal exhaustion"} {
+		t.Run(outcome, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			var mu sync.Mutex
+			calls := 0
+			positiveControl := false
+			var laterRequests []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				calls++
+				if calls > 1 {
+					laterRequests = append(laterRequests, string(body))
+				}
+				if calls == 1 {
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("X-Raw-Secret", sentinel)
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = fmt.Fprintf(w, `{"error":{"code":"server_error","message":"unavailable","raw_secret":%q}}`, sentinel)
+					positiveControl = true
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				if calls == 2 {
+					writeRecoveryToolTurn(w, "glob-after-recovery", "Glob", `{"pattern":"*"}`)
+					return
+				}
+				writeRecoveryTextTurn(w, "recovered without projection")
+			}))
+			defer srv.Close()
+			diag := &recordingDiag{}
+			cfg := recoveryAppConfig(t, srv.URL)
+			cfg.Diagnostics = diag
+			cfg.LLMBreakerThreshold = 5
+			if outcome == "terminal exhaustion" {
+				cfg.LLMMaxAttempts = 1
+			}
+			built, err := buildIsolated(t, ctx, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, defaultLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			relay := httptest.NewServer(server.NewHTTPHandler(built.Service))
+			rawSSE := recoveryPromptRawSSE(ctx, t, relay.URL, sess.ID)
+			relay.Close()
+			terminal := recoveryTerminalFromSSE(t, rawSSE)
+			if outcome == "successful recovery" {
+				if terminal.Stop != session.StopEndTurn || terminal.Text != "recovered without projection" {
+					t.Fatalf("successful terminal=%+v", terminal)
+				}
+			} else if terminal.Stop != session.StopError || !strings.Contains(terminal.Error, "unavailable") {
+				t.Fatalf("exhausted terminal did not retain safe cause: %+v", terminal)
+			}
+			built.Close()
+			store, err := jsonlstore.New(cfg.StoreDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			persisted, err := store.Load(ctx, sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var logged []session.Event
+			for event, readErr := range store.Read(ctx, sess.ID) {
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				logged = append(logged, event)
+			}
+			persistedJSON, err := json.Marshal(persisted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			diagnostics := make([]any, 0, len(diag.msgs))
+			for i, msg := range diag.msgs {
+				diagnostics = append(diagnostics, []any{msg, diag.attrs[i]})
+			}
+			mu.Lock()
+			served, actualCalls := positiveControl, calls
+			requests := append([]string(nil), laterRequests...)
+			mu.Unlock()
+			wantCalls := 3
+			if outcome == "terminal exhaustion" {
+				wantCalls = 1
+			}
+			if !served || actualCalls != wantCalls || len(requests) != wantCalls-1 {
+				t.Fatalf("secrecy controls not exercised: positive=%v calls=%d later=%d", served, actualCalls, len(requests))
+			}
+			projection := recoverySecrecyProjection{
+				RawSSE: string(rawSSE), DurableEvents: logged, PersistedState: persistedJSON,
+				Diagnostics: diagnostics, ModelRequests: requests,
+			}
+			if encoded := marshalRecoveryProjection(t, projection); strings.Contains(string(encoded), sentinel) {
+				t.Fatalf("raw provider response projected into composed surfaces: %s", encoded)
+			}
+
+			// Mutation controls prove both nested terminal errors and persisted payloads
+			// are part of the inspected projection rather than pointer/empty stand-ins.
+			mutatedEvents := append([]session.Event(nil), logged...)
+			for i := range mutatedEvents {
+				if mutatedEvents[i].Result != nil {
+					result := *mutatedEvents[i].Result
+					result.Error = sentinel
+					mutatedEvents[i].Result = &result
+					break
+				}
+			}
+			mutation := projection
+			mutation.DurableEvents = mutatedEvents
+			if !strings.Contains(string(marshalRecoveryProjection(t, mutation)), sentinel) {
+				t.Fatal("terminal Result.Error mutation escaped the secrecy oracle")
+			}
+			mutation = projection
+			mutatedPersisted, err := json.Marshal(map[string]any{"actual": json.RawMessage(persistedJSON), "mutation": sentinel})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutation.PersistedState = mutatedPersisted
+			if !strings.Contains(string(marshalRecoveryProjection(t, mutation)), sentinel) {
+				t.Fatal("persisted payload mutation escaped the secrecy oracle")
+			}
+		})
 	}
 }
 

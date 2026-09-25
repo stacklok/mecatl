@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
-	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
-	"github.com/stacklok/mecatl/internal/testutil/recoveryhost"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/internal/testutil/recoveryhost"
 )
 
 func TestServerProviderRecovery_Scenario7_HostLogDeliveryPolicy(t *testing.T) {

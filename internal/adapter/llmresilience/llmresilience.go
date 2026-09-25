@@ -655,144 +655,176 @@ func terminalWithUsage(usage session.Usage, err error) (iter.Seq2[port.Chunk, er
 	}, nil
 }
 
+type streamRecoveryState struct {
+	lastErr        error
+	discardedUsage session.Usage
+	calls          int
+	source         string
+	window         *recoveryWindow
+}
+
+func (s *streamRecoveryState) terminal(ctx context.Context, p *resilientProvider, req port.LLMRequest, err error) (iter.Seq2[port.Chunk, error], error) {
+	p.logRecovery(ctx, req.Model, "terminal", s.calls, 0, s.window, s.source)
+	if callerErr := ctx.Err(); callerErr != nil {
+		err = callerErr
+	}
+	return terminalWithUsage(s.discardedUsage, classifiedProgressError(err, session.StreamProgressPrecommit))
+}
+
+func (s *streamRecoveryState) admit(ctx context.Context, p *resilientProvider, req port.LLMRequest) (*breakerLease, bool, bool) {
+	lease, rejection, changed := p.allow(ctx, p.cfg.Clock())
+	if rejection == nil {
+		return lease, false, false
+	}
+	s.source = "breaker"
+	if s.lastErr == nil {
+		s.lastErr = rejection
+	}
+	s.window.start(p.cfg.Clock(), p.cfg.RecoveryBudget)
+	if p.cfg.RecoveryBudget <= 0 || p.cfg.Clock().Add(rejection.RetryAfter).After(s.window.deadline) {
+		return nil, false, true
+	}
+	wait := rejection.RetryAfter
+	if wait == 0 {
+		wait = s.window.remaining(p.cfg.Clock())
+	}
+	p.logRecovery(ctx, req.Model, "wait", s.calls, wait, s.window, s.source)
+	if waitRecovery(s.window.ctx, rejection.RetryAfter, changed) != nil {
+		return nil, false, true
+	}
+	return nil, true, false
+}
+
+func (s *streamRecoveryState) commit(ctx context.Context, p *resilientProvider, req port.LLMRequest, head *attemptResult, diagnostic attemptDiagnostic) (iter.Seq2[port.Chunk, error], bool) {
+	// Joining before returning the head linearizes commit against expiry,
+	// including providers that ignore cancellation and yield text or Done.
+	if s.window.stop(p.cfg.Clock()) || ctx.Err() != nil {
+		s.discardedUsage = s.discardedUsage.Add(head.discardedUsage)
+		if head.cancel != nil {
+			head.cancel()
+		}
+		if head.stop != nil {
+			head.stop()
+		}
+		diagnostic.lease.release()
+		return nil, false
+	}
+	if s.discardedUsage != (session.Usage{}) {
+		head.buffered = append([]port.Chunk{{Kind: port.ChunkUsage, Usage: &s.discardedUsage}}, head.buffered...)
+	}
+	cancel := head.cancel
+	head.cancel = func() {
+		if cancel != nil {
+			cancel()
+		}
+		s.window.cancel()
+	}
+	if s.lastErr != nil {
+		p.logRecovery(ctx, req.Model, "recovered", s.calls, 0, s.window, s.source)
+	}
+	return wrapAttempt(head, diagnostic), true
+}
+
+func (s *streamRecoveryState) failedAttempt(ctx context.Context, p *resilientProvider, req port.LLMRequest, head *attemptResult, diagnostic attemptDiagnostic, err error) (bool, error) {
+	if head != nil {
+		s.discardedUsage = s.discardedUsage.Add(head.discardedUsage)
+	}
+	if ctx.Err() != nil || s.window.expired(p.cfg.Clock()) {
+		diagnostic.lease.release()
+		return true, s.lastErr
+	}
+	if dispositionOf(err) == session.RetryDispositionRetryable {
+		s.window.start(p.cfg.Clock(), p.cfg.RecoveryBudget)
+	}
+	if isTransientForBreaker(err) {
+		diagnostic.lease.finish(breakerFailure)
+	}
+	diagnostic.lease.release()
+	s.lastErr = err
+	if errors.Is(err, errFirstChunkTimeout) {
+		p.diag().Log(ctx, port.LevelDebug, "llm stream per-attempt timeout fired",
+			"per_attempt_timeout", p.cfg.PerAttemptTimeout, "attempt", s.calls, "max_attempts", p.cfg.MaxAttempts)
+	}
+	reason := replaySuppressedReason("")
+	switch {
+	case providerVeto(err):
+		reason = replayProviderInternalVeto
+	case dispositionOf(err) == session.RetryDispositionPermanent:
+		reason = replayPermanent
+	case dispositionOf(err) != session.RetryDispositionRetryable:
+		reason = replayUnknown
+	case !p.cfg.Classifier(err):
+		reason = replayClassifierVeto
+	}
+	if reason != "" {
+		p.logAttemptDecision(diagnostic, err, decisionTerminal, session.StreamProgressPrecommit, reason, 0)
+		return true, err
+	}
+	if s.calls >= p.cfg.MaxAttempts {
+		p.logAttemptDecision(diagnostic, err, decisionTerminal, session.StreamProgressPrecommit, replayAttemptsExhausted, 0)
+		return true, &ExhaustedError{Attempts: s.calls, Err: classifiedProgressError(err, session.StreamProgressPrecommit), PerAttempt: p.cfg.PerAttemptTimeout}
+	}
+	now := p.cfg.Clock()
+	at, source, schedulable := retryAt(err, now, p.backoffDuration(s.calls-1), s.window)
+	s.source = source
+	// This records the genuine failure, not a fabricated budget terminal.
+	p.logAttemptDecision(diagnostic, err, decisionRetry, session.StreamProgressPrecommit, "", max(0, at.Sub(now)))
+	if !schedulable {
+		return true, s.lastErr
+	}
+	wait := max(0, at.Sub(p.cfg.Clock()))
+	p.logRecovery(ctx, req.Model, "wait", s.calls, wait, s.window, s.source)
+	if waitRecovery(s.window.ctx, wait, nil) != nil {
+		return true, s.lastErr
+	}
+	return false, nil
+}
+
 // Stream pumps attempts under retry and breaker policy. Failed precommit
 // attempts never escape; visible attempts return a continuation and are never
 // replayed.
 func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
-	var lastErr error
-	var discardedUsage session.Usage
-	calls := 0
-	source := "backoff"
-	r := newRecoveryWindow(ctx)
-	defer func() { r.stop(p.cfg.Clock()) }()
+	s := streamRecoveryState{source: "backoff", window: newRecoveryWindow(ctx)}
+	defer func() { s.window.stop(p.cfg.Clock()) }()
 	transferred := false
 	defer func() {
 		if !transferred {
-			r.cancel()
+			s.window.cancel()
 		}
 	}()
-	terminal := func(err error) (iter.Seq2[port.Chunk, error], error) {
-		p.logRecovery(ctx, req.Model, "terminal", calls, 0, r, source)
-		if callerErr := ctx.Err(); callerErr != nil {
-			err = callerErr
-		}
-		return terminalWithUsage(discardedUsage, classifiedProgressError(err, session.StreamProgressPrecommit))
-	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return terminal(err)
+			return s.terminal(ctx, p, req, err)
 		}
-		if r.expired(p.cfg.Clock()) {
-			return terminal(lastErr)
+		if s.window.expired(p.cfg.Clock()) {
+			return s.terminal(ctx, p, req, s.lastErr)
 		}
-		lease, rejection, changed := p.allow(ctx, p.cfg.Clock())
-		if rejection != nil {
-			source = "breaker"
-			if lastErr == nil {
-				lastErr = rejection
-			}
-			r.start(p.cfg.Clock(), p.cfg.RecoveryBudget)
-			if p.cfg.RecoveryBudget <= 0 || p.cfg.Clock().Add(rejection.RetryAfter).After(r.deadline) {
-				return terminal(lastErr)
-			}
-			wait := rejection.RetryAfter
-			if wait == 0 {
-				wait = r.remaining(p.cfg.Clock())
-			}
-			p.logRecovery(ctx, req.Model, "wait", calls, wait, r, source)
-			if err := waitRecovery(r.ctx, rejection.RetryAfter, changed); err != nil {
-				return terminal(lastErr)
-			}
+		lease, retryAdmission, terminal := s.admit(ctx, p, req)
+		if terminal {
+			return s.terminal(ctx, p, req, s.lastErr)
+		}
+		if retryAdmission {
 			continue
 		}
-		if ctx.Err() != nil || r.expired(p.cfg.Clock()) {
+		if ctx.Err() != nil || s.window.expired(p.cfg.Clock()) {
 			lease.release()
-			return terminal(lastErr)
+			return s.terminal(ctx, p, req, s.lastErr)
 		}
-		calls++
-		diagnostic := attemptDiagnostic{ctx: ctx, model: req.Model, attempt: calls,
+		s.calls++
+		diagnostic := attemptDiagnostic{ctx: ctx, model: req.Model, attempt: s.calls,
 			maxAttempts: p.cfg.MaxAttempts, started: p.cfg.Clock(), lease: lease}
-		head, err := p.establish(r.ctx, req, diagnostic)
+		head, err := p.establish(s.window.ctx, req, diagnostic)
 		if err == nil {
-			// Joining before returning the head linearizes commit against expiry,
-			// including providers that ignore cancellation and yield text or Done.
-			if r.stop(p.cfg.Clock()) || ctx.Err() != nil {
-				discardedUsage = discardedUsage.Add(head.discardedUsage)
-				if head.cancel != nil {
-					head.cancel()
-				}
-				if head.stop != nil {
-					head.stop()
-				}
-				lease.release()
-				return terminal(lastErr)
-			}
-			if discardedUsage != (session.Usage{}) {
-				head.buffered = append([]port.Chunk{{Kind: port.ChunkUsage, Usage: &discardedUsage}}, head.buffered...)
-			}
-			cancel := head.cancel
-			head.cancel = func() {
-				if cancel != nil {
-					cancel()
-				}
-				r.cancel()
+			seq, committed := s.commit(ctx, p, req, head, diagnostic)
+			if !committed {
+				return s.terminal(ctx, p, req, s.lastErr)
 			}
 			transferred = true
-			if lastErr != nil {
-				p.logRecovery(ctx, req.Model, "recovered", calls, 0, r, source)
-			}
-			return p.wrap(head, diagnostic), nil
+			return seq, nil
 		}
-		if head != nil {
-			discardedUsage = discardedUsage.Add(head.discardedUsage)
-		}
-		if ctx.Err() != nil || r.expired(p.cfg.Clock()) {
-			lease.release()
-			return terminal(lastErr)
-		}
-		if dispositionOf(err) == session.RetryDispositionRetryable {
-			r.start(p.cfg.Clock(), p.cfg.RecoveryBudget)
-		}
-		if isTransientForBreaker(err) {
-			lease.finish(breakerFailure)
-		}
-		lease.release()
-		lastErr = err
-		if errors.Is(err, errFirstChunkTimeout) {
-			p.diag().Log(ctx, port.LevelDebug, "llm stream per-attempt timeout fired",
-				"per_attempt_timeout", p.cfg.PerAttemptTimeout, "attempt", calls, "max_attempts", p.cfg.MaxAttempts)
-		}
-		reason := replaySuppressedReason("")
-		switch {
-		case providerVeto(err):
-			reason = replayProviderInternalVeto
-		case dispositionOf(err) == session.RetryDispositionPermanent:
-			reason = replayPermanent
-		case dispositionOf(err) != session.RetryDispositionRetryable:
-			reason = replayUnknown
-		case !p.cfg.Classifier(err):
-			reason = replayClassifierVeto
-		}
-		if reason != "" {
-			p.logAttemptDecision(diagnostic, err, decisionTerminal, session.StreamProgressPrecommit, reason, 0)
-			return terminal(err)
-		}
-		if calls >= p.cfg.MaxAttempts {
-			p.logAttemptDecision(diagnostic, err, decisionTerminal, session.StreamProgressPrecommit, replayAttemptsExhausted, 0)
-			return terminal(&ExhaustedError{Attempts: calls, Err: classifiedProgressError(err, session.StreamProgressPrecommit), PerAttempt: p.cfg.PerAttemptTimeout})
-		}
-		now := p.cfg.Clock()
-		at, waitSource, schedulable := retryAt(err, now, p.backoffDuration(calls-1), r)
-		source = waitSource
-		// This records the genuine failure, not a fabricated budget terminal.
-		p.logAttemptDecision(diagnostic, err, decisionRetry, session.StreamProgressPrecommit, "", max(0, at.Sub(now)))
-		if !schedulable {
-			return terminal(lastErr)
-		}
-		wait := max(0, at.Sub(p.cfg.Clock()))
-		p.logRecovery(ctx, req.Model, "wait", calls, wait, r, source)
-		if err := waitRecovery(r.ctx, wait, nil); err != nil {
-			return terminal(lastErr)
+		terminal, terminalErr := s.failedAttempt(ctx, p, req, head, diagnostic, err)
+		if terminal {
+			return s.terminal(ctx, p, req, terminalErr)
 		}
 	}
 }
@@ -1194,7 +1226,7 @@ func attemptError(cause, err error) error {
 // wrap flushes tentative chunks at their semantic boundary and then relays the
 // visible stream continuation, if any. A breaker success is recorded only after
 // clean completion; a visible transient failure remains terminal and unhealthy.
-func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[port.Chunk, error] {
+func wrapAttempt(result *attemptResult, diagnostic attemptDiagnostic) iter.Seq2[port.Chunk, error] {
 	return func(yield func(port.Chunk, error) bool) {
 		defer diagnostic.lease.release()
 		if result.cancel != nil {
