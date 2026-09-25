@@ -15,7 +15,12 @@ as it arrives. Tool calls appear as compact cards; Edit and Write cards include
 their diff.
 
 Focus a tool card and press `ctrl+t` to view its complete arguments and output.
-Press `ctrl+t` again to return to the preview.
+The same control reveals retained guardrail summaries and live details for completed,
+acceptable reviews that executed the action or released the existing result. Those
+routine notices are hidden by default; guardrail findings, outages, unresolved reviews,
+and approval-related outcomes remain visible. Press `ctrl+t` again to return to the
+preview. To keep benign guardrail notices visible, configure
+[`hook_notices.show_benign`](./customization.md#show-benign-guardrail-notices).
 
 ## Attach a local file
 

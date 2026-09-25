@@ -1134,8 +1134,18 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.GuardrailReviewDetailMsg:
+		reviewID := msg.ReviewID
+		if reviewID == "" {
+			reviewID = msg.Detail.ReviewID
+		}
+		benign := m.guardrailBenign[reviewID]
+		delete(m.guardrailBenign, reviewID)
 		if msg.Err == nil {
-			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
+			if benign {
+				m.conv.addBenignGuardrailNotice(guardrailDetailNotice(msg.Detail))
+			} else {
+				m.conv.addNotice(guardrailDetailNotice(msg.Detail))
+			}
 			m.refreshView()
 		}
 		return m, nil, true
@@ -1374,7 +1384,14 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
-	m.conv.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+	benign := benignGuardrailReview(msg.Guardrail)
+	m.conv.addGuardrailHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision), benign)
+	if msg.Guardrail != nil && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
+		if m.guardrailBenign == nil {
+			m.guardrailBenign = make(map[string]bool)
+		}
+		m.guardrailBenign[msg.Guardrail.ReviewID] = benign
+	}
 	model, cmd := m.afterEvent()
 	if msg.Guardrail == nil || m.deps.Guardrails == nil {
 		return model, cmd

@@ -27,6 +27,11 @@ type clientSettings struct {
 	Keymap              map[string]string    `yaml:"keymap"`
 	StatusCustomization *statusCustomization `yaml:"status_customization"`
 	TerminalTitle       terminalTitleSettings
+	HookNotices         hookNoticeSettings
+}
+
+type hookNoticeSettings struct {
+	ShowBenign bool `yaml:"show_benign"`
 }
 
 type terminalTitleSettings struct {
@@ -57,6 +62,7 @@ type clientSettingsYAML struct {
 	Keymap              map[string]string          `yaml:"keymap"`
 	StatusCustomization *statusCustomizationYAML   `yaml:"status_customization"`
 	TerminalTitle       *terminalTitleSettingsYAML `yaml:"terminal_title"`
+	HookNotices         *hookNoticeSettings        `yaml:"hook_notices"`
 }
 
 type statusCustomizationYAML struct {
@@ -171,7 +177,11 @@ func readClientSettings() (clientSettings, error) {
 	if err != nil {
 		return clientSettings{}, fmt.Errorf("parsing %s: terminal_title.template: %w", path, err)
 	}
-	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title}, nil
+	hookNotices := hookNoticeSettings{}
+	if raw.HookNotices != nil {
+		hookNotices = *raw.HookNotices
+	}
+	return clientSettings{Keymap: raw.Keymap, StatusCustomization: status, TerminalTitle: title, HookNotices: hookNotices}, nil
 }
 
 func decodeTerminalTitle(raw *terminalTitleSettingsYAML) (terminalTitleSettings, error) {

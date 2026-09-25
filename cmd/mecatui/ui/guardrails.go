@@ -18,6 +18,13 @@ func (m Model) runGuardrails() (tea.Model, tea.Cmd) {
 	return m, client.ListGuardrailCoverageCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, m.guardrailStatusRequest, false)
 }
 
+func benignGuardrailReview(review *client.GuardrailReview) bool {
+	if review == nil || review.Inspection != "complete" || review.Assessment != "acceptable" {
+		return false
+	}
+	return review.Disposition == "execute" || review.Disposition == "release_result"
+}
+
 func guardrailDetailNotice(detail client.GuardrailReviewDetail) string {
 	parts := []string{"Guardrail detail"}
 	if detail.Concern != "" {

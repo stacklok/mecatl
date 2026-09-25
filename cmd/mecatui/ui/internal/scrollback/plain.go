@@ -3,8 +3,9 @@ package scrollback
 // NoticeCardSnapshot is the detached payload for a notice; Recover marks a
 // notice emitted while recovering a session.
 type NoticeCardSnapshot struct {
-	Text    string
-	Recover bool
+	Text            string
+	Recover         bool
+	BenignGuardrail bool
 }
 
 // Kind returns KindNotice.
@@ -31,7 +32,10 @@ func (ErrorCardSnapshot) payloadSnapshot() {}
 
 // HookCardSnapshot is the detached payload recording a hook phase, tool, and
 // decision, with optional display text.
-type HookCardSnapshot struct{ Text, Phase, Tool, Decision string }
+type HookCardSnapshot struct {
+	Text, Phase, Tool, Decision string
+	BenignGuardrail             bool
+}
 
 // Kind returns KindHook.
 func (HookCardSnapshot) Kind() Kind       { return KindHook }
@@ -53,6 +57,12 @@ func (c *Conversation) Notices() PlainCards { return PlainCards{conversation: c}
 // AddNotice appends a normal notice and returns its new, stable block ID.
 func (p PlainCards) AddNotice(text string) BlockID {
 	return p.conversation.append(NoticeCardSnapshot{Text: text})
+}
+
+// AddBenignGuardrailNotice appends retained guardrail detail that presentation
+// may hide while conversation details are collapsed.
+func (p PlainCards) AddBenignGuardrailNotice(text string) BlockID {
+	return p.conversation.append(NoticeCardSnapshot{Text: text, BenignGuardrail: true})
 }
 
 // RetractLatestNotice removes the most-recent matching notice. It is used when
@@ -93,6 +103,12 @@ func (p PlainCards) AddHook(phase, tool, decision string) BlockID {
 // AddHookText appends a hook card and returns its new, stable block ID.
 func (p PlainCards) AddHookText(text, phase, tool, decision string) BlockID {
 	return p.conversation.append(HookCardSnapshot{Text: text, Phase: phase, Tool: tool, Decision: decision})
+}
+
+// AddGuardrailHook appends a hook card with its client-only benign presentation
+// classification while retaining the complete durable hook text.
+func (p PlainCards) AddGuardrailHook(text, phase, tool, decision string, benign bool) BlockID {
+	return p.conversation.append(HookCardSnapshot{Text: text, Phase: phase, Tool: tool, Decision: decision, BenignGuardrail: benign})
 }
 
 // AddDelivery appends an unscheduled delivery and returns its new, stable block ID.

@@ -111,6 +111,13 @@ the configured checker and the actual session catalog/rule coverage; an operatio
 inspection failure is shown as an outage, never as a finding. The transient registry and
 held results disappear on run cleanup, cancellation, disconnect, shutdown, or restart.
 
+Mecatui derives presentation only from the machine review fields. A completed,
+acceptable review with disposition `execute` or `release_result` is retained but hidden
+while conversation details are collapsed. `ctrl+t` reveals those benign hook and live
+detail blocks. Every missing, unknown, unresolved, prohibited, failed, advisory, held,
+denied, warning, or approval-related outcome remains visible; checker prose never controls
+visibility.
+
 Guardrails are operator-tier configuration. The checker provider/model pair is captured
 at Build: a scalar `models.slots.guardrail` uses the deployment default provider, while
 the strict object form names both a configured provider and model selector. The same

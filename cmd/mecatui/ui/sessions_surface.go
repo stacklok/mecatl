@@ -258,7 +258,7 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
 	case client.HookMsg:
-		c.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+		c.addGuardrailHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision), benignGuardrailReview(msg.Guardrail))
 	case client.ResultMsg:
 		if msg.Stop == stopError && msg.Error != "" {
 			if msg.Permanent {
@@ -373,7 +373,7 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 		s.transcriptRend.setWidth(width)
 		s.transcriptVP.SetWidth(width)
 		s.transcriptVP.SetHeight(height)
-		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript.scrollback, false))
+		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript.scrollback, s.transcriptExpand))
 		if s.transcriptStuck {
 			s.transcriptVP.GotoBottom()
 		}

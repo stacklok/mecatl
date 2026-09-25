@@ -1561,6 +1561,13 @@ unchanged (the existing line cap applies). Everything stays fully inspectable:
 and for an MCP card it also reveals the raw `mcp__…` tool name — Edit/Write keep
 their colourised diff rendering, untouched.
 
+**Guardrail notices.** Contextual guardrail hook summaries and live review details stay
+in the conversation model. A completed acceptable `execute` or `release_result` review
+is hidden while details are collapsed; `ExpandTools` (`ctrl+t` by default) reveals it.
+All uncertain, failed, advisory, withheld, denied, warning, and approval-related reviews
+remain visible. The client can keep benign reviews visible with
+`hook_notices.show_benign: true` in its settings file.
+
 **Layout (one model).** The frame is a vertical stack of regions — header, the
 conversation body, zero or more **transient inline regions** (the slash-command
 palette, the `@`-mention menu, the queued-follow-ups card), then the input and
