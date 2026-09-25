@@ -97,7 +97,8 @@ func (g childGenerationInstructions) AssembleWithManifest(ctx context.Context) (
 		return nil, nil, err
 	}
 	context.AfterFunc(ctx, release)
-	return prompt.AssembleWithManifest(ctx, g.source)
+	// Cancellation releases the run hold, not an in-flight backend operation.
+	return g.generationInstructions.AssembleWithManifest(ctx)
 }
 
 type generationSkills struct {

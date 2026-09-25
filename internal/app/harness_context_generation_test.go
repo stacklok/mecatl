@@ -206,6 +206,74 @@ func TestChildGenerationRetainsInvalidatingSourceUntilRunEnds(t *testing.T) {
 	}
 }
 
+type blockingInvalidatingAssembler struct {
+	started, unblock chan struct{}
+	closed           *atomic.Int32
+}
+
+func (a blockingInvalidatingAssembler) Assemble(context.Context) ([]session.Message, error) {
+	close(a.started)
+	<-a.unblock
+	if a.closed.Load() != 0 {
+		return nil, errors.New("source invalidated during assembly")
+	}
+	return hcAssembler("held source").Assemble(context.Background())
+}
+
+func TestChildGenerationCancellationKeepsActiveAssembly(t *testing.T) {
+	var closed atomic.Int32
+	reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "a", Scope: HarnessSourceScopePrincipal, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+		return &hcCommands{}, func() error { closed.Add(1); return nil }, nil
+	}}
+	r, err := newHarnessCommandResolver(t.Context(), harnessKindPolicy{sources: []HarnessSourceID{"a"}, mode: harnessModeCombine}, []HarnessSourceRegistration[server.CommandSourceBinding]{reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	binding, release, err := r.Borrow(t.Context(), "parent", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := binding.(*resolvedCommandBinding).generation
+	source := blockingInvalidatingAssembler{started: make(chan struct{}), unblock: make(chan struct{}), closed: &closed}
+	child := childGenerationInstructions{generationInstructions{harnessGeneration: g, source: source}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := child.Assemble(ctx); done <- err }()
+	<-source.started
+	r.Retire("parent")
+	release()
+	r.mu.Lock()
+	beforeCancel := g.entry.refs
+	r.mu.Unlock()
+	cancel()
+	// Wait until the run-lifetime callback has released; the operation must
+	// still hold its own reference while the backend ignores cancellation.
+	var operationRefs int
+	for {
+		r.mu.Lock()
+		operationRefs = g.entry.refs
+		r.mu.Unlock()
+		if operationRefs < beforeCancel {
+			break
+		}
+		runtime.Gosched()
+	}
+	wasClosed := closed.Load()
+	close(source.unblock)
+	assemblyErr := <-done
+	if operationRefs == 0 || wasClosed != 0 || assemblyErr != nil {
+		t.Fatalf("active assembly invalidated: refs=%d closes=%d err=%v", operationRefs, wasClosed, assemblyErr)
+	}
+	for closed.Load() == 0 {
+		runtime.Gosched()
+	}
+	if closed.Load() != 1 {
+		t.Fatalf("cleanup calls=%d", closed.Load())
+	}
+}
+
 func TestHarnessResolverCancellationBeforePublicationReleasesAttempt(t *testing.T) {
 	var binds, cleanups atomic.Int32
 	reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "a", Scope: HarnessSourceScopePrincipal, Bind: func(ctx context.Context, _ HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {

@@ -2354,7 +2354,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	}
 	// A broker attachment is keyed by the canonical persisted identity. Mint and
 	// reserve generated IDs before any attachment or catalogue construction.
-	if s.cfg.MCPBroker != nil && !opts.idSet {
+	if (s.cfg.MCPBroker != nil || s.cfg.SessionContextEngine != nil) && !opts.idSet {
 		id := mintID()
 		request := newCreateRequest(placement.Ref, mode, limits, sel, profile, opts.sourceSessionID, opts)
 		// Populate the outer retryRequest too (not just the local var used for
@@ -2467,6 +2467,11 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 	var broker *localBrokerAttachment
 	var committed bool
 	var id session.SessionID
+	if s.cfg.SessionContextEngine != nil && opts.debugTargetID == "" {
+		id = mintID()
+		unlock := s.runEntryMu.lock(id)
+		defer unlock()
+	}
 	var contextPublished bool
 	defer func() {
 		if !contextPublished && id != "" && s.cfg.Commands != nil {
@@ -2484,7 +2489,9 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID, session.DebugTargetFingerprint(debugTarget), debugTarget.Owner, opts.debugMCPServers, nil)
 	} else {
 		if s.cfg.MCPBroker != nil {
-			id = mintID()
+			if id == "" {
+				id = mintID()
+			}
 			unlockBroker := s.brokerMu.lock(id)
 			defer unlockBroker()
 			broker, err = s.openBrokerAttachment(ctx, id, "", false)
@@ -2493,10 +2500,20 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			}
 			defer s.finalizeBrokerAttachment(broker, &committed)
 		}
-		if s.cfg.SessionContextEngine != nil && id == "" {
-			id = mintID()
+		acquire := s.executionFilesAcquirer(owner, placement.Ref)
+		res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker))
+		// Only this reserved, unpublished create may retry a retired attempt.
+		// Ordinary rehydration must wait for explicit owner-authorized Load.
+		if errors.Is(err, ErrCommandBindingRetired) && s.cfg.SessionContextEngine != nil {
+			if resolver, ok := s.cfg.Commands.(executionFilesCommandSourceResolver); ok {
+				err = resolver.ActivateWithExecutionFiles(ctx, id, owner.Clone(), string(profile), acquire)
+			} else if s.cfg.Commands != nil {
+				err = s.cfg.Commands.Activate(ctx, id, owner.Clone(), string(profile))
+			}
+			if err == nil {
+				res, err = s.callSessionEngine(ctx, id, owner, acquire, sel, specs, profile, workspace, mode, brokerTools(broker))
+			}
 		}
-		res, err = s.callSessionEngine(ctx, id, owner, s.executionFilesAcquirer(owner, placement.Ref), sel, specs, profile, workspace, mode, brokerTools(broker))
 	}
 	if err != nil {
 		// Factory maps an unknown/unavailable provider to ErrInvalidArgument; any
@@ -8586,6 +8603,9 @@ type CommandSourceBinding interface {
 	prompt.CommandExpander
 	prompt.CommandLister
 }
+
+// ErrCommandBindingRetired requires explicit authorized activation, never an ordinary borrow.
+var ErrCommandBindingRetired = errors.New("harness command binding is retired")
 
 // CommandSourceResolver owns per-session command source generations. Borrow
 // returns an authoritative binding plus a mandatory release function; callers

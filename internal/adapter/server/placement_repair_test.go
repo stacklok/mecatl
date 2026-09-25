@@ -82,6 +82,13 @@ func TestExecutionFilesAcquisitionIsReadOnlyAndLedgerIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
+	read, err := source.Read(t.Context(), "original.txt")
+	if err != nil || string(read) != "original" {
+		t.Fatalf("acquired source Read = %q, %v", read, err)
+	}
+	if _, _, err := source.ReadVersion(t.Context(), "original.txt"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := source.CreateFile(t.Context(), "created.txt", []byte("no")); !errors.Is(err, tool.ErrFileOperationUnsupported) {
 		t.Fatalf("CreateFile = %v", err)
 	}

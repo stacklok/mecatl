@@ -5,20 +5,24 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 func TestADR_0359_HarnessContext_Scenario3_ChildAttenuationPreserved(t *testing.T) {
+	t.Run("factory lifetime", testHarnessChildFactoryLifetime)
 	for _, profile := range []server.SessionProfile{server.ProfileDefault, server.ProfileNoFS} {
 		t.Run(string(profile), func(t *testing.T) {
 			kinds := harnessEmptyKinds()
@@ -108,6 +112,114 @@ func TestADR_0359_HarnessContext_Scenario3_ChildAttenuationPreserved(t *testing.
 			}
 			if _, err := os.Stat(filepath.Join(cfg.Workspace, "must-not-exist.txt")); !os.IsNotExist(err) {
 				t.Fatalf("uncooperative child mutated parent: %v", err)
+			}
+		})
+	}
+}
+
+func testHarnessChildFactoryLifetime(t *testing.T) {
+	for _, family := range []string{"isolated", "direct-write", "parallel", "team"} {
+		t.Run(family, func(t *testing.T) {
+			placement := harnessExecutionBinding(t, "parent", "PARENT-ACQUIRED-SOURCE", "parent-command")
+			provider := &harnessExecutionProvider{bindings: map[session.EnvironmentRef]server.PlacementBinding{placement.Ref: placement}}
+			var requests []port.LLMRequest
+			cfg := harnessExecutionConfig(t, provider, &requests)
+			resolver := &harnessCommandResolver{}
+			cfg.harnessResolver = resolver
+			built, err := buildIsolated(t, t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer built.Close()
+			parent, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithPlacementBinding(placement))
+			if err != nil {
+				t.Fatal(err)
+			}
+			binding, release, err := resolver.Borrow(t.Context(), parent.ID, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved := binding.(*resolvedCommandBinding)
+			cfg.harnessInstructions = generationInstructions{harnessGeneration: resolved.generation, source: resolved.context.harnessInstructions}
+			cfg.harnessRules = resolved.context.harnessRules
+			arrived, resume := make(chan port.LLMRequest, 2), make(chan struct{})
+			var childRequests atomic.Int32
+			llm := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+				first := childRequests.Add(1) == 1
+				arrived <- req
+				if first {
+					<-resume
+				}
+			})}, mockllm.TextTurn("child done"), mockllm.TextTurn("child read after retirement"))
+			reg := regForTest(llm, providerMock, "m")
+			var eng *agent.Engine
+			var memberClose func() error
+			switch family {
+			case "isolated":
+				eng = buildChildEngine(cfg, reg, llm, providerMock, "m", nil)
+			case "direct-write":
+				eng, _ = buildWritableSubagentEngineFactory(cfg, reg, llm, providerMock, "m")("m")
+			case "parallel":
+				eng, _ = buildParallelEngineFactory(cfg, reg, llm, providerMock, "m", nil)("m")
+			case "team":
+				member := buildMemberEngine(cfg, reg, llm, providerMock, "m", nil, nil, nil, nil, nil, false, nil, catalogAssets{}, false)(team.New("held"), agent.MemberSpec{Name: "reader"}, "")
+				eng, memberClose = member.Engine, member.Close
+				defer memberClose()
+			}
+			if eng == nil {
+				t.Fatal("factory returned nil engine")
+			}
+			for _, name := range []string{"Subagent", "Parallel", "Shell"} {
+				if eng.HasTool(name) {
+					t.Fatalf("child gained %s", name)
+				}
+			}
+			if eng.HasTool("Write") != (family == "direct-write" || family == "parallel") {
+				t.Fatal("child mutation ceiling changed")
+			}
+			childPlacement := harnessExecutionBinding(t, "child-conflict", "UNSELECTED-CHILD", "wrong-command")
+			if family == "direct-write" {
+				childPlacement = placement
+			}
+			child := session.New("held-child", session.ModeDefault, childPlacement.Ref, session.Limits{}, parent.CreatedAt)
+			run := eng.Run(t.Context(), child, childPlacement.Environment, agent.RunRequest{Text: "inspect"})
+			request := <-arrived
+			built.Service.CloseSession(parent.ID)
+			release()
+			heldRead := session.New("held-child-read", session.ModeDefault, childPlacement.Ref, session.Limits{}, parent.CreatedAt)
+			for range eng.Run(t.Context(), heldRead, childPlacement.Environment, agent.RunRequest{Text: "read after parent retirement"}).Events() {
+			}
+			close(resume)
+			for range run.Events() {
+			}
+			select {
+			case afterRetirement := <-arrived:
+				if !strings.Contains(harnessRequestText(afterRetirement), "PARENT-ACQUIRED-SOURCE") {
+					t.Fatal("actual child read lost original source after parent close")
+				}
+			default:
+				t.Fatal("actual child read failed after parent close")
+			}
+			text := harnessRequestText(request)
+			if !strings.Contains(text, "PARENT-ACQUIRED-SOURCE") || strings.Contains(text, "UNSELECTED-CHILD") {
+				t.Fatal("child retargeted source")
+			}
+			if memberClose != nil {
+				if provider.sourceCloses.Load() != 0 {
+					t.Fatal("member source closed before MemberBuild.Close")
+				}
+				if err := memberClose(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for provider.sourceCloses.Load() < 2 {
+				runtime.Gosched()
+			}
+			if provider.sourceCloses.Load() != 2 {
+				t.Fatalf("source closes=%d", provider.sourceCloses.Load())
+			}
+			if _, err := cfg.harnessInstructions.Assemble(t.Context()); err == nil {
+				t.Fatal("released generation remained readable")
 			}
 		})
 	}

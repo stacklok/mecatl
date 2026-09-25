@@ -4415,11 +4415,6 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 				}
 			}
 			binding, release, err := cfg.harnessResolver.BorrowWithExecutionFiles(ctx, id, owner, string(profile), acquire)
-			if errors.Is(err, errHarnessBindingRetired) {
-				if err = cfg.harnessResolver.ActivateWithExecutionFiles(ctx, id, owner, string(profile), acquire); err == nil {
-					binding, release, err = cfg.harnessResolver.BorrowWithExecutionFiles(ctx, id, owner, string(profile), acquire)
-				}
-			}
 			if err != nil {
 				return server.SessionEngineResult{}, err
 			}

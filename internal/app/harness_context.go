@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -719,8 +718,6 @@ func (p harnessKindPolicy) excludes(source HarnessSourceID, name string) bool {
 	return excluded
 }
 
-var errHarnessBindingRetired = errors.New("harness command binding is retired")
-
 type commandBindingEntry struct {
 	principal *session.Principal
 	profile   string
@@ -1000,7 +997,7 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 		}
 		if _, retired := r.retired[id]; retired && !activate {
 			r.mu.Unlock()
-			return nil, nil, errHarnessBindingRetired
+			return nil, nil, server.ErrCommandBindingRetired
 		}
 		if entry := r.entries[id]; entry != nil {
 			if !sameHarnessPrincipal(entry.principal, principal) || entry.profile != profile {
