@@ -59,7 +59,12 @@ func (c *Client) attachResponse(r *brokerv1.AttachResponse) (mcpbroker.Attachmen
 	if r.GetHandle() == "" || r.GetBinding() == "" || r.GetBrokerIncarnation() == "" || !validAttachOutcome(r.GetOutcome()) {
 		return nil, "", errors.New("mcpbrokergrpc: malformed attach response")
 	}
-	base := &clientSessionHandle{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), instanceID: r.GetBrokerIncarnation()}
+	tools, e := remoteTools(c, r)
+	if e != nil {
+		c.discardAttachResponse(r)
+		return nil, "", e
+	}
+	base := &clientSessionHandle{client: c, handle: r.GetHandle(), binding: session.ExternalBinding(r.GetBinding()), instanceID: r.GetBrokerIncarnation(), tools: tools}
 	c.mu.Lock()
 	current := c.instanceID
 	if current != "" && current != r.GetBrokerIncarnation() {

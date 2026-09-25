@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BrokerService_Attach_FullMethodName = "/mecatl.broker.v1.BrokerService/Attach"
-	BrokerService_Commit_FullMethodName = "/mecatl.broker.v1.BrokerService/Commit"
-	BrokerService_Abort_FullMethodName  = "/mecatl.broker.v1.BrokerService/Abort"
-	BrokerService_Close_FullMethodName  = "/mecatl.broker.v1.BrokerService/Close"
-	BrokerService_Delete_FullMethodName = "/mecatl.broker.v1.BrokerService/Delete"
+	BrokerService_Attach_FullMethodName  = "/mecatl.broker.v1.BrokerService/Attach"
+	BrokerService_Commit_FullMethodName  = "/mecatl.broker.v1.BrokerService/Commit"
+	BrokerService_Abort_FullMethodName   = "/mecatl.broker.v1.BrokerService/Abort"
+	BrokerService_Close_FullMethodName   = "/mecatl.broker.v1.BrokerService/Close"
+	BrokerService_Delete_FullMethodName  = "/mecatl.broker.v1.BrokerService/Delete"
+	BrokerService_Execute_FullMethodName = "/mecatl.broker.v1.BrokerService/Execute"
 )
 
 // BrokerServiceClient is the client API for BrokerService service.
@@ -51,6 +52,11 @@ type BrokerServiceClient interface {
 	// Delete removes only the exact logical session and binding in the current incarnation.
 	// It is potentially ambiguous after transport loss and must not be blindly retried.
 	Delete(ctx context.Context, in *DeleteRequest, opts ...grpc.CallOption) (*DeleteResponse, error)
+	// Execute dispatches one descriptor-advertised invocation. The attachment and
+	// incarnation must be current. An identical call_id/invocation joins or replays only
+	// within its receipt lease; changed content fails before dispatch. After lost transport,
+	// retry only with exact structured DISPATCH_NOT_STARTED proof for this method.
+	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
 }
 
 type brokerServiceClient struct {
@@ -111,6 +117,16 @@ func (c *brokerServiceClient) Delete(ctx context.Context, in *DeleteRequest, opt
 	return out, nil
 }
 
+func (c *brokerServiceClient) Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteResponse)
+	err := c.cc.Invoke(ctx, BrokerService_Execute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BrokerServiceServer is the server API for BrokerService service.
 // All implementations must embed UnimplementedBrokerServiceServer
 // for forward compatibility.
@@ -136,6 +152,11 @@ type BrokerServiceServer interface {
 	// Delete removes only the exact logical session and binding in the current incarnation.
 	// It is potentially ambiguous after transport loss and must not be blindly retried.
 	Delete(context.Context, *DeleteRequest) (*DeleteResponse, error)
+	// Execute dispatches one descriptor-advertised invocation. The attachment and
+	// incarnation must be current. An identical call_id/invocation joins or replays only
+	// within its receipt lease; changed content fails before dispatch. After lost transport,
+	// retry only with exact structured DISPATCH_NOT_STARTED proof for this method.
+	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
 	mustEmbedUnimplementedBrokerServiceServer()
 }
 
@@ -160,6 +181,9 @@ func (UnimplementedBrokerServiceServer) Close(context.Context, *CloseRequest) (*
 }
 func (UnimplementedBrokerServiceServer) Delete(context.Context, *DeleteRequest) (*DeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedBrokerServiceServer) Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Execute not implemented")
 }
 func (UnimplementedBrokerServiceServer) mustEmbedUnimplementedBrokerServiceServer() {}
 func (UnimplementedBrokerServiceServer) testEmbeddedByValue()                       {}
@@ -272,6 +296,24 @@ func _BrokerService_Delete_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BrokerService_Execute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).Execute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_Execute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).Execute(ctx, req.(*ExecuteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BrokerService_ServiceDesc is the grpc.ServiceDesc for BrokerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -298,6 +340,10 @@ var BrokerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _BrokerService_Delete_Handler,
+		},
+		{
+			MethodName: "Execute",
+			Handler:    _BrokerService_Execute_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

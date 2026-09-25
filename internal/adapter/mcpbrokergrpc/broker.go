@@ -15,8 +15,11 @@ import (
 )
 
 const (
-	defaultMaxHandles        = 128
-	defaultMaxActiveExecutes = 64
+	defaultMaxHandles         = 128
+	defaultMaxActiveExecutes  = 64
+	maxTerminalReceiptBytes   = 1024
+	ambiguousOutcomeMessage   = "remote tool outcome is unknown because the broker response was lost; the operation may already have completed. Do not automatically repeat it. Reconcile through a safe status/read path first; if unavailable, report the uncertainty and seek operator direction."
+	sessionUnavailableMessage = "tool temporarily unavailable"
 )
 
 // Config bounds transport calls and server-side session-handle retention.

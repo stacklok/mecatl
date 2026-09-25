@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	mcpadapter "github.com/stacklok/mecatl/internal/adapter/mcp"
 	"github.com/stacklok/mecatl/internal/adapter/mcp/jq"
+	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
 type callMcpWithQueryArgs struct {
@@ -29,6 +30,22 @@ var _ tool.AuthorizationRequester = (*attachmentQueryTool)(nil)
 
 func (*attachmentQueryTool) Spec() tool.ToolSpec { return mcpadapter.CallMcpWithQuerySpec() }
 func (*attachmentQueryTool) ReadOnly() bool      { return true }
+
+func (t *attachmentQueryTool) ExecutionMetadata(call session.ToolCall) (contract.ExecutionMetadata, bool) {
+	native, filter, err := t.target(call)
+	if err != nil {
+		return contract.ExecutionMetadata{}, false
+	}
+	target, err := t.native(context.Background(), native, filter)
+	if err != nil {
+		return contract.ExecutionMetadata{}, false
+	}
+	metadata, ok := target.(contract.ExecutionMetadataProvider)
+	if !ok {
+		return contract.ExecutionMetadata{}, false
+	}
+	return metadata.ExecutionMetadata(native)
+}
 
 func (*attachmentQueryTool) target(call session.ToolCall) (session.ToolCall, string, error) {
 	var args callMcpWithQueryArgs

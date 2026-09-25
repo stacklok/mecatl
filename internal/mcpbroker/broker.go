@@ -55,6 +55,31 @@ func ValidLogicalSessionID(id session.SessionID) bool {
 	return true
 }
 
+// ExecutionMetadata is private execution provenance for broker diagnostics. It
+// deliberately excludes URLs, scopes, credentials, and request data.
+type ExecutionMetadata struct {
+	Backend                string
+	OutboundCredentialKind OutboundCredentialKind
+}
+
+// OutboundCredentialKind is the closed credential-custody vocabulary.
+type OutboundCredentialKind string
+
+// Outbound credential kinds are diagnostic-only labels, not credentials.
+const (
+	OutboundCredentialNone OutboundCredentialKind = "none"
+	//nolint:gosec // Diagnostic label, not a hardcoded credential.
+	OutboundCredentialRouteOAuth OutboundCredentialKind = "route_oauth"
+	//nolint:gosec // Diagnostic label, not a hardcoded credential.
+	OutboundCredentialBrokerOAuth OutboundCredentialKind = "broker_oauth"
+)
+
+// ExecutionMetadataProvider is optional. Absence is safe and means that a
+// transport must log no backend or outbound credential attribution.
+type ExecutionMetadataProvider interface {
+	ExecutionMetadata(session.ToolCall) (ExecutionMetadata, bool)
+}
+
 // AttachOutcome is the closed result vocabulary for AttachSession.
 type AttachOutcome string
 
@@ -246,6 +271,14 @@ type frozenTool struct {
 
 func (t *frozenTool) Spec() tool.ToolSpec { return cloneToolSpec(t.spec) }
 
+func (t *frozenTool) ExecutionMetadata(call session.ToolCall) (ExecutionMetadata, bool) {
+	metadata, ok := t.Tool.(ExecutionMetadataProvider)
+	if !ok {
+		return ExecutionMetadata{}, false
+	}
+	return metadata.ExecutionMetadata(call)
+}
+
 // Advertised forwards to the wrapped tool's own Disclosable projection when it
 // has one, so the freeze boundary does not silently widen what the model sees
 // (Catalog.AdvertisedSpecs falls back to Spec() for a non-Disclosable tool,
@@ -263,6 +296,14 @@ type frozenAuthorizationTool struct {
 }
 
 func (t *frozenAuthorizationTool) Spec() tool.ToolSpec { return cloneToolSpec(t.spec) }
+
+func (t *frozenAuthorizationTool) ExecutionMetadata(call session.ToolCall) (ExecutionMetadata, bool) {
+	metadata, ok := t.AuthorizationRequester.(ExecutionMetadataProvider)
+	if !ok {
+		return ExecutionMetadata{}, false
+	}
+	return metadata.ExecutionMetadata(call)
+}
 
 func (t *frozenAuthorizationTool) Advertised() tool.ToolSpec {
 	if d, ok := t.AuthorizationRequester.(tool.Disclosable); ok {

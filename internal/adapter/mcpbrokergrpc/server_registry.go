@@ -2,6 +2,7 @@ package mcpbrokergrpc
 
 import (
 	"context"
+	"crypto/sha256"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -9,6 +10,7 @@ import (
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -21,6 +23,19 @@ const (
 	lifecycleAbort
 	lifecycleClose
 )
+
+// executeReceipt lets retries of the same call join its execution or replay its
+// result rather than dispatching the tool again. Authorization may reserve one
+// before Execute arrives. Server.mu protects updates; closing done publishes the
+// immutable response and err to waiters.
+type executeReceipt struct {
+	digest   [sha256.Size]byte         // Detects reuse of a call ID with different invocation content.
+	bytes    int                       // Reserved or retained bytes charged to the handle's budget.
+	started  bool                      // Execute has claimed the receipt, even if capacity later rejects it.
+	done     chan struct{}             // Closed when the terminal response or error is available.
+	response *brokerv1.ExecuteResponse // Retained wire result, if execution produced one.
+	err      error                     // Retained RPC error, if the invocation failed at the transport layer.
+}
 
 // sessionOwner keeps a logical session bound to the same authenticated workload
 // across handle closure and reattachment. It is not the logical session itself.
@@ -42,17 +57,20 @@ type sessionOwner struct {
 // Server.mu protects mutable fields. Terminal entries remain in handles until
 // expiry so repeated Close or Abort calls can recover the recorded outcome.
 type serverHandle struct {
-	sessionHandle   mcpbroker.Attachment   // Underlying broker session handle, not an MCP network connection.
-	principal       *session.Principal     // Caller identity bound to this handle; nil for direct test usage.
-	logicalID       session.SessionID      // Logical session shared with other session handles.
-	owner           *sessionOwner          // Exact ownership entry charged by this handle.
-	binding         string                 // Opaque identity of the exact logical state, used for conditional deletion.
-	active          int                    // In-flight operations that keep cleanup from reclaiming the handle.
-	expiresAt       time.Time              // Absolute handle expiry set at Attach; use does not renew it.
-	changed         chan struct{}          // Closed and replaced to wake lifecycle waiters when state changes.
-	running         lifecycleOperation     // Close or Abort currently invoking the underlying broker.
-	terminal        lifecycleOperation     // Successfully settled Close or Abort, if any.
-	terminalOutcome mcpbroker.CloseOutcome // Outcome replayed to retries of the same terminal operation.
+	sessionHandle   mcpbroker.Attachment                   // Underlying broker session handle, not an MCP network connection.
+	principal       *session.Principal                     // Caller identity bound to this handle; nil for direct test usage.
+	logicalID       session.SessionID                      // Logical session shared with other session handles.
+	owner           *sessionOwner                          // Exact ownership entry charged by this handle.
+	binding         string                                 // Opaque identity of the exact logical state, used for conditional deletion.
+	tools           map[string]tool.Tool                   // Executable registry, replaced after successful workspace enrollment.
+	active          int                                    // In-flight operations that keep cleanup from reclaiming the handle.
+	expiresAt       time.Time                              // Absolute handle expiry set at Attach; use does not renew it.
+	changed         chan struct{}                          // Closed and replaced to wake lifecycle waiters when state changes.
+	receipts        map[session.ToolCallID]*executeReceipt // Invocation reservations and retained execution results.
+	receiptBytes    int                                    // Total bytes charged to receipts for this handle.
+	running         lifecycleOperation                     // Close or Abort currently invoking the underlying broker.
+	terminal        lifecycleOperation                     // Successfully settled Close or Abort, if any.
+	terminalOutcome mcpbroker.CloseOutcome                 // Outcome replayed to retries of the same terminal operation.
 }
 
 // bindSession reserves ownership while Attach calls the backing service without
@@ -240,6 +258,7 @@ func (s *Server) get(ctx context.Context, instanceID, handle string) (*serverHan
 	return a, func() {
 		s.mu.Lock()
 		a.active--
+		s.releaseClosedReceiptsLocked(a)
 		signalHandle(a)
 		s.mu.Unlock()
 	}, nil
@@ -319,6 +338,17 @@ func releaseOwnerHandleLocked(owner *sessionOwner) {
 	owner.handles--
 }
 
+func releaseReceiptsLocked(handle *serverHandle) {
+	clear(handle.receipts)
+	handle.receiptBytes = 0
+}
+
+func (s *Server) releaseClosedReceiptsLocked(handle *serverHandle) {
+	if s.closed && handle.active == 0 {
+		releaseReceiptsLocked(handle)
+	}
+}
+
 // finishLifecycle releases an attempt's active/control slots and wakes waiters.
 // A terminal attempt retains its outcome for replay; a nonterminal failure leaves
 // the handle open for another attempt.
@@ -328,6 +358,7 @@ func (s *Server) finishLifecycle(a *serverHandle, operation lifecycleOperation, 
 		releaseOwnerHandleLocked(a.owner)
 	}
 	a.active--
+	s.releaseClosedReceiptsLocked(a)
 	if terminal {
 		a.terminal = operation
 		a.terminalOutcome = outcome
@@ -361,6 +392,7 @@ func (s *Server) sweep() {
 			var retirements []ownerRetirement
 			for id, handle := range s.handles {
 				if handle.active == 0 && !now.Before(handle.expiresAt) {
+					releaseReceiptsLocked(handle)
 					delete(s.handles, id)
 					if handle.terminal == lifecycleNone {
 						releaseOwnerHandleLocked(handle.owner)
