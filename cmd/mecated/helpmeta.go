@@ -165,6 +165,7 @@ var flagMetaByFlag = map[string]flagMeta{
 
 	// ── LLM resilience (both) ────────────────────────────────────────────
 	"llm-max-attempts":        {group: groupLLMResilience, common: false, acp: acpInclude},
+	"llm-recovery-budget":     {group: groupLLMResilience, common: false, acp: acpInclude},
 	"llm-per-attempt-timeout": {group: groupLLMResilience, common: false, acp: acpInclude},
 	"llm-stream-idle-timeout": {group: groupLLMResilience, common: false, acp: acpInclude},
 	"llm-breaker-threshold":   {group: groupLLMResilience, common: false, acp: acpInclude},

@@ -1733,14 +1733,6 @@ func (m Model) applyResult(msg client.ResultMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("retry stopped before the model was called — adjust configuration and use /retry")
 		return m, tea.Batch(m.refreshCmd(), m.retryPendingModeCmd(), m.armLiveFeed())
 	}
-	if msg.FailedStepRetryEligible() && !m.failedStepRetryTried {
-		// NOT a genuine end: an automatic retry run starts now, so no Superset
-		// Stop. The retry's turn.start re-Starts (deduped, still busy), and the
-		// eventual real terminal fires Stop below.
-		m.failedStepRetryTried = true
-		rm, retryCmd := m.startFailedStepRetry()
-		return rm, tea.Batch(m.refreshCmd(), retryCmd, m.armLiveFeed())
-	}
 	// Every remaining path is a genuine run terminal that returns to idle.
 	m.notifyHookStop(msg)
 	if msg.Stop == stopError && msg.RetryDispositionPresent && msg.RetryDisposition == client.RetryDispositionRetryable {

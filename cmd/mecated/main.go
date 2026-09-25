@@ -159,6 +159,7 @@ type config struct {
 
 	// LLM resilience knobs (see package internal/adapter/llmresilience).
 	llmMaxAttempts       int
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	llmBreakerThreshold  int
@@ -1185,6 +1186,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		Tokenizer:                     cfg.tokenizer,
 		ContextWindowOverride:         cfg.contextWindowOverride,
 		LLMMaxAttempts:                cfg.llmMaxAttempts,
+		LLMRecoveryBudget:             cfg.llmRecoveryBudget,
 		LLMPerAttemptTimeout:          cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:          cfg.llmStreamIdleTimeout,
 		LLMBreakerThreshold:           cfg.llmBreakerThreshold,
@@ -1613,6 +1615,12 @@ func validateEffectiveConfig(cfg config) error {
 	// or non-finite value is an operator misconfiguration. Reject before the
 	// server is constructed so a malformed file or CLI value never reaches the
 	// rate limiter.
+	if cfg.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if cfg.cliExplicit["llm-max-attempts"] && cfg.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
+	}
 	if cfg.rateLimit < 0 || math.IsNaN(cfg.rateLimit) || math.IsInf(cfg.rateLimit, 0) {
 		return fmt.Errorf("rate_limit %v is invalid: must be >= 0 and finite (0 disables rate limiting)", cfg.rateLimit)
 	}
@@ -1698,7 +1706,8 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.tokenizer, "tokenizer", "heuristic", "token counter for the compaction trigger: \"heuristic\" (default, dependency-free) or \"tiktoken\" (offline tiktoken vocab)")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens for compaction and the client context meter. Default 0 uses the configured, reported, cataloged, or 128k value.")
 
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "max LLM stream-establish attempts (initial call plus retries)")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "max LLM stream-establish attempts (initial call plus retries)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "timeout for connecting to an LLM stream and receiving its first chunk. It does not interrupt an active stream. Set 0 to disable.")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "max idle gap between LLM stream chunks after the first chunk; a longer stall terminates the turn (0 disables)")
 	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "consecutive LLM failures that open the circuit breaker (0 disables)")
