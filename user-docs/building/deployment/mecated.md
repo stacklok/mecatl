@@ -122,7 +122,8 @@ A slightly more configured invocation for unattended local operation:
 export MECATL_AUTH_TOKEN="$(cat ~/.mecatl/token)"
 mecated serve \
   --store-dir ~/.local/share/mecatl/sessions \
-  --posture auto
+  --permission-mode auto \
+  --guardrails-model <MODEL>
 ```
 
 `--log-level` accepts `debug`, `info` (default), `warn`, or `error`. Startup
@@ -131,8 +132,9 @@ logs the binary version with `msg="mecated starting"`.
 `--store-dir` enables local JSONL persistence. The path and its ancestors must
 be physical directories, not symlinks. On macOS, use `/private/...` instead of a
 path through the `/var` symlink. `--auth-token` requires the token on every
-request and can also read `MECATL_AUTH_TOKEN`. `--posture auto` allows
-unattended runs while retaining child prompt-injection protections.
+request and can also read `MECATL_AUTH_TOKEN`. `--permission-mode auto` allows
+unattended runs while retaining child prompt-injection protections. It refuses
+to start without a guardrails checker unless you pass `--guardrails off`.
 
 Before binding a non-loopback address, add TLS and caller authentication. See
 [The trust model](#the-trust-model).
@@ -383,26 +385,33 @@ For provider selection, protocol paths, independent catalog status, and
 model-routing troubleshooting, see
 [Choose models and providers](/features/choose-models.md#set-up-a-local-provider).
 
-### Posture
+### Permission mode
 
-|Flag|Notes|
-|-|-|
-|`--posture strict`|Default. Every mutating call asks for approval|
-|`--posture trusted`|Honor a project's ALLOW rules (alias: `--trust-project`)|
-|`--posture auto`|Allow unattended calls while keeping child injection defense on|
-|`--posture yolo`|Also disable child injection defense. Isolated single-tenant only. Refused as root without `MECATL_SANDBOX=1`|
+`--permission-mode` defaults to `default`. It accepts `plan`, `default`,
+`accept-edits`, `trusted`, `trusted-accept-edits`, `auto`, or `yolo`, and it
+sets the process-wide posture and the mode new sessions start in. The
+operator-global `settings.yaml` `permissionMode:` key sets the same value; the
+flag outranks it. See
+[Choose a permission mode](/features/permissions-and-posture.md#choose-a-permission-mode)
+for what each mode allows.
 
-On a **headless** root (`--headless`), posture never raises `TrustProject`.
-Explicit `--trust-project`, `trustedWorkspaces:`, or undrifted remembered trust
-admits BOTH repo steering and the read-only child shell. Without a trust source,
-`--posture auto` keeps its approvals but gets neither because `.git` is not
-vouched. See
-[Permissions and posture](/features/permissions-and-posture.md#project-trust)
-for the trust sources and headless behavior.
+`mecated` refuses to start in two cases:
 
-See [Permissions & guardrails](/building/what-you-get/permissions.md) for the
-full rule engine. Posture is read from the operator-global `settings.yaml`
-(`posture:` key) and out-ranked by the CLI flag when both are set.
+- `auto` or `yolo` with no guardrails checker. Pass `--guardrails-model`, bind
+  the `guardrail` model slot, or pass `--guardrails off`.
+- `trusted` or `trusted-accept-edits` on a `--headless` root with no trust
+  source. Pass `--trust-project` or add the workspace to `trustedWorkspaces:`.
+
+On a headless root, `auto` and `yolo` start without a trust source but load no
+project steering and give read-only subagents no Shell, because `.git` is not
+vouched. Headless `auto` and `yolo` also turn on the subagent ask reviewer; pass
+`--subagent-ask-reviewer off` to keep it off. See
+[Subagents under auto](/features/permissions-and-posture.md#subagents-under-auto).
+`auto` and `yolo` are refused as root without `MECATL_SANDBOX=1`.
+
+`--posture`, `--yolo`, and the `posture:` key are deprecated aliases that log a
+warning. See [Permissions & guardrails](/building/what-you-get/permissions.md)
+for the full rule engine.
 
 ### Guardrails
 
