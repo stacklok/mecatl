@@ -248164,6 +248164,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790339583838,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7e2718feb93ede5c94ccb78915de2c4a5bf0e0e1",
+          "message": "feat(studio): align chat transcript and composer (#1886)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T14:37:13+02:00",
+          "tree_id": "e1012c38e4e3e229f438f4def0c8d838152cc0ca",
+          "url": "https://github.com/stacklok/mecatl/commit/7e2718feb93ede5c94ccb78915de2c4a5bf0e0e1"
+        },
+        "date": 1790340557640,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -360506,6 +360540,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790340554485,
+  "lastUpdate": 1790340558871,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
