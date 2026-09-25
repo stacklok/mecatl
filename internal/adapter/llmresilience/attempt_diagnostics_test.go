@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"iter"
 	"net"
 	"strings"
 	"syscall"
@@ -54,6 +56,227 @@ func requireDecisionFields(t *testing.T, record diagRecord, want map[string]any)
 		if got := argValue(record.args, forbidden); got != nil {
 			t.Errorf("forbidden %s field = %#v", forbidden, got)
 		}
+	}
+}
+
+type structuralAttemptProvider struct{ calls int }
+
+func (*structuralAttemptProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *structuralAttemptProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.calls++
+	call := p.calls
+	return func(yield func(port.Chunk, error) bool) {
+		if call == 1 {
+			terminal := false
+			port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: "stream_error"})
+			yield(port.Chunk{}, io.ErrUnexpectedEOF)
+			return
+		}
+		terminal := true
+		port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: "complete"})
+		yield(port.Chunk{Kind: port.ChunkText, Text: "ok"}, nil)
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+	}, nil
+}
+
+// deferredObserveProvider yields one visible chunk BEFORE reporting any
+// structural evidence, then reports the terminal observation only when
+// yielding its final chunk — mirroring a real adapter that cannot know the
+// stream's structural outcome until the provider's own terminal marker
+// arrives. Used to prove a chunk is observable while structural evidence
+// remains unfinalized (ADR 0357 AC1.2).
+type deferredObserveProvider struct{}
+
+func (*deferredObserveProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (*deferredObserveProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	return func(yield func(port.Chunk, error) bool) {
+		if !yield(port.Chunk{Kind: port.ChunkText, Text: "partial"}, nil) {
+			return
+		}
+		terminal := true
+		port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: "complete"})
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+	}, nil
+}
+
+// outcomeReportingProvider yields one visible chunk, reports the given
+// structural evidence, then ends the attempt with err.
+type outcomeReportingProvider struct {
+	terminal bool
+	outcome  string
+	err      error
+}
+
+func (*outcomeReportingProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *outcomeReportingProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	return func(yield func(port.Chunk, error) bool) {
+		terminal := p.terminal
+		port.ObserveAttempt(ctx, session.NetworkAttemptPayload{ProviderTerminalObserved: &terminal, StreamOutcome: p.outcome})
+		if !yield(port.Chunk{Kind: port.ChunkText, Text: "partial"}, nil) {
+			return
+		}
+		yield(port.Chunk{}, p.err)
+	}, nil
+}
+
+// TestADR_0357_Scenario1_PreservesStreaming proves AC1.2: the first model
+// chunk is observable while the fixture source remains open (no
+// whole-response buffering), and structural evidence is finalized only at
+// attempt termination.
+func TestADR_0357_Scenario1_PreservesStreaming(t *testing.T) {
+	var observations []session.NetworkAttemptPayload
+	ctx := port.WithAttemptObserver(context.Background(), func(row session.NetworkAttemptPayload) {
+		observations = append(observations, row)
+	})
+	seq, err := Wrap(&deferredObserveProvider{}, Config{MaxAttempts: 1}).Stream(ctx, port.LLMRequest{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text string
+	sawTextBeforeFinalization := false
+	for c, streamErr := range seq {
+		if streamErr != nil {
+			t.Fatal(streamErr)
+		}
+		if c.Kind == port.ChunkText {
+			text += c.Text
+			sawTextBeforeFinalization = len(observations) == 0
+		}
+	}
+	if text != "partial" {
+		t.Fatalf("visible text = %q", text)
+	}
+	if !sawTextBeforeFinalization {
+		t.Fatal("first chunk was not observable before structural evidence was finalized")
+	}
+	if len(observations) != 1 || observations[0].StreamOutcome != "complete" ||
+		observations[0].ProviderTerminalObserved == nil || !*observations[0].ProviderTerminalObserved {
+		t.Fatalf("structural evidence finalized at attempt termination = %+v", observations)
+	}
+}
+
+// TestADR_0357_Scenario2_IncompleteErrorCancelled proves AC2.1: truncated,
+// errored, and cancelled attempts produce the approved closed outcomes with
+// ProviderTerminalObserved=false when the adapter determines no recognized
+// terminal semantic was accepted.
+func TestADR_0357_Scenario2_IncompleteErrorCancelled(t *testing.T) {
+	tests := []struct {
+		name    string
+		outcome string
+		err     error
+	}{
+		{name: "truncated", outcome: "incomplete", err: errors.New("truncated mid-stream")},
+		{name: "errored", outcome: "stream_error", err: errors.New("stream broke")},
+		{name: "cancelled", outcome: "cancelled", err: context.Canceled},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &outcomeReportingProvider{terminal: false, outcome: test.outcome, err: test.err}
+			var observations []session.NetworkAttemptPayload
+			ctx := port.WithAttemptObserver(context.Background(), func(row session.NetworkAttemptPayload) {
+				observations = append(observations, row)
+			})
+			seq, err := Wrap(provider, Config{MaxAttempts: 1}).Stream(ctx, port.LLMRequest{Model: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = drain(t, seq)
+			if len(observations) != 1 {
+				t.Fatalf("observations = %d, want exactly one final row: %+v", len(observations), observations)
+			}
+			got := observations[0]
+			if got.StreamOutcome != test.outcome {
+				t.Fatalf("stream outcome = %q, want %q", got.StreamOutcome, test.outcome)
+			}
+			if got.ProviderTerminalObserved == nil || *got.ProviderTerminalObserved {
+				t.Fatalf("provider_terminal_observed = %v, want explicit false", got.ProviderTerminalObserved)
+			}
+		})
+	}
+}
+
+// TestADR_0357_Scenario2_PreStreamFailureEvidence proves AC2.3: a pre-stream
+// establishment failure retains the existing failure evidence and does not
+// receive a fabricated structural completion summary.
+func TestADR_0357_Scenario2_PreStreamFailureEvidence(t *testing.T) {
+	var observations []session.NetworkAttemptPayload
+	ctx := port.WithAttemptObserver(context.Background(), func(row session.NetworkAttemptPayload) {
+		observations = append(observations, row)
+	})
+	_, err := Wrap(&fakeProvider{steps: []step{{outerErr: connectionFailure()}}}, Config{MaxAttempts: 1}).
+		Stream(ctx, port.LLMRequest{Model: "test"})
+	if err == nil {
+		t.Fatal("Stream error = nil, want pre-stream establishment failure")
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %d, want 1: %+v", len(observations), observations)
+	}
+	got := observations[0]
+	if got.StreamOutcome != "" || got.ProviderTerminalObserved != nil {
+		t.Fatalf("pre-stream failure fabricated structural evidence = %+v", got)
+	}
+	if got.Decision != "terminal" || got.FailureClass != "connect" {
+		t.Fatalf("pre-stream failure lost existing failure evidence = %+v", got)
+	}
+}
+
+// TestADR_0357_Scenario3_ObservationLifecycle proves AC3.2: the resilience
+// wrapper emits at most one final structural summary for each outer
+// attempt/decision slot. This is the regression test for the double-report
+// bug: an ordinary consumer that BREAKS its range loop on a mid-stream error
+// used to receive two terminal rows for the one outer attempt (logMidStreamError
+// reporting it once, wrap's !consumed branch reporting it again).
+func TestADR_0357_Scenario3_ObservationLifecycle(t *testing.T) {
+	provider := &outcomeReportingProvider{terminal: false, outcome: "stream_error", err: errors.New("boom")}
+	var observations []session.NetworkAttemptPayload
+	ctx := port.WithAttemptObserver(context.Background(), func(row session.NetworkAttemptPayload) {
+		observations = append(observations, row)
+	})
+	seq, err := Wrap(provider, Config{MaxAttempts: 1}).Stream(ctx, port.LLMRequest{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, streamErr := range seq {
+		if streamErr != nil {
+			break
+		}
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %d, want at most one final structural summary per outer attempt: %+v", len(observations), observations)
+	}
+}
+
+func TestADR_0357_Scenario3_RetryCorrelation(t *testing.T) {
+	provider := &structuralAttemptProvider{}
+	var observations []session.NetworkAttemptPayload
+	ctx := port.WithAttemptObserver(context.Background(), func(row session.NetworkAttemptPayload) {
+		observations = append(observations, row)
+	})
+	seq, err := Wrap(provider, Config{MaxAttempts: 2}).Stream(ctx, port.LLMRequest{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := drain(t, seq); err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("observations = %d, want one final row per outer attempt", len(observations))
+	}
+	if observations[0].Attempt != 1 || observations[0].Decision != "retry" || observations[0].StreamOutcome != "stream_error" ||
+		observations[1].Attempt != 2 || observations[1].Decision != "terminal" || observations[1].StreamOutcome != "complete" {
+		t.Fatalf("retry observations = %+v", observations)
+	}
+	if observations[1].ProviderTerminalObserved == nil || !*observations[1].ProviderTerminalObserved {
+		t.Fatalf("successful terminal evidence = %+v", observations[1])
 	}
 }
 
@@ -121,8 +344,8 @@ func TestAttemptDecisionRetryFieldsElapsedMetadataAndSession(t *testing.T) {
 			t.Fatalf("diagnostic leaked producer token %q: %q", secret, rendered)
 		}
 	}
-	if len(observations) != 1 {
-		t.Fatalf("attempt observations = %d, want 1", len(observations))
+	if len(observations) != 2 {
+		t.Fatalf("attempt observations = %d, want retry and successful final rows", len(observations))
 	}
 	observation := observations[0]
 	if observation.SessionID != "session-409" || observation.RunSerial != 17 || observation.Turn != 3 ||
@@ -130,6 +353,9 @@ func TestAttemptDecisionRetryFieldsElapsedMetadataAndSession(t *testing.T) {
 		observation.Decision != "retry" || observation.FailureClass != "connect" || observation.HTTPStatus != 503 ||
 		observation.InBandStatus != 429 || observation.CorrelationKind != "request" || observation.CorrelationDigest != wantDigest {
 		t.Fatalf("typed observation = %+v", observation)
+	}
+	if final := observations[1]; final.Attempt != 2 || final.StreamOutcome != "unavailable" || final.ProviderTerminalObserved != nil {
+		t.Fatalf("successful final observation = %+v", final)
 	}
 	marshaled, err := json.Marshal(observation)
 	if err != nil {

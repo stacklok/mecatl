@@ -623,22 +623,24 @@ const (
 // domain-separated SHA-256 digest, never a raw provider correlation value. No
 // field may contain raw errors or arbitrary transport data.
 type NetworkAttemptPayload struct {
-	SessionID         SessionID `json:"session_id"`
-	RunSerial         int64     `json:"run_serial"`
-	Turn              int       `json:"turn"`
-	Attempt           int       `json:"attempt"`
-	MaxAttempts       int       `json:"max_attempts"`
-	ElapsedMs         int64     `json:"elapsed_ms"`
-	RetryDisposition  string    `json:"retry_disposition"`
-	StreamProgress    string    `json:"stream_progress"`
-	Decision          string    `json:"decision"`
-	SuppressionReason string    `json:"suppression_reason,omitempty"`
-	BackoffMs         int64     `json:"backoff_ms"`
-	FailureClass      string    `json:"failure_class"`
-	HTTPStatus        int       `json:"http_status,omitempty"`
-	InBandStatus      int       `json:"in_band_status,omitempty"`
-	CorrelationKind   string    `json:"correlation_kind,omitempty"`
-	CorrelationDigest string    `json:"correlation_digest,omitempty"`
+	SessionID                SessionID `json:"session_id"`
+	RunSerial                int64     `json:"run_serial"`
+	Turn                     int       `json:"turn"`
+	Attempt                  int       `json:"attempt"`
+	MaxAttempts              int       `json:"max_attempts"`
+	ElapsedMs                int64     `json:"elapsed_ms"`
+	RetryDisposition         string    `json:"retry_disposition"`
+	StreamProgress           string    `json:"stream_progress"`
+	Decision                 string    `json:"decision"`
+	SuppressionReason        string    `json:"suppression_reason,omitempty"`
+	BackoffMs                int64     `json:"backoff_ms"`
+	FailureClass             string    `json:"failure_class"`
+	HTTPStatus               int       `json:"http_status,omitempty"`
+	InBandStatus             int       `json:"in_band_status,omitempty"`
+	CorrelationKind          string    `json:"correlation_kind,omitempty"`
+	CorrelationDigest        string    `json:"correlation_digest,omitempty"`
+	ProviderTerminalObserved *bool     `json:"provider_terminal_observed,omitempty"`
+	StreamOutcome            string    `json:"stream_outcome,omitempty"`
 }
 
 const maxNetworkCorrelationBytes = 4096
@@ -677,10 +679,38 @@ func validNetworkAttemptScalars(in NetworkAttemptPayload) bool {
 		networkAttemptStatusValid(in.HTTPStatus) && networkAttemptStatusValid(in.InBandStatus)
 }
 
+// StreamOutcome is the closed vocabulary of structural stream-completion
+// outcomes ADR 0357 defines for NetworkAttemptPayload.StreamOutcome. Producers
+// (provider adapters, llmresilience) and consumers (the debugger projection)
+// share these constants so the vocabulary cannot silently drift between them.
+const (
+	StreamOutcomeComplete    = "complete"
+	StreamOutcomeIncomplete  = "incomplete"
+	StreamOutcomeStreamError = "stream_error"
+	StreamOutcomeCancelled   = "cancelled"
+	StreamOutcomeUnavailable = "unavailable"
+)
+
 func validNetworkAttemptVocabulary(in NetworkAttemptPayload) bool {
 	return networkAttemptOneOf(in.RetryDisposition, "retryable", "permanent", "unknown") &&
 		networkAttemptOneOf(in.StreamProgress, "precommit", "visible", "complete", "unknown") &&
-		networkAttemptOneOf(in.FailureClass, "dns", "connect", "tls", "timeout", "connection_reset", "stream_idle", "breaker", "rate_limit", "http", "provider", "unknown")
+		networkAttemptOneOf(in.FailureClass, "dns", "connect", "tls", "timeout", "connection_reset", "stream_idle", "breaker", "rate_limit", "http", "provider", "unknown") &&
+		validNetworkStreamOutcome(in)
+}
+
+func validNetworkStreamOutcome(in NetworkAttemptPayload) bool {
+	switch in.StreamOutcome {
+	case "":
+		return in.ProviderTerminalObserved == nil
+	case StreamOutcomeUnavailable:
+		return in.ProviderTerminalObserved == nil
+	case StreamOutcomeComplete:
+		return in.ProviderTerminalObserved != nil && *in.ProviderTerminalObserved
+	case StreamOutcomeIncomplete, StreamOutcomeStreamError, StreamOutcomeCancelled:
+		return in.ProviderTerminalObserved != nil
+	default:
+		return false
+	}
 }
 
 func validNetworkAttemptDecision(in NetworkAttemptPayload) bool {

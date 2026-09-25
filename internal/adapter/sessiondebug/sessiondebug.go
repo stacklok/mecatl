@@ -716,28 +716,30 @@ type networkEvidence struct {
 }
 
 type networkAttemptEvidence struct {
-	RunSerial         int64  `json:"run_serial"`
-	Turn              int    `json:"turn"`
-	Attempt           int    `json:"attempt"`
-	MaxAttempts       int    `json:"max_attempts"`
-	ElapsedMs         int64  `json:"elapsed_ms"`
-	RetryDisposition  string `json:"retry_disposition"`
-	StreamProgress    string `json:"stream_progress"`
-	Decision          string `json:"decision"`
-	SuppressionReason string `json:"suppression_reason,omitempty"`
-	BackoffMs         int64  `json:"backoff_ms"`
-	FailureClass      string `json:"failure_class"`
-	HTTPStatus        int    `json:"http_status,omitempty"`
-	InBandStatus      int    `json:"in_band_status,omitempty"`
-	CorrelationKind   string `json:"correlation_kind,omitempty"`
-	CorrelationDigest string `json:"correlation_digest,omitempty"`
+	RunSerial                int64  `json:"run_serial"`
+	Turn                     int    `json:"turn"`
+	Attempt                  int    `json:"attempt"`
+	MaxAttempts              int    `json:"max_attempts"`
+	ElapsedMs                int64  `json:"elapsed_ms"`
+	RetryDisposition         string `json:"retry_disposition"`
+	StreamProgress           string `json:"stream_progress"`
+	Decision                 string `json:"decision"`
+	SuppressionReason        string `json:"suppression_reason,omitempty"`
+	BackoffMs                int64  `json:"backoff_ms"`
+	FailureClass             string `json:"failure_class"`
+	HTTPStatus               int    `json:"http_status,omitempty"`
+	InBandStatus             int    `json:"in_band_status,omitempty"`
+	CorrelationKind          string `json:"correlation_kind,omitempty"`
+	CorrelationDigest        string `json:"correlation_digest,omitempty"`
+	ProviderTerminalObserved *bool  `json:"provider_terminal_observed,omitempty"`
+	StreamOutcome            string `json:"stream_outcome"`
 }
 
 func (t *inspectTool) networkView(ctx context.Context, target session.SessionID, offset, requested int) networkEvidence {
 	limit := boundedLimit(requested, maxNetworkRows)
 	out := networkEvidence{
 		View: "network", Available: t.log != nil, Authoritative: false,
-		Coverage:                "failed and policy-interesting attempts observed by the shared resilience wrapper; no request bodies, headers, URLs, raw errors, per-phase DNS/TCP/TLS timing, or successful-attempt timing",
+		Coverage:                "outer provider attempts with bounded terminal-observation and stream-outcome evidence; no request bodies, headers, URLs, raw errors, per-phase DNS/TCP/TLS timing, bytes, framing, or raw protocol events",
 		SuccessfulAttemptsTimed: false, Offset: offset, Limit: limit,
 		Attempts: []networkAttemptEvidence{},
 	}
@@ -783,7 +785,18 @@ func (t *inspectTool) networkView(ctx context.Context, target session.SessionID,
 }
 
 func projectNetworkAttempt(row session.NetworkAttemptPayload) networkAttemptEvidence {
-	return networkAttemptEvidence{row.RunSerial, row.Turn, row.Attempt, row.MaxAttempts, row.ElapsedMs, row.RetryDisposition, row.StreamProgress, row.Decision, row.SuppressionReason, row.BackoffMs, row.FailureClass, row.HTTPStatus, row.InBandStatus, row.CorrelationKind, row.CorrelationDigest}
+	outcome := row.StreamOutcome
+	if outcome == "" {
+		outcome = session.StreamOutcomeUnavailable
+	}
+	return networkAttemptEvidence{
+		RunSerial: row.RunSerial, Turn: row.Turn, Attempt: row.Attempt, MaxAttempts: row.MaxAttempts,
+		ElapsedMs: row.ElapsedMs, RetryDisposition: row.RetryDisposition, StreamProgress: row.StreamProgress,
+		Decision: row.Decision, SuppressionReason: row.SuppressionReason, BackoffMs: row.BackoffMs,
+		FailureClass: row.FailureClass, HTTPStatus: row.HTTPStatus, InBandStatus: row.InBandStatus,
+		CorrelationKind: row.CorrelationKind, CorrelationDigest: row.CorrelationDigest,
+		ProviderTerminalObserved: row.ProviderTerminalObserved, StreamOutcome: outcome,
+	}
 }
 
 func validNetworkAttempt(row session.NetworkAttemptPayload, target session.SessionID) bool {

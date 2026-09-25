@@ -303,6 +303,11 @@ const (
 	decisionTerminal attemptDecision = "terminal"
 )
 
+// diagnosticUnknown is the shared "no classification available" string used
+// across the plain-string diagnostic fields (retry disposition, stream
+// progress, suppression reason, failure class) so the literal isn't repeated.
+const diagnosticUnknown = "unknown"
+
 type replaySuppressedReason string
 
 const (
@@ -321,6 +326,65 @@ type attemptDiagnostic struct {
 	attempt     int
 	maxAttempts int
 	started     time.Time
+	structure   *attemptStructure
+}
+
+type attemptStructure struct {
+	mu       sync.Mutex
+	observed *bool
+	outcome  string
+}
+
+// observe records the row's structural fields when they form a valid
+// observation, mirroring engine/session's validNetworkStreamOutcome rule for
+// the subset this local pre-validation opts into (a "" outcome is simply not
+// an observation yet, not a rejection).
+func (s *attemptStructure) observe(row session.NetworkAttemptPayload) {
+	terminal := row.ProviderTerminalObserved
+	switch row.StreamOutcome {
+	case session.StreamOutcomeComplete:
+		if terminal == nil || !*terminal {
+			return
+		}
+	case session.StreamOutcomeIncomplete, session.StreamOutcomeStreamError, session.StreamOutcomeCancelled:
+		if terminal == nil {
+			return
+		}
+	case session.StreamOutcomeUnavailable:
+		if terminal != nil {
+			return
+		}
+	default:
+		return
+	}
+	s.mu.Lock()
+	s.observed = row.ProviderTerminalObserved
+	s.outcome = row.StreamOutcome
+	s.mu.Unlock()
+}
+
+func (s *attemptStructure) unavailable() {
+	s.mu.Lock()
+	if s.outcome == "" {
+		s.outcome = session.StreamOutcomeUnavailable
+	}
+	s.mu.Unlock()
+}
+
+func (s *attemptStructure) fields() (*bool, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.observed, s.outcome
+}
+
+// attemptStructuralFields reports an attempt's structural evidence, unless the
+// attempt has no structure tracker or timed out before establishment (a
+// per-attempt timeout carries no meaningful stream-structural evidence).
+func attemptStructuralFields(attempt attemptDiagnostic, err error) (*bool, string) {
+	if attempt.structure == nil || errors.Is(err, errFirstChunkTimeout) {
+		return nil, ""
+	}
+	return attempt.structure.fields()
 }
 
 // logAttemptDecision is the single failed-attempt decision log path. It records
@@ -348,6 +412,7 @@ func (p *resilientProvider) logAttemptDecision(
 		Decision:         string(decision),
 		FailureClass:     attemptFailureClass(err, metadata),
 	}
+	observation.ProviderTerminalObserved, observation.StreamOutcome = attemptStructuralFields(attempt, err)
 	if id, ok := port.SessionIDFromContext(attempt.ctx); ok {
 		observation.SessionID = id
 	}
@@ -430,7 +495,7 @@ func retryDispositionDiagnostic(disposition session.RetryDisposition) string {
 	case session.RetryDispositionPermanent:
 		return "permanent"
 	default:
-		return "unknown"
+		return diagnosticUnknown
 	}
 }
 
@@ -443,7 +508,7 @@ func streamProgressDiagnostic(progress session.StreamProgress) string {
 	case session.StreamProgressComplete:
 		return "complete"
 	default:
-		return "unknown"
+		return diagnosticUnknown
 	}
 }
 
@@ -537,7 +602,7 @@ func attemptFailureClass(err error, metadata attemptErrorMetadata) string {
 	if metadata.inBandStatus != 0 || metadata.providerCode != "" {
 		return "provider"
 	}
-	return "unknown"
+	return diagnosticUnknown
 }
 
 func transportFailureClass(err error) string {
@@ -582,11 +647,32 @@ func isTLSError(err error) bool {
 		errors.As(err, &hostname) || errors.As(err, &certificateInvalid)
 }
 
+func (p *resilientProvider) observeFinalStructure(attempt attemptDiagnostic, progress session.StreamProgress) {
+	if attempt.structure == nil {
+		return
+	}
+	observed, outcome := attempt.structure.fields()
+	if outcome == "" {
+		return
+	}
+	elapsed := p.cfg.Clock().Sub(attempt.started)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	port.ObserveAttempt(attempt.ctx, session.NetworkAttemptPayload{
+		Attempt: attempt.attempt, MaxAttempts: attempt.maxAttempts, ElapsedMs: elapsed.Milliseconds(),
+		RetryDisposition: diagnosticUnknown, StreamProgress: streamProgressDiagnostic(progress),
+		Decision: "terminal", SuppressionReason: diagnosticUnknown, FailureClass: diagnosticUnknown,
+		ProviderTerminalObserved: observed, StreamOutcome: outcome,
+	})
+}
+
 // logMidStreamError records a failure after semantic visibility. Cancellation
 // keeps its pre-existing non-failure diagnostic; every actual failure uses the
 // centralized attempt-decision path.
 func (p *resilientProvider) logMidStreamError(attempt attemptDiagnostic, err error) {
 	if errors.Is(err, context.Canceled) {
+		p.observeFinalStructure(attempt, session.StreamProgressVisible)
 		p.diag().Log(context.Background(), port.LevelInfo, "llm stream cancelled mid-stream; ending turn",
 			"model", attempt.model)
 		return
@@ -736,9 +822,10 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 			return terminalWithUsage(discardedUsage, classifiedProgressError(err, session.StreamProgressPrecommit))
 		}
 		started := p.cfg.Clock()
+		structure := &attemptStructure{}
 		diagnostic := attemptDiagnostic{
 			ctx: ctx, model: req.Model, attempt: attempt + 1,
-			maxAttempts: p.cfg.MaxAttempts, started: started,
+			maxAttempts: p.cfg.MaxAttempts, started: started, structure: structure,
 		}
 		lastDiagnostic = diagnostic
 		if err := p.allow(started); err != nil {
@@ -763,6 +850,7 @@ func (p *resilientProvider) Stream(ctx context.Context, req port.LLMRequest) (it
 
 		// Caller cancellation is never retried and is breaker-neutral.
 		if isCallerCanceled(ctx, err) {
+			p.observeFinalStructure(diagnostic, session.StreamProgressPrecommit)
 			return terminalWithUsage(discardedUsage, classifiedProgressError(err, session.StreamProgressPrecommit))
 		}
 		// Only TRANSIENT failures count toward the shared breaker; permanent
@@ -898,6 +986,7 @@ func (p *resilientProvider) establish(ctx context.Context, req port.LLMRequest, 
 		return attemptError(ctx.Err(), innerErr)
 	}
 
+	attemptCtx = port.WithAttemptObserver(attemptCtx, diagnostic.structure.observe)
 	seq, err := p.inner.Stream(attemptCtx, req)
 	if err != nil {
 		failure := establishmentFailure(err)
@@ -907,6 +996,7 @@ func (p *resilientProvider) establish(ctx context.Context, req port.LLMRequest, 
 		}
 		return nil, failure
 	}
+	diagnostic.structure.unavailable()
 
 	// Pump raw chunks to the semantic boundary. The establishment timer is stopped
 	// by pumpAttempt on the first raw chunk, including tentative metadata.
@@ -1218,25 +1308,37 @@ func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagno
 		}
 		for _, buffered := range result.buffered {
 			if !yield(buffered, nil) {
+				p.observeFinalStructure(diagnostic, result.progress)
 				cleanupRemaining()
 				return
 			}
 		}
 		switch result.progress {
 		case session.StreamProgressComplete:
+			p.observeFinalStructure(diagnostic, session.StreamProgressComplete)
 			p.recordSuccess()
 			return
 		case session.StreamProgressVisible:
 			if !yield(result.chunk, nil) {
+				p.observeFinalStructure(diagnostic, result.progress)
 				cleanupRemaining()
 				return
 			}
 			if result.remaining == nil {
+				p.observeFinalStructure(diagnostic, session.StreamProgressComplete)
 				p.recordSuccess()
 				return
 			}
 			clean := true
 			consumed := true
+			// stoppedOnError tracks whether the range stopped on a chunk that
+			// carried a mid-stream error. restSeqUnbounded/restSeqIdleBounded
+			// already report that attempt's structural summary via
+			// logMidStreamError BEFORE yielding it (see the comment there), so
+			// reporting it again here would produce two terminal rows for one
+			// outer attempt (ADR 0357 AC3.2: at most one final summary per
+			// attempt). Only an error-free early stop is unreported elsewhere.
+			stoppedOnError := false
 			result.remaining(func(chunk port.Chunk, err error) bool {
 				if err != nil {
 					clean = false
@@ -1246,12 +1348,16 @@ func (p *resilientProvider) wrap(result *attemptResult, diagnostic attemptDiagno
 				}
 				if !yield(chunk, err) {
 					consumed = false
+					stoppedOnError = err != nil
 					return false
 				}
 				return err == nil
 			})
 			if clean && consumed {
+				p.observeFinalStructure(diagnostic, session.StreamProgressComplete)
 				p.recordSuccess()
+			} else if !consumed && !stoppedOnError {
+				p.observeFinalStructure(diagnostic, session.StreamProgressVisible)
 			}
 		case session.StreamProgressUnknown, session.StreamProgressPrecommit:
 			cleanupRemaining()

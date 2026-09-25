@@ -232,7 +232,9 @@ func TestStreamRateLimitErrorIsRetried(t *testing.T) {
 	attemptIndex, firstVisibleRetryOutputIndex := -1, -1
 	for i, ev := range events {
 		if ev.Type == session.EvNetworkAttempt {
-			attemptIndex = i
+			if attemptIndex < 0 {
+				attemptIndex = i
+			}
 			if ev.NetworkAttempt == nil {
 				t.Fatal("network.attempt has nil payload")
 			}
@@ -243,8 +245,8 @@ func TestStreamRateLimitErrorIsRetried(t *testing.T) {
 			firstVisibleRetryOutputIndex = i
 		}
 	}
-	if len(attempts) != 1 {
-		t.Fatalf("network attempts = %d, want exactly one retry event: %v", len(attempts), events)
+	if len(attempts) != 2 {
+		t.Fatalf("network attempts = %d, want retry and successful final rows: %v", len(attempts), events)
 	}
 	attempt := attempts[0]
 	wantDigest, _ := session.NetworkCorrelationDigest("request", secrets[1])
@@ -254,6 +256,9 @@ func TestStreamRateLimitErrorIsRetried(t *testing.T) {
 		attempt.SuppressionReason != "" || attempt.HTTPStatus != 429 ||
 		attempt.CorrelationKind != "request" || attempt.CorrelationDigest != wantDigest {
 		t.Fatalf("retry attempt = %+v", attempt)
+	}
+	if final := attempts[1]; final.Attempt != 2 || final.StreamOutcome != "unavailable" || final.ProviderTerminalObserved != nil {
+		t.Fatalf("successful final attempt = %+v", final)
 	}
 	if attemptIndex < 0 || firstVisibleRetryOutputIndex < 0 || attemptIndex >= firstVisibleRetryOutputIndex {
 		t.Fatalf("network attempt/first retry output order = %d/%d, events=%v", attemptIndex, firstVisibleRetryOutputIndex, events)

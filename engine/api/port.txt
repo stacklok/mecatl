@@ -122,6 +122,7 @@ func DecodeCursor(cur Cursor, id session.SessionID, currentGeneration string) (p
 func EncodeCursor(id session.SessionID, generation string, position string) Cursor
 func NewSessionLoadFailure(class SessionLoadFailureClass, cause error) error
 func ObserveAttempt(ctx context.Context, observation session.NetworkAttemptPayload)
+func ObserveAttemptOnce(ctx context.Context) func(terminal bool, outcome string)
 func PaginateSessionMetadata(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest) SessionMetadataPage
 func PaginateSessionMetadataBound(rows []SessionDiscoveryMeta, request SessionMetadataPageRequest, generation string) (SessionMetadataPage, error)
 func RouteToolResultParts(tr session.ToolResult, caps ProviderCapabilities) []session.Content
