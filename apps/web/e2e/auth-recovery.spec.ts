@@ -173,6 +173,63 @@ function setup(offlineBff: OfflineBff, initial: Partial<OfflineState> = {}): Off
 
 const draftRoute = "/workspace/chat?sessionId=s1#draft";
 
+async function saveAccountArtifacts(page: import("@playwright/test").Page, owner: "Alice" | "Bob") {
+  await page.evaluate((name) => {
+    const folderId = `${name.toLowerCase()}-folder`;
+    localStorage.setItem(
+      "studio.chat.folders",
+      JSON.stringify({
+        assignments: { s1: folderId },
+        folders: [{ id: folderId, name: `${name} folder` }],
+      }),
+    );
+    localStorage.setItem(
+      "studio.chat.queue.s1",
+      JSON.stringify([
+        { createdAt: 1, id: `${name.toLowerCase()}-queued`, text: `${name} queued prompt` },
+      ]),
+    );
+    sessionStorage.setItem(
+      "studio.chat.failedRun.s1",
+      JSON.stringify({
+        message: `${name} failed run`,
+        permanent: false,
+        prompt: `${name} failed prompt`,
+      }),
+    );
+    localStorage.setItem("mecatl-studio-theme", "dark");
+    localStorage.setItem("mecatl-studio.palette", "solar");
+  }, owner);
+}
+
+async function accountArtifacts(page: import("@playwright/test").Page) {
+  return page.evaluate(() => ({
+    account: localStorage.getItem("studio.account"),
+    folder: localStorage.getItem("studio.chat.folders"),
+    queue: localStorage.getItem("studio.chat.queue.s1"),
+    failedRun: sessionStorage.getItem("studio.chat.failedRun.s1"),
+    localKeys: Object.keys(localStorage)
+      .filter((key) => key.startsWith("studio."))
+      .sort(),
+    sessionKeys: Object.keys(sessionStorage)
+      .filter((key) => key.startsWith("studio."))
+      .sort(),
+    theme: localStorage.getItem("mecatl-studio-theme"),
+    palette: localStorage.getItem("mecatl-studio.palette"),
+  }));
+}
+
+async function expectAccountArtifacts(
+  page: import("@playwright/test").Page,
+  owner: "Alice" | "Bob",
+) {
+  await expect(page.getByRole("heading", { name: `${owner} folder` })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Queued messages" })).toContainText(
+    `${owner} queued prompt`,
+  );
+  await expect(page.getByText(`${owner} failed run`)).toBeVisible();
+}
+
 for (const signIn of ["popup", "new tab"] as const) {
   test(`large seeded link stays in the original tab through ${signIn} sign-in until explicit Send`, async ({
     offlineBff,
@@ -569,14 +626,19 @@ test("side-thread SSE expiry preserves its draft until an explicit retry", async
   await expect.poll(() => sideWrites).toBe(2);
 });
 
-test("different account clears the mounted draft before showing its data", async ({
+test("same-account reload keeps artifacts and a different account clears them before rendering", async ({
   offlineBff,
   page,
 }) => {
   const state = setup(offlineBff);
   await page.goto(draftRoute);
   await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
-  await page.evaluate(() => localStorage.setItem("studio.chat.queue", "Alice's queued draft"));
+  await saveAccountArtifacts(page, "Alice");
+  const aliceArtifacts = await accountArtifacts(page);
+  await page.reload();
+  await expectAccountArtifacts(page, "Alice");
+  expect(await accountArtifacts(page)).toEqual(aliceArtifacts);
+
   await expireWrite(page, state);
   state.account = "opaque-b";
   const popupEvent = page.waitForEvent("popup");
@@ -584,11 +646,19 @@ test("different account clears the mounted draft before showing its data", async
   await popupEvent;
   await expect(page.getByRole("heading", { name: "Bob chat" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveValue("");
-  const scoped = await page.evaluate(() => ({
-    account: localStorage.getItem("studio.account"),
-    queue: localStorage.getItem("studio.chat.queue"),
-  }));
-  expect(scoped).toEqual({ account: "opaque-b", queue: null });
+  await expect(page.getByRole("heading", { name: "Alice folder" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Queued messages" })).toHaveCount(0);
+  await expect(page.getByText("Alice failed run")).toHaveCount(0);
+  expect(await accountArtifacts(page)).toEqual({
+    account: "opaque-b",
+    folder: null,
+    queue: null,
+    failedRun: null,
+    localKeys: ["studio.account"],
+    sessionKeys: ["studio.account"],
+    theme: "dark",
+    palette: "solar",
+  });
 });
 
 test("accountless session clears mounted private data", async ({ offlineBff, page }) => {
@@ -597,13 +667,92 @@ test("accountless session clears mounted private data", async ({ offlineBff, pag
   await page.goto(draftRoute);
   await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
   await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Alice's draft");
-  await page.evaluate(() => localStorage.setItem("studio.chat.queue", "Alice's queued draft"));
+  await saveAccountArtifacts(page, "Alice");
   state.account = "";
   await page.clock.runFor(60_001);
   await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Mecatl Studio" })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem("studio.chat.queue"))).toBeNull();
-  expect(await page.evaluate(() => localStorage.getItem("studio.account"))).toBeNull();
+  expect(await accountArtifacts(page)).toEqual({
+    account: null,
+    folder: null,
+    queue: null,
+    failedRun: null,
+    localKeys: [],
+    sessionKeys: [],
+    theme: "dark",
+    palette: "solar",
+  });
+});
+
+test("peer account marker protects Bob's data while the stale Alice tab rechecks", async ({
+  context,
+  offlineBff,
+  page,
+}) => {
+  const state = setup(offlineBff);
+  await page.goto(draftRoute);
+  await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+  await saveAccountArtifacts(page, "Alice");
+  const peer = await context.newPage();
+  await peer.goto(draftRoute);
+  await expect(peer.getByRole("heading", { name: "Alice chat" })).toBeVisible();
+
+  let releaseAliceCheck!: () => void;
+  let observeAliceCheck!: () => void;
+  const aliceCheckPending = new Promise<void>((resolve) => {
+    observeAliceCheck = resolve;
+  });
+  const aliceCheckGate = new Promise<void>((resolve) => {
+    releaseAliceCheck = resolve;
+  });
+  await page.route("**/api/v1/auth/session", async (route) => {
+    observeAliceCheck();
+    await aliceCheckGate;
+    await route.fulfill({
+      body: JSON.stringify({ mode: "oidc", status: "authenticated", account: "opaque-b" }),
+      contentType: "application/json",
+    });
+  });
+
+  try {
+    state.account = "opaque-b";
+    await peer.reload();
+    await expect(peer.getByRole("heading", { name: "Bob chat" })).toBeVisible();
+    await aliceCheckPending;
+    await expect(page.getByRole("heading", { name: "Alice chat" })).toHaveCount(0);
+    await saveAccountArtifacts(peer, "Bob");
+    await peer.reload();
+    await expectAccountArtifacts(peer, "Bob");
+    const bobArtifacts = await accountArtifacts(peer);
+
+    const staleAccess = await page.evaluate(async () => {
+      const scoped = (await import(
+        /* @vite-ignore */ `${window.location.origin}/src/lib/account-storage.ts`
+      )) as typeof import("../src/lib/account-storage");
+      const folders = scoped.readUserScopedItem("studio.chat.folders");
+      const queue = scoped.readUserScopedItem("studio.chat.queue.s1");
+      const keys = scoped.listUserScopedKeys("studio.chat.queue.");
+      scoped.writeUserScopedItem("studio.chat.folders", "Alice stale folder");
+      scoped.writeUserScopedItem("studio.chat.queue.s1", "Alice stale queue");
+      scoped.writeUserScopedItem(
+        "studio.chat.failedRun.s1",
+        "Alice stale failed prompt",
+        sessionStorage,
+      );
+      return { folders, queue, keys };
+    });
+    expect(staleAccess).toEqual({ folders: null, queue: null, keys: [] });
+    expect(await accountArtifacts(peer)).toEqual(bobArtifacts);
+    expect((await accountArtifacts(page)).failedRun).toBeNull();
+  } finally {
+    releaseAliceCheck();
+  }
+  await expect(page.getByRole("heading", { name: "Bob chat" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bob folder" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Queued messages" })).toContainText(
+    "Bob queued prompt",
+  );
+  await expect(page.getByText("Alice failed run")).toHaveCount(0);
 });
 
 test("peer-tab sign-out removes the mounted private workspace", async ({
@@ -615,6 +764,7 @@ test("peer-tab sign-out removes the mounted private workspace", async ({
   await page.goto(draftRoute);
   await expect(page.getByRole("heading", { name: "Alice chat" })).toBeVisible();
   await page.getByRole("textbox", { name: "Message Mecatl" }).fill("Alice's draft");
+  await saveAccountArtifacts(page, "Alice");
   const peer = await context.newPage();
   await peer.goto("/workspace/settings/about");
   await peer.getByRole("button", { name: "Sign out" }).click();
@@ -623,6 +773,16 @@ test("peer-tab sign-out removes the mounted private workspace", async ({
   expect(new URL(page.url()).pathname + new URL(page.url()).search + new URL(page.url()).hash).toBe(
     draftRoute,
   );
+  expect(await accountArtifacts(page)).toEqual({
+    account: null,
+    folder: null,
+    queue: null,
+    failedRun: null,
+    localKeys: [],
+    sessionKeys: [],
+    theme: "dark",
+    palette: "solar",
+  });
 });
 
 test("anonymous shell shows outage before sign-in", async ({ offlineBff, page }) => {
