@@ -7,6 +7,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 )
 
@@ -37,10 +38,11 @@ var permissionModeTable = []PermissionModeToken{
 	{Name: "plan", Posture: PostureStrict, SessionMode: session.ModePlan},
 	{Name: "default", Posture: PostureStrict, SessionMode: session.ModeDefault},
 	{Name: "accept-edits", Posture: PostureStrict, SessionMode: session.ModeAccept},
-	{Name: "trusted", Posture: PostureTrusted, SessionMode: session.ModeDefault},
+	// The three single-word tokens above strict share their posture's name.
+	{Name: PostureTrusted.String(), Posture: PostureTrusted, SessionMode: session.ModeDefault},
 	{Name: "trusted-accept-edits", Posture: PostureTrusted, SessionMode: session.ModeAccept},
-	{Name: "auto", Posture: PostureAuto, SessionMode: session.ModeDefault},
-	{Name: "yolo", Posture: PostureYolo, SessionMode: session.ModeDefault},
+	{Name: PostureAuto.String(), Posture: PostureAuto, SessionMode: session.ModeDefault},
+	{Name: PostureYolo.String(), Posture: PostureYolo, SessionMode: session.ModeDefault},
 }
 
 // PermissionModeNames lists the valid tokens in table order, for help text and
@@ -182,22 +184,29 @@ func (cfg Config) resolvedPermissionModeName() string {
 	return fmt.Sprintf("posture %s with session mode %s", cfg.Posture, mode)
 }
 
+// The three checker states the startup line reports (ADR 0365 AC2.6).
+const (
+	checkerEnforcing = "enforcing"
+	checkerAdvisory  = "advisory"
+	checkerDisabled  = "disabled"
+)
+
 // checkerState reports the guardrails checker as exactly one of three named
 // states (ADR 0365 AC2.6), plus the reason when it is disabled.
 func checkerState(cfg Config, configured bool) (state, reason string) {
 	switch {
 	case cfg.GuardrailsDisabled:
-		return "disabled", "kill-switch (--guardrails off)"
+		return checkerDisabled, "kill-switch (--guardrails off)"
 	case !configured:
-		return "disabled", "no checker configured"
+		return checkerDisabled, "no checker configured"
 	case cfg.Posture >= PostureYolo:
-		return "advisory", "demoted by posture yolo"
+		return checkerAdvisory, "demoted by posture yolo"
 	}
 	specs, _ := effectiveGuardrailSpecs(cfg)
-	if highestSeverityGuardrailMode(specs) == "advisory" {
-		return "advisory", "configured advisory"
+	if highestSeverityGuardrailMode(specs) == string(modelhook.ModeAdvisory) {
+		return checkerAdvisory, "configured advisory"
 	}
-	return "enforcing", ""
+	return checkerEnforcing, ""
 }
 
 // reviewerState reports the subagent ask reviewer for the startup line.
@@ -239,7 +248,7 @@ func narratePermissionMode(cfg Config, checkerConfigured bool) {
 	if checkerReason != "" {
 		attrs = append(attrs, "guardrails_checker_reason", checkerReason)
 	}
-	if checker == "advisory" && cfg.Posture >= PostureYolo {
+	if checker == checkerAdvisory && cfg.Posture >= PostureYolo {
 		attrs = append(attrs, "guardrails_checker_note", yoloCheckerAdvisoryNote)
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo, "permission mode", attrs...)
