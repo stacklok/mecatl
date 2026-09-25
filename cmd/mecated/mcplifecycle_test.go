@@ -766,3 +766,116 @@ func TestDirectMCPOnboarding_CancellationDuringRemovalDoesNotPublish(t *testing.
 		t.Fatal("cancelled remove changed settings")
 	}
 }
+
+func forcedDirectDCRSettings(t *testing.T, root string) []byte {
+	t.Helper()
+	data := mcpLoginOAuthYAML("connector", "local", root)
+	data = strings.Replace(data, "mode: cimd\n            cimd: {document_url: https://client.example/metadata.json}", "mode: dcr\n            dcr: {}", 1)
+	data = strings.Replace(data, "scopes: [read]", "scopes: [openid]", 1)
+	return []byte(data)
+}
+
+func TestMCPAbandonUnavailable_Scenario1_Eligibility(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	original := append([]byte("# keep this note\n"), forcedDirectDCRSettings(t, filepath.Join(t.TempDir(), "credentials"))...)
+	if err := os.WriteFile(settings, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldLookup := lookupMCPEnvironment
+	t.Cleanup(func() { lookupMCPEnvironment = oldLookup })
+	lookupMCPEnvironment = func(string) (string, bool) { return "", false }
+	oldRemove := removeMCPOAuthDCR
+	t.Cleanup(func() { removeMCPOAuthDCR = oldRemove })
+	removeMCPOAuthDCR = func(context.Context, string, mcp.OAuthOptions) (mcp.OAuthDCRRemovalResult, error) {
+		t.Fatal("forced removal opened the OAuth lifecycle")
+		return mcp.OAuthDCRRemovalResult{}, nil
+	}
+	var output bytes.Buffer
+	if err := runMCPRemove([]string{"connector", "--force", "--file", settings}, &output); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "connector") || !strings.Contains(string(got), "# keep this note") {
+		t.Fatalf("forced removal changed the wrong settings: %s", got)
+	}
+	want := "MCP profile abandoned locally; encrypted records were retained, no upstream client was revoked, and later re-enrollment may create a new registration."
+	if !strings.Contains(output.String(), want) {
+		t.Fatalf("output = %q, want %q", output.String(), want)
+	}
+}
+
+func TestMCPAbandonUnavailable_Scenario1_FinalEligibilityRecheck(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(settings, forcedDirectDCRSettings(t, filepath.Join(t.TempDir(), "credentials")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldLookup := lookupMCPEnvironment
+	t.Cleanup(func() { lookupMCPEnvironment = oldLookup })
+	calls := 0
+	lookupMCPEnvironment = func(string) (string, bool) {
+		calls++
+		if calls == 1 {
+			return "", false
+		}
+		return "became-available", true
+	}
+	before, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runMCPRemove([]string{"connector", "--force", "--file", settings}, io.Discard); err == nil {
+		t.Fatal("forced removal succeeded after custody became available")
+	}
+	after, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("final eligibility rejection changed settings")
+	}
+	if calls != 2 {
+		t.Fatalf("environment checks = %d, want initial and final checks", calls)
+	}
+}
+
+func TestMCPAbandonUnavailable_Scenario1_RejectionsPreserveState(t *testing.T) {
+	cases := []struct {
+		name  string
+		data  []byte
+		key   string
+		value string
+	}{
+		{name: "readable legacy key", data: forcedDirectDCRSettings(t, filepath.Join(t.TempDir(), "credentials")), key: "MECATL_LOGIN_KEY", value: base64.StdEncoding.EncodeToString(make([]byte, 32))},
+		{name: "malformed legacy key", data: forcedDirectDCRSettings(t, filepath.Join(t.TempDir(), "credentials")), key: "MECATL_LOGIN_KEY", value: "not-a-key"},
+		{name: "native custody", data: func() []byte {
+			data := forcedDirectDCRSettings(t, filepath.Join(t.TempDir(), "credentials"))
+			return []byte(strings.Replace(string(data), "key_env: MECATL_LOGIN_KEY", "key: {mode: keyring}", 1))
+		}(), key: "MECATL_LOGIN_KEY", value: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := filepath.Join(t.TempDir(), "settings.yaml")
+			if err := os.WriteFile(settings, tc.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(tc.key, tc.value)
+			before, err := os.ReadFile(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := runMCPRemove([]string{"connector", "--force", "--file", settings}, io.Discard); err == nil {
+				t.Fatal("forced removal unexpectedly succeeded")
+			}
+			after, err := os.ReadFile(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatal("rejected forced removal changed settings")
+			}
+		})
+	}
+}
