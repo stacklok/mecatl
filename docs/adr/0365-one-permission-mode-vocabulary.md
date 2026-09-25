@@ -5,8 +5,9 @@
 - Scope: the operator flag surface across all four composition roots (`--posture`, `--yolo`,
   mecatui `--mode`, and the operator-tier `posture:` key), two new boot-time admission gates,
   and the default for the headless child-ask reviewer. NO change to `engine/governance`, to
-  `engine/session.PermissionMode`, to the gRPC contract, to the TypeScript SDK, or to the
-  guardrails checker itself.
+  `engine/session.PermissionMode`, to any gRPC message, field, enum value, or rpc, to the
+  TypeScript SDK's behaviour, or to the guardrails checker itself. The one wire-visible
+  correction is that an unspecified `CreateSession` mode honours the server's default mode.
 - Amends: [ADR 0022](./0022-allow-all-posture.md) by renaming its operator surface. Its four
   decisions are NOT superseded and carry over verbatim; in particular there is still no new
   `PermissionMode`, and allow-all remains a server-wide operator posture set at process start.
@@ -77,7 +78,11 @@ deployment changes behaviour. The combination the earlier ladder would have dest
 `server.Config.DefaultMode` is documented as "applied when a `CreateSession` request leaves
 mode unspecified", which is exactly what the session half of a token sets. `cfg.Posture` set
 from a flag is what `--posture` does today. Nothing is repurposed and no interface is bent to a
-new use; the flag is a parse plus a table lookup writing two existing fields.
+new use; the flag is a parse plus a table lookup writing two existing fields. One wiring gap
+is closed to make that documented purpose true on every transport: the gRPC `CreateSession`
+handler collapsed an unspecified mode to `default` before the service could apply
+`DefaultMode`, so it now passes an unspecified mode through, as the HTTP path already did.
+With no permission mode configured the default is `default`, so no existing client changes.
 
 The scope split is REAL and must stay visible rather than being smoothed over: the posture half
 is process-wide and fixed at boot, the mode half is only a default that a session may later
