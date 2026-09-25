@@ -161,6 +161,12 @@ type PlacementReattachRequest struct {
 	Scope     PlacementScope
 }
 
+// PlacementValidator performs side-effect-free startup validation. Providers
+// whose Bind allocates resources implement this seam so preflight never binds.
+type PlacementValidator interface {
+	ValidatePlacement(context.Context) error
+}
+
 // PlacementBinder is the server-owned choke point around one deployment
 // provider. It exposes no registry, inventory, signer, cache, or split
 // authorization/resolution operation.
@@ -241,10 +247,17 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 	if err != nil {
 		return nil, err
 	}
+	if validator, ok := cfg.PlacementProvider.(PlacementValidator); ok {
+		if err := validator.ValidatePlacement(ctx); err != nil {
+			return nil, fmt.Errorf("server: validate default placement: %w", classifyValidationError(err))
+		}
+		return binder, nil
+	}
 	// NewService runs before a listener can serve. Binding the configured
 	// default proves that its current record is authorized, available,
 	// revision-stable, and capable of constructing a complete environment. The
-	// result is deliberately not cached.
+	// result is deliberately not cached. Providers whose Bind allocates must
+	// implement PlacementValidator above.
 	validation, err := binder.Bind(ctx, PlacementBindRequest{
 		Selector: DefaultPlacement(), Scope: cfg.PlacementScope,
 		Operation: PlacementOperationCreate,
@@ -256,6 +269,21 @@ func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinde
 		_ = validation.Close()
 	}
 	return binder, nil
+}
+
+// classifyValidationError keeps a validator's cause but guarantees callers
+// can classify it: an error that is not already one of the placement
+// sentinels is reported as ErrPlacementUnavailable.
+func classifyValidationError(err error) error {
+	for _, sentinel := range []error{
+		ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
+		ErrPlacementUnavailable, ErrPlacementChanged, ErrInvalidPlacementBinding,
+	} {
+		if errors.Is(err, sentinel) {
+			return err
+		}
+	}
+	return fmt.Errorf("%w: %w", ErrPlacementUnavailable, err)
 }
 
 func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
