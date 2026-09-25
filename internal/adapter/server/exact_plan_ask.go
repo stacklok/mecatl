@@ -284,7 +284,9 @@ func (s *Service) startExactPlanContinuation(id session.SessionID, continuation 
 	proceed, err := s.startRunContentLocked(continuation.ctx, id, agent.PlanApprovedProceedText, nil, runPurposeChat, continuation.generation, false, false)
 	if err != nil {
 		s.recordPlanContinuationFailure(continuation.ctx, id, continuation)
-		s.cfg.Diagnostics.Log(continuation.ctx, port.LevelWarn, "accepted plan continuation failed to start", "session", string(id))
+		// Admission errors may contain provider or user content. Keep the durable
+		// event correlation-only and diagnose through the bounded error taxonomy.
+		s.cfg.Diagnostics.Log(continuation.ctx, port.LevelWarn, "accepted plan continuation failed to start", "session", string(id), "error_code", classifyError(err).Code)
 		return
 	}
 	unlockOnce()

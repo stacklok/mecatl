@@ -4540,11 +4540,8 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if err := admitRunPurpose(sess, runPurposeChat); err != nil {
 		return nil, fmt.Errorf("%w: session %q is not eligible for chat retry", ErrFailedStepRetryIneligible, id)
 	}
-	if registered, ok := s.LookupRun(id); ok {
-		if !sess.State.IsTerminal() {
-			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedStepRetryIneligible, id)
-		}
-		s.deregister(id, registered)
+	if err := s.deregisterTerminalRunForEntry(id, sess, ErrFailedStepRetryIneligible); err != nil {
+		return nil, err
 	}
 	eligibleFailure, err := failedStepRetryEligibility(sess)
 	if err != nil {
@@ -4682,6 +4679,40 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	return s.startRunContentLocked(ctx, id, text, parts, purpose, generation, canPresentAuthorization, serverOwnedPlanContinuation)
 }
 
+// deregisterTerminalRunForEntry removes an old terminal run only after ruling
+// out an accepted plan continuation. The caller holds runEntryMu for id. A
+// live verdict takes persistMu before reserving, so that lock must span the
+// reservation check and removal for both prompt and retry entry.
+func (s *Service) deregisterTerminalRunForEntry(id session.SessionID, sess *session.Session, activeRunError error) error {
+	s.mu.Lock()
+	st := s.runs[id]
+	var run *agent.Run
+	if st != nil {
+		run = st.run
+	}
+	s.mu.Unlock()
+	if run == nil {
+		return nil
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	current := s.runs[id] == st && st.run == run
+	reserved := current && st.planContinuation != nil
+	s.mu.Unlock()
+	if reserved {
+		return fmt.Errorf("%w: session %q has an accepted plan continuation", ErrFailedPrecondition, id)
+	}
+	if !current {
+		return nil
+	}
+	if !sess.State.IsTerminal() {
+		return fmt.Errorf("%w: session %q already has an active run", activeRunError, id)
+	}
+	s.deregister(id, run)
+	return nil
+}
+
 // startRunContentLocked is also used by an accepted plan verdict's terminal
 // relay. Holding runEntryMu across old-run removal and fresh-run admission
 // prevents a competing prompt from taking the continuation's place.
@@ -4714,39 +4745,11 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	if _, pending := sess.FailedStepRetryPending(); pending {
 		return nil, fmt.Errorf("%w: session %q has a pending failed-step retry", ErrFailedPrecondition, id)
 	}
-	// The run registry is the authoritative same-process single-run gate while the
-	// loaded aggregate is non-terminal. A terminal snapshot means the registered
-	// run has finished driving but its relay has not called FinishRun yet. Remove
-	// that exact run before reopening so the finished relay's later FinishRun
-	// cannot deregister the continuation that replaces it.
-	s.mu.Lock()
-	registeredState := s.runs[id]
-	var registered *agent.Run
-	if registeredState != nil {
-		registered = registeredState.run
-	}
-	s.mu.Unlock()
-	if registered != nil {
-		// A live exact verdict takes persistMu before reserving the
-		// continuation. Keep that barrier through terminal cleanup so it cannot
-		// reserve between our check and removal of the old run.
-		registeredState.persistMu.Lock()
-		s.mu.Lock()
-		current := s.runs[id] == registeredState && registeredState.run == registered
-		reserved := current && registeredState.planContinuation != nil
-		s.mu.Unlock()
-		if reserved {
-			registeredState.persistMu.Unlock()
-			return nil, fmt.Errorf("%w: session %q has an accepted plan continuation", ErrFailedPrecondition, id)
-		}
-		if current {
-			if !sess.State.IsTerminal() {
-				registeredState.persistMu.Unlock()
-				return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
-			}
-			s.deregister(id, registered)
-		}
-		registeredState.persistMu.Unlock()
+	// A terminal snapshot means the registered run has finished driving but its
+	// relay has not yet removed it. Retire only that run, without displacing a
+	// continuation reserved by an accepted plan verdict.
+	if err := s.deregisterTerminalRunForEntry(id, sess, ErrFailedPrecondition); err != nil {
+		return nil, err
 	}
 	// NOTE (ADR 0062): there is NO prompt-channel scan here. The guardrails
 	// approve-once flow is OUT-OF-BAND — a PreToolUse guardrail block surfaces to the

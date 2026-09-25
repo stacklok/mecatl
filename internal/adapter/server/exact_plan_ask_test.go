@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
@@ -777,6 +778,29 @@ type notifyingPlanAskLog struct {
 	asks chan session.Event
 }
 
+type planFailureDiagnostics struct {
+	mu   sync.Mutex
+	logs []string
+}
+
+func (d *planFailureDiagnostics) Log(_ context.Context, _ port.Level, message string, args ...any) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	fields := make([]string, 0, len(args)/2)
+	for i := 0; i+1 < len(args); i += 2 {
+		fields = append(fields, fmt.Sprintf("%v=%v", args[i], args[i+1]))
+	}
+	d.logs = append(d.logs, message+" "+strings.Join(fields, " "))
+}
+
+func (d *planFailureDiagnostics) With(...any) port.Diagnostics { return d }
+
+func (d *planFailureDiagnostics) joined() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return strings.Join(d.logs, "\n")
+}
+
 func (l *notifyingPlanAskLog) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
 	if err := l.EventLog.Append(ctx, id, ev); err != nil {
 		return err
@@ -872,7 +896,7 @@ func TestStudioPlanAsk_ContinuationOwnershipAndFailure(t *testing.T) {
 			})
 		}
 	})
-	t.Run("accepted continuation has priority over a competing prompt", func(t *testing.T) {
+	t.Run("accepted continuation has priority over a competing prompt and retry", func(t *testing.T) {
 		store := memstore.New()
 		llm := mockllm.New(mockllm.ToolCallTurn(call("c1", "PresentPlan", `{"plan":"one"}`)), mockllm.TextTurn("executed"))
 		cat := tool.NewCatalog()
@@ -925,8 +949,21 @@ func TestStudioPlanAsk_ContinuationOwnershipAndFailure(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("approved terminal was not relayed to the event log")
 		}
+		// Persist the completed snapshot while the terminal relay is paused.
+		// Retry must still honor the accepted continuation on the registered run.
+		svc.Persist(t.Context(), sess.ID)
+		terminal, err := svc.GetSession(t.Context(), sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if terminal.State != session.StateCompleted {
+			t.Fatalf("persisted state = %s, want completed before competing entries", terminal.State)
+		}
 		if _, err := svc.StartRunContent(t.Context(), sess.ID, "competing prompt", nil); !errors.Is(err, server.ErrFailedPrecondition) {
 			t.Fatalf("competing prompt = %v, want failed precondition while continuation reserved", err)
+		}
+		if _, err := svc.RetryFailedRun(t.Context(), sess.ID); !errors.Is(err, server.ErrFailedPrecondition) || errors.Is(err, server.ErrFailedStepRetryIneligible) {
+			t.Fatalf("competing retry = %v, want reservation precondition rather than retry eligibility", err)
 		}
 		close(log.release)
 		for {
@@ -939,6 +976,14 @@ func TestStudioPlanAsk_ContinuationOwnershipAndFailure(t *testing.T) {
 			}
 		}
 		waitExactPlanProceed(t, svc, sess.ID, planRunID, session.ModeDefault, llm, 2)
+		for ev, readErr := range log.Read(t.Context(), sess.ID) {
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if ev.Type == session.EvPlanContinuationFailed {
+				t.Fatal("competing retry caused a false plan continuation failure")
+			}
+		}
 	})
 	t.Run("grpc opt-in closes the old stream before slow proceed admission", func(t *testing.T) {
 		store := memstore.New()
@@ -1045,12 +1090,13 @@ func TestStudioPlanAsk_ContinuationOwnershipAndFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 		log := memstore.NewEventLog()
+		diagnostics := &planFailureDiagnostics{}
 		llm := mockllm.New(mockllm.TextTurn("must not execute"))
 		cat := tool.NewCatalog()
 		cat.MustRegister(agent.NewPresentPlanTool())
 		eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model", Interactive: true, Store: store})
 		var admissions atomic.Int32
-		svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: log, Now: func() time.Time { return time.Unix(0, 0) }, AwaitContextWindow: func(context.Context, string, string) error {
+		svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: log, Diagnostics: diagnostics, Now: func() time.Time { return time.Unix(0, 0) }, AwaitContextWindow: func(context.Context, string, string) error {
 			if admissions.Add(1) == 2 {
 				return errors.New("secret failure detail")
 			}
@@ -1097,6 +1143,14 @@ func TestStudioPlanAsk_ContinuationOwnershipAndFailure(t *testing.T) {
 		}
 		if failures != 1 || terminals != 1 || llm.Calls() != 0 {
 			t.Fatalf("failures=%d terminals=%d model calls=%d", failures, terminals, llm.Calls())
+		}
+		if !eventually(5*time.Second, func() bool {
+			return strings.Contains(diagnostics.joined(), "accepted plan continuation failed to start")
+		}) {
+			t.Fatal("continuation start failure was not diagnosed")
+		}
+		if got := diagnostics.joined(); !strings.Contains(got, "error_code=internal") || strings.Contains(got, "secret failure detail") {
+			t.Fatalf("continuation failure diagnostic lost its safe cause or disclosed content: %s", got)
 		}
 		closed := make(chan struct{})
 		go func() { svc.Close(); close(closed) }()
