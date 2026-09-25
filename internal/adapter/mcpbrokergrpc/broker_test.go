@@ -23,6 +23,31 @@ import (
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
+func TestInitialProductionMCPBroker_Scenario1_AttachmentParity(t *testing.T) {
+	local := newBroker()
+	remote := newRemote(t, local)
+	attachment, outcome, err := remote.AttachSession(context.Background(), "session-1")
+	if err != nil || outcome != mcpbroker.AttachCreated {
+		t.Fatalf("AttachSession() = (%q, %v), want created", outcome, err)
+	}
+	if attachment.Binding() != "binding-1" {
+		t.Fatalf("Binding() = %q, want binding-1", attachment.Binding())
+	}
+	tools := attachment.Tools()
+	if len(tools) != 2 || tools[0].Spec().Name != "read" || tools[1].Spec().Name != "protected" {
+		t.Fatalf("Tools() = %#v, want frozen complete catalogue", tools)
+	}
+	if !tools[0].ReadOnly() {
+		t.Error("read-only descriptor was lost")
+	}
+	if _, ok := tools[0].(tool.DispatchSerial); !ok {
+		t.Error("dispatch-serial descriptor was lost")
+	}
+	if _, ok := tools[1].(tool.AuthorizationRequester); !ok {
+		t.Error("authorization capability was lost")
+	}
+}
+
 func TestInitialProductionMCPBroker_Scenario1_LifecycleOutcomes(t *testing.T) {
 	local := newBroker()
 	remote := newRemote(t, local)

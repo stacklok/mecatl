@@ -4,6 +4,8 @@ package mecatl.broker.v1;
 
 option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
 
+import "google/protobuf/timestamp.proto";
+
 // BrokerService connects a harness to one authoritative MCP broker process. A broker
 // has one random incarnation; attachment handles and all lifecycle/Execute receipts
 // are process-local, lease-bound capabilities, not restart-continuous replica state.
@@ -30,6 +32,17 @@ service BrokerService {
   // within its receipt lease; changed content fails before dispatch. After lost transport,
   // retry only with exact structured DISPATCH_NOT_STARTED proof for this method.
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  // RequestAuthorization starts authorization for an exact attachment invocation using
+  // current handle/incarnation. Returned refs are opaque, attachment-bound, and expiring.
+  rpc RequestAuthorization(RequestAuthorizationRequest) returns (RequestAuthorizationResponse);
+  // AbortAuthorization abandons an authorization ref. A lost response is ambiguous.
+  rpc AbortAuthorization(AbortAuthorizationRequest) returns (AbortAuthorizationResponse);
+  // PresentAuthorization returns an ephemeral browser URL. Do not log or persist it.
+  rpc PresentAuthorization(PresentAuthorizationRequest) returns (PresentAuthorizationResponse);
+  // AuthorizationStatus reads an authorization ref without renewing absolute leases.
+  rpc AuthorizationStatus(AuthorizationStatusRequest) returns (AuthorizationStatusResponse);
+  // CancelAuthorization cancels a ref; retry/replay remains process- and lease-bound.
+  rpc CancelAuthorization(CancelAuthorizationRequest) returns (CancelAuthorizationResponse);
 }
 
 // BrokerErrorReason is the closed structured reason vocabulary in BrokerErrorDetail.
@@ -41,6 +54,8 @@ enum BrokerErrorReason {
   BROKER_ERROR_REASON_STATE_UNAVAILABLE = 1;
   // Attachment closed; not proof that an earlier Execute did not dispatch.
   BROKER_ERROR_REASON_ATTACHMENT_CLOSED = 2;
+  // Authorization ref absent; terminal control state, not an Execute dispatch proof.
+  BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND = 3;
   // Exact proof that dispatch_method was not started. Only exact Execute method permits
   // ordinary pre-dispatch Execute failure handling.
   BROKER_ERROR_REASON_DISPATCH_NOT_STARTED = 4;
@@ -201,4 +216,89 @@ message ResultPart {
   double priority = 12;
   // Valid UTF-8 source last-modified presentation value.
   string last_modified = 13;
+}
+
+// RequestAuthorizationRequest identifies an authorization-capable invocation.
+message RequestAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact advertised authorization-capable descriptor name.
+  string name = 2;
+  // Opaque invocation ID, digest-pinned within the receipt lease.
+  string call_id = 3;
+  // Sensitive untrusted JSON-object args; never log or guess.
+  bytes args = 4;
+  // Optional opaque provider item identity.
+  string item_id = 5;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 6;
+}
+// RequestAuthorizationResponse says whether external authorization is required.
+message RequestAuthorizationResponse {
+  // Opaque attachment-bound expiring ref when required; never persist past lease/expiry.
+  Authorization authorization = 1;
+  // False requires authorization to be absent.
+  bool required = 2;
+}
+// AbortAuthorizationRequest targets an opaque authorization ref.
+message AbortAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// AbortAuthorizationResponse confirms abort request completion.
+message AbortAuthorizationResponse {}
+// Authorization identifies one expiring external authorization flow.
+message Authorization {
+  // Opaque sensitive authorization identity, never a location.
+  string id = 1;
+  // Opaque binding to external logical state; never log.
+  string binding = 2;
+  // Absolute expiry after which clients must stop using this ref.
+  google.protobuf.Timestamp expires_at = 3;
+}
+// PresentAuthorizationRequest targets authorization browser presentation.
+message PresentAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// PresentAuthorizationResponse supplies short-lived browser presentation data.
+message PresentAuthorizationResponse {
+  // Valid UTF-8 URL; sensitive presentation data, not a credential, path, or durable ID.
+  string url = 1;
+}
+// AuthorizationStatusRequest reads an opaque authorization ref.
+message AuthorizationStatusRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// AuthorizationStatusResponse carries validated closed authorization status.
+message AuthorizationStatusResponse {
+  // Status such as pending/granted/denied/expired/cancelled; unknown values fail closed.
+  string status = 1;
+}
+// CancelAuthorizationRequest cancels an opaque authorization ref.
+message CancelAuthorizationRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact opaque authorization ref.
+  Authorization authorization = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// CancelAuthorizationResponse carries validated closed cancellation outcome.
+message CancelAuthorizationResponse {
+  // Unknown outcome values fail closed.
+  string outcome = 1;
 }

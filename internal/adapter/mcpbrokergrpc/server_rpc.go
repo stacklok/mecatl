@@ -3,12 +3,14 @@ package mcpbrokergrpc
 import (
 	"context"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
@@ -172,4 +174,151 @@ func (s *Server) Delete(ctx context.Context, req *brokerv1.DeleteRequest) (*brok
 	}
 	s.finishSessionDelete(session.SessionID(req.GetSessionId()), owner, out == mcpbroker.DeleteDeleted)
 	return &brokerv1.DeleteResponse{Outcome: string(out)}, nil
+}
+
+// RequestAuthorization begins authorization for one exact invocation.
+func (s *Server) RequestAuthorization(ctx context.Context, req *brokerv1.RequestAuthorizationRequest) (*brokerv1.RequestAuthorizationResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.RPCDeadline)
+	defer cancel()
+	a, release, e := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
+	if e != nil {
+		return nil, e
+	}
+	defer release()
+	call, e := callFrom(req.GetName(), req.GetCallId(), req.GetArgs(), req.GetItemId())
+	if e != nil {
+		return nil, e
+	}
+	s.mu.Lock()
+	target, ok := a.tools[call.Name].(tool.AuthorizationRequester)
+	s.mu.Unlock()
+	if !ok {
+		return nil, invalid("tool is not authorization-capable")
+	}
+	digest := invocationDigest(call)
+	s.mu.Lock()
+	receipt := a.receipts[call.ID]
+	if receipt != nil && receipt.digest != digest {
+		s.mu.Unlock()
+		return nil, invalid("call_id was reused with different invocation content")
+	}
+	if receipt == nil {
+		if len(a.receipts) >= s.cfg.MaxReceipts || a.receiptBytes+receiptReservationBytes(call) > s.cfg.MaxReceiptBytes {
+			s.mu.Unlock()
+			return nil, reasonStatus(codes.ResourceExhausted, "broker receipt capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
+		}
+		receipt := &executeReceipt{digest: digest, bytes: receiptReservationBytes(call), done: make(chan struct{})}
+		a.receipts[call.ID] = receipt
+		a.receiptBytes += receipt.bytes
+	}
+	s.mu.Unlock()
+	auth, required, e := target.RequestAuthorization(ctx, call)
+	if e != nil {
+		return nil, brokerStatus(e)
+	}
+	if !required {
+		return &brokerv1.RequestAuthorizationResponse{}, nil
+	}
+	return &brokerv1.RequestAuthorizationResponse{Authorization: authToWire(auth), Required: true}, nil
+}
+
+// AbortAuthorization aborts one exact tool authorization.
+func (s *Server) AbortAuthorization(ctx context.Context, req *brokerv1.AbortAuthorizationRequest) (*brokerv1.AbortAuthorizationResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.RPCDeadline)
+	defer cancel()
+	a, release, e := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
+	if e != nil {
+		return nil, e
+	}
+	defer release()
+	auth, e := authFromWire(req.GetAuthorization())
+	if e != nil {
+		return nil, e
+	}
+	s.mu.Lock()
+	targets := make([]tool.AuthorizationRequester, 0, len(a.tools))
+	for _, target := range a.tools {
+		if requester, ok := target.(tool.AuthorizationRequester); ok {
+			targets = append(targets, requester)
+		}
+	}
+	s.mu.Unlock()
+	for _, requester := range targets {
+		if e = requester.AbortAuthorization(ctx, auth); e == nil {
+			return &brokerv1.AbortAuthorizationResponse{}, nil
+		}
+	}
+	if e == nil {
+		return nil, invalid("tool is not authorization-capable")
+	}
+	return nil, brokerStatus(e)
+}
+
+// PresentAuthorization returns the ephemeral URL for one exact authorization.
+func (s *Server) PresentAuthorization(ctx context.Context, req *brokerv1.PresentAuthorizationRequest) (*brokerv1.PresentAuthorizationResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.RPCDeadline)
+	defer cancel()
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	auth, err := authFromWire(req.GetAuthorization())
+	if err != nil {
+		return nil, err
+	}
+	url, err := a.sessionHandle.PresentAuthorization(ctx, auth)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if url == "" || !utf8.ValidString(url) {
+		return nil, invalid("invalid presentation")
+	}
+	return &brokerv1.PresentAuthorizationResponse{Url: url}, nil
+}
+
+// AuthorizationStatus observes one exact authorization.
+func (s *Server) AuthorizationStatus(ctx context.Context, req *brokerv1.AuthorizationStatusRequest) (*brokerv1.AuthorizationStatusResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.RPCDeadline)
+	defer cancel()
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	auth, err := authFromWire(req.GetAuthorization())
+	if err != nil {
+		return nil, err
+	}
+	out, err := a.sessionHandle.AuthorizationStatus(ctx, auth)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if !validAuthorizationStatus(out) {
+		return nil, status.Error(codes.Internal, "invalid authorization status")
+	}
+	return &brokerv1.AuthorizationStatusResponse{Status: string(out)}, nil
+}
+
+// CancelAuthorization cancels one exact authorization.
+func (s *Server) CancelAuthorization(ctx context.Context, req *brokerv1.CancelAuthorizationRequest) (*brokerv1.CancelAuthorizationResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.RPCDeadline)
+	defer cancel()
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	auth, err := authFromWire(req.GetAuthorization())
+	if err != nil {
+		return nil, err
+	}
+	out, err := a.sessionHandle.CancelAuthorization(ctx, auth)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if !validCancelOutcome(out) {
+		return nil, status.Error(codes.Internal, "invalid cancel outcome")
+	}
+	return &brokerv1.CancelAuthorizationResponse{Outcome: string(out)}, nil
 }
