@@ -784,7 +784,7 @@ export interface McpInventory {
 export const MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "network.attempt", "request.manifest", "user_prompt"];
 
 // @public
-export const MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"];
+export const MECATL_ERROR_CODES: readonly ["activity_gap", "artifacts_unavailable", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"];
 
 // @public
 export const MECATL_EVENT_KINDS: readonly ["approval", "authorization.required", "authorization.resolved", "compaction", "compaction.archive", "control.refused", "hook", "message.delta", "model.retry", "network.attempt", "no_progress", "parallel.branch", "parallel.end", "parallel.start", "permission.ask", "permission.retract", "plan.continuation_failed", "provider.route", "reasoning.delta", "recover_notice", "request.manifest", "result", "schedule.failed", "schedule.fired", "schedule.skipped", "session.init", "session.title", "steer", "steer.outcome", "subagent.end", "subagent.start", "subagent.tool", "team.end", "team.findings", "team.member", "team.start", "team.tasks", "tool.call", "tool.progress", "tool.result", "turn.end", "turn.start", "user_prompt"];
@@ -1275,6 +1275,8 @@ export interface ServerCapabilities {
     // (undocumented)
     readonly agents: boolean;
     // (undocumented)
+    readonly artifacts: boolean;
+    // (undocumented)
     readonly audio: boolean;
     // (undocumented)
     readonly debugMcp: boolean;
@@ -1296,8 +1298,6 @@ export interface ServerCapabilities {
     readonly memory: boolean;
     // (undocumented)
     readonly modelSelection: boolean;
-    // (undocumented)
-    readonly pdfArtifacts: boolean;
     // (undocumented)
     readonly posture: string;
     // (undocumented)
@@ -1398,6 +1398,7 @@ export interface Session {
     connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment>;
     controls(runId: string): RunControls;
     delete(options?: RequestOptions): Promise<void>;
+    downloadArtifact(artifactId: string, requestOptions?: RequestOptions): AsyncIterable<Uint8Array>;
     // Warning: (ae-forgotten-export) The symbol "ListGuardrailCoverageResponse" needs to be exported by the entry point deno.d.ts
     guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse>;
     // Warning: (ae-forgotten-export) The symbol "GetGuardrailReviewDetailResponse" needs to be exported by the entry point deno.d.ts
@@ -1414,9 +1415,10 @@ export interface Session {
     setMode(mode: SessionMode, options?: RequestOptions): Promise<SessionSnapshot>;
     snapshot(options?: RequestOptions): Promise<SessionSnapshot>;
     transcript(options?: RequestOptions): Promise<SessionTranscript>;
-    uploadPdf(source: Blob | AsyncIterable<Uint8Array>, options: {
+    uploadArtifact(source: Blob | AsyncIterable<Uint8Array>, options: {
         name: string;
-    }, requestOptions?: RequestOptions): Promise<PdfPromptPart>;
+        mimeType: "application/pdf";
+    }, requestOptions?: RequestOptions): Promise<UploadedArtifact>;
 }
 
 // @public
@@ -2053,6 +2055,20 @@ export class UnsupportedFeatureError extends MecatlError {
     constructor(feature: string, options: Omit<MecatlErrorOptions, "code">);
     // (undocumented)
     readonly feature: string;
+}
+
+// @public
+export interface UploadedArtifact {
+    // (undocumented)
+    readonly artifactId: string;
+    // (undocumented)
+    readonly mimeType: string;
+    // (undocumented)
+    readonly name: string;
+    // (undocumented)
+    readonly sha256: string;
+    // (undocumented)
+    readonly size: bigint;
 }
 
 // @public

@@ -221,6 +221,7 @@ This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`
 | [`UnknownHttpEvent`](#api-unknownhttpevent-interface) | Interface |
 | [`UnknownWatchEnvelope`](#api-unknownwatchenvelope-interface) | Interface |
 | [`UnsupportedFeatureError`](#api-unsupportedfeatureerror-class) | Class |
+| [`UploadedArtifact`](#api-uploadedartifact-interface) | Interface |
 | [`UserModel`](#api-usermodel-interface) | Interface |
 | [`UserPromptEventPayload`](#api-userprompteventpayload-interface) | Interface |
 | [`WatchBoundaryEnvelope`](#api-watchboundaryenvelope-interface) | Interface |
@@ -846,7 +847,7 @@ export declare function pdfPart(artifactId: string): PdfPromptPart;
 
 Parameters:
 
-- `artifactId` (`string`): Opaque ID returned by Session.uploadPdf().
+- `artifactId` (`string`): Opaque ID from Session.uploadArtifact() or a PDF result block.
 
 Returns: `PdfPromptPart`: A PDF prompt part containing only the artifact ID.
 
@@ -3316,7 +3317,7 @@ readonly workspace: string;
 
 <Heading as="h3" id="api-pdfpromptpart-interface"><code>PdfPromptPart</code></Heading>
 
-A session-owned PDF uploaded with Session.uploadPdf().
+A reference to a session-owned PDF uploaded with Session.uploadArtifact().
 
 ```ts
 export interface PdfPromptPart
@@ -4338,6 +4339,12 @@ export interface ServerCapabilities
 readonly agents: boolean;
 ```
 
+<Heading as="h4" id="api-servercapabilities-artifacts-propertysignature"><code>ServerCapabilities.artifacts</code></Heading>
+
+```ts
+readonly artifacts: boolean;
+```
+
 <Heading as="h4" id="api-servercapabilities-audio-propertysignature"><code>ServerCapabilities.audio</code></Heading>
 
 ```ts
@@ -4402,12 +4409,6 @@ readonly memory: boolean;
 
 ```ts
 readonly modelSelection: boolean;
-```
-
-<Heading as="h4" id="api-servercapabilities-pdfartifacts-propertysignature"><code>ServerCapabilities.pdfArtifacts</code></Heading>
-
-```ts
-readonly pdfArtifacts: boolean;
 ```
 
 <Heading as="h4" id="api-servercapabilities-posture-propertysignature"><code>ServerCapabilities.posture</code></Heading>
@@ -4596,7 +4597,7 @@ A durable Mecatl session handle.
 export interface Session
 ```
 
-Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`guardrailCoverage()`](#api-session-guardrailcoverage-methodsignature), [`guardrailReviewDetail()`](#api-session-guardrailreviewdetail-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature), [`uploadPdf()`](#api-session-uploadpdf-methodsignature)
+Callable members: [`activity()`](#api-session-activity-methodsignature), [`attach()`](#api-session-attach-methodsignature), [`cancelWorkspaceEnrollment()`](#api-session-cancelworkspaceenrollment-methodsignature), [`clear()`](#api-session-clear-methodsignature), [`close()`](#api-session-close-methodsignature), [`compact()`](#api-session-compact-methodsignature), [`connectWorkspaceServices()`](#api-session-connectworkspaceservices-methodsignature), [`controls()`](#api-session-controls-methodsignature), [`delete()`](#api-session-delete-methodsignature), [`downloadArtifact()`](#api-session-downloadartifact-methodsignature), [`guardrailCoverage()`](#api-session-guardrailcoverage-methodsignature), [`guardrailReviewDetail()`](#api-session-guardrailreviewdetail-methodsignature), [`listMcpConnectors()`](#api-session-listmcpconnectors-methodsignature), [`mcpAuthorization()`](#api-session-mcpauthorization-methodsignature), [`rename()`](#api-session-rename-methodsignature), [`resolvePlan()`](#api-session-resolveplan-methodsignature), [`retry()`](#api-session-retry-methodsignature), [`retryWorkspaceEnrollment()`](#api-session-retryworkspaceenrollment-methodsignature), [`run()`](#api-session-run-methodsignature), [`setMode()`](#api-session-setmode-methodsignature), [`snapshot()`](#api-session-snapshot-methodsignature), [`transcript()`](#api-session-transcript-methodsignature), [`uploadArtifact()`](#api-session-uploadartifact-methodsignature)
 
 <Heading as="h4" id="api-session-activity-methodsignature"><code>Session.activity</code></Heading>
 
@@ -4736,6 +4737,23 @@ Parameters:
 - `options` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
 Returns: `Promise<void>`: A promise that resolves after the server removes the session.
+
+<Heading as="h4" id="api-session-downloadartifact-methodsignature"><code>Session.downloadArtifact</code></Heading>
+
+Streams a session-owned PDF artifact in ordered byte chunks. The stream starts on first consumption. Returning from its iterator closes the transport response and cancels any unfinished download.
+
+```ts
+downloadArtifact(artifactId: string, requestOptions?: RequestOptions): AsyncIterable<Uint8Array>;
+```
+
+Parameters:
+
+- `artifactId` (`string`): Opaque ID from a PDF tool-result block.
+- `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
+
+Returns: `AsyncIterable<Uint8Array>`: An async byte stream with no whole-file buffer.
+
+Throws: `UnsupportedFeatureError` when artifact storage is unavailable.
 
 <Heading as="h4" id="api-session-guardrailcoverage-methodsignature"><code>Session.guardrailCoverage</code></Heading>
 
@@ -4932,27 +4950,28 @@ Returns: `Promise<SessionTranscript>`: The ordered transcript without provider-p
 
 Throws: `ProtocolError` when the server response is missing or mismatched.
 
-<Heading as="h4" id="api-session-uploadpdf-methodsignature"><code>Session.uploadPdf</code></Heading>
+<Heading as="h4" id="api-session-uploadartifact-methodsignature"><code>Session.uploadArtifact</code></Heading>
 
 Streams one PDF into a session-owned artifact for later prompts or steers.
 
 ```ts
-uploadPdf(source: Blob | AsyncIterable<Uint8Array>, options: {
+uploadArtifact(source: Blob | AsyncIterable<Uint8Array>, options: {
         name: string;
-    }, requestOptions?: RequestOptions): Promise<PdfPromptPart>;
+        mimeType: "application/pdf";
+    }, requestOptions?: RequestOptions): Promise<UploadedArtifact>;
 ```
 
 Parameters:
 
 - `source` (`Blob | AsyncIterable<Uint8Array>`): Browser Blob or async source of PDF bytes.
-- `options` (`{ name: string; }`): A safe PDF basename.
+- `options` (`{ name: string; mimeType: "application/pdf"; }`): A safe basename and the PDF MIME type.
 - `requestOptions` (`RequestOptions`, optional): Request headers, cancellation signal, and deadline.
 
-Returns: `Promise<PdfPromptPart>`: A session-bound PDF prompt reference.
+Returns: `Promise<UploadedArtifact>`: An opaque artifact ID and validated metadata for a later prompt.
 
 Throws: `UnsupportedFeatureError` when artifact storage is unavailable.
 
-Throws: `PromptValidationError` for an invalid source or unsupported model.
+Throws: `PromptValidationError` for invalid upload metadata or source bytes.
 
 <Heading as="h3" id="api-sessionactivity-interface"><code>SessionActivity</code></Heading>
 
@@ -6706,6 +6725,44 @@ readonly kind: "unknown";
 readonly phase: string;
 ```
 
+<Heading as="h3" id="api-uploadedartifact-interface"><code>UploadedArtifact</code></Heading>
+
+Bounded metadata for one session-owned uploaded artifact.
+
+```ts
+export interface UploadedArtifact
+```
+
+<Heading as="h4" id="api-uploadedartifact-artifactid-propertysignature"><code>UploadedArtifact.artifactId</code></Heading>
+
+```ts
+readonly artifactId: string;
+```
+
+<Heading as="h4" id="api-uploadedartifact-mimetype-propertysignature"><code>UploadedArtifact.mimeType</code></Heading>
+
+```ts
+readonly mimeType: string;
+```
+
+<Heading as="h4" id="api-uploadedartifact-name-propertysignature"><code>UploadedArtifact.name</code></Heading>
+
+```ts
+readonly name: string;
+```
+
+<Heading as="h4" id="api-uploadedartifact-sha256-propertysignature"><code>UploadedArtifact.sha256</code></Heading>
+
+```ts
+readonly sha256: string;
+```
+
+<Heading as="h4" id="api-uploadedartifact-size-propertysignature"><code>UploadedArtifact.size</code></Heading>
+
+```ts
+readonly size: bigint;
+```
+
 <Heading as="h3" id="api-usermodel-interface"><code>UserModel</code></Heading>
 
 Resolved user-model inspection operations.
@@ -7359,7 +7416,7 @@ MECATL_ATTACH_FILTERED_KINDS: readonly ["approval", "compaction.archive", "netwo
 Stable server error codes, kept in parity with the Go registry.
 
 ```ts
-MECATL_ERROR_CODES: readonly ["activity_gap", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
+MECATL_ERROR_CODES: readonly ["activity_gap", "artifacts_unavailable", "ask_not_pending", "approval_grant_ineligible", "approval_intent_mismatch", "approval_not_pending", "approval_unsupported", "attempt_live_claim_conflict", "attempt_terminal_conflict", "attempt_version_conflict", "child_not_found", "cleanup_backend", "cleanup_plan_stale", "cleanup_unsupported", "client_mcp_unreachable", "client_mcp_unsupported", "conflict", "context_window_unavailable", "cursor_expired", "cursor_malformed", "draining", "dream_apply_failed", "dream_capacity", "dream_conflict", "dream_deadline", "dream_generate_failed", "dream_in_progress", "dream_not_found", "dream_request_failed", "dream_terminal_conflict", "dream_unavailable", "failed_precondition", "failed_step_retry_ineligible", "fire_now_overlap", "internal", "invalid_argument", "learning_unavailable", "management_unauthorized", "mcp_connector_unavailable", "mcp_authorization_pending", "no_active_run", "no_event_log", "no_mcp_provider", "no_schedule_store", "not_awaiting_plan", "not_found", "placement_binding_invalid", "placement_changed", "placement_selector_invalid", "placement_selector_not_found", "placement_selector_stale", "placement_unavailable", "plan_resolution_required", "proposal_conflict", "reflection_cancelled", "reflection_deadline", "reflection_failed", "reflection_queue_full", "request_too_large", "resource_exhausted", "schedule_disabled", "schedule_exhausted", "schedule_not_found", "schedule_not_leader", "schedule_unsupported", "scheduler_not_running", "session_delete_unsupported", "session_leased_elsewhere", "session_metadata_cursor_restart", "session_metadata_paging_unsupported", "session_not_found", "stale_run_control", "storage_health_backend", "team_not_found", "team_not_running", "team_running", "teams_disabled", "too_many_session_engines", "too_many_teams", "unauthenticated", "unimplemented", "watch_capacity", "watch_lagging", "watch_unsupported"]
 ```
 
 <Heading as="h3" id="api-mecatl-event-kinds-variable"><code>MECATL_EVENT_KINDS</code></Heading>
