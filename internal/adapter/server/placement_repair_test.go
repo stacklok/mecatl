@@ -36,8 +36,8 @@ type repairPlacementProvider struct {
 func (p *repairPlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
 	p.binds++
 	binding := p.binding
-	if binding.CompositionRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
-		binding.CompositionRoot = binding.Environment.Workspace().Root()
+	if binding.GovernanceRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.GovernanceRoot = binding.Environment.Workspace().Root()
 	}
 	return binding, p.err
 }
@@ -48,8 +48,8 @@ func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReatt
 	}
 	binding := p.binding
 	binding.Ref = req.Ref
-	if binding.CompositionRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
-		binding.CompositionRoot = binding.Environment.Workspace().Root()
+	if binding.GovernanceRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.GovernanceRoot = binding.Environment.Workspace().Root()
 	}
 	binding.Environment = tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/fresh"), memledger.New(), nil)
 	return binding, nil
@@ -236,7 +236,7 @@ func (immediateLeaseLoss) Release(context.Context, port.Lease) error { return ni
 func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	closed := &atomic.Int32{}
-	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil), CompositionRoot: "/provisional"}, closed: closed}
+	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil), GovernanceRoot: "/provisional"}, closed: closed}
 	store := memstore.New()
 	source := session.New("source", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(context.Background(), source); err != nil {

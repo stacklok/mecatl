@@ -807,7 +807,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	case startupProgressMsg:
 		if m.phase == phaseConnecting && msg != "" {
-			m.statusMsg = m.deps.Theme.Style("muted").Render(sanitizeTerminal(string(msg)))
+			m.statusMsg = m.deps.Theme.Style("muted").Render(terminaltext.Sanitize(string(msg)))
 		}
 		return m, m.startupProgressCmd(), true
 	case client.SessionReadyMsg:

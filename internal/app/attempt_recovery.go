@@ -162,7 +162,7 @@ func recoverAttempt(ctx context.Context, cfg Config, reg *providerRegistry, sess
 			if err != nil || binding.Ref != source.EnvironmentRef || binding.Environment.Workspace() == nil {
 				return learning.FailureNone, errAttemptSetupTransient
 			}
-			workspace, err = server.PlacementCompositionRoot(binding)
+			workspace, err = server.PlacementGovernanceRoot(binding)
 			if err != nil {
 				return learning.FailureNone, errAttemptSetupTransient
 			}

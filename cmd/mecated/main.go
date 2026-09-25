@@ -997,6 +997,10 @@ func run(mode commandMode, remaining []string) error {
 	}
 
 	composition := appConfig(cfg, sink, cliconfig.TeeToolCallRecorder(mainScoped, pm.ToolCallRecorder), roleScoper, obs.metrics, diag)
+	composition, err = app.ConfigureExecution(composition)
+	if err != nil {
+		return err
+	}
 	built, err := app.Build(ctx, composition)
 	if err != nil {
 		return err

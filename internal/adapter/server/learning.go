@@ -82,7 +82,7 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
 	}
 	if s.placementBinder != nil {
-		workspace, workspaceErr := s.privateCompositionRoot(ctx, sess)
+		workspace, workspaceErr := s.privateGovernanceRoot(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
@@ -570,7 +570,7 @@ func (s *Service) learningWorkspace(ctx context.Context, sess *session.Session) 
 	if s.placementBinder == nil {
 		return "", true
 	}
-	workspace, err := s.privateCompositionRoot(ctx, sess)
+	workspace, err := s.privateGovernanceRoot(ctx, sess)
 	if err != nil {
 		return "", false
 	}

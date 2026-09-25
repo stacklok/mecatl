@@ -22,14 +22,14 @@ import (
 )
 
 type placementLifecycleSpy struct {
-	compositionRoot string
-	kind            session.EnvironmentKind
-	invalid         bool
-	binds           atomic.Int32
-	defaultBinds    atomic.Int32
-	noFSBinds       atomic.Int32
-	reattaches      atomic.Int32
-	closes          atomic.Int32
+	governanceRoot string
+	kind           session.EnvironmentKind
+	invalid        bool
+	binds          atomic.Int32
+	defaultBinds   atomic.Int32
+	noFSBinds      atomic.Int32
+	reattaches     atomic.Int32
+	closes         atomic.Int32
 }
 
 func (p *placementLifecycleSpy) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {
@@ -60,8 +60,8 @@ func (p *placementLifecycleSpy) binding() server.PlacementBinding {
 	ref := session.EnvironmentRef{Kind: kind, ID: "opaque", Revision: "7"}
 	binding := server.PlacementBinding{
 		Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/workspace"), memledger.New(), nil),
-		CompositionRoot: p.compositionRoot,
-		Close:           func() error { p.closes.Add(1); return nil },
+		GovernanceRoot: p.governanceRoot,
+		Close:          func() error { p.closes.Add(1); return nil },
 	}
 	if p.invalid {
 		binding.Ref.Revision = ""
@@ -87,7 +87,7 @@ func placementLifecycleConfig(provider server.PlacementProvider, store *memstore
 }
 
 func TestServiceConstructionDoesNotAllocatePlacement(t *testing.T) {
-	provider := &placementLifecycleSpy{compositionRoot: "/host/source"}
+	provider := &placementLifecycleSpy{governanceRoot: "/host/source"}
 	svc, err := server.NewService(placementLifecycleConfig(provider, memstore.New()))
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestServiceConstructionDoesNotAllocatePlacement(t *testing.T) {
 }
 
 func TestPlacementAllocationOccursOnlyForRequestedProfile(t *testing.T) {
-	provider := &placementLifecycleSpy{compositionRoot: "/host/source"}
+	provider := &placementLifecycleSpy{governanceRoot: "/host/source"}
 	svc, err := server.NewService(placementLifecycleConfig(provider, memstore.New()))
 	if err != nil {
 		t.Fatal(err)
@@ -149,9 +149,9 @@ func TestPlacementReadinessFailurePersistsNothingAndDoesNotFallBack(t *testing.T
 	}
 }
 
-func TestACPUsesHostCompositionRootAndClosesRejectedBinding(t *testing.T) {
+func TestACPUsesHostGovernanceRootAndClosesRejectedBinding(t *testing.T) {
 	hostRoot := t.TempDir()
-	provider := &placementLifecycleSpy{compositionRoot: hostRoot}
+	provider := &placementLifecycleSpy{governanceRoot: hostRoot}
 	svc, err := server.NewService(placementLifecycleConfig(provider, memstore.New()))
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestLoadACPSessionOwnsExactBindingUntilOverrideLifecycleEnds(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hostRoot := t.TempDir()
-			provider := &acpBindingOwnershipSpy{placementLifecycleSpy: &placementLifecycleSpy{compositionRoot: hostRoot}}
+			provider := &acpBindingOwnershipSpy{placementLifecycleSpy: &placementLifecycleSpy{governanceRoot: hostRoot}}
 			svc, err := server.NewService(placementLifecycleConfig(provider, memstore.New()))
 			if err != nil {
 				t.Fatal(err)
@@ -248,14 +248,14 @@ func TestLoadACPSessionOwnsExactBindingUntilOverrideLifecycleEnds(t *testing.T) 
 	}
 }
 
-func TestRemotePlacementWithoutCompositionRootNeverUsesGuestRoot(t *testing.T) {
+func TestRemotePlacementWithoutGovernanceRootNeverUsesGuestRoot(t *testing.T) {
 	for _, kind := range []session.EnvironmentKind{"microvm", "another-remote-backend"} {
 		t.Run(string(kind), func(t *testing.T) {
 			provider := &placementLifecycleSpy{kind: kind}
 			cfg := placementLifecycleConfig(provider, memstore.New())
 			var roots []string
-			cfg.SessionEngine = func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, compositionRoot string, _ session.PermissionMode) (server.SessionEngineResult, error) {
-				roots = append(roots, compositionRoot)
+			cfg.SessionEngine = func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, _ server.SessionProfile, governanceRoot string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+				roots = append(roots, governanceRoot)
 				return server.SessionEngineResult{Engine: cfg.Engine}, nil
 			}
 			svc, err := server.NewService(cfg)
@@ -300,22 +300,22 @@ func TestInvalidProviderBindingIsClosed(t *testing.T) {
 	}
 }
 
-func TestGuestExecutionRootNeverBecomesHostCompositionRoot(t *testing.T) {
+func TestGuestExecutionRootNeverBecomesHostGovernanceRoot(t *testing.T) {
 	hostSource := t.TempDir()
 	const marker = "host-source-project-policy"
 	if err := os.WriteFile(filepath.Join(hostSource, "project.policy"), []byte(marker), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	provider := &placementLifecycleSpy{compositionRoot: hostSource}
+	provider := &placementLifecycleSpy{governanceRoot: hostSource}
 	store := memstore.New()
 	cfg := placementLifecycleConfig(provider, store)
-	cfg.SessionEngine = func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, compositionRoot string, _ session.PermissionMode) (server.SessionEngineResult, error) {
+	cfg.SessionEngine = func(_ context.Context, _ server.ProviderSelector, _ []mcp.ServerConfig, profile server.SessionProfile, governanceRoot string, _ session.PermissionMode) (server.SessionEngineResult, error) {
 		if profile == server.ProfileNoFS {
-			if compositionRoot != "" {
+			if governanceRoot != "" {
 				return server.SessionEngineResult{}, errors.New("no-fs received host composition root")
 			}
 		} else {
-			content, err := os.ReadFile(filepath.Join(compositionRoot, "project.policy"))
+			content, err := os.ReadFile(filepath.Join(governanceRoot, "project.policy"))
 			if err != nil || string(content) != marker {
 				return server.SessionEngineResult{}, errors.New("factory did not receive exact host project root")
 			}

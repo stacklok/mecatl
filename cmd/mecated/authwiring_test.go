@@ -46,7 +46,7 @@ func (offlinePlacementProvider) Bind(context.Context, server.PlacementBindReques
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
 	return server.PlacementBinding{
 		Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil),
-		CompositionRoot: "/ws",
+		GovernanceRoot: "/ws",
 	}, nil
 }
 
@@ -54,7 +54,7 @@ func (offlinePlacementProvider) Reattach(context.Context, server.PlacementReatta
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "offline", Revision: "v1"}
 	return server.PlacementBinding{
 		Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/ws"), memledger.New(), nil),
-		CompositionRoot: "/ws",
+		GovernanceRoot: "/ws",
 	}, nil
 }
 

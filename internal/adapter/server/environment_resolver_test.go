@@ -50,7 +50,7 @@ func (p resolverPlacementProvider) Reattach(ctx context.Context, req server.Plac
 	}
 	binding := server.PlacementBinding{Ref: req.Ref, Environment: env}
 	if env.Workspace() != nil {
-		binding.CompositionRoot = env.Workspace().Root()
+		binding.GovernanceRoot = env.Workspace().Root()
 	}
 	return binding, nil
 }

@@ -65,6 +65,33 @@ func TestFoldExecutionCLIOverrideWinsOnlyWhenSet(t *testing.T) {
 	}
 }
 
+func TestConfigureExecutionRegistersRepositoryHarnessSourcesOnce(t *testing.T) {
+	cfg, err := ConfigureExecution(Config{
+		Workspace: t.TempDir(), DefaultPlacement: PlacementMicroVMLocal, DefaultPlacementSet: true,
+		MicroVMReadyRequest: func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+			return microvmmanager.ReadyRequest{}, nil
+		},
+		MicroVMManagerFactory: func() (MicroVMReadyManager, string, error) {
+			return &executionReadyManager{}, "unix:///run/test-microvmd.sock", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = ConfigureExecution(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.HarnessInstructionSources) != 1 || len(cfg.HarnessCommandSources) != 1 {
+		t.Fatalf("repository registrations = instructions:%d commands:%d", len(cfg.HarnessInstructionSources), len(cfg.HarnessCommandSources))
+	}
+	instruction := cfg.HarnessInstructionSources[0]
+	command := cfg.HarnessCommandSources[0]
+	if instruction.ID != "repository" || command.ID != "repository" || instruction.Scope != HarnessSourceScopePrincipal || command.Scope != HarnessSourceScopePrincipal || !instruction.UsesExecutionWorkspace || !command.UsesExecutionWorkspace || instruction.Provenance.Fixed != harnessProjectTier || command.Provenance.Fixed != harnessProjectTier {
+		t.Fatalf("repository registrations = instruction:%+v command:%+v", instruction, command)
+	}
+}
+
 func TestMicroVMReadinessProgressAndStableFailureCrossPlacementBoundary(t *testing.T) {
 	manager := &executionReadyManager{err: errors.New("private manager failure")}
 	diag := newCapturingDiagnostics()

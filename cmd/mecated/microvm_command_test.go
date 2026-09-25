@@ -190,6 +190,10 @@ func TestMecatedCLICompositionValidatesMicroVMDefaultAfterReadiness(t *testing.T
 	composition.MicroVMManagerFactory = func() (app.MicroVMReadyManager, string, error) {
 		return manager, manager.endpoint, nil
 	}
+	composition, err = app.ConfigureExecution(composition)
+	if err != nil {
+		t.Fatalf("configure CLI execution: %v", err)
+	}
 	buildCtx, cancelBuild := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelBuild()
 	built, err := buildIsolated(t, buildCtx, composition)

@@ -160,7 +160,7 @@ func TestPlacementBinderTreatsRemoteKindsGenerically(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				ref := session.EnvironmentRef{Kind: kind, ID: "opaque", Revision: "v1"}
 				binder, err := NewPlacementBinder(placementProviderFunc(func(context.Context, PlacementBindRequest) (PlacementBinding, error) {
-					return PlacementBinding{Ref: ref, Environment: placementTestEnvironment(ref), CompositionRoot: root}, nil
+					return PlacementBinding{Ref: ref, Environment: placementTestEnvironment(ref), GovernanceRoot: root}, nil
 				}))
 				if err != nil {
 					t.Fatal(err)
@@ -169,12 +169,12 @@ func TestPlacementBinderTreatsRemoteKindsGenerically(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				got, err := PlacementCompositionRoot(binding)
+				got, err := PlacementGovernanceRoot(binding)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if got != root {
-					t.Fatalf("PlacementCompositionRoot = %q, want %q", got, root)
+					t.Fatalf("PlacementGovernanceRoot = %q, want %q", got, root)
 				}
 			})
 		}

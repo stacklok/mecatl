@@ -215,7 +215,7 @@ type ResolvedModel struct {
 // and apply the no-FS prompt posture. A no-FS session ALWAYS routes through this
 // factory — the shared engine has the FS tools baked in.
 //
-// compositionRoot is the SESSION's trusted host project-composition root (issue #32):
+// governanceRoot is the SESSION's trusted host project-composition root (issue #32):
 // the factory pins the per-session engine's CHILD permission resolver to it, so a per-session
 // engine's subagents/members/branches resolve project permission rules from
 // THEIR session's pre-fork base root — never the execution environment's guest root,
@@ -2349,7 +2349,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		}
 		placement = opts.placement
 		executionRoot := placement.Environment.Workspace().Root()
-		workspace, err = PlacementCompositionRoot(*placement)
+		workspace, err = PlacementGovernanceRoot(*placement)
 		if err != nil {
 			return nil, err
 		}
@@ -4506,7 +4506,7 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	// loaded session's persisted Mode (ADR 0030 Layer 3), so a session loaded into plan
 	// mode mounts the plan model; builtForMode is stamped from the result so a later
 	// in-process mode switch on this reloaded session triggers the CASE 1 rebuild.
-	workspace, err := s.privateCompositionRoot(ctx, sess)
+	workspace, err := s.privateGovernanceRoot(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -4661,7 +4661,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 		}
 	}()
 	ctx = admissionCtx
-	engine, env, compositionRoot, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -4678,7 +4678,7 @@ func (s *Service) RetryFailedRun(ctx context.Context, id session.SessionID) (*ag
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), compositionRoot)
+	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.RetryFailedStep(ctx, sess, env)
 	})
@@ -4945,7 +4945,7 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 		// owns the paired result/resolution lifecycle.
 		return nil, fmt.Errorf("%w: restored MCP authorization requires its control", ErrFailedPrecondition)
 	}
-	engine, env, compositionRoot, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -4963,7 +4963,7 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), compositionRoot)
+	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
 	run, err := s.promoteRunAdmission(id, st, stopAdmission, func() *agent.Run {
 		return engine.Run(ctx, sess, env, agent.RunRequest{Text: text, Parts: parts, RunID: runID, CanPresentAuthorization: canPresentAuthorization})
 	})
@@ -5831,7 +5831,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		}
 	}
 	verifiedPlacement := &verified
-	compositionRoot, err := PlacementCompositionRoot(verified)
+	governanceRoot, err := PlacementGovernanceRoot(verified)
 	if err != nil {
 		return nil, tool.Environment{}, "", err
 	}
@@ -5891,7 +5891,7 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	}
 	placementNeedsEngine := !hasEngine && !s.needsRehydration(sess) &&
 		sess.EnvironmentRef.Kind != session.EnvKindNoFS &&
-		compositionRoot != s.cfg.SharedEngineRoot
+		governanceRoot != s.cfg.SharedEngineRoot
 	if !hasEngine && (s.needsRehydration(sess) || placementNeedsEngine) {
 		// RESTART REHYDRATION (issue #55, widened in the cloud-native Phase 1): a
 		// PERSISTED session that needed a PER-SESSION engine — a non-default
@@ -5920,9 +5920,9 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		// overrides are complete environments: the creator supplied the accurate ref
 		// and the correct (possibly nil) CommandRunner. Use them directly; never guess
 		// a ref, namespace, or runner from the override's presence.
-		return engine, envOverride, compositionRoot, nil
+		return engine, envOverride, governanceRoot, nil
 	}
-	return engine, verifiedPlacement.Environment, compositionRoot, nil
+	return engine, verifiedPlacement.Environment, governanceRoot, nil
 }
 
 // sessionNeedsPerFactory reports whether a CreateSession with the given inputs
@@ -6085,7 +6085,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, sess.Relationship.DebugTargetID, sess.DebugTargetFingerprint, target.Owner, sess.DebugMCPServers, sess.DebugMCPTools)
 	} else if useExactTools {
-		workspace, workspaceErr := s.privateCompositionRoot(ctx, sess)
+		workspace, workspaceErr := s.privateGovernanceRoot(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
@@ -6096,7 +6096,7 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 			return nil, err
 		}
 		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
-		workspace, workspaceErr := s.privateCompositionRoot(ctx, sess)
+		workspace, workspaceErr := s.privateGovernanceRoot(ctx, sess)
 		if workspaceErr != nil {
 			return nil, workspaceErr
 		}
@@ -6673,7 +6673,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 		}
 	}()
 	ctx = admissionCtx
-	engine, env, compositionRoot, err := s.engineAndEnvironmentFor(ctx, sess)
+	engine, env, governanceRoot, err := s.engineAndEnvironmentFor(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -6683,7 +6683,7 @@ func (s *Service) resumeFromAwaiting(ctx context.Context, id session.SessionID, 
 	if !leaseHeld() {
 		return nil, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
-	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), compositionRoot)
+	ctx = memory.WithWorkspace(port.WithRootSessionID(ctx, sess.ID), governanceRoot)
 	st.persistMu.Lock()
 	accepted := resolution
 	st.acceptedApproval = &accepted

@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
@@ -32,12 +35,20 @@ type resolvedExecution struct {
 }
 
 // ConfigureExecution applies the resolved execution policy and wires any selected
-// backend. Build calls the same fold after constructing the operator resolver.
+// backend before Build resolves harness-context registrations.
 func ConfigureExecution(cfg Config) (Config, error) {
+	if cfg.executionConfigured {
+		return cfg, nil
+	}
 	if cfg.permResolver == nil {
 		cfg.permResolver = buildPermResolver(cfg)
 	}
-	return foldExecution(cfg)
+	configured, err := foldExecution(cfg)
+	if err != nil {
+		return cfg, err
+	}
+	configured.executionConfigured = true
+	return configured, nil
 }
 
 func foldExecution(cfg Config) (Config, error) {
@@ -152,6 +163,38 @@ func configureMicroVMExecution(cfg Config, egress microvmmanager.GuestEgressSele
 	}
 	cfg.PlacementProvider = provider
 	cfg.PlacementScope = scope
+	cfg.HarnessInstructionSources = slices.Clone(cfg.HarnessInstructionSources)
+	cfg.HarnessCommandSources = slices.Clone(cfg.HarnessCommandSources)
+	cfg.EnvironmentForkers = maps.Clone(cfg.EnvironmentForkers)
+	cfg.EnvironmentMergers = maps.Clone(cfg.EnvironmentMergers)
+	cfg.HarnessInstructionSources = append(cfg.HarnessInstructionSources, HarnessSourceRegistration[prompt.InstructionAssembler]{
+		ID: "repository", Scope: HarnessSourceScopePrincipal,
+		Provenance: HarnessProvenancePolicy{Fixed: harnessProjectTier}, UsesExecutionWorkspace: true,
+		Bind: func(ctx context.Context, sourceScope HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
+			if sourceScope.AcquireExecutionWorkspace == nil {
+				return nil, nil, errors.New("repository instruction source requires execution workspace acquisition")
+			}
+			workspace, release, acquireErr := sourceScope.AcquireExecutionWorkspace(ctx)
+			if acquireErr != nil {
+				return nil, nil, acquireErr
+			}
+			return prompt.RootAssembler{Source: workspace}, release, nil
+		},
+	})
+	cfg.HarnessCommandSources = append(cfg.HarnessCommandSources, HarnessSourceRegistration[server.CommandSourceBinding]{
+		ID: "repository", Scope: HarnessSourceScopePrincipal,
+		Provenance: HarnessProvenancePolicy{Fixed: harnessProjectTier}, UsesExecutionWorkspace: true,
+		Bind: func(ctx context.Context, sourceScope HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+			if sourceScope.AcquireExecutionWorkspace == nil {
+				return nil, nil, errors.New("repository command source requires execution workspace acquisition")
+			}
+			workspace, release, acquireErr := sourceScope.AcquireExecutionWorkspace(ctx)
+			if acquireErr != nil {
+				return nil, nil, acquireErr
+			}
+			return prompt.NewDirCommandExpander(workspace), release, nil
+		},
+	})
 	if cfg.EnvironmentForkers == nil {
 		cfg.EnvironmentForkers = make(map[session.EnvironmentKind]tool.EnvironmentForker)
 	}

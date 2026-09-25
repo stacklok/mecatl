@@ -156,6 +156,8 @@ type Config struct {
 	MicroVMGuestEgressSet bool
 	MicroVMReadyRequest   func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error)
 	MicroVMManagerFactory func() (MicroVMReadyManager, string, error)
+	executionConfigured   bool
+	placementSelectorRead func([]byte) (int, error)
 	// MicroVMReadinessObserver receives bounded, secret-free preparation updates.
 	// MicroVMReadinessFailureHint is appended to a stable preparation error without
 	// exposing the manager's private paths or process output.
@@ -1651,6 +1653,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
+	var executionErr error
+	cfg, executionErr = ConfigureExecution(cfg)
+	if executionErr != nil {
+		return nil, executionErr
+	}
 	registerHarnessCompatibility(&cfg)
 	if section, err := validateHarnessPolicy(cfg); err != nil {
 		return nil, err
@@ -1679,11 +1686,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg, commandRunnerErr = foldOperatorCommandRunnerEnvironment(cfg)
 	if commandRunnerErr != nil {
 		return nil, fmt.Errorf("command runner configuration: %w", commandRunnerErr)
-	}
-	var executionErr error
-	cfg, executionErr = foldExecution(cfg)
-	if executionErr != nil {
-		return nil, executionErr
 	}
 	var temporaryStorageErr error
 	cfg, temporaryStorageErr = foldOperatorTemporaryStorage(cfg)
@@ -2275,7 +2277,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		placementScope = defaultPlacementScope
 	}
 	var placementSelectorKey [32]byte
-	if _, err := rand.Read(placementSelectorKey[:]); err != nil {
+	readPlacementSelector := cfg.placementSelectorRead
+	if readPlacementSelector == nil {
+		readPlacementSelector = rand.Read
+	}
+	if _, err := readPlacementSelector(placementSelectorKey[:]); err != nil {
 		return nil, fmt.Errorf("initialize placement selector signer: %w", err)
 	}
 	placementProvider := cfg.PlacementProvider

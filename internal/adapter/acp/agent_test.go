@@ -63,7 +63,7 @@ func (p acpPlacementProvider) binding() server.PlacementBinding {
 		panic(err)
 	}
 	env := tool.MustEnvironment(p.ref, ws, memledger.New(), nil)
-	return server.PlacementBinding{Environment: env, Ref: p.ref, CompositionRoot: p.root}
+	return server.PlacementBinding{Environment: env, Ref: p.ref, GovernanceRoot: p.root}
 }
 
 func (p acpPlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {

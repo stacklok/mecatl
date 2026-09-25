@@ -1586,7 +1586,7 @@ func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing
 	}
 
 	for range 2 {
-		if _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+		if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1596,7 +1596,7 @@ func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing
 
 	current.Store(8)
 	for range 2 {
-		if _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
+		if _, _, _, err := f.svc.engineAndEnvironmentFor(t.Context(), loaded); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1605,7 +1605,7 @@ func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing
 	}
 
 	pinned := context.WithValue(t.Context(), revisionKey{}, uint64(7))
-	if _, _, err := f.svc.engineAndEnvironmentFor(pinned, loaded); err != nil {
+	if _, _, _, err := f.svc.engineAndEnvironmentFor(pinned, loaded); err != nil {
 		t.Fatal(err)
 	}
 	if got := builds.Load(); got != 3 {
@@ -1627,7 +1627,7 @@ func TestMCPAuthorizationUnpinnedEngineResolutionKeepsStartupRevision(t *testing
 		return withoutBuild(ctx, sel, specs, profile, workspace, mode)
 	}
 	for range 2 {
-		if _, _, err := withoutRuntime.svc.engineAndEnvironmentFor(t.Context(), withoutLoaded); err != nil {
+		if _, _, _, err := withoutRuntime.svc.engineAndEnvironmentFor(t.Context(), withoutLoaded); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1644,7 +1644,7 @@ func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, env, compositionRoot, err := f.svc.engineAndEnvironmentFor(ctx, loaded)
+	engine, env, governanceRoot, err := f.svc.engineAndEnvironmentFor(ctx, loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1659,7 +1659,7 @@ func TestMCPAuthorizationPreparedRegistrationCancellationRestoresClaim(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, compositionRoot), loaded, env, claimed, resolution)
+	prepared, err := engine.PrepareAuthorizationContinuation(memory.WithWorkspace(ctx, governanceRoot), loaded, env, claimed, resolution)
 	if err != nil {
 		t.Fatal(err)
 	}

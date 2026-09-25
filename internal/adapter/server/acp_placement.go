@@ -95,9 +95,9 @@ func (s *Service) LoadACPSession(ctx context.Context, id session.SessionID, cwd 
 }
 
 func assertACPPlacementCWD(cwd string, binding PlacementBinding) error {
-	compositionRoot, rootErr := PlacementCompositionRoot(binding)
+	governanceRoot, rootErr := PlacementGovernanceRoot(binding)
 	resolved, err := filepath.EvalSymlinks(cwd)
-	if rootErr != nil || err != nil || compositionRoot == "" || !filepath.IsAbs(cwd) || filepath.Clean(resolved) != filepath.Clean(compositionRoot) {
+	if rootErr != nil || err != nil || governanceRoot == "" || !filepath.IsAbs(cwd) || filepath.Clean(resolved) != filepath.Clean(governanceRoot) {
 		return fmt.Errorf("%w: cwd does not match the configured session placement", ErrInvalidArgument)
 	}
 	return nil

@@ -91,7 +91,11 @@ func TestBareEmbeddedConfigResolvesOperatorExecutionSettings(t *testing.T) {
 		factoryCalled = true
 		return manager, "unix:///run/test-microvmd.sock", nil
 	}
-	built, err := app.Build(t.Context(), cfg)
+	configured, err := app.ConfigureExecution(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := app.Build(t.Context(), configured)
 	if err != nil {
 		t.Fatal(err)
 	}

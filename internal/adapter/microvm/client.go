@@ -119,6 +119,8 @@ type Client struct {
 	scope          server.PlacementScope
 	readiness      func(context.Context) error
 	cleanupTimeout time.Duration
+	ownershipMu    sync.Mutex
+	ownership      map[session.EnvironmentRef]int
 }
 
 // New validates endpoint and constructs a thin lifecycle client.
@@ -127,7 +129,7 @@ func New(endpoint string) (*Client, error) {
 	if err != nil || u.Scheme != "unix" || u.Host != "" || u.Path == "" {
 		return nil, errors.New("microvmd endpoint must be an absolute unix:// path")
 	}
-	return &Client{endpoint: u.Path, cleanupTimeout: cleanupPhaseTimeout}, nil
+	return &Client{endpoint: u.Path, cleanupTimeout: cleanupPhaseTimeout, ownership: make(map[session.EnvironmentRef]int)}, nil
 }
 
 // NewPlacementProvider constructs a deployment-owned microVM default placement.
@@ -187,6 +189,13 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 	if c.sourceCheckout == "" {
 		return server.PlacementBinding{}, server.ErrInvalidPlacementBinding
 	}
+	// Resolve and final detach are one client-local ownership transaction. A new
+	// owner cannot publish between backend resolution and a previous last detach.
+	c.ownershipMu.Lock()
+	defer c.ownershipMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return server.PlacementBinding{}, err
+	}
 	resolveCtx, cancelResolve := context.WithTimeoutCause(ctx, resolvePhaseTimeout, errors.New("microvmd resolve phase timed out"))
 	defer cancelResolve()
 	response, err := c.call(resolveCtx, lifecycleRequest{
@@ -200,7 +209,13 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 		return server.PlacementBinding{}, errors.New("microvmd resolved a different environment generation")
 	}
 	closePlacement := func() error { return c.boundedOperate(ctx, "detach", claim) }
-	return c.placementBinding(request.Ref, claim, closePlacement, nil), nil
+	if err := ctx.Err(); err != nil {
+		if c.ownership[request.Ref] == 0 {
+			return server.PlacementBinding{}, errors.Join(err, closePlacement())
+		}
+		return server.PlacementBinding{}, err
+	}
+	return c.placementBindingLocked(request.Ref, claim, closePlacement, nil), nil
 }
 
 func noFSBinding() (server.PlacementBinding, error) {
@@ -300,12 +315,47 @@ func canonicalBinding(claim binding) bool {
 		claim.Ref == claim.EnvironmentID+"@"+strconv.FormatUint(uint64(claim.Generation), 10) && claim.Generation != 0
 }
 
-func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, closePlacement, rollbackPlacement func() error) server.PlacementBinding {
-	return server.PlacementBinding{
-		Ref: ref, Environment: c.environment(ref, claim), Close: closePlacement, Rollback: rollbackPlacement,
-		CompositionRoot: c.sourceCheckout,
-		Metadata:        server.PlacementMetadata{Kind: string(kindMicroVM), Label: "Local microVM", Revision: ref.Revision},
+func (c *Client) placementBinding(ref session.EnvironmentRef, claim binding, detach, rollback func() error) server.PlacementBinding {
+	c.ownershipMu.Lock()
+	defer c.ownershipMu.Unlock()
+	return c.placementBindingLocked(ref, claim, detach, rollback)
+}
+
+func (c *Client) placementBindingLocked(ref session.EnvironmentRef, claim binding, detach, rollback func() error) server.PlacementBinding {
+	c.ownership[ref]++
+	var releaseOnce sync.Once
+	var releaseErr error
+	release := func(remove bool) error {
+		releaseOnce.Do(func() {
+			c.ownershipMu.Lock()
+			defer c.ownershipMu.Unlock()
+			remaining := c.ownership[ref] - 1
+			if remaining == 0 {
+				delete(c.ownership, ref)
+			} else {
+				c.ownership[ref] = remaining
+			}
+			if remove && rollback != nil {
+				if remaining != 0 {
+					releaseErr = errors.New("microvm rollback refused: placement still has live owners")
+				} else {
+					releaseErr = rollback()
+				}
+			} else if remaining == 0 && detach != nil {
+				releaseErr = detach()
+			}
+		})
+		return releaseErr
 	}
+	binding := server.PlacementBinding{
+		Ref: ref, Environment: c.environment(ref, claim), Close: func() error { return release(false) },
+		GovernanceRoot: c.sourceCheckout,
+		Metadata:       server.PlacementMetadata{Kind: string(kindMicroVM), Label: "Local microVM", Revision: ref.Revision},
+	}
+	if rollback != nil {
+		binding.Rollback = func() error { return release(true) }
+	}
+	return binding
 }
 
 func refForBinding(claim binding) session.EnvironmentRef {

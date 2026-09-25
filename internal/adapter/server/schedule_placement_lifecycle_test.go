@@ -32,7 +32,7 @@ type schedulePlacementProvider struct {
 
 func schedulePlacementBinding(ref session.EnvironmentRef, closeFn func() error) server.PlacementBinding {
 	env := tool.MustEnvironment(ref, memfs.NewWorkspace("/workspace"), memledger.New(), nil)
-	return server.PlacementBinding{Ref: ref, Environment: env, CompositionRoot: "/host", Close: closeFn}
+	return server.PlacementBinding{Ref: ref, Environment: env, GovernanceRoot: "/host", Close: closeFn}
 }
 
 func (p *schedulePlacementProvider) Bind(_ context.Context, req server.PlacementBindRequest) (server.PlacementBinding, error) {

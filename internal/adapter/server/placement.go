@@ -153,12 +153,13 @@ type PlacementBinding struct {
 	Environment tool.Environment
 	Ref         session.EnvironmentRef
 	Metadata    PlacementMetadata
-	// CompositionRoot is explicit trusted host context used only to assemble
-	// host-side project policy and prompt sources. It is independent of the
-	// execution namespace exposed by Environment.Workspace().Root(). Non-local
-	// bindings leave it empty when there is no host context; guest roots are never
-	// used as a fallback. No-FS bindings always leave it empty.
-	CompositionRoot string
+	// GovernanceRoot is explicit trusted host context for project-scoped
+	// governance, including permission, learning, and continuation partitioning.
+	// It is independent of harness-context sources and of the execution namespace
+	// exposed by Environment.Workspace().Root(). Non-local bindings leave it empty
+	// when there is no host governance context; guest roots are never used as a
+	// fallback. No-FS bindings always leave it empty.
+	GovernanceRoot string
 	// Close detaches a published placement binding. Service ownership is
 	// transferred only after the session snapshot is durably created.
 	Close func() error
@@ -374,12 +375,12 @@ func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionPro
 		rollbackUnpublishedPlacement(s, &binding)
 		return "", nil, ErrInvalidPlacementBinding
 	}
-	compositionRoot, err := PlacementCompositionRoot(binding)
+	governanceRoot, err := PlacementGovernanceRoot(binding)
 	if err != nil {
 		rollbackUnpublishedPlacement(s, &binding)
 		return "", nil, err
 	}
-	return compositionRoot, &binding, nil
+	return governanceRoot, &binding, nil
 }
 
 func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest, placement *PlacementBinding) (*session.Session, error) {
@@ -486,6 +487,7 @@ func (s *Service) installSessionPlacement(id session.SessionID, binding Placemen
 		}
 		return
 	}
+	var redundantClose func() error
 	s.placementAttachMu.Lock()
 	attachment := s.attachedPlacements[binding.Ref]
 	if attachment == nil {
@@ -493,11 +495,14 @@ func (s *Service) installSessionPlacement(id session.SessionID, binding Placemen
 		owned.Rollback = nil
 		attachment = &servicePlacementAttachment{binding: owned}
 		s.attachedPlacements[binding.Ref] = attachment
-	} else if binding.Close != nil {
-		_ = binding.Close()
+	} else {
+		redundantClose = binding.Close
 	}
 	attachment.refs++
 	s.placementAttachMu.Unlock()
+	if redundantClose != nil {
+		_ = redundantClose()
+	}
 
 	var once sync.Once
 	release := func() error {
@@ -586,30 +591,31 @@ func (s *Service) borrowSessionPlacement(ctx context.Context, sess *session.Sess
 	return binding, func() { once.Do(func() { _ = s.releasePlacementAttachment(binding.Ref) }) }, nil
 }
 
-func (s *Service) privateCompositionRoot(ctx context.Context, sess *session.Session) (string, error) {
+func (s *Service) privateGovernanceRoot(ctx context.Context, sess *session.Session) (string, error) {
 	binding, release, err := s.borrowSessionPlacement(ctx, sess)
 	if err != nil {
 		return "", err
 	}
 	defer release()
-	return PlacementCompositionRoot(binding)
+	return PlacementGovernanceRoot(binding)
 }
 
-// PlacementCompositionRoot returns explicit host-side composition context when
-// provided. A non-local empty root means no host context and never falls back to
-// the execution namespace; local bindings preserve their historical fallback.
-func PlacementCompositionRoot(binding PlacementBinding) (string, error) {
+// PlacementGovernanceRoot returns explicit host-side governance context when
+// provided. A non-local empty root means no host governance context and never
+// falls back to the execution namespace; local bindings preserve their historical
+// governance fallback.
+func PlacementGovernanceRoot(binding PlacementBinding) (string, error) {
 	if binding.Ref.Kind == session.EnvKindNoFS {
-		if binding.CompositionRoot != "" {
+		if binding.GovernanceRoot != "" {
 			return "", ErrInvalidPlacementBinding
 		}
 		return "", nil
 	}
-	if binding.CompositionRoot != "" {
-		return binding.CompositionRoot, nil
+	if binding.GovernanceRoot != "" {
+		return binding.GovernanceRoot, nil
 	}
 	// Local providers historically exposed one host namespace for both execution
-	// and composition. Preserve that internal compatibility without ever treating
+	// and governance. Preserve that internal compatibility without ever treating
 	// a non-local guest root (notably microVM /workspace) as a host path.
 	if binding.Ref.Kind == session.EnvKindLocal {
 		return binding.Environment.Workspace().Root(), nil
@@ -726,7 +732,7 @@ func validatePlacementBinding(binding PlacementBinding) error {
 	if binding.Environment.Ref() != binding.Ref {
 		return ErrInvalidPlacementBinding
 	}
-	if binding.Ref.Kind == session.EnvKindNoFS && binding.CompositionRoot != "" {
+	if binding.Ref.Kind == session.EnvKindNoFS && binding.GovernanceRoot != "" {
 		return ErrInvalidPlacementBinding
 	}
 	if runner := binding.Environment.CommandRunner(); runner != nil {

@@ -57,8 +57,8 @@ func TestPlacementProviderUsesOpaqueDaemonProfileAndExactRef(t *testing.T) {
 	if placed.Metadata.Label != "Local microVM" || strings.Contains(placed.Metadata.Label, "/private/") {
 		t.Fatalf("public placement metadata = %+v", placed.Metadata)
 	}
-	if placed.CompositionRoot != "/source" || placed.Environment.Workspace().Root() != "/workspace" {
-		t.Fatalf("host/guest roots = %q/%q", placed.CompositionRoot, placed.Environment.Workspace().Root())
+	if placed.GovernanceRoot != "/source" || placed.Environment.Workspace().Root() != "/workspace" {
+		t.Fatalf("host/guest roots = %q/%q", placed.GovernanceRoot, placed.Environment.Workspace().Root())
 	}
 }
 
@@ -127,8 +127,8 @@ func TestNoFSBindBypassesMicroVMReadiness(t *testing.T) {
 	if readinessCalls != 0 {
 		t.Fatalf("no-fs readiness calls = %d, want 0", readinessCalls)
 	}
-	if binding.CompositionRoot != "" || binding.Environment.Workspace().Root() != "" {
-		t.Fatalf("no-fs host/guest roots = %q/%q, want empty", binding.CompositionRoot, binding.Environment.Workspace().Root())
+	if binding.GovernanceRoot != "" || binding.Environment.Workspace().Root() != "" {
+		t.Fatalf("no-fs host/guest roots = %q/%q, want empty", binding.GovernanceRoot, binding.Environment.Workspace().Root())
 	}
 }
 

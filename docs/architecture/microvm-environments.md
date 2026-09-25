@@ -86,13 +86,28 @@ accepting an arbitrary host path. Stale generations, replayed credentials, sibli
 path escapes fail before dispatch. Transport failure never falls back to host filesystem or
 shell.
 
-The placement binding also carries an internal host-composition root that is distinct from
-the guest execution root. MicroVM Bind and exact Reattach supply the configured source checkout
-only after the daemon resolves the binding against that repository. Host-side project
-instructions, rules, slash commands, permission learning, and authorization use that root;
-Read/Edit/Bash continue to use guest `/workspace`. The composition root is not snapshot data,
-public metadata, or model-visible content. Missing MicroVM composition context fails closed,
-and no-FS deliberately supplies none.
+The placement binding also carries an internal host governance root for permission,
+learning, and authorization partitioning. It is distinct from both harness-context sources
+and the guest execution root. MicroVM Bind and exact Reattach supply the configured source
+checkout as that governance root only after the daemon resolves the binding against the
+repository. Read, Edit, and Shell continue to use guest `/workspace`. No-FS supplies no
+governance root.
+
+Harness context is selected independently by operator policy. The MicroVM composition
+registers `repository` instruction and command sources, but registration does not enable
+them. Selection also requires separate project trust and ingestion admission. Each admitted
+principal-scoped binding lazily borrows the exact authorized guest workspace through the
+placement reattachment capability. The source
+view supports reads and command discovery without a runner or execution `ReadLedger`,
+and refuses mutations; its cleanup releases only that source borrow. The MicroVM client
+serializes exact-ref acquisition with final detach within that Client and retains the backend
+until that Client's source and execution owners release it. This does not protect owners held
+by another Client or harness process. The guest root string
+`/workspace` is never reopened on the host or used as an identity. Independent `local`,
+`driver`, `mcp`, and `skills` sources attach no guest placement. A required selected
+repository source fails when its exact guest files are unavailable instead of using the host
+checkout or another session. Root instructions retain AGENTS.md-first and CLAUDE.md-fallback
+behavior, and directory commands remain live between observations.
 
 Two source-capture transactions may run concurrently in one daemon process. Each initial
 capture has a cumulative 256 MiB I/O accounting budget across tracked and untracked working
@@ -108,7 +123,7 @@ so it is not a promise that every 256 MiB checkout is admissible.
 Workspace and CommandRunner remain affined to the same root and cwd. The MicroVM Workspace's
 `tool.AuthorityResourceResolver` projects relative tool paths onto the same confined guest
 `/workspace` identity used by filesystem RPCs; this lets authorization evaluate the guest
-resource without mistaking the host composition root for tool authority. Absolute, empty,
+resource without mistaking the host governance root for tool authority. Absolute, empty,
 NUL-containing, and escaping paths fail closed. Existing opaque file
 versions, create-only and conditional writes, ordered stdout/stderr, exit status, bounded
 output, and process-group cancellation remain the data-plane contract. This confines
@@ -124,7 +139,9 @@ roots or host paths.
 Two sessions in one repository attach to one VM generation but hold different refs and
 worktrees. Direct-write Subagents use the parent's complete Environment. Read-only
 Subagents, Parallel branches, and Team members use new daemon-created worktrees and refs in
-the same repository VM.
+the same repository VM. All four delegation paths retain the parent's admitted harness
+source binding and its source borrow for as long as the child reference needs it. A child
+worktree never replaces that source anchor.
 
 Closing a session or child releases process-local handles and unregisters the attachment;
 it does not stop the repository VM or remove its rootfs, caches, or another logical

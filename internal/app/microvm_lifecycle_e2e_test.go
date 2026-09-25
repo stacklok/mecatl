@@ -28,14 +28,18 @@ import (
 )
 
 type placementTestDaemon struct {
-	listener     net.Listener
-	root         string
-	mu           sync.Mutex
-	ops          []string
-	next         int
-	guests       map[string]string
-	execBindings []string
-	deleteClaims []string
+	listener      net.Listener
+	root          string
+	mu            sync.Mutex
+	ops           []string
+	next          int
+	guests        map[string]string
+	claims        map[string]string
+	attached      map[string]bool
+	rejectResolve bool
+	seed          func(string) error
+	execBindings  []string
+	deleteClaims  []string
 }
 
 func startPlacementTestDaemon(t *testing.T) *placementTestDaemon {
@@ -55,7 +59,7 @@ func startPlacementTestDaemon(t *testing.T) *placementTestDaemon {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &placementTestDaemon{listener: listener, root: t.TempDir(), guests: make(map[string]string)}
+	d := &placementTestDaemon{listener: listener, root: t.TempDir(), guests: make(map[string]string), claims: make(map[string]string), attached: make(map[string]bool)}
 	t.Cleanup(func() { _ = listener.Close() })
 	go d.serve()
 	return d
@@ -100,19 +104,48 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 			response = map[string]any{"error_code": "create_failed", "error": "guest root unavailable"}
 			break
 		}
-		binding = map[string]any{"owner": "local", "session_id": sessionID, "environment_id": environmentID, "ref": environmentID + "@7", "generation": 7}
+		binding = map[string]any{"owner": provision["owner"], "session_id": sessionID, "environment_id": environmentID, "ref": environmentID + "@7", "generation": 7}
+		d.mu.Lock()
+		d.claims[environmentID] = placementClaimKey(binding)
+		d.attached[environmentID] = true
+		seed := d.seed
+		d.mu.Unlock()
+		if seed != nil {
+			if err := seed(guestRoot); err != nil {
+				response = map[string]any{"error_code": "create_failed", "error": "guest seed failed"}
+				break
+			}
+		}
 		response["binding"] = binding
 		response["created"] = map[string]any{
 			"ref": map[string]any{"Kind": "microvm", "ID": environmentID + "@7"}, "generation": 7,
 			"host_worktree": guestRoot, "guest_root": "/workspace", "profile": "microvm-local",
 			"guest_egress": "deny-all", "host_egress": "not constrained",
 		}
-	case "resolve", "detach":
+	case "resolve":
+		environmentID, _ := binding["environment_id"].(string)
+		d.mu.Lock()
+		if d.rejectResolve || d.guests[environmentID] == "" || d.claims[environmentID] != placementClaimKey(binding) {
+			response = map[string]any{"error_code": "not_found", "error": "generation unavailable"}
+		} else {
+			d.attached[environmentID] = true
+		}
+		d.mu.Unlock()
+	case "detach", "child-delete":
 		if !d.hasBinding(binding) {
 			response = map[string]any{"error_code": "not_found", "error": "generation unavailable"}
+		} else {
+			environmentID, _ := binding["environment_id"].(string)
+			d.mu.Lock()
+			delete(d.attached, environmentID)
+			d.mu.Unlock()
 		}
 	case "delete":
-		guestRoot, ok := d.guestRoot(binding)
+		environmentID, _ := binding["environment_id"].(string)
+		d.mu.Lock()
+		guestRoot, ok := d.guests[environmentID]
+		ok = ok && d.claims[environmentID] == placementClaimKey(binding)
+		d.mu.Unlock()
 		if !ok {
 			response = map[string]any{"error_code": "not_found", "error": "generation unavailable"}
 			break
@@ -121,7 +154,6 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 			response = map[string]any{"error_code": "delete_failed", "error": "guest root cleanup failed"}
 			break
 		}
-		environmentID, _ := binding["environment_id"].(string)
 		ref, _ := binding["ref"].(string)
 		sessionID, _ := binding["session_id"].(string)
 		generation, _ := binding["generation"].(float64)
@@ -157,14 +189,76 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 			response = map[string]any{"error_code": "invalid", "error": "invalid fork label"}
 			break
 		}
-		response["binding"] = map[string]any{
+		childBinding := map[string]any{
 			"owner": binding["owner"], "session_id": fmt.Sprint(binding["session_id"]) + ":" + forkPayload.Label,
 			"environment_id": childID, "ref": childID + "@7", "generation": 7,
 		}
-	case "child-delete":
-		if !d.hasBinding(binding) {
+		d.mu.Lock()
+		d.claims[childID] = placementClaimKey(childBinding)
+		d.attached[childID] = true
+		d.mu.Unlock()
+		response["binding"] = childBinding
+	case "workspace":
+		guestRoot, ok := d.guestRoot(binding)
+		if !ok {
 			response = map[string]any{"error_code": "not_found", "error": "generation unavailable"}
+			break
 		}
+		var payload struct {
+			Operation string `json:"operation"`
+			Path      string `json:"path"`
+			Pattern   string `json:"pattern"`
+		}
+		encoded, _ := json.Marshal(request["payload"])
+		var raw json.RawMessage
+		_ = json.Unmarshal(encoded, &raw)
+		if json.Unmarshal(raw, &payload) != nil {
+			response = map[string]any{"error_code": "invalid", "error": "invalid workspace request"}
+			break
+		}
+		workspaceResult := map[string]any{}
+		requestedPath := payload.Path
+		if payload.Operation == "glob" {
+			requestedPath = payload.Pattern
+		}
+		cleanedPath := filepath.Clean(filepath.FromSlash(requestedPath))
+		if filepath.IsAbs(cleanedPath) || cleanedPath == ".." || strings.HasPrefix(cleanedPath, ".."+string(filepath.Separator)) {
+			workspaceResult["error_code"] = "invalid"
+			workspacePayload, _ := json.Marshal(workspaceResult)
+			response["payload"] = json.RawMessage(workspacePayload)
+			break
+		}
+		switch payload.Operation {
+		case "read":
+			data, readErr := os.ReadFile(filepath.Join(guestRoot, filepath.FromSlash(payload.Path)))
+			if errors.Is(readErr, fs.ErrNotExist) {
+				workspaceResult["error_code"] = "not_found"
+			} else if readErr != nil {
+				workspaceResult["error_code"] = "read_failed"
+			} else {
+				workspaceResult["data"] = data
+				workspaceResult["version"] = "test-version"
+				workspaceResult["version_valid"] = true
+			}
+		case "glob":
+			matches, globErr := filepath.Glob(filepath.Join(guestRoot, filepath.FromSlash(payload.Pattern)))
+			if globErr != nil {
+				workspaceResult["error_code"] = "invalid"
+				break
+			}
+			paths := make([]string, 0, len(matches))
+			for _, match := range matches {
+				rel, relErr := filepath.Rel(guestRoot, match)
+				if relErr == nil {
+					paths = append(paths, filepath.ToSlash(rel))
+				}
+			}
+			workspaceResult["paths"] = paths
+		default:
+			workspaceResult["error_code"] = "unsupported"
+		}
+		workspacePayload, _ := json.Marshal(workspaceResult)
+		response["payload"] = json.RawMessage(workspacePayload)
 	case "exec":
 		guestRoot, ok := d.guestRoot(binding)
 		if !ok {
@@ -209,12 +303,33 @@ func (d *placementTestDaemon) serveConn(conn net.Conn) {
 	_ = writePlacementFrame(conn, response)
 }
 
+func placementClaimKey(binding map[string]any) string {
+	return fmt.Sprintf("%v/%v/%v/%v", binding["owner"], binding["session_id"], binding["ref"], binding["generation"])
+}
+
 func (d *placementTestDaemon) guestRoot(binding map[string]any) (string, bool) {
 	environmentID, _ := binding["environment_id"].(string)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	root, ok := d.guests[environmentID]
-	return root, ok
+	return root, ok && d.attached[environmentID] && d.claims[environmentID] == placementClaimKey(binding)
+}
+
+func (d *placementTestDaemon) writeGuestFile(t *testing.T, environmentID, name, body string) {
+	t.Helper()
+	d.mu.Lock()
+	root := d.guests[environmentID]
+	d.mu.Unlock()
+	if root == "" {
+		t.Fatalf("guest %q is unavailable", environmentID)
+	}
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (d *placementTestDaemon) hasBinding(binding map[string]any) bool {
@@ -336,6 +451,108 @@ func TestMicroVMDefaultPlacementRetainsOneExactAttachmentUntilCloseSession(t *te
 	}
 }
 
+func TestMicroVMHarnessContextSelectedRepositoryUsesExactGuestSources(t *testing.T) {
+	ctx := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "test", Subject: "same-owner"})
+	daemon := startPlacementTestDaemon(t)
+	settings := writeOperatorSettingsFile(t, `
+execution:
+  default_placement: microvm-local
+harness_context:
+  enabled_sources: [repository]
+  kinds:
+    instructions: {sources: [repository], mode: combine}
+    commands: {sources: [repository], mode: combine}
+    rules: {sources: [], mode: combine}
+    skills: {sources: [], mode: combine}
+    agent_defs: {sources: [], mode: combine}
+`)
+	manager := &placementReadyManager{endpoint: daemon.endpoint()}
+	var requests []port.LLMRequest
+	provider := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) { requests = append(requests, request) })},
+		mockllm.TextTurn("first complete"),
+		mockllm.TextTurn("second complete"),
+	)
+	cfg, err := ConfigureExecution(Config{
+		Workspace: t.TempDir(), StoreDir: t.TempDir(), UseMock: true, MockProvider: provider,
+		TrustProject: true, PermissionConfigs: []string{settings}, UserModelDir: t.TempDir(), OwnershipEnforced: true,
+		MicroVMReadyRequest: func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
+			return microvmmanager.ReadyRequest{}, nil
+		},
+		MicroVMManagerFactory: func() (MicroVMReadyManager, string, error) {
+			return manager, daemon.endpoint(), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer built.Close()
+
+	first, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstEnvironment := strings.SplitN(first.EnvironmentRef.ID, ".", 2)
+	secondEnvironment := strings.SplitN(second.EnvironmentRef.ID, ".", 2)
+	if len(firstEnvironment) != 2 || len(secondEnvironment) != 2 {
+		t.Fatalf("unexpected refs: first=%+v second=%+v", first.EnvironmentRef, second.EnvironmentRef)
+	}
+	daemon.writeGuestFile(t, firstEnvironment[1], "AGENTS.md", "FIRST-GUEST-INSTRUCTION")
+	daemon.writeGuestFile(t, firstEnvironment[1], ".mecatl/commands/which.md", "FIRST-GUEST-COMMAND")
+	daemon.writeGuestFile(t, secondEnvironment[1], "AGENTS.md", "SECOND-GUEST-INSTRUCTION")
+	daemon.writeGuestFile(t, secondEnvironment[1], ".mecatl/commands/which.md", "SECOND-GUEST-COMMAND")
+
+	for _, sess := range []*session.Session{first, second} {
+		commands, listErr := built.Service.ListCommandsForSession(ctx, sess.ID)
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(commands) != 1 || commands[0].Name != "which" {
+			t.Fatalf("commands for %s = %+v", sess.ID, commands)
+		}
+		harnessRun(t, built, ctx, sess.ID, "/which")
+	}
+	if len(requests) != 2 {
+		t.Fatalf("model requests = %d, want 2", len(requests))
+	}
+	for index, want := range []struct{ present, absent []string }{
+		{present: []string{"FIRST-GUEST-INSTRUCTION", "FIRST-GUEST-COMMAND"}, absent: []string{"SECOND-GUEST-INSTRUCTION", "SECOND-GUEST-COMMAND"}},
+		{present: []string{"SECOND-GUEST-INSTRUCTION", "SECOND-GUEST-COMMAND"}, absent: []string{"FIRST-GUEST-INSTRUCTION", "FIRST-GUEST-COMMAND"}},
+	} {
+		var text strings.Builder
+		for _, message := range requests[index].Messages {
+			text.WriteString(message.Text)
+			text.WriteByte('\n')
+		}
+		body := text.String()
+		for _, present := range want.present {
+			if !strings.Contains(body, present) {
+				t.Fatalf("request %d source context omitted %q: %q", index, present, body)
+			}
+		}
+		for _, absent := range want.absent {
+			if strings.Contains(body, absent) {
+				t.Fatalf("request %d source context included other guest %q: %q", index, absent, body)
+			}
+		}
+	}
+	foreign := session.WithPrincipal(t.Context(), &session.Principal{Issuer: "test", Subject: "other-owner"})
+	if _, err := built.Service.ListCommandsForSession(foreign, first.ID); err == nil {
+		t.Fatal("foreign owner discovered guest source")
+	}
+	if got := daemon.operationCount("resolve"); got != 4 {
+		t.Fatalf("source borrows = %d, want two exact instruction/command borrows per session", got)
+	}
+}
+
 func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 	ctx := context.Background()
 	daemon := startPlacementTestDaemon(t)
@@ -345,7 +562,7 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 	manager := &placementReadyManager{endpoint: daemon.endpoint()}
 
 	config := func(provider *mockllm.Provider) Config {
-		return Config{
+		configured, err := ConfigureExecution(Config{
 			Workspace: hostSource, StoreDir: storeDir, UseMock: true, MockProvider: provider,
 			Shell: "/bin/sh", AllowAllTools: true, TrustProject: true, PermissionConfigs: []string{settings},
 			MicroVMReadyRequest: func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
@@ -354,7 +571,11 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 			MicroVMManagerFactory: func() (MicroVMReadyManager, string, error) {
 				return manager, daemon.endpoint(), nil
 			},
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
+		return configured
 	}
 
 	firstProvider := mockllm.New(
@@ -403,6 +624,10 @@ func TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact(t *testing.T) {
 	if manager.calls != 2 || daemon.operationCount("create") != 2 {
 		first.Close()
 		t.Fatalf("default-session allocation counts: readiness=%d create=%d", manager.calls, daemon.operationCount("create"))
+	}
+	if got := daemon.operationCount("resolve"); got != 0 {
+		first.Close()
+		t.Fatalf("unselected repository context acquired guest placement %d times", got)
 	}
 	if one.EnvironmentRef.Kind != "microvm" || two.EnvironmentRef.Kind != "microvm" || one.EnvironmentRef == two.EnvironmentRef {
 		first.Close()

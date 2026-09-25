@@ -180,10 +180,39 @@ mkdir -p "$CONFIG_HOME/mecatl"
 cat >"$CONFIG_HOME/mecatl/settings.yaml" <<'YAML'
 execution:
   default_placement: microvm-local
+harness_context:
+  enabled_sources: [repository, local, skills]
+  kinds:
+    instructions:
+      sources: [repository, local]
+      mode: combine
+    commands:
+      sources: [repository, local, skills]
+      mode: combine
+    rules:
+      sources: [local]
+      mode: combine
+    skills:
+      sources: [local]
+      mode: combine
+    agent_defs:
+      sources: [local]
+      mode: combine
 YAML
 mecated microvm doctor
 mecatui
 ```
+
+This policy selects repository `AGENTS.md` or `CLAUDE.md` files and slash commands
+from each session's exact guest worktree. Selection does not grant project admission:
+separately trust the checkout through operator `trustedWorkspaces` settings or
+`--trust-project`. Headless posture alone does not trust a project. MicroVM placement
+alone does not select those files.
+The `local` registration is the source-bound compatibility view for local instructions,
+commands, rules, skills, and agent definitions. `skills` exposes resolved skills as commands.
+Configured remote command or customization services register as `driver`, and enabled MCP
+prompts register as `mcp`. Include only registered IDs in `enabled_sources`; every explicit
+policy must provide all five kind mappings.
 
 `microvm doctor` is read-only. With prerequisites satisfied, a fresh home reports
 `ready to configure on first use` and succeeds. Bare mecatui hosts its in-process server;
@@ -199,7 +228,11 @@ mecatui --resume SESSION_ID
 ```
 
 A microVM session remains on its exact server-owned placement for its lifetime; it is
-never moved to host execution. If `microvmd` restarts or the host reboots, ordinary session
+never moved to host execution. Harness context follows the separately configured source
+policy. Independent `local`, `driver`, `skills`, and `mcp` sources remain available without
+a guest attachment, including for no-filesystem sessions. A selected `repository` source
+requires the session's exact guest files and reports an error if they cannot be acquired.
+If `microvmd` restarts or the host reboots, ordinary session
 resume starts a fresh VM boot around the retained rootfs and logical worktrees. The logical
 `EnvironmentRef`, including its revision, stays unchanged. Installed packages, guest home,
 caches, branches, indexes, and dirty or untracked files remain available. A command that was
@@ -264,7 +297,7 @@ curl -sS -X POST http://127.0.0.1:8081/v1/sessions \
 SESSION_ID=copy-from-create-response
 curl -sS -N -X POST "http://127.0.0.1:8081/v1/sessions/${SESSION_ID}/prompt" \
   -H 'Content-Type: application/json' \
-  -d '{"text":"Inspect this repository and report its test command."}'
+  -d '{"text":"Run pwd and report the execution workspace."}'
 mecated microvm status
 ```
 

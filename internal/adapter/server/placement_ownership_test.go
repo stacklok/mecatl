@@ -32,11 +32,11 @@ func (p *ownershipPlacementProvider) binding(reattach bool) PlacementBinding {
 		p.binds.Add(1)
 	}
 	return PlacementBinding{
-		Ref:             p.ref,
-		Environment:     tool.MustEnvironment(p.ref, memfs.NewWorkspace("/owned"), memledger.New(), nil),
-		CompositionRoot: "/owned",
-		Close:           func() error { p.detaches.Add(1); return nil },
-		Rollback:        func() error { p.rollbacks.Add(1); return p.rollbackErr },
+		Ref:            p.ref,
+		Environment:    tool.MustEnvironment(p.ref, memfs.NewWorkspace("/owned"), memledger.New(), nil),
+		GovernanceRoot: "/owned",
+		Close:          func() error { p.detaches.Add(1); return nil },
+		Rollback:       func() error { p.rollbacks.Add(1); return p.rollbackErr },
 	}
 }
 

@@ -15,12 +15,6 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
-type failingHarnessPlacement struct{}
-
-func (failingHarnessPlacement) Bind(context.Context, server.PlacementBindRequest) (server.PlacementBinding, error) {
-	return server.PlacementBinding{}, errors.New("late placement validation failure")
-}
-
 func TestHarnessBuildLateFailureOwnsEachCleanupOnce(t *testing.T) {
 	kinds := harnessEmptyKinds()
 	kinds.Commands = permconfig.HarnessContextKind{Sources: []string{"command"}, Mode: "combine"}
@@ -33,17 +27,15 @@ func TestHarnessBuildLateFailureOwnsEachCleanupOnce(t *testing.T) {
 	cfg.HarnessRulesSources = []HarnessSourceRegistration[prompt.RulesSource]{{ID: "rules", Scope: HarnessSourceScopeProcess, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(context.Context, HarnessSourceScope) (prompt.RulesSource, func() error, error) {
 		return frozenHarnessRules{rules: []prompt.Rule{{Name: "rule", Body: "body"}}}, func() error { rulesClosed.Add(1); return nil }, nil
 	}}}
-	cfg.PlacementProvider = failingHarnessPlacement{}
-	cfg.PlacementScope = "late-failure"
+	cfg.placementSelectorRead = func([]byte) (int, error) { return 0, errors.New("late selector signer failure") }
 	built, err := buildIsolated(t, t.Context(), cfg)
-	if err == nil || built != nil || !strings.Contains(err.Error(), "validate default placement") {
+	if err == nil || built != nil || !strings.Contains(err.Error(), "initialize placement selector signer") {
 		t.Fatalf("late Build failure=%v, built=%v", err, built)
 	}
 	if commandClosed.Load() != 1 || rulesClosed.Load() != 1 {
 		t.Fatalf("late Build cleanup command=%d rules=%d", commandClosed.Load(), rulesClosed.Load())
 	}
-	cfg.PlacementProvider = nil
-	cfg.PlacementScope = ""
+	cfg.placementSelectorRead = nil
 	built, err = buildIsolated(t, t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)

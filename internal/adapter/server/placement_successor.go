@@ -226,11 +226,11 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 		defer s.finalizeBrokerAttachment(broker, &brokerCommitted)
 		created.ExternalBinding = broker.attachment.Binding()
 	}
-	compositionRoot, err := PlacementCompositionRoot(binding)
+	governanceRoot, err := PlacementGovernanceRoot(binding)
 	if err != nil {
 		return "", err
 	}
-	if s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, compositionRoot) {
+	if s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(selector, nil, profile, governanceRoot) {
 		if s.cfg.MCPBroker == nil && s.cfg.SessionEngine == nil {
 			return "", fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
 		}
@@ -307,7 +307,13 @@ func successorProviderSelector(source *session.Session, req ForkSuccessorRequest
 
 func (s *Service) successorPlacement(ctx context.Context, source *session.Session, requested SuccessorPlacement) (PlacementBinding, error) {
 	if requested.Selector == "" {
-		return s.sessionPlacement(ctx, source)
+		binding, release, err := s.borrowSessionPlacement(ctx, source)
+		if err != nil {
+			return PlacementBinding{}, err
+		}
+		binding.Close = func() error { release(); return nil }
+		binding.Rollback = nil
+		return binding, nil
 	}
 	if source.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return PlacementBinding{}, ErrPlacementNotFound
