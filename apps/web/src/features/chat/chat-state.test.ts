@@ -171,6 +171,7 @@ describe("messagesFromTranscript", () => {
           content: "Look",
           id: "transcript-0",
           images: [{ ...images[0], id: "transcript-0-image-0" }],
+          recordedOrdinal: 0,
           role: "user",
         },
       ],

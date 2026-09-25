@@ -165,6 +165,7 @@ import {
   imagePreview,
 } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import { MessageMinimap } from "./message-minimap";
 import { QueuedMessageList } from "./queued-message-list";
 import { ReasoningDisclosure } from "./reasoning-disclosure";
 import {
@@ -193,10 +194,14 @@ import {
 import { hasVisibleStopReason, StopReasonChip } from "./stop-reason-chip";
 import { StreamingIndicator } from "./streaming-indicator";
 import {
+  matchingThreadKeyForMessage,
+  readThreadAssociations,
+  recordedRootForMessage,
   registerThreadSession,
-  threadKeyForMessage,
+  relinkLegacyThread,
+  threadKeyForRoot,
   threadTitleFromRoot,
-  useThreadMap,
+  useThreadAssociations,
   useThreadSessionIds,
 } from "./thread-map";
 import { type ToolActivity, ToolActivityList } from "./tool-activity";
@@ -388,6 +393,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const activityFollowedSession = useRef<string | undefined>(undefined);
   const interruptedSettledSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
+  const minimapNavigation = useRef(false);
+  const threadCreation = useRef(false);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
   const visibleDelegationFleet =
     delegationFleet.sessionId === (sessionId ?? "")
@@ -407,7 +414,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const enterSendBehavior = useEnterSendBehavior().value;
   const queuedMessages = useQueuedMessages(sessionId ?? "");
   const canvas = useLocalCanvas(sessionId ?? "draft");
-  const threadMap = useThreadMap(sessionId ?? "");
+  const threadAssociations = useThreadAssociations(sessionId ?? "", transcript.data);
   const threadSessionIds = useThreadSessionIds();
   const titledSessionItems = useMemo(
     () =>
@@ -1110,14 +1117,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
 
   async function openSideThread(message: ChatMessage) {
     if (!sessionId) return;
-    const messageKey = threadKeyForMessage(message);
-    const existing = threadMap[messageKey]?.sessionId;
-    if (existing) {
+    const sourceId = sessionId;
+    const knownRoot = await recordedRootForMessage(message, transcript.data);
+    const knownKey = knownRoot && threadKeyForRoot(knownRoot);
+    const known =
+      knownKey &&
+      (await readThreadAssociations(sourceId, transcript.data)).byKey[knownKey]?.sessionId;
+    if (known && viewedSessionId.current === sourceId) {
       setContentPreview({
         kind: "thread",
-        messageKey,
-        parentSessionId: sessionId,
-        sessionId: existing,
+        messageKey: knownKey,
+        parentSessionId: sourceId,
+        sessionId: known,
       });
       return;
     }
@@ -1125,23 +1136,54 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       setNotice("Wait for the current response to finish before starting a side thread.");
       return;
     }
-    const model = displayedDetail?.model;
-    if (!model) {
-      setError("This chat has no resolved model to carry into a side thread.");
-      return;
-    }
+    if (threadCreation.current) return;
 
+    threadCreation.current = true;
     setError(undefined);
-    setNotice("Creating a focused side thread…");
+    let creating = false;
     try {
+      // A render-local anchor, even one with a saved ordinal, is insufficient
+      // until the latest authoritative transcript proves its final role/text.
+      const refreshed = await transcript.refetch();
+      if (viewedSessionId.current !== sourceId) return;
+      if (!refreshed.isSuccess) {
+        setNotice("Could not refresh the saved transcript. Try again.");
+        return;
+      }
+      const latest = refreshed.data;
+      const root = await recordedRootForMessage(message, latest);
+      if (!root || latest?.sessionId !== sourceId) {
+        setNotice("Wait for this message to be saved before starting a side thread.");
+        return;
+      }
+      const messageKey = threadKeyForRoot(root);
+      const existing = (await readThreadAssociations(sourceId, latest)).byKey[messageKey]
+        ?.sessionId;
+      if (existing) {
+        setContentPreview({
+          kind: "thread",
+          messageKey,
+          parentSessionId: sourceId,
+          sessionId: existing,
+        });
+        return;
+      }
+      const model = displayedDetail?.model;
+      if (!model) {
+        setError("This chat has no resolved model to carry into a side thread.");
+        return;
+      }
+      setNotice("Creating a focused side thread…");
+      creating = true;
+      // Fork copies the source's current full history. This row is only its UI anchor.
       const successor = await forkSession.mutateAsync({
         body: {
           model: { id: model.id, providerId: model.providerId },
           reasoningEffort: model.reasoningEffort,
         },
-        path: { sessionId },
+        path: { sessionId: sourceId },
       });
-      registerThreadSession(sessionId, messageKey, successor.id);
+      registerThreadSession(sourceId, messageKey, successor.id);
       try {
         await renameSession.mutateAsync({
           body: { title: threadTitleFromRoot(message.content) },
@@ -1151,16 +1193,56 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         // The association is still valid if the optional presentation rename fails.
       }
       await queryClient.invalidateQueries({ queryKey: listSessionsQueryKey() });
+      if (viewedSessionId.current === sourceId) {
+        setContentPreview({
+          kind: "thread",
+          messageKey,
+          parentSessionId: sourceId,
+          sessionId: successor.id,
+        });
+      }
+    } catch (caught) {
+      if (viewedSessionId.current === sourceId) setError(errorMessage(caught));
+    } finally {
+      threadCreation.current = false;
+      if (creating && viewedSessionId.current === sourceId) setNotice(undefined);
+    }
+  }
+
+  async function relinkOlderThread(message: ChatMessage) {
+    if (!sessionId || isRunning) return;
+    const sourceId = sessionId;
+    try {
+      const refreshed = await transcript.refetch();
+      if (viewedSessionId.current !== sourceId) return;
+      if (!refreshed.isSuccess) {
+        setNotice("Could not refresh the saved transcript. Try again.");
+        return;
+      }
+      const latest = refreshed.data;
+      const root = await recordedRootForMessage(message, latest);
+      if (!root || latest?.sessionId !== sourceId) {
+        setNotice("Wait for this message to be saved before relinking its thread.");
+        return;
+      }
+      const messageKey = threadKeyForRoot(root);
+      const associations = await readThreadAssociations(sourceId, latest);
+      const candidate = associations.legacyCandidates[messageKey];
+      if (
+        !candidate ||
+        !(await relinkLegacyThread(sourceId, candidate.legacyKey, messageKey, latest))
+      ) {
+        setNotice("The older thread is no longer available for this message.");
+        return;
+      }
       setContentPreview({
         kind: "thread",
         messageKey,
-        parentSessionId: sessionId,
-        sessionId: successor.id,
+        parentSessionId: sourceId,
+        sessionId: candidate.sessionId,
       });
     } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setNotice(undefined);
+      if (viewedSessionId.current === sourceId) setError(errorMessage(caught));
     }
   }
 
@@ -2413,77 +2495,128 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           )}
         </header>
 
-        <div
-          className="min-h-0 flex-1 overflow-y-auto"
-          onPointerUp={captureTranscriptSelection}
-          onScroll={(event) => {
-            setSelectionAction(undefined);
-            const element = event.currentTarget;
-            setAtTranscriptBottom(isNearTranscriptBottom(element));
-          }}
-          ref={transcriptScroll}
-        >
-          <div className="mx-auto flex min-h-full max-w-3xl flex-col px-4 py-8 sm:px-6">
-            {transcript.isPending && sessionId && !isRunning ? (
-              <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
-            ) : messages.length === 0 ? (
-              <div className="m-auto flex flex-col items-center">
-                <DraftGreeting
-                  onPickSeed={(seed) => {
-                    setSeedRequiresConfirmation(false);
-                    setSeedText(seed);
+        <div className="relative min-h-0 flex-1">
+          <section
+            aria-label="Conversation transcript"
+            className="h-full min-h-0 overflow-y-auto"
+            onKeyDown={(event) => {
+              if (
+                ["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "].includes(
+                  event.key,
+                )
+              ) {
+                minimapNavigation.current = false;
+              }
+            }}
+            onPointerDown={() => {
+              minimapNavigation.current = false;
+            }}
+            onPointerUp={captureTranscriptSelection}
+            onScroll={(event) => {
+              setSelectionAction(undefined);
+              if (minimapNavigation.current) return;
+              const element = event.currentTarget;
+              setAtTranscriptBottom(isNearTranscriptBottom(element));
+            }}
+            onTouchMove={() => {
+              minimapNavigation.current = false;
+            }}
+            onWheel={() => {
+              minimapNavigation.current = false;
+            }}
+            ref={transcriptScroll}
+          >
+            <div className="mx-auto flex min-h-full max-w-3xl flex-col py-8 pl-4 pr-12 sm:pl-6 sm:pr-12">
+              {transcript.isPending && sessionId && !isRunning ? (
+                <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
+              ) : messages.length === 0 ? (
+                <div className="m-auto flex flex-col items-center">
+                  <DraftGreeting
+                    onPickSeed={(seed) => {
+                      setSeedRequiresConfirmation(false);
+                      setSeedText(seed);
+                    }}
+                  />
+                  {!sessionId && (
+                    <ContinueLatestChip latest={latestChat} onContinue={selectSession} />
+                  )}
+                </div>
+              ) : (
+                <ChatTranscript
+                  agentName={agentName}
+                  delegationsByMessageId={delegationPlacement.byMessageId}
+                  legacyThreadSessionIdForMessage={(message) => {
+                    const key = matchingThreadKeyForMessage(
+                      message,
+                      transcript.data,
+                      threadAssociations,
+                    );
+                    return key ? threadAssociations.legacyCandidates[key]?.sessionId : undefined;
+                  }}
+                  messages={messages}
+                  onOpenActivity={(focus, opener) => {
+                    activityOpener.current = opener;
+                    activityOpenerFocus.current = focus;
+                    setActivityFocus(focus);
+                    setActivityFocusRequest((value) => value + 1);
+                    setContentPreview({ kind: "activity" });
+                  }}
+                  onOpenThread={(message) => void openSideThread(message)}
+                  onRelinkThread={(message) => void relinkOlderThread(message)}
+                  onReviewAuthorization={(authorization) =>
+                    setContentPreview({ authorization, kind: "authorization" })
+                  }
+                  onPreviewImage={(image) =>
+                    setContentPreview({ file: imagePreview(image, true), kind: "file" })
+                  }
+                  onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                  showToolCalls={showToolCalls}
+                  streamingMessageId={
+                    isRunning && messages.at(-1)?.role === "assistant"
+                      ? messages.at(-1)?.id
+                      : undefined
+                  }
+                  threadDisabled={forkSession.isPending}
+                  threadSessionIdForMessage={(message) => {
+                    const key = matchingThreadKeyForMessage(
+                      message,
+                      transcript.data,
+                      threadAssociations,
+                    );
+                    return key ? threadAssociations.byKey[key]?.sessionId : undefined;
+                  }}
+                  userName={userName}
+                />
+              )}
+              {delegationPlacement.unanchored.length > 0 && (
+                <DelegationCardRow
+                  activities={delegationPlacement.unanchored}
+                  onOpen={(focus, opener) => {
+                    activityOpener.current = opener;
+                    activityOpenerFocus.current = focus;
+                    setActivityFocus(focus);
+                    setActivityFocusRequest((value) => value + 1);
+                    setContentPreview({ kind: "activity" });
                   }}
                 />
-                {!sessionId && (
-                  <ContinueLatestChip latest={latestChat} onContinue={selectSession} />
-                )}
-              </div>
-            ) : (
-              <ChatTranscript
-                agentName={agentName}
-                delegationsByMessageId={delegationPlacement.byMessageId}
-                messages={messages}
-                onOpenActivity={(focus, opener) => {
-                  activityOpener.current = opener;
-                  activityOpenerFocus.current = focus;
-                  setActivityFocus(focus);
-                  setActivityFocusRequest((value) => value + 1);
-                  setContentPreview({ kind: "activity" });
-                }}
-                onOpenThread={(message) => void openSideThread(message)}
-                onReviewAuthorization={(authorization) =>
-                  setContentPreview({ authorization, kind: "authorization" })
-                }
-                onPreviewImage={(image) =>
-                  setContentPreview({ file: imagePreview(image, true), kind: "file" })
-                }
-                onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
-                showToolCalls={showToolCalls}
-                streamingMessageId={
-                  isRunning && messages.at(-1)?.role === "assistant"
-                    ? messages.at(-1)?.id
-                    : undefined
-                }
-                threadDisabled={forkSession.isPending}
-                threadSessionIdForMessage={(message) =>
-                  threadMap[threadKeyForMessage(message)]?.sessionId
-                }
-                userName={userName}
-              />
-            )}
-            {delegationPlacement.unanchored.length > 0 && (
-              <DelegationCardRow
-                activities={delegationPlacement.unanchored}
-                onOpen={(focus, opener) => {
-                  activityOpener.current = opener;
-                  activityOpenerFocus.current = focus;
-                  setActivityFocus(focus);
-                  setActivityFocusRequest((value) => value + 1);
-                  setContentPreview({ kind: "activity" });
-                }}
-              />
-            )}
-          </div>
+              )}
+            </div>
+          </section>
+          <MessageMinimap
+            delegationsByMessageId={delegationPlacement.byMessageId}
+            key={sessionId ?? "draft"}
+            messages={messages}
+            onNavigate={() => {
+              minimapNavigation.current = true;
+              setAtTranscriptBottom(false);
+            }}
+            scrollportRef={transcriptScroll}
+            sessionId={sessionId}
+            showToolCalls={showToolCalls}
+            streamingMessageId={
+              isRunning && messages.at(-1)?.role === "assistant" ? messages.at(-1)?.id : undefined
+            }
+          />
         </div>
 
         {!atTranscriptBottom && (
@@ -2491,6 +2624,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             aria-label="Scroll to latest message"
             className="absolute bottom-32 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg"
             onClick={() => {
+              minimapNavigation.current = false;
               const element = transcriptScroll.current;
               element?.scrollTo({ behavior: "smooth", top: element.scrollHeight });
               setAtTranscriptBottom(true);

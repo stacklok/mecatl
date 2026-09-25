@@ -81,7 +81,11 @@ function matchesImageContent(live: ChatMessage, saved: ChatMessage): boolean {
 
 function keepLiveWithRecordedTools(live: ChatMessage, saved: ChatMessage): ChatMessage {
   const content = saved.content.startsWith(live.content) ? saved.content : live.content;
-  if (!saved.tools?.length) return content === live.content ? live : { ...live, content };
+  if (!saved.tools?.length) {
+    return content === live.content && live.recordedOrdinal === saved.recordedOrdinal
+      ? live
+      : { ...live, content, recordedOrdinal: saved.recordedOrdinal };
+  }
   const liveTools = live.tools ?? [];
   const seen = new Set<string>();
   const recordedTools = saved.tools.map((recorded) => {
@@ -104,9 +108,10 @@ function keepLiveWithRecordedTools(live: ChatMessage, saved: ChatMessage): ChatM
   const tools = [...recordedTools, ...liveTools.filter((tool) => !seen.has(tool.id))];
   return tools.length === liveTools.length &&
     tools.every((tool, index) => tool === liveTools[index]) &&
-    content === live.content
+    content === live.content &&
+    live.recordedOrdinal === saved.recordedOrdinal
     ? live
-    : { ...live, content, tools };
+    : { ...live, content, recordedOrdinal: saved.recordedOrdinal, tools };
 }
 
 /** Rebuild saved order, matching each repeated ordinary row only once. */
