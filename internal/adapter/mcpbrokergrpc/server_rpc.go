@@ -75,7 +75,8 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	now := time.Now()
 	s.handles[h] = &serverHandle{sessionHandle: a, principal: principal, logicalID: logicalID, owner: owner, binding: string(a.Binding()), tools: tools, expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{}), receipts: make(map[session.ToolCallID]*executeReceipt)}
 	attached = true
-	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.instanceID}, nil
+	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentAttachment)
+	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.instanceID, WorkspaceEnrollment: enrollment}, nil
 }
 
 func (s *Server) discardUnpublishedHandle(handle mcpbroker.Attachment, outcome mcpbroker.AttachOutcome) {
@@ -321,4 +322,95 @@ func (s *Server) CancelAuthorization(ctx context.Context, req *brokerv1.CancelAu
 		return nil, status.Error(codes.Internal, "invalid cancel outcome")
 	}
 	return &brokerv1.CancelAuthorizationResponse{Outcome: string(out)}, nil
+}
+
+// BeginWorkspaceEnrollment begins a pre-prompt enrollment.
+func (s *Server) BeginWorkspaceEnrollment(ctx context.Context, req *brokerv1.BeginWorkspaceEnrollmentRequest) (*brokerv1.BeginWorkspaceEnrollmentResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.RPCDeadline)
+	defer cancel()
+	a, release, err := s.get(ctx, req.GetBrokerIncarnation(), req.GetHandle())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	enroller, ok := a.sessionHandle.(mcpbroker.WorkspaceEnrollmentAttachment)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "workspace enrollment unsupported")
+	}
+	presentation, err := enroller.BeginWorkspaceEnrollment(ctx)
+	if err != nil {
+		return nil, brokerStatus(err)
+	}
+	if !presentation.Valid() {
+		return nil, status.Error(codes.Internal, "invalid workspace presentation")
+	}
+	return &brokerv1.BeginWorkspaceEnrollmentResponse{Ref: workspaceRefToWire(presentation.Ref), Url: presentation.URL}, nil
+}
+
+// ObserveWorkspaceEnrollment observes one exact pre-prompt enrollment.
+func (s *Server) ObserveWorkspaceEnrollment(ctx context.Context, req *brokerv1.ObserveWorkspaceEnrollmentRequest) (*brokerv1.ObserveWorkspaceEnrollmentResponse, error) {
+	result, err := s.workspaceResult(ctx, req.GetBrokerIncarnation(), req.GetHandle(), req.GetRef(), false)
+	if err != nil {
+		return nil, err
+	}
+	return &brokerv1.ObserveWorkspaceEnrollmentResponse{Ref: result.ref, Status: result.status, Tools: result.tools}, nil
+}
+
+// CancelWorkspaceEnrollment cancels one exact pre-prompt enrollment.
+func (s *Server) CancelWorkspaceEnrollment(ctx context.Context, req *brokerv1.CancelWorkspaceEnrollmentRequest) (*brokerv1.CancelWorkspaceEnrollmentResponse, error) {
+	result, err := s.workspaceResult(ctx, req.GetBrokerIncarnation(), req.GetHandle(), req.GetRef(), true)
+	if err != nil {
+		return nil, err
+	}
+	return &brokerv1.CancelWorkspaceEnrollmentResponse{Ref: result.ref, Status: result.status, Tools: result.tools}, nil
+}
+
+type workspaceResultWire struct {
+	ref    *brokerv1.WorkspaceRef
+	status string
+	tools  []*brokerv1.ToolDescriptor
+}
+
+func (s *Server) workspaceResult(ctx context.Context, instanceID, handle string, wireRef *brokerv1.WorkspaceRef, cancel bool) (workspaceResultWire, error) {
+	ctx, stop := context.WithTimeout(ctx, s.cfg.RPCDeadline)
+	defer stop()
+	a, release, err := s.get(ctx, instanceID, handle)
+	if err != nil {
+		return workspaceResultWire{}, err
+	}
+	defer release()
+	enroller, ok := a.sessionHandle.(mcpbroker.WorkspaceEnrollmentAttachment)
+	if !ok {
+		return workspaceResultWire{}, status.Error(codes.FailedPrecondition, "workspace enrollment unsupported")
+	}
+	ref, err := workspaceRefFromWire(wireRef)
+	if err != nil {
+		return workspaceResultWire{}, err
+	}
+	var result mcpbroker.WorkspaceEnrollmentResult
+	if cancel {
+		result, err = enroller.CancelWorkspaceEnrollment(ctx, ref)
+	} else {
+		result, err = enroller.ObserveWorkspaceEnrollment(ctx, ref)
+	}
+	if err != nil {
+		return workspaceResultWire{}, brokerStatus(err)
+	}
+	if !result.Valid() {
+		return workspaceResultWire{}, status.Error(codes.Internal, "invalid workspace result")
+	}
+	var desc []*brokerv1.ToolDescriptor
+	if result.Catalogue != nil {
+		var tools map[string]tool.Tool
+		desc, tools, err = descriptors(result.Catalogue.Tools())
+		if err != nil {
+			return workspaceResultWire{}, status.Error(codes.Internal, "invalid workspace catalogue")
+		}
+		// A connected catalogue is the complete frozen set for this enrollment.
+		// Publish its descriptors and executable tools together for this handle.
+		s.mu.Lock()
+		a.tools = tools
+		s.mu.Unlock()
+	}
+	return workspaceResultWire{ref: workspaceRefToWire(result.Ref), status: string(result.Status), tools: desc}, nil
 }

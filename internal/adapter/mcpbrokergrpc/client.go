@@ -75,6 +75,9 @@ func (c *Client) attachResponse(r *brokerv1.AttachResponse) (mcpbroker.Attachmen
 	}
 	c.instanceID = r.GetBrokerIncarnation()
 	c.mu.Unlock()
+	if r.GetWorkspaceEnrollment() {
+		return &clientEnrollmentSessionHandle{clientSessionHandle: base}, mcpbroker.AttachOutcome(r.GetOutcome()), nil
+	}
 	return base, mcpbroker.AttachOutcome(r.GetOutcome()), nil
 }
 func (c *Client) discardAttachResponse(response *brokerv1.AttachResponse) {
@@ -211,6 +214,56 @@ func (a *clientSessionHandle) CancelAuthorization(ctx context.Context, auth sess
 		return "", errors.New("mcpbrokergrpc: invalid cancel outcome")
 	}
 	return out, nil
+}
+
+type clientEnrollmentSessionHandle struct{ *clientSessionHandle }
+
+// ResetWorkspaceEnrollment has no remote-broker RPC yet (same gap as
+// RefreshGrantedAuthorizationCatalogue): the wire contract has no reset
+// method, so a remote attachment cannot ask the broker to withdraw its
+// completed catalogue generation ahead of a fresh whole-bundle enrollment.
+// The in-process caller drives withdrawal from its own recorded pending/
+// completed state regardless, so a no-op here does not silently double as
+// success for a broker-side reset that never happened.
+func (*clientEnrollmentSessionHandle) ResetWorkspaceEnrollment(context.Context) error { return nil }
+
+func (a *clientEnrollmentSessionHandle) BeginWorkspaceEnrollment(ctx context.Context) (mcpbroker.WorkspaceEnrollmentPresentation, error) {
+	rpcCtx, cancel := context.WithTimeout(ctx, a.client.cfg.RPCDeadline)
+	defer cancel()
+	r, err := a.client.rpc.BeginWorkspaceEnrollment(rpcCtx, &brokerv1.BeginWorkspaceEnrollmentRequest{Handle: a.handle, BrokerIncarnation: a.instanceID})
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentPresentation{}, clientError(err)
+	}
+	ref, err := workspaceRefFromWire(r.GetRef())
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentPresentation{}, err
+	}
+	out := mcpbroker.WorkspaceEnrollmentPresentation{Ref: ref, URL: r.GetUrl()}
+	if !out.Valid() {
+		return mcpbroker.WorkspaceEnrollmentPresentation{}, errors.New("mcpbrokergrpc: malformed workspace presentation")
+	}
+	return out, nil
+}
+func (a *clientEnrollmentSessionHandle) ObserveWorkspaceEnrollment(ctx context.Context, ref mcpbroker.WorkspaceEnrollmentRef) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	return a.workspaceResult(ctx, ref, false)
+}
+func (a *clientEnrollmentSessionHandle) CancelWorkspaceEnrollment(ctx context.Context, ref mcpbroker.WorkspaceEnrollmentRef) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	return a.workspaceResult(ctx, ref, true)
+}
+func (a *clientEnrollmentSessionHandle) workspaceResult(ctx context.Context, ref mcpbroker.WorkspaceEnrollmentRef, cancelOperation bool) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	rpcCtx, cancel := context.WithTimeout(ctx, a.client.cfg.RPCDeadline)
+	defer cancel()
+	var r workspaceResultResponse
+	var err error
+	if cancelOperation {
+		r, err = a.client.rpc.CancelWorkspaceEnrollment(rpcCtx, &brokerv1.CancelWorkspaceEnrollmentRequest{Handle: a.handle, Ref: workspaceRefToWire(ref), BrokerIncarnation: a.instanceID})
+	} else {
+		r, err = a.client.rpc.ObserveWorkspaceEnrollment(rpcCtx, &brokerv1.ObserveWorkspaceEnrollmentRequest{Handle: a.handle, Ref: workspaceRefToWire(ref), BrokerIncarnation: a.instanceID})
+	}
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentResult{}, clientError(err)
+	}
+	return workspaceResultFromWire(a.client, a.handle, a.instanceID, r)
 }
 
 var _ mcpbroker.Service = (*Client)(nil)

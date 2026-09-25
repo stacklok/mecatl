@@ -245,6 +245,52 @@ func authFromWire(a *brokerv1.Authorization) (session.ExternalAuthorization, err
 	}
 	return session.ExternalAuthorization{ID: a.GetId(), Binding: session.AuthorizationBinding(a.GetBinding()), ExpiresAt: a.GetExpiresAt().AsTime()}, nil
 }
+
+func workspaceRefToWire(ref mcpbroker.WorkspaceEnrollmentRef) *brokerv1.WorkspaceRef {
+	return &brokerv1.WorkspaceRef{Id: string(ref.ID), RequiredServices: ref.RequiredServices, ExpiresAt: timestamppb.New(ref.ExpiresAt)}
+}
+func workspaceRefFromWire(ref *brokerv1.WorkspaceRef) (mcpbroker.WorkspaceEnrollmentRef, error) {
+	if ref == nil || ref.GetExpiresAt() == nil || !ref.GetExpiresAt().IsValid() {
+		return mcpbroker.WorkspaceEnrollmentRef{}, invalid("malformed workspace reference")
+	}
+	out := mcpbroker.WorkspaceEnrollmentRef{ID: session.WorkspaceEnrollmentID(ref.GetId()), RequiredServices: ref.GetRequiredServices(), ExpiresAt: ref.GetExpiresAt().AsTime()}
+	if !out.Valid() {
+		return mcpbroker.WorkspaceEnrollmentRef{}, invalid("malformed workspace reference")
+	}
+	return out, nil
+}
+
+type workspaceResultResponse interface {
+	GetRef() *brokerv1.WorkspaceRef
+	GetStatus() string
+	GetTools() []*brokerv1.ToolDescriptor
+}
+
+func workspaceResultFromWire(c *Client, handle, instanceID string, r workspaceResultResponse) (mcpbroker.WorkspaceEnrollmentResult, error) {
+	if r == nil {
+		return mcpbroker.WorkspaceEnrollmentResult{}, errors.New("mcpbrokergrpc: malformed workspace result")
+	}
+	ref, err := workspaceRefFromWire(r.GetRef())
+	if err != nil {
+		return mcpbroker.WorkspaceEnrollmentResult{}, err
+	}
+	out := mcpbroker.WorkspaceEnrollmentResult{Ref: ref, Status: mcpbroker.WorkspaceEnrollmentStatus(r.GetStatus())}
+	if out.Status == mcpbroker.WorkspaceEnrollmentConnected {
+		attach := &brokerv1.AttachResponse{Handle: handle, BrokerIncarnation: instanceID, Tools: r.GetTools()}
+		tools, toolsErr := remoteTools(c, attach)
+		if toolsErr != nil {
+			return mcpbroker.WorkspaceEnrollmentResult{}, toolsErr
+		}
+		out.Catalogue, err = mcpbroker.NewWorkspaceCatalogue(ref, tools)
+		if err != nil {
+			return mcpbroker.WorkspaceEnrollmentResult{}, err
+		}
+	}
+	if !out.Valid() {
+		return mcpbroker.WorkspaceEnrollmentResult{}, errors.New("mcpbrokergrpc: malformed workspace result")
+	}
+	return out, nil
+}
 func validAuthorizationStatus(s session.AuthorizationStatus) bool {
 	switch s {
 	case session.AuthorizationPending, session.AuthorizationGranted, session.AuthorizationDenied,
