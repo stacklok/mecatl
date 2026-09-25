@@ -476,9 +476,11 @@ Slack bot remains a separate pnpm project and has its own package-export typeche
 
 The test-only [high-level RPC inventory](../sdk/typescript/test/high-level-surface.test.ts)
 classifies every public `HarnessService` and `ScheduleService` descriptor by the public SDK
-operation that invokes it. `StreamSessionEvents` and `StreamSessionLive` have individual raw-only
-rationales: durable `Session.activity()` and `attach()` instead use `WatchSessionEvents`. This
-coverage guard checks handwritten invocation paths separately from the raw transport catalog.
+operation that invokes it. The session handle invokes the two guardrail diagnostic RPCs through
+`guardrailCoverage()` and `guardrailReviewDetail()`. `StreamSessionEvents` and `StreamSessionLive`
+have individual raw-only rationales: durable `Session.activity()` and `attach()` instead use
+`WatchSessionEvents`. This coverage guard checks handwritten invocation paths separately from the
+raw transport catalog.
 The [TUI builtin inventory](../cmd/mecatui/ui/sdk_high_level_parity_test.go) classifies all
 actual builtin declarations by reusable SDK outcome or application, operator, and debug
 ownership. These inventories are verification data; the SDK and `mecatui` remain independent

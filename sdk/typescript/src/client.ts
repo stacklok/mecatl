@@ -26,7 +26,9 @@ import {
   ContentSchema,
   type ConverseResponse,
   type Event,
+  type GetGuardrailReviewDetailResponse,
   HarnessService,
+  type ListGuardrailCoverageResponse,
   type ListSessionsRequest,
   type ListSessionsResponse,
   type Session as ProtoSession,
@@ -219,6 +221,30 @@ export interface Session {
    * @returns A detached SDK-owned connector inventory projection.
    */
   listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
+  /**
+   * Reads the effective guardrail coverage for this session.
+   *
+   * The server authorizes this diagnostic for the session owner. This RPC is
+   * available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+   *
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The effective checker configuration and rule coverage.
+   */
+  guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse>;
+  /**
+   * Reads bounded live detail for one guardrail review in this session.
+   *
+   * The server authorizes this diagnostic for the session owner. This RPC is
+   * available over gRPC; HTTP transport reports `UnsupportedFeatureError`.
+   *
+   * @param reviewId - Review ID from the session's guardrail event.
+   * @param options - Request headers, cancellation signal, and deadline.
+   * @returns The review concern, source display, and next action.
+   */
+  guardrailReviewDetail(
+    reviewId: string,
+    options?: RequestOptions,
+  ): Promise<GetGuardrailReviewDetailResponse>;
   /**
    * Starts or observes this session's whole-bundle workspace enrollment.
    *
@@ -622,6 +648,27 @@ class SessionImpl implements Session {
       options,
     );
     return projectMcpConnectorInventory(response);
+  }
+
+  async guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse> {
+    this.#operations.assertOpen();
+    return this.#operations.unary(
+      HarnessService.method.listGuardrailCoverage,
+      { sessionId: this.id },
+      options,
+    );
+  }
+
+  async guardrailReviewDetail(
+    reviewId: string,
+    options?: RequestOptions,
+  ): Promise<GetGuardrailReviewDetailResponse> {
+    this.#operations.assertOpen();
+    return this.#operations.unary(
+      HarnessService.method.getGuardrailReviewDetail,
+      { reviewId, sessionId: this.id },
+      options,
+    );
   }
 
   async connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment> {

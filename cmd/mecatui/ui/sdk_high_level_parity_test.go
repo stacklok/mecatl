@@ -62,11 +62,17 @@ var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
 		additionalSDKOperation: "Client.worktrees.list",
 		applicationDetail:      "The TUI picks a sibling worktree, then passes its selector to Session.clear for the successor handoff.",
 	},
-	"schedule":             {category: sdkBacked, sdkOperation: "Client.schedules.list"},
-	"sessions":             {category: sdkBacked, sdkOperation: "Client.sessions.list"},
-	"tools-connect":        {category: sdkBacked, sdkOperation: "Session.connectWorkspaceServices"},
-	"tools-cancel":         {category: sdkBacked, sdkOperation: "Session.cancelWorkspaceEnrollment"},
-	"posture":              {category: sdkBacked, sdkOperation: "Client.server.compatibility"},
+	"schedule":      {category: sdkBacked, sdkOperation: "Client.schedules.list"},
+	"sessions":      {category: sdkBacked, sdkOperation: "Client.sessions.list"},
+	"tools-connect": {category: sdkBacked, sdkOperation: "Session.connectWorkspaceServices"},
+	"tools-cancel":  {category: sdkBacked, sdkOperation: "Session.cancelWorkspaceEnrollment"},
+	"posture": {
+		category:               sdkBacked,
+		sdkOperation:           "Client.server.compatibility",
+		additionalSDKOperation: "Session.guardrailCoverage",
+		applicationDetail:      "The TUI combines server posture and effective session checker coverage in its status line.",
+	},
+	"guardrails":           {category: sdkBacked, sdkOperation: "Session.guardrailCoverage"},
 	"help":                 {category: applicationOnly, rationale: "The help overlay describes local keys and panels."},
 	"quit":                 {category: applicationOnly, rationale: "Exiting the terminal application has no server outcome."},
 	"diagnostics":          {category: applicationOnly, rationale: "The TUI assembles a client-state report and its own diagnostic prompt."},
@@ -195,7 +201,7 @@ func TestSDKHighLevelParity_Scenario2_BuiltinDispatchUnchanged(t *testing.T) {
 		}
 	}
 	slices.Sort(absent)
-	want := []string{"connect", "dream", "mcp-refresh", "reflect", "reflections", "tools-cancel", "tools-connect"}
+	want := []string{"connect", "dream", "guardrails", "mcp-refresh", "reflect", "reflections", "tools-cancel", "tools-connect"}
 	if !slices.Equal(absent, want) {
 		t.Fatalf("known-name registry drift: absent = %v, want %v", absent, want)
 	}

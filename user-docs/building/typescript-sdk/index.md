@@ -42,6 +42,12 @@ schedules, learning, MCP inventory, and storage operations. See the
 [TypeScript SDK API reference](/reference/typescript-sdk-api/index.md) for the
 complete public surface.
 
+On a gRPC session, `guardrailCoverage()` reads effective checker status and
+`guardrailReviewDetail(reviewId)` retrieves owner-authorized live review detail.
+HTTP connections raise `UnsupportedFeatureError` for these methods because the
+server exposes no HTTP routes. See [Permissions and posture](/features/permissions-and-posture.md)
+for guardrail behavior.
+
 ## Workflow ownership
 
 The server validates requests and owns session state, permissions, and MCP authorization

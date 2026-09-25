@@ -44,6 +44,14 @@ const HIGH_LEVEL_SURFACE = {
   "HarnessService.CreateSession": { kind: "namespace", operation: "Client.sessions.create" },
   "HarnessService.GetServerInfo": { kind: "namespace", operation: "Client.server.info" },
   "HarnessService.GetSession": { kind: "session", operation: "Session.snapshot" },
+  "HarnessService.ListGuardrailCoverage": {
+    kind: "session",
+    operation: "Session.guardrailCoverage",
+  },
+  "HarnessService.GetGuardrailReviewDetail": {
+    kind: "session",
+    operation: "Session.guardrailReviewDetail",
+  },
   "HarnessService.GetSessionTranscript": { kind: "session", operation: "Session.transcript" },
   "HarnessService.SetMode": { kind: "session", operation: "Session.setMode" },
   "HarnessService.CloseSession": { kind: "session", operation: "Session.close" },

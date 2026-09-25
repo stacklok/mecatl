@@ -1363,6 +1363,10 @@ export interface Session {
     connectWorkspaceServices(options?: RequestOptions): Promise<WorkspaceEnrollment>;
     controls(runId: string): RunControls;
     delete(options?: RequestOptions): Promise<void>;
+    // Warning: (ae-forgotten-export) The symbol "ListGuardrailCoverageResponse" needs to be exported by the entry point deno.d.ts
+    guardrailCoverage(options?: RequestOptions): Promise<ListGuardrailCoverageResponse>;
+    // Warning: (ae-forgotten-export) The symbol "GetGuardrailReviewDetailResponse" needs to be exported by the entry point deno.d.ts
+    guardrailReviewDetail(reviewId: string, options?: RequestOptions): Promise<GetGuardrailReviewDetailResponse>;
     // (undocumented)
     readonly id: string;
     listMcpConnectors(options?: RequestOptions): Promise<McpConnectorInventory>;
