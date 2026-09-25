@@ -272620,6 +272620,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790327009067,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "409ea74e89044c9d67a138aa8efbf09e17fb1fd8",
+          "message": "feat: integrate contextual guardrails into execution and approvals (#1510)\n\nCo-authored-by: mecatl <noreply@stacklok.com>",
+          "timestamp": "2026-09-25T12:07:19+03:00",
+          "tree_id": "c26fac570874781a8fcec21226f9106cbe684ab3",
+          "url": "https://github.com/stacklok/mecatl/commit/409ea74e89044c9d67a138aa8efbf09e17fb1fd8"
+        },
+        "date": 1790327910355,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3326,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 118,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -357474,6 +357513,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790327907322,
+  "lastUpdate": 1790327911141,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
