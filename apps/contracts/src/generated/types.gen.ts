@@ -1405,6 +1405,17 @@ export type GetAuthorizationPresentationData = {
 
 export type GetAuthorizationPresentationErrors = {
     /**
+     * Open the authorization page from the Studio origin.
+     */
+    403: {
+        code: string;
+        detail: string;
+        instance: string;
+        status: number;
+        title: string;
+        type: string;
+    };
+    /**
      * The request could not be completed.
      */
     502: {

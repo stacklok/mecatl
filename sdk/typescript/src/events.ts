@@ -122,7 +122,9 @@ export interface PermissionAskEventPayload {
  * @public
  */
 export interface PlanContinuationFailureEventPayload {
+  /** Run ID of the approved plan whose proceed run failed to start. */
   readonly planRunId: string;
+  /** ID of the approved plan ask on that run. */
   readonly askId: string;
 }
 

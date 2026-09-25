@@ -189,7 +189,8 @@ chat. Select **Open authorization** to complete the external step in a
 new tab, then return to Studio and select **Recheck**. The panel shows the
 observed status. **Cancel authorization** ends the pending handoff. Opening the
 external page alone does not grant access, and closing the review panel leaves
-the handoff pending.
+the handoff pending. Open the page from the Studio panel. The Studio
+authorization link rejects address-bar navigation and links from other sites.
 
 If Studio cannot confirm a **Recheck** or **Cancel authorization** result, the
 panel disables both actions. Select **Refresh activity** to check for a later

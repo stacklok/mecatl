@@ -166,6 +166,32 @@ export function sameOriginMutations(options: SecurityOptions): MiddlewareHandler
 }
 
 /**
+ * The authorization presentation GET redirects to a fresh authorization
+ * URL. SameSite=Lax also sends the session cookie on a cross-site top-level
+ * navigation, so this browser-only route requires same-origin Fetch Metadata.
+ */
+export function sameOriginPresentation(options: SecurityOptions): MiddlewareHandler<AppEnv> {
+  return async (context, next) => {
+    if (context.req.method !== "GET") return next();
+    const origin = context.req.header("origin");
+    if (
+      context.req.header("sec-fetch-site") !== "same-origin" ||
+      (origin !== undefined && origin !== expectedOrigin(context, options))
+    ) {
+      context.header("Cache-Control", "no-store");
+      return problem(
+        context,
+        403,
+        "cross_site_request",
+        "Cross-site request rejected",
+        "Authorization pages must be opened from the Studio origin.",
+      );
+    }
+    return next();
+  };
+}
+
+/**
  * AC3.13: an in-process fixed-window limiter keyed by client address. It is
  * per replica by design; a deployment that needs a shared budget puts one at
  * the Ingress.

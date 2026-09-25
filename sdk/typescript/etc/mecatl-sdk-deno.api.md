@@ -955,9 +955,7 @@ export type PlanApprovalVerdict = "approve" | "accept_edits" | "iterate";
 
 // @public
 export interface PlanContinuationFailureEventPayload {
-    // (undocumented)
     readonly askId: string;
-    // (undocumented)
     readonly planRunId: string;
 }
 

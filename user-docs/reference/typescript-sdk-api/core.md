@@ -3316,11 +3316,15 @@ export interface PlanContinuationFailureEventPayload
 
 <Heading as="h4" id="api-plancontinuationfailureeventpayload-askid-propertysignature"><code>PlanContinuationFailureEventPayload.askId</code></Heading>
 
+ID of the approved plan ask on that run.
+
 ```ts
 readonly askId: string;
 ```
 
 <Heading as="h4" id="api-plancontinuationfailureeventpayload-planrunid-propertysignature"><code>PlanContinuationFailureEventPayload.planRunId</code></Heading>
+
+Run ID of the approved plan whose proceed run failed to start.
 
 ```ts
 readonly planRunId: string;

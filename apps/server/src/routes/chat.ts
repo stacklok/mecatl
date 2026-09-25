@@ -379,6 +379,7 @@ const authorizationPresentationRoute = createRoute({
   request: { params: authorizationParameters },
   responses: {
     302: { description: "Redirect to a fresh external authorization page." },
+    403: { ...errorResponse, description: "Open the authorization page from the Studio origin." },
     502: errorResponse,
     503: unavailableResponse,
   },

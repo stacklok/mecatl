@@ -10,6 +10,7 @@ import {
 import { type Client, MecatlError, ProtocolError } from "@stacklok-oss/mecatl-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../app";
+import type { AuthenticationService } from "../auth/service";
 import { type ActivityDelivery, type ChatService, createMecatlChatService } from "../mecatl/chat";
 import { csrfHeaders } from "../testing/fakes";
 
@@ -119,6 +120,12 @@ const chat = {
 
 const app = createApp({ chat });
 
+const sameOriginNavigation = {
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "same-origin",
+};
+
 /** Sends the bootstrap's same-origin + double-submit CSRF pair on every mutation. */
 const request = (input: string, init?: RequestInit) => {
   const method = init?.method?.toUpperCase() ?? "GET";
@@ -185,7 +192,10 @@ describe("chat routes", () => {
       },
     });
     const scopedRequest = (path: string, method = "GET") =>
-      scoped.request(path, { headers: method === "POST" ? csrfHeaders() : undefined, method });
+      scoped.request(path, {
+        headers: method === "POST" ? csrfHeaders() : sameOriginNavigation,
+        method,
+      });
     const path = "/api/v1/sessions/session-1/authorizations/auth-7";
 
     const opened = await scopedRequest(`${path}/presentation`);
@@ -203,7 +213,9 @@ describe("chat routes", () => {
         authorizationPresentation: async () => "https://issuer.example/authorize\u0000",
       },
     });
-    const normalized = await withControlCharacters.request(`${path}/presentation`);
+    const normalized = await withControlCharacters.request(`${path}/presentation`, {
+      headers: sameOriginNavigation,
+    });
     expect(normalized.status).toBe(302);
     expect(normalized.headers.get("location")).toBe("https://issuer.example/authorize");
 
@@ -245,7 +257,9 @@ describe("chat routes", () => {
     const unsafe = createApp({
       chat: { ...chat, authorizationPresentation: async () => "javascript:alert(1)" },
     });
-    const refused = await unsafe.request(`${path}/presentation`);
+    const refused = await unsafe.request(`${path}/presentation`, {
+      headers: sameOriginNavigation,
+    });
     expect(refused.status).toBe(502);
     expect(refused.headers.get("location")).toBeNull();
 
@@ -259,9 +273,78 @@ describe("chat routes", () => {
         },
       },
     });
-    const rejected = await sdkRejected.request(`${path}/presentation`);
+    const rejected = await sdkRejected.request(`${path}/presentation`, {
+      headers: sameOriginNavigation,
+    });
     expect(rejected.status).toBe(502);
     expect(rejected.headers.get("location")).toBeNull();
+  });
+
+  it("opens authorization only from a same-origin browser navigation", async () => {
+    const presentation = vi.fn(async () => "https://issuer.example/authorize?token=secret");
+    const authentication: AuthenticationService = {
+      clear: () => undefined,
+      completeLogin: async () => {
+        throw new Error("unused");
+      },
+      credential: async (context) =>
+        context.req.header("cookie")?.includes("studio_access=session-cookie")
+          ? {
+              credential: {
+                accessToken: "test-access-token",
+                expiresAt: Number.MAX_SAFE_INTEGER,
+                subject: "test-user",
+                tokenType: "Bearer" as const,
+              },
+              status: "authenticated" as const,
+            }
+          : { status: "anonymous" as const },
+      logout: async () => undefined,
+      noteLoginComplete: () => undefined,
+      noteLoginFailure: () => undefined,
+      save: async () => undefined,
+      signInRequired: async () => true,
+      startLogin: async () => "https://issuer.example/authorize",
+    };
+    const guarded = createApp({
+      authentication,
+      chat: { ...chat, authorizationPresentation: presentation },
+      security: { publicUrl: new URL("https://studio.example") },
+    });
+    const path =
+      "https://studio.example/api/v1/sessions/session-1/authorizations/auth-7/presentation";
+    const cookie = "studio_access=session-cookie; studio_csrf=t";
+
+    const opened = await guarded.request(path, {
+      headers: { ...sameOriginNavigation, Cookie: cookie },
+    });
+    expect(opened.status).toBe(302);
+    expect(opened.headers.get("location")).toBe("https://issuer.example/authorize?token=secret");
+    expect(presentation).toHaveBeenCalledOnce();
+
+    const rejectedHeaders: Record<string, string>[] = [
+      { "Sec-Fetch-Site": "cross-site" },
+      { "Sec-Fetch-Site": "same-site" },
+      { "Sec-Fetch-Site": "none" },
+      {},
+      { Origin: "https://other.example", "Sec-Fetch-Site": "same-origin" },
+    ];
+    for (const headers of rejectedHeaders) {
+      const requestHeaders = new Headers(headers);
+      requestHeaders.set("Cookie", cookie);
+      requestHeaders.set("Sec-Fetch-Dest", "document");
+      requestHeaders.set("Sec-Fetch-Mode", "navigate");
+      const rejected = await guarded.request(path, {
+        headers: requestHeaders,
+      });
+      expect(rejected.status).toBe(403);
+      expect(rejected.headers.get("location")).toBeNull();
+      expect(rejected.headers.get("cache-control")).toBe("no-store");
+      const body = await rejected.text();
+      expect(body).not.toContain("token=secret");
+      expect(JSON.parse(body)).toMatchObject({ code: "cross_site_request" });
+    }
+    expect(presentation).toHaveBeenCalledOnce();
   });
 
   it("lists sessions through the product contract", async () => {
