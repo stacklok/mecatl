@@ -202,8 +202,8 @@ Standalone source provisioning and an expanded native-specific source outage/no-
 matrix are deferred product features, not waivers of those authorization, fail-closed, or lifetime rules.
 
 Private Git credentials, remote project ingestion, automatic PRs, import/export, arbitrary user-supplied
-tools, background commands, isolated delegation, schedules, and multi-replica MVP qualification remain
-deferred. Existing supported provider replica-safety behavior remains in place. Harness content selection
+tools, background commands, isolated delegation, schedules, and multi-mecak8s-replica product qualification
+remain deferred. Existing provider replica-lifecycle and fencing regression tests remain required. Harness content selection
 does not change governance or permission roots: configured Ask/Deny, root-aware project trust, hooks,
 credentials, tool grants, execution placement, and fencing remain effective. SkillDraft and unsupported
 remote Subagent/Parallel/Team, background Shell, worktree-successor, delegation-expansion, and
@@ -264,8 +264,9 @@ Draft full-race CI remained skipped; earlier local full-race and latest targeted
 are distinguished in that receipt, not represented as a draft full-race CI execution.
 
 MVP product qualification uses one mecak8s replica with Redis, a supported model provider, and one
-operator-configured coding image. Existing multi-replica provider safety remains supported but is not a
-required MVP topology. Five observable current-candidate journeys remain required and PENDING: actual TUI
+operator-configured coding image. Multi-mecak8s-replica product qualification is deferred; the existing
+provider replica-lifecycle and fencing regression qualification remains required under AC7.1 of the
+acceptance plan. Five observable current-candidate journeys remain required and PENDING: actual TUI
 company OIDC login/connect through blank-session coding, file edit, protected Ask, and foreground test
 results; concurrent Alice/Bob sessions with bidirectional cross-user denial behind the same creator identity;
 disconnect/reconnect plus service restart preserving exact files; cancellation or authority loss with no
