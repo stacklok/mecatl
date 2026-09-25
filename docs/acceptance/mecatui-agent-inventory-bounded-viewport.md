@@ -8,7 +8,7 @@
 **Delivery:** Split. The user-visible geometry, compact fallback, and keyboard-ownership contract need plan/interface review before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1897](https://github.com/stacklok/mecatl/issues/1897).
-**Plan PR:** pending
+**Plan PR:** [#1946](https://github.com/stacklok/mecatl/pull/1946)
 
 `/agents` will replace its duplicated physical-row offset and fixed fourteen-line window with the established pointer-owned `bounded.Viewport`. It remains a read-only, idle-only definition inventory over the conversation, not the live `/team` view and not a `surface`-owned modal. The viewport owns physical layout and offset over the overlay's supplied rendered lines; the overlay retains the snapshot RPC, state copy, terminal-safe row construction, chrome, and input lifecycle.
 
