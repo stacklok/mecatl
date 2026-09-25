@@ -364988,9 +364988,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790364051248,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b1132929dd9a3d881dbf059fb2b508bd1964b862",
+          "message": "docs: include user-docs in matlatl and use local documentation links (#1934)\n\nCo-authored-by: mecatl <mecatl@users.noreply.github.com>",
+          "timestamp": "2026-09-25T22:44:16+03:00",
+          "tree_id": "f25d36c06820d26e9fb9ec2d2222f6c03930acc9",
+          "url": "https://github.com/stacklok/mecatl/commit/b1132929dd9a3d881dbf059fb2b508bd1964b862"
+        },
+        "date": 1790366168363,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 799,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3134,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32675,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2118,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1790366164963,
+  "lastUpdate": 1790366169615,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
