@@ -123,6 +123,8 @@ import { takeNextQueuedMessage, useQueuedMessages } from "./chat-queue";
 import { consumeChatSeed } from "./chat-seed";
 import { ChatSessionControls } from "./chat-session-controls";
 import {
+  approvalKey,
+  approvalMatchesToolCall,
   type ChatMessage,
   enqueueApproval,
   errorMessage,
@@ -376,6 +378,10 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const [notice, setNotice] = useState<string>();
   const [runTarget, setRunTarget] = useState<RunTarget>();
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const ordinaryVerdictsInFlight = useRef(new Set<string>());
+  const ordinaryVerdictsUncertain = useRef(new Set<string>());
+  const settledAskKeys = useRef(new Set<string>());
+  const [ordinaryVerdictEpoch, setOrdinaryVerdictEpoch] = useState(0);
   const [failedRun, setFailedRun] = useState<RunFailure>();
   const [draftConfiguration, setDraftConfiguration] = useState(defaultDraftConfiguration);
   const [seedText, setSeedText] = useState<string | undefined>(arrivalSeed.seed?.text);
@@ -506,6 +512,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setReturnNotice(undefined);
     awayTracker.current.clear();
     setApprovals([]);
+    ordinaryVerdictsInFlight.current.clear();
+    ordinaryVerdictsUncertain.current.clear();
+    settledAskKeys.current.clear();
     setFailedRun(sessionId ? readFailedRun(sessionId) : undefined);
     setLiveUsage(undefined);
     setSteerTrace([]);
@@ -701,7 +710,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     },
     [],
   );
-  const approval = approvals[0];
+  const planApproval = approvals.find((candidate) => candidate.tool === "PresentPlan");
+  const ordinaryApprovals = useMemo(
+    () => approvals.filter((candidate) => candidate.tool !== "PresentPlan"),
+    [approvals],
+  );
   const displayedPreview =
     contentPreview?.kind === "authorization"
       ? {
@@ -820,7 +833,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setStatusFacts({ phase: "following" });
     setError(undefined);
     setNotice(undefined);
-    setApprovals([]);
+    setApprovals((current) => retainUncertainApprovals(current));
     if (!resumeFrom) {
       setMessages([]);
       // A status-driven attach can interrupt a settled replay. Preserve its
@@ -890,7 +903,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
           activeRun.current = undefined;
           if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
-          setApprovals([]);
+          setApprovals((current) => retainUncertainApprovals(current));
           setIsRunning(false);
           setReattached(false);
           if (end.kind === "authorization")
@@ -916,7 +929,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       if (activeRun.current === owner) {
         activeRun.current = undefined;
         setRunTarget(undefined);
-        setApprovals([]);
+        setApprovals((current) => retainUncertainApprovals(current));
         setIsRunning(false);
         setReattached(false);
       }
@@ -1285,7 +1298,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     if (owned) {
       activeRun.current = undefined;
       if (end.kind === "settled" || end.kind === "authorization") setRunTarget(undefined);
-      setApprovals([]);
+      setApprovals((current) => retainUncertainApprovals(current));
     }
     if (owner.sessionId) {
       try {
@@ -1778,7 +1791,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         } else if (event.kind === "permission.ask") {
           const approval = permissionAsk(event.payload);
-          if (approval) {
+          if (approval && !settledAskKeys.current.has(`${event.runId}\u0000${approval.askId}`)) {
             const controlTarget =
               owner.sessionId && event.runId
                 ? { askId: approval.askId, runId: event.runId, sessionId: owner.sessionId }
@@ -1789,11 +1802,27 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
         } else if (event.kind === "permission.retract") {
           const askId = permissionAskId(event.payload);
-          setApprovals((current) => retractApproval(current, askId));
+          if (askId) {
+            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
+            if (owner.sessionId) {
+              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
+              ordinaryVerdictsUncertain.current.delete(key);
+            }
+            setOrdinaryVerdictEpoch((value) => value + 1);
+          }
+          setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "approval") {
           const askId = permissionAskId(event.payload);
-          setApprovals((current) => retractApproval(current, askId));
+          if (askId) {
+            settledAskKeys.current.add(`${event.runId}\u0000${askId}`);
+            if (owner.sessionId) {
+              const key = approvalKey({ askId, runId: event.runId, sessionId: owner.sessionId });
+              ordinaryVerdictsUncertain.current.delete(key);
+            }
+            setOrdinaryVerdictEpoch((value) => value + 1);
+          }
+          setApprovals((current) => retractApproval(current, askId, event.runId || undefined));
           if (owner.sessionId) awayTracker.current.record(owner.sessionId, "approval-resolved");
         } else if (event.kind === "result") {
           sawResult = true;
@@ -2063,35 +2092,78 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     }
   }
 
-  async function respondToApproval(verdict: ApprovalVerdict) {
-    const target = controlTarget(runTarget, sessionId);
-    if (!target || !approval || approval.tool === "PresentPlan") {
+  function retainUncertainApprovals(current: ApprovalRequest[]): ApprovalRequest[] {
+    return current.filter(
+      (candidate) =>
+        candidate.controlTarget &&
+        ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+    );
+  }
+
+  function ordinaryApprovalUncertain(candidate: ApprovalRequest): boolean {
+    void ordinaryVerdictEpoch;
+    return Boolean(
+      candidate.controlTarget &&
+        ordinaryVerdictsUncertain.current.has(approvalKey(candidate.controlTarget)),
+    );
+  }
+
+  function ordinaryApprovalDisabled(candidate: ApprovalRequest): boolean {
+    const target = candidate.controlTarget;
+    const activeTarget = controlTarget(runTarget, sessionId);
+    return Boolean(
+      !target ||
+        target.askId !== candidate.askId ||
+        target.sessionId !== activeTarget?.sessionId ||
+        target.runId !== activeTarget?.runId ||
+        target.sessionId !== viewedSessionId.current ||
+        controlPending ||
+        ordinaryVerdictsInFlight.current.has(approvalKey(target)) ||
+        ordinaryVerdictsUncertain.current.has(approvalKey(target)),
+    );
+  }
+
+  async function respondToApproval(candidate: ApprovalRequest, verdict: ApprovalVerdict) {
+    if (
+      candidate.tool === "PresentPlan" ||
+      (verdict !== "deny" && !candidate.args.trim()) ||
+      ordinaryApprovalDisabled(candidate)
+    )
       return;
-    }
+    const target = candidate.controlTarget;
+    if (!target) return;
+    const key = approvalKey(target);
+    ordinaryVerdictsInFlight.current.add(key);
     setControlPending(true);
     try {
       await resolveRunPermission({
         body: { verdict },
-        path: { askId: approval.askId, runId: target.runId, sessionId: target.sessionId },
+        path: { askId: target.askId, runId: target.runId, sessionId: target.sessionId },
         throwOnError: true,
       });
+      settledAskKeys.current.add(`${target.runId}\u0000${target.askId}`);
       if (viewedSessionId.current === target.sessionId) {
-        setApprovals((current) => retractApproval(current, approval.askId));
+        setApprovals((current) => retractApproval(current, target.askId, target.runId));
+        setNotice(`Permission ${verdict.replaceAll("_", " ")} recorded.`);
       }
     } catch (caught) {
-      setError(errorMessage(caught));
+      ordinaryVerdictsUncertain.current.add(key);
+      setOrdinaryVerdictEpoch((value) => value + 1);
+      if (viewedSessionId.current === target.sessionId)
+        setError(`Could not confirm this verdict: ${errorMessage(caught)}`);
     } finally {
+      ordinaryVerdictsInFlight.current.delete(key);
       setControlPending(false);
     }
   }
 
   async function respondToPlan(verdict: PlanVerdict) {
-    if (approval?.tool !== "PresentPlan" || planVerdictInFlight.current) return;
+    if (!planApproval || planVerdictInFlight.current) return;
     const activeTarget = controlTarget(runTarget, sessionId);
-    const target = approval.controlTarget;
+    const target = planApproval.controlTarget;
     if (
       !target ||
-      target.askId !== approval.askId ||
+      target.askId !== planApproval.askId ||
       target.sessionId !== activeTarget?.sessionId ||
       target.runId !== activeTarget?.runId ||
       target.sessionId !== viewedSessionId.current
@@ -2110,7 +2182,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         throwOnError: true,
       });
       if (viewedSessionId.current === target.sessionId) {
-        setApprovals((current) => retractApproval(current, askId));
+        setApprovals((current) => retractApproval(current, askId, target.runId));
       }
       if (viewedSessionId.current !== target.sessionId) return;
       if (verdict === "iterate") {
@@ -2526,7 +2598,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             {showSteerTrace && <SteerTrace entries={steerTrace} />}
             {transcript.isPending && sessionId && !isRunning ? (
               <p className="m-auto text-sm text-muted-foreground">Loading conversation…</p>
-            ) : messages.length === 0 ? (
+            ) : messages.length === 0 && ordinaryApprovals.length === 0 ? (
               <div className="m-auto flex flex-col items-center">
                 <DraftGreeting
                   onPickSeed={(seed) => {
@@ -2541,6 +2613,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             ) : (
               <ChatTranscript
                 agentName={agentName}
+                approvalDisabled={ordinaryApprovalDisabled}
+                approvalUncertain={ordinaryApprovalUncertain}
+                approvals={ordinaryApprovals}
                 delegationsByMessageId={delegationPlacement.byMessageId}
                 messages={messages}
                 onOpenActivity={(focus, opener) => {
@@ -2558,6 +2633,9 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   setContentPreview({ file: imagePreview(image, true), kind: "file" })
                 }
                 onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                onRespondToApproval={(candidate, verdict) =>
+                  void respondToApproval(candidate, verdict)
+                }
                 showToolCalls={showToolCalls}
                 streamingMessageId={
                   isRunning && messages.at(-1)?.role === "assistant"
@@ -2639,31 +2717,22 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             {notice}
           </div>
         )}
-        {approval &&
-          (approval.tool === "PresentPlan" ? (
-            <PlanControlBridge
-              approval={approval}
-              disabled={controlPending}
-              onRespond={(verdict) => void respondToPlan(verdict)}
-              unavailableReason={
-                exactPlanControlAvailability(runtime.data?.features).reason ??
-                (approval.controlTarget?.askId === approval.askId &&
-                approval.controlTarget?.sessionId === sessionId &&
-                approval.controlTarget?.runId === runTarget?.runId &&
-                runTarget?.sessionId === sessionId
-                  ? undefined
-                  : "This plan ask is stale or its exact run is unavailable. Refresh activity.")
-              }
-            />
-          ) : (
-            <ApprovalPanel
-              approval={approval}
-              disabled={controlPending}
-              onRespond={(verdict) => void respondToApproval(verdict)}
-              position={1}
-              total={approvals.length}
-            />
-          ))}
+        {planApproval && (
+          <PlanControlBridge
+            approval={planApproval}
+            disabled={controlPending}
+            onRespond={(verdict) => void respondToPlan(verdict)}
+            unavailableReason={
+              exactPlanControlAvailability(runtime.data?.features).reason ??
+              (planApproval.controlTarget?.askId === planApproval.askId &&
+              planApproval.controlTarget?.sessionId === sessionId &&
+              planApproval.controlTarget?.runId === runTarget?.runId &&
+              runTarget?.sessionId === sessionId
+                ? undefined
+                : "This plan ask is stale or its exact run is unavailable. Refresh activity.")
+            }
+          />
+        )}
         {failedRun && (
           <RunFailurePanel
             failure={failedRun}
@@ -2881,10 +2950,14 @@ function RunFailurePanel({
 export function Message({
   agentAvatar,
   agentName,
+  approvalDisabled,
+  approvalUncertain,
+  approvals = [],
   message,
   onOpenThread,
   onPreviewImage,
   onPreviewTool,
+  onRespondToApproval,
   showToolCalls,
   streaming,
   threadDisabled,
@@ -2894,10 +2967,14 @@ export function Message({
 }: {
   agentAvatar: string;
   agentName: string;
+  approvalDisabled?: (approval: ApprovalRequest) => boolean;
+  approvalUncertain?: (approval: ApprovalRequest) => boolean;
+  approvals?: ApprovalRequest[];
   message: ChatMessage;
   onOpenThread?: () => void;
   onPreviewImage?: (image: ChatImage) => void;
   onPreviewTool?: (tool: ToolActivity) => void;
+  onRespondToApproval?: (approval: ApprovalRequest, verdict: ApprovalVerdict) => void;
   showToolCalls: boolean;
   streaming: boolean;
   threadDisabled: boolean;
@@ -2911,13 +2988,18 @@ export function Message({
   // chip) renders nothing at all — never a "Thinking…" placeholder for a
   // run that has already finished (e.g. StopNoProgress with an empty final
   // turn).
-  const hasVisibleTools = showToolCalls && Boolean(message.tools?.length);
+  const matching = approvals.filter((approval) =>
+    message.tools?.some((tool) => approvalMatchesToolCall(approval, tool)),
+  );
+  const unmatched = approvals.filter((approval) => !matching.includes(approval));
+  const hasVisibleTools = (showToolCalls || matching.length > 0) && Boolean(message.tools?.length);
   const hasExtras =
     Boolean(message.images?.length) ||
     Boolean(message.reasoning) ||
     Boolean(message.failure) ||
     Boolean(message.turnStat) ||
-    hasVisibleStopReason(message.stopReason ?? "");
+    hasVisibleStopReason(message.stopReason ?? "") ||
+    approvals.length > 0;
   if (!user && !streaming && !message.content && !hasVisibleTools && !hasExtras) {
     return null;
   }
@@ -2996,9 +3078,25 @@ export function Message({
         ) : message.tools?.length ? null : streaming ? (
           <StreamingIndicator />
         ) : null}
-        {showToolCalls && message.tools && message.tools.length > 0 && (
-          <ToolActivityList onPreview={onPreviewTool} tools={message.tools} />
+        {(showToolCalls || matching.length > 0) && message.tools && message.tools.length > 0 && (
+          <ToolActivityList
+            approvalDisabled={approvalDisabled}
+            approvalUncertain={approvalUncertain}
+            approvals={matching}
+            onPreview={onPreviewTool}
+            onRespondToApproval={onRespondToApproval}
+            tools={message.tools}
+          />
         )}
+        {unmatched.map((approval) => (
+          <ApprovalPanel
+            approval={approval}
+            disabled={!approval.controlTarget || (approvalDisabled?.(approval) ?? false)}
+            key={`${approval.controlTarget?.runId ?? ""}:${approval.askId}`}
+            onRespond={(verdict) => onRespondToApproval?.(approval, verdict)}
+            uncertain={approvalUncertain?.(approval)}
+          />
+        ))}
         {!streaming && !message.failure && <StopReasonChip stopReason={message.stopReason ?? ""} />}
         {message.failure && (
           <FailedTurnCard

@@ -36,13 +36,44 @@ export function enqueueApproval(
   approval: ApprovalRequest,
 ): ApprovalRequest[] {
   if (!approval.askId) return approvals;
-  if (approvals.some((candidate) => candidate.askId === approval.askId)) return approvals;
+  if (
+    approvals.some(
+      (candidate) =>
+        candidate.askId === approval.askId &&
+        candidate.controlTarget?.sessionId === approval.controlTarget?.sessionId &&
+        candidate.controlTarget?.runId === approval.controlTarget?.runId,
+    )
+  )
+    return approvals;
   return [...approvals, approval];
 }
 
-export function retractApproval(approvals: ApprovalRequest[], askId: string): ApprovalRequest[] {
-  if (!approvals.some((approval) => approval.askId === askId)) return approvals;
-  return approvals.filter((approval) => approval.askId !== askId);
+export function retractApproval(
+  approvals: ApprovalRequest[],
+  askId: string,
+  runId?: string,
+): ApprovalRequest[] {
+  return approvals.filter(
+    (approval) =>
+      approval.askId !== askId ||
+      (runId !== undefined &&
+        approval.controlTarget?.runId !== undefined &&
+        approval.controlTarget.runId !== runId),
+  );
+}
+
+/** Same-run call correlation is solely for placement, never for verdict authority. */
+export function approvalMatchesToolCall(approval: ApprovalRequest, tool: ToolActivity): boolean {
+  return Boolean(
+    approval.callId &&
+      approval.callId === tool.id &&
+      approval.controlTarget?.runId &&
+      approval.controlTarget.runId === tool.runId,
+  );
+}
+
+export function approvalKey(target: { askId: string; runId: string; sessionId: string }): string {
+  return JSON.stringify([target.sessionId, target.runId, target.askId]);
 }
 
 export function failureFromResult(payload: unknown, prompt: string): RunFailure | undefined {
@@ -209,6 +240,9 @@ export function permissionAsk(payload: unknown): ApprovalRequest | undefined {
   return {
     args: typeof value.args === "string" ? value.args : "",
     askId: value.askId,
+    ...(typeof value.callId === "string" && value.callId.length > 0
+      ? { callId: value.callId }
+      : {}),
     reason: typeof value.reason === "string" ? value.reason : "",
     tool: typeof value.tool === "string" ? value.tool : "Tool",
   };
@@ -235,6 +269,7 @@ export interface RunDeliveryState {
   liveUsage?: SessionUsageResponse;
   messages: ChatMessage[];
   runId?: string;
+  settledAskKeys: string[];
   sawResult: boolean;
   stopReason?: string;
   turnStartedAt: number;
@@ -250,6 +285,7 @@ export function initialRunDeliveryState(
     activePrompt: prompt,
     approvals: [],
     messages,
+    settledAskKeys: [],
     sawResult: false,
     turnStartedAt: Date.now(),
   };
@@ -270,7 +306,7 @@ export function startsNewRun(followedRunId: string | undefined, startedRunId: st
 export function applyRunDelivery(
   state: RunDeliveryState,
   delivery: RunStreamEvent,
-  options: { newId: () => string; now: number; replay: boolean },
+  options: { newId: () => string; now: number; replay: boolean; sessionId?: string },
 ): RunDeliveryState {
   if (delivery.type === "run.error") {
     return {
@@ -381,10 +417,31 @@ export function applyRunDelivery(
   }
   if (event.kind === "permission.ask") {
     const approval = permissionAsk(event.payload);
-    return approval ? { ...next, approvals: enqueueApproval(next.approvals, approval) } : next;
+    if (!approval || next.settledAskKeys.includes(`${event.runId}\u0000${approval.askId}`))
+      return next;
+    const controlTarget =
+      options.sessionId && event.runId
+        ? { askId: approval.askId, runId: event.runId, sessionId: options.sessionId }
+        : undefined;
+    return {
+      ...next,
+      approvals: enqueueApproval(
+        next.approvals,
+        controlTarget ? { ...approval, controlTarget } : approval,
+      ),
+    };
   }
   if (event.kind === "permission.retract" || event.kind === "approval") {
-    return { ...next, approvals: retractApproval(next.approvals, permissionAskId(event.payload)) };
+    const askId = permissionAskId(event.payload);
+    if (!askId) return next;
+    const key = `${event.runId}\u0000${askId}`;
+    return {
+      ...next,
+      approvals: retractApproval(next.approvals, askId, event.runId || undefined),
+      settledAskKeys: next.settledAskKeys.includes(key)
+        ? next.settledAskKeys
+        : [...next.settledAskKeys, key],
+    };
   }
   if (event.kind === "result") {
     const failure = failureFromResult(event.payload, next.activePrompt);

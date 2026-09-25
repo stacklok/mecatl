@@ -4,12 +4,15 @@ import { ShieldAlert } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
+import { parseDiffArgs, ToolDiff } from "./edit-diff";
 
 const destructiveTool = /\b(delete|remove|drop|revoke|destroy|purge|rm)\b/iu;
 
 export interface ApprovalRequest {
   args: string;
   askId: string;
+  /** Presentation correlation only; never a verdict target. */
+  callId?: string;
   /** Immutable identity from the permission.ask delivery, when its run is known. */
   controlTarget?: { askId: string; runId: string; sessionId: string };
   reason: string;
@@ -23,20 +26,28 @@ export function ApprovalPanel({
   disabled,
   onRespond,
   position = 1,
+  uncertain = false,
   total = 1,
 }: {
   approval: ApprovalRequest;
   disabled: boolean;
   onRespond: (verdict: ApprovalVerdict) => void;
   position?: number;
+  uncertain?: boolean;
   total?: number;
 }) {
   const destructive = destructiveTool.test(approval.tool);
+  const hasArgs = approval.args.trim().length > 0;
+  const showDiff =
+    hasArgs &&
+    approval.args.length <= 65_536 &&
+    parseDiffArgs(approval.tool, approval.args) !== null;
 
   return (
-    <div
+    <section
+      aria-label={`Permission required: ${approval.tool || "Tool"}`}
       className={cn(
-        "mx-auto mb-3 w-[calc(100%-2rem)] max-w-3xl rounded-xl border p-4",
+        "my-2 min-w-0 rounded-xl border p-4",
         destructive ? "border-destructive/40 bg-destructive/5" : "border-warning/40 bg-warning/5",
       )}
     >
@@ -56,15 +67,33 @@ export function ApprovalPanel({
         </Badge>
       </div>
       {approval.reason && <p className="mt-2 text-sm">{approval.reason}</p>}
-      <pre className="my-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg border bg-background p-3 font-mono text-xs">
-        {approval.args || "{}"}
-      </pre>
+      {!hasArgs && (
+        <p className="mt-2 text-sm" role="status">
+          Arguments unavailable
+        </p>
+      )}
+      {showDiff && (
+        <ToolDiff bounded className="mt-3" name={approval.tool} rawArgs={approval.args} />
+      )}
+      {hasArgs && (
+        <details className="my-3 text-xs">
+          <summary className="cursor-pointer">Raw arguments</summary>
+          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background p-3 font-mono">
+            {approval.args}
+          </pre>
+        </details>
+      )}
+      {uncertain && (
+        <p className="mb-3 text-sm" role="status">
+          This verdict's outcome is uncertain. Refresh activity before deciding again.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
-        <Button disabled={disabled} onClick={() => onRespond("allow_once")} size="sm">
+        <Button disabled={disabled || !hasArgs} onClick={() => onRespond("allow_once")} size="sm">
           Allow once
         </Button>
         <Button
-          disabled={disabled}
+          disabled={disabled || !hasArgs}
           onClick={() => onRespond("allow_always")}
           size="sm"
           variant="outline"
@@ -75,6 +104,6 @@ export function ApprovalPanel({
           Deny
         </Button>
       </div>
-    </div>
+    </section>
   );
 }
