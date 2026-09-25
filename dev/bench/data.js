@@ -246374,6 +246374,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790327906454,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "30a4c3cae430f7e8adc7b33e59c883ffea43f2da",
+          "message": "feat: compose independent harness context sources (#1875)\n\nCo-authored-by: OpenAI <noreply@openai.com>\nCo-authored-by: mecatl <noreply@stacklok.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T12:36:13+03:00",
+          "tree_id": "6ca63f4491266c0e83aff897d0859c1b287e35f3",
+          "url": "https://github.com/stacklok/mecatl/commit/30a4c3cae430f7e8adc7b33e59c883ffea43f2da"
+        },
+        "date": 1790329647597,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -357951,6 +357985,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790329644663,
+  "lastUpdate": 1790329649167,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
