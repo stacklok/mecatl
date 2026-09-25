@@ -251028,6 +251028,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790354074643,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d03c456e418eac65cc8ef62390f0482683e630cf",
+          "message": "feat(mecatui): bound sessions inventory (#1944)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T12:09:43-07:00",
+          "tree_id": "505f452c6185ad4b8427c44f2e0a1811f6b19937",
+          "url": "https://github.com/stacklok/mecatl/commit/d03c456e418eac65cc8ef62390f0482683e630cf"
+        },
+        "date": 1790364055327,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -364594,6 +364628,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790364052217,
+  "lastUpdate": 1790364056878,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
