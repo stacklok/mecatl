@@ -488,6 +488,8 @@ func (r *RepositoryRuntime) control(ctx context.Context, record RepositoryVMReco
 		return guestagent.RepositoryControlResponse{}, err
 	}
 	defer func() { _ = stream.Close() }()
+	stopCancel := context.AfterFunc(ctx, func() { _ = stream.Close() })
+	defer stopCancel()
 	codec := control.NewCodec(control.DefaultMaxMessageBytes)
 	if err := codec.Write(stream, request); err != nil {
 		return guestagent.RepositoryControlResponse{}, err

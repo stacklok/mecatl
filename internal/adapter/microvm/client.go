@@ -122,6 +122,7 @@ type Client struct {
 	readiness                  func(context.Context) error
 	cleanupTimeout             time.Duration
 	acquisitionResponseDecoded func()
+	acquisitionAfterFunc       func(context.Context, func()) func() bool
 }
 
 type acquisition struct {
@@ -257,6 +258,9 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 		Provision: &provisionRequest{Owner: claim.Owner, SessionID: claim.SessionID, Profile: c.profile, SourceCheckout: c.sourceCheckout},
 	})
 	if err != nil {
+		if owner != nil {
+			err = errors.Join(err, owner.terminal("detach"))
+		}
 		return server.PlacementBinding{}, fmt.Errorf("microvmd resolve phase failed: %w", err)
 	}
 	if response.Binding != claim {
@@ -298,6 +302,9 @@ func (c *Client) provisionPlacement(ctx context.Context, principal *session.Prin
 				cleanup = func() error { return ownerConn.terminal("delete") }
 			}
 			return server.PlacementBinding{}, invalidPlacementResponseError(err, cleanup())
+		}
+		if ownerConn != nil {
+			err = errors.Join(err, ownerConn.terminal("detach"))
 		}
 		return server.PlacementBinding{}, unsafePlacementResponseError(err)
 	}
@@ -676,12 +683,11 @@ func (c *Client) Fork(ctx context.Context, base tool.Environment, label string) 
 	safeChild := response.Binding.Owner == claim.Owner && response.Binding.Generation == claim.Generation &&
 		response.Binding.Ref != claim.Ref && strings.HasPrefix(response.Binding.EnvironmentID, "logical-") && canonicalBinding(response.Binding)
 	if err != nil {
-		if safeChild && validAcquisitionID(response.AcquisitionID) {
-			cleanup := func() error { return c.boundedRollbackPlacement(ctx, response.Binding) }
-			if childOwner != nil {
-				cleanup = func() error { return childOwner.terminal("child-delete") }
-			}
-			return tool.Environment{}, nil, "", invalidPlacementResponseError(err, cleanup())
+		if safeChild && childOwner != nil {
+			return tool.Environment{}, nil, "", invalidPlacementResponseError(err, childOwner.terminal("child-delete"))
+		}
+		if childOwner != nil {
+			err = errors.Join(err, childOwner.terminal("detach"))
 		}
 		return tool.Environment{}, nil, "", unsafePlacementResponseError(err)
 	}
@@ -784,7 +790,11 @@ func (c *Client) acquire(ctx context.Context, request lifecycleRequest) (lifecyc
 	if err != nil {
 		return lifecycleResponse{}, nil, fmt.Errorf("dial microvmd: %w", err)
 	}
-	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	afterFunc := context.AfterFunc
+	if c.acquisitionAfterFunc != nil {
+		afterFunc = c.acquisitionAfterFunc
+	}
+	stopCancel := afterFunc(ctx, func() { _ = conn.Close() })
 	if err := writeFrame(conn, request); err != nil {
 		stopCancel()
 		_ = conn.Close()

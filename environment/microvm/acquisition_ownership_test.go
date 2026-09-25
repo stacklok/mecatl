@@ -52,7 +52,7 @@ func newOwnershipFixture(t *testing.T) ownershipFixture {
 	attachment := &RepositoryAttachment{Logical: logical, Environment: env}
 	manager := &RepositoryAttachmentManager{
 		active:  map[session.EnvironmentRef]*repositoryChildAttachment{ref: {attachment: attachment}},
-		records: make(map[string]*repositoryAttachmentRecord),
+		records: map[string]*repositoryAttachmentRecord{binding.Ref: {binding: binding, attachment: attachment}},
 	}
 	auth, err := control.NewService(control.ServiceConfig{AccountUID: 1000, PeerAuthenticator: controltest.StaticPeerAuthenticator{UID: 1000}})
 	if err != nil {
@@ -210,7 +210,7 @@ func TestMicroVMAcquisitionOwnershipIsExactAndIdempotent(t *testing.T) {
 	deadline := time.After(time.Second)
 	for {
 		pinFixture.daemon.ownershipMu.Lock()
-		phase := pinFixture.daemon.refOwnership[pinFixture.binding].phase
+		phase := pinFixture.daemon.refOwnership[pinFixture.binding.Ref].phase
 		pinFixture.daemon.ownershipMu.Unlock()
 		if phase == refPhaseDetaching {
 			break
@@ -521,7 +521,7 @@ func TestForkOperationPinEndsBeforeChildOwnerLifetime(t *testing.T) {
 		t.Fatalf("fork response = %+v, %v", child, err)
 	}
 	daemon.ownershipMu.Lock()
-	parentPins := daemon.refOwnership[binding].pins
+	parentPins := daemon.refOwnership[binding.Ref].pins
 	daemon.ownershipMu.Unlock()
 	if parentPins != 0 {
 		t.Fatalf("parent remained pinned for child owner lifetime: %d", parentPins)

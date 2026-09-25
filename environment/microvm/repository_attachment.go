@@ -262,6 +262,19 @@ func (m *RepositoryAttachmentManager) lookupChild(ref session.EnvironmentRef) *r
 	return m.active[ref]
 }
 
+func (m *RepositoryAttachmentManager) validateBinding(binding control.Binding, allowAbsent bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	record := m.records[binding.Ref]
+	if record == nil && allowAbsent {
+		return nil
+	}
+	if record == nil || record.binding != binding || record.deleted || record.deleting {
+		return control.ErrBindingMismatch
+	}
+	return nil
+}
+
 func (m *RepositoryAttachmentManager) register(binding control.Binding, attachment *RepositoryAttachment) error {
 	if m == nil || attachment == nil || binding.Ref == "" || binding.Ref != attachment.Environment.Ref().ID {
 		return errors.New("repository logical attachment binding is invalid")

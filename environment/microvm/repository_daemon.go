@@ -70,6 +70,11 @@ func (d *Daemon) repositoryOperation(ctx context.Context, request LifecycleReque
 	if err := claimValidate(request.Binding); err != nil {
 		return LifecycleResponse{}, control.ErrBindingMismatch
 	}
+	if request.Operation == LifecycleResolve {
+		if err := d.repositoryAttachments.validateBinding(request.Binding, false); err != nil {
+			return LifecycleResponse{}, err
+		}
+	}
 	if request.Operation == LifecycleDelete || request.Operation == LifecycleChildDelete {
 		result, err := d.repositoryAttachments.delete(ctx, request.Binding)
 		if d.observer != nil {
@@ -95,14 +100,13 @@ func (d *Daemon) repositoryOperation(ctx context.Context, request LifecycleReque
 		if err != nil {
 			return LifecycleResponse{}, err
 		}
+		if err := d.repositoryAttachments.register(request.Binding, reattached); err != nil {
+			_ = d.repositoryAttachments.Detach(reattached.Environment.Ref())
+			return LifecycleResponse{}, err
+		}
 		d.repositoryMu.Lock()
 		d.repositoryBindings[request.Binding.Ref] = repositoryDaemonBinding{binding: request.Binding}
 		d.repositoryMu.Unlock()
-		if err := d.repositoryAttachments.register(request.Binding, reattached); err != nil {
-			_ = reattached.Close()
-			d.removeRepositoryBinding(request.Binding.Ref)
-			return LifecycleResponse{}, err
-		}
 		attachment = reattached
 	}
 	if attachment == nil {
