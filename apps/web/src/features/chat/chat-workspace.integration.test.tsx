@@ -1132,6 +1132,127 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.getAllByText("Tool: Calendar")).toHaveLength(1);
   });
 
+  it("anchors two equal recorded replies while Fork receives the full source session", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        { images: [], role: "user", text: "same", toolCalls: [] },
+        { images: [], role: "assistant", text: "first answer", toolCalls: [] },
+        { images: [], role: "user", text: "same", toolCalls: [] },
+        { images: [], role: "assistant", text: "later turn", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "thread-a" }, 201)),
+      Promise.resolve(json({ id: "thread-b" }, 201)),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const roots = screen.getAllByRole("article", { name: "You message" });
+    expect(roots).toHaveLength(2);
+    const firstReply = within(roots[0] as HTMLElement).getByRole("button", {
+      name: "Reply in side thread",
+    });
+    fireEvent.click(firstReply);
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toEqual({
+      model: { id: "current", providerId: "provider" },
+      reasoningEffort: "medium",
+    });
+    expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript").length).toBeGreaterThan(1);
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Thread" })).getByRole("button", {
+        name: "Close thread",
+      }),
+    );
+    fireEvent.click(
+      within(roots[1] as HTMLElement).getByRole("button", { name: "Reply in side thread" }),
+    );
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(2),
+    );
+    const stored = JSON.parse(window.localStorage.getItem("studio.chat.threads.chat-a") ?? "null");
+    expect(stored.version).toBe(2);
+    expect(
+      stored.entries.map((entry: { ordinal: number; sessionId: string }) => [
+        entry.ordinal,
+        entry.sessionId,
+      ]),
+    ).toEqual([
+      [0, "thread-a"],
+      [2, "thread-b"],
+    ]);
+    expect(screen.getByText("later turn")).toBeTruthy();
+    expect(bff.transcripts.get("chat-a")?.messages.map((message) => message.text)).toEqual([
+      "same",
+      "first answer",
+      "same",
+      "later turn",
+    ]);
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Thread" })).getByRole("button", {
+        name: "Close thread",
+      }),
+    );
+    fireEvent.click(
+      within(roots[0] as HTMLElement).getByRole("button", { name: "Open side thread" }),
+    );
+    const reopened = await screen.findByRole("complementary", { name: "Thread" });
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(2);
+    fireEvent.click(within(reopened).getByRole("button", { name: "Close thread" }));
+  });
+
+  it("does not fork from a cached transcript when its authoritative refresh fails", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "saved question", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    bff.nextReplies.set("/api/v1/sessions/chat-a/transcript", [
+      Promise.resolve(json({ detail: "temporarily unavailable", status: 503 }, 503)),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Reply in side thread" }));
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2),
+    );
+    await screen.findByText("Could not refresh the saved transcript. Try again.");
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(0);
+  });
+
+  it("waits for a saved match when the selected row changed before Fork", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "original", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "changed", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reply in side thread" }));
+    expect(
+      await screen.findByText("Wait for this message to be saved before starting a side thread."),
+    ).toBeTruthy();
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(0);
+  });
+
   it("creates a draft with its selected controls and excludes a disabled model", async () => {
     const user = userEvent.setup();
     const bff = new BffFixture();

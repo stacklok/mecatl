@@ -176,6 +176,41 @@ afterEach(() => {
 });
 
 describe("mounted transcript streaming", () => {
+  it("keeps a minimap selection above the bottom during live deltas", async () => {
+    const bff = new ActivityFixture();
+    const activity = heldStream();
+    bff.responses.set("", [activity.response]);
+    await mountWorkspace(bff);
+    await act(async () => {
+      activity.send(runEvent("user_prompt", 1, "A question"));
+      activity.send(runEvent("message.delta", 2, "First answer"));
+    });
+    const scroll = screen.getByRole("region", {
+      name: "Conversation transcript",
+    }) as HTMLDivElement;
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 2000 },
+      scrollTop: { configurable: true, value: 900, writable: true },
+    });
+    scroll.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    Object.defineProperty(scroll, "scrollTo", {
+      configurable: true,
+      value: vi.fn((options: ScrollToOptions) => {
+        scroll.scrollTop = Number(options.top);
+      }),
+    });
+    const first = screen.getByText("A question").closest("article");
+    if (!first) throw new Error("Live prompt row missing");
+    first.getBoundingClientRect = () => ({ top: -750 }) as DOMRect;
+    fireEvent.click(screen.getByRole("button", { name: /^Jump to message 1:/u }));
+    expect(scroll.scrollTop).toBe(50);
+    expect(screen.getByRole("button", { name: "Scroll to latest message" })).toBeTruthy();
+    await act(async () => activity.send(runEvent("message.delta", 3, " continues")));
+    expect(await screen.findByText("First answer continues")).toBeTruthy();
+    expect(scroll.scrollTop).toBe(50);
+  });
+
   it("keeps a scrolled reader in place and resumes following after the jump action", async () => {
     const bff = new ActivityFixture();
     const activity = heldStream();
@@ -186,7 +221,7 @@ describe("mounted transcript streaming", () => {
       activity.send(runEvent("message.delta", 2, "First answer"));
     });
     const answer = await screen.findByText("First answer");
-    const scroll = answer.closest("div.overflow-y-auto") as HTMLDivElement | null;
+    const scroll = answer.closest("section.overflow-y-auto") as HTMLElement | null;
     expect(scroll).not.toBeNull();
     if (!scroll) throw new Error("Transcript scroll container is missing");
     let scrollHeight = 2000;
