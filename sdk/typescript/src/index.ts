@@ -77,6 +77,7 @@ export type {
   ModelRetryEventPayload,
   ParallelEventPayload,
   PermissionAskEventPayload,
+  PlanContinuationFailureEventPayload,
   ResultEventPayload,
   RoutingDecisionEventPayload,
   ScheduleEventPayload,

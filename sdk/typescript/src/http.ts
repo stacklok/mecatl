@@ -456,6 +456,9 @@ class HttpTransport implements Transport {
             mime_type: part.mimeType,
             url: part.url,
           })) as unknown as JsonValue,
+          ...(start.value.serverOwnedPlanContinuation
+            ? { server_owned_plan_continuation: true }
+            : {}),
           text: start.value.text,
         };
       } else {

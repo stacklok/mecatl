@@ -189,7 +189,27 @@ session uses plan mode. Set `session.mode` to `PermissionMode.PLAN` in the query
 options.
 
 `session.controls(runId).resolveAsk()` does not approve or deny plans. Use the
-live plan responder above or `session.resolvePlan()` for a parked plan.
+live plan responder above or `session.resolvePlan()` for a parked plan when the
+client owns continuation.
+
+## Let the server continue an approved plan
+
+Set `serverOwnedPlanContinuation: true` on `session.run()` when the server must
+start the proceed run after plan approval. The SDK requires the server's
+`exact_plan_ask_control` feature before starting the run. This option cannot be
+combined with `onPlanApproval` or set to `true` on `session.retry()`.
+
+After showing a `PresentPlan` `permission.ask`, submit the operator's verdict
+through `session.controls(run.id).resolvePlanAsk(askId, verdict)`. The verdict is
+`approve`, `accept_edits`, or `iterate`. The control acknowledges the exact run
+and ask; it does not confirm that execution started. Follow `session.activity()`
+until a new run ID appears or a `plan.continuation_failed` event identifies the
+approved plan run and ask. A disconnected activity stream can leave the outcome
+uncertain until activity is reconciled.
+
+For a restored pending plan ask, use its durable run and ask IDs with the same
+exact control. The server owns that continuation even if the original run did
+not opt in.
 
 ## Continue a parked plan
 
