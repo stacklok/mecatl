@@ -234,7 +234,7 @@ Linux amd64 keeps its qualified namespace mechanism. Darwin arm64 keeps the same
 **Acceptance:**
 
 - AC6.1: On Linux amd64, guest workload UID/GID 65532 maps to the daemon user through an unprivileged user namespace, model commands run unprivileged, and session or child worktrees are never widened to world-readable, world-writable, or world-traversable modes.
-  - verify: `TestMicroVMMVP_Scenario6_LinuxUserNamespaceAvoidsWorldModeWidening`, `TestRepositoryOwnershipLinuxIsNoOp`
+  - verify: `TestMicroVMDefaultPlacementDailyHarnessJourney`, `TestMicroVMEnvironments_Scenario3_WorktreeIsBidirectionallyVisible`, `TestRepositoryMountsLinuxRetainNamespaceMappingWithoutXattrs`, `TestRepositoryOwnershipLinuxIsNoOp`
 - AC6.1a: On Darwin arm64, both read-write logical roots and read-only object snapshots use strict go-microvm ownership preparation for fixed guest UID/GID 65532. Rootfs home/workspace and logical subtrees are prepared before publication or guest registration. Object files are copied privately, prepared, then sealed to mode `0400`.
   - verify: `TestRepositoryMountsDarwinRequireStrictFixedGuestOwnership`, `TestRepositoryLogicalManagerPreparesEachLogicalRootBeforeRegister`, `TestRepositoryLogicalManagerOwnershipFailureRollsBackBeforeRegister`, `TestRepositoryObjectSnapshotRetainsPackedGitObjects`, `TestRepositoryRootFSMaterializer_ClonesStaticRootFSAndInjectsGuestAgentOnce`
 - AC6.1b: Host-side merge-back applies the Git patch and then refreshes upstream ownership preparation. New inodes retain host-derived modes, guest chmod changes survive when represented by the patch, and a preparation failure reports that the patch was already applied. This is not transactional with concurrent Bash and promises no cache invalidation.
@@ -276,7 +276,8 @@ automated gate and is not evidence for microvmd restart recovery.
 **Acceptance:**
 
 - AC7.1: Linux amd64 KVM enters through production profile/session composition and proves ordinary first use, direct admitted Brood consumption with in-process verification, one guest-backed session, confined filesystem/Bash execution, and source-checkout isolation. Deterministic production-composition tests separately prove two-session logical-worktree isolation, exact harness-restart reattachment, microvmd restart recovery around retained state, and direct-write versus isolated-child routing. Repository-VM/rootfs singleton, networking, close-detach, and merge/conflict behavior remain proven by their focused AC2–AC6 tests; the live journey does not overclaim those observations.
-  - verify: `task e2e:microvm` runs `TestMicroVMDefaultPlacementDailyHarnessJourney` plus `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`; focused evidence is listed by AC2–AC6
+  - verify: `TestMicroVMDefaultPlacementDailyHarnessJourney`, `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`; focused evidence is listed by AC2–AC6
+  - Live invocation: `task e2e:microvm` runs `TestMicroVMDefaultPlacementDailyHarnessJourney` and `TestMicroVMOperatorJourneyIsLazyIsolatedAndRestartExact`.
 - AC7.2: Concise architecture, operator, and public documentation describes profile selection, the repository sharing boundary, distinct worktrees, direct Brood admission, Linux ownership, permissive networking, optional tightening, automatic restart recovery, fail-closed uncertainty, and the experimental Darwin code path without claiming native or released qualification.
   - verify: inspection — `task docs` and `task site:build` prove the linked documentation surfaces build
 
