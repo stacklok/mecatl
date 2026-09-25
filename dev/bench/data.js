@@ -275796,6 +275796,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790341257648,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0e75a7782365dbf4b5edb1e0f6061cf9f83812eb",
+          "message": "docs: improve gRPC schema table readability (#1842)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T14:58:25+02:00",
+          "tree_id": "d0e97245f0e58f940362cb92be8bd4e6f4b84c8d",
+          "url": "https://github.com/stacklok/mecatl/commit/0e75a7782365dbf4b5edb1e0f6061cf9f83812eb"
+        },
+        "date": 1790341979188,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -361562,6 +361601,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790341976235,
+  "lastUpdate": 1790341979820,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
