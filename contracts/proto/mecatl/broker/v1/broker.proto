@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package mecatl.broker.v1;
+
+option go_package = "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1;brokerv1";
+
+// BrokerService connects a harness to one authoritative MCP broker process. A broker
+// has one random incarnation; attachment handles and all lifecycle/Execute receipts
+// are process-local, lease-bound capabilities, not restart-continuous replica state.
+// Bindings identify logical state but are opaque, sensitive, and never filesystem paths.
+service BrokerService {
+  // Attach creates or reattaches a caller to a logical session. First attach may omit
+  // broker_incarnation; later attaches use the pinned current incarnation. Its returned
+  // handle is required for attachment RPCs and is replayable only in this process/lease.
+  rpc Attach(AttachRequest) returns (AttachResponse);
+  // Commit commits provisional attachment state. It needs current handle/incarnation;
+  // transport loss has an ambiguous outcome, not an Execute receipt guarantee.
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  // Abort terminally releases provisional state. Same-operation duplicates replay only
+  // during the handle lease; incompatible lifecycle operations fail.
+  rpc Abort(AbortRequest) returns (AbortResponse);
+  // Close terminally releases a handle but preserves its logical state. Same-operation
+  // duplicate outcomes are retained only for the attachment lease.
+  rpc Close(CloseRequest) returns (CloseResponse);
+  // Delete removes only the exact logical session and binding in the current incarnation.
+  // It is potentially ambiguous after transport loss and must not be blindly retried.
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+// BrokerErrorReason is the closed structured reason vocabulary in BrokerErrorDetail.
+// Unknown values, missing details, and status text prove no replay safety and fail closed.
+enum BrokerErrorReason {
+  // No classification: proves neither pre-dispatch failure nor replay safety.
+  BROKER_ERROR_REASON_UNSPECIFIED = 0;
+  // Process-local state is gone; treat as state loss, never proof Execute was not sent.
+  BROKER_ERROR_REASON_STATE_UNAVAILABLE = 1;
+  // Attachment closed; not proof that an earlier Execute did not dispatch.
+  BROKER_ERROR_REASON_ATTACHMENT_CLOSED = 2;
+  // Capacity rejection. It is Execute replay-safe only with exact Execute dispatch_method.
+  BROKER_ERROR_REASON_CAPACITY_REACHED = 5;
+  // Client's broker incarnation is stale; recover only before a new prompt, never replay.
+  BROKER_ERROR_REASON_INCARNATION_LOST = 6;
+}
+
+// BrokerErrorDetail provides stable error identity without status-text inference.
+message BrokerErrorDetail {
+  // Closed reason; unknown values are unsafe and clients must fail closed.
+  BrokerErrorReason reason = 1;
+  // Exact fully-qualified method only for dispatch-not-started (and Execute capacity)
+  // proof; empty otherwise. Compare exactly; never guess.
+  string dispatch_method = 2;
+}
+
+// AttachRequest identifies logical state to attach.
+message AttachRequest {
+  // Opaque logical session ID, never a filesystem location or guessed path.
+  string session_id = 1;
+  // Pinned process incarnation; empty only for initial attach, stale values are rejected.
+  string broker_incarnation = 2;
+}
+// AttachResponse establishes an ephemeral attachment capability.
+message AttachResponse {
+  // Durable opaque logical-incarnation identity for exact delete; sensitive, never logged.
+  string binding = 1;
+  // Ephemeral process-local capability for attachment RPCs; never persist it.
+  string handle = 2;
+  // Validated closed attach outcome (created or reattached).
+  string outcome = 3;
+  // Current random broker incarnation to pin; stale values are rejected.
+  string broker_incarnation = 5;
+}
+
+// CommitRequest targets current attachment lifecycle state.
+message CommitRequest {
+  // Ephemeral attachment capability, never a durable ID or path.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// CommitResponse confirms commit completion.
+message CommitResponse {}
+// AbortRequest targets terminal attachment abort.
+message AbortRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// AbortResponse confirms abort; duplicate replay ends with the attachment lease.
+message AbortResponse {}
+// CloseRequest targets terminal attachment close without deleting logical state.
+message CloseRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 2;
+}
+// CloseResponse reports validated closed/already-closed lifecycle outcome.
+message CloseResponse {
+  // Closed outcome, validated by both peers.
+  string outcome = 1;
+}
+
+// DeleteRequest targets exact logical state rather than a process-local handle.
+message DeleteRequest {
+  // Opaque logical session identity, never a path.
+  string session_id = 1;
+  // Durable opaque binding from Attach; sensitive and never synthesized or logged.
+  string binding = 2;
+  // Current pinned broker incarnation.
+  string broker_incarnation = 3;
+}
+// DeleteResponse reports validated deleted/not-found outcome.
+message DeleteResponse {
+  // Closed delete outcome.
+  string outcome = 1;
+}
