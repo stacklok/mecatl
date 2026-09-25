@@ -391,7 +391,7 @@ func TestCanonicalShellTool_Scenario1_CatalogNames(t *testing.T) {
 	def := agents.AgentDef{Name: "scoped-explorer", Tools: []string{"Read", "Shell"}}
 	base := baseSubagentTools(cfg)
 	defEng, defClose, defNames, _, _ := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name, "test",
-		oa, cfg.Model, nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
+		oa, testProviderModel(cfg.Model), nil, base, false /*allowMutating*/, true /*allowShell*/, nil, hooks, runner, nil)
 	if defClose != nil {
 		defer func() { _ = defClose() }()
 	}

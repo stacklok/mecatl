@@ -137,7 +137,7 @@ func TestChildEngineDepsRoleScopedTelemetryWhenScoperSet(t *testing.T) {
 		{"parallel", "parallel"},
 	}
 	for _, tc := range cases {
-		deps := childEngineDepsForProvider(cfg, tc.role, provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+		deps := childEngineDepsForProvider(cfg, tc.role, provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 		sink, ok := deps.Sink.(*fakeScopedSink)
 		if !ok {
 			t.Fatalf("role %q: Deps.Sink = %T, want the scoper's sink", tc.role, deps.Sink)
@@ -157,7 +157,7 @@ func TestChildEngineDepsRoleScopedTelemetryWhenScoperSet(t *testing.T) {
 	// The DEFAULT-provider child shape (childEngineDeps: parallel-judge and the
 	// usermodel-review child) is wired equivalently — the two builders must not
 	// drift (the same posture rule as the Clock inheritance test).
-	defDeps := childEngineDeps(cfg, "usermodel-review", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
+	defDeps := childEngineDeps(cfg, "usermodel-review", provider, testProviderModel(cfg.Model), tool.NewCatalog(), fixedDefaultWindow, promptConfig(cfg, ""), nil)
 	sink, ok := defDeps.Sink.(*fakeScopedSink)
 	if !ok || sink.family != "usermodel" {
 		t.Errorf("childEngineDeps(usermodel-review) Sink = %T/%+v, want the scoper's sink with family usermodel", defDeps.Sink, defDeps.Sink)
@@ -179,7 +179,7 @@ func TestChildEngineDepsNilTelemetryWhenNoScoper(t *testing.T) {
 	cfg.ToolCallRecorder = &fakeScopedRecorder{family: "main"}
 	provider := mockllm.New()
 
-	deps := childEngineDepsForProvider(cfg, "task", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	deps := childEngineDepsForProvider(cfg, "task", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	if deps.Sink != nil {
 		t.Errorf("childEngineDepsForProvider Deps.Sink = %T, want nil without a scoper", deps.Sink)
 	}
@@ -187,7 +187,7 @@ func TestChildEngineDepsNilTelemetryWhenNoScoper(t *testing.T) {
 		t.Errorf("childEngineDepsForProvider Deps.ToolCallRecorder = %T, want nil without a scoper", deps.ToolCallRecorder)
 	}
 
-	defDeps := childEngineDeps(cfg, "parallel-judge", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
+	defDeps := childEngineDeps(cfg, "parallel-judge", provider, testProviderModel(cfg.Model), tool.NewCatalog(), fixedDefaultWindow, promptConfig(cfg, ""), nil)
 	if defDeps.Sink != nil || defDeps.ToolCallRecorder != nil {
 		t.Errorf("childEngineDeps Sink/ToolCallRecorder = %T/%T, want nil/nil without a scoper", defDeps.Sink, defDeps.ToolCallRecorder)
 	}
@@ -270,7 +270,7 @@ func driveSubagentWithRoleMetrics(t *testing.T) []*dto.MetricFamily {
 	parentCat.MustRegister(task)
 	// Role "" routes the parent through the SAME scoper onto the "main" family —
 	// the uniform-label property the cmd wiring establishes with WithRole(RoleMain).
-	parentEng := newChildEngine(cfg, "", parentProvider, parentCat, cfg.Model, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
+	parentEng := newChildEngine(cfg, "", parentProvider, testProviderModel(cfg.Model), parentCat, fixedDefaultWindow, promptConfig(cfg, cfg.gitStatus))
 
 	parentWS := osfsWSForTest(t, ws)
 	parentEnv := testEnvironment(parentWS, nil)

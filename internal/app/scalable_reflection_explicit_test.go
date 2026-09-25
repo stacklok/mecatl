@@ -218,8 +218,8 @@ func TestScalableReflectionEvidence_Scenario8_ExplicitUsesPersistedProviderModel
 		[]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests <- req })},
 		mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`),
 	)
-	cfg := Config{Model: persistedModel, auxiliaryProviderID: "test", LearningMode: learning.Review}
-	observer := buildExplicitReflectionObserver(cfg, provider, persistedModel, memmemory.New(), nil, memproposal.New(), nil)
+	cfg := Config{Model: persistedModel, LearningMode: learning.Review}
+	observer := buildExplicitReflectionObserver(cfg, provider, testProviderModel(persistedModel), memmemory.New(), nil, memproposal.New(), nil)
 	trajectory := automaticTrajectory("persisted-routing", []session.Message{session.NewUserMessage("remember model routing")}, learning.MessageSpan{})
 	if _, err := observer.Reflect(context.Background(), trajectory, false); err != nil {
 		t.Fatal(err)
@@ -235,12 +235,12 @@ func TestScalableReflectionEvidence_Scenario8_ExplicitUsesPersistedProviderModel
 }
 
 func TestScalableReflectionEvidence_Scenario8_OffModeExplicitOnly(t *testing.T) {
-	cfg := Config{Model: "model", auxiliaryProviderID: "test", LearningMode: learning.Off}
+	cfg := Config{Model: "model", LearningMode: learning.Off}
 	provider := mockllm.New(mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
-	if automatic := buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil, nil); automatic != nil {
+	if automatic := buildReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memmemory.New(), nil, memproposal.New(), nil, nil); automatic != nil {
 		t.Fatal("off mode installed automatic reflection")
 	}
-	explicit := buildExplicitReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil)
+	explicit := buildExplicitReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memmemory.New(), nil, memproposal.New(), nil)
 	if explicit == nil {
 		t.Fatal("off mode did not install explicit reflection")
 	}

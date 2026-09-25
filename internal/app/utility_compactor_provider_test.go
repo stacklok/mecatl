@@ -21,10 +21,9 @@ func TestUtilityCascadeCompactorsUseParentProvider(t *testing.T) {
 	provider := mockllm.New()
 	reg := regForTest(provider, deploymentProvider, parentModel)
 	cfg := Config{
-		Model:               parentModel,
-		UseMock:             true,
-		Compaction:          "cascade",
-		auxiliaryProviderID: deploymentProvider,
+		Model:      parentModel,
+		UseMock:    true,
+		Compaction: "cascade",
 	}
 
 	assertCascadeProvider := func(name string, deps agent.Deps) {
@@ -33,10 +32,21 @@ func TestUtilityCascadeCompactorsUseParentProvider(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s compactor = %T, want agent.CascadeCompactor", name, deps.Compactor)
 		}
-		if got, want := compactor.ProviderModel, (session.ProviderModelID{ProviderID: parentProvider, ModelID: compactor.Model}); got != want {
+		want := session.ProviderModelID{ProviderID: parentProvider, ModelID: compactor.Model}
+		if got := compactor.ProviderModel; got != want {
 			t.Fatalf("%s cascade ProviderModel = %+v, want %+v", name, got, want)
 		}
+		if got := deps.ProviderModel; got != want {
+			t.Fatalf("%s engine ProviderModel = %+v, want %+v", name, got, want)
+		}
 	}
+
+	primaryModel := session.ProviderModelID{ProviderID: parentProvider, ModelID: parentModel}
+	primary := engineDepsForProvider(cfg, provider, primaryModel, func() int { return defaultContextWindowTokens }, nil, nil, nil, nil, nil)
+	if got := primary.ProviderModel; got != primaryModel {
+		t.Fatalf("primary ProviderModel = %+v, want %+v", got, primaryModel)
+	}
+	assertCascadeProvider("primary", primary)
 
 	assertCascadeProvider("parallel judge", parallelJudgeDeps(cfg, reg, parentProvider, provider))
 
@@ -59,4 +69,38 @@ func TestUtilityCascadeCompactorsUseParentProvider(t *testing.T) {
 		t.Fatal("guardrails checker dependencies were not built")
 	}
 	assertCascadeProvider("guardrails checker", guardrailsDeps)
+}
+
+func TestUtilityCascadeCompactorUsesSelectedProviderAndSlotModel(t *testing.T) {
+	const (
+		deploymentProvider = "deployment-default"
+		selectedProvider   = "session-selected"
+		selectedModel      = "session-primary-model"
+		reviewerModel      = "reviewer-primary-model"
+		compactionModel    = "compaction-slot-model"
+	)
+	provider := mockllm.New()
+	reg := regForTest(provider, deploymentProvider, "deployment-model")
+	cfg := Config{
+		Model:                    "deployment-model",
+		Compaction:               "cascade",
+		SubagentAskReviewerModel: reviewerModel,
+		ModelSlots:               map[string]string{slotCompaction: slotCheap},
+		ModelAliases:             map[string]string{slotCheap: compactionModel},
+	}
+
+	deps, ok := askAdjudicatorDeps(cfg, reg, provider, selectedProvider, selectedModel)
+	if !ok {
+		t.Fatal("ask adjudicator dependencies were not built")
+	}
+	if want := (session.ProviderModelID{ProviderID: selectedProvider, ModelID: reviewerModel}); deps.ProviderModel != want {
+		t.Fatalf("ask adjudicator ProviderModel = %+v, want %+v", deps.ProviderModel, want)
+	}
+	compactor, ok := deps.Compactor.(agent.CascadeCompactor)
+	if !ok {
+		t.Fatalf("ask adjudicator compactor = %T, want agent.CascadeCompactor", deps.Compactor)
+	}
+	if want := (session.ProviderModelID{ProviderID: selectedProvider, ModelID: compactionModel}); compactor.ProviderModel != want {
+		t.Fatalf("ask adjudicator cascade ProviderModel = %+v, want %+v", compactor.ProviderModel, want)
+	}
 }

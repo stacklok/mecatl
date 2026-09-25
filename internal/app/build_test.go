@@ -25,6 +25,10 @@ import (
 
 func fixedDefaultWindow() int { return defaultContextWindowTokens }
 
+func testProviderModel(model string) session.ProviderModelID {
+	return session.ProviderModelID{ProviderID: "test", ModelID: model}
+}
+
 // depsTestFixture builds the shared (non-provider) collaborators the two
 // Deps-constructing paths consume, so a test can compare baseEngineDeps against
 // engineDepsForProvider on equal footing. All offline (mockllm/memstore).
@@ -65,7 +69,7 @@ func TestBaseEngineDepsDelegatesToProviderSeam(t *testing.T) {
 	reg := regForTest(provider, providerOpenAI, cfg.Model)
 	windowFn := reg.windowResolver(cfg, reg.Default(), cfg.Model)
 	base := baseEngineDeps(cfg, reg, provider, store, policy, hooks, mcpP, instr)
-	direct := engineDepsForProvider(cfg, provider, cfg.Model, windowFn, store, policy, hooks, mcpP, instr)
+	direct := engineDepsForProvider(cfg, provider, session.ProviderModelID{ProviderID: reg.Default(), ModelID: cfg.Model}, windowFn, store, policy, hooks, mcpP, instr)
 
 	if base.Model != direct.Model {
 		t.Errorf("Model: base=%q direct=%q", base.Model, direct.Model)
@@ -124,7 +128,7 @@ func TestEngineDepsForProviderRebindsModel(t *testing.T) {
 
 	const altModel = "gpt-4" // cl100k_base, a DIFFERENT encoding from gpt-4o (o200k_base)
 
-	deps := engineDepsForProvider(cfg, provider, altModel, func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
+	deps := engineDepsForProvider(cfg, provider, testProviderModel(altModel), func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
 
 	if deps.Model != altModel {
 		t.Errorf("Deps.Model = %q, want %q (not the default gpt-4o)", deps.Model, altModel)
@@ -144,7 +148,7 @@ func TestEngineDepsForProviderRebindsModel(t *testing.T) {
 	// (cl100k_base) must DIFFER from a counter built for the default cfg.Model
 	// (o200k_base) on a probe string. If engineDepsForProvider leaked the default
 	// model's counter, these would be equal and the guard would be vacuous.
-	defaultDeps := engineDepsForProvider(cfg, provider, cfg.Model, func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
+	defaultDeps := engineDepsForProvider(cfg, provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
 	const probe = "tokenization differences 12345 café 日本語"
 	altCount := deps.TokenCounter.Count(probe)
 	defCount := defaultDeps.TokenCounter.Count(probe)
@@ -184,7 +188,7 @@ func TestEngineDepsCarryWallClock(t *testing.T) {
 		t.Fatalf("baseEngineDeps Deps.Clock = %T, want wallclock.Clock", base.Clock)
 	}
 
-	direct := engineDepsForProvider(cfg, provider, cfg.Model, func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
+	direct := engineDepsForProvider(cfg, provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
 	if direct.Clock == nil {
 		t.Fatal("engineDepsForProvider Deps.Clock is nil (latency metrics dead, issue #53)")
 	}
@@ -194,7 +198,7 @@ func TestEngineDepsCarryWallClock(t *testing.T) {
 
 	// Children INHERIT the clock — childEngineDepsForProvider clears the telemetry
 	// seams (Sink/ToolCallRecorder) but must NOT clear Clock.
-	child := childEngineDepsForProvider(cfg, "member:explorer", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	child := childEngineDepsForProvider(cfg, "member:explorer", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	if child.Clock == nil {
 		t.Fatal("childEngineDepsForProvider Deps.Clock is nil (children must inherit the wall clock)")
 	}
@@ -206,7 +210,7 @@ func TestEngineDepsCarryWallClock(t *testing.T) {
 	// the default Subagent explorer, Parallel branch/judge, usermodel-review
 	// children) builds its own Deps literal — assert its Clock too, or deleting
 	// the field there would pass the suite while silently zeroing child latency.
-	defChild := childEngineDeps(cfg, "explorer", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
+	defChild := childEngineDeps(cfg, "explorer", provider, testProviderModel(cfg.Model), tool.NewCatalog(), fixedDefaultWindow, promptConfig(cfg, ""), nil)
 	if defChild.Clock == nil {
 		t.Fatal("childEngineDeps Deps.Clock is nil (default child engines must carry the wall clock)")
 	}
@@ -221,9 +225,9 @@ func TestRequestManifestGatePropagatesToEveryEngineShape(t *testing.T) {
 		cfg := Config{Model: "model", enableDurableEvidence: enabled}
 		reg := regForTest(provider, providerOpenAI, cfg.Model)
 		base := baseEngineDeps(cfg, reg, provider, store, policy, hooks, mcpP, instr)
-		perSession := engineDepsForProvider(cfg, provider, cfg.Model, fixedDefaultWindow, store, policy, hooks, mcpP, instr)
-		child := childEngineDepsForProvider(cfg, "member:lead", provider, cfg.Model, fixedDefaultWindow, tool.NewCatalog(), promptConfig(cfg, ""), nil)
-		defaultChild := childEngineDeps(cfg, "task", provider, tool.NewCatalog(), cfg.Model, fixedDefaultWindow, promptConfig(cfg, ""), nil)
+		perSession := engineDepsForProvider(cfg, provider, testProviderModel(cfg.Model), fixedDefaultWindow, store, policy, hooks, mcpP, instr)
+		child := childEngineDepsForProvider(cfg, "member:lead", provider, testProviderModel(cfg.Model), fixedDefaultWindow, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+		defaultChild := childEngineDeps(cfg, "task", provider, testProviderModel(cfg.Model), tool.NewCatalog(), fixedDefaultWindow, promptConfig(cfg, ""), nil)
 		for name, deps := range map[string]agent.Deps{
 			"main": base, "per-session": perSession, "child/provider": child, "child/default": defaultChild,
 		} {

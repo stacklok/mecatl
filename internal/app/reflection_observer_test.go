@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/skillfs"
 	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	memoryadapter "github.com/stacklok/mecatl/internal/adapter/memory"
@@ -362,7 +363,7 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	sourceStore := memstore.New()
 	ledger := automaticStoreForTest(t, t.TempDir(), automatic)
 	cfg := Config{
-		Model: "test-model", auxiliaryProviderID: "test", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
+		Model: "test-model", LearningMode: learning.Auto, LearningSensitivity: learning.Balanced,
 		LearningAutomatic: automatic, LearningMetricsEmitter: emitter,
 		attemptRepository: memattempt.New(wallclock.Clock{}), automaticAdmissionLedger: ledger, learningSourceStore: sourceStore,
 	}
@@ -371,7 +372,7 @@ func TestAutomaticReflectionEmitsCorrelatedClosedMetrics(t *testing.T) {
 	t.Cleanup(coordinator.Close)
 	provider := mockllm.New(mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
 	memory := memmemory.New()
-	observer, ok := buildReflectionObserver(cfg, provider, cfg.Model, memory, nil, memproposal.New(), coordinator, admission).(*reflectionObserver)
+	observer, ok := buildReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memory, nil, memproposal.New(), coordinator, admission).(*reflectionObserver)
 	if !ok {
 		t.Fatal("automatic reflection observer was not built")
 	}
@@ -443,6 +444,52 @@ func waitForLearningActivity(t *testing.T, emitted <-chan learning.Activity, kin
 		case <-time.After(time.Second):
 			t.Fatalf("timed out waiting for learning activity %q", kind)
 		}
+	}
+}
+
+func TestReflectionSlotUsesSelectedProviderAndReturnsAttributedUsage(t *testing.T) {
+	const (
+		selectedProvider = "non-default-provider"
+		primaryModel     = "session-primary-model"
+		slotModel        = "reflection-slot-model"
+	)
+	var request port.LLMRequest
+	provider := mockllm.NewWith(
+		[]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) { request = got })},
+		mockllm.Turn{Chunks: []port.Chunk{
+			{Kind: port.ChunkText, Text: `{"kind":"abstained","candidates":[]}`},
+			{Kind: port.ChunkUsage, Usage: &session.Usage{InputTokens: 7, OutputTokens: 3}},
+			{Kind: port.ChunkDone, Stop: session.StopEndTurn},
+		}},
+	)
+	cfg := Config{
+		Model:        primaryModel,
+		LearningMode: learning.Review,
+		ModelSlots:   map[string]string{slotReflection: slotCheap},
+		ModelAliases: map[string]string{slotCheap: slotModel},
+	}
+	observer := buildExplicitReflectionObserver(cfg, provider,
+		session.ProviderModelID{ProviderID: selectedProvider, ModelID: primaryModel},
+		memmemory.New(), nil, memproposal.New(), nil)
+	if observer == nil {
+		t.Fatal("explicit reflection observer was not built")
+	}
+	trajectory := learning.NewTrajectory("reflection-slot", "/workspace", session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("remember this")})
+	trajectory.Current = learning.MessageSpan{Start: 0, End: 1}
+	receipt, err := observer.Reflect(context.Background(), trajectory, false)
+	if err != nil {
+		t.Fatalf("Reflect: %v", err)
+	}
+	if request.Model != slotModel {
+		t.Fatalf("reflection request model = %q, want %q", request.Model, slotModel)
+	}
+	bucket, ok := receipt.Usage.Buckets[session.UsageKindReflection]
+	if !ok {
+		t.Fatalf("reflection usage = %+v, want reflection bucket", receipt.Usage)
+	}
+	wantUsage := session.Usage{InputTokens: 7, OutputTokens: 3}
+	if got := bucket.Models[selectedProvider+"/"+slotModel]; got != wantUsage {
+		t.Fatalf("reflection usage attribution = %+v, want %+v", bucket.Models, map[string]session.Usage{selectedProvider + "/" + slotModel: wantUsage})
 	}
 }
 

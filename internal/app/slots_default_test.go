@@ -67,7 +67,7 @@ func TestSlotsByteIdenticalDefault(t *testing.T) {
 	// the session model when no compaction slot is set.
 	cfg := Config{Model: sessionModel, Compaction: "cascade"}
 	provider, store, policy, hooks, mcpP, instr := depsTestFixture(t)
-	deps := engineDepsForProvider(cfg, provider, sessionModel, func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
+	deps := engineDepsForProvider(cfg, provider, testProviderModel(sessionModel), func() int { return defaultContextWindowTokens }, store, policy, hooks, mcpP, instr)
 	if deps.Model != sessionModel {
 		t.Fatalf("deps.Model = %q, want the session model %q", deps.Model, sessionModel)
 	}
