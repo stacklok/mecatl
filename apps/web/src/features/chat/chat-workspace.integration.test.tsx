@@ -967,7 +967,11 @@ describe("mounted chat workspace BFF boundary", () => {
     });
     checkpoint.send(required, "handoff-cursor");
     checkpoint.close();
-    bff.activityResponses.set("", [initialActivity.response, checkpoint.response]);
+    bff.activityResponses.set("", [
+      initialActivity.response,
+      completedStream(),
+      checkpoint.response,
+    ]);
     bff.activityResponses.set("old-cursor", [replayFromOldCursor.response]);
     bff.activityResponses.set("handoff-cursor", [refreshFromHandoff.response]);
     const run = heldStream();
@@ -984,6 +988,9 @@ describe("mounted chat workspace BFF boundary", () => {
       initialActivity.send(runEvent("session.title", "1", "", "", {}), "old-cursor");
       initialActivity.close();
     });
+    // An idle session replays delegation history after the interrupted live
+    // follow. The authorization checkpoint needs its own durable read.
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(2));
     typePrompt("Use Calendar");
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Send message" }).hasAttribute("disabled")).toBe(

@@ -709,6 +709,12 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     settledState === "completed" ||
     settledState === "failed" ||
     settledState === "cancelled";
+  const pendingAuthorization = messages.some((message) =>
+    message.authorizations?.some((authorization) => authorization.status === "pending"),
+  );
+  const uncertainAuthorization = sessionId
+    ? [...authorizationUncertain.current.keys()].some((key) => key.startsWith(`${sessionId}\u0000`))
+    : false;
   const imageAttachmentsSupported = sessionId
     ? sessionDetail.data?.capabilities.image === true
     : draftConfiguration.model
@@ -904,6 +910,8 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       !settled ||
       isRunning ||
       activeRun.current ||
+      pendingAuthorization ||
+      uncertainAuthorization ||
       activityFollowedSession.current === sessionId ||
       protectedRequestsPaused()
     ) {
@@ -990,7 +998,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         if (!activeRun.current) interruptedSettledSession.current = sessionId;
       }
     };
-  }, [sessionId, settled, isRunning]);
+  }, [sessionId, settled, isRunning, pendingAuthorization, uncertainAuthorization]);
 
   async function selectSession(id: string) {
     setSidebarOpen(false);
