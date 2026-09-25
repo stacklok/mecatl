@@ -247090,6 +247090,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790332399482,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c8d1c32d6e07574ab8980e7efbf007a6b4273195",
+          "message": "test(app): remove real reconciliation cooldown waits (#1923)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T14:09:29+03:00",
+          "tree_id": "d6d85c85db82ee9666d70a84f0cfe56a8c413156",
+          "url": "https://github.com/stacklok/mecatl/commit/c8d1c32d6e07574ab8980e7efbf007a6b4273195"
+        },
+        "date": 1790335252747,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -358973,6 +359007,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790335249715,
+  "lastUpdate": 1790335253729,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
