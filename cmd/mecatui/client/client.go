@@ -706,11 +706,13 @@ func (c *Client) openConverse(ctx context.Context) (*Stream, error) {
 // ModeDefaultString is the canonical CLI/UI spelling for default permission mode.
 const ModeDefaultString = "default"
 
+const modePlanString = "plan"
+
 // ModeFromString maps a CLI mode string to the proto enum. Unknown/empty maps to
 // UNSPECIFIED (the server defaults that to DEFAULT).
 func ModeFromString(s string) mecatlv1.PermissionMode {
 	switch s {
-	case "plan":
+	case modePlanString:
 		return mecatlv1.PermissionMode_PERMISSION_MODE_PLAN
 	case "accept-edits", "acceptEdits", "accept_edits", "accept edits":
 		return mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS
@@ -726,7 +728,7 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 func ModeString(m mecatlv1.PermissionMode) string {
 	switch m {
 	case mecatlv1.PermissionMode_PERMISSION_MODE_PLAN:
-		return "plan"
+		return modePlanString
 	case mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS:
 		return "accept-edits"
 	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED:
@@ -740,8 +742,8 @@ func ModeString(m mecatlv1.PermissionMode) string {
 func NextMode(mode string) string {
 	switch ModeString(ModeFromString(mode)) {
 	case ModeDefaultString:
-		return "plan"
-	case "plan":
+		return modePlanString
+	case modePlanString:
 		return "accept-edits"
 	default:
 		return ModeDefaultString

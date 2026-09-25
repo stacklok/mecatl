@@ -140,7 +140,7 @@ func (m *Model) retirePendingApprovalRecovery() {
 	m.pendingRecovery = nil
 }
 
-func (m Model) refusePendingApprovalRecovery(text string) (tea.Model, tea.Cmd) {
+func (m Model) refusePendingApprovalRecovery(text string) Model {
 	(&m).retirePendingApprovalRecovery()
 	m.closeModal()
 	m.phase = phaseFatal
@@ -148,129 +148,150 @@ func (m Model) refusePendingApprovalRecovery(text string) (tea.Model, tea.Cmd) {
 	m.conv.addError(text)
 	m.prompt.Blur()
 	m.refreshView()
-	return m, nil
+	return m
 }
 
 func (m Model) updatePendingApproval(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
-	// Recovery messages are always consumed. A late open owns a watch that the
-	// retired generation can no longer publish, so close it here.
 	if m.pendingRecovery == nil {
-		switch msg := msg.(type) {
-		case pendingApprovalWatchOpenedMsg:
-			if msg.watch != nil {
-				msg.watch.Close()
-			}
-			return m, nil, true
-		case pendingApprovalWatchMsg, pendingApprovalResolvedMsg, pendingApprovalCancelledMsg:
-			return m, nil, true
-		default:
-			return m, nil, false
-		}
+		return m.consumeRetiredPendingApprovalMessage(msg)
 	}
-	recovery := m.pendingRecovery
+
 	switch msg := msg.(type) {
 	case pendingApprovalWatchOpenedMsg:
-		if msg.generation != recovery.generation {
-			if msg.watch != nil {
-				msg.watch.Close()
-			}
-			return m, nil, true
-		}
-		if msg.err != nil || msg.watch == nil || msg.event.Kind != client.PendingApprovalEventBoundary {
-			if msg.watch != nil {
-				msg.watch.Close()
-			}
-			mm, cmd := m.refusePendingApprovalRecovery("pending approval recovery could not establish a gap-free watch; leave the approval pending and retry")
-			return mm, cmd, true
-		}
-		recovery.watch = msg.watch
-		m.phase = phaseRunning
-		ask := recovery.approval
-		mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
-		m = mm.(Model)
-		return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, msg.watch)), true
+		return m.updatePendingApprovalWatchOpened(msg)
 	case pendingApprovalResolvedMsg:
-		if msg.generation != recovery.generation || !samePendingApproval(msg.approval, recovery.approval) {
-			return m, nil, true
-		}
-		recovery.resolving = false
-		if msg.err != nil {
-			mm, cmd := m.refusePendingApprovalRecovery("the pending approval changed or could not be acknowledged; no verdict will be resent")
-			return mm, cmd, true
-		}
-		recovery.resolved = true
-		return m, nil, true
+		return m.updatePendingApprovalResolved(msg)
 	case pendingApprovalCancelledMsg:
-		if msg.generation != recovery.generation || !samePendingApproval(msg.approval, recovery.approval) {
-			return m, nil, true
-		}
-		if msg.err != nil {
-			mm, cmd := m.refusePendingApprovalRecovery("the recovered run could not be cancelled; check the session before retrying")
-			return mm, cmd, true
-		}
-		(&m).retirePendingApprovalRecovery()
-		return m, tea.Quit, true
+		return m.updatePendingApprovalCancelled(msg)
 	case pendingApprovalWatchMsg:
-		if msg.generation != recovery.generation {
-			return m, nil, true
-		}
-		if msg.err != nil {
-			text := "the pending approval watch ended before a terminal result; check the session before retrying"
-			if !recovery.resolving && !recovery.resolved {
-				text = "the pending approval watch ended before your choice; leave the approval pending and retry"
-			}
-			mm, cmd := m.refusePendingApprovalRecovery(text)
-			return mm, cmd, true
-		}
-		if msg.event.Kind == client.PendingApprovalEventResolved && !recovery.resolved && !recovery.resolving {
-			mm, cmd := m.refusePendingApprovalRecovery("the pending approval changed before your choice; no verdict was sent")
-			return mm, cmd, true
-		}
-		if msg.event.Kind == client.PendingApprovalEventRetracted {
-			text := "the pending approval was withdrawn; no verdict was sent"
-			if recovery.resolving || recovery.resolved {
-				text = "the recovered approval was withdrawn after your choice; check the session before retrying"
-			}
-			mm, cmd := m.refusePendingApprovalRecovery(text)
-			return mm, cmd, true
-		}
-		if msg.event.Kind == client.PendingApprovalEventAsk && msg.event.Approval != nil {
-			ask := *msg.event.Approval
-			recovery.approval = ask
-			recovery.resolved = false
-			recovery.resolving = false
-			recovery.cancelled = false
-			mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
-			m = mm.(Model)
-			return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
-		}
-		// After an explicit choice, follow EventToMsg's nil/skip convention for
-		// incidental telemetry (for example request.manifest). Before a choice,
-		// an unknown event still makes the pending permission state uncertain.
-		if msg.event.Kind == client.PendingApprovalEventOther && msg.event.Message == nil && !recovery.resolving && !recovery.resolved {
-			mm, cmd := m.refusePendingApprovalRecovery("the pending approval watch returned an unknown event; no control was sent")
-			return mm, cmd, true
-		}
-		var eventCmd tea.Cmd
-		if msg.event.Message != nil {
-			reconciled := false
-			if call, ok := msg.event.Message.(client.ToolCallMsg); ok {
-				if _, replay := recovery.snapshotCalls[call.ID]; replay {
-					delete(recovery.snapshotCalls, call.ID)
-					reconciled = m.conv.reconcileUnresolvedTool(call.ID, call.Name, call.Args)
-				}
-			}
-			if !reconciled {
-				mm, cmd := m.updateStreamEvent(msg.event.Message)
-				m, eventCmd = mm.(Model), cmd
-			}
-		}
-		if msg.event.Kind == client.PendingApprovalEventTerminal {
-			(&m).retirePendingApprovalRecovery()
-			return m, eventCmd, true
-		}
-		return m, tea.Batch(eventCmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
+		return m.updatePendingApprovalWatch(msg)
 	default:
 		return m, nil, false
 	}
+}
+
+// Recovery messages are always consumed. A late open owns a watch that the
+// retired generation can no longer publish, so close it here.
+func (m Model) consumeRetiredPendingApprovalMessage(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	switch msg := msg.(type) {
+	case pendingApprovalWatchOpenedMsg:
+		if msg.watch != nil {
+			msg.watch.Close()
+		}
+		return m, nil, true
+	case pendingApprovalWatchMsg, pendingApprovalResolvedMsg, pendingApprovalCancelledMsg:
+		return m, nil, true
+	default:
+		return m, nil, false
+	}
+}
+
+func (m Model) updatePendingApprovalWatchOpened(msg pendingApprovalWatchOpenedMsg) (tea.Model, tea.Cmd, bool) {
+	recovery := m.pendingRecovery
+	if msg.generation != recovery.generation {
+		if msg.watch != nil {
+			msg.watch.Close()
+		}
+		return m, nil, true
+	}
+	if msg.err != nil || msg.watch == nil || msg.event.Kind != client.PendingApprovalEventBoundary {
+		if msg.watch != nil {
+			msg.watch.Close()
+		}
+		return m.refusePendingApprovalRecovery("pending approval recovery could not establish a gap-free watch; leave the approval pending and retry"), nil, true
+	}
+	recovery.watch = msg.watch
+	m.phase = phaseRunning
+	ask := recovery.approval
+	mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
+	m = mm.(Model)
+	return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, msg.watch)), true
+}
+
+func (m Model) updatePendingApprovalResolved(msg pendingApprovalResolvedMsg) (tea.Model, tea.Cmd, bool) {
+	recovery := m.pendingRecovery
+	if msg.generation != recovery.generation || !samePendingApproval(msg.approval, recovery.approval) {
+		return m, nil, true
+	}
+	recovery.resolving = false
+	if msg.err != nil {
+		return m.refusePendingApprovalRecovery("the pending approval changed or could not be acknowledged; no verdict will be resent"), nil, true
+	}
+	recovery.resolved = true
+	return m, nil, true
+}
+
+func (m Model) updatePendingApprovalCancelled(msg pendingApprovalCancelledMsg) (tea.Model, tea.Cmd, bool) {
+	recovery := m.pendingRecovery
+	if msg.generation != recovery.generation || !samePendingApproval(msg.approval, recovery.approval) {
+		return m, nil, true
+	}
+	if msg.err != nil {
+		return m.refusePendingApprovalRecovery("the recovered run could not be cancelled; check the session before retrying"), nil, true
+	}
+	(&m).retirePendingApprovalRecovery()
+	return m, tea.Quit, true
+}
+
+func (m Model) updatePendingApprovalWatch(msg pendingApprovalWatchMsg) (tea.Model, tea.Cmd, bool) {
+	recovery := m.pendingRecovery
+	if msg.generation != recovery.generation {
+		return m, nil, true
+	}
+	if msg.err != nil {
+		text := "the pending approval watch ended before a terminal result; check the session before retrying"
+		if !recovery.resolving && !recovery.resolved {
+			text = "the pending approval watch ended before your choice; leave the approval pending and retry"
+		}
+		return m.refusePendingApprovalRecovery(text), nil, true
+	}
+	if msg.event.Kind == client.PendingApprovalEventResolved && !recovery.resolved && !recovery.resolving {
+		return m.refusePendingApprovalRecovery("the pending approval changed before your choice; no verdict was sent"), nil, true
+	}
+	if msg.event.Kind == client.PendingApprovalEventRetracted {
+		text := "the pending approval was withdrawn; no verdict was sent"
+		if recovery.resolving || recovery.resolved {
+			text = "the recovered approval was withdrawn after your choice; check the session before retrying"
+		}
+		return m.refusePendingApprovalRecovery(text), nil, true
+	}
+	if msg.event.Kind == client.PendingApprovalEventAsk && msg.event.Approval != nil {
+		ask := *msg.event.Approval
+		recovery.approval = ask
+		recovery.resolved = false
+		recovery.resolving = false
+		recovery.cancelled = false
+		mm, cmd := m.applyPermissionAsk(client.PermissionAskMsg{RunID: ask.RunID, AskID: ask.AskID, Tool: ask.Tool, Args: ask.Args, Reason: ask.Reason, ExpectedRunID: ask.RunID, Recovery: true})
+		m = mm.(Model)
+		return m, tea.Batch(cmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
+	}
+	// After an explicit choice, follow EventToMsg's nil/skip convention for
+	// incidental telemetry (for example request.manifest). Before a choice,
+	// an unknown event still makes the pending permission state uncertain.
+	if msg.event.Kind == client.PendingApprovalEventOther && msg.event.Message == nil && !recovery.resolving && !recovery.resolved {
+		return m.refusePendingApprovalRecovery("the pending approval watch returned an unknown event; no control was sent"), nil, true
+	}
+	eventCmd := m.applyPendingApprovalEventMessage(msg.event.Message, recovery)
+	if msg.event.Kind == client.PendingApprovalEventTerminal {
+		(&m).retirePendingApprovalRecovery()
+		return m, eventCmd, true
+	}
+	return m, tea.Batch(eventCmd, pendingApprovalRecvCmd(recovery.generation, recovery.watch)), true
+}
+
+func (m *Model) applyPendingApprovalEventMessage(message tea.Msg, recovery *pendingApprovalRecovery) tea.Cmd {
+	if message == nil {
+		return nil
+	}
+	if call, ok := message.(client.ToolCallMsg); ok {
+		if _, replay := recovery.snapshotCalls[call.ID]; replay {
+			delete(recovery.snapshotCalls, call.ID)
+			if m.conv.reconcileUnresolvedTool(call.ID, call.Name, call.Args) {
+				return nil
+			}
+		}
+	}
+	mm, cmd := m.updateStreamEvent(message)
+	*m = mm.(Model)
+	return cmd
 }

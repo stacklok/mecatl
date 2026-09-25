@@ -30,6 +30,7 @@ type PendingApproval struct {
 // PendingApprovalFailure is a closed, proto-free refusal category.
 type PendingApprovalFailure string
 
+// Pending approval failure categories are closed and safe for presentation code.
 const (
 	PendingApprovalNone                PendingApprovalFailure = "none"
 	PendingApprovalIncomplete          PendingApprovalFailure = "incomplete_replay"
@@ -106,6 +107,7 @@ type pendingApprovalWatchStream interface {
 // PendingApprovalEventKind is the narrow recovery lifecycle vocabulary.
 type PendingApprovalEventKind string
 
+// Pending approval event kinds describe the recovery lifecycle projection.
 const (
 	PendingApprovalEventBoundary  PendingApprovalEventKind = "boundary"
 	PendingApprovalEventAsk       PendingApprovalEventKind = "ask"
@@ -355,59 +357,69 @@ func (c *Client) DiscoverPendingApproval(ctx context.Context, sessionID string) 
 	}
 }
 
+func pendingApprovalKey(runID, askID string) string {
+	return runID + "\x00" + askID
+}
+
+func removePendingApproval(key string, pending map[string]PendingApproval, unsupported map[string]bool) error {
+	if _, exists := pending[key]; !exists {
+		return pendingApprovalFailure(PendingApprovalMalformed)
+	}
+	delete(pending, key)
+	delete(unsupported, key)
+	return nil
+}
+
+func clearPendingApprovalRun(runID string, pending map[string]PendingApproval, unsupported map[string]bool) {
+	prefix := runID + "\x00"
+	for key := range pending {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			delete(pending, key)
+			delete(unsupported, key)
+		}
+	}
+}
+
+func hasPendingApprovalRun(runID string, pending map[string]PendingApproval) bool {
+	prefix := runID + "\x00"
+	for key := range pending {
+		if runID != "" && len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
 func foldPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event, pending map[string]PendingApproval, unsupported map[string]bool) error {
-	key := func(runID, askID string) string { return runID + "\x00" + askID }
 	switch ev.GetType() {
 	case "permission.ask":
 		approval, supported, err := approvalFromEvent(sessionID, cursor, ev)
 		if err != nil {
 			return err
 		}
-		k := key(approval.RunID, approval.AskID)
-		if _, exists := pending[k]; exists {
+		key := pendingApprovalKey(approval.RunID, approval.AskID)
+		if _, exists := pending[key]; exists {
 			return pendingApprovalFailure(PendingApprovalMalformed)
 		}
-		pending[k], unsupported[k] = approval, !supported
+		pending[key], unsupported[key] = approval, !supported
 	case "approval":
 		if !validApprovalEvent(ev) {
 			return pendingApprovalFailure(PendingApprovalMalformed)
 		}
-		k := key(ev.GetRunId(), ev.GetApproval().GetAskId())
-		if _, exists := pending[k]; !exists {
-			return pendingApprovalFailure(PendingApprovalMalformed)
-		}
-		delete(pending, k)
-		delete(unsupported, k)
+		return removePendingApproval(pendingApprovalKey(ev.GetRunId(), ev.GetApproval().GetAskId()), pending, unsupported)
 	case "permission.retract":
 		if ev.GetRunId() == "" || ev.GetAsk() == nil || ev.GetAsk().GetAskId() == "" {
 			return pendingApprovalFailure(PendingApprovalMalformed)
 		}
-		k := key(ev.GetRunId(), ev.GetAsk().GetAskId())
-		if _, exists := pending[k]; !exists {
-			return pendingApprovalFailure(PendingApprovalMalformed)
-		}
-		delete(pending, k)
-		delete(unsupported, k)
+		return removePendingApproval(pendingApprovalKey(ev.GetRunId(), ev.GetAsk().GetAskId()), pending, unsupported)
 	case "result":
 		if ev.GetRunId() == "" || ev.GetResult() == nil || !validResultStop(ev.GetResult().GetStop()) {
 			return pendingApprovalFailure(PendingApprovalMalformed)
 		}
-		prefix := ev.GetRunId() + "\x00"
-		for k := range pending {
-			if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-				delete(pending, k)
-				delete(unsupported, k)
-			}
-		}
+		clearPendingApprovalRun(ev.GetRunId(), pending, unsupported)
 	default:
-		if EventToMsg(ev) != nil {
-			return nil
-		}
-		prefix := ev.GetRunId() + "\x00"
-		for k := range pending {
-			if ev.GetRunId() != "" && len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-				return pendingApprovalFailure(PendingApprovalIncomplete)
-			}
+		if EventToMsg(ev) == nil && hasPendingApprovalRun(ev.GetRunId(), pending) {
+			return pendingApprovalFailure(PendingApprovalIncomplete)
 		}
 	}
 	return nil

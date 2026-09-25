@@ -6,10 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )

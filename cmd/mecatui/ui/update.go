@@ -2227,37 +2227,8 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.doubleEscapeReleased = false
 	}
 
-	// Global lifecycle controls retain precedence over every overlay.
-	if key.Matches(msg, m.keys.Quit) {
-		return m.onQuitKey()
-	}
-
-	// ctrl+d is the unix EOF-habit quit (issue #504), an INDEPENDENT second guard.
-	// It sits right after Quit and BEFORE the textarea/phase routing so the chord is
-	// intercepted everywhere — but only when the prompt textarea is EMPTY. On a
-	// populated prompt we deliberately do NOT consume it, so the chord falls through
-	// to the textarea's DeleteCharacterForward (its default bubble binding) — never a
-	// surprise quit mid-draft. Handled even when an overlay/modal owns the keyboard
-	// (the textarea is blurred and empty then, so the empty gate passes).
-	if key.Matches(msg, m.keys.QuitD) && strings.TrimSpace(m.prompt.Value()) == "" {
-		return m.onQuitDKey()
-	}
-
-	// ctrl+z suspends the whole TUI process to the shell (issue #504). Handled
-	// BEFORE the phase/overlay routing so it works in EVERY state — idle, mid-run,
-	// the permission modal (the ask stays pending and durable). onSuspend writes the
-	// leave-behind notice to stderr, then returns tea.Suspend. Suspending does NOT
-	// stop the embedded mecated or an in-flight run — they keep working and the UI
-	// re-syncs on resume.
-	if key.Matches(msg, m.keys.Suspend) {
-		return m.onSuspend()
-	}
-
-	// Leaving before an owner choice closes only the client watch. The durable ask
-	// remains untouched and no run control is sent.
-	if m.pendingRecovery != nil && !m.pendingRecovery.resolving && !m.pendingRecovery.resolved && key.Matches(msg, m.keys.Close) {
-		(&m).retirePendingApprovalRecovery()
-		return m, tea.Quit
+	if mm, cmd, handled := m.onGlobalLifecycleKey(msg); handled {
+		return mm, cmd
 	}
 
 	// Help owns the remaining keys while open: its documented navigation and close
@@ -2326,6 +2297,33 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.dispatchPhaseKey(msg)
+}
+
+func (m Model) onGlobalLifecycleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	// Global lifecycle controls retain precedence over every overlay.
+	if key.Matches(msg, m.keys.Quit) {
+		mm, cmd := m.onQuitKey()
+		return mm, cmd, true
+	}
+	// A populated prompt sends ctrl+d through to DeleteCharacterForward rather
+	// than allowing the independent EOF-habit quit guard to consume it.
+	if key.Matches(msg, m.keys.QuitD) && strings.TrimSpace(m.prompt.Value()) == "" {
+		mm, cmd := m.onQuitDKey()
+		return mm, cmd, true
+	}
+	if key.Matches(msg, m.keys.Suspend) {
+		mm, cmd := m.onSuspend()
+		return mm, cmd, true
+	}
+	return m.onPendingApprovalRecoveryKey(msg)
+}
+
+func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.pendingRecovery == nil || m.pendingRecovery.resolving || m.pendingRecovery.resolved || !key.Matches(msg, m.keys.Close) {
+		return m, nil, false
+	}
+	(&m).retirePendingApprovalRecovery()
+	return m, tea.Quit, true
 }
 
 // onHelpKey handles the help overlay's complete keyboard contract. It runs before
