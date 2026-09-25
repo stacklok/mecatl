@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stacklok/mecatl/engine/port"
@@ -16,91 +17,87 @@ func TestServerProviderRecovery_Scenario7_BlockedObserverDoesNotHoldAdmissionMut
 }
 
 func testBlockedRecoveryCallback(t *testing.T, diagnostics bool) {
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	defer func() {
-		select {
-		case <-release:
-		default:
-			close(release)
+	synctest.Test(t, func(t *testing.T) {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		defer func() {
+			select {
+			case <-release:
+			default:
+				close(release)
+			}
+		}()
+		ctx := t.Context()
+		if !diagnostics {
+			ctx = port.WithAttemptObserver(ctx, func(session.NetworkAttemptPayload) {
+				close(entered)
+				<-release
+			})
 		}
-	}()
-	ctx := t.Context()
-	if !diagnostics {
-		ctx = port.WithAttemptObserver(ctx, func(session.NetworkAttemptPayload) {
-			close(entered)
-			<-release
-		})
-	}
-	waiting := make(chan struct{}, 1)
-	cfg := recoveryConfig(1, 5*time.Second)
-	cfg.BreakerThreshold = 1
-	cfg.BreakerCooldown = 2 * time.Second
-	cfg.Diagnostics = recoveryWaitSignal{entered: waiting}
-	if diagnostics {
-		cfg.Diagnostics = blockedRecoveryDiagnostics{recoveryWaitSignal: recoveryWaitSignal{entered: waiting}, entered: entered, release: release}
-	}
-	provider := Wrap(&fakeProvider{steps: []step{{outerErr: apiErr(503)}}}, cfg).(*resilientProvider)
-	done := make(chan error, 1)
-	go func() {
-		_, err := provider.Stream(ctx, port.LLMRequest{})
-		done <- err
-	}()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("attempt observer was not called")
-	}
+		waiting := make(chan struct{}, 1)
+		cfg := recoveryConfig(1, 5*time.Second)
+		cfg.BreakerThreshold = 1
+		cfg.BreakerCooldown = 2 * time.Second
+		cfg.Diagnostics = recoveryWaitSignal{entered: waiting}
+		if diagnostics {
+			cfg.Diagnostics = blockedRecoveryDiagnostics{recoveryWaitSignal: recoveryWaitSignal{entered: waiting}, entered: entered, release: release}
+		}
+		provider := Wrap(&fakeProvider{steps: []step{{outerErr: apiErr(503)}}}, cfg).(*resilientProvider)
+		done := make(chan error, 1)
+		go func() {
+			_, err := provider.Stream(ctx, port.LLMRequest{})
+			done <- err
+		}()
+		synctest.Wait()
+		select {
+		case <-entered:
+		default:
+			t.Fatal("attempt observer was not called")
+		}
 
-	mutexState := make(chan bool)
-	go func() {
-		provider.breaker.mu.Lock()
+		if !provider.breaker.mu.TryLock() {
+			t.Fatal("blocked observer held breaker admission mutex")
+		}
 		opened := provider.breaker.open
 		provider.breaker.mu.Unlock()
-		mutexState <- opened
-	}()
-	select {
-	case opened := <-mutexState:
 		if !opened {
 			t.Fatal("blocked callback ran before breaker state was published")
 		}
-	case <-time.After(time.Second):
-		close(release)
-		t.Fatal("blocked observer held breaker admission mutex")
-	}
 
-	waitCtx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	waitDone := make(chan error, 1)
-	go func() {
-		_, err := provider.Stream(waitCtx, port.LLMRequest{})
-		waitDone <- err
-	}()
-	select {
-	case <-waiting:
-	case <-time.After(time.Second):
-		close(release)
+		waitCtx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		waitDone := make(chan error, 1)
+		go func() {
+			_, err := provider.Stream(waitCtx, port.LLMRequest{})
+			waitDone <- err
+		}()
+		synctest.Wait()
+		select {
+		case <-waiting:
+		default:
+			t.Fatal("second caller never reached breaker admission wait")
+		}
 		cancel()
-		t.Fatal("second caller never reached breaker admission wait")
-	}
-	cancel()
-	select {
-	case err := <-waitDone:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("canceled waiter error = %v", err)
+		synctest.Wait()
+		select {
+		case err := <-waitDone:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled waiter error = %v", err)
+			}
+		default:
+			t.Fatal("blocked observer held breaker admission mutex")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("blocked observer held breaker admission mutex")
-	}
-	close(release)
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("failed attempt unexpectedly succeeded")
+		close(release)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("failed attempt unexpectedly succeeded")
+			}
+		default:
+			t.Fatal("blocked attempt did not finish after observer release")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("blocked attempt did not finish after observer release")
-	}
+	})
 }
 
 type blockedRecoveryDiagnostics struct {
@@ -120,44 +117,48 @@ func (d blockedRecoveryDiagnostics) Log(ctx context.Context, level port.Level, m
 func TestRecoveryCancellationAfterAdmission(t *testing.T) {
 	for _, phase := range []string{"provider call", "breaker wait"} {
 		t.Run(phase, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			entered := make(chan struct{}, 1)
-			cfg := recoveryConfig(2, time.Minute)
-			cfg.BreakerThreshold = 1
-			cfg.BreakerCooldown = 2 * time.Second
-			cfg.Diagnostics = recoveryWaitSignal{entered: entered}
-			inner := &fakeProvider{steps: []step{{block: true}}, onAttempt: func(context.Context, int) { entered <- struct{}{} }}
-			provider := Wrap(inner, cfg).(*resilientProvider)
-			if phase == "breaker wait" {
-				provider.recordOutcome(0, false, breakerFailure)
-			}
-			done := make(chan error, 1)
-			go func() {
-				_, err := recoveryDrain(ctx, t, provider)
-				done <- err
-			}()
-			select {
-			case <-entered:
-			case <-time.After(time.Second):
-				t.Fatal("recovery never entered requested phase")
-			}
-			cancel()
-			select {
-			case err := <-done:
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("cancellation error = %v", err)
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				entered := make(chan struct{}, 1)
+				cfg := recoveryConfig(2, time.Minute)
+				cfg.BreakerThreshold = 1
+				cfg.BreakerCooldown = 2 * time.Second
+				cfg.Diagnostics = recoveryWaitSignal{entered: entered}
+				inner := &fakeProvider{steps: []step{{block: true}}, onAttempt: func(context.Context, int) { entered <- struct{}{} }}
+				provider := Wrap(inner, cfg).(*resilientProvider)
+				if phase == "breaker wait" {
+					provider.recordOutcome(0, false, breakerFailure)
 				}
-			case <-time.After(time.Second):
-				t.Fatal("active operation did not cancel")
-			}
-			want := 1
-			if phase == "breaker wait" {
-				want = 0
-			}
-			if inner.Calls() != want {
-				t.Fatalf("actual calls=%d want %d", inner.Calls(), want)
-			}
+				done := make(chan error, 1)
+				go func() {
+					_, err := recoveryDrain(ctx, t, provider)
+					done <- err
+				}()
+				synctest.Wait()
+				select {
+				case <-entered:
+				default:
+					t.Fatal("recovery never entered requested phase")
+				}
+				cancel()
+				synctest.Wait()
+				select {
+				case err := <-done:
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("cancellation error = %v", err)
+					}
+				default:
+					t.Fatal("active operation did not cancel")
+				}
+				want := 1
+				if phase == "breaker wait" {
+					want = 0
+				}
+				if inner.Calls() != want {
+					t.Fatalf("actual calls=%d want %d", inner.Calls(), want)
+				}
+			})
 		})
 	}
 }
