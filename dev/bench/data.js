@@ -250670,6 +250670,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790353361766,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd71c52701509e10f2782a0acfc885f2f7bd8c21",
+          "message": "feat(studio): show session delegation activity (#1907)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T18:22:03+02:00",
+          "tree_id": "f18d245ebde6cd8a4c614e87bbeff77e40e7318e",
+          "url": "https://github.com/stacklok/mecatl/commit/cd71c52701509e10f2782a0acfc885f2f7bd8c21"
+        },
+        "date": 1790354074643,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -364083,6 +364117,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790354071428,
+  "lastUpdate": 1790354076007,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
