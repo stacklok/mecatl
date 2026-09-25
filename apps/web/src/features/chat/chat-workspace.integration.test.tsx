@@ -516,6 +516,59 @@ describe("mounted chat workspace BFF boundary", () => {
     ).toHaveLength(0);
   });
 
+  it("cancels a pending authorization from the mounted review without sending a permission verdict", async () => {
+    window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+    const bff = new BffFixture(session("chat-a", "authorizing"));
+    const activity = heldStream();
+    const cancel = heldStream();
+    const cancelPath = "/api/v1/sessions/chat-a/authorizations/auth-1/cancel";
+    bff.activityResponses.set("", [activity.response]);
+    bff.nextReplies.set(cancelPath, [Promise.resolve(cancel.response)]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(
+        runEvent("tool.call", "1", "", "run-a", { args: "{}", id: "call-1", name: "Calendar" }),
+      );
+      activity.send(
+        runEvent("authorization.required", "2", "", "run-a", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "pending",
+        }),
+      );
+      activity.close();
+    });
+    const row = (await screen.findByText("Tool: Calendar")).closest("li");
+    if (!row) throw new Error("Tool row missing");
+    fireEvent.click(within(row).getByRole("button", { name: "Review authorization" }));
+    const review = screen.getByRole("complementary", { name: "Authorization review" });
+    fireEvent.click(within(review).getByRole("button", { name: "Cancel authorization" }));
+    await waitFor(() => expect(bff.requestsAt("POST", cancelPath)).toHaveLength(1));
+    expect(bff.requestsAt("POST", cancelPath)[0]?.body).toBeUndefined();
+    await act(async () => {
+      cancel.send(
+        runEvent("authorization.resolved", "3", "", "run-a", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "cancelled",
+        }),
+      );
+      cancel.send(runEvent("result", "4", "", "run-a", { stop: "cancelled" }));
+      cancel.close();
+    });
+    await waitFor(() => expect(within(review).getByText("Authorization cancelled")).toBeTruthy());
+    expect(
+      bff.requests.filter(
+        (request) => request.method === "POST" && request.pathname.includes("/permissions/"),
+      ),
+    ).toHaveLength(0);
+    expect(bff.requestsAt("POST", cancelPath)).toHaveLength(1);
+  });
+
   it.each(["run.error", "no status", "status then run.error and result"])(
     "keeps authorization controls uncertain after %s",
     async (outcome) => {

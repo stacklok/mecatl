@@ -8,7 +8,6 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/memory"
 )
 
 // planContinuation owns one reserved detached relay after a plan allow. It is
@@ -221,7 +220,7 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 		}
 	}()
 	run, err := s.promoteDetachedRunAdmission(ctx, id, st, stopRun, func() *agent.Run {
-		return engine.ResumeApproval(memory.WithWorkspace(ownedLeaseCtx, env.Workspace().Root()), sess, env, askID, verdict)
+		return engine.ResumeApproval(rootedRunContext(ownedLeaseCtx, sess, env), sess, env, askID, verdict)
 	})
 	if err != nil {
 		stopRun()

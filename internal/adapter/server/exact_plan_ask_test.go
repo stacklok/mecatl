@@ -46,6 +46,61 @@ func exactPlanService(t *testing.T, store *memstore.Store, llm *mockllm.Provider
 	return svc
 }
 
+func TestExactPlanAskRestoredResumeRootsEngineContext(t *testing.T) {
+	store := memstore.New()
+	parked := makePlanControlSession(t, "exact-plan-root")
+	if err := store.Save(t.Context(), parked); err != nil {
+		t.Fatal(err)
+	}
+	llm := mockllm.New(mockllm.TextTurn("executed"))
+	engineStore := &planResumeRootCaptureStore{Store: store, originalRunID: parked.RunID()}
+	cat := tool.NewCatalog()
+	cat.MustRegister(agent.NewPresentPlanTool())
+	eng := agent.NewEngine(agent.Deps{LLM: llm, Catalog: cat, Policy: permpolicy.NewPolicy(allowRules(), nil), Model: "test-model", Interactive: true, Store: engineStore})
+	svc, err := newPlacementTestService(server.Config{Engine: eng, Store: store, EventLog: memstore.NewEventLog(), LeaseOwner: "exact-plan-test", LeaseTTL: time.Hour, LeaseRenewInterval: 30 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(svc.Close)
+	ctx := port.WithRootSessionID(t.Context(), "forged-caller-root")
+	if _, err := svc.ResolvePlanAsk(ctx, parked.ID, parked.RunID(), "plan-ask", session.VerdictAllowOnce); err != nil {
+		t.Fatal(err)
+	}
+	waitExactPlanProceed(t, svc, parked.ID, parked.RunID(), session.ModeDefault, llm, 1)
+	engineStore.assertRoot(t, parked.ID)
+}
+
+type planResumeRootCaptureStore struct {
+	*memstore.Store
+	mu            sync.Mutex
+	originalRunID string
+	roots         []session.SessionID
+}
+
+func (s *planResumeRootCaptureStore) Save(ctx context.Context, sess *session.Session) error {
+	if sess.RunID() == s.originalRunID && sess.State == session.StateCompleted {
+		root, _ := port.RootSessionIDFromContext(ctx)
+		s.mu.Lock()
+		s.roots = append(s.roots, root)
+		s.mu.Unlock()
+	}
+	return s.Store.Save(ctx, sess)
+}
+
+func (s *planResumeRootCaptureStore) assertRoot(t *testing.T, want session.SessionID) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.roots) == 0 {
+		t.Fatal("resumed plan did not persist through the engine")
+	}
+	for _, root := range s.roots {
+		if root != want {
+			t.Fatalf("resumed plan persistence roots = %q, want only %q", s.roots, want)
+		}
+	}
+}
+
 func waitExactPlanProceed(t *testing.T, svc *server.Service, id session.SessionID, oldRunID string, wantMode session.PermissionMode, llm *mockllm.Provider, wantCalls int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

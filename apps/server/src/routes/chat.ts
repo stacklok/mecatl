@@ -2,6 +2,7 @@
 
 import { createRoute, type OpenAPIHono, z } from "@hono/zod-openapi";
 import {
+  type RunStreamEvent,
   clearSessionResponseSchema,
   compactSessionResponseSchema,
   createSessionRequestSchema,
@@ -440,6 +441,24 @@ export function registerChatRoutes(
 ) {
   const { maxStreams, replayMax } = limits;
   const streams = activityStreamGate(maxStreams);
+  const streamRunEvents = (
+    context: Parameters<typeof problem>[0],
+    source: (signal: AbortSignal) => AsyncIterable<RunStreamEvent>,
+  ) =>
+    streamSSE(context, async (stream) => {
+      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
+      stream.onAbort(abort);
+      try {
+        for await (const delivery of source(controller.signal)) {
+          await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
+        }
+      } catch (error) {
+        const delivery = runError(error);
+        await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
+      } finally {
+        unlink();
+      }
+    });
   app.openapi(listSessionsRoute, async (context) => {
     if (chat === undefined) {
       return unavailable(context);
@@ -493,24 +512,7 @@ export function registerChatRoutes(
     const { sessionId } = context.req.valid("param");
     const request = context.req.valid("json");
 
-    return streamSSE(context, async (stream) => {
-      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
-      stream.onAbort(abort);
-
-      try {
-        for await (const event of chat.run(sessionId, request, controller.signal)) {
-          await stream.writeSSE({
-            data: JSON.stringify(event),
-            event: event.type,
-          });
-        }
-      } catch (error) {
-        const event = runError(error);
-        await stream.writeSSE({ data: JSON.stringify(event), event: event.type });
-      } finally {
-        unlink();
-      }
-    });
+    return streamRunEvents(context, (signal) => chat.run(sessionId, request, signal));
   });
 
   app.openapi(watchSessionActivityRoute, async (context) => {
@@ -627,21 +629,7 @@ export function registerChatRoutes(
   app.openapi(retrySessionRoute, async (context) => {
     if (chat === undefined) return unavailable(context);
     const { sessionId } = context.req.valid("param");
-    return streamSSE(context, async (stream) => {
-      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
-      stream.onAbort(abort);
-
-      try {
-        for await (const delivery of chat.retry(sessionId, controller.signal)) {
-          await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
-        }
-      } catch (error) {
-        const delivery = runError(error);
-        await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
-      } finally {
-        unlink();
-      }
-    });
+    return streamRunEvents(context, (signal) => chat.retry(sessionId, signal));
   });
 
   app.openapi(cancelRunRoute, async (context) => {
@@ -714,43 +702,20 @@ export function registerChatRoutes(
     return context.redirect(destination.href, 302);
   });
 
-  const streamAuthorization = (
-    context: Parameters<typeof problem>[0],
-    sessionId: string,
-    authorizationId: string,
-    operation: "recheck" | "cancel",
-  ) =>
-    streamSSE(context, async (stream) => {
-      if (chat === undefined) return;
-      const { controller, abort, unlink } = linkedAbort(context.req.raw.signal);
-      stream.onAbort(abort);
-      try {
-        for await (const delivery of chat.authorizationFlow(
-          sessionId,
-          authorizationId,
-          operation,
-          controller.signal,
-        )) {
-          await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
-        }
-      } catch (error) {
-        const delivery = runError(error);
-        await stream.writeSSE({ data: JSON.stringify(delivery), event: delivery.type });
-      } finally {
-        unlink();
-      }
-    });
-
   app.openapi(recheckAuthorizationRoute, (context) => {
     if (chat === undefined) return unavailable(context);
     const { sessionId, authorizationId } = context.req.valid("param");
-    return streamAuthorization(context, sessionId, authorizationId, "recheck");
+    return streamRunEvents(context, (signal) =>
+      chat.authorizationFlow(sessionId, authorizationId, "recheck", signal),
+    );
   });
 
   app.openapi(cancelAuthorizationRoute, (context) => {
     if (chat === undefined) return unavailable(context);
     const { sessionId, authorizationId } = context.req.valid("param");
-    return streamAuthorization(context, sessionId, authorizationId, "cancel");
+    return streamRunEvents(context, (signal) =>
+      chat.authorizationFlow(sessionId, authorizationId, "cancel", signal),
+    );
   });
 }
 

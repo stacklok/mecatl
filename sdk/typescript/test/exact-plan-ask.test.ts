@@ -28,7 +28,7 @@ describe("exact plan ask SDK control", () => {
         requestOptions?: RequestOptions,
       ) => Promise<void>
     >();
-    const requests: Array<{ askId: string; expectedRunId: string; verdict: number }> = [];
+    const requests: Array<{ sessionId: string; askId: string; expectedRunId: string; verdict: number }> = [];
     const client = connect({
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {
@@ -50,9 +50,9 @@ describe("exact plan ask SDK control", () => {
     await controls.resolvePlanAsk(askId, "accept_edits");
     await controls.resolvePlanAsk(askId, "iterate");
     expect(requests).toMatchObject([
-      { askId, expectedRunId: runId, verdict: 2 },
-      { askId, expectedRunId: runId, verdict: 3 },
-      { askId, expectedRunId: runId, verdict: 1 },
+      { sessionId, askId, expectedRunId: runId, verdict: 2 },
+      { sessionId, askId, expectedRunId: runId, verdict: 3 },
+      { sessionId, askId, expectedRunId: runId, verdict: 1 },
     ]);
     await client.close();
   });
