@@ -1,27 +1,18 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"log/slog"
-	"strings"
+	"github.com/stacklok/mecatl/internal/testutil/recoveryhost"
+	"os"
 	"testing"
-
-	"github.com/stacklok/mecatl/engine/port"
-	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
-	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 func TestServerProviderRecovery_Scenario7_HostLogDeliveryPolicy(t *testing.T) {
-	var sink bytes.Buffer
-	diag := slogdiag.NewFromLogger(cliconfig.NewTextLogger(&sink, slog.LevelInfo, ""))
-	cfg, err := parseFlags(nil)
-	if err != nil {
-		t.Fatal(err)
+	if args, child := recoveryhost.ChildArgs(t); child {
+		os.Args = append([]string{"mecak8s"}, args...)
+		if err := run(); err != nil {
+			t.Fatal(err)
+		}
+		return
 	}
-	composed := appConfig(cfg, diag, observability{})
-	composed.Diagnostics.Log(context.Background(), port.LevelInfo, "recovery decision", "decision", "recovered")
-	if !strings.Contains(sink.String(), "recovery decision") {
-		t.Fatalf("k8s operational sink did not receive recovery log: %q", &sink)
-	}
+	recoveryhost.Daemon(t, []string{"--session-lease-k8s-namespace="})
 }
