@@ -2256,7 +2256,7 @@ func (s *Service) reserveGeneratedSessionID(ctx context.Context, id session.Sess
 	}
 	if existing, err := s.cfg.Store.Load(ctx, id); err == nil && existing != nil {
 		release()
-		return nil, port.ErrSessionAlreadyExists
+		return nil, fmt.Errorf("%w: generated session id %q already exists: %w", ErrInvalidArgument, id, port.ErrSessionAlreadyExists)
 	} else if err != nil && !errors.Is(err, port.ErrSessionNotFound) {
 		release()
 		s.logDiscoveryError(ctx, "probe generated session placement", err)

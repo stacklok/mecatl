@@ -143,8 +143,8 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 	if !utf8.ValidString(streamedShellResult) || !strings.Contains(streamedShellResult, "out�") || !strings.Contains(streamedShellResult, "err�") || modelShellResult != streamedShellResult {
 		t.Fatalf("private protobuf bytes were not repaired identically for client/model: stream=%q model=%q", streamedShellResult, modelShellResult)
 	}
-	if executor.calls.Load() != 3 {
-		t.Fatalf("executor calls=%d, want authority+read+shell", executor.calls.Load())
+	if executor.calls.Load() != 2 {
+		t.Fatalf("executor calls=%d, want read+shell", executor.calls.Load())
 	}
 	if _, err := svc.StartRunContent(ctx, sess.ID, "early", nil); err == nil {
 		t.Fatal("replacement run acquired before relay release")

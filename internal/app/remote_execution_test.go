@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -159,7 +160,7 @@ func TestRemoteExecutionPreservesOperatorPermissionsUnderAuto(t *testing.T) {
 			for ev := range run.Events() {
 				if ev.Ask != nil {
 					asks++
-					if ev.Ask.Call != "asked" || !ev.Ask.ConfiguredAsk {
+					if ev.Ask.Call != "asked" || ev.Ask.AskProvenance != governance.AskProvenanceConfigured {
 						t.Errorf("unexpected permission ask: %+v", ev.Ask)
 					}
 					if _, err := built.Service.ApproveRun(ctx, sess.ID, ev.Ask.AskID, session.VerdictDeny, ""); err != nil {

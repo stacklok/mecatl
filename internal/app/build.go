@@ -4573,8 +4573,8 @@ type sessionInstructionSet struct {
 	remote   prompt.InstructionAssembler
 }
 
-func (s sessionInstructionSet) Assemble(ctx context.Context, ws tool.Workspace) ([]session.Message, error) {
-	return s.standard.Assemble(ctx, ws)
+func (s sessionInstructionSet) Assemble(ctx context.Context) ([]session.Message, error) {
+	return s.standard.Assemble(ctx)
 }
 
 // buildInstructionAssembler composes the ephemeral turn-0 instruction fragments:
