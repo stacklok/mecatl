@@ -125,7 +125,7 @@ func TestMecatuiFunctionalConversationCards_Scenario2_ToolVariantsPreserveWidthA
 						want = variant.expandedWant
 					}
 					compact := strings.Map(func(r rune) rune {
-						if unicode.IsSpace(r) {
+						if unicode.IsSpace(r) || strings.ContainsRune("╭╮╰╯│", r) {
 							return -1
 						}
 						return r

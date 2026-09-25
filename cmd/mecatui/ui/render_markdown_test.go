@@ -48,10 +48,10 @@ func TestMarkdownOrderedListMarkerSpacing(t *testing.T) {
 
 // TestMarkdownReservesFinalColumn locks the reserve-final-column hygiene: no
 // rendered markdown line may occupy the terminal's FINAL column, measured under
-// BOTH width methods. This is retained hygiene (mirroring the Width(r.width-2)
-// inset on tool cards), not the scramble fix — that root cause is the width-method
-// disagreement guarded by TestMarkdownWidthMethodAgreement. markdown() wraps one
-// column short, so each line stays below the width under lipgloss/GraphemeWidth AND
+// BOTH width methods. This is retained hygiene, not the scramble fix — that root
+// cause is the width-method disagreement guarded by TestMarkdownWidthMethodAgreement.
+// markdown() wraps one column short, so each line stays below the width under
+// lipgloss/GraphemeWidth AND
 // under WcWidth (the method the renderer actually paints with on terminals that do
 // not confirm DEC mode 2027).
 func TestMarkdownReservesFinalColumn(t *testing.T) {

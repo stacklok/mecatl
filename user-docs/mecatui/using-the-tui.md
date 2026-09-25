@@ -12,10 +12,11 @@ description:
 Use the conversation view to follow the response, inspect tool calls, and steer
 the agent without waiting for the current run to finish. Assistant text streams
 as it arrives. Tool calls appear as compact cards; Edit and Write cards include
-their diff.
+their diff. Framed tool cards use the available conversation width.
 
 Focus a tool card and press `ctrl+t` to view its complete arguments and output.
-Press `ctrl+t` again to return to the preview.
+Press `ctrl+t` again to return to the preview. This control changes which details
+are visible; the card width continues to follow the conversation width.
 
 ## Attach a local file
 

@@ -12,9 +12,11 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
 
+const toolCardTestWidth = 100
+
 func TestMecatuiCardLayout_Scenario1_ResultRowsWrapBeforeStyle(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 	_, cardWidth, bodyWidth := r.toolCardLayout()
 
 	long := "long-row-" + strings.Repeat("x", bodyWidth+9)
@@ -110,7 +112,7 @@ func TestDelegationToolArgsWrapBeforeStyle(t *testing.T) {
 
 func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 
 	rows := make([]string, maxToolResultLines+1)
 	for i := range rows {
@@ -184,48 +186,27 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 	})
 }
 
-// toolCardMaxWidth columns on a wide terminal, but on a narrow terminal the
-// contentWidth-2 inset wins (the card never exceeds the viewport content). The card is
-// laid out against contentWidth() = r.width - the left-margin indent, so the cap binds at
-// width ≥ toolCardMaxWidth + 2 + indent and the narrow card is (width - indent - 2). The
-// card's rendered width is measured per-line via lipgloss.Width on the widest line
-// (renderToolBlock calls renderTool directly, so the per-block indent prefix is NOT
-// applied here — this measures the raw card).
-func TestToolCardWidthCap(t *testing.T) {
-	const capBindsAt = toolCardMaxWidth + 2 + defaultBlockIndent
-	cases := []struct {
-		name     string
-		width    int
-		wantMax  int // the card's rendered width must be ≤ this
-		wantWide bool
-	}{
-		{"wide terminal caps at the max", 200, toolCardMaxWidth, true},
-		{"exactly the cap-binding width caps at the max", capBindsAt, toolCardMaxWidth, true},
-		{"narrow terminal uses contentWidth-2", 60, 60 - defaultBlockIndent - 2, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+// A framed card consumes the renderer's complete conversation-content width. The
+// raw card excludes the block indent because renderToolBlock calls renderTool directly.
+func TestToolCardWidthFillsConversationContent(t *testing.T) {
+	for _, width := range []int{60, 200} {
+		t.Run(strconv.Itoa(width), func(t *testing.T) {
 			r := newTestRenderer()
-			r.setWidth(tc.width)
+			r.setWidth(width)
 			out := r.renderToolBlock("Read", `{"path":"greeting.txt"}`, false)
-			got := maxLineWidth(out)
-			if got > tc.wantMax {
-				t.Errorf("width %d: card rendered %d cols, want ≤ %d", tc.width, got, tc.wantMax)
-			}
-			// A wide card should actually REACH the cap (border fills the card width), so
-			// the cap is load-bearing, not vacuously satisfied by a short body.
-			if tc.wantWide && got != toolCardMaxWidth {
-				t.Errorf("width %d: capped card should render exactly %d cols, got %d", tc.width, toolCardMaxWidth, got)
+			if got, want := maxLineWidth(out), r.contentWidth(); got != want {
+				t.Errorf("width %d: card rendered %d cols, want %d", width, got, want)
 			}
 		})
 	}
 }
 
 // TestToolCardWidthHardWrapsKnownRenderer covers the normal known-width card path:
-// a collapsed Shell result's unbreakable divider must not escape the capped card.
+// a collapsed Shell result's unbreakable divider must not escape the full-width card.
 func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(185)
+	cardWidth := r.contentWidth()
 	resultLines := make([]string, 0, maxToolResultLines+27)
 	resultLines = append(resultLines, strings.Repeat("-", 220))
 	for range maxToolResultLines - 1 + 27 {
@@ -235,15 +216,19 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 		kind:       blockTool,
 		toolID:     "bash-1",
 		toolName:   "Shell",
-		toolArgs:   mustJSON(t, map[string]string{"command": strings.Repeat("x", toolCardMaxWidth+1)}),
+		toolArgs:   mustJSON(t, map[string]string{"command": strings.Repeat("x", cardWidth+1)}),
 		resolved:   true,
 		resultBody: strings.Join(resultLines, "\n"),
 	}
 
+	_, _, bodyWidth := r.toolCardLayout()
+	rawResultLines, _ := r.renderToolResultLines(b, false)
+	expectedOverflow := len(wrapResultDisplayLines(rawResultLines, bodyWidth)) - maxToolResultLines
+	marker := "+" + strconv.Itoa(expectedOverflow) + " more lines · ctrl+t expand"
 	out := r.renderTool(b, false)
 	plain := stripANSIstr(out)
-	if !strings.Contains(plain, "+29 more lines · ctrl+t expand") {
-		t.Fatalf("collapsed Shell card lost its expansion marker:\n%s", plain)
+	if !strings.Contains(plain, marker) {
+		t.Fatalf("collapsed Shell card lost its expansion marker %q:\n%s", marker, plain)
 	}
 	if got := strings.Count(plain, "-"); got != 220 {
 		t.Errorf("divider lost content while wrapping: got %d dashes, want 220", got)
@@ -254,18 +239,18 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 		if got > maxWidth {
 			maxWidth = got
 		}
-		if got > toolCardMaxWidth {
-			t.Errorf("line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, stripANSIstr(line))
+		if got > cardWidth {
+			t.Errorf("line %d exceeds card width %d (got %d): %q", i, cardWidth, got, stripANSIstr(line))
 		}
 	}
-	if maxWidth != toolCardMaxWidth {
-		t.Errorf("card should be bounded at width %d, got %d", toolCardMaxWidth, maxWidth)
+	if maxWidth != cardWidth {
+		t.Errorf("card should fill width %d, got %d", cardWidth, maxWidth)
 	}
 }
 
 func TestToolCardTabIndentedResultDoesNotReflowAtFrame(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 	_, cardWidth, _ := r.toolCardLayout()
 	b := &block{
 		kind:       blockTool,
@@ -301,7 +286,7 @@ func TestToolCardTabIndentedResultDoesNotReflowAtFrame(t *testing.T) {
 // the final card wrap turn the retained rows into a taller collapsed card.
 func TestCollapsedShellResultCapsVisualRows(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 
 	resultLines := make([]string, 7)
 	for i := range resultLines {
@@ -341,8 +326,8 @@ func TestCollapsedShellResultCapsVisualRows(t *testing.T) {
 		t.Errorf("collapsed result has %d visual rows before its affordance, want %d:\n%s", rows, maxToolResultLines, plain)
 	}
 	for i, line := range strings.Split(collapsed, "\n") {
-		if got := maxLineWidth(line); got > toolCardMaxWidth {
-			t.Errorf("collapsed line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, stripANSIstr(line))
+		if got := maxLineWidth(line); got > toolCardTestWidth {
+			t.Errorf("collapsed line %d exceeds card width %d (got %d): %q", i, toolCardTestWidth, got, stripANSIstr(line))
 		}
 	}
 
@@ -356,8 +341,8 @@ func TestCollapsedShellResultCapsVisualRows(t *testing.T) {
 		}
 	}
 	for i, line := range strings.Split(expanded, "\n") {
-		if got := maxLineWidth(line); got > toolCardMaxWidth {
-			t.Errorf("expanded line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, line)
+		if got := maxLineWidth(line); got > toolCardTestWidth {
+			t.Errorf("expanded line %d exceeds card width %d (got %d): %q", i, toolCardTestWidth, got, line)
 		}
 	}
 }
@@ -366,7 +351,7 @@ func TestCollapsedShellResultCapsVisualRows(t *testing.T) {
 // cannot consume the collapsed result budget or appear as blank vertical gaps.
 func TestCollapsedShellResultSkipsIndentOnlyWrapRows(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 	_, _, bodyWidth := r.toolCardLayout()
 	resultLines := make([]string, maxToolResultLines+1)
 	for i := range resultLines {
@@ -489,7 +474,13 @@ func TestCollapsedLargeJSONResultCapsVisualRows(t *testing.T) {
 	if strings.Contains(expanded, "ctrl+t expand") {
 		t.Errorf("expanded JSON result retained collapsed expansion affordance:\n%s", expanded)
 	}
-	if !strings.Contains(expanded, "unlisted") || !strings.Contains(expanded, "hidden") {
+	compactExpanded := strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\n' || r == '\r' || r == '\t' || strings.ContainsRune("╭╮╰╯│", r) {
+			return -1
+		}
+		return r
+	}, expanded)
+	if !strings.Contains(compactExpanded, `"unlisted":"hidden"`) {
 		t.Errorf("expanded JSON result omitted non-prominent field/value:\n%s", expanded)
 	}
 	for _, key := range []string{"html_url", "url", "id", "number", "sha", "status", "state"} {
@@ -503,7 +494,7 @@ func TestCollapsedLargeJSONResultCapsVisualRows(t *testing.T) {
 // the display-row cap still advertises fields hidden by the summary itself.
 func TestCollapsedLargeJSONSummaryAdvertisesOmittedFields(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 	result := mustJSON(t, map[string]string{
 		"html_url": "https://example.test/item",
 		"url":      "https://example.test/api/item",
@@ -546,7 +537,7 @@ func TestCollapsedLargeJSONSummaryAdvertisesOmittedFields(t *testing.T) {
 // advertise expansion without inventing an object-field count.
 func TestCollapsedArraySummaryAdvertisesExpansion(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 	elems := make([]string, 20)
 	for i := range elems {
 		elems[i] = "entry-" + strconv.Itoa(i) + "-" + strings.Repeat("x", 40)
@@ -581,7 +572,7 @@ func TestCollapsedArraySummaryAdvertisesExpansion(t *testing.T) {
 // collapsed text-result budget instead of extending the card below its affordance.
 func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
 	r := newTestRenderer()
-	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
+	r.setWidth(toolCardTestWidth + defaultBlockIndent)
 	blocks := make([]client.ContentBlock, 13)
 	for i := range blocks {
 		if i == len(blocks)-1 {
@@ -635,8 +626,8 @@ func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
 		}
 	}
 	for i, line := range strings.Split(collapsed, "\n") {
-		if got := maxLineWidth(line); got > toolCardMaxWidth {
-			t.Errorf("collapsed line %d exceeds card width %d (got %d): %q", i, toolCardMaxWidth, got, stripANSIstr(line))
+		if got := maxLineWidth(line); got > toolCardTestWidth {
+			t.Errorf("collapsed line %d exceeds card width %d (got %d): %q", i, toolCardTestWidth, got, stripANSIstr(line))
 		}
 	}
 
@@ -770,7 +761,7 @@ func TestResolvedShellToolCardFitsOneColumnViewport(t *testing.T) {
 }
 
 // TestResolvedShellToolCardFitsFrameTransition verifies the first width that can
-// render the normal card frame while retaining the existing 2-cell right inset.
+// render the normal card frame with one content column.
 func TestResolvedShellToolCardFitsFrameTransition(t *testing.T) {
 	command := strings.Repeat("x", 200)
 	result := strings.Repeat("y", 200)
@@ -778,7 +769,7 @@ func TestResolvedShellToolCardFitsFrameTransition(t *testing.T) {
 	for _, expand := range []bool{false, true} {
 		t.Run(map[bool]string{false: "collapsed", true: "expanded"}[expand], func(t *testing.T) {
 			r := newTestRenderer()
-			r.setWidth(defaultBlockIndent + r.th.Style("toolCard").GetHorizontalFrameSize() + 2)
+			r.setWidth(defaultBlockIndent + r.th.Style("toolCard").GetHorizontalFrameSize() + 3)
 			c := &conversation{}
 			c.addTool("bash-1", "Shell", mustJSON(t, map[string]string{"command": command}))
 			if !c.resolveTool("bash-1", result, false) {
@@ -794,21 +785,21 @@ func TestResolvedShellToolCardFitsFrameTransition(t *testing.T) {
 	}
 }
 
-// TestToolCardWidthUnchangedAtCap proves the cap is a no-op exactly at the cap
-// boundary: at the cap-binding width the card is identical to a card at a far wider
-// width — i.e. the cap only ever clamps, it never changes a card that already fits.
-func TestToolCardWidthUnchangedAtCap(t *testing.T) {
-	const capBindsAt = toolCardMaxWidth + 2 + defaultBlockIndent
-
+// TestToolCardWidthChangesWithConversationWidth proves no hidden readability cap
+// makes wide cards byte-identical.
+func TestToolCardWidthChangesWithConversationWidth(t *testing.T) {
 	r1 := newTestRenderer()
-	r1.setWidth(capBindsAt) // contentWidth-2 == cap, min(cap, cap) == cap
+	r1.setWidth(toolCardTestWidth + defaultBlockIndent)
 	a := r1.renderToolBlock("Read", `{"path":"x"}`, false)
 
 	r2 := newTestRenderer()
-	r2.setWidth(400) // far past the cap → min clamps to the cap
+	r2.setWidth(400)
 	b := r2.renderToolBlock("Read", `{"path":"x"}`, false)
 
-	if a != b {
-		t.Errorf("card at the cap-binding width and at 400 must be byte-identical (both clamp to the cap):\nlen(a)=%d len(b)=%d", lipgloss.Width(a), lipgloss.Width(b))
+	if lipgloss.Width(a) != r1.contentWidth() || lipgloss.Width(b) != r2.contentWidth() {
+		t.Errorf("card widths = %d/%d, want conversation widths %d/%d", lipgloss.Width(a), lipgloss.Width(b), r1.contentWidth(), r2.contentWidth())
+	}
+	if a == b {
+		t.Fatal("cards at different conversation widths must not be byte-identical")
 	}
 }

@@ -1,12 +1,12 @@
- ╭───────────────────────────────────────────────────────────────────────────────────────────────╮
- │ … Subagent                                                                                    │
- │ ↳ inspect routing                                                                             │
- │ backend: jev · classifier: jev-1.13.0 · outcome: fallback                                     │
- │ candidate: medium → gpt-5.6-terra · confidence: 0.42 · threshold: 0.50                        │
- │ actual model: gpt-6-astra · reason: low-confidence                                            │
- │ breaker: 2/3 misses · closed                                                                  │
- │ subagent · 0ms · ↑0 ↓0 · 0 tools · stop:done                                                  │
- ╰───────────────────────────────────────────────────────────────────────────────────────────────╯
+ ╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ … Subagent                                                                                      │
+ │ ↳ inspect routing                                                                               │
+ │ backend: jev · classifier: jev-1.13.0 · outcome: fallback                                       │
+ │ candidate: medium → gpt-5.6-terra · confidence: 0.42 · threshold: 0.50                          │
+ │ actual model: gpt-6-astra · reason: low-confidence                                              │
+ │ breaker: 2/3 misses · closed                                                                    │
+ │ subagent · 0ms · ↑0 ↓0 · 0 tools · stop:done                                                    │
+ ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯
 
  mecatui  ·  session sess-test-00  ·  mock-model  ·  mode default  ·  127.0.0.1:8080
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
