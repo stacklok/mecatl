@@ -175,11 +175,17 @@ func (m *RepositoryAttachmentManager) Reattach(ctx context.Context, request Logi
 
 // Detach releases only process-local handles and retains the logical worktree.
 func (m *RepositoryAttachmentManager) Detach(ref session.EnvironmentRef) error {
+	return m.detach(context.Background(), ref)
+}
+
+func (m *RepositoryAttachmentManager) detach(ctx context.Context, ref session.EnvironmentRef) error {
+	ctx, cancel := context.WithTimeout(ctx, repositoryRollbackTimeout)
+	defer cancel()
 	entry := m.lookupChild(ref)
 	if entry == nil {
 		return ErrEnvironmentUnavailable
 	}
-	if err := entry.attachment.Logical.Detach(); err != nil {
+	if err := entry.attachment.Logical.DetachContext(ctx); err != nil {
 		return err
 	}
 	m.mu.Lock()

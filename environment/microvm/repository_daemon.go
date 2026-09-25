@@ -126,7 +126,7 @@ func (d *Daemon) repositoryOperation(ctx context.Context, request LifecycleReque
 	case LifecycleExec:
 		return d.repositoryExec(ctx, request, attachment)
 	case LifecycleDetach:
-		if err := d.repositoryAttachments.Detach(attachment.Environment.Ref()); err != nil {
+		if err := d.repositoryAttachments.detach(ctx, attachment.Environment.Ref()); err != nil {
 			return LifecycleResponse{}, err
 		}
 		d.removeRepositoryBinding(request.Binding.Ref)

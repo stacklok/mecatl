@@ -452,7 +452,7 @@ func (d *Daemon) serveAcquisition(ctx context.Context, conn net.Conn, codec cont
 		}
 		defer func() {
 			if reservedResolve {
-				retErr = errors.Join(retErr, d.abortResolve(request.Binding))
+				retErr = errors.Join(retErr, d.abortResolve(ctx, request.Binding))
 			}
 		}()
 	}
@@ -606,7 +606,7 @@ func (d *Daemon) beginResolve(ctx context.Context, binding control.Binding) (boo
 	}
 }
 
-func (d *Daemon) abortResolve(binding control.Binding) error {
+func (d *Daemon) abortResolve(ctx context.Context, binding control.Binding) error {
 	d.ownershipMu.Lock()
 	state := d.refOwnership[binding.Ref]
 	if state == nil || state.binding != binding || state.resolves == 0 {
@@ -624,8 +624,6 @@ func (d *Daemon) abortResolve(binding control.Binding) error {
 		d.ownershipMu.Unlock()
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), repositoryRollbackTimeout)
-	defer cancel()
 	_, err := d.finishRelease(ctx, binding, state, false, false)
 	return err
 }
@@ -797,7 +795,9 @@ func (d *Daemon) finishRelease(ctx context.Context, binding control.Binding, sta
 	if destroy {
 		request.Operation = LifecycleDelete
 	}
-	response, err := d.repositoryOperation(ctx, request)
+	cleanupCtx, cancel := context.WithTimeout(ctx, repositoryRollbackTimeout)
+	defer cancel()
+	response, err := d.repositoryOperation(cleanupCtx, request)
 	d.ownershipMu.Lock()
 	if d.refOwnership[binding.Ref] == state {
 		if err == nil {
