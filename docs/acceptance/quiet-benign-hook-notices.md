@@ -4,7 +4,7 @@
 **Work classification:** Bounded — changes only mecatui's presentation of existing structured contextual-guardrail events and adds client-local display configuration; server authority, engine outcomes, public APIs, wire contracts, and persistence remain unchanged.
 **Decision record:** None — ADR 0363 already owns contextual guardrail review semantics; this plan applies a bounded client rendering policy to its existing machine assessment, inspection, and disposition fields.
 **Phase:** contextual guardrail TUI presentation
-**Status:** in-progress, 2026-09-25. Amended after contextual guardrails landed on `origin/main`, under the directing human's explicit authorization recorded below.
+**Status:** landed, 2026-09-25. Implementation candidate complete under the recorded direct-human process waiver; authoritative on merge. Feature, lint, documentation, site, and focused race gates pass; aggregate `task test`/`task test:race` reproduce the unrelated `mecak8s` Helm namespace fixture mismatch already present on `origin/main`.
 **Delivery:** Split contract with a direct-human waiver of the merged Plan / Interface PR checkpoint for this named work; implementation remains stacked on the planning commit.
 **Expected tasks:** deferred to orchestration
 **Plan PR:** absent under the named process waiver
