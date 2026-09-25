@@ -84,10 +84,15 @@ func TestSpecialistNameContainingJudgeRetainsHarnessContext(t *testing.T) {
 
 func TestInternalPurposeChildRolesExcludeOperatorProfile(t *testing.T) {
 	store := memmemory.New()
-	cfg := Config{operatorProfileSource: store}
+	cfg := Config{Model: "m", operatorProfileSource: store, harnessInstructions: hcAssembler("INTERNAL-ROLE-MUST-NOT-SEE")}
+	provider := mockllm.New()
 	for _, role := range []string{"guardrail-checker", "model-router", "parallel-judge", "ask-reviewer", "usermodel-review"} {
 		if got := childOperatorProfileSource(cfg, role); got != nil {
 			t.Errorf("internal role %q inherited operator profile", role)
+		}
+		deps := childEngineDepsForProvider(cfg, role, provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+		if deps.Instructions != nil {
+			t.Errorf("internal role %q inherited harness instructions", role)
 		}
 	}
 }

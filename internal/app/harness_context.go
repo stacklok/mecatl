@@ -775,6 +775,9 @@ func (b *lazyProcessCommandBinding) Bind(ctx context.Context) (server.CommandSou
 			err = fmt.Errorf("source returned nil binding")
 		}
 		b.mu.Lock()
+		if err == nil {
+			err = ctx.Err()
+		}
 		b.ready = nil
 		closed := b.closed
 		if err == nil && !closed {
@@ -846,6 +849,9 @@ func (b *lazyCommandBinding) get(ctx context.Context) (server.CommandSourceBindi
 			err = fmt.Errorf("source returned nil binding")
 		}
 		b.mu.Lock()
+		if err == nil {
+			err = ctx.Err()
+		}
 		b.ready = nil
 		closed := b.closed
 		if err == nil && !closed {
@@ -1038,14 +1044,14 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 		})
 
 		r.mu.Lock()
-		delete(r.creating, id)
-		close(reservation.done)
 		ctxErr := ctx.Err()
 		publish := err == nil && ctxErr == nil && !r.closed && r.revisions[id] == reservation.revision
 		if _, retired := r.retired[id]; retired && !activate {
 			publish = false
 		}
 		if publish {
+			delete(r.creating, id)
+			close(reservation.done)
 			r.entries[id] = entry
 			r.generations[entry] = struct{}{}
 			delete(r.retired, id)
@@ -1057,6 +1063,12 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 		if entry != nil {
 			closeHarnessCleanups(entry.cleanup)
 		}
+		r.mu.Lock()
+		delete(r.creating, id)
+		close(reservation.done)
+		processCleanup := r.takeProcessCleanupLocked()
+		r.mu.Unlock()
+		closeHarnessCleanups(processCleanup)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1212,7 +1224,7 @@ func (r *harnessCommandResolver) Close() {
 }
 
 func (r *harnessCommandResolver) takeProcessCleanupLocked() []func() error {
-	if !r.closed || len(r.generations) != 0 {
+	if !r.closed || len(r.generations) != 0 || len(r.creating) != 0 {
 		return nil
 	}
 	cleanup := r.close

@@ -4228,6 +4228,15 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 		return scheduleMgr
 	}
 
+	// Default children are constructed while buildCatalog runs, before the main
+	// instruction assembler below. Bind their root instructions to the admitted
+	// startup project source now; explicit harness policy already supplied its
+	// own assembler and remains untouched.
+	if cfg.harnessInstructions == nil && cfg.Workspace != "" && projectIngestionAdmitted(cfg) {
+		instructionSource, _ := osfs.NewWorkspace(cfg.Workspace)
+		cfg.harnessInstructions = prompt.RootAssembler{Source: instructionSource}
+	}
+
 	// agentReg (threaded from Build's single resolveAgentSeam) is shared with
 	// BOTH the build-time catalog's Subagent/Team tools and the per-session
 	// engine factory (Half B builds a per-session Subagent/Team tool over the
