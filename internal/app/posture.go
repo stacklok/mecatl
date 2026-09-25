@@ -260,6 +260,9 @@ func foldOperatorPosture(cfg Config) Config {
 		return cfg
 	}
 	cfg.Posture = parsePosture(yamlPosture)
+	cfg.diag().Log(context.Background(), port.LevelWarn,
+		"posture: the settings.yaml posture: key is DEPRECATED; use permissionMode: instead (ADR 0365)",
+		"posture", yamlPosture)
 	return cfg
 }
 
@@ -272,7 +275,14 @@ func foldOperatorPosture(cfg Config) Config {
 // decision drive the real Build and read its structured diagnostic.
 func ResolveAuthoritativePosture(cfg Config) Posture {
 	cfg.permResolver = buildPermResolver(cfg)
-	cfg = foldOperatorPosture(cfg)
+	// Fold the permission-mode token first (ADR 0365), so an operator-YAML-only
+	// permissionMode: auto/yolo reaches the cmd fast paths. An invalid token is
+	// Build's to report; the pre-check falls back to the deprecated surface.
+	if folded, err := foldPermissionMode(cfg); err == nil {
+		cfg = folded
+	} else {
+		cfg = foldOperatorPosture(cfg)
+	}
 	return resolvePosture(cfg, postureNoCeiling)
 }
 

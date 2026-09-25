@@ -110,6 +110,20 @@ model: ""
 maxRunTokens: null
 maxTeamTokens: null
 
+# guardrails declares the checker choice for the chart's allow-all permission
+# mode (--permission-mode=auto: every tool runs without asking, only deny rules
+# and configured ask rules still apply). mecak8s refuses to start an allow-all
+# mode without a checker unless the operator opts out explicitly, so the chart
+# always passes one of two flags:
+#   - model set: --guardrails-model=<model>, a tool-free checker model that
+#     inspects outbound tool arguments and inbound results.
+#   - model empty (the default): --guardrails=off, a DELIBERATE choice to run
+#     unsupervised, with no checker inspecting tool content. The kill-switch also
+#     disables a guardrail model slot bound in mounted settings, so set model here
+#     to the checker you want rather than relying on a slot.
+guardrails:
+  model: ""
+
 # Stable, non-secret identity exported on mecak8s OTel resources. Empty is safe
 # only for live Helm install/upgrade: Helm creates a UUID on install and preserves
 # the live ConfigMap value on ordinary upgrades. Offline/template-based GitOps must

@@ -362,10 +362,11 @@ func TestSubproviderHalfAFullBuildE2E(t *testing.T) {
 	writeFile(t, agentsDir, "orspec.md", "---\nname: orspec\ndescription: runs on openrouter\nprovider: openrouter\ntools: [Read]\n---\nYou run on openrouter.\n")
 
 	built, err := buildIsolated(t, ctx, Config{
-		Workspace:     workspace,
-		NoSoul:        true,
-		AgentsDirs:    []string{agentsDir},
-		AllowAllTools: true, // --yolo: auto-approve the routed Subagent (no interactive gate)
+		Workspace:          workspace,
+		NoSoul:             true,
+		AgentsDirs:         []string{agentsDir},
+		AllowAllTools:      true, // --yolo: auto-approve the routed Subagent (no interactive gate)
+		GuardrailsDisabled: true,
 		envDetector: fakeEnv(map[string]string{
 			"OPENAI_API_KEY":     "sk-x",
 			"OPENROUTER_API_KEY": "sk-x",

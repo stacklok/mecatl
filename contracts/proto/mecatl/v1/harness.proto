@@ -520,7 +520,9 @@ message Limits {
 message CreateSessionRequest {
   reserved 1, 8;
   reserved "workspace", "source_session_id";
-  // mode is the permission posture; unspecified defaults to DEFAULT.
+  // mode is the permission posture; unspecified uses the server's configured
+  // default session mode, which is DEFAULT unless the operator chose a
+  // permission mode that starts sessions elsewhere.
   PermissionMode mode = 2;
   // limits are the optional stop conditions.
   Limits limits = 3;

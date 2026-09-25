@@ -60,7 +60,7 @@ func TestADR_0359_HarnessContext_Scenario4_PrincipalScopedBindingIsolation(t *te
 		binds[index].Add(1)
 	}
 	var requests []port.LLMRequest
-	cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file}, UseMock: true, OwnershipEnforced: true, AllowAllTools: true,
+	cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), SoulPath: filepath.Join(t.TempDir(), "soul.md"), PermissionConfigs: []string{file}, UseMock: true, OwnershipEnforced: true, AllowAllTools: true, GuardrailsDisabled: true,
 		MockProvider: mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(r port.LLMRequest) { requests = append(requests, r) })},
 			mockllm.ToolCallTurn(session.NewToolCall("agent-alice", "Subagent", []byte(`{"agent":"owner-agent-alice","prompt":"report owner"}`))),
 			mockllm.TextTurn("alice specialist done"),

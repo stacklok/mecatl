@@ -1232,7 +1232,9 @@ imports `port.CursorEventLog`, exactly as it never imports `port.EventLog`. Unli
 auth, or telemetry pipeline; unlike `mecatui` it has no UI. It defaults `--headless`
 (inverted from `mecated`): a CI run has no approver, so a child ask auto-denies or routes
 to the opt-in ask-reviewer, and a *main-engine* ask under `posture strict` cancels the run
-with an actionable message (the intended CI posture is `--posture auto`). It is **forge-
+with an actionable message (the intended CI mode is `--permission-mode auto`, which
+refuses to start unless a guardrails checker is configured or `--guardrails off` declares
+the run unsupervised; [ADR 0365](adr/0365-one-permission-mode-vocabulary.md)). It is **forge-
 agnostic** — the GitHub-Actions glue that turns an issue into a pull request (a composite
 action + a split-privilege workflow) lives entirely under `.github/` and changes no Go.
 An EXPLICIT `--out-summary=-` selects the stdout-compact summary mode (ADR 0082): the
@@ -1314,7 +1316,7 @@ therefore fail closed for explicit operator repair. A constant-work Lua CAS then
 stable generation, exact lock token, and global cardinality while publishing readiness, so a
 concurrent Save/Delete cannot invalidate the proof and no O(total) key or member list enters
 Lua ([ADR 0231](adr/0231-redis-owner-index-exact-coverage.md)). It defaults
-`--headless=true` and `--posture=auto` (an unattended daemon, inverted from `mecated`'s
+`--headless=true` and posture `auto` (an unattended daemon, inverted from `mecated`'s
 interactive defaults), drops `mecated`'s subcommands + Prometheus/OTel admin surface, and
 exposes `--redis-url` (mutually exclusive with `--store-dir`/`--session-store-url`). Its
 normal HTTP/SSE listener exposes only health/readiness outside authentication and the API

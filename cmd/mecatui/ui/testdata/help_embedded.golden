@@ -16,7 +16,7 @@
 ┃                          also clears attachments, large pasted text, and pending media; requires a terminal with enhanced key-event support  ┃
 ┃                          fixed shortcut; repeats do not count, and other views handle esc first                                              ┃
 ┃                          use the remappable Clear prompt action (ctrl+u) on any terminal                                                     ┃
-┃  lines 1–14 of 68 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                                                             ┃
+┃  lines 1–14 of 82 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                                                             ┃
 ┃                                                                                                                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

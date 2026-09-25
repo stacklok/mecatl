@@ -505,6 +505,15 @@ type config struct {
 	// postureFlagSet is true when --posture was passed explicitly (set after parse via
 	// fs.Visit), so composition lets CLI out-rank the settings.yaml posture: key.
 	postureFlagSet bool
+	// permissionMode is the raw --permission-mode token (ADR 0365), validated at
+	// parse time; permissionModeFlagSet records that it was passed explicitly, so
+	// composition (app.Build's foldPermissionMode) lets it out-rank every other
+	// posture source. --posture and --yolo are its deprecated aliases.
+	permissionMode        string
+	permissionModeFlagSet bool
+	// yoloFlagSet records an explicit --yolo, for the deprecation WARN and the
+	// --permission-mode conflict check.
+	yoloFlagSet bool
 	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055): ""
 	// or "auto" (unset → the provider default) or low/medium/high/xhigh/max.
 	// Operator-tier only: the operator-global settings.yaml reasoning-effort: key
@@ -1302,7 +1311,12 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// YAML-only allow-all tier cannot escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
-		DeploymentID:   cfg.deploymentID,
+		// Permission mode (ADR 0365): the named token writes both the posture and
+		// the default session mode; app.Build's foldPermissionMode resolves it
+		// ahead of the deprecated --posture/--yolo surface.
+		PermissionMode:        cfg.permissionMode,
+		PermissionModeFlagSet: cfg.permissionModeFlagSet,
+		DeploymentID:          cfg.deploymentID,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
@@ -1356,6 +1370,7 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 // cyclomatic complexity bounded. A non-nil err is the root/no-sandbox refusal (a
 // fast path — app.Build re-checks it authoritatively as the fail-closed backstop).
 func applyPostureCLI(cfg config, diag port.Diagnostics) error {
+	warnDeprecatedPermissionFlags(diag, cfg)
 	effPosture := app.ResolveAuthoritativePosture(posturePreCheckConfig(cfg, diag))
 	if !app.IsKnownPostureToken(cfg.posture) {
 		slog.Warn("unknown --posture value; failing closed to strict", "value", cfg.posture)
@@ -1383,13 +1398,15 @@ func applyPostureCLI(cfg config, diag port.Diagnostics) error {
 // --trust-project inputs. It does NOT need the provider/engine fields — app.Build owns
 // the authoritative resolution + the engine; this is only the early read.
 func posturePreCheckConfig(cfg config, diag port.Diagnostics) app.Config {
-	return app.Config{
+	out := app.Config{
 		Workspace:               cfg.workspace,
 		PermissionsConventional: cfg.permissionsConventional,
 		ImportClaudePermissions: cfg.importClaudePermissions,
 		PermissionConfigs:       cfg.permissionConfigs,
 		Posture:                 app.ParsePosture(cfg.posture),
 		PostureFlagSet:          cfg.postureFlagSet,
+		PermissionMode:          cfg.permissionMode,
+		PermissionModeFlagSet:   cfg.permissionModeFlagSet,
 		DeploymentID:            cfg.deploymentID,
 		AllowAllTools:           cfg.allowAllTools,
 		TrustProject:            cfg.trustProject,
@@ -1397,6 +1414,14 @@ func posturePreCheckConfig(cfg config, diag port.Diagnostics) app.Config {
 		Interactive:             !cfg.headless,
 		Diagnostics:             diag,
 	}
+	// An explicit --permission-mode token's posture half is the explicit tier the
+	// fast path must see, so `--permission-mode yolo` as bare root hits the same
+	// refusal `--yolo` does. The token was validated at parse time.
+	if tok, err := app.ParsePermissionMode(cfg.permissionMode); cfg.permissionModeFlagSet && err == nil {
+		out.Posture = tok.Posture
+		out.PostureFlagSet = true
+	}
+	return out
 }
 
 // privilegedProcess reports the cmd-computed "root WITHOUT a declared sandbox"
@@ -1786,7 +1811,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// Shared model alias/slot flags (cliconfig): mecated uses the default help
 	// wording, so a zero ModelFlagHelp is enough.
 	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
-	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "model identifier or --model-alias for reviewing child permission requests in headless mode. An allow applies only to that request; denied or failed reviews deny it. Empty disables reviews.")
+	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "model identifier or --model-alias for reviewing child permission requests in headless mode. An allow applies only to that request; denied or failed reviews deny it. Empty leaves reviews off, except that a headless auto or yolo permission mode turns them on by default (ask-reviewer model slot, else the session model); off disables reviews explicitly.")
 	fs.IntVar(&cfg.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "maximum consecutive denied, failed, or timed-out child-permission reviews before later requests are automatically denied. An allowed review resets the count. Values at or below 0 use the default of 3.")
 	fs.StringVar(&cfg.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "path to a trusted policy file that replaces the built-in child-permission review rubric. Startup fails if the file is unreadable.")
 	fs.BoolVar(&cfg.subagentModelRouter, "subagent-model-router", false, "set explicitly to false to disable the configured subagent model router. The router selects a model for eligible plain subagent delegations; failures use the default model.")
@@ -1819,10 +1844,11 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.BoolVar(&cfg.permissionsConventional, "permissions-conventional", true, "load project and user permission settings for each session. Enabled by default. Project allow rules require --trust-project; project deny and ask rules always apply.")
 	fs.BoolVar(&cfg.importClaudePermissions, "import-claude-permissions", false, "also load supported Claude Code permission settings when --permissions-conventional is enabled. Unsupported or invalid rules are ignored with a log entry.")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "apply allow rules from a discovered project permission configuration. Project deny and ask rules always apply. Disabled by default because project allow rules can approve tool calls.")
+	fs.StringVar(&cfg.permissionMode, "permission-mode", "", permissionModeHelp)
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
-		"alias for --posture=yolo. Allows tools server-wide and lets child command substitutions run automatically. Deny rules and configured ask rules still apply. Intended only for isolated, ephemeral, single-tenant environments. Refused for root unless MECATL_SANDBOX=1 or IS_SANDBOX=1.")
+		"DEPRECATED: use --permission-mode yolo. Alias for --posture=yolo. Allows tools server-wide and lets child command substitutions run automatically. Deny rules and configured ask rules still apply. Intended only for isolated, ephemeral, single-tenant environments. Refused for root unless MECATL_SANDBOX=1 or IS_SANDBOX=1.")
 	fs.StringVar(&cfg.posture, "posture", "",
-		"permission posture: strict prompts mutations; trusted applies project allow rules; auto allows tools and relaxes main shell substitutions; yolo also runs child command substitutions. Deny rules and configured ask rules still apply. strict is the default. --trust-project and --yolo select trusted and yolo. auto and yolo are refused for root outside MECATL_SANDBOX.")
+		"DEPRECATED: use --permission-mode. Permission posture: strict prompts mutations; trusted applies project allow rules; auto allows tools and relaxes main shell substitutions; yolo also runs child command substitutions. Deny rules and configured ask rules still apply. strict is the default. --trust-project and --yolo select trusted and yolo. auto and yolo are refused for root outside MECATL_SANDBOX.")
 
 	fs.StringVar(&cfg.deploymentID, "deployment-id", "",
 		fmt.Sprintf("optional opaque deployment label returned by GetCompatibilityInfo. Mecatl never derives it from host or environment values. Printable single-line text only, up to %d bytes.", maxDeploymentIDLen))
@@ -1900,6 +1926,9 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	// composition can let CLI out-rank the operator-global settings.yaml posture: key
 	// and WARN if an alias raised above an explicit lower --posture.
 	recordExplicitFlags(fs, &cfg)
+	if err := validatePermissionModeFlags(cfg); err != nil {
+		return fs, config{}, err
+	}
 	resolvedShell, err := cliconfig.ResolveCommandRunnerConfig(cfg.shell, cfg.shellFlagSet, cfg.permissionsConventional, cfg.permissionConfigs)
 	if err != nil {
 		return fs, config{}, fmt.Errorf("command runner configuration: %w", err)
@@ -1993,6 +2022,10 @@ func recordExplicitFlags(fs *flag.FlagSet, cfg *config) {
 		switch f.Name {
 		case "posture":
 			cfg.postureFlagSet = true
+		case "permission-mode":
+			cfg.permissionModeFlagSet = true
+		case "yolo":
+			cfg.yoloFlagSet = true
 		case "shell":
 			cfg.shellFlagSet = true
 		case "subagent-model-router":

@@ -146,6 +146,11 @@ type Resolver struct {
 	// files) out-ranks user-global (first-non-empty keeps CLI).
 	operatorPosture string
 
+	// operatorPermissionMode is the OPERATOR-TIER permissionMode: token (ADR 0365),
+	// captured exactly like operatorPosture: user-global + CLI tiers only, CLI
+	// first-non-empty wins, a project-tier occurrence is ignored with a WARN.
+	operatorPermissionMode string
+
 	// operatorReasoningEffort is the OPERATOR-TIER reasoning-effort: scalar (ADR
 	// 0055), read ONCE at construction from the user-global + CLI tiers ONLY. A
 	// project-tier file's reasoning-effort: key is deliberately IGNORED (operator-
@@ -362,6 +367,16 @@ func (r *Resolver) OperatorPosture() string {
 		return ""
 	}
 	return r.operatorPosture
+}
+
+// OperatorPermissionMode returns the operator-tier permissionMode: token
+// (user-global + CLI only), or "" when none was configured. Like
+// OperatorPosture it never returns a project-tier value. nil-safe.
+func (r *Resolver) OperatorPermissionMode() string {
+	if r == nil {
+		return ""
+	}
+	return r.operatorPermissionMode
 }
 
 // OperatorReasoningEffort returns the operator-tier reasoning-effort: scalar
@@ -731,16 +746,7 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"guardrails: IGNORING a project-tier guardrails: block (operator-tier only — a project repo cannot configure/disable a security checker; set guardrails in your user-global settings.yaml or via --guardrails-model)",
 				"file", src.path, "root", ws.Root())
 		}
-		// Posture is OPERATOR-TIER ONLY (the fail-closed core of the posture ladder): a
-		// project file's posture: scalar is IGNORED with a loud WARN. Honouring it would
-		// let a malicious repo RAISE the automation posture (e.g. posture: yolo to
-		// auto-run substitutions in subagents) — a security DOWNGRADE the tighten-only
-		// project gate forbids (it reverses here, exactly like guardrails).
-		if strings.TrimSpace(cfg.Posture) != "" {
-			r.diag.Log(context.Background(), port.LevelWarn,
-				"posture: IGNORING a project-tier posture: scalar (operator-tier only — a project repo cannot raise the automation posture; set posture in your user-global settings.yaml or via --posture)",
-				"file", src.path, "root", ws.Root())
-		}
+		r.warnIgnoredProjectPermissionScalars(&cfg, src.path, ws.Root())
 		// ReasoningEffort is OPERATOR-TIER ONLY (ADR 0055), for consistency with
 		// posture: a project file's reasoning-effort: scalar is IGNORED
 		// with a loud WARN. It is a cost/quality preference, not a security control,
@@ -1048,6 +1054,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureGuardrails(cfg.Guardrails)
 		// Operator-tier posture: same first-non-empty-keeps-CLI discipline as guardrails.
 		r.capturePosture(cfg.Posture)
+		r.capturePermissionMode(cfg.PermissionMode)
 		// Operator-tier reasoning-effort (ADR 0055): same discipline as posture.
 		r.captureReasoningEffort(cfg.ReasoningEffort)
 		// Operator-tier plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
@@ -1092,6 +1099,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureGuardrails(cfg.Guardrails)
 				// User-global posture: captured only if no higher CLI file already did.
 				r.capturePosture(cfg.Posture)
+				r.capturePermissionMode(cfg.PermissionMode)
 				// User-global reasoning-effort (ADR 0055): same discipline as posture.
 				r.captureReasoningEffort(cfg.ReasoningEffort)
 				// User-global plan-mode-auto-approve (issue #206 Wave 6a): same discipline as posture.
@@ -1168,6 +1176,31 @@ func (r *Resolver) captureGuardrails(g *GuardrailsSection) {
 	r.operatorGuardrails = g
 }
 
+// warnIgnoredProjectPermissionScalars WARNs about the operator-tier-only
+// permission scalars (posture:, permissionMode:) found in a project-tier file.
+// Honouring either would let a repo raise its own automation posture, so both
+// are ignored; split out of loadProjectRules to keep its complexity bounded.
+func (r *Resolver) warnIgnoredProjectPermissionScalars(cfg *Config, path, root string) {
+	// Posture is OPERATOR-TIER ONLY (the fail-closed core of the posture ladder): a
+	// project file's posture: scalar is IGNORED with a loud WARN. Honouring it would
+	// let a malicious repo RAISE the automation posture (e.g. posture: yolo to
+	// auto-run substitutions in subagents) — a security DOWNGRADE the tighten-only
+	// project gate forbids (it reverses here, exactly like guardrails).
+	if strings.TrimSpace(cfg.Posture) != "" {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"posture: IGNORING a project-tier posture: scalar (operator-tier only — a project repo cannot raise the automation posture; set permissionMode in your user-global settings.yaml or via --permission-mode)",
+			"file", path, "root", root)
+	}
+	// PermissionMode is OPERATOR-TIER ONLY for the same reason as posture (ADR
+	// 0365): a repo naming its own permission mode could raise the automation
+	// posture.
+	if strings.TrimSpace(cfg.PermissionMode) != "" {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"permissionMode: IGNORING a project-tier permissionMode: scalar (operator-tier only — a project repo cannot choose its own permission mode; set permissionMode in your user-global settings.yaml or via --permission-mode)",
+			"file", path, "root", root)
+	}
+}
+
 // capturePosture records the FIRST operator-tier posture: scalar seen during
 // construction (CLI files are parsed before user-global, so CLI wins on
 // first-non-empty). It is called only from loadUserRules — the operator (user-
@@ -1182,6 +1215,15 @@ func (r *Resolver) capturePosture(p string) {
 		return
 	}
 	r.operatorPosture = strings.TrimSpace(p)
+}
+
+// capturePermissionMode records the FIRST operator-tier permissionMode: token,
+// with the same CLI-first, operator-tier-only discipline as capturePosture.
+func (r *Resolver) capturePermissionMode(p string) {
+	if r.operatorPermissionMode != "" || strings.TrimSpace(p) == "" {
+		return
+	}
+	r.operatorPermissionMode = strings.TrimSpace(p)
 }
 
 // captureReasoningEffort records the FIRST operator-tier reasoning-effort: scalar

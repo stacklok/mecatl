@@ -178,6 +178,7 @@ func (c *Config) UnmarshalYAML(node ast.Node) error {
 		"permissions":            &c.Permissions,
 		"guardrails":             newPermconfigNodePointer(&c.Guardrails),
 		"posture":                &c.Posture,
+		"permissionMode":         &c.PermissionMode,
 		"models":                 newPermconfigNodePointer(&c.Models),
 		"reasoning-effort":       &c.ReasoningEffort,
 		"plan-mode-auto-approve": &c.PlanModeAutoApprove,

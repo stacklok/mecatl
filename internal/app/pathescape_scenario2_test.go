@@ -66,6 +66,7 @@ func escapeCfg(t *testing.T, f escapeFixture, posture Posture, turns ...mockllm.
 		Workspace:           f.workspace,
 		NoSoul:              true,
 		Posture:             posture,
+		GuardrailsDisabled:  true,
 		PostureFlagSet:      true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}),
 		liveModelHTTPClient: offlineHTTPClient(),

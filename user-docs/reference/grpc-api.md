@@ -531,10 +531,10 @@ an ephemeral port. The resolved network and address are logged at startup
 because the supported MCP transport is streaming HTTP and needs a URL; the
 resolved `/mcp` URL is logged. No stdio MCP is used, and this raw admin data is
 not injected into the model or dedicated session debugger. The embedded server
-also accepts `--yolo` (the allow-all operator posture — same semantics, root
-refusal, and `MECATL_SANDBOX`/ `IS_SANDBOX` env as `mecated`; see the allow-all
-note in §12). It is **rejected in `connect` mode** — the dialed server owns its
-own posture. Note the TUI's **built-in slash commands** (`/clear`, `/help`, and
+also accepts `--permission-mode`, with the same modes, checker requirement,
+root refusal, and `MECATL_SANDBOX`/ `IS_SANDBOX` env as `mecated`; see the
+allow-all note in §12. In `connect` mode it accepts only `plan`, `default`, and
+`accept-edits`, because the dialed server owns its own posture. Note the TUI's **built-in slash commands** (`/clear`, `/help`, and
 the caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`,
 `/reflections`, `/reflect`, `/models`, `/effort`, `/worktrees`) still work
 regardless — they act on the TUI itself, not the server, so typing `/` always

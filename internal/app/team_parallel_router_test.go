@@ -313,6 +313,7 @@ func routerE2ECfg(workspace string, parentCtor func() port.LLMProvider, enable f
 		},
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor:   func(_ Config, _, _, _ string) port.LLMProvider { return parentCtor() },

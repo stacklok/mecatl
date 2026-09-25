@@ -19,6 +19,7 @@ func TestHarnessProjectPolicyIgnoredValueFreeWithoutDroppingDeny(t *testing.T) {
 	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{Kinds: harnessEmptyKinds()})
 	cfg.PermissionsConventional = true
 	cfg.AllowAllTools = true
+	cfg.GuardrailsDisabled = true
 	cfg.TrustProject = true
 	if err := os.MkdirAll(filepath.Join(cfg.Workspace, ".mecatl"), 0o700); err != nil {
 		t.Fatal(err)

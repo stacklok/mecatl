@@ -165,9 +165,10 @@ for delegation behavior and the information available in `mecatui`.
 
 ## Change conversation settings
 
-Press `shift+tab` to switch the active permission mode. See
-[Choose a permission mode](/features/permissions-and-posture.md#choose-a-permission-mode)
-for the available modes and their behavior.
+Press `shift+tab` to cycle the session through `default`, `plan`, and
+`accept-edits`. The modes that change the server's posture, such as `auto`, are
+set at launch with `--permission-mode`. See
+[Change the mode after launch](/features/permissions-and-posture.md#change-the-mode-after-launch).
 
 |Command|Result|
 |-|-|

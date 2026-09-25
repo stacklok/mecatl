@@ -70,6 +70,7 @@ func writeEscapeCfg(t *testing.T, f writeFixture, posture Posture, turns ...mock
 		Workspace:           f.workspace,
 		NoSoul:              true,
 		Posture:             posture,
+		GuardrailsDisabled:  true,
 		PostureFlagSet:      true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-openai"}),
 		liveModelHTTPClient: offlineHTTPClient(),

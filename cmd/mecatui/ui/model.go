@@ -284,6 +284,13 @@ type Deps struct {
 	Workspace      string
 	Mode           string
 	Model          string
+	// ModeServerDefault asks the server to choose the first session's permission
+	// mode (ADR 0365): no --permission-mode or --mode was given, so the create
+	// carries an unspecified mode and the server's configured default applies
+	// (embedded: the operator's permissionMode: key; connect: the remote server's
+	// own default). The created session's mode is read back with GetSession, so the
+	// header never guesses it. Mode is then only the pre-session display fallback.
+	ModeServerDefault bool
 	// Resume is a statically validated existing chat selected before Bubble Tea
 	// starts. Its authoritative transcript is adopted without CreateSession; nil
 	// preserves the new-session default.
@@ -1090,7 +1097,7 @@ func New(deps Deps) Model {
 		// rejects the create, createSessionCmd's fallback leg retries on the default and
 		// surfaces a loud warning (connectFallbackMsg) — connect still completes.
 		createModelSelection: deps.InitialModel,
-		activeMode:           client.ModeString(client.ModeFromString(deps.Mode)),
+		activeMode:           initialActiveMode(deps),
 		modelCatalog:         modelCatalog{active: deps.InitialModel, globalDefault: deps.GlobalDefault},
 		// Seed the CLI-supplied seed prompt (-p/--prompt + --prompt-file) for
 		// one-shot auto-submit on the FIRST session ready.

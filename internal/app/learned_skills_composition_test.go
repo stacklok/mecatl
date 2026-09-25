@@ -25,7 +25,7 @@ func TestBuildOwnerlessSessionHydratesLearnedSkillIntoTool(t *testing.T) {
 
 	built, err := Build(context.Background(), Config{
 		Workspace: workspace, Model: "mock", StoreDir: t.TempDir(), UserModelDir: userModelDir,
-		NoSoul: true, AllowAllTools: true, MockProvider: mockllm.New(
+		NoSoul: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: mockllm.New(
 			mockllm.ToolCallTurn(session.NewToolCall("skill-ownerless", "Skill", []byte(`{"name":"ownerless-recovery"}`))),
 			mockllm.TextTurn("done"),
 		),
@@ -63,7 +63,7 @@ func TestBuildRestartHydratesCallerBoundLearnedSkillIntoListAndTool(t *testing.T
 	config := func(provider *mockllm.Provider) Config {
 		return Config{
 			Workspace: workspace, Model: "mock", StoreDir: storeDir, UserModelDir: userModelDir,
-			NoSoul: true, OwnershipEnforced: true, AllowAllTools: true, MockProvider: provider,
+			NoSoul: true, OwnershipEnforced: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: provider,
 		}
 	}
 	built1, err := Build(context.Background(), config(mockllm.New(mockllm.TextTurn("created"))))
@@ -131,7 +131,7 @@ func TestADR_0259_ReplicaHydrationConvergesAcrossReplacementAndRollback(t *testi
 	)
 	replicaB, err := Build(context.Background(), Config{
 		Workspace: workspace, Model: "mock", StoreDir: storeDir, UserModelDir: userModelDir,
-		NoSoul: true, Headless: true, OwnershipEnforced: true, AllowAllTools: true, MockProvider: provider,
+		NoSoul: true, Headless: true, OwnershipEnforced: true, AllowAllTools: true, GuardrailsDisabled: true, MockProvider: provider,
 	})
 	if err != nil {
 		t.Fatal(err)

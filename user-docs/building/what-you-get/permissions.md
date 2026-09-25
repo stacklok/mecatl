@@ -268,9 +268,13 @@ Denies and asks import unchanged. Embedded `mecatui` enables this import and
 
 ### The posture ladder
 
-Posture controls how much the harness self-authorizes. Set it with
-`--posture <strict|trusted|auto|yolo>` or the operator-global `posture:`
-setting. `--trust-project` aliases `trusted`; `--yolo` aliases `yolo`.
+Posture controls how much the harness self-authorizes. It is the process-wide
+half of the operator's `--permission-mode` (or the operator-global
+`permissionMode:` setting): `plan`, `default`, and `accept-edits` select
+`strict`; `trusted` and `trusted-accept-edits` select `trusted`; `auto` and
+`yolo` select themselves. `--trust-project` raises `strict` to `trusted`. See
+[Choose a permission mode](/features/permissions-and-posture.md#choose-a-permission-mode)
+for the full mode table.
 
 |Posture|Automatic mutation|Child substitution checks|Project trust|Use it for|
 |-|-|-|-|-|
@@ -281,7 +285,8 @@ setting. `--trust-project` aliases `trusted`; `--yolo` aliases `yolo`.
 
 Use `auto` for unattended operation when the deployment sandbox can tolerate
 automatic mutations. It retains the child substitution check that `yolo`
-disables.
+disables. Both refuse to start without a guardrails checker unless the operator
+passes `--guardrails off`, and at `yolo` a configured checker is advisory only.
 
 Automatic mutation loosens only the built-in mutation prompt. Every posture
 still honors:

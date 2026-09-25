@@ -32,6 +32,7 @@ func TestADR_0359_HarnessContext_Scenario4_RestartRebindsCurrentPolicy(t *testin
 		cfg.MemoryDir = memoryDir
 		cfg.OwnershipEnforced = true
 		cfg.AllowAllTools = true
+		cfg.GuardrailsDisabled = true
 		cfg.MockProvider = provider
 		cfg.HarnessInstructionSources = []HarnessSourceRegistration[prompt.InstructionAssembler]{{ID: HarnessSourceID(id), Scope: HarnessSourceScopePrincipal, Provenance: HarnessProvenancePolicy{Fixed: "driver"}, Bind: func(_ context.Context, scope HarnessSourceScope) (prompt.InstructionAssembler, func() error, error) {
 			if !scope.Principal.SameIdentity(owner) {

@@ -133,7 +133,7 @@ the values file if you need a fixed name.
 |Setting|Default|
 |-|-|
 |Replicas|Two|
-|Posture|Headless with `auto` permissions|
+|Permission mode|Headless `auto`, with no guardrails checker unless you set `guardrails.model`|
 |Session state|Redis|
 |Session ownership|Kubernetes Leases|
 |Filesystem|No filesystem access|
@@ -143,6 +143,30 @@ the values file if you need a fixed name.
 Project-provided instructions, skills, agents, and read-only child Shell access
 still require explicit project trust. `mecak8s` does not include ACP, local
 JSONL storage, or the `mecated` operator subcommands.
+
+### Choose a guardrails checker
+
+`auto` allows every tool without asking, so `mecak8s` refuses to start it until
+you choose a guardrails checker or opt out. The chart always passes
+`--permission-mode=auto` and declares the choice from `guardrails.model`:
+
+```yaml
+guardrails:
+  model: <MODEL>
+```
+
+A non-empty value renders `--guardrails-model=<MODEL>`. The default empty value
+renders `--guardrails=off`, which runs with nothing inspecting tool content.
+The kill-switch also disables a `guardrail` model slot bound in mounted
+settings, so name the checker here rather than relying on a slot. When you run
+the `mecak8s` binary without the chart, pass `--guardrails-model` or
+`--guardrails=off` yourself.
+
+Because `mecak8s` is headless, the subagent ask reviewer is on by default. It
+uses the `ask-reviewer` model slot or the session model to decide subagent
+permission requests, and each decision spends tokens. Add
+`--subagent-ask-reviewer=off` to `extraArgs` to keep it off. See
+[Subagents under auto](/features/permissions-and-posture.md#subagents-under-auto).
 
 ## Choose filesystem access
 

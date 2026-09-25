@@ -10,12 +10,14 @@ description:
 Configure two independent safety controls:
 
 1. **Permissions** decide whether a tool call is allowed, needs approval, or is
-   denied before it runs.
+   denied before it runs. A single launch-time setting, the _permission mode_,
+   selects how much Mecatl allows without asking.
 2. **Guardrails** are an optional model-backed checker that inspects selected
    tool arguments and results. They are independent of the permission rules.
 
 Permissions always apply. Guardrails require an operator-configured checker
-model.
+model, and the allow-all permission modes require you to decide whether you
+want one.
 
 For evaluator, authority-set, and custom-policy contracts, see
 [Permissions and guardrails for builders](/building/what-you-get/permissions.md).
@@ -24,69 +26,185 @@ For evaluator, authority-set, and custom-policy contracts, see
 
 Permissions and posture apply to `mecated`, `mecak8s`, `mecatequi`, and the
 embedded server hosted by `mecatui`. A connected `mecatui` uses the posture and
-permission configuration of the remote server; local embedded-server flags do
-not apply to `connect` sessions.
+permission configuration of the remote server. Under `mecatui connect`, the
+local `--permission-mode` flag accepts only `plan`, `default`, and
+`accept-edits`, which choose the mode of the sessions that client creates.
 
 Interactive clients such as `mecatui` can answer approval requests. For headless
 servers and one-shot jobs, configure the permissions required by the workload
 before it starts.
 
-## Choose a posture
-
-`--posture` selects the operator posture ladder:
-
-|Posture|Behavior|
-|-|-|
-|`strict`|Default for interactive `mecated`; read-only calls are allowed and mutating calls use the permission rules, normally asking before they run. Project trust is not granted by the posture.|
-|`trusted`|Interactive roots admit trusted project instructions and project permission allows, but mutating calls still use the normal approval rules.|
-|`auto`|Enables the allow-all posture for the main agent and children while keeping deny rules and deliberately configured asks effective. Child substitution defenses remain enabled.|
-|`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. Use only for isolated, disposable, single-tenant deployments.|
-
-`--yolo`, `--trust-project`, and operator-global `posture:` settings can raise
-the posture tier; the highest tier wins. A project file cannot raise it.
-
-Deployment defaults differ: `mecated` is interactive and defaults to `strict`,
-while unattended `mecak8s` and `mecatequi` deployments commonly select `auto`.
-Check the individual command's help before assuming a default.
-
-For example:
-
-```sh
-# Interactive, fail-closed default.
-mecated serve --posture strict
-
-# Unattended single-tenant deployment; review the trust implications first.
-mecated serve --headless --posture auto
-```
-
-Allow-all postures are refused when running as root unless the deployment
-explicitly declares an isolated sandbox with `MECATL_SANDBOX=1` or
-`IS_SANDBOX=1`.
-
 ## Choose a permission mode
 
-A permission mode controls one session. It works alongside the deployment
-posture and configured rules.
+Pass `--permission-mode` when you start `mecated`, `mecatui`, `mecak8s`, or
+`mecatequi`. Deny rules and configured asks win in every mode, including
+`yolo`.
 
-|Mode|Behavior|
-|-|-|
-|`default`|Uses the normal permission policy: read-only work is usually allowed, while operations that can mutate state normally ask first.|
-|`plan`|Exposes a read-only toolset so the model can inspect the workspace and prepare a plan without changing it.|
-|`accept-edits`|Automatically allows `Edit` and `Write` when they would otherwise hit only the built-in approval floor. Shell commands and other tools still use the normal policy, and configured asks and denies still win.|
+|Mode|Project instructions and rules|Edits|Shell and other mutations|Command substitution in subagents|
+|-|-|-|-|-|
+|`plan`|Only with a trust source|Denied|Denied|Not applicable, read-only|
+|`default`|Only with a trust source|Ask|Ask|Ask|
+|`accept-edits`|Only with a trust source|Allowed|Ask|Ask|
+|`trusted`|Loaded|Ask|Ask|Ask|
+|`trusted-accept-edits`|Loaded|Allowed|Ask|Ask|
+|`auto`|Loaded|Allowed|Allowed|Adjudicated by a reviewer model when headless|
+|`yolo`|Loaded|Allowed|Allowed|Allowed|
+
+"Loaded" applies to an interactive root, or to a headless root that has a trust
+source. See [Project trust](#project-trust) for the trust sources and
+[Headless roots and project trust](#headless-roots-and-project-trust) for how
+each mode behaves without one. Use `yolo` only for isolated, disposable,
+single-tenant deployments.
+
+Every root defaults to `default`, except `mecak8s`, which defaults to `auto`.
+The [`mecatequi` GitHub Action](/building/deployment/mecatequi.md) also passes
+`auto` unless you set its `permission-mode` input.
+
+```sh
+# Interactive: honor this project's rules and auto-accept edits.
+mecatui --workspace "$PWD" --permission-mode trusted-accept-edits
+
+# Unattended single-tenant deployment with a guardrails checker.
+mecated serve --headless --permission-mode auto --guardrails-model <MODEL>
+```
+
+To set a default for every launch, add the key to your user-global
+`settings.yaml`:
+
+```yaml title="~/.config/mecatl/settings.yaml"
+permissionMode: accept-edits
+```
+
+An explicit `--permission-mode` flag outranks the key. Mecatl ignores a
+`permissionMode:` key in a project's `.mecatl/settings.yaml` and logs a warning,
+so a repository cannot choose its own permission mode. `--trust-project`
+combines with any mode: it supplies project trust, and at `plan`, `default`, or
+`accept-edits` it also raises the posture to `trusted`.
+
+### What a mode sets
+
+Each mode sets two things with different lifetimes:
+
+|Mode|Posture: process-wide, fixed at startup|Session mode: where each new session starts|
+|-|-|-|
+|`plan`|`strict`|`plan`|
+|`default`|`strict`|`default`|
+|`accept-edits`|`strict`|`accept-edits`|
+|`trusted`|`trusted`|`default`|
+|`trusted-accept-edits`|`trusted`|`accept-edits`|
+|`auto`|`auto`|`default`|
+|`yolo`|`yolo`|`default`|
+
+The _posture_ applies to every session the server hosts and cannot change while
+the process runs. The _session mode_ is only a starting point; a client can
+change it for its own session.
+
+### Change the mode after launch
 
 In `mecatui`, press `shift+tab` to cycle the active session through **default →
 plan → accept-edits → default**. You can remap the `ModeSwitch` action in the
 client keymap or with `--keymap`; see [Keybindings](/mecatui/keybindings.md).
 
-To select the initial mode when launching `mecatui`, use `--mode`:
+Cycling changes only the session mode, never the posture. If you start in
+`auto` and cycle to `plan` and back to `default`, every tool is still allowed
+without asking. The `mecatui` header shows the session mode and, whenever the
+posture is above `strict`, the posture as well (`trusted`, `auto`, or `yolo`).
 
-```sh
-mecatui --workspace "$PWD" --mode plan
-mecatui --workspace "$PWD" --mode accept-edits
-```
+`mecatui` has no control that selects `trusted`, `trusted-accept-edits`,
+`auto`, or `yolo` at runtime. Those modes set the posture, so they need a
+restart of the process that hosts the server:
 
-The header displays the active mode. Changing modes does not bypass configured
-permission rules or guardrails.
+- With the embedded server, quit and relaunch `mecatui` with the new
+  `--permission-mode` value.
+- Under `mecatui connect`, the server operator changes `mecated`'s
+  configuration and restarts it. Relaunching the client changes nothing.
+
+Press `?` in `mecatui` to see every mode, the two things each one sets, and the
+restart that applies to your connection.
+
+### Check the resolved mode at startup
+
+Every root logs one `permission mode` line at startup. Its fields report:
+
+- `permission_mode`: the resolved mode.
+- `posture` and `session_mode`: the two values the mode set, each with a
+  `_scope` field stating its lifetime.
+- `guardrails_checker`: exactly one of `enforcing`, `advisory`, or `disabled`,
+  with a `guardrails_checker_reason` when it is not enforcing.
+- `subagent_ask_reviewer`: whether the
+  [subagent ask reviewer](#subagents-under-auto) is on, and why.
+
+ `mecatui` writes its startup diagnostics to
+its log file rather than the terminal.
+
+### Deprecated flags
+
+`--posture`, `--yolo`, the `mecatui` `--mode` flag, and the `posture:` settings
+key still work and resolve to the equivalent mode. Each logs a deprecation
+warning naming the `--permission-mode` replacement, and they will be removed in
+a future release. Passing `--permission-mode` together with `--posture`,
+`--yolo`, or `--mode` is a startup error. `--trust-project` is not deprecated.
+
+## Allow-all modes need a checker decision
+
+`auto` and `yolo` allow every tool without asking, which leaves a guardrails
+checker as the only inspection of tool content. They refuse to start until you
+make one of these choices:
+
+- Set a checker with `--guardrails-model <MODEL>`.
+- Bind the `guardrail` model slot, with `--model-slot guardrail=<MODEL>` or
+  `models.slots.guardrail` in `settings.yaml`.
+- Run without a checker on purpose with `--guardrails off`.
+
+The `mecak8s` Helm chart and the `mecatequi` GitHub Action always make this
+choice for you: they pass the checker model you configure, or `--guardrails off`
+when you leave it empty. See [Guardrails for mecak8s](/building/deployment/mecak8s.md#choose-a-guardrails-checker)
+and the [`mecatequi` action inputs](/building/deployment/mecatequi.md#headless-posture-and-permission-asks).
+
+At `yolo`, a configured checker is advisory only. It has no pre-tool veto, no
+approve-once human ask, and no fail-closed behavior when the checker fails, so a
+checker outage looks the same as a clean result. The startup line reports it as
+`advisory`. Choose `auto` when you want the checker to block findings.
+
+## Headless roots and project trust
+
+A headless root never gains project trust from its permission mode. The modes
+behave differently when no trust source is present:
+
+- `trusted` and `trusted-accept-edits` refuse to start, because project trust is
+  what they add. Pass `--trust-project`, add the workspace to
+  `trustedWorkspaces` in your user-global `settings.yaml`, or rely on a
+  remembered trust decision. Otherwise choose a mode that does not name trust.
+- `auto` and `yolo` start and log a warning that project instructions and rules
+  are withheld. Tools are still allowed without asking.
+- `plan`, `default`, and `accept-edits` start without loading project content.
+
+On an interactive root, `trusted` and `trusted-accept-edits` grant project trust
+directly.
+
+## Subagents under auto
+
+Under `auto`, subagents keep the command-substitution guard that the main agent
+loses. A subagent Shell command containing `$(...)`, backticks, or a subshell
+that Mecatl cannot prove read-only is not run automatically, even though the
+main agent would run the same command. `yolo` removes that guard for subagents
+too.
+
+An interactive client receives these requests as ordinary approval prompts. A
+headless `auto` or `yolo` deployment has nobody to ask, so the _subagent ask
+reviewer_ is on by default there. The reviewer is a tool-free model that decides
+a subagent permission request nobody else can answer. An approval applies only
+to that request, and each decision spends tokens.
+
+The reviewer uses the `ask-reviewer` model slot, or the session model when the
+slot is unbound. If neither resolves, subagent requests are denied and Mecatl
+logs a warning naming the fix. To keep the reviewer off and deny these requests,
+pass `--subagent-ask-reviewer off`. Configured deny and ask rules still win over
+the reviewer.
+
+The reviewer is separate from the guardrails checker. The checker inspects tool
+arguments and results; the reviewer decides pending subagent permission
+requests.
 
 ## Approve and constrain work
 
@@ -184,14 +302,15 @@ Project trust controls whether Mecatl admits project-provided authority:
 - project skills, soul, and named agents; and
 - the read-only child shell and workspace inspection posture.
 
-Trust can come from an explicit operator flag, a trusted-workspace setting, an
-undrifted remembered trust decision, or the interactive posture floor. A
-headless root does not gain project trust merely because it uses `trusted`,
-`auto`, or `yolo`; it needs an explicit trust source.
+Trust can come from `--trust-project`, a `trustedWorkspaces` entry in the
+user-global `settings.yaml`, an undrifted remembered trust decision, or a
+`trusted`, `trusted-accept-edits`, `auto`, or `yolo` mode on an interactive
+root. A headless root needs one of the first three; see
+[Headless roots and project trust](#headless-roots-and-project-trust).
 
-On an untrusted headless checkout, `--posture auto` can allow admitted tools
-without loading project steering or enabling a read-only child shell.
 `--trust-project` asserts that you trust the repository and its `.git` metadata.
+Without trust, a headless `auto` deployment still allows admitted tools, but it
+loads no project steering and gives read-only subagents no Shell.
 
 ## Guardrails
 
@@ -239,8 +358,10 @@ matchers, modes, and checker failure handling.
 - Permission rules and guardrails are different controls: an allow does not
   disable guardrails, and a guardrail advisory does not change the tool's
   permission result.
-- `--posture`, `--trust-project`, and permission configuration on a local
-  `mecatui` invocation do not change a remote server used through `connect`.
+- `--trust-project` and permission configuration on a local `mecatui`
+  invocation leave a remote server used through `connect` unchanged, and
+  `mecatui connect` refuses a `--permission-mode` that sets a posture. The
+  server operator owns that server's posture.
 
 ## Next steps
 

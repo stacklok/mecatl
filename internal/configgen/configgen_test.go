@@ -106,6 +106,8 @@ func authoritativeKeys() []string {
 	collect("mcp.servers.auth.oauth.tools", permconfig.MCPStaticToolProfile{})
 	// posture is a bare scalar Config field, not a *Section.
 	keys = append(keys, "posture")
+	// permissionMode is likewise a bare scalar Config field (ADR 0365).
+	keys = append(keys, "permissionMode")
 	// output-economy is absent: the setting was REMOVED (ADR 0041, superseded;
 	// clean break) and MUST NOT appear in generated artifacts (pinned by
 	// TestDeprecatedOutputEconomyIsAbsentFromGeneratedArtifacts).
@@ -362,6 +364,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"permissions":            configgen.TierProject,  // allow/ask/deny + subagent: project-settable (allows trust-gated)
 		"guardrails":             configgen.TierOperator, // operator-only: a project cannot weaken a security checker
 		"posture":                configgen.TierOperator, // operator-only: a project cannot raise the automation posture
+		"permissionMode":         configgen.TierOperator, // operator-only: a project cannot choose its own permission mode (ADR 0365)
 		"reasoning-effort":       configgen.TierOperator, // operator-only: a project cannot raise the model's reasoning spend (ADR 0055)
 		"plan-mode-auto-approve": configgen.TierOperator, // operator-only: a project cannot grant an autonomous approval capability (issue #206)
 		"providers":              configgen.TierOperator, // operator-only: a project cannot choose LLM endpoints or auth posture

@@ -541,10 +541,11 @@ func TestSubAgentPinsAnthropic(t *testing.T) {
 	}
 
 	built, err := buildIsolated(t, ctx, Config{
-		Workspace:     workspace,
-		NoSoul:        true,
-		AgentsDirs:    []string{agentsDir},
-		AllowAllTools: true, // --yolo: auto-approve the routed Subagent
+		Workspace:          workspace,
+		NoSoul:             true,
+		AgentsDirs:         []string{agentsDir},
+		AllowAllTools:      true, // --yolo: auto-approve the routed Subagent
+		GuardrailsDisabled: true,
 		envDetector: fakeEnv(map[string]string{
 			"OPENAI_API_KEY":    "sk-x",
 			"ANTHROPIC_API_KEY": "sk-x",

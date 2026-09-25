@@ -83,14 +83,15 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 	})
 	fixture.mcpClient = fixture.clientWithRoots(roots)
 	built, err := app.Build(ctx, app.Config{
-		Workspace:         t.TempDir(),
-		UserModelDir:      t.TempDir(),
-		StoreDir:          t.TempDir(),
-		MockProvider:      provider,
-		NoSoul:            true,
-		AllowAllTools:     true,
-		OwnershipEnforced: true,
-		MCPAuthority:      declaration,
+		Workspace:          t.TempDir(),
+		UserModelDir:       t.TempDir(),
+		StoreDir:           t.TempDir(),
+		MockProvider:       provider,
+		NoSoul:             true,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
+		OwnershipEnforced:  true,
+		MCPAuthority:       declaration,
 		MCPBrokerDiscovered: []mcpbroker.ToolDefinition{{
 			Backend: "github", Name: toolName, Description: "read protected data", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true,
 		}},

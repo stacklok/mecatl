@@ -255,19 +255,20 @@ func TestADR_0352_Scenario3_CompositionParity(t *testing.T) {
 	srv, calls := jevTestServer(t, "small", 1, 4, 2)
 	provider := &jevBuildProvider{}
 	built, err := buildIsolated(t, t.Context(), Config{
-		Workspace:        t.TempDir(),
-		UserModelDir:     t.TempDir(),
-		UseMock:          true,
-		MockProvider:     provider,
-		NoSoul:           true,
-		NoUserModel:      true,
-		NoShell:          true,
-		AllowAllTools:    true,
-		Model:            "parent-model",
-		RouterBackend:    "jev",
-		RouterJevBaseURL: srv.URL,
-		TypesafeAPIKey:   "secret",
-		ModelAliases:     map[string]string{"tiny": "resolved-model"},
+		Workspace:          t.TempDir(),
+		UserModelDir:       t.TempDir(),
+		UseMock:            true,
+		MockProvider:       provider,
+		NoSoul:             true,
+		NoUserModel:        true,
+		NoShell:            true,
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
+		Model:              "parent-model",
+		RouterBackend:      "jev",
+		RouterJevBaseURL:   srv.URL,
+		TypesafeAPIKey:     "secret",
+		ModelAliases:       map[string]string{"tiny": "resolved-model"},
 		RouterCategories: []permconfig.RouterCategory{
 			{Name: "small", Description: "small task", Model: "tiny"},
 			{Name: "large", Description: "large task", Model: "other-model"},
@@ -330,7 +331,7 @@ func TestADR_0352_Scenario4_BuildConfiguredRequestLimit(t *testing.T) {
 	provider := &jevBuildProvider{}
 	built, err := buildIsolated(t, t.Context(), Config{
 		Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
-		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, Model: "inherited-model",
+		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, GuardrailsDisabled: true, Model: "inherited-model",
 		RouterBackend: "jev", RouterJevBaseURL: srv.URL, RouterJevMaximumInputBytes: 1,
 		TypesafeAPIKey: "secret", RouterCategories: []permconfig.RouterCategory{
 			{Name: "small", Description: "small task", Model: "routed-model"},
@@ -366,7 +367,7 @@ func TestADR_0352_Scenario4_BuildSharedCapacity(t *testing.T) {
 	provider := &jevBuildProvider{parentDelegated: make(chan struct{}, 9)}
 	built, err := buildIsolated(t, t.Context(), Config{
 		Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
-		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, Model: "parent-model",
+		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, GuardrailsDisabled: true, Model: "parent-model",
 		RouterBackend: "jev", RouterJevBaseURL: srv.URL, TypesafeAPIKey: "secret",
 		RouterCategories: []permconfig.RouterCategory{{Name: "small", Description: "small task", Model: "routed-model"}},
 	})
@@ -431,7 +432,7 @@ func TestJevLowConfidenceCandidateSurvivesRealDelegation(t *testing.T) {
 	provider := &jevBuildProvider{}
 	built, err := buildIsolated(t, t.Context(), Config{
 		Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
-		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, Model: "inherited-model",
+		NoSoul: true, NoUserModel: true, NoShell: true, AllowAllTools: true, GuardrailsDisabled: true, Model: "inherited-model",
 		RouterBackend: "jev", RouterJevModel: "jev-1.13.0", RouterJevBaseURL: srv.URL,
 		RouterJevMinimumConfidence: 0.50, TypesafeAPIKey: "secret",
 		ModelAliases: map[string]string{"candidate-alias": "locally-resolved-candidate"},
@@ -525,7 +526,7 @@ func TestADR_0352_Scenario2_ExistingRoutingSemantics(t *testing.T) {
 			provider := &jevBuildProvider{subagentArgs: tc.args}
 			cfg := Config{
 				Workspace: t.TempDir(), UserModelDir: t.TempDir(), UseMock: true, MockProvider: provider,
-				NoSoul: true, NoShell: true, AllowAllTools: true, Model: "parent-model",
+				NoSoul: true, NoShell: true, AllowAllTools: true, GuardrailsDisabled: true, Model: "parent-model",
 			}
 			applyJevRouting(&cfg, srv)
 			if tc.agentSetup {

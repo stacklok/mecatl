@@ -51,6 +51,7 @@ func TestWritableRoutableDefFullBuildE2E(t *testing.T) {
 		RouterCategories:      routerTaxonomyCategories(),
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {

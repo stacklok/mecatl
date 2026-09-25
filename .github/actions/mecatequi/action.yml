@@ -47,7 +47,7 @@
 # is no version input (matlatl has none either).
 #
 # OMITTED INPUT — the ask-reviewer policy file. --subagent-ask-reviewer is surfaced (see
-# the input) so a posture:auto run can adjudicate a child's read-only substitution instead
+# the input) so an auto-mode run can adjudicate a child's read-only substitution instead
 # of silently auto-denying it, but --subagent-ask-reviewer-policy (a TRUSTED rubric file
 # whose CONTENT replaces the built-in rubric) is NOT surfaced: it grants the reviewer a
 # rule set the operator would have to author and check into the repo, which is a deliberate
@@ -125,13 +125,24 @@ inputs:
     description: Session workspace root (must be a git repository so the diff can be computed).
     required: false
     default: ${{ github.workspace }}
+  permission-mode:
+    description: >-
+      Permission mode (ADR 0365) → --permission-mode: one of plan, default, accept-edits,
+      trusted, trusted-accept-edits, auto, yolo. Empty (the input default) resolves to
+      "auto", the documented CI mode (allow-all, child injection-defence ON), unless the
+      deprecated `posture` input is set. "default" would CANCEL the run on the first
+      mutate because a headless run has no approver. auto and yolo need a checker choice;
+      see `guardrails-model`. Setting both this and `posture` fails the step.
+    required: false
+    default: ""
   posture:
     description: >-
-      Operator posture ladder (strict < trusted < auto < yolo). Default "auto" — the
-      documented CI posture (allow-all, child injection-defence ON). "strict" would
-      CANCEL the run on the first mutate because a headless run has no approver.
+      DEPRECATED alias for `permission-mode`, kept for one release → --posture (the
+      binary WARNs). Used only when set non-empty; setting it together with
+      `permission-mode` fails the step. Migrate `posture: "auto"` to
+      `permission-mode: "auto"`.
     required: false
-    default: "auto"
+    default: ""
   timeout:
     description: >-
       Wall-clock bound on the whole run (e.g. 40m); the primary cost ceiling for a
@@ -186,17 +197,24 @@ inputs:
   guardrails-model:
     description: >-
       GUARDRAILS (issue #27) checker model id / alias inspecting outbound args + inbound
-      results. Empty disables guardrails.
+      results → --guardrails-model. mecatequi refuses an allow-all permission mode (auto,
+      yolo) with no checker unless the opt-out is explicit, so this action always declares
+      the choice: a non-empty value passes --guardrails-model; empty (default) passes
+      --guardrails off, a DELIBERATE choice to run unsupervised with nothing inspecting
+      tool content. The kill-switch also disables a guardrail model slot from settings,
+      so name the checker here if you want one.
     required: false
     default: ""
   subagent-ask-reviewer:
     description: >-
-      OPT-IN headless ask reviewer (issue #31) → --subagent-ask-reviewer: model id / alias
-      of a tool-less one-turn reviewer that adjudicates a CHILD permission ask the headless
-      auto-deny would otherwise reject (so a posture:auto run whose subagent wants a
-      read-only $(...) substitution is reviewed rather than silently denied). Empty (default)
-      = no reviewer (children auto-deny). The TRUSTED policy-rubric file is NOT an input —
-      see the action header.
+      Headless ask reviewer (issue #31) → --subagent-ask-reviewer: model id / alias of a
+      tool-less one-turn reviewer that adjudicates a CHILD permission ask the headless
+      auto-deny would otherwise reject (so an auto-mode run whose subagent wants a
+      read-only $(...) substitution is reviewed rather than silently denied). Empty
+      (default) omits the flag: in the auto and yolo modes the reviewer is then ON by
+      default (ask-reviewer model slot, else the session model); in other modes children
+      auto-deny. "off" disables it explicitly. The TRUSTED policy-rubric file is NOT an
+      input — see the action header.
     required: false
     default: ""
   subagent-ask-reviewer-max-denies:
@@ -366,6 +384,7 @@ runs:
         MQ_UNTRUSTED: ${{ inputs.untrusted }}
         MQ_INSTRUCTIONS: ${{ inputs.instructions }}
         MQ_WORKSPACE: ${{ inputs.workspace }}
+        MQ_PERMISSION_MODE: ${{ inputs.permission-mode }}
         MQ_POSTURE: ${{ inputs.posture }}
         MQ_TIMEOUT: ${{ inputs.timeout }}
         MQ_MAX_RUN_TOKENS: ${{ inputs.max-run-tokens }}
@@ -408,10 +427,23 @@ runs:
         # Build the argv as an ARRAY from env values — never string-interpolated. Each
         # event-derived value crosses as a discrete token, so no value can be re-parsed
         # as a flag or a shell metacharacter.
+        # Permission mode: `permission-mode` replaces the deprecated `posture` input. Both
+        # set is ambiguous, so fail rather than guess; neither set is the documented CI mode.
+        if [ -n "${MQ_PERMISSION_MODE}" ] && [ -n "${MQ_POSTURE}" ]; then
+          echo "::error::both permission-mode and the deprecated posture input are set; pass only permission-mode."
+          exit 1
+        fi
+        if [ -n "${MQ_POSTURE}" ]; then
+          echo "::warning::the posture input is deprecated; use permission-mode instead."
+          permission_args=( --posture "${MQ_POSTURE}" )
+        else
+          permission_args=( --permission-mode "${MQ_PERMISSION_MODE:-auto}" )
+        fi
+
         args=(
           --prompt-file "${MQ_PROMPT_FILE}"
           --workspace "${MQ_WORKSPACE}"
-          --posture "${MQ_POSTURE}"
+          "${permission_args[@]}"
           --timeout "${MQ_TIMEOUT}"
           --headless=true
           --out-diff "${MQ_OUT_DIFF}"
@@ -427,7 +459,13 @@ runs:
         [ -n "${MQ_DEFAULT_MODEL}" ] && args+=( --default-model "${MQ_DEFAULT_MODEL}" )
         [ "${openai_on}" = "true" ] && args+=( --openai )
         [ -n "${MQ_OPENAI_BASE_URL}" ] && args+=( --openai-base-url "${MQ_OPENAI_BASE_URL}" )
-        [ -n "${MQ_GUARDRAILS_MODEL}" ] && args+=( --guardrails-model "${MQ_GUARDRAILS_MODEL}" )
+        # Checker choice is ALWAYS declared: a named checker, or the explicit unsupervised
+        # kill-switch (an allow-all mode with neither is refused at startup).
+        if [ -n "${MQ_GUARDRAILS_MODEL}" ]; then
+          args+=( --guardrails-model "${MQ_GUARDRAILS_MODEL}" )
+        else
+          args+=( --guardrails off )
+        fi
         [ -n "${MQ_ASK_REVIEWER}" ] && args+=( --subagent-ask-reviewer "${MQ_ASK_REVIEWER}" )
         [ -n "${MQ_ASK_REVIEWER_MAX_DENIES}" ] && args+=( --subagent-ask-reviewer-max-denies "${MQ_ASK_REVIEWER_MAX_DENIES}" )
 

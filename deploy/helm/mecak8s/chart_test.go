@@ -877,7 +877,8 @@ func TestMecak8sHelmChart_DeployCheckProductionFixtureRuntimeAndSpread(t *testin
 		"--redis-max-followers=32",
 		"--session-lease-k8s-namespace=default",
 		"--headless=true",
-		"--posture=auto",
+		"--permission-mode=auto",
+		"--guardrails=off",
 		"--default-provider=openrouter",
 		"--model=anthropic/claude-sonnet-4-6",
 		"--max-run-tokens=200000",
@@ -3024,5 +3025,47 @@ mcp:
 	secondSum := deploymentFromRender(t, second).Spec.Template.Annotations["checksum/mcp-profile"]
 	if firstSum == "" || secondSum == "" || firstSum == secondSum {
 		t.Fatalf("OAuth profile checksums = %q and %q; profile change must roll pods", firstSum, secondSum)
+	}
+}
+
+// TestADR_0365_ShippedAllowAllDefaultsDeclareCheckerChoice pins ADR 0365 AC2.3 for
+// the chart: it runs mecak8s in the allow-all auto permission mode, and mecak8s
+// refuses that mode without a checker, so every render must declare the checker
+// choice. An empty guardrails.model is the explicit unsupervised --guardrails=off;
+// a set model becomes --guardrails-model and never carries the kill-switch.
+func TestADR_0365_ShippedAllowAllDefaultsDeclareCheckerChoice(t *testing.T) {
+	cases := []struct {
+		name    string
+		extra   []string
+		want    string
+		notWant string
+	}{
+		{name: "default declares unsupervised", want: "--guardrails=off", notWant: "--guardrails-model="},
+		{name: "model declares checker", extra: []string{"--set-string", "guardrails.model=openrouter/checker"}, want: "--guardrails-model=openrouter/checker", notWant: "--guardrails=off"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered, err := helm(t, append(secureProductionArgs(), tc.extra...)...)
+			if err != nil {
+				t.Fatalf("render: %v\n%s", err, rendered)
+			}
+			args := deploymentFromRender(t, rendered).Spec.Template.Spec.Containers[0].Args
+			if !slices.Contains(args, "--permission-mode=auto") {
+				t.Fatalf("args lack --permission-mode=auto: %q", args)
+			}
+			for _, a := range args {
+				if strings.HasPrefix(a, "--posture") || a == "--yolo" {
+					t.Fatalf("args still use deprecated alias %q: %q", a, args)
+				}
+			}
+			if !slices.Contains(args, tc.want) {
+				t.Fatalf("args lack checker choice %q: %q", tc.want, args)
+			}
+			for _, a := range args {
+				if strings.HasPrefix(a, tc.notWant) {
+					t.Fatalf("args carry conflicting %q: %q", a, args)
+				}
+			}
+		})
 	}
 }

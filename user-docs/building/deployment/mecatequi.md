@@ -239,7 +239,7 @@ corrupt both.
 |`--workspace`|cwd|Session workspace root. Must be a git repository top level.|
 |`--default-provider`|`""`|Provider ID: `openai`, `openai-codex`, `openrouter`, `anthropic`, or `opencode`.|
 |`--model`|`""`|Per-session passthrough model ID. Accepts any ID the provider serves, including IDs newer than the embedded catalog. Prefer this over `--default-model` for newer models.|
-|`--posture`|`""` (strict)|Permission posture. Use `auto` for autonomous CI. With `strict` and `--headless`, a main-agent permission ask cancels the run and exits 1.|
+|`--permission-mode`|`default`|Permission mode. Use `auto` for autonomous CI, together with `--guardrails-model` or `--guardrails off`. With `default` and `--headless`, a main-agent permission ask cancels the run and exits 1. `--posture` is a deprecated alias.|
 |`--trust-project`|`false`|Trust this workspace for project content and read-only child shell access. No posture grants project trust in headless mode. Without this flag or a declared or remembered trust decision, Mecatl ignores project content such as `AGENTS.md` and does not give read-only children a shell.|
 |`--headless`|`true`|Controls child permission requests. The default denies them or routes them to the optional ask reviewer. See [Headless posture and permission asks](#headless-posture-and-permission-asks).|
 |`--timeout`|`0` (disabled)|Wall-clock bound on the whole run (e.g. `40m`). A timeout-cancelled run exits 1 with `stop_reason: cancelled`.|
@@ -286,22 +286,35 @@ Metrics use bounded role labels and do not include session or model IDs.
 `mecatequi` defaults to `--headless=true`. Permission asks behave differently
 for the main agent and its children.
 
-Child asks from subagents, team members, and parallel branches are denied by
-default. `--subagent-ask-reviewer` enables a tool-less, one-turn LLM reviewer
-that can approve the current call only. A reviewer error leaves the call denied.
-This flag applies only in headless mode.
+Child asks from subagents, team members, and parallel branches go to a
+tool-less, one-turn LLM reviewer under `auto` and `yolo`, which can approve the
+current call only. The reviewer uses the `ask-reviewer` model slot, or the
+session model. Set `--subagent-ask-reviewer <MODEL>` to choose its model, or
+`--subagent-ask-reviewer off` to deny child asks instead. In other modes child
+asks are denied unless you set a reviewer model. A reviewer error leaves the
+call denied. The reviewer applies only in headless mode.
 
 `--headless=false` surfaces child asks instead. `mecatequi` has no approval
 interface, so the first surfaced ask cancels the run, produces
 `stop_reason: cancelled`, and exits 1.
 
-With `--posture strict` and `--headless`, the main agent has no approver. Its
-first permission ask cancels the run, produces `stop_reason: cancelled`, and
-exits 1 with guidance to add allow rules or choose another posture.
+With `--permission-mode default` and `--headless`, the main agent has no
+approver. Its first permission ask cancels the run, produces
+`stop_reason: cancelled`, and exits 1 with guidance to add allow rules or choose
+another permission mode.
 
-Use `--posture auto` for autonomous CI. It allows main-agent and child tool
-calls while retaining child prompt-injection defenses. Reserve `yolo` for a
-disposable, isolated, single-tenant environment.
+Use `--permission-mode auto` for autonomous CI. It allows main-agent and child
+tool calls while retaining child prompt-injection defenses. It refuses to start
+until you choose a guardrails checker with `--guardrails-model` or opt out with
+`--guardrails off`. Reserve `yolo` for a disposable, isolated, single-tenant
+environment. `trusted` and `trusted-accept-edits` also need `--trust-project`
+or a declared trust decision, or the run refuses to start.
+
+The GitHub Action passes `--permission-mode auto` unless you set its
+`permission-mode` input; its `posture` input is a deprecated alias. The action
+passes `--guardrails-model` when its `guardrails-model` input is set and
+`--guardrails off` when it is empty, so an action run with no checker model
+runs with nothing inspecting tool content.
 
 For shared posture behavior, project trust, and permission-rule precedence, see
 [Permissions and posture](/features/permissions-and-posture.md).

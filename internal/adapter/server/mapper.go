@@ -1350,6 +1350,17 @@ func modeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
 	}
 }
 
+// createModeFromProto maps a CreateSession mode. Unlike modeFromProto, an
+// UNSPECIFIED mode stays empty so Service.createSession applies the server's
+// configured DefaultMode (the session half of the operator's permission mode,
+// ADR 0365), matching the HTTP create path.
+func createModeFromProto(m mecatlv1.PermissionMode) session.PermissionMode {
+	if m == mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED {
+		return ""
+	}
+	return modeFromProto(m)
+}
+
 func guardrailApprovalKindFromProto(kind mecatlv1.GuardrailApprovalKind) session.GuardrailApprovalKind {
 	switch kind {
 	case mecatlv1.GuardrailApprovalKind_GUARDRAIL_APPROVAL_KIND_ACTION:

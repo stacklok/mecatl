@@ -116,9 +116,13 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	"context-window-override": {group: groupLLMResilience, common: false, local: true, connect: false},
 
 	// ── Permissions (embedded-only) ───────────────────────────────────────
-	"posture":       {group: groupPermissions, common: true, local: true, connect: false},
-	"yolo":          {group: groupPermissions, common: true, local: true, connect: false},
-	"trust-project": {group: groupPermissions, common: true, local: true, connect: false},
+	// --permission-mode applies under connect too: its session half sets this
+	// client's new sessions, and a non-strict posture half is refused there
+	// (validatePermissionModeFlags) because the posture is the remote server's.
+	"permission-mode": {group: groupPermissions, common: true, local: true, connect: true},
+	"posture":         {group: groupPermissions, common: true, local: true, connect: false},
+	"yolo":            {group: groupPermissions, common: true, local: true, connect: false},
+	"trust-project":   {group: groupPermissions, common: true, local: true, connect: false},
 
 	// ── Storage (embedded-only) ───────────────────────────────────────────
 	"store-dir":                         {group: groupStorage, common: true, local: true, connect: false},

@@ -57,6 +57,7 @@ func harnessHybridConfig(t *testing.T, includeRepository bool, instructionMode s
 	}
 	cfg := harnessPolicyConfig(t, permconfig.HarnessContextSection{EnabledSources: enabled, Kinds: kinds})
 	cfg.AllowAllTools = true
+	cfg.GuardrailsDisabled = true
 	deployment := t.TempDir()
 	if err := os.WriteFile(filepath.Join(deployment, "policy.md"), []byte("DEPLOYMENT-INSTRUCTIONS"), 0o600); err != nil {
 		t.Fatal(err)
