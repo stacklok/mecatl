@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -216,30 +217,32 @@ func TestMCPAuthorizationOpeningOrCopyingStartsPolling(t *testing.T) {
 		{name: "copy", key: tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			control := &mcpAuthorizationControllerFake{}
-			m := New(Deps{
-				Ctx:              t.Context(),
-				MCPAuthorization: control,
-				OpenURL:          func(context.Context, string) error { return nil },
-				Clipboard:        &fakeClipboard{},
+			synctest.Test(t, func(t *testing.T) {
+				control := &mcpAuthorizationControllerFake{}
+				m := New(Deps{
+					Ctx:              t.Context(),
+					MCPAuthorization: control,
+					OpenURL:          func(context.Context, string) error { return nil },
+					Clipboard:        &fakeClipboard{},
+				})
+				m.sessionID = "session-1"
+				m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
+				_, actionCmd := m.onMCPAuthorizationKey(tc.key)
+				m = applyAll(m, actionCmd())
+				gen := m.authorization.controlGen
+				if !m.authorization.polling {
+					t.Fatal("successful presentation did not arm polling")
+				}
+				mm, pollCmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen})
+				m = mm.(Model)
+				if pollCmd == nil {
+					t.Fatal("presentation did not start an authorization observation")
+				}
+				runBatchLeaves(pollCmd)
+				if control.recheck != 1 {
+					t.Fatalf("rechecks = %d, want 1", control.recheck)
+				}
 			})
-			m.sessionID = "session-1"
-			m = applyAll(m, client.MCPAuthorizationMsg{AuthorizationID: "auth-1", Status: mcpAuthorizationStatusPending})
-			_, actionCmd := m.onMCPAuthorizationKey(tc.key)
-			m = applyAll(m, actionCmd())
-			gen := m.authorization.controlGen
-			if !m.authorization.polling {
-				t.Fatal("successful presentation did not arm polling")
-			}
-			mm, pollCmd := m.applyMCPAuthorizationPollTick(mcpAuthorizationPollTickMsg{sessionID: "session-1", authorizationID: "auth-1", gen: gen})
-			m = mm.(Model)
-			if pollCmd == nil {
-				t.Fatal("presentation did not start an authorization observation")
-			}
-			runBatchLeaves(pollCmd)
-			if control.recheck != 1 {
-				t.Fatalf("rechecks = %d, want 1", control.recheck)
-			}
 		})
 	}
 }
