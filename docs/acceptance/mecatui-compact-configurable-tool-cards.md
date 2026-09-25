@@ -8,7 +8,7 @@
 **Delivery:** Split. The new client configuration surface and intentional default presentation change require review before implementation.
 **Expected tasks:** deferred to orchestration after Plan / Interface review.
 **Issue:** None — initiated directly by the user.
-**Plan PR:** added when opened.
+**Plan PR:** [#1913](https://github.com/stacklok/mecatl/pull/1913)
 **Approved baseline:** absent until the Plan / Interface PR merges.
 
 Mecatui will make collapsed tool calls in the active conversation scannable by moving a bounded argument summary into the status/name header and limiting resolved output previews to three display rows by default. The complete arguments and output remain available there through the existing `ExpandTools` action (`ctrl+t` by default).
