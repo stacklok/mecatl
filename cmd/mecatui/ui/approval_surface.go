@@ -268,7 +268,7 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 	if s.known(msg.AskID) {
 		return false
 	}
-	offerAlways := !isChildAsk(msg.AskID, s.sessionID) && !s.isDebugMCPMutationAsk(msg)
+	offerAlways := !msg.Recovery && !isChildAsk(msg.AskID, s.sessionID) && !s.isDebugMCPMutationAsk(msg)
 	if msg.Guardrail != nil {
 		offerAlways = msg.Guardrail.Kind == "action" && msg.Guardrail.RepeatAvailable
 	}

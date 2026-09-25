@@ -74,6 +74,65 @@ func TestResumeLatestLoaderPreservesStatusSnapshot(t *testing.T) {
 	}
 }
 
+type fakePendingStartupResumeSource struct {
+	*fakeStartupResumeSource
+	pending       client.PendingApproval
+	discoverErr   error
+	afterDiscover *client.SessionSnapshot
+	discoverCalls int
+}
+
+func (f *fakePendingStartupResumeSource) DiscoverPendingApproval(context.Context, string) (client.PendingApproval, error) {
+	f.discoverCalls++
+	if f.afterDiscover != nil {
+		f.snapshots[f.pending.SessionID] = *f.afterDiscover
+	}
+	return f.pending, f.discoverErr
+}
+
+func TestNativePendingApprovalStartupSelection(t *testing.T) {
+	base := func() *fakePendingStartupResumeSource {
+		return &fakePendingStartupResumeSource{
+			fakeStartupResumeSource: &fakeStartupResumeSource{
+				transcripts: map[string]client.SessionTranscript{"s": {SessionID: "s", Complete: true, Kind: client.SessionKindMain}},
+				snapshots:   map[string]client.SessionSnapshot{"s": {State: "awaiting"}},
+			},
+			pending: client.PendingApproval{SessionID: "s", RunID: "run", AskID: "ask", Tool: "Write", Args: `{}`},
+		}
+	}
+
+	t.Run("exact awaiting ordinary ask", func(t *testing.T) {
+		source := base()
+		selection, err := resolveStartupResume(t.Context(), source, "s", false)
+		if err != nil || selection.Pending == nil || selection.Pending.RunID != "run" {
+			t.Fatalf("selection = %+v, %v", selection, err)
+		}
+	})
+	t.Run("foreign snapshot denied", func(t *testing.T) {
+		source := base()
+		source.snapshotErrs = map[string]error{"s": errors.New("foreign owner at /private/path")}
+		selection, err := resolveStartupResume(t.Context(), source, "s", false)
+		if err == nil || selection != nil || source.discoverCalls != 0 || strings.Contains(err.Error(), "foreign owner") || strings.Contains(err.Error(), "/private/path") {
+			t.Fatalf("foreign selection = %+v, calls=%d, err=%v", selection, source.discoverCalls, err)
+		}
+	})
+	t.Run("current state changed", func(t *testing.T) {
+		source := base()
+		changed := client.SessionSnapshot{State: "completed"}
+		source.afterDiscover = &changed
+		if selection, err := resolveStartupResume(t.Context(), source, "s", false); err == nil || selection != nil {
+			t.Fatalf("changed state selection = %+v, %v", selection, err)
+		}
+	})
+	t.Run("watch unsupported", func(t *testing.T) {
+		source := base()
+		source.discoverErr = errors.New("unsupported")
+		if selection, err := resolveStartupResume(t.Context(), source, "s", false); err == nil || selection != nil || strings.Contains(err.Error(), "unsupported") {
+			t.Fatalf("unsupported selection = %+v, %v", selection, err)
+		}
+	})
+}
+
 // TestSessionContinuityUX_Scenario6_FlagGrammar pins startup resume flag parsing.
 func TestSessionContinuityUX_Scenario6_FlagGrammar(t *testing.T) {
 	for _, mode := range []transportMode{modeLocal, modeConnect} {

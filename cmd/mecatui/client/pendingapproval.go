@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 
+	tea "charm.land/bubbletea/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -87,8 +88,7 @@ type pendingApprovalWatchStream interface {
 	Recv() (*mecatlv1.WatchSessionEventsResponse, error)
 }
 
-// PendingApprovalEventKind is the narrow lifecycle vocabulary needed by the
-// next recovery UI increment.
+// PendingApprovalEventKind is the narrow recovery lifecycle vocabulary.
 type PendingApprovalEventKind string
 
 const (
@@ -107,6 +107,7 @@ type PendingApprovalEvent struct {
 	RunID    string
 	AskID    string
 	Approval *PendingApproval
+	Message  tea.Msg
 }
 
 // PendingApprovalWatch owns the context of one durable subscription. Call Close
@@ -196,7 +197,7 @@ func (w *PendingApprovalWatch) Recv() (PendingApprovalEvent, error) {
 }
 
 func projectPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event) (PendingApprovalEvent, error) {
-	out := PendingApprovalEvent{Kind: PendingApprovalEventOther, Cursor: cursor, RunID: ev.GetRunId()}
+	out := PendingApprovalEvent{Kind: PendingApprovalEventOther, Cursor: cursor, RunID: ev.GetRunId(), Message: EventToMsg(ev)}
 	switch ev.GetType() {
 	case "permission.ask":
 		approval, supported, err := approvalFromEvent(sessionID, cursor, ev)

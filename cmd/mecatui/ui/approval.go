@@ -52,6 +52,9 @@ func approvalSurfaceFor(m *Model) *approvalSurface {
 // current stream before returning the command, preserving the existing resolved
 // correlation and nil-stream behavior without exposing transport to the surface.
 func (m *Model) approvalSendCmd(askID string, verdict client.Verdict, guardrail *client.GuardrailApprovalScope, expectedRunID string) tea.Cmd {
+	if m.pendingRecovery != nil && askID == m.pendingRecovery.approval.AskID {
+		return m.resolvePendingApprovalCmd(verdict)
+	}
 	if authorizationStream := m.authorization.controlStream; authorizationStream != nil && m.authorization.runningControlGen == m.authorization.controlGen {
 		authorizationStream.MarkApprovalResolved(askID)
 		return func() tea.Msg {

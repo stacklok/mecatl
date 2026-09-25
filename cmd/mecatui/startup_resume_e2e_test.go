@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -461,4 +465,144 @@ func seedStartupResumeSession(ctx context.Context, t *testing.T, target, _ strin
 			t.Fatalf("receive seed turn: %v", err)
 		}
 	}
+}
+
+func TestNativePendingApprovalStartupRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		verdict   client.Verdict
+		wantRun   bool
+		finalTurn mockllm.Turn
+	}{
+		{name: "allow-once", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.TextTurn("continuation complete")},
+		{name: "allow-empty-model", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.EmptyTurn()},
+		{name: "allow-error-model", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.ErrorTurn(errors.New("bounded provider failure"))},
+		{name: "deny", verdict: client.VerdictDeny, finalTurn: mockllm.TextTurn("must not be called")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			workspace, storeDir := t.TempDir(), t.TempDir()
+			settings := filepath.Join(t.TempDir(), "operator.yaml")
+			if err := os.WriteFile(settings, []byte("permissions:\n  ask: [Write]\n"), 0o600); err != nil {
+				t.Fatalf("write permissions: %v", err)
+			}
+			provider := mockllm.New(
+				mockllm.ToolCallTurn(session.NewToolCall("write-1", "Write", []byte(`{"path":"approved.txt","content":"executed"}`))),
+				tc.finalTurn,
+			)
+			cfg := app.Config{
+				Workspace: workspace, StoreDir: storeDir, Model: "mock-model", MockProvider: provider,
+				Shell: "/bin/sh", Compaction: "heuristic", Tokenizer: "heuristic", PermissionConfigs: []string{settings},
+			}
+
+			target, built, grpcServer, lis := startPendingRecoveryServer(t, cfg)
+			conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatalf("dial first server: %v", err)
+			}
+			svc := mecatlv1.NewHarnessServiceClient(conn)
+			created, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			stream, err := svc.Converse(ctx)
+			if err != nil {
+				t.Fatalf("open converse: %v", err)
+			}
+			if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: created.GetSessionId(), Text: "write the file"}}}); err != nil {
+				t.Fatalf("send prompt: %v", err)
+			}
+			var originalRun, originalAsk string
+			for originalAsk == "" {
+				response, recvErr := stream.Recv()
+				if recvErr != nil {
+					t.Fatalf("receive initial ask: %v", recvErr)
+				}
+				event := response.GetEvent()
+				if event.GetType() == "permission.ask" {
+					originalRun, originalAsk = event.GetRunId(), event.GetAsk().GetAskId()
+				}
+			}
+
+			built.Close()
+			grpcServer.Stop()
+			_ = lis.Close()
+			_ = conn.Close()
+
+			target, built, grpcServer, lis = startPendingRecoveryServer(t, cfg)
+			defer func() {
+				built.Close()
+				grpcServer.Stop()
+				_ = lis.Close()
+			}()
+			cl, err := client.Dial(client.DialConfig{Server: target})
+			if err != nil {
+				t.Fatalf("dial restarted server: %v", err)
+			}
+			defer func() { _ = cl.Close() }()
+
+			selection, err := resolveStartupResume(ctx, cl, created.GetSessionId(), false)
+			if err != nil {
+				t.Fatalf("exact pending resume: %v", err)
+			}
+			if selection.Pending == nil || selection.Pending.RunID != originalRun || selection.Pending.AskID != originalAsk {
+				t.Fatalf("recovered correlation = %+v, want run %q ask %q", selection.Pending, originalRun, originalAsk)
+			}
+			if _, err := os.Stat(filepath.Join(workspace, "approved.txt")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("tool ran before owner verdict: %v", err)
+			}
+
+			watch, err := cl.WatchPendingApprovalRun(ctx, *selection.Pending)
+			if err != nil {
+				t.Fatalf("open exact continuation watch: %v", err)
+			}
+			defer watch.Close()
+			boundary, err := watch.Recv()
+			if err != nil || boundary.Kind != client.PendingApprovalEventBoundary {
+				t.Fatalf("establish replay/live boundary: event=%+v err=%v", boundary, err)
+			}
+			if err := cl.ResolvePendingApproval(ctx, *selection.Pending, tc.verdict); err != nil {
+				t.Fatalf("resolve pending approval: %v", err)
+			}
+			var sawToolResult bool
+			for {
+				event, recvErr := watch.Recv()
+				if recvErr != nil {
+					t.Fatalf("watch exact continuation: %v", recvErr)
+				}
+				if _, ok := event.Message.(client.ToolResultMsg); ok {
+					sawToolResult = true
+				}
+				if event.Kind == client.PendingApprovalEventTerminal {
+					break
+				}
+			}
+			_, statErr := os.Stat(filepath.Join(workspace, "approved.txt"))
+			if tc.wantRun {
+				if statErr != nil || !sawToolResult {
+					t.Fatalf("allow-once did not continue original tool: stat=%v tool-result=%v", statErr, sawToolResult)
+				}
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("deny executed original tool: stat=%v", statErr)
+			}
+		})
+	}
+}
+
+func startPendingRecoveryServer(t *testing.T, cfg app.Config) (string, *app.Built, *grpc.Server, net.Listener) {
+	t.Helper()
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("build pending recovery server: %v", err)
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		built.Close()
+		t.Fatalf("listen pending recovery server: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	mecatlv1.RegisterHarnessServiceServer(grpcServer, server.NewHarnessServer(built.Service))
+	go func() { _ = grpcServer.Serve(lis) }()
+	return lis.Addr().String(), built, grpcServer, lis
 }

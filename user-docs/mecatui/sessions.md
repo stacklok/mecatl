@@ -36,6 +36,30 @@ accounting. A chat with no saved context measurement shows an unknown value unti
 a completed turn establishes one. See [Session continuity](/features/session-continuity.md)
 for the storage and recovery behavior behind resume.
 
+### Recover a pending approval
+
+Use an exact session ID to reopen an owned main chat that stopped while waiting
+for an ordinary tool approval:
+
+```sh
+mecatui --resume <SESSION_ID>
+```
+
+When the server provides a complete durable event watch, `mecatui` displays the
+original tool, arguments, and reason. Choose **Allow once** or **Deny**. The
+client follows the same run and displays its later model messages and tool
+results. **Allow always** is unavailable during recovery.
+
+`--resume-latest` continues to exclude chats that are waiting for approval. A
+`--prompt` value remains in the composer as a draft and is not sent before or
+after your approval choice.
+
+Press `esc` before choosing to leave the approval pending. If the event history
+has a gap, the ask changed, the session is no longer waiting, or the server does
+not support durable watches, `mecatui` refuses recovery. Retry with the exact ID
+after checking the session. Plan approvals and guardrail reviews use their
+existing dedicated flows and cannot be recovered this way.
+
 To get the active session ID, run `/session` and press `c` to copy it. On a
 normal exit, `mecatui` also writes a machine-readable handoff to standard error:
 

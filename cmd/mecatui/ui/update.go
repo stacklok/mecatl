@@ -457,6 +457,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // overlays accrue (each helper returns handled=false for a non-matching msg, so
 // at most one consumes).
 func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mm, cmd, handled := m.updatePendingApproval(msg); handled {
+		return mm, cmd
+	}
 	// The open modal surface routes every non-key/wheel Msg through m.modal
 	// BEFORE the Model's generic reducer; handled=false falls through to the
 	// rest of the chain.
@@ -2250,6 +2253,13 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.onSuspend()
 	}
 
+	// Leaving before an owner choice closes only the client watch. The durable ask
+	// remains untouched and no run control is sent.
+	if m.pendingRecovery != nil && !m.pendingRecovery.resolved && key.Matches(msg, m.keys.Close) {
+		(&m).closePendingApprovalWatch()
+		return m, tea.Quit
+	}
+
 	// Help owns the remaining keys while open: its documented navigation and close
 	// controls act on the overlay and every ordinary key is swallowed.
 	if m.showHelp {
@@ -2459,7 +2469,7 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	// A clear command composed while running stays actionable if a permission ask
 	// opens before Enter is pressed. Route it ahead of the approval surface:
 	// ClearSession cancels the ask and must never become Allow/Deny/Learn.
-	if clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
+	if m.pendingRecovery == nil && clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
 		return m.dispatchBareBuiltin(m.prompt.Value())
 	}
 	cmd, handled, closed := m.modal.HandleKey(msg)
@@ -2673,6 +2683,7 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
 	m.admissionSubmission = nil
+	(&m).closePendingApprovalWatch()
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
@@ -2682,6 +2693,12 @@ func (m Model) quitNow() (tea.Model, tea.Cmd) {
 // onQuitKey implements the guarded ctrl+c exit behavior. The immediate exit is
 // shared with /quit so both paths cancel an active run before Bubble Tea exits.
 func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
+	if m.pendingRecovery != nil && m.pendingRecovery.resolved && !m.pendingRecovery.cancelled {
+		cmd := (&m).cancelPendingApprovalCmd()
+		m.statusMsg = "cancelling recovered run…"
+		m.refreshView()
+		return m, cmd
+	}
 	// Already armed → a second ctrl+c within the window: quit now. The fatal
 	// (dead-connection) screen also exits on a single press — there is no input to
 	// clear and no run to protect, so the guard would only add friction.

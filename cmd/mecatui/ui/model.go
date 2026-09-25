@@ -184,6 +184,9 @@ type Deps struct {
 	// tests. nil disables the live bridge (the ui still renders deliveries via the
 	// replay on a session switch/reload, just not live). *Client satisfies it.
 	LiveStream client.LiveStreamer
+	// PendingApprovals owns exact-run watch and control operations for an exact
+	// startup recovery. It is unused for ordinary continuation.
+	PendingApprovals PendingApprovalController
 	// MCPAuthorization is the distinct browser authorization surface. It never
 	// shares the permission-approval stream or controls.
 	MCPAuthorization client.MCPAuthorizationController
@@ -679,6 +682,7 @@ type Model struct {
 	// pre-declared tombstone field (surface.go).
 	modal           surface
 	pendingApproval *approvalResolvedIntent
+	pendingRecovery *pendingApprovalRecovery
 	// modelSwitchRequestToken correlates the asynchronous create-and-hydrate handoff.
 	// A stale result must not replace a session selected by a later lifecycle action.
 	modelSwitchRequestToken uint64
@@ -1157,6 +1161,18 @@ func New(deps Deps) Model {
 		m.startupAdopted = true
 		m.restartedThisRun = true
 		m.statusMsg = "continuing chat " + terminaltext.Sanitize(resume.Row.Title) + " — type to add a turn"
+		if resume.Pending != nil {
+			m.pendingRecovery = &pendingApprovalRecovery{approval: *resume.Pending}
+			m.phase = phaseConnecting
+			m.pendingInitialPrompt = ""
+			if deps.InitialPrompt != "" {
+				m.prompt.Rewrite(deps.InitialPrompt)
+				m.statusMsg = "initial prompt kept as a draft while approval recovery is pending"
+			} else {
+				m.statusMsg = "verifying pending approval recovery"
+			}
+			m.prompt.Blur()
+		}
 		m.refreshView()
 	}
 	return m
@@ -1356,6 +1372,9 @@ func (m Model) startupCmd() tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 	if m.deps.Resume != nil {
+		if m.pendingRecovery != nil {
+			return tea.Batch(m.sp.Tick, m.openPendingApprovalWatchCmd(), m.statusLineWaitCmd())
+		}
 		return tea.Batch(m.sp.Tick, func() tea.Msg { return startupResumeReadyMsg{} }, m.statusLineWaitCmd())
 	}
 	if m.deps.Models != nil {

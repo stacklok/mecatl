@@ -175,7 +175,8 @@ func TestPendingApprovalContinuationUsesRetainedCursorAndCloses(t *testing.T) {
 	}
 	defer watch.Close()
 	event, err := watch.Recv()
-	if err != nil || event.Kind != PendingApprovalEventAsk || event.Approval == nil || event.Approval.AskID != "ask-2" {
+	askMsg, projected := event.Message.(PermissionAskMsg)
+	if err != nil || event.Kind != PendingApprovalEventAsk || event.Approval == nil || event.Approval.AskID != "ask-2" || !projected || askMsg.AskID != "ask-2" {
 		t.Fatalf("event = %#v, err = %v", event, err)
 	}
 	watch.Close()
