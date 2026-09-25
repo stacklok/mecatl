@@ -276193,6 +276193,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790341979188,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e5039f8e64d7cfa6984c487cd977414ac9a1e2e6",
+          "message": "test(sdk): enforce SDK/TUI high-level parity (#1471) (#1917)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-25T15:18:58+02:00",
+          "tree_id": "62f8c73ac4bb9153af3cb009c1035ef8eede51e6",
+          "url": "https://github.com/stacklok/mecatl/commit/e5039f8e64d7cfa6984c487cd977414ac9a1e2e6"
+        },
+        "date": 1790343066250,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3316,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 106.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -362073,6 +362112,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790343063330,
+  "lastUpdate": 1790343066893,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
