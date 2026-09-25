@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,15 +19,20 @@ import (
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	openaioption "github.com/openai/openai-go/v3/option"
 
+	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
 	anthropicprovider "github.com/stacklok/mecatl/provider/anthropic"
 	openairesponse "github.com/stacklok/mecatl/provider/openai"
@@ -440,6 +446,86 @@ data: {"type":"response.completed","sequence_number":3,"response":{"id":"respons
 	if !strings.HasPrefix(active, "model-router-") || active == "invoking-conversation" || root != "invoking-conversation" {
 		t.Fatalf("router correlation = active %q root %q", active, root)
 	}
+}
+
+func TestRootSessionProviderCorrelation_Scenario3_ConfiguredRouterPreservesRoot(t *testing.T) {
+	ctx := context.Background()
+	type observation struct {
+		model        string
+		active, root session.SessionID
+	}
+	var (
+		mu  sync.Mutex
+		obs []observation
+	)
+	provider := correlationObservingProvider{inner: mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("c1", "Subagent", []byte(`{"prompt":"review the diff","agent":"reviewer"}`))),
+		mockllm.TextTurn(`{"category":"large"}`),
+		mockllm.TextTurn("CHILD SUMMARY"),
+		mockllm.TextTurn("parent done"),
+	), observe: func(ctx context.Context, r port.LLMRequest) {
+		active, _ := port.SessionIDFromContext(ctx)
+		root, _ := port.RootSessionIDFromContext(ctx)
+		mu.Lock()
+		obs = append(obs, observation{r.Model, active, root})
+		mu.Unlock()
+	}}
+	cfg := Config{
+		Model:                 "gpt-5",
+		RouterCategories:      routerTaxonomyCategories(),
+		RouterDefaultCategory: "small",
+	}
+	// An unpinned def is routable, so delegating to it consults the configured
+	// semantic router through the production per-session engine wiring.
+	assets := catalogAssets{agentReg: agents.NewRegistry([]agents.AgentDef{
+		{Name: "reviewer", Description: "reviewer specialist", Body: "REVIEWER-DEF-BODY"},
+	})}
+	factory := sessionEngineFactory(cfg, regForTest(provider, providerOpenAI, cfg.Model), provider, memstore.New(),
+		permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil), hookexec.New(nil), nil, prompt.RootAssembler{}, assets, nil)
+	built, err := factory(ctx, server.ProviderSelector{}, nil, server.ProfileDefault, "", session.ModeDefault)
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	defer func() { _ = built.Close() }()
+
+	// The parent's active ID differs from its inherited root, so a caller that reset
+	// the root to its immediate parent would be detectable at the classifier request.
+	sess := session.New("parent-active", session.ModeDefault,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
+		session.Limits{}, time.Unix(1, 0))
+	for range built.Engine.Run(port.WithRootSessionID(ctx, "inherited-root"), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go"}).Events() {
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(obs) != 4 {
+		t.Fatalf("recorded %d requests (%+v), want 4 (parent→classifier→child→parent)", len(obs), obs)
+	}
+	if obs[0].active != "parent-active" || obs[0].root != "inherited-root" {
+		t.Fatalf("parent correlation = active %q root %q", obs[0].active, obs[0].root)
+	}
+	if classifier := obs[1]; !strings.HasPrefix(string(classifier.active), "model-router-") || classifier.root != "inherited-root" {
+		t.Fatalf("configured router classifier correlation = active %q root %q, want model-router-* and inherited-root", classifier.active, classifier.root)
+	}
+	if obs[2].model != routerLarge || obs[2].root != "inherited-root" {
+		t.Fatalf("routed child = model %q root %q, want %q and inherited-root", obs[2].model, obs[2].root, routerLarge)
+	}
+}
+
+// correlationObservingProvider reports each request's context-carried correlation
+// before delegating, so composition tests can observe identities at the provider port.
+type correlationObservingProvider struct {
+	inner   port.LLMProvider
+	observe func(context.Context, port.LLMRequest)
+}
+
+func (p correlationObservingProvider) Capabilities() port.ProviderCapabilities {
+	return p.inner.Capabilities()
+}
+
+func (p correlationObservingProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.observe(ctx, req)
+	return p.inner.Stream(ctx, req)
 }
 
 func TestRootSessionProviderCorrelation_Scenario3_JevCarriesRoot(t *testing.T) {
