@@ -43,6 +43,7 @@ const chat = {
     return {
       capabilities: { image: true, manualCompaction: true, modelSelection: true },
       id: sessionId,
+      kind: "main",
       mode: "plan" as const,
       model: {
         contextWindow: "200000",
@@ -68,10 +69,26 @@ const chat = {
       complete: true,
       items: [
         {
-          capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+          capabilities: {
+            copyId: true,
+            copyIdReason: "",
+            delete: true,
+            deleteReason: "",
+            fork: true,
+            forkReason: "",
+            inspect: true,
+            inspectReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: true,
+            renameReason: "",
+            viewTranscript: true,
+            viewTranscriptReason: "",
+          },
           createdAt: "2026-09-16T12:00:00.000Z",
           debugTargetSessionId: "",
           id: "session-1",
+          kind: "main",
           modelId: "test-model",
           state: "idle",
           title: "First chat",
@@ -425,6 +442,73 @@ describe("chat routes", () => {
     await expect(fork.json()).resolves.toEqual({ id: "session-fork" });
     expect(clear.status).toBe(201);
     await expect(clear.json()).resolves.toEqual({ id: "session-clear" });
+  });
+
+  it("passes opaque worktree selectors only in explicit successor requests", async () => {
+    const clearSession = vi.fn().mockResolvedValue({ id: "clear-successor" });
+    const forkSession = vi.fn().mockResolvedValue({ id: "fork-successor" });
+    const selected = createApp({ chat: { ...chat, clearSession, forkSession } });
+    const send = (path: string, body: unknown) =>
+      selected.request(path, {
+        body: JSON.stringify(body),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+
+    expect(
+      (await send("/api/v1/sessions/source/clear", { worktreeSelector: "opaque-choice" })).status,
+    ).toBe(201);
+    expect(clearSession).toHaveBeenCalledWith("source", { worktreeSelector: "opaque-choice" });
+    expect(
+      (
+        await send("/api/v1/sessions/source/fork", {
+          model: { id: "model", providerId: "provider" },
+          reasoningEffort: "default",
+          worktreeSelector: "opaque-choice",
+        })
+      ).status,
+    ).toBe(201);
+    expect(forkSession).toHaveBeenCalledWith("source", {
+      model: { id: "model", providerId: "provider" },
+      reasoningEffort: "default",
+      worktreeSelector: "opaque-choice",
+    });
+    expect((await send("/api/v1/sessions/source/clear", { worktreeSelector: "" })).status).toBe(
+      400,
+    );
+    expect(clearSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps failed successor selectors out of problem details", async () => {
+    const failure = new MecatlError("selector opaque-choice at /private/root is stale", {
+      code: "placement_selector_stale",
+      status: 9,
+      transport: "grpc",
+    });
+    const forkSession = vi.fn().mockRejectedValue(failure);
+    const clearSession = vi.fn().mockRejectedValue(failure);
+    const selected = createApp({ chat: { ...chat, clearSession, forkSession } });
+    const send = (path: string, body: unknown) =>
+      selected.request(path, {
+        body: JSON.stringify(body),
+        headers: { ...csrfHeaders(), "Content-Type": "application/json" },
+        method: "POST",
+      });
+
+    const clear = await send("/api/v1/sessions/source/clear", {
+      worktreeSelector: "opaque-choice",
+    });
+    const fork = await send("/api/v1/sessions/source/fork", {
+      model: { id: "model", providerId: "provider" },
+      reasoningEffort: "default",
+      worktreeSelector: "opaque-choice",
+    });
+    for (const response of [clear, fork]) {
+      expect(response.status).toBe(409);
+      expect(await response.text()).not.toContain("opaque-choice");
+    }
+    expect(clearSession).toHaveBeenCalledTimes(1);
+    expect(forkSession).toHaveBeenCalledTimes(1);
   });
 
   it("streams durable session activity", async () => {
