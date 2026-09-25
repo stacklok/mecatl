@@ -68,6 +68,7 @@ func run() error {
 	slog.SetDefault(logger)
 	diag := slogdiag.NewFromLogger(logger)
 	cfg.diagnostics = diag
+	warnDeprecatedPermissionFlags(diag, cfg)
 
 	ctx, stop := signalCtx()
 	defer stop()

@@ -182,10 +182,11 @@ var flagMetaByFlag = map[string]flagMeta{
 	"no-shell": {group: groupTools, common: true, acp: acpInclude},
 
 	// ── Posture & permissions (both) ─────────────────────────────────────
-	"posture":                   {group: groupPermissions, common: true, acp: acpInclude},
+	"permission-mode":           {group: groupPermissions, common: true, acp: acpInclude},
+	"posture":                   {group: groupPermissions, common: false, acp: acpInclude},
 	"deployment-id":             {group: groupServer, common: false, acp: acpInclude},
 	"cors-origins":              {group: groupSecurity, common: false, acp: acpExclude},
-	"yolo":                      {group: groupPermissions, common: true, acp: acpInclude},
+	"yolo":                      {group: groupPermissions, common: false, acp: acpInclude},
 	"trust-project":             {group: groupPermissions, common: true, acp: acpInclude},
 	"permissions-conventional":  {group: groupPermissions, common: true, acp: acpInclude},
 	"import-claude-permissions": {group: groupPermissions, common: false, acp: acpInclude},

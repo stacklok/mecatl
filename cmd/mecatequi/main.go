@@ -24,7 +24,7 @@
 // (strict), the main engine asks on every mutate — so a strict + headless run that
 // reaches a mutate is CANCELLED on that ask (run.Cancel, drain-to-close) and exits 1
 // with an actionable "no approver" message naming the fix. The intended CI posture is
-// therefore --posture auto (allow-all, child injection-defense ON) or trusted/yolo,
+// therefore --permission-mode auto (allow-all, child injection-defense ON) or trusted/yolo,
 // where the main engine does not ask. --timeout is the orthogonal wall-clock backstop.
 // See run()'s cancel-on-ask path and flags.posture.
 package main
@@ -69,6 +69,7 @@ func realMain(argv []string, stdout, stderr io.Writer) int {
 	}
 	emitAuthFileWarning(stderr, f.providerCredentials.AuthFileWarning)
 	diag := newDiagnostics()
+	warnDeprecatedPermissionFlags(diag, f)
 
 	// Observability (issue #343, ADR 0098): OPT-IN OTLP push. Built right after
 	// flag parse so the flush-on-exit defer covers EVERY exit path (setup-failure
@@ -188,7 +189,8 @@ func verdictLine(sum Summary, noApprover, timedOut bool) string {
 		return fmt.Sprintf("mecatequi: TIMED OUT — stop=%s, %s; the run exceeded --timeout and was cancelled", stop, files)
 	case noApprover:
 		return "mecatequi: NO APPROVER — a permission approval was requested but none is attached (--headless); " +
-			"re-run with --posture auto|trusted|yolo or add allow rules. stop=" + stop
+			"re-run with --permission-mode auto|yolo (plus --guardrails-model <model> or --guardrails off), " +
+			"or add allow rules (--permission-mode trusted --trust-project honours the repo's). stop=" + stop
 	default:
 		return fmt.Sprintf("mecatequi: done — stop=%s, %s", stop, files)
 	}

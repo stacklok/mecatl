@@ -118,7 +118,7 @@ type SummaryUsage struct {
 // runOutcome is the result of run(): the Summary, the captured event stream (the
 // durable-log source), and NoApprover — set when the run was cancelled because the MAIN
 // engine asked for a permission approval and mecatequi has no approver attached. The
-// caller uses NoApprover to print the actionable "re-run with --posture …" guidance and
+// caller uses NoApprover to print the actionable "re-run with --permission-mode …" guidance and
 // to distinguish a no-approver cancel from an ordinary cancel in the operator message
 // (the StopReason is "cancelled" in both, honestly).
 type runOutcome struct {

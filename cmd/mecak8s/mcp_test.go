@@ -60,7 +60,7 @@ func TestMecak8sBuildDiscoversOperatorMCPSettings(t *testing.T) {
 	if err := os.WriteFile(explicit, []byte("mcp:\n  mode: global\n  servers:\n    - name: explicit\n      url: https://mcp.example/mcp\n      auth: {mode: none}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err = parseFlags([]string{"--permission-config", explicit})
+	cfg, err = parseFlags([]string{"--permission-config", explicit, "--guardrails=off"})
 	if err != nil {
 		t.Fatal(err)
 	}
