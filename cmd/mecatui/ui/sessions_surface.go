@@ -1058,8 +1058,6 @@ func (s *sessionsState) pageCmd() tea.Cmd {
 	return client.ListSessionsPageCmd(s.pageCtx, s.pager, s.nextCursor, s.pageRequestToken)
 }
 
-const sessionsVisibleRows = 12
-
 func filterSessionsByTabWithActivity(sessions []client.SessionListItem, tab sessionsTab, activityInventory bool) []client.SessionListItem {
 	out := make([]client.SessionListItem, 0, len(sessions))
 	for _, s := range sessions {
@@ -1288,7 +1286,7 @@ func renderSessionsPanelSized(th theme.Theme, st *sessionsState, caps client.Cap
 	if status != "" {
 		fixed++
 	}
-	st.rowBudget = min(sessionsVisibleRows, height-fixed)
+	st.rowBudget = height - fixed
 	if st.rowBudget < 1 || width < 4 {
 		st.rowBudget, st.compact = 0, true
 		closeHint := hk.closeOnly
@@ -1470,7 +1468,7 @@ func renderSessionsPanelState(th theme.Theme, st sessionsState, hk helpKeys) (st
 		}
 		return th.Style("errorText").Render("could not list sessions") + "\n" + th.Style("muted").Render(hint), true
 	case len(st.filtered) == 0:
-		message := "no " + []string{"chats", "scheduled runs", "child runs", "other sessions"}[st.tab] + " found"
+		message := "no " + []string{"chats", "drafts", "scheduled runs", "child runs", "other sessions"}[st.tab] + " found"
 		if st.filter.Value() != "" {
 			message = "no matches — clear search to see all"
 		}

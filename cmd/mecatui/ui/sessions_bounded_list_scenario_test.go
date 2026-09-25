@@ -39,7 +39,7 @@ func sessionsScenarioKey(text string) tea.KeyPressMsg {
 }
 
 func TestMecatuiSessionsBoundedList_Scenario1_GeometryPresentationAndIndicators(t *testing.T) {
-	for _, tc := range []struct{ width, height int }{{0, 10}, {20, 0}, {2, 8}, {8, 3}, {24, 8}, {56, 20}} {
+	for _, tc := range []struct{ width, height int }{{0, 10}, {20, 0}, {2, 8}, {8, 3}, {24, 8}, {56, 20}, {56, 24}} {
 		st := sessionsScenarioState(sessionsScenarioRows(20))
 		st.loadState = sessionsLoadingMore
 		got, _ := st.Render(tc.width, tc.height)
@@ -65,8 +65,8 @@ func TestMecatuiSessionsBoundedList_Scenario1_GeometryPresentationAndIndicators(
 			continue
 		}
 		view := st.list.ViewWithIndicators(st.rowBudget, false)
-		if st.rowBudget > 12 || len(view.Rows)+(boolInt(view.Above > 0)+boolInt(view.Below > 0)) > 12 {
-			t.Fatalf("body exceeded twelve physical rows: budget=%d view=%+v", st.rowBudget, view)
+		if len(view.Rows)+(boolInt(view.Above > 0)+boolInt(view.Below > 0)) > st.rowBudget {
+			t.Fatalf("body exceeded its physical row budget: budget=%d view=%+v", st.rowBudget, view)
 		}
 		if view.Below == 0 || !strings.Contains(ansi.Strip(got), "↓") {
 			t.Fatalf("missing bounded-list overflow indicator: %+v\n%s", view, ansi.Strip(got))
@@ -111,6 +111,35 @@ func TestMecatuiSessionsBoundedList_Scenario1_GeometryPresentationAndIndicators(
 	got, _ := st.Render(40, 8)
 	if plain := ansi.Strip(got); strings.ContainsAny(plain, "\t\u202e") || !strings.Contains(plain, "unsafenamenext") || st.list.CursorID() != "raw-id" {
 		t.Fatalf("terminal-safe fields or opaque ID changed: %q id=%q", plain, st.list.CursorID())
+	}
+}
+
+func TestMecatuiSessionsBoundedList_Scenario1_EmptyTabLabelsDoNotPanic(t *testing.T) {
+	for _, tc := range []struct {
+		activity bool
+		labels   []string
+	}{
+		{false, []string{"no chats found", "no scheduled runs found", "no child runs found", "no other sessions found"}},
+		{true, []string{"no chats found", "no drafts found", "no scheduled runs found", "no child runs found", "no other sessions found"}},
+	} {
+		st := sessionsScenarioState(nil)
+		st.activityInventory = tc.activity
+		for _, want := range tc.labels {
+			got, _ := st.Render(60, 10)
+			if !strings.Contains(ansi.Strip(got), want) {
+				t.Fatalf("activity=%t tab=%d rendered %q, want %q", tc.activity, st.tab, ansi.Strip(got), want)
+			}
+			st.nextTab()
+			st.syncFilter()
+		}
+	}
+}
+
+func TestMecatuiSessionsBoundedList_Scenario1_UsesAllRowsAfterChrome(t *testing.T) {
+	st := sessionsScenarioState(sessionsScenarioRows(20))
+	st.loadState = sessionsLoadingMore
+	if _, _ = st.Render(56, 24); st.rowBudget != 19 {
+		t.Fatalf("list body budget=%d, want all 19 rows remaining after fixed chrome", st.rowBudget)
 	}
 }
 
