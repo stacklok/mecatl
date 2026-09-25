@@ -15,7 +15,7 @@ qualification and is not released support. Linux arm64, remote placement, multi-
 sharing, and non-Git sources are not available. Recurring and one-shot schedules are
 supported on the same repository-scoped VM and use durable logical worktrees.
 
-Install and verify published, release-stamped `mecatui` **and** `mecated` binaries before
+[Install and verify](../../install.md) published, release-stamped `mecatui` **and** `mecated` binaries before
 use. `mecatui` runs the embedded server; `mecated` supplies the local `microvm doctor`,
 `status`, and `delete` administration commands and does not need to remain running.
 Source builds are for the separate repository-developer workflow, not ordinary local

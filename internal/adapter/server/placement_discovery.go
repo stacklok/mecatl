@@ -37,19 +37,19 @@ func (s *Service) ownedSession(ctx context.Context, id session.SessionID) (*sess
 	return sess, nil
 }
 
-func (s *Service) ownedSessionBinding(ctx context.Context, id session.SessionID) (*session.Session, PlacementBinding, func(), error) {
+func (s *Service) ownedSessionBinding(ctx context.Context, id session.SessionID) (*session.Session, PlacementBinding, error) {
 	sess, err := s.ownedSession(ctx, id)
 	if err != nil {
-		return nil, PlacementBinding{}, nil, err
+		return nil, PlacementBinding{}, err
 	}
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
-		return sess, PlacementBinding{}, func() {}, nil
+		return sess, PlacementBinding{}, nil
 	}
-	binding, release, err := s.borrowSessionPlacement(ctx, sess)
+	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
 	if err != nil {
-		return nil, PlacementBinding{}, nil, err
+		return nil, PlacementBinding{}, err
 	}
-	return sess, binding, release, nil
+	return sess, binding, nil
 }
 
 // ownedSessionEnvironment is the long-lived environment path used by team
@@ -57,9 +57,13 @@ func (s *Service) ownedSessionBinding(ctx context.Context, id session.SessionID)
 // uses ownedSessionBinding directly so it can release request-scoped provider
 // resources after the read completes.
 func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.SessionID) (*session.Session, tool.Environment, func(), error) {
-	sess, binding, release, err := s.ownedSessionBinding(ctx, id)
+	sess, binding, err := s.ownedSessionBinding(ctx, id)
 	if err != nil {
 		return nil, tool.Environment{}, nil, err
+	}
+	release := func() {}
+	if binding.Close != nil {
+		release = func() { _ = binding.Close() }
 	}
 	return sess, binding.Environment, release, nil
 }
@@ -102,11 +106,13 @@ func (s *Service) ListCommandsForSession(ctx context.Context, id session.Session
 // enumeration, then issues caller/source-scoped selectors without retaining
 // them. A no-FS source is an empty result and invokes no lister.
 func (s *Service) ListWorktreesForSession(ctx context.Context, id session.SessionID) ([]ScopedWorktree, error) {
-	sess, _, release, err := s.ownedSessionBinding(ctx, id)
+	sess, binding, err := s.ownedSessionBinding(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	defer release()
+	if binding.Close != nil {
+		defer func() { _ = binding.Close() }()
+	}
 	if sess.EnvironmentRef.Kind == session.EnvKindNoFS {
 		return nil, nil
 	}

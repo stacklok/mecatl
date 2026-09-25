@@ -431,10 +431,10 @@ func runWithOptions(argv []string, options runOptions) error {
 	var finalModel tea.Model
 	var runErr error
 	if options.runProgram != nil {
+		deps.TerminalTitle = title.Set
 		finalModel, runErr = options.runProgram(ctx, ui.New(deps))
 	} else {
-		prog := newMecatuiProgram(ctx, deps, title)
-		finalModel, runErr = prog.Run()
+		finalModel, runErr = newMecatuiProgram(ctx, deps, title).Run()
 	}
 	interrupted := ctx.Err() != nil
 	if err := closeTerminalTitle(title); runErr == nil && err != nil {
