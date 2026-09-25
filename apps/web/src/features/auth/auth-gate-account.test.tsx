@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // @vitest-environment happy-dom
 
+import { client as apiClient } from "@mecatl-studio/contracts/client";
 import type { GetAuthSessionResponse } from "@mecatl-studio/contracts/generated";
-import { getAuthSessionOptions, listSessionsQueryKey } from "@mecatl-studio/contracts/query";
+import {
+  getAuthSessionOptions,
+  getPublicStatusOptions,
+  listSessionsQueryKey,
+} from "@mecatl-studio/contracts/query";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { clearUserScopedStorage } from "../../lib/account-storage";
+import {
+  clearUserScopedStorage,
+  listUserScopedKeys,
+  readUserScopedItem,
+  writeUserScopedItem,
+} from "../../lib/account-storage";
 import { useDisabledModels } from "../../lib/model-preferences";
 import { usePanelWidth } from "../../lib/panel-width";
 import {
@@ -18,9 +28,13 @@ import {
   useUserDisplayName,
 } from "../../lib/profile-preferences";
 import { useChatFolders } from "../chat/chat-folders";
+import { useQueuedMessages } from "../chat/chat-queue";
+import { readFailedRun } from "../chat/failed-run-storage";
 import { useLocalCanvas } from "../chat/local-canvas";
 import { registerThreadSession, useThreadMap, useThreadSessionIds } from "../chat/thread-map";
 import { AuthGate, authLoginUrl } from "./auth-gate";
+
+const initialApiConfig = apiClient.getConfig();
 
 it("keeps a large arrival seed in its original tab instead of return_to", () => {
   const returnTo = `/workspace/chat?sessionId=s1&prompt=${"x".repeat(3_000)}&send=1#draft`;
@@ -36,6 +50,7 @@ it("keeps a large arrival seed in its original tab instead of return_to", () => 
 
 afterEach(() => {
   vi.restoreAllMocks();
+  apiClient.setConfig({ baseUrl: initialApiConfig.baseUrl, fetch: initialApiConfig.fetch });
   cleanup();
   clearUserScopedStorage();
   document.documentElement.style.removeProperty("--ui-scale");
@@ -48,6 +63,190 @@ function AccountData() {
     </span>
   );
 }
+
+function CrossTabAccountData({ client }: { client: QueryClient }) {
+  const folders = useChatFolders();
+  const queue = useQueuedMessages("same");
+  const failed = readFailedRun("same");
+  const sessions = client.getQueryData<{ items: { title: string }[] }>(listSessionsQueryKey());
+  return (
+    <pre data-testid="cross-tab-data">
+      {JSON.stringify({
+        failedPrompt: failed?.prompt,
+        folders: folders.state.folders.map((folder) => folder.name),
+        queuedPrompts: queue.items.map((item) => item.text),
+        sessionTitle: sessions?.items[0]?.title,
+      })}
+    </pre>
+  );
+}
+
+function crossTabData() {
+  return JSON.parse(screen.getByTestId("cross-tab-data").textContent ?? "null") as Record<
+    string,
+    unknown
+  >;
+}
+
+async function mountStaleAliceTab() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const folder = (owner: string) =>
+    JSON.stringify({
+      assignments: { same: `${owner}-folder` },
+      folders: [{ id: `${owner}-folder`, name: `${owner} folder` }],
+    });
+  const queue = (owner: string) =>
+    JSON.stringify([{ createdAt: 1, id: `${owner}-queue`, text: `${owner} queue` }]);
+  window.localStorage.setItem("studio.account", "alice");
+  window.localStorage.setItem("studio.chat.folders", folder("Alice"));
+  window.localStorage.setItem("studio.chat.queue.same", queue("Alice"));
+  window.sessionStorage.setItem("studio.account", "alice");
+  window.sessionStorage.setItem(
+    "studio.chat.failedRun.same",
+    JSON.stringify({
+      message: "failed",
+      prompt: "Alice failed prompt",
+    }),
+  );
+  window.localStorage.setItem("mecatl-studio-theme", "dark");
+  let resolveAuth!: (response: Response) => void;
+  const authReply = new Promise<Response>((resolve) => {
+    resolveAuth = resolve;
+  });
+  const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
+    const pathname = new URL(
+      input instanceof Request ? input.url : String(input),
+      window.location.href,
+    ).pathname;
+    if (pathname === "/api/v1/auth/session") return authReply;
+    if (pathname === "/api/v1/status")
+      return Response.json({ connection: "reachable", signInRequired: false });
+    throw new Error(`Unexpected request: ${pathname}`);
+  });
+  apiClient.setConfig({ baseUrl: window.location.origin, fetch });
+  client.setQueryData(getAuthSessionOptions().queryKey, authenticated("alice"));
+  client.setQueryData(listSessionsQueryKey(), {
+    complete: true,
+    items: [{ id: "same", title: "Alice session" }],
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <AuthGate>
+        <CrossTabAccountData client={client} />
+      </AuthGate>
+    </QueryClientProvider>,
+  );
+  await waitFor(() =>
+    expect(crossTabData()).toMatchObject({
+      failedPrompt: "Alice failed prompt",
+      folders: ["Alice folder"],
+      queuedPrompts: ["Alice queue"],
+      sessionTitle: "Alice session",
+    }),
+  );
+
+  // Bob's tab now owns shared local storage; Alice's session storage is tab-local.
+  window.localStorage.setItem("studio.account", "bob");
+  window.localStorage.setItem("studio.chat.folders", folder("Bob"));
+  window.localStorage.setItem("studio.chat.queue.same", queue("Bob"));
+  await act(async () =>
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "studio.account",
+        oldValue: "alice",
+        newValue: "bob",
+        storageArea: window.localStorage,
+      }),
+    ),
+  );
+  expect(screen.queryByTestId("cross-tab-data")).toBeNull();
+  expect(client.getQueryData(listSessionsQueryKey())).toBeUndefined();
+  expect(window.sessionStorage.getItem("studio.chat.failedRun.same")).toBeNull();
+  writeUserScopedItem("studio.chat.folders", "Alice's stale write");
+  writeUserScopedItem("studio.chat.queue.same", "Alice's stale queue");
+  expect(window.localStorage.getItem("studio.account")).toBe("bob");
+  expect(window.localStorage.getItem("studio.chat.folders")).toBe(folder("Bob"));
+  expect(window.localStorage.getItem("studio.chat.queue.same")).toBe(queue("Bob"));
+  expect(readUserScopedItem("studio.chat.folders")).toBeNull();
+  expect(listUserScopedKeys("studio.chat.queue.")).toEqual([]);
+  expect(window.localStorage.getItem("mecatl-studio-theme")).toBe("dark");
+  expect(
+    fetch.mock.calls.some(
+      ([input]) =>
+        new URL(input instanceof Request ? input.url : String(input), window.location.href)
+          .pathname === "/api/v1/auth/session",
+    ),
+  ).toBe(true);
+  return { client, resolveAuth };
+}
+
+it("preserves Bob's marked shared data through Alice's storage event and Bob's auth refetch", async () => {
+  const { client, resolveAuth } = await mountStaleAliceTab();
+  resolveAuth(Response.json(authenticated("bob")));
+  await waitFor(() =>
+    expect(crossTabData()).toMatchObject({ folders: ["Bob folder"], queuedPrompts: ["Bob queue"] }),
+  );
+  expect(crossTabData()).not.toHaveProperty("failedPrompt");
+  expect(crossTabData()).not.toHaveProperty("sessionTitle");
+  expect(window.localStorage.getItem("studio.account")).toBe("bob");
+  expect(window.localStorage.getItem("studio.chat.folders")).toContain("Bob folder");
+  expect(window.localStorage.getItem("studio.chat.queue.same")).toContain("Bob queue");
+  client.clear();
+});
+
+it.each([
+  ["missing account", Response.json({ mode: "oidc", status: "authenticated" })],
+  ["failed check", new Response("unavailable", { status: 503 })],
+  ["stale Alice account", Response.json(authenticated("alice"))],
+])("keeps Bob's shared data quarantined after a %s auth refetch", async (_case, response) => {
+  const { client, resolveAuth } = await mountStaleAliceTab();
+  resolveAuth(response);
+  await waitFor(() =>
+    expect(client.getQueryState(getAuthSessionOptions().queryKey)?.fetchStatus).toBe("idle"),
+  );
+  expect(screen.queryByTestId("cross-tab-data")).toBeNull();
+  expect(client.getQueryData(listSessionsQueryKey())).toBeUndefined();
+  expect(window.localStorage.getItem("studio.account")).toBe("bob");
+  expect(window.localStorage.getItem("studio.chat.folders")).toContain("Bob folder");
+  expect(window.localStorage.getItem("studio.chat.queue.same")).toContain("Bob queue");
+  client.clear();
+});
+
+it("finishes a peer sign-out's unmarked account cleanup", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => new Promise<Response>(() => {}));
+  apiClient.setConfig({ baseUrl: window.location.origin, fetch });
+  client.setQueryData(getAuthSessionOptions().queryKey, authenticated("alice"));
+  window.localStorage.setItem("studio.account", "alice");
+  window.localStorage.setItem("studio.chat.folders", "Alice's folder");
+  window.sessionStorage.setItem("studio.account", "alice");
+  window.sessionStorage.setItem("studio.chat.failedRun.same", "Alice's failed prompt");
+  render(
+    <QueryClientProvider client={client}>
+      <AuthGate>
+        <AccountData />
+      </AuthGate>
+    </QueryClientProvider>,
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId("account-data").textContent).toBe("Alice's folder"),
+  );
+  window.localStorage.removeItem("studio.account");
+  await act(async () =>
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "studio.account",
+        oldValue: "alice",
+        newValue: null,
+        storageArea: window.localStorage,
+      }),
+    ),
+  );
+  expect(screen.queryByTestId("account-data")).toBeNull();
+  expect(window.localStorage.getItem("studio.chat.folders")).toBeNull();
+  expect(window.sessionStorage.getItem("studio.chat.failedRun.same")).toBeNull();
+  client.clear();
+});
 
 function ScopedAccountData() {
   const userName = useUserDisplayName();
@@ -118,9 +317,14 @@ function authenticated(account: string): GetAuthSessionResponse {
 }
 
 it("drops account data and prior BFF snapshots before the next account renders", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_000_000);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const authKey = getAuthSessionOptions().queryKey;
   client.setQueryData(authKey, authenticated("alice"));
+  client.setQueryData(getPublicStatusOptions().queryKey, {
+    connection: "reachable",
+    signInRequired: false,
+  });
   client.setQueryData(listSessionsQueryKey(), {
     complete: true,
     items: [{ id: "same", title: "Alice" }],
@@ -128,8 +332,8 @@ it("drops account data and prior BFF snapshots before the next account renders",
   window.localStorage.setItem("studio.account", "alice");
   window.sessionStorage.setItem("studio.account", "alice");
   window.localStorage.setItem("studio.chat.folders", "Alice's folder");
-  window.sessionStorage.setItem("studio.chat.failed.same", "Alice's failed prompt");
-  window.localStorage.setItem("theme", "dark");
+  window.sessionStorage.setItem("studio.chat.failedRun.same", "Alice's failed prompt");
+  window.localStorage.setItem("mecatl-studio-theme", "dark");
 
   render(
     <QueryClientProvider client={client}>
@@ -142,9 +346,9 @@ it("drops account data and prior BFF snapshots before the next account renders",
 
   client.setQueryData(authKey, authenticated("bob"));
   await waitFor(() => expect(screen.getByTestId("account-data").textContent).toBe("cleared"));
-  expect(window.sessionStorage.getItem("studio.chat.failed.same")).toBeNull();
+  expect(window.sessionStorage.getItem("studio.chat.failedRun.same")).toBeNull();
   expect(client.getQueryData(listSessionsQueryKey())).toBeUndefined();
-  expect(window.localStorage.getItem("theme")).toBe("dark");
+  expect(window.localStorage.getItem("mecatl-studio-theme")).toBe("dark");
   client.clear();
 });
 
@@ -157,6 +361,10 @@ it("quarantines every account-scoped caller after partial removal, including sto
   });
   const oldThreads = JSON.stringify({ root: { sessionId: "alice-thread" } });
   client.setQueryData(authKey, authenticated("alice"));
+  client.setQueryData(getPublicStatusOptions().queryKey, {
+    connection: "reachable",
+    signInRequired: false,
+  });
   for (const [key, value] of Object.entries({
     "studio.account": "alice",
     "studio.profile.user-name": "Alice",
@@ -176,7 +384,7 @@ it("quarantines every account-scoped caller after partial removal, including sto
     window.localStorage.setItem(key, value);
   }
   window.sessionStorage.setItem("studio.account", "alice");
-  window.localStorage.setItem("theme", "dark");
+  window.localStorage.setItem("mecatl-studio-theme", "dark");
   initializeProfilePreferences();
 
   render(
@@ -230,7 +438,7 @@ it("quarantines every account-scoped caller after partial removal, including sto
   });
   expect(window.localStorage.getItem("studio.profile.user-name")).toBe("Alice");
   expect(window.localStorage.getItem("studio.account")).not.toBe("bob");
-  expect(window.localStorage.getItem("theme")).toBe("dark");
+  expect(window.localStorage.getItem("mecatl-studio-theme")).toBe("dark");
 
   act(() => {
     window.dispatchEvent(

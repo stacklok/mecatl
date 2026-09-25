@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearUserScopedStorage,
+  quarantinePeerAccount,
   readUserScopedItem,
   reconcileAccount,
   writeUserScopedItem,
@@ -76,14 +77,45 @@ describe("account-scoped browser storage", () => {
   });
 
   it("uses the session account marker when another tab updated local storage", () => {
-    const local = memoryStore({ "studio.account": "bob" });
+    const local = memoryStore({
+      "studio.account": "bob",
+      "studio.chat.folders": "Bob's folder",
+      "studio.chat.queue.same": "Bob's queued prompt",
+    });
     const session = memoryStore({
       "studio.account": "alice",
       "studio.chat.failedRun.s1": "alice-failure",
     });
 
     expect(reconcileAccount("bob", local, session)).toBe(true);
+    expect(local.data.get("studio.account")).toBe("bob");
+    expect(local.data.get("studio.chat.folders")).toBe("Bob's folder");
+    expect(local.data.get("studio.chat.queue.same")).toBe("Bob's queued prompt");
     expect([...session.data.entries()]).toEqual([["studio.account", "bob"]]);
+  });
+
+  it("blocks stale writes and uses memory when this tab cannot clear its session store", () => {
+    const local = memoryStore({
+      "studio.account": "bob",
+      "studio.chat.folders": "Bob's folder",
+      "studio.chat.queue.same": "Bob's queued prompt",
+    });
+    const session = memoryStore(
+      { "studio.account": "alice", "studio.chat.failedRun.same": "Alice's failed prompt" },
+      { remove: true },
+    );
+    quarantinePeerAccount(local, session);
+    writeUserScopedItem("studio.chat.queue.same", "Alice's stale write", local);
+    expect(local.data.get("studio.chat.queue.same")).toBe("Bob's queued prompt");
+    expect(readUserScopedItem("studio.chat.folders", local)).toBeNull();
+    expect(reconcileAccount("bob", local, session)).toBe(true);
+    expect(readUserScopedItem("studio.chat.folders", local)).toBeNull();
+    expect(readUserScopedItem("studio.chat.failedRun.same", session)).toBeNull();
+    writeUserScopedItem("studio.chat.queue.same", "Bob's memory draft", local);
+    expect(readUserScopedItem("studio.chat.queue.same", local)).toBe("Bob's memory draft");
+    expect(local.data.get("studio.account")).toBe("bob");
+    expect(local.data.get("studio.chat.folders")).toBe("Bob's folder");
+    expect(session.data.get("studio.chat.failedRun.same")).toBe("Alice's failed prompt");
   });
 
   it("quarantines a stale tab before its account-change storage event", async () => {

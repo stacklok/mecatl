@@ -10,7 +10,7 @@ import {
 } from "../../components/shell/connection-status-banner-state";
 import { GlobalStatusSlot } from "../../components/shell/global-status-slot";
 import { Button } from "../../components/ui/button";
-import { accountStorageKey } from "../../lib/account-storage";
+import { accountStorageKey, sharedMarkerIsAbsent } from "../../lib/account-storage";
 import { onAuthenticationRequired, setRequestRecoveryState } from "../../lib/api-client";
 import { initializeProfilePreferences } from "../../lib/profile-preferences";
 import { AuthRecoveryContext, useAuthRecovery } from "./auth-recovery-context";
@@ -98,7 +98,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (session.isPending) return;
-    const observation = `${session.status}:${session.dataUpdatedAt}:${session.errorUpdatedAt}`;
+    // Query updates can share a millisecond; include the identity facts.
+    const account = session.data?.status === "authenticated" ? session.data.account : "";
+    const observation = `${session.status}:${session.dataUpdatedAt}:${session.errorUpdatedAt}:${session.data?.mode}:${session.data?.status}:${account}`;
     if (processedSession.current === observation) return;
     processedSession.current = observation;
     if (session.isError || !session.data) {
@@ -134,9 +136,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== accountStorageKey || event.newValue === recoveryRef.current.account) return;
-      // A peer tab explicitly signed out or changed account. Unlike an
-      // expired session, its old workspace must disappear immediately.
-      applyCheck({ kind: "signed-out" });
+      // A peer may already have written the new account's shared data.
+      // A confirmed absent marker is an unmarked sign-out that needs cleanup.
+      applyCheck(
+        event.newValue === null && sharedMarkerIsAbsent()
+          ? { kind: "signed-out" }
+          : { kind: "peer-account-changed" },
+      );
       void session.refetch();
       void status.refetch();
     };

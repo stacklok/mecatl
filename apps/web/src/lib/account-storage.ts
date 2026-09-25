@@ -15,6 +15,7 @@ const volatileItems = new Map<string, string>();
 const volatileWrites = new Set<string>();
 let volatileAccount: string | undefined;
 let quarantined = false;
+let peerQuarantined = false;
 let accountStore: Store | undefined;
 
 type Store = Pick<Storage, "getItem" | "key" | "length" | "removeItem" | "setItem">;
@@ -118,6 +119,7 @@ function markerAccess(store: Pick<Storage, "getItem"> | null | undefined): Accou
 
 /** Recheck the shared marker at the storage seam; storage has no cross-tab CAS. */
 function accountAccess(store: Pick<Storage, "getItem"> | null | undefined): AccountAccess {
+  if (peerQuarantined) return "blocked";
   if (volatileAccount === undefined) return "verified";
   // A failed cleanup has already detached this page from both physical stores.
   if (quarantined) return "memory";
@@ -135,8 +137,42 @@ export function clearUserScopedStorage(
   const sessionCleared = sessionStore === store ? localCleared : clearStore(sessionStore);
   resetVolatileState();
   accountStore = undefined;
+  peerQuarantined = false;
   quarantined = !localCleared || !sessionCleared;
   if (quarantined) markCleanupPending(store, sessionStore);
+}
+
+/** A peer owns the shared marker now; discard only this tab's data before auth is rechecked. */
+export function quarantinePeerAccount(
+  store: Store | undefined = browserStorage(),
+  sessionStore: Store | undefined = browserSessionStorage(),
+): void {
+  resetVolatileState();
+  accountStore = store;
+  peerQuarantined = true;
+  quarantined = false;
+  if (sessionStore !== store && !clearStore(sessionStore)) {
+    markCleanupPending(undefined, sessionStore);
+  }
+}
+
+/** An unreadable marker uses memory fallback; a known other owner cannot be adopted. */
+export function sharedMarkerConflicts(
+  account: string,
+  store: Store | undefined = browserStorage(),
+): boolean {
+  const marker = readableAccount(store);
+  return (
+    marker.ok &&
+    marker.value !== null &&
+    marker.value !== cleanupPending &&
+    marker.value !== account
+  );
+}
+
+export function sharedMarkerIsAbsent(store: Store | undefined = browserStorage()): boolean {
+  const marker = readableAccount(store);
+  return marker.ok && marker.value === null;
 }
 
 /** Keeps account data usable during a storage exception for this open page. */
@@ -232,42 +268,39 @@ export function reconcileAccount(
 ): boolean {
   if (account === undefined || account === "") return false;
   accountStore = store;
-  if (quarantined && volatileAccount === account) return false;
+  if (quarantined && volatileAccount === account && !peerQuarantined) return false;
 
   const local = readableAccount(store);
   const session = sessionStore === store ? local : readableAccount(sessionStore);
   const changedInPage = volatileAccount !== undefined && volatileAccount !== account;
-  let needsClear =
-    changedInPage ||
-    !local.ok ||
-    !session.ok ||
-    (local.value !== null && local.value !== account) ||
-    (session.value !== null && session.value !== account);
-
-  // An absent marker does not prove that existing payloads belong to this
-  // account: a prior marker write or partial sign-out may have failed.
-  if (!needsClear) {
-    for (const [marker, candidate] of [
-      [local, store],
-      [session, sessionStore],
-    ] as const) {
-      if (marker.value !== null) continue;
-      const keys = scopedKeys(candidate);
-      if (keys === undefined || keys.some((key) => key !== accountStorageKey)) {
-        needsClear = true;
-        break;
-      }
-    }
-  }
+  const needsStoreClear = (marker: typeof local, candidate: Store | undefined): boolean => {
+    if (!marker.ok) return true;
+    if (marker.value !== null) return marker.value !== account;
+    // An absent marker cannot establish ownership of existing payloads.
+    const keys = scopedKeys(candidate);
+    return keys === undefined || keys.some((key) => key !== accountStorageKey);
+  };
+  const clearLocal = needsStoreClear(local, store);
+  const clearSession = sessionStore === store ? clearLocal : needsStoreClear(session, sessionStore);
+  const needsClear = changedInPage || clearLocal || clearSession;
 
   if (needsClear) {
-    const localCleared = clearStore(store);
-    const sessionCleared = sessionStore === store ? localCleared : clearStore(sessionStore);
+    // The peer may already have marked and written the new account's shared
+    // data. Identity change still evicts old memory, without removing it.
+    const localCleared = !clearLocal || (local.ok && clearStore(store));
+    const sessionCleared =
+      sessionStore === store
+        ? localCleared
+        : !clearSession || (session.ok && clearStore(sessionStore));
     resetVolatileState();
     if (!localCleared || !sessionCleared) {
+      peerQuarantined = false;
       quarantined = true;
       volatileAccount = account;
-      markCleanupPending(store, sessionStore);
+      markCleanupPending(
+        localCleared || !local.ok ? undefined : store,
+        (sessionCleared && !clearSession) || !session.ok ? undefined : sessionStore,
+      );
       return true;
     }
   }
@@ -275,8 +308,14 @@ export function reconcileAccount(
   const localRecorded = persistAccount(store, account);
   const sessionRecorded =
     sessionStore === store ? localRecorded : persistAccount(sessionStore, account);
+  peerQuarantined = false;
   quarantined = !localRecorded || !sessionRecorded;
-  if (quarantined) markCleanupPending(store, sessionStore);
+  if (quarantined) {
+    markCleanupPending(
+      localRecorded ? undefined : store,
+      sessionRecorded ? undefined : sessionStore,
+    );
+  }
   volatileAccount = account;
   return needsClear;
 }
