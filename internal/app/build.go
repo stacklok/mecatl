@@ -338,6 +338,7 @@ type Config struct {
 
 	// LLM resilience knobs (see internal/adapter/llmresilience).
 	LLMMaxAttempts       int
+	LLMRecoveryBudget    time.Duration
 	LLMPerAttemptTimeout time.Duration
 	LLMStreamIdleTimeout time.Duration
 	LLMBreakerThreshold  int

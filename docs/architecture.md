@@ -928,10 +928,11 @@ the `HarnessService`, creates a session, opens the bidi `Converse` stream, and
 renders the streamed `Event` envelopes (glamour markdown for assistant text,
 themed lipgloss cards for user prompts and tool I/O), resolving permission asks
 inline by sending `ResumeApproval` on the same stream. Terminal results carry
-presence-aware retry disposition and stream progress. Mecatui performs at most one
-automatic prompt-free failed-step retry, and only for typed `retryable` plus `precommit`;
-it preserves queued future prompts while retrying and pauses them after ambiguity or
-a second failure. Visible failures require an explicit retry. The server it talks to is
+presence-aware retry disposition and stream progress. The shared server runtime
+recovers retryable precommit provider failures inside the same live model call;
+mecatui does not start a second run automatically after a terminal failure.
+`/retry` remains the explicit prompt-free action for an idle failed step. Visible
+failures always require that explicit action. The server it talks to is
 either one it **hosts in-process** over a UNIX socket (`cmd/mecatui/embed` →
 `app.Build`, the default — bare `mecatui` always embeds, never probes) or an
 external `mecated` it dials via `mecatui connect ADDRESS` — so a single binary

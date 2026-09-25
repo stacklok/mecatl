@@ -185,6 +185,7 @@ type config struct {
 
 	// LLM resilience knobs (see internal/adapter/llmresilience).
 	llmMaxAttempts       int
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	llmBreakerThreshold  int
@@ -409,9 +410,10 @@ func parseFlags(argv []string) (config, error) {
 	fs.IntVar(&cfg.schedulerMaxConcurrentFires, "scheduler-max-concurrent-fires", 4, "Maximum schedules started concurrently in one scheduler tick")
 
 	// LLM resilience knobs (mirrors mecated's defaults).
-	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 3, "Maximum attempts to establish an LLM stream, including the initial attempt")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "Maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "Timeout for connecting to an LLM stream and receiving its first chunk. Does not stop an active stream; zero disables the timeout")
-	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. A longer gap ends the turn; zero disables the timeout")
+	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "Maximum idle gap between LLM stream chunks. The watchdog bounds each chunk gap; before semantic output a timed-out attempt may recover, while visible stalls are terminal. Zero disables the timeout")
 	fs.IntVar(&cfg.llmBreakerThreshold, "llm-breaker-threshold", 5, "Consecutive LLM failures that open the circuit breaker. Zero disables it")
 	fs.DurationVar(&cfg.llmBreakerCooldown, "llm-breaker-cooldown", 30*time.Second, "How long the LLM circuit breaker remains open before retrying")
 	fs.IntVar(&cfg.maxRunTokens, "max-run-tokens", 0, "Maximum cumulative input and output tokens per agent run. Runs exceeding it end with stop=budget; zero is unlimited")
@@ -621,6 +623,12 @@ func parseFlags(argv []string) (config, error) {
 	if (cfg.redisFilesystem || cfg.redisReadLedger) && cfg.redisURL == "" {
 		return config{}, errors.New("--redis-filesystem and --redis-read-ledger require --redis-url")
 	}
+	if cfg.llmRecoveryBudget < 0 {
+		return config{}, errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if cfg.llmMaxAttempts <= 0 {
+		return config{}, errors.New("--llm-max-attempts must be positive")
+	}
 	if cfg.redisFollowPoolSize < 1 {
 		return config{}, errors.New("--redis-follow-pool-size must be at least 1")
 	}
@@ -701,6 +709,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		SchedulerMinInterval:          cfg.schedulerMinInterval,
 		SchedulerMaxConcurrentFires:   cfg.schedulerMaxConcurrentFires,
 		LLMMaxAttempts:                cfg.llmMaxAttempts,
+		LLMRecoveryBudget:             cfg.llmRecoveryBudget,
 		LLMPerAttemptTimeout:          cfg.llmPerAttemptTimeout,
 		LLMStreamIdleTimeout:          cfg.llmStreamIdleTimeout,
 		LLMBreakerThreshold:           cfg.llmBreakerThreshold,

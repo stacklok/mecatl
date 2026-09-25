@@ -1227,8 +1227,8 @@ func TestBreakerHalfOpenVisibleOutcomeHealth(t *testing.T) {
 	}{
 		{"clean success closes", step{chunks: textTurn("ok")}, false, false, 0, false},
 		{"visible transient failure reopens", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: apiErr(503)}, true, false, 2, true},
-		{"visible permanent failure stays half-open", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: apiErr(400)}, true, true, 1, true},
-		{"visible cancellation is neutral", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: context.Canceled}, true, true, 1, true},
+		{"visible permanent failure releases probe", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: apiErr(400)}, true, false, 1, true},
+		{"visible cancellation is neutral", step{chunks: []port.Chunk{{Kind: port.ChunkText, Text: "partial"}}, midErr: context.Canceled}, true, false, 1, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

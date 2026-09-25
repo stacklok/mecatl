@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"math"
+	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -397,6 +401,8 @@ type providerErrorMetadata struct {
 	providerCode    string
 	correlationKind string
 	correlationID   string
+	retryNotBefore  time.Time
+	hasRetryAfter   bool
 }
 
 func (e *anthropicStreamError) Error() string             { return e.msg }
@@ -409,6 +415,9 @@ func (e *anthropicStreamError) ProviderErrorCorrelationKind() string {
 	return e.metadata.correlationKind
 }
 func (e *anthropicStreamError) ProviderErrorCorrelationID() string { return e.metadata.correlationID }
+func (e *anthropicStreamError) RetryNotBefore() (time.Time, bool) {
+	return e.metadata.retryNotBefore, e.metadata.hasRetryAfter
+}
 
 // RetryDisposition implements session.RetryDispositionError.
 func (e *anthropicStreamError) RetryDisposition() session.RetryDisposition {
@@ -439,6 +448,39 @@ func isContextOverflowMessage(msg string) bool {
 // consistent with the llmresilience classifier's retry set.
 func retryableStatus(code int) bool {
 	return code == 408 || code == 429 || code >= 500
+}
+
+var retryAfterHorizon = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+
+func parseRetryAfter(header http.Header, received time.Time) (time.Time, bool) {
+	values := header.Values("Retry-After")
+	if len(values) != 1 {
+		return time.Time{}, false
+	}
+	value := values[0]
+	if value != "" && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		seconds, err := strconv.ParseUint(value, 10, 64)
+		// The digit check above leaves only overflow as a parse failure.
+		if err != nil || seconds > uint64(math.MaxInt64/int64(time.Second)) {
+			return retryAfterHorizon, true
+		}
+		at := received.Add(time.Duration(seconds) * time.Second)
+		if !at.Before(retryAfterHorizon) {
+			return retryAfterHorizon, true
+		}
+		return at, true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if at.Before(received) {
+		return received, true
+	}
+	if !at.Before(retryAfterHorizon) {
+		return retryAfterHorizon, true
+	}
+	return at, true
 }
 
 // anthropicHTTPErrorText projects only the structured API envelope for display.
@@ -479,6 +521,9 @@ func anthropicStreamErr(err error, msg string) *anthropicStreamError {
 		msg = port.AppendHTTPErrorDisplay(anthropicHTTPErrorText(sdkErr), sdkErr.Request, sdkErr.RequestID)
 		status = sdkErr.StatusCode
 		metadata.httpStatus = status
+		if sdkErr.Response != nil {
+			metadata.retryNotBefore, metadata.hasRetryAfter = parseRetryAfter(sdkErr.Response.Header, time.Now())
+		}
 		metadata.providerCode = string(sdkErr.Type())
 		if sdkErr.RequestID != "" {
 			metadata.correlationKind = "request"

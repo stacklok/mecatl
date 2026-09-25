@@ -460,7 +460,6 @@ func (m Model) runFailedStepRetry() (tea.Model, tea.Cmd) {
 		m.statusMsg = m.deps.Theme.Style("warning").Render("no session is available to retry")
 		return m, nil
 	}
-	m.failedStepRetryTried = true
 	return m.startFailedStepRetry()
 }
 

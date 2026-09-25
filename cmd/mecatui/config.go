@@ -193,6 +193,9 @@ type config struct {
 	// in main.go. llmPerAttemptTimeout bounds ESTABLISHMENT (connect + first chunk)
 	// only — it never cuts an actively-streaming turn; llmStreamIdleTimeout bounds
 	// the idle gap between chunks after the first.
+	llmMaxAttempts       int
+	llmMaxAttemptsSet    bool
+	llmRecoveryBudget    time.Duration
 	llmPerAttemptTimeout time.Duration
 	llmStreamIdleTimeout time.Duration
 	// contextWindowOverride mirrors mecated's embedded-server-only escape hatch.
@@ -433,6 +436,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.shell, "shell", "/bin/sh", "embedded server only: shell used to execute Shell-tool commands; empty disables Shell")
 	fs.BoolVar(&cfg.noShell, "no-shell", false, "embedded server only: disable the Shell tool (shell-less mode)")
 	fs.BoolVar(&cfg.noSteer, "no-steer", false, "queue mid-turn input as a follow-up instead of steering the active run")
+	fs.IntVar(&cfg.llmMaxAttempts, "llm-max-attempts", 60, "maximum attempts for one precommit model step (initial request included)")
+	fs.DurationVar(&cfg.llmRecoveryBudget, "llm-recovery-budget", 30*time.Minute, "maximum time spent recovering a model step before semantic output")
 	fs.DurationVar(&cfg.llmPerAttemptTimeout, "llm-per-attempt-timeout", 300*time.Second, "maximum time to connect and receive the first model response chunk; 0 disables the timeout")
 	fs.DurationVar(&cfg.llmStreamIdleTimeout, "llm-stream-idle-timeout", 180*time.Second, "maximum pause between model response chunks; 0 disables the timeout")
 	fs.IntVar(&cfg.contextWindowOverride, "context-window-override", 0, "override the model context window in tokens; 0 uses the detected or configured value")
@@ -673,6 +678,8 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.reasoningEffortFlagSet = true
 	case "default-provider":
 		cfg.defaultProviderFlagSet = true
+	case "llm-max-attempts":
+		cfg.llmMaxAttemptsSet = true
 	case "terminal-title":
 		cfg.terminalTitleFlagSet = true
 	case "workspace":
@@ -901,6 +908,9 @@ func (c config) validate() error {
 	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
 	// 1); the predicate + its rationale live once on config.mayEmbed.
 	if c.mayEmbed() {
+		if err := validateEmbeddedRecovery(c); err != nil {
+			return err
+		}
 		if err := validateEmbeddedProvider(c); err != nil {
 			return err
 		}
@@ -912,6 +922,16 @@ func (c config) validate() error {
 		if err := app.PostureRefusalReason(embeddedAuthoritativePosture(c), embeddedPrivileged()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateEmbeddedRecovery(c config) error {
+	if c.llmRecoveryBudget < 0 {
+		return errors.New("--llm-recovery-budget must be nonnegative")
+	}
+	if c.llmMaxAttemptsSet && c.llmMaxAttempts <= 0 {
+		return errors.New("--llm-max-attempts must be positive")
 	}
 	return nil
 }

@@ -391,41 +391,13 @@ func TestAgentHookTerminalOnAuthorizationControlStreamError(t *testing.T) {
 	wantStartFailedStopStart(t, fake.kinds(), lastStop(t, fake), "authorization control stream error")
 }
 
-// TestAgentHookNoTerminalOnAutomaticRetry pins the deliberate NON-terminal
-// exception: a retry-eligible failure starts another run by itself, so the run
-// never returned to idle and the host must not be told it finished. The whole
-// retry-eligible → retry turn → real terminal sequence must report exactly one
-// busy signal and exactly one terminal, at the end.
-func TestAgentHookNoTerminalOnAutomaticRetry(t *testing.T) {
+// A retryable precommit failure is terminal until the operator invokes /retry.
+func TestAgentHookTerminalBeforeManualRetry(t *testing.T) {
 	m, fake := modelWithNotifier(t)
-	m = applyAll(m, client.TurnStartMsg{Turn: 1}, failedStepRetryableResult())
+	applyAll(m, client.TurnStartMsg{Turn: 1}, failedStepRetryableResult())
 
-	if got := fake.kinds(); len(got) != 1 || got[0] != "start" {
-		t.Fatalf("an automatic retry is not a terminal: want [start], got %v", got)
-	}
-
-	// The retry's own turn.start must not re-announce busy, and the eventual
-	// real terminal is the one and only Stop.
-	applyAll(m, client.TurnStartMsg{Turn: 2}, client.ResultMsg{Stop: "end_turn"})
-
-	kinds := fake.kinds()
-	stops, starts := 0, 0
-	for _, k := range kinds {
-		switch k {
-		case "stop":
-			stops++
-		case "start":
-			starts++
-		}
-	}
-	if stops != 1 || kinds[len(kinds)-1] != "stop" {
-		t.Fatalf("want exactly one terminal, last: got %v", kinds)
-	}
-	if starts != 2 {
-		// Two reducer-level Starts are expected (one per turn.start); the
-		// notifier dedupes them into ONE host busy signal, which is pinned by
-		// the agenthook package's TestStartDedupedWithinRun.
-		t.Fatalf("want one Start per turn.start, got %v", kinds)
+	if got := fake.kinds(); len(got) != 2 || got[0] != "start" || got[1] != "stop" {
+		t.Fatalf("retryable terminal notifications = %v, want [start stop]", got)
 	}
 }
 

@@ -499,33 +499,13 @@ the workspace-tier surface — live, workspace-relative, read through the
 
 ## Reliability — provider resilience
 
-The `port.LLMProvider` seam is wrapped by a **decorator**,
-`llmresilience.Wrap(inner, Config) port.LLMProvider`, so the loop is unchanged.
-It adds retry with exponential backoff and a circuit breaker, configured in
-`mecated` via `--llm-max-attempts` / `--llm-per-attempt-timeout` /
-`--llm-breaker-threshold` / `--llm-breaker-cooldown`.
+The `port.LLMProvider` seam is wrapped by `llmresilience.Wrap(inner, Config)`, so recovery is server-owned and the agent loop does not replay a model step itself. The decorator retries transient failures before the step reaches its semantic commit boundary, with exponential backoff, provider retry hints, and a circuit breaker. It is configured with `--llm-max-attempts`, `--llm-recovery-budget`, `--llm-per-attempt-timeout`, `--llm-stream-idle-timeout`, `--llm-breaker-threshold`, and `--llm-breaker-cooldown`.
 
-Its load-bearing invariant is **no replay after the first chunk**: retries happen
-only while *establishing* the stream (connect + first chunk). Once the first
-`Chunk` has been yielded, the decorator never re-issues the call, so the model
-never re-sees a half-streamed turn. The breaker opens after N consecutive
-**transient** establishment failures (rate-limits, timeouts, 5xx, network);
-permanent client errors (4xx other than 408/429) and caller cancellations don't
-count. It short-circuits with a `BreakerError` until its
-cooldown half-opens it; exhausted retries surface as an `ExhaustedError`. Both
-flow back to the client as a terminal `result` event — `session.ResultPayload`
-now carries an **`Error`** field, so a provider failure is reported to the caller
-rather than swallowed.
+The semantic commit boundary is the first text delta that makes accumulated text non-whitespace, or a clean `ChunkDone`. Before that boundary, reasoning, provider metadata, whitespace-only text, tool calls, and usage remain tentative. A retryable failure discards those tentative chunks and can retry the same model step; their usage remains accounted for. Once meaningful text is visible, a failure is terminal and the decorator never re-issues the call. A clean completion also commits pure-tool-call and whitespace-only turns, so completed tools are never rerun.
 
-Mid-stream stalls are bounded separately, by `Config.StreamIdleTimeout`
-(`--llm-stream-idle-timeout`, default 180s, 0 disables), NOT by
-`PerAttemptTimeout`: after the first chunk a per-chunk watchdog caps the idle
-gap between consecutive chunks and synthesizes a terminal `*StreamIdleError`
-(`errors.Is(_, context.DeadlineExceeded)`) when it fires — the wrapper must
-synthesize it because the adapters deliberately swallow the ctx error on
-cancel and would otherwise yield nothing. The stall is TERMINAL, never retried
-(no-replay-after-first-chunk holds); pre-first-chunk stalls stay on
-`PerAttemptTimeout` + retry, unchanged.
+`--llm-recovery-budget` starts at the first retryable failure or breaker rejection for each precommit model step, rather than at task start. It bounds retry waits and breaker admission; a distinct step receives a new budget. A value of `0` disables additional waiting and never shortens a provider retry hint. The caller's shorter deadline still wins, and token budgets are checked between turns rather than between retries. The breaker opens after its configured number of consecutive transient establishment failures, admits one half-open probe after its cooldown, and resets only after clean completion.
+
+Establishment ends on the first raw chunk, independently of semantic progress. `--llm-per-attempt-timeout` applies until then. Afterwards, `--llm-stream-idle-timeout` bounds gaps between raw chunks. An idle stall is retryable only while the step is still precommit; after semantic output it is terminal. Diagnostics record recovery activity without prompt text.
 
 The `llmresilience` decorator emits stream-lifecycle diagnostics through an
 **injected `port.Diagnostics`** (`Config.Diagnostics`, defaulted to
