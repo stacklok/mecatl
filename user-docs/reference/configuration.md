@@ -74,11 +74,21 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 | `guardrails.rules[].prompt` | `string` | `(empty)` | Prompt adds operator task-risk context beneath the fixed harness safety, provenance, evidence, and structured-output rubric; it cannot replace it. |
 | `guardrails.rules[].failClosed` | `bool` | `false` | FailClosed optionally overrides the fail-closed global default for this rule. |
 
+## `permissionMode`
+
+Tier: **operator**
+
+OPERATOR-TIER named permission mode (ADR 0365): plan, default, accept-edits, trusted, trusted-accept-edits, auto, or yolo. Each token sets two things: the process-wide posture, fixed at startup, and the mode new sessions start in, which each session may change. auto and yolo refuse to start without a guardrails checker unless guardrails are explicitly off. An explicit --permission-mode out-ranks this key, and it out-ranks the deprecated posture: key. A project-tier permissionMode: is IGNORED with a WARN. Empty = keep the CLI/default.
+
+| Value | Type | Default | Description |
+| --- | --- | --- | --- |
+| `permissionMode` | `string` | `(empty)` | PermissionMode is the OPERATOR-TIER named permission-mode token (ADR 0365: plan/default/accept-edits/trusted/trusted-accept-edits/auto/yolo). It sets the posture and the default session mode together and supersedes the deprecated posture: key. Like Posture it is honoured ONLY from the user-global + CLI tiers; a project-tier occurrence is IGNORED with a WARN. Empty = absent. The composition layer parses the token. |
+
 ## `posture`
 
 Tier: **operator**
 
-OPERATOR-TIER posture-ladder scalar: strict < trusted < auto < yolo (the graduated trust/automation tier). A project-tier posture: is IGNORED with a WARN (a project cannot raise the automation posture). Empty = keep the CLI/default.
+DEPRECATED: use permissionMode: instead (ADR 0365); still honoured with a WARN for one release. OPERATOR-TIER posture-ladder scalar: strict < trusted < auto < yolo (the graduated trust/automation tier). A project-tier posture: is IGNORED with a WARN (a project cannot raise the automation posture). Empty = keep the CLI/default.
 
 | Value | Type | Default | Description |
 | --- | --- | --- | --- |

@@ -999,7 +999,9 @@ func (x *Limits) GetMaxConsecutiveFailures() int32 {
 // CreateSessionRequest opens a new session.
 type CreateSessionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// mode is the permission posture; unspecified defaults to DEFAULT.
+	// mode is the permission posture; unspecified uses the server's configured
+	// default session mode, which is DEFAULT unless the operator chose a
+	// permission mode that starts sessions elsewhere.
 	Mode PermissionMode `protobuf:"varint,2,opt,name=mode,proto3,enum=mecatl.v1.PermissionMode" json:"mode,omitempty"`
 	// limits are the optional stop conditions.
 	Limits *Limits `protobuf:"bytes,3,opt,name=limits,proto3" json:"limits,omitempty"`
