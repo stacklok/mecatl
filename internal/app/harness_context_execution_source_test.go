@@ -198,14 +198,15 @@ func TestADR_0359_HarnessContext_Scenario6_AcquisitionFailureIsolation(t *testin
 		t.Fatal(err)
 	}
 	defer built.Close()
-	if _, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("failed-attempt"), server.WithPlacementBinding(binding)); err == nil {
+	id := session.SessionID("retry-same-unpublished-id")
+	if _, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id), server.WithPlacementBinding(binding)); err == nil {
 		t.Fatal("construction failure published a session")
 	}
 	if provider.sourceCloses.Load() != 1 {
 		t.Fatalf("failed attempt released %d source borrows, want its one acquired borrow", provider.sourceCloses.Load())
 	}
-	if _, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID("retry-attempt"), server.WithPlacementBinding(binding)); err != nil {
-		t.Fatalf("later exact acquisition could not retry: %v", err)
+	if _, err := built.Service.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id), server.WithPlacementBinding(binding)); err != nil {
+		t.Fatalf("same unpublished id could not retry: %v", err)
 	}
 }
 

@@ -4415,6 +4415,11 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 				}
 			}
 			binding, release, err := cfg.harnessResolver.BorrowWithExecutionFiles(ctx, id, owner, string(profile), acquire)
+			if errors.Is(err, errHarnessBindingRetired) {
+				if err = cfg.harnessResolver.ActivateWithExecutionFiles(ctx, id, owner, string(profile), acquire); err == nil {
+					binding, release, err = cfg.harnessResolver.BorrowWithExecutionFiles(ctx, id, owner, string(profile), acquire)
+				}
+			}
 			if err != nil {
 				return server.SessionEngineResult{}, err
 			}
@@ -6911,7 +6916,11 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 		switch role {
 		case "guardrail-checker", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
 		default:
-			deps.Instructions = prompt.NewMultiAssembler(cfg.harnessInstructions, prompt.RulesAssembler{Src: cfg.harnessRules})
+			instructions := cfg.harnessInstructions
+			if generation, ok := instructions.(generationInstructions); ok {
+				instructions = childGenerationInstructions{generationInstructions: generation}
+			}
+			deps.Instructions = prompt.NewMultiAssembler(instructions, prompt.RulesAssembler{Src: cfg.harnessRules})
 		}
 	}
 	deps.OperatorProfileSource = childOperatorProfileSource(cfg, role)
@@ -8116,9 +8125,15 @@ func applyMemberRoute(cfg Config, provReg *providerRegistry, parentProviderID, r
 }
 
 // base-sharing read-only-member backstop stays sound. `a` is read only when noFS.
+//
+//nolint:gocyclo // Member catalog shaping and its generation lease share one teardown transaction.
 func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, teamHooks port.HookRunner, reg *agents.Registry, skillIdx skillIndex, runner, mutatingRunner tool.CommandRunner, roIsolationAvailable bool, mainMgr *mcp.Manager, a catalogAssets, noFS bool) server.MemberEngineFactory {
 	cfg.operatorProfileSource, _ = a.userModelStore.(prompt.OperatorProfileSource)
 	return func(t *team.Team, spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+		generationClose, err := retainHarnessGeneration(cfg)
+		if err != nil {
+			return agent.MemberBuild{}
+		}
 		if noFS {
 			model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
 			// OPT-IN model router (ADR 0034): an undefined member the supervisor classified
@@ -8144,7 +8159,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
 			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, provider, model, windowFn, cat, pc, nil)
-			return agent.MemberBuild{Engine: eng, MCPToolNames: exempt}
+			return agent.MemberBuild{Engine: eng, Close: generationClose, MCPToolNames: exempt}
 		}
 		classified := newClassifiedCatalog()
 		cat := classified.catalog
@@ -8316,7 +8331,17 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 		// member now resolves the parent model's REAL window via childWindowFor too
 		// (issue #64), flooring to 128k only for a genuinely uncatalogued model.
 		eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, model, windowFn, cat, pc, memberHooks)
-		return agent.MemberBuild{Engine: eng, Mode: mode, Limits: memberLimits, Close: mcpClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
+		memberClose := sync.OnceValue(func() error {
+			var mcpErr, generationErr error
+			if mcpClose != nil {
+				mcpErr = mcpClose()
+			}
+			if generationClose != nil {
+				generationErr = generationClose()
+			}
+			return errors.Join(mcpErr, generationErr)
+		})
+		return agent.MemberBuild{Engine: eng, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
 	}
 }
 

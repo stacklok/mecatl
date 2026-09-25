@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -718,6 +719,8 @@ func (p harnessKindPolicy) excludes(source HarnessSourceID, name string) bool {
 	return excluded
 }
 
+var errHarnessBindingRetired = errors.New("harness command binding is retired")
+
 type commandBindingEntry struct {
 	principal *session.Principal
 	profile   string
@@ -997,7 +1000,7 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 		}
 		if _, retired := r.retired[id]; retired && !activate {
 			r.mu.Unlock()
-			return nil, nil, fmt.Errorf("harness command binding is retired")
+			return nil, nil, errHarnessBindingRetired
 		}
 		if entry := r.entries[id]; entry != nil {
 			if !sameHarnessPrincipal(entry.principal, principal) || entry.profile != profile {
@@ -1039,7 +1042,8 @@ func (r *harnessCommandResolver) borrow(ctx context.Context, id session.SessionI
 		r.mu.Lock()
 		delete(r.creating, id)
 		close(reservation.done)
-		publish := err == nil && !r.closed && r.revisions[id] == reservation.revision
+		ctxErr := ctx.Err()
+		publish := err == nil && ctxErr == nil && !r.closed && r.revisions[id] == reservation.revision
 		if _, retired := r.retired[id]; retired && !activate {
 			publish = false
 		}

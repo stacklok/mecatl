@@ -139,8 +139,11 @@ func (*sourceWorkspace) ReplaceFile(context.Context, string, tool.FileVersion, [
 
 func (s *Service) executionFilesAcquirer(owner *session.Principal, ref session.EnvironmentRef) ExecutionFilesAcquirer {
 	return func(ctx context.Context) (tool.Workspace, func() error, error) {
-		if s == nil || s.placementBinder == nil || !ref.Valid() || ref.Kind == session.EnvKindNoFS {
+		if s == nil || s.placementBinder == nil || !ref.Valid() {
 			return nil, nil, fmt.Errorf("acquire selected harness execution files: %w", ErrPlacementUnavailable)
+		}
+		if ref.Kind == session.EnvKindNoFS {
+			return nil, nil, fmt.Errorf("selected harness source requires execution files; use an independent registered source or disable the selected source in operator policy: %w", ErrPlacementUnavailable)
 		}
 		binding, err := s.placementBinder.Reattach(ctx, PlacementReattachRequest{
 			Ref: ref, Principal: owner.Clone(), Scope: s.cfg.PlacementScope,

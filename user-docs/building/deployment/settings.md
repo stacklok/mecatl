@@ -118,9 +118,12 @@ without falling back to execution files.
 
 A project `harness_context` block is ignored in full with a warning that omits
 its values, even in a trusted project. Source selection cannot grant tool
-permissions or bypass project trust. A no-filesystem session can still use
-separately configured file-backed or service-backed logical sources; reading
-those sources does not authorize execution-file edits.
+permissions or bypass project trust. A selected source that requires execution files fails for a no-filesystem
+session; there is no silent fallback. Use an independent registered source for
+that profile, or disable the execution-file source in operator policy. A
+no-filesystem session can still use separately configured file-backed or
+service-backed logical sources; reading those sources does not authorize
+execution-file edits.
 
 Restart the process after changing source policy. Existing sessions and
 schedules use the current policy and current source authorization when they

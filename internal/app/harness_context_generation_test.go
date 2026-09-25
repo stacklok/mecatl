@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -154,6 +155,94 @@ func TestHarnessResolverBindingDoesNotHoldGlobalLock(t *testing.T) {
 		t.Fatalf("cleanup calls = %d, want successful unrelated and late blocked results", cleaned.Load())
 	}
 }
+
+type invalidatingHarnessAssembler struct {
+	closed *atomic.Bool
+}
+
+func (a invalidatingHarnessAssembler) Assemble(context.Context) ([]session.Message, error) {
+	if a.closed.Load() {
+		return nil, errors.New("source invalidated")
+	}
+	return []session.Message{session.NewSystemMessage("held source")}, nil
+}
+
+func TestChildGenerationRetainsInvalidatingSourceUntilRunEnds(t *testing.T) {
+	var closed atomic.Bool
+	reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "a", Scope: HarnessSourceScopePrincipal, Bind: func(context.Context, HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+		return &hcCommands{values: map[string]string{"x": "ready"}}, func() error {
+			closed.Store(true)
+			return nil
+		}, nil
+	}}
+	resolver, err := newHarnessCommandResolver(t.Context(), harnessKindPolicy{sources: []HarnessSourceID{"a"}, mode: harnessModeCombine}, []HarnessSourceRegistration[server.CommandSourceBinding]{reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, releaseOwner, err := resolver.Borrow(t.Context(), "parent", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := binding.(*resolvedCommandBinding).generation
+	child := childGenerationInstructions{generationInstructions: generationInstructions{harnessGeneration: generation, source: invalidatingHarnessAssembler{closed: &closed}}}
+	ctx, cancel := context.WithCancel(t.Context())
+	if _, err := child.Assemble(ctx); err != nil {
+		t.Fatal(err)
+	}
+	resolver.Retire("parent")
+	releaseOwner()
+	if closed.Load() {
+		t.Fatal("parent retirement invalidated a source retained by the child run")
+	}
+	if _, err := child.Assemble(ctx); err != nil {
+		t.Fatalf("held child read after parent retirement: %v", err)
+	}
+	cancel()
+	for !closed.Load() {
+		runtime.Gosched()
+	}
+	if _, err := (invalidatingHarnessAssembler{closed: &closed}).Assemble(t.Context()); err == nil {
+		t.Fatal("fixture remained readable after the child released its generation")
+	}
+}
+
+func TestHarnessResolverCancellationBeforePublicationReleasesAttempt(t *testing.T) {
+	var binds, cleanups atomic.Int32
+	reg := HarnessSourceRegistration[server.CommandSourceBinding]{ID: "a", Scope: HarnessSourceScopePrincipal, Bind: func(ctx context.Context, _ HarnessSourceScope) (server.CommandSourceBinding, func() error, error) {
+		binds.Add(1)
+		if cancel, ok := ctx.Value(cancelHarnessBindKey{}).(context.CancelFunc); ok {
+			cancel()
+		}
+		return &hcCommands{values: map[string]string{"x": "ready"}}, func() error {
+			cleanups.Add(1)
+			return nil
+		}, nil
+	}}
+	resolver, err := newHarnessCommandResolver(t.Context(), harnessKindPolicy{sources: []HarnessSourceID{"a"}, mode: harnessModeCombine}, []HarnessSourceRegistration[server.CommandSourceBinding]{reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolver.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	ctx = context.WithValue(ctx, cancelHarnessBindKey{}, cancel)
+	if _, _, err := resolver.Borrow(ctx, "cancelled", nil, ""); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled borrow = %v", err)
+	}
+	if cleanups.Load() != 1 {
+		t.Fatalf("cancelled attempt cleanups = %d, want 1", cleanups.Load())
+	}
+	binding, release, err := resolver.Borrow(t.Context(), "cancelled", nil, "")
+	if err != nil {
+		t.Fatalf("retry after cancellation: %v", err)
+	}
+	release()
+	if binding == nil || binds.Load() != 2 {
+		t.Fatalf("retry binding=%v binds=%d", binding, binds.Load())
+	}
+}
+
+type cancelHarnessBindKey struct{}
 
 func TestHarnessGenerationOldReleaseCannotEvictReplacement(t *testing.T) {
 	var binds, closed atomic.Int32

@@ -27,6 +27,21 @@ func (g harnessGeneration) borrow() (func(), error) {
 	return g.resolver.release(g.entry), nil
 }
 
+func retainHarnessGeneration(cfg Config) (func() error, error) {
+	generation, ok := cfg.harnessInstructions.(generationInstructions)
+	if !ok {
+		return nil, nil
+	}
+	release, err := generation.borrow()
+	if err != nil {
+		return nil, err
+	}
+	return func() error {
+		release()
+		return nil
+	}, nil
+}
+
 type generationCommands struct {
 	harnessGeneration
 	source server.CommandSourceBinding
@@ -64,6 +79,24 @@ func (g generationInstructions) AssembleWithManifest(ctx context.Context) ([]ses
 		return nil, nil, err
 	}
 	defer release()
+	return prompt.AssembleWithManifest(ctx, g.source)
+}
+
+type childGenerationInstructions struct {
+	generationInstructions
+}
+
+func (g childGenerationInstructions) Assemble(ctx context.Context) ([]session.Message, error) {
+	messages, _, err := g.AssembleWithManifest(ctx)
+	return messages, err
+}
+
+func (g childGenerationInstructions) AssembleWithManifest(ctx context.Context) ([]session.Message, []prompt.InstructionManifest, error) {
+	release, err := g.borrow()
+	if err != nil {
+		return nil, nil, err
+	}
+	context.AfterFunc(ctx, release)
 	return prompt.AssembleWithManifest(ctx, g.source)
 }
 
