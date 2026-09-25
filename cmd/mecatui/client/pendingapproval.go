@@ -31,13 +31,15 @@ type PendingApproval struct {
 type PendingApprovalFailure string
 
 const (
-	PendingApprovalNone             PendingApprovalFailure = "none"
-	PendingApprovalIncomplete       PendingApprovalFailure = "incomplete_replay"
-	PendingApprovalMalformed        PendingApprovalFailure = "malformed_correlation"
-	PendingApprovalUnsupportedAsk   PendingApprovalFailure = "unsupported_ask"
-	PendingApprovalWatchUnsupported PendingApprovalFailure = "watch_unsupported"
-	PendingApprovalCorrelation      PendingApprovalFailure = "correlation_mismatch"
-	PendingApprovalUnavailable      PendingApprovalFailure = "unavailable"
+	PendingApprovalNone                PendingApprovalFailure = "none"
+	PendingApprovalIncomplete          PendingApprovalFailure = "incomplete_replay"
+	PendingApprovalMalformed           PendingApprovalFailure = "malformed_correlation"
+	PendingApprovalUnsupportedAsk      PendingApprovalFailure = "unsupported_ask"
+	PendingApprovalWatchUnsupported    PendingApprovalFailure = "watch_unsupported"
+	PendingApprovalControlsUnsupported PendingApprovalFailure = "controls_unsupported"
+	PendingApprovalNotRecoverable      PendingApprovalFailure = "not_recoverable"
+	PendingApprovalCorrelation         PendingApprovalFailure = "correlation_mismatch"
+	PendingApprovalUnavailable         PendingApprovalFailure = "unavailable"
 )
 
 type pendingApprovalError struct {
@@ -67,21 +69,34 @@ func pendingApprovalFailure(kind PendingApprovalFailure) error {
 		text = "this pending approval type is not supported by recovery"
 	case PendingApprovalWatchUnsupported:
 		text = "pending approval recovery requires durable event watch support"
+	case PendingApprovalControlsUnsupported:
+		text = "pending approval recovery controls are not supported"
+	case PendingApprovalNotRecoverable:
+		text = "pending approval is no longer recoverable because its current state changed"
 	case PendingApprovalCorrelation:
 		text = "pending approval recovery correlation changed"
 	}
 	return &pendingApprovalError{kind: kind, text: text}
 }
 
-func pendingApprovalRPCFailure(_ error) error {
-	return pendingApprovalFailure(PendingApprovalUnavailable)
+func pendingApprovalControlFailure(err error) error {
+	switch status.Code(err) {
+	case codes.Aborted:
+		return pendingApprovalFailure(PendingApprovalCorrelation)
+	case codes.FailedPrecondition:
+		return pendingApprovalFailure(PendingApprovalNotRecoverable)
+	case codes.Unimplemented:
+		return pendingApprovalFailure(PendingApprovalControlsUnsupported)
+	default:
+		return pendingApprovalFailure(PendingApprovalUnavailable)
+	}
 }
 
 func pendingApprovalWatchFailure(err error) error {
 	if status.Code(err) == codes.Unimplemented {
 		return pendingApprovalFailure(PendingApprovalWatchUnsupported)
 	}
-	return pendingApprovalRPCFailure(err)
+	return pendingApprovalFailure(PendingApprovalUnavailable)
 }
 
 type pendingApprovalWatchStream interface {
@@ -149,7 +164,7 @@ func (c *Client) openPendingApprovalWatch(ctx context.Context, sessionID, cursor
 // WatchPendingApprovalRun resumes from the discovery cursor before a verdict is
 // sent and projects only the recovered run. The caller owns Close.
 func (c *Client) WatchPendingApprovalRun(ctx context.Context, approval PendingApproval) (*PendingApprovalWatch, error) {
-	if approval.SessionID == "" || approval.RunID == "" {
+	if approval.SessionID == "" || approval.RunID == "" || approval.AskID == "" || approval.Cursor == "" {
 		return nil, pendingApprovalFailure(PendingApprovalMalformed)
 	}
 	watch, err := c.openPendingApprovalWatch(ctx, approval.SessionID, approval.Cursor)
@@ -170,6 +185,9 @@ func (w *PendingApprovalWatch) Recv() (PendingApprovalEvent, error) {
 			if errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 				return PendingApprovalEvent{}, context.Canceled
 			}
+			if errors.Is(err, io.EOF) {
+				return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalIncomplete)
+			}
 			return PendingApprovalEvent{}, pendingApprovalWatchFailure(err)
 		}
 		if frame.GetPhase() == "gap" || (frame.GetPhase() != "replay" && frame.GetPhase() != "live") {
@@ -178,7 +196,7 @@ func (w *PendingApprovalWatch) Recv() (PendingApprovalEvent, error) {
 		}
 		ev := frame.GetEvent()
 		if ev == nil {
-			if frame.GetPhase() != "live" {
+			if frame.GetPhase() != "live" || frame.GetCursor() == "" {
 				w.Close()
 				return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
 			}
@@ -219,7 +237,7 @@ func projectPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event) (
 		}
 		out.Kind, out.AskID = PendingApprovalEventRetracted, ev.GetAsk().GetAskId()
 	case "result":
-		if ev.GetRunId() == "" || ev.GetResult() == nil || ev.GetResult().GetStop() == "" {
+		if ev.GetRunId() == "" || ev.GetResult() == nil || !validResultStop(ev.GetResult().GetStop()) {
 			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
 		}
 		out.Kind = PendingApprovalEventTerminal
@@ -247,6 +265,15 @@ func approvalFromEvent(sessionID, cursor string, ev *mecatlv1.Event) (PendingApp
 func validToolArgs(args string) bool {
 	var object map[string]json.RawMessage
 	return json.Unmarshal([]byte(args), &object) == nil && object != nil
+}
+
+func validResultStop(stop string) bool {
+	switch stop {
+	case "end_turn", "max_turns", "max_tool_calls", "max_consecutive_failures", "cancelled", "error", "no_progress", "budget", "timeout", "structured_output", "plan_approved", "plan_iterate":
+		return true
+	default:
+		return false
+	}
 }
 
 func validApprovalEvent(ev *mecatlv1.Event) bool {
@@ -294,6 +321,9 @@ func (c *Client) DiscoverPendingApproval(ctx context.Context, sessionID string) 
 		ev := frame.GetEvent()
 		if ev == nil {
 			if phase != "live" {
+				return PendingApproval{}, pendingApprovalFailure(PendingApprovalMalformed)
+			}
+			if frame.GetCursor() == "" {
 				return PendingApproval{}, pendingApprovalFailure(PendingApprovalMalformed)
 			}
 			if len(pending) != 1 {
@@ -350,7 +380,7 @@ func foldPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event, pend
 		delete(pending, k)
 		delete(unsupported, k)
 	case "result":
-		if ev.GetRunId() == "" || ev.GetResult() == nil || ev.GetResult().GetStop() == "" {
+		if ev.GetRunId() == "" || ev.GetResult() == nil || !validResultStop(ev.GetResult().GetStop()) {
 			return pendingApprovalFailure(PendingApprovalMalformed)
 		}
 		prefix := ev.GetRunId() + "\x00"
@@ -361,12 +391,13 @@ func foldPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event, pend
 			}
 		}
 	default:
-		if ev.GetRunId() != "" {
-			prefix := ev.GetRunId() + "\x00"
-			for k := range pending {
-				if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-					return pendingApprovalFailure(PendingApprovalIncomplete)
-				}
+		if EventToMsg(ev) != nil {
+			return nil
+		}
+		prefix := ev.GetRunId() + "\x00"
+		for k := range pending {
+			if ev.GetRunId() != "" && len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+				return pendingApprovalFailure(PendingApprovalIncomplete)
 			}
 		}
 	}
@@ -387,7 +418,7 @@ func (c *Client) ResolvePendingApproval(ctx context.Context, approval PendingApp
 		SessionId: approval.SessionID, ExpectedRunId: approval.RunID, AskId: approval.AskID, Verdict: wireVerdict,
 	})
 	if err != nil {
-		return pendingApprovalRPCFailure(err)
+		return pendingApprovalControlFailure(err)
 	}
 	if ack.GetRunId() != approval.RunID || ack.GetAskId() != approval.AskID {
 		return pendingApprovalFailure(PendingApprovalCorrelation)
@@ -403,7 +434,7 @@ func (c *Client) CancelPendingRun(ctx context.Context, approval PendingApproval)
 	}
 	ack, err := c.svc.CancelRun(withSessionAffinity(ctx, approval.SessionID), &mecatlv1.CancelRunRequest{SessionId: approval.SessionID, ExpectedRunId: approval.RunID})
 	if err != nil {
-		return pendingApprovalRPCFailure(err)
+		return pendingApprovalControlFailure(err)
 	}
 	if ack.GetRunId() != approval.RunID {
 		return pendingApprovalFailure(PendingApprovalCorrelation)

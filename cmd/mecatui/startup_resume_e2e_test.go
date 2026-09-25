@@ -473,8 +473,10 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 		verdict   client.Verdict
 		wantRun   bool
 		finalTurn mockllm.Turn
+		chained   bool
 	}{
 		{name: "allow-once", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.TextTurn("continuation complete")},
+		{name: "allow-recovery-history", verdict: client.VerdictAllowOnce, wantRun: true, chained: true},
 		{name: "allow-empty-model", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.EmptyTurn()},
 		{name: "allow-error-model", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.ErrorTurn(errors.New("bounded provider failure"))},
 		{name: "deny", verdict: client.VerdictDeny, finalTurn: mockllm.TextTurn("must not be called")},
@@ -487,10 +489,17 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 			if err := os.WriteFile(settings, []byte("permissions:\n  ask: [Write]\n"), 0o600); err != nil {
 				t.Fatalf("write permissions: %v", err)
 			}
-			provider := mockllm.New(
-				mockllm.ToolCallTurn(session.NewToolCall("write-1", "Write", []byte(`{"path":"approved.txt","content":"executed"}`))),
-				tc.finalTurn,
-			)
+			turns := []mockllm.Turn{mockllm.ToolCallTurn(session.NewToolCall("write-1", "Write", []byte(`{"path":"approved.txt","content":"executed"}`)))}
+			if tc.chained {
+				turns = append(turns,
+					mockllm.ToolCallTurn(session.NewToolCall("write-2", "Write", []byte(`{"path":"second.txt","content":"executed"}`))),
+					mockllm.TextTurn("continuation complete"),
+					mockllm.ToolCallTurn(session.NewToolCall("write-3", "Write", []byte(`{"path":"third.txt","content":"pending"}`))),
+				)
+			} else {
+				turns = append(turns, tc.finalTurn)
+			}
+			provider := mockllm.New(turns...)
 			cfg := app.Config{
 				Workspace: workspace, StoreDir: storeDir, Model: "mock-model", MockProvider: provider,
 				Shell: "/bin/sh", Compaction: "heuristic", Tokenizer: "heuristic", PermissionConfigs: []string{settings},
@@ -523,6 +532,15 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				if event.GetType() == "permission.ask" {
 					originalRun, originalAsk = event.GetRunId(), event.GetAsk().GetAskId()
 				}
+			}
+			probe, err := client.Dial(client.DialConfig{Server: target})
+			if err != nil {
+				t.Fatalf("dial persistence probe: %v", err)
+			}
+			persisted, err := probe.DiscoverPendingApproval(ctx, created.GetSessionId())
+			_ = probe.Close()
+			if err != nil || persisted.RunID != originalRun || persisted.AskID != originalAsk {
+				t.Fatalf("persist initial ask before restart: candidate=%+v err=%v", persisted, err)
 			}
 
 			built.Close()
@@ -574,6 +592,18 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				if _, ok := event.Message.(client.ToolResultMsg); ok {
 					sawToolResult = true
 				}
+				if tc.chained && event.Kind == client.PendingApprovalEventAsk {
+					later, discoverErr := cl.DiscoverPendingApproval(ctx, created.GetSessionId())
+					if discoverErr != nil {
+						t.Fatalf("rediscover later same-run ask: %v", discoverErr)
+					}
+					if later.RunID != originalRun || later.AskID == originalAsk {
+						t.Fatalf("later same-run correlation = %+v, original run=%q ask=%q", later, originalRun, originalAsk)
+					}
+					if resolveErr := cl.ResolvePendingApproval(ctx, later, client.VerdictAllowOnce); resolveErr != nil {
+						t.Fatalf("resolve later same-run ask: %v", resolveErr)
+					}
+				}
 				if event.Kind == client.PendingApprovalEventTerminal {
 					break
 				}
@@ -585,6 +615,37 @@ func TestNativePendingApprovalStartupRecovery(t *testing.T) {
 				}
 			} else if !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("deny executed original tool: stat=%v", statErr)
+			}
+			if tc.chained {
+				followConn, dialErr := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+				if dialErr != nil {
+					t.Fatalf("dial later run: %v", dialErr)
+				}
+				defer func() { _ = followConn.Close() }()
+				follow, converseErr := mecatlv1.NewHarnessServiceClient(followConn).Converse(ctx)
+				if converseErr != nil {
+					t.Fatalf("open later run: %v", converseErr)
+				}
+				if sendErr := follow.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: created.GetSessionId(), Text: "write another file"}}}); sendErr != nil {
+					t.Fatalf("send later prompt: %v", sendErr)
+				}
+				var laterRun string
+				for laterRun == "" {
+					response, recvErr := follow.Recv()
+					if recvErr != nil {
+						t.Fatalf("receive later-run ask: %v", recvErr)
+					}
+					if event := response.GetEvent(); event.GetType() == "permission.ask" {
+						laterRun = event.GetRunId()
+					}
+				}
+				rediscovered, discoverErr := cl.DiscoverPendingApproval(ctx, created.GetSessionId())
+				if discoverErr != nil {
+					t.Fatalf("rediscover later-run ask: %v", discoverErr)
+				}
+				if rediscovered.RunID != laterRun || rediscovered.RunID == originalRun {
+					t.Fatalf("later-run correlation = %+v, live run=%q original=%q", rediscovered, laterRun, originalRun)
+				}
 			}
 		})
 	}

@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -28,9 +27,11 @@ type pendingApprovalWireServer struct {
 	affinities      [][]string
 	resolveReq      *mecatlv1.ResolveRunAskRequest
 	resolveResp     *mecatlv1.ResolveRunAskResponse
+	resolveErr      error
 	resolveAffinity []string
 	cancelReq       *mecatlv1.CancelRunRequest
 	cancelResp      *mecatlv1.CancelRunResponse
+	cancelErr       error
 	cancelAffinity  []string
 	watchDone       chan struct{}
 }
@@ -63,6 +64,9 @@ func (s *pendingApprovalWireServer) ResolveRunAsk(ctx context.Context, req *meca
 	defer s.mu.Unlock()
 	s.resolveReq = req
 	s.resolveAffinity = append([]string(nil), md.Get(sessionaffinity.HeaderName)...)
+	if s.resolveErr != nil {
+		return nil, s.resolveErr
+	}
 	if s.resolveResp != nil {
 		return s.resolveResp, nil
 	}
@@ -75,6 +79,9 @@ func (s *pendingApprovalWireServer) CancelRun(ctx context.Context, req *mecatlv1
 	defer s.mu.Unlock()
 	s.cancelReq = req
 	s.cancelAffinity = append([]string(nil), md.Get(sessionaffinity.HeaderName)...)
+	if s.cancelErr != nil {
+		return nil, s.cancelErr
+	}
 	if s.cancelResp != nil {
 		return s.cancelResp, nil
 	}
@@ -129,6 +136,50 @@ func TestDiscoverPendingApprovalAcceptsOnlyTrailingOrdinaryAsk(t *testing.T) {
 	}
 }
 
+func TestDiscoverPendingApprovalAcceptsRecoveryLifecycleBeforeLaterAsk(t *testing.T) {
+	approval := &mecatlv1.Event{Type: "approval", RunId: "run-1", Approval: &mecatlv1.Approval{AskId: "ask-1", Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_ALLOW_ONCE, Origin: "permission"}}
+	tests := []struct {
+		name   string
+		frames []*mecatlv1.WatchSessionEventsResponse
+		want   PendingApproval
+	}{
+		{
+			name: "later ask in recovered run",
+			frames: []*mecatlv1.WatchSessionEventsResponse{
+				watchFrame("c1", "replay", ordinaryAsk("run-1", "ask-1")),
+				watchFrame("c2", "replay", &mecatlv1.Event{Type: "session.init", RunId: "run-1"}),
+				watchFrame("c3", "replay", approval),
+				watchFrame("c4", "replay", ordinaryAsk("run-1", "ask-2")),
+				watchFrame("c4", "live", nil),
+			},
+			want: PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-2", Tool: "Shell", Args: `{"command":"go test ./..."}`, Reason: "protected", Cursor: "c4"},
+		},
+		{
+			name: "later run ask after recovered run",
+			frames: []*mecatlv1.WatchSessionEventsResponse{
+				watchFrame("c1", "replay", ordinaryAsk("run-1", "ask-1")),
+				watchFrame("c2", "replay", &mecatlv1.Event{Type: "session.init", RunId: "run-1"}),
+				watchFrame("c3", "replay", approval),
+				watchFrame("c4", "replay", &mecatlv1.Event{Type: "result", RunId: "run-1", Result: &mecatlv1.Result{Stop: "end_turn"}}),
+				watchFrame("c5", "replay", ordinaryAsk("run-2", "ask-2")),
+				watchFrame("c5", "live", nil),
+			},
+			want: PendingApproval{SessionID: "session-1", RunID: "run-2", AskID: "ask-2", Tool: "Shell", Args: `{"command":"go test ./..."}`, Reason: "protected", Cursor: "c5"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := newPendingApprovalWireClient(t, &pendingApprovalWireServer{frames: tt.frames}).DiscoverPendingApproval(t.Context(), "session-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("candidate = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDiscoverPendingApprovalRefusesUnsafeReplay(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -137,10 +188,12 @@ func TestDiscoverPendingApprovalRefusesUnsafeReplay(t *testing.T) {
 	}{
 		{"gap", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "gap", nil)}, PendingApprovalIncomplete},
 		{"unknown phase", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "future", ordinaryAsk("run", "ask"))}, PendingApprovalIncomplete},
+		{"empty live cursor", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", ordinaryAsk("run", "ask")), watchFrame("", "live", nil)}, PendingApprovalMalformed},
 		{"missing run id", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", ordinaryAsk("", "ask"))}, PendingApprovalMalformed},
 		{"missing ask id", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", ordinaryAsk("run", ""))}, PendingApprovalMalformed},
 		{"malformed args", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", &mecatlv1.Event{Type: "permission.ask", RunId: "run", Ask: &mecatlv1.PermissionAsk{AskId: "ask", Tool: "Shell", Args: "{"}})}, PendingApprovalMalformed},
 		{"unknown event after ask", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", ordinaryAsk("run", "ask")), watchFrame("c2", "replay", &mecatlv1.Event{Type: "future.terminal", RunId: "run"})}, PendingApprovalIncomplete},
+		{"unknown result stop", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", ordinaryAsk("run", "ask")), watchFrame("c2", "replay", &mecatlv1.Event{Type: "result", RunId: "run", Result: &mecatlv1.Result{Stop: "future_stop"}})}, PendingApprovalMalformed},
 		{"plan ask", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", &mecatlv1.Event{Type: "permission.ask", RunId: "run", Ask: &mecatlv1.PermissionAsk{AskId: "ask", Tool: "PresentPlan", Args: `{}`}}), watchFrame("c1", "live", nil)}, PendingApprovalUnsupportedAsk},
 		{"scoped ask", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", &mecatlv1.Event{Type: "permission.ask", RunId: "run", Ask: &mecatlv1.PermissionAsk{AskId: "ask", Tool: "Shell", Args: `{}`, Guardrail: &mecatlv1.GuardrailApprovalScope{}}}), watchFrame("c1", "live", nil)}, PendingApprovalUnsupportedAsk},
 		{"resolved ask", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c1", "replay", ordinaryAsk("run", "ask")), watchFrame("c2", "replay", &mecatlv1.Event{Type: "approval", RunId: "run", Approval: &mecatlv1.Approval{AskId: "ask", Verdict: mecatlv1.ApprovalVerdict_APPROVAL_VERDICT_DENY, Origin: "permission"}}), watchFrame("c2", "live", nil)}, PendingApprovalNone},
@@ -165,11 +218,79 @@ func TestDiscoverPendingApprovalRefusesUnsupportedWatchWithoutFallback(t *testin
 	}
 }
 
+func TestWatchPendingApprovalRunRequiresCompleteCorrelation(t *testing.T) {
+	client := newPendingApprovalWireClient(t, &pendingApprovalWireServer{})
+	for name, approval := range map[string]PendingApproval{
+		"session": {RunID: "run", AskID: "ask", Cursor: "c1"},
+		"run":     {SessionID: "session", AskID: "ask", Cursor: "c1"},
+		"ask":     {SessionID: "session", RunID: "run", Cursor: "c1"},
+		"cursor":  {SessionID: "session", RunID: "run", AskID: "ask"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := client.WatchPendingApprovalRun(t.Context(), approval); !IsPendingApprovalFailure(err, PendingApprovalMalformed) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestPendingApprovalContinuationFailsClosed(t *testing.T) {
+	tests := []struct {
+		name   string
+		frames []*mecatlv1.WatchSessionEventsResponse
+		kind   PendingApprovalFailure
+	}{
+		{"gap", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "gap", nil)}, PendingApprovalIncomplete},
+		{"unknown phase", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "future", ordinaryAsk("run-1", "ask-2"))}, PendingApprovalIncomplete},
+		{"unknown stop", []*mecatlv1.WatchSessionEventsResponse{watchFrame("c2", "live", &mecatlv1.Event{Type: "result", RunId: "run-1", Result: &mecatlv1.Result{Stop: "future_stop"}})}, PendingApprovalMalformed},
+		{"premature eof", nil, PendingApprovalIncomplete},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			watch, err := newPendingApprovalWireClient(t, &pendingApprovalWireServer{frames: tt.frames}).WatchPendingApprovalRun(t.Context(), PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1", Cursor: "c1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer watch.Close()
+			if _, err = watch.Recv(); !IsPendingApprovalFailure(err, tt.kind) {
+				t.Fatalf("error = %v, want kind %q", err, tt.kind)
+			}
+		})
+	}
+}
+
+func TestPendingApprovalContinuationMasksStreamError(t *testing.T) {
+	watch, err := newPendingApprovalWireClient(t, &pendingApprovalWireServer{watchErr: status.Error(codes.Unavailable, "private backend detail")}).WatchPendingApprovalRun(t.Context(), PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1", Cursor: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Close()
+	if _, err = watch.Recv(); !IsPendingApprovalFailure(err, PendingApprovalUnavailable) || err.Error() == "private backend detail" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPendingApprovalContinuationFiltersForeignRuns(t *testing.T) {
+	service := &pendingApprovalWireServer{frames: []*mecatlv1.WatchSessionEventsResponse{
+		watchFrame("c2", "live", ordinaryAsk("other-run", "other-ask")),
+		watchFrame("c3", "live", ordinaryAsk("run-1", "ask-2")),
+	}}
+	watch, err := newPendingApprovalWireClient(t, service).WatchPendingApprovalRun(t.Context(), PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1", Cursor: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Close()
+	event, err := watch.Recv()
+	if err != nil || event.AskID != "ask-2" {
+		t.Fatalf("event = %#v, err = %v", event, err)
+	}
+}
+
 func TestPendingApprovalContinuationUsesRetainedCursorAndCloses(t *testing.T) {
 	done := make(chan struct{})
 	service := &pendingApprovalWireServer{frames: []*mecatlv1.WatchSessionEventsResponse{watchFrame("c4", "live", ordinaryAsk("run-1", "ask-2"))}, watchDone: done}
 	client := newPendingApprovalWireClient(t, service)
-	watch, err := client.WatchPendingApprovalRun(t.Context(), PendingApproval{SessionID: "session-1", RunID: "run-1", Cursor: "c3"})
+	watch, err := client.WatchPendingApprovalRun(t.Context(), PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1", Cursor: "c3"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +303,7 @@ func TestPendingApprovalContinuationUsesRetainedCursorAndCloses(t *testing.T) {
 	watch.Close()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-t.Context().Done():
 		t.Fatal("closing the watch did not release its server read loop")
 	}
 	service.mu.Lock()
@@ -212,6 +333,54 @@ func TestResolvePendingApprovalChecksAckAndPayload(t *testing.T) {
 	}
 	if err := client.ResolvePendingApproval(t.Context(), candidate, VerdictAllowOnce); !IsPendingApprovalFailure(err, PendingApprovalCorrelation) {
 		t.Fatalf("ack mismatch error = %v", err)
+	}
+}
+
+func TestPendingApprovalControlsClassifyClosedRPCFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		code codes.Code
+		kind PendingApprovalFailure
+	}{
+		{"stale run", codes.Aborted, PendingApprovalCorrelation},
+		{"state changed", codes.FailedPrecondition, PendingApprovalNotRecoverable},
+		{"unsupported", codes.Unimplemented, PendingApprovalControlsUnsupported},
+		{"transport", codes.Unavailable, PendingApprovalUnavailable},
+		{"deadline", codes.DeadlineExceeded, PendingApprovalUnavailable},
+		{"masked absence", codes.NotFound, PendingApprovalUnavailable},
+		{"masked denial", codes.PermissionDenied, PendingApprovalUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			serverErr := status.Error(tt.code, "private backend detail")
+			service := &pendingApprovalWireServer{resolveErr: serverErr, cancelErr: serverErr}
+			client := newPendingApprovalWireClient(t, service)
+			approval := PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1"}
+			for name, err := range map[string]error{
+				"resolve": client.ResolvePendingApproval(t.Context(), approval, VerdictDeny),
+				"cancel":  client.CancelPendingRun(t.Context(), approval),
+			} {
+				if !IsPendingApprovalFailure(err, tt.kind) || err.Error() == "private backend detail" {
+					t.Fatalf("%s error = %v, want kind %q", name, err, tt.kind)
+				}
+			}
+		})
+	}
+}
+
+func TestPendingApprovalControlsRejectMalformedInputsBeforeRPC(t *testing.T) {
+	service := &pendingApprovalWireServer{}
+	client := newPendingApprovalWireClient(t, service)
+	if err := client.ResolvePendingApproval(t.Context(), PendingApproval{SessionID: "session", RunID: "run"}, VerdictDeny); !IsPendingApprovalFailure(err, PendingApprovalMalformed) {
+		t.Fatalf("resolve error = %v", err)
+	}
+	if err := client.CancelPendingRun(t.Context(), PendingApproval{SessionID: "session"}); !IsPendingApprovalFailure(err, PendingApprovalMalformed) {
+		t.Fatalf("cancel error = %v", err)
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.resolveReq != nil || service.cancelReq != nil {
+		t.Fatalf("malformed controls reached RPC: resolve=%#v cancel=%#v", service.resolveReq, service.cancelReq)
 	}
 }
 
