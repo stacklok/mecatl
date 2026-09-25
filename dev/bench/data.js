@@ -278178,6 +278178,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790354079524,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d03c456e418eac65cc8ef62390f0482683e630cf",
+          "message": "feat(mecatui): bound sessions inventory (#1944)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T12:09:43-07:00",
+          "tree_id": "505f452c6185ad4b8427c44f2e0a1811f6b19937",
+          "url": "https://github.com/stacklok/mecatl/commit/d03c456e418eac65cc8ef62390f0482683e630cf"
+        },
+        "date": 1790364059703,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3298,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 91,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -364628,6 +364667,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790364056878,
+  "lastUpdate": 1790364061337,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
