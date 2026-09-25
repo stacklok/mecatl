@@ -185,6 +185,10 @@ const (
 // autoBadgeText is the auto-posture badge: amber inline WARNING text (no pill).
 const autoBadgeText = "⚠ auto"
 
+// trustedBadgeText is the trusted-posture badge: inline warning-styled text naming
+// the posture, with no glyph so it reads quieter than the allow-all tiers.
+const trustedBadgeText = "trusted"
+
 // yoloPillText is the YOLO pill's CONTENT — just the word, padded by a space each side
 // so the filled dangerPill chip has visual breathing room around "YOLO". The pill never
 // contains the lightning bolt: the emoji (when shown) rides OUTSIDE the pill as plain
@@ -202,12 +206,13 @@ const yoloBoltPrefix = "⚡️ "
 
 // postureBadgeRender builds the right-aligned operator-posture chrome badge — the STYLED
 // string ready to drop into the header AND its visible (plain) cell width for the
-// fit/shed math. It surfaces the SERVER-WIDE automation posture (m.caps.Posture) for the
-// allow-all tiers ONLY — strict/trusted/unknown render NO badge, so the
-// steady-state frame and the goldens stay byte-identical. It is DISTINCT from the
-// per-session `mode` segment.
+// fit/shed math. It surfaces the SERVER-WIDE posture (m.caps.Posture) whenever it is
+// above strict — strict/unknown render NO badge, so the steady-state frame and the
+// goldens stay byte-identical. It is DISTINCT from the per-session `mode` segment, and a
+// session-mode cycle never changes it (ADR 0365).
 //
 // Tiers:
+//   - trusted → warning-styled inline text "trusted".
 //   - auto → amber inline WARNING text "⚠ auto".
 //   - yolo → a clean filled DANGER PILL (dangerPill style) of " YOLO ", optionally
 //     PRECEDED by a PLAIN ⚡️ emoji bolt when m.emojiOK (seeded once at New). The bolt is
@@ -230,9 +235,14 @@ func (m Model) postureBadgeRender() (styled string, plainWidth int) {
 			return yoloBoltPrefix + pill, lipgloss.Width(yoloBoltPrefix) + w
 		}
 		return pill, w
-	case postureStrict, postureTrusted:
-		// The non-allow-all tiers carry no badge — the steady-state frame stays
-		// byte-identical (the goldens are captured at strict).
+	case postureTrusted:
+		// Above strict (ADR 0365, AC5.3): the project's rules and instructions are
+		// honoured process-wide, so the header must not read as a plain default
+		// session. Warning-styled text, no glyph, quieter than auto's.
+		return m.deps.Theme.Style("warning").Render(trustedBadgeText), lipgloss.Width(trustedBadgeText)
+	case postureStrict:
+		// Strict carries no badge — the steady-state frame stays byte-identical (the
+		// goldens are captured at strict).
 		return "", 0
 	default:
 		// Unknown / older-server posture: no badge.

@@ -452,7 +452,7 @@ func (m Model) runHelp() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	deps := (&m).surfaceDeps()
-	m.modal = &helpState{deps: deps, lines: strings.Split(helpBody(deps.theme, deps.caps, deps.marks), "\n")}
+	m.modal = &helpState{deps: deps, lines: strings.Split(m.helpBody(), "\n")}
 	m.prompt.Blur()
 	return m, nil
 }
