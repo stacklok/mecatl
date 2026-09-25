@@ -63,6 +63,10 @@ test("an idle open chat picks up a short recorded delivery and its reply", async
     body: JSON.stringify({ complete: true, messages: savedMessages, sessionId: "chat-a" }),
     contentType: "application/json",
   }));
+  offlineBff.on("GET", "/api/v1/sessions/chat-a/activity", () => ({
+    body: "",
+    contentType: "text/event-stream",
+  }));
 
   await page.clock.install({ time: new Date("2026-09-24T12:00:00Z") });
   await page.goto("/workspace/chat?sessionId=chat-a");
@@ -153,6 +157,10 @@ test("a fresh legacy inventory title updates the chat header and folder row", as
     messages: [],
     sessionId: "chat-a",
   });
+  offlineBff.on("GET", "/api/v1/sessions/chat-a/activity", () => ({
+    body: "",
+    contentType: "text/event-stream",
+  }));
   await page.addInitScript(() => {
     localStorage.setItem("studio.account", "opaque-a");
     localStorage.setItem(

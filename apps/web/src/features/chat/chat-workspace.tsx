@@ -42,6 +42,7 @@ import {
   Eraser,
   ExternalLink,
   GitFork,
+  ListTodo,
   ListTree,
   MessageSquareText,
   MoreHorizontal,
@@ -143,6 +144,15 @@ import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
 import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
 import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
+import { DelegationCardRow, type DelegationFocus } from "./delegation-card";
+import {
+  applyDelegationDelivery,
+  createDelegationFleet,
+  type DelegationFleet,
+  markDelegationHistoryIncomplete,
+  markDelegationRunUnfollowed,
+} from "./delegation-fleet";
+import { type DelegationAnchor, placeDelegationCards } from "./delegation-placement";
 import { DraftGreeting } from "./draft-greeting";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
 import { FailedTurnCard } from "./failed-turn-card";
@@ -252,6 +262,50 @@ const defaultDraftConfiguration: DraftChatConfiguration = {
   toolAccess: "all",
 };
 
+function delegationFamilyForKind(kind: string): DelegationFocus["family"] | undefined {
+  if (kind === "subagent.start" || kind === "subagent.tool" || kind === "subagent.end") {
+    return "subagent";
+  }
+  if (kind === "parallel.start" || kind === "parallel.branch" || kind === "parallel.end") {
+    return "parallel";
+  }
+  if (
+    kind === "team.start" ||
+    kind === "team.member" ||
+    kind === "team.tasks" ||
+    kind === "team.findings" ||
+    kind === "team.end"
+  ) {
+    return "team";
+  }
+  return undefined;
+}
+
+function hasUnsettledDelegation(fleet: DelegationFleet, runId: string): boolean {
+  return (
+    fleet.subagents.some((item) => item.runId === runId && item.state !== "finished") ||
+    fleet.parallelGroups.some(
+      (item) =>
+        item.runId === runId &&
+        (item.state !== "finished" || item.branches.some((branch) => branch.state !== "finished")),
+    ) ||
+    fleet.teams.some(
+      (item) =>
+        item.runId === runId &&
+        (item.state !== "finished" || item.members.some((member) => member.state !== "finished")),
+    )
+  );
+}
+
+function foldDelegationDelivery(fleet: DelegationFleet, delivery: RunStreamEvent): DelegationFleet {
+  const next = applyDelegationDelivery(fleet, delivery);
+  return delivery.type === "run.event" &&
+    delivery.event.kind === "result" &&
+    hasUnsettledDelegation(next, delivery.event.runId)
+    ? markDelegationRunUnfollowed(next, delivery.event.runId)
+    : next;
+}
+
 export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const recovery = useAuthRecovery();
   const [arrivalSeed] = useState(() => consumeChatSeed(new URL(window.location.href)));
@@ -275,6 +329,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const compactSession = useMutation(compactSessionMutation());
   const forkSession = useMutation(forkSessionMutation());
   const clearSession = useMutation(clearSessionMutation());
+  const [delegationFleet, setDelegationFleet] = useState(() =>
+    createDelegationFleet(sessionId ?? ""),
+  );
+  const [delegationAnchors, setDelegationAnchors] = useState<Record<string, DelegationAnchor>>({});
+  const [activityFocus, setActivityFocus] = useState<DelegationFocus>();
+  const [activityFocusRequest, setActivityFocusRequest] = useState(0);
+  const activityOpener = useRef<HTMLButtonElement>(null);
+  const activityOpenerFocus = useRef<DelegationFocus>(undefined);
+  const sessionActivityControl = useRef<HTMLButtonElement>(null);
   const [isRunning, setIsRunning] = useState(false);
   const activeRun = useRef<RunOwner | undefined>(undefined);
   const { loadedTranscriptSession, messages, setMessages } = useChatMessages(
@@ -322,8 +385,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
   const awayFacts = useRef<AwayFacts | undefined>(undefined);
   const returnNoticeTimer = useRef<number | undefined>(undefined);
   const lastInventoryRow = useRef<SessionSummaryResponse | undefined>(undefined);
+  const activityFollowedSession = useRef<string | undefined>(undefined);
+  const interruptedSettledSession = useRef<string | undefined>(undefined);
   const transcriptScroll = useRef<HTMLDivElement>(null);
   const [atTranscriptBottom, setAtTranscriptBottom] = useState(true);
+  const visibleDelegationFleet =
+    delegationFleet.sessionId === (sessionId ?? "")
+      ? delegationFleet
+      : createDelegationFleet(sessionId ?? "");
+  const delegationPlacement = useMemo(
+    () => placeDelegationCards(messages, visibleDelegationFleet, delegationAnchors),
+    [messages, visibleDelegationFleet, delegationAnchors],
+  );
   const chatFolders = useChatFolders();
   const agentName = useAgentDisplayName().value.trim() || defaultAgentName;
   const userName = useUserDisplayName().value.trim() || "You";
@@ -396,6 +469,13 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     viewedSessionId.current = sessionId;
     activityRefresh.current = undefined;
     authorizationActivityCursor.current = undefined;
+    activityFollowedSession.current = undefined;
+    interruptedSettledSession.current = undefined;
+    setDelegationFleet(createDelegationFleet(sessionId ?? ""));
+    setDelegationAnchors({});
+    setActivityFocus(undefined);
+    activityOpenerFocus.current = undefined;
+    activityOpener.current = null;
     // A run belongs to one session: leaving it stops its stream here, so its
     // asks, controls, and queue can never act on the chat the user opened.
     const owner = activeRun.current;
@@ -417,7 +497,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setSelectionAction(undefined);
     if (!activeRun.current || activeRun.current.sessionId !== sessionId)
       setStatusFacts({ phase: "idle" });
-  }, [sessionId]);
+    if (!sessionId) {
+      setMessages([]);
+    }
+    return () => {
+      // Cleanup runs before a new session's effects set up, and before the
+      // settled reader's cleanup on unmount. Old activity must not finalize
+      // into a view that has already left its session.
+      if (viewedSessionId.current === sessionId) viewedSessionId.current = undefined;
+    };
+  }, [sessionId, setMessages]);
 
   useEffect(() => () => activeRun.current?.controller.abort(), []);
 
@@ -614,6 +703,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
         providerId: model.providerId,
       })) ?? [];
   const watchable = isActiveSessionState(selectedSession?.state);
+  const settledState = selectedSession?.state ?? sessionDetail.data?.state;
+  const settled =
+    settledState === "idle" ||
+    settledState === "completed" ||
+    settledState === "failed" ||
+    settledState === "cancelled";
+  const pendingAuthorization = messages.some((message) =>
+    message.authorizations?.some((authorization) => authorization.status === "pending"),
+  );
+  const uncertainAuthorization = sessionId
+    ? [...authorizationUncertain.current.keys()].some((key) => key.startsWith(`${sessionId}\u0000`))
+    : false;
   const imageAttachmentsSupported = sessionId
     ? sessionDetail.data?.capabilities.image === true
     : draftConfiguration.model
@@ -697,7 +798,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     setError(undefined);
     setNotice(undefined);
     setApprovals([]);
-    if (!resumeFrom) setMessages([]);
+    if (!resumeFrom) {
+      setMessages([]);
+      // A status-driven attach can interrupt a settled replay. Preserve its
+      // observed cards; their unfinished outcomes were marked unknown.
+      if (interruptedSettledSession.current !== sessionId) {
+        setDelegationFleet(createDelegationFleet(sessionId));
+      }
+      setDelegationAnchors({});
+    }
+    interruptedSettledSession.current = undefined;
 
     void (async () => {
       const streamFailure: StreamFailure = {};
@@ -789,6 +899,106 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       }
     };
   }, [reconnectGeneration, reattachEpoch, sessionId, watchable]);
+
+  // Finished chats keep their saved transcript. Rebuild only the delegation
+  // projection from the bounded activity replay, with no live run owner or
+  // controls. A session switch or new run aborts this read before it can fold.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: helpers are stable; the replay lifetime follows session and running state
+  useEffect(() => {
+    if (
+      !sessionId ||
+      !settled ||
+      isRunning ||
+      activeRun.current ||
+      pendingAuthorization ||
+      uncertainAuthorization ||
+      activityFollowedSession.current === sessionId ||
+      protectedRequestsPaused()
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const owner: RunOwner = { controller, sessionId };
+    const observedRuns = new Set<string>();
+    let replayCompleted = false;
+    const owns = () =>
+      !controller.signal.aborted &&
+      viewedSessionId.current === sessionId &&
+      activeRun.current === undefined;
+    const updateFleet = (update: (fleet: DelegationFleet) => DelegationFleet) =>
+      setDelegationFleet((current) =>
+        owns() && current.sessionId === sessionId ? update(current) : current,
+      );
+    const markUnfinished = (interrupted = false) =>
+      setDelegationFleet((current) => {
+        if (viewedSessionId.current !== sessionId || current.sessionId !== sessionId)
+          return current;
+        let next = current;
+        for (const runId of observedRuns) {
+          if (hasUnsettledDelegation(next, runId)) {
+            next = markDelegationRunUnfollowed(next, runId);
+          }
+        }
+        // A stopped history read may have unseen later runs even when every
+        // observed child finished. Keep those cards intact and disclose the
+        // unread remainder without inventing its contents.
+        return interrupted ? { ...next, incompleteHistory: true } : next;
+      });
+    void (async () => {
+      const streamFailure: StreamFailure = {};
+      let reattaches = 0;
+      try {
+        let stream: AsyncIterable<RunStreamEvent> | undefined = await watchActivity(
+          owner,
+          streamFailure,
+        );
+        while (stream && owns()) {
+          let resumeFrom: string | undefined;
+          for await (const delivery of stream) {
+            if (!owns()) break;
+            if (delivery.type === "run.started" && delivery.sessionId !== sessionId) continue;
+            if (delivery.type === "run.event" && delivery.event.runId) {
+              observedRuns.add(delivery.event.runId);
+            }
+            updateFleet((current) => foldDelegationDelivery(current, delivery));
+            if (delivery.type !== "run.truncated") continue;
+            const decision = decideTruncation(delivery, reattaches);
+            if (decision.action === "reattach") {
+              resumeFrom = decision.cursor;
+            } else {
+              updateFleet(markDelegationHistoryIncomplete);
+            }
+            break;
+          }
+          stream = undefined;
+          if (resumeFrom && !streamFailure.error && owns()) {
+            reattaches += 1;
+            stream = await watchActivity(owner, streamFailure, resumeFrom);
+          }
+        }
+        if (streamFailure.error) throw streamFailure.error;
+        replayCompleted = owns();
+      } catch {
+        if (owns()) {
+          updateFleet(markDelegationHistoryIncomplete);
+        }
+      } finally {
+        if (owns()) markUnfinished();
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      // A new run in this same chat cuts replay short. Keep the observed card,
+      // but do not keep claiming its old child is still running. On a status
+      // driven attach this cleanup precedes the live reader's setup.
+      if (viewedSessionId.current === sessionId) {
+        markUnfinished(!replayCompleted);
+        if (!activeRun.current) interruptedSettledSession.current = sessionId;
+      }
+    };
+  }, [sessionId, settled, isRunning, pendingAuthorization, uncertainAuthorization]);
 
   async function selectSession(id: string) {
     setSidebarOpen(false);
@@ -1321,6 +1531,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       continuation.followedRunId = followedRunId;
     };
 
+    // A prior run in this chat may have completed, but this reader must earn
+    // its own terminal observation before it can suppress settled replay.
+    if (owns() && activityFollowedSession.current === owner.sessionId) {
+      activityFollowedSession.current = undefined;
+    }
     if (replay && owns()) setMessages([]);
 
     let stream: AsyncIterable<RunStreamEvent> | undefined = firstStream;
@@ -1336,6 +1551,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           break;
         }
         if (!shouldApply(delivery)) continue;
+        setDelegationFleet((current) =>
+          current.sessionId === owner.sessionId
+            ? foldDelegationDelivery(current, delivery)
+            : current,
+        );
         if (delivery.type === "run.error") {
           onRunError?.();
           failure = { message: delivery.message, permanent: false, prompt: activePrompt };
@@ -1360,6 +1580,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             resumeFrom = decision.cursor;
           } else {
             unfollowed = true;
+            setDelegationFleet((current) =>
+              current.sessionId === owner.sessionId
+                ? markDelegationHistoryIncomplete(current)
+                : current,
+            );
             loadedTranscriptSession.current = undefined;
             if (owner.sessionId) {
               void queryClient.invalidateQueries({
@@ -1410,6 +1635,31 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           failure = undefined;
           sawResult = false;
           persistContinuation();
+        }
+        const delegationFamily = delegationFamilyForKind(event.kind);
+        const payload = event.payload;
+        const parentCallId =
+          typeof payload === "object" && payload !== null && "parentCallId" in payload
+            ? payload.parentCallId
+            : undefined;
+        if (
+          !event.unknown &&
+          delegationFamily &&
+          typeof parentCallId === "string" &&
+          parentCallId.length > 0 &&
+          owner.sessionId
+        ) {
+          ensureAssistant(activeAssistantId);
+          const anchorKey = JSON.stringify([
+            owner.sessionId,
+            event.runId,
+            delegationFamily,
+            parentCallId,
+          ]);
+          const anchor = { assistantId: activeAssistantId };
+          setDelegationAnchors((current) =>
+            current[anchorKey] ? current : { ...current, [anchorKey]: anchor },
+          );
         }
         if (event.usage && !replay) setLiveUsage(event.usage);
         if (event.kind === "session.title" && owner.sessionId) {
@@ -1558,6 +1808,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     // catch-up notice no longer describes anything.
     if (!unfollowed && owns()) {
       setNotice((current) => (current === CATCHING_UP_NOTICE ? undefined : current));
+    }
+    if (owns() && followedRunId) {
+      setDelegationFleet((current) =>
+        current.sessionId === owner.sessionId && hasUnsettledDelegation(current, followedRunId)
+          ? markDelegationRunUnfollowed(current, followedRunId)
+          : current,
+      );
+    }
+    if (sawResult && !unfollowed && owns() && !streamFailure.error && owner.sessionId) {
+      activityFollowedSession.current = owner.sessionId;
     }
     return runStreamEnd(
       {
@@ -1990,6 +2250,23 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             )}
           </div>
           <Button
+            aria-label="Open session activity"
+            disabled={!sessionId}
+            onClick={(event) => {
+              activityOpener.current = event.currentTarget;
+              activityOpenerFocus.current = undefined;
+              setActivityFocus(undefined);
+              setActivityFocusRequest((value) => value + 1);
+              setContentPreview({ kind: "activity" });
+            }}
+            ref={sessionActivityControl}
+            size="sm"
+            variant="ghost"
+          >
+            <ListTodo aria-hidden="true" />
+            <span className="hidden sm:inline">Activity</span>
+          </Button>
+          <Button
             aria-label="Open local canvas"
             onClick={() => setContentPreview({ kind: "canvas" })}
             size="sm"
@@ -2164,7 +2441,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
             ) : (
               <ChatTranscript
                 agentName={agentName}
+                delegationsByMessageId={delegationPlacement.byMessageId}
                 messages={messages}
+                onOpenActivity={(focus, opener) => {
+                  activityOpener.current = opener;
+                  activityOpenerFocus.current = focus;
+                  setActivityFocus(focus);
+                  setActivityFocusRequest((value) => value + 1);
+                  setContentPreview({ kind: "activity" });
+                }}
                 onOpenThread={(message) => void openSideThread(message)}
                 onReviewAuthorization={(authorization) =>
                   setContentPreview({ authorization, kind: "authorization" })
@@ -2184,6 +2469,18 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                   threadMap[threadKeyForMessage(message)]?.sessionId
                 }
                 userName={userName}
+              />
+            )}
+            {delegationPlacement.unanchored.length > 0 && (
+              <DelegationCardRow
+                activities={delegationPlacement.unanchored}
+                onOpen={(focus, opener) => {
+                  activityOpener.current = opener;
+                  activityOpenerFocus.current = focus;
+                  setActivityFocus(focus);
+                  setActivityFocusRequest((value) => value + 1);
+                  setContentPreview({ kind: "activity" });
+                }}
               />
             )}
           </div>
@@ -2316,6 +2613,15 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       </section>
       {displayedPreview && (
         <ContentPreviewPanel
+          activity={{
+            fallbackOpener: sessionActivityControl.current,
+            fleet: visibleDelegationFleet,
+            focus: activityFocus,
+            focusRequest: activityFocusRequest,
+            onFocusChange: setActivityFocus,
+            opener: activityOpener.current,
+            openerFocus: activityOpenerFocus.current,
+          }}
           authorizationDisabled={authorizationBusy !== undefined}
           authorizationUncertain={
             displayedPreview?.kind === "authorization" &&

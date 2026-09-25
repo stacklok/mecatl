@@ -125,6 +125,10 @@ function setup(offlineBff: OfflineBff, initial: Partial<OfflineState> = {}): Off
     messages: [],
     sessionId: "s1",
   });
+  offlineBff.on("GET", "/api/v1/sessions/s1/activity", () => ({
+    body: "",
+    contentType: "text/event-stream",
+  }));
   offlineBff.on("POST", "/api/v1/sessions/s1/runs", () => {
     state.runWrites += 1;
     if (state.expireNextWrite) {
