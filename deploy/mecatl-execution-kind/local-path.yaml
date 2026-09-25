@@ -1,0 +1,33 @@
+# Recovery fixture for a Kind local-path provisioner whose helper image was
+# changed during an interrupted qualification setup. Fresh clusters do not need
+# this manifest. The workload image supplies /bin/sh, mkdir, and chown.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-config
+  namespace: local-path-storage
+data:
+  config.json: |-
+    {"nodePathMap":[{"node":"DEFAULT_PATH_FOR_NON_LISTED_NODES","paths":["/var/local-path-provisioner"]}]}
+  setup: |-
+    #!/bin/sh
+    set -eu
+    mkdir -m 0770 -p "$VOL_DIR"
+    chown 65532:65532 "$VOL_DIR"
+  teardown: |-
+    #!/bin/sh
+    echo "retained by execution qualification; no automatic deletion"
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      securityContext: {runAsUser: 0, runAsGroup: 0}
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: helper-pod
+        image: WORKLOAD_IMAGE
+        imagePullPolicy: IfNotPresent

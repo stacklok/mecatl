@@ -120,6 +120,12 @@ type config struct {
 	httpShutdownTimeout    time.Duration
 	closeTimeout           time.Duration
 	workspace              string
+	executionEnabled       bool
+	executionEndpoint      string
+	executionProfile       string
+	executionTLSCA         string
+	executionTLSCert       string
+	executionTLSKey        string
 	model                  string
 	defaultProvider        string
 	defaultModel           string
@@ -352,6 +358,12 @@ func parseFlags(argv []string) (config, error) {
 	positiveDurationFlag(fs, &cfg.httpShutdownTimeout, "http-shutdown-timeout", defaultHTTPShutdownTimeout, "Maximum time for graceful HTTP and metrics shutdown")
 	positiveDurationFlag(fs, &cfg.closeTimeout, "close-timeout", defaultCloseTimeout, "Maximum time for final application cleanup")
 	fs.StringVar(&cfg.workspace, "workspace", "", "Shared agent workspace root, such as a mounted PVC. Empty gives every session a shell-less, file-less workspace; clients cannot choose another root")
+	fs.BoolVar(&cfg.executionEnabled, "execution-enabled", false, "Use an independently deployed Kubernetes execution provider for default sessions")
+	fs.StringVar(&cfg.executionEndpoint, "execution-endpoint", "", "Host:port endpoint of the mTLS gRPC execution provider. Requires --execution-enabled")
+	fs.StringVar(&cfg.executionProfile, "execution-profile", "", "Operator-configured execution provider profile")
+	fs.StringVar(&cfg.executionTLSCA, "execution-tls-ca", "", "Mounted CA bundle used only by the execution client")
+	fs.StringVar(&cfg.executionTLSCert, "execution-tls-cert", "", "Mounted execution-provider mTLS client certificate")
+	fs.StringVar(&cfg.executionTLSKey, "execution-tls-key", "", "Mounted execution-provider mTLS client private key")
 	fs.StringVar(&cfg.model, "model", "", "Model identifier sent to the provider. Empty uses the provider default")
 	fs.StringVar(&cfg.defaultProvider, "default-provider", "", "Deployment-wide default provider ID, such as openai, openrouter, or anthropic. Invalid values prevent startup")
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "Deployment-wide default model ID for the default provider. Invalid values prevent startup")
@@ -612,6 +624,21 @@ func parseFlags(argv []string) (config, error) {
 	if cfg.workspace != "" && (!filepath.IsAbs(cfg.workspace) || filepath.Clean(cfg.workspace) != cfg.workspace) {
 		return config{}, fmt.Errorf("--workspace %q must be a clean absolute path (a mounted filesystem root); leave it empty for a file-less deployment", cfg.workspace)
 	}
+	if cfg.executionEnabled {
+		if cfg.executionEndpoint == "" || cfg.executionProfile == "" || cfg.executionTLSCA == "" || cfg.executionTLSCert == "" || cfg.executionTLSKey == "" {
+			return config{}, errors.New("--execution-enabled requires --execution-endpoint, --execution-profile, --execution-tls-ca, --execution-tls-cert, and --execution-tls-key")
+		}
+		if !cfg.oidc.Enabled() {
+			return config{}, errors.New("--execution-enabled requires OIDC caller ownership enforcement")
+		}
+		if cfg.workspace != "" || cfg.redisFilesystem {
+			return config{}, errors.New("--execution-enabled conflicts with --workspace and --redis-filesystem")
+		}
+		if cfg.enableParallel || cfg.enableTeams {
+			return config{}, errors.New("remote execution does not support --enable-parallel or --enable-teams")
+		}
+		cfg.noScheduler = true
+	}
 	if cfg.redisFilesystem && cfg.workspace != "" {
 		return config{}, errors.New("--redis-filesystem and --workspace are mutually exclusive")
 	}
@@ -659,6 +686,7 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		mcpAuthorityDefault = mcpauthority.Global
 	}
 	out := app.Config{
+		RemoteExecution:        cfg.executionEnabled,
 		Workspace:              cfg.workspace,
 		Model:                  cfg.model,
 		DefaultProvider:        cfg.defaultProvider,

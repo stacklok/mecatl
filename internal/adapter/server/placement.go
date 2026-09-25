@@ -1,3 +1,4 @@
+//nolint:revive // Host-only lifecycle seams are exported solely for internal adapter composition.
 package server
 
 import (
@@ -6,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -137,6 +139,9 @@ type PlacementBindRequest struct {
 	Principal *session.Principal
 	Scope     PlacementScope
 	Operation PlacementOperation
+	// BindingID is the final server-minted session identity. Providers that
+	// allocate durable environments use it as their idempotency/reference key.
+	BindingID session.SessionID
 }
 
 // PlacementMetadata is the bounded, display-safe provider projection returned
@@ -160,6 +165,10 @@ type PlacementBinding struct {
 	// when there is no host governance context; guest roots are never used as a
 	// fallback. No-FS bindings always leave it empty.
 	GovernanceRoot string
+	// Commit publishes a provisional durable reference after the session store
+	// definitively publishes the matching binding. Close aborts it only while Commit
+	// has not succeeded; an ambiguous commit must remain recoverable.
+	Commit func(context.Context) error
 	// Close detaches a published placement binding. Service ownership is
 	// transferred only after the session snapshot is durably created.
 	Close func() error
@@ -167,6 +176,24 @@ type PlacementBinding struct {
 	// that provision durable state during Bind must supply it; it is never used
 	// after publication or for ordinary EndSession teardown.
 	Rollback func() error
+}
+
+type ExecutionRunRequest struct {
+	Ref       session.EnvironmentRef
+	Principal *session.Principal
+	BindingID session.SessionID
+	RunID     string
+}
+
+type ExecutionRunHandle interface {
+	Environment() tool.Environment
+	Renew(context.Context) error
+	Release(context.Context) error
+}
+
+type ExecutionAccess interface {
+	Applies(session.EnvironmentRef) bool
+	AcquireRun(context.Context, ExecutionRunRequest) (ExecutionRunHandle, error)
 }
 
 // sourceWorkspace exposes the content-reading Workspace surface while refusing
@@ -223,6 +250,46 @@ type PlacementProvider interface {
 	Bind(context.Context, PlacementBindRequest) (PlacementBinding, error)
 }
 
+type PlacementSuccessorRequest struct {
+	Ref                  session.EnvironmentRef
+	Principal            *session.Principal
+	SourceBindingID      session.SessionID
+	DestinationBindingID session.SessionID
+}
+
+type ReferenceDeleteHandle interface {
+	Confirm(context.Context) error
+	Cancel(context.Context) error
+}
+type ReferenceLifecycle interface {
+	Applies(session.EnvironmentRef) bool
+	PrepareReferenceDelete(context.Context, PlacementSuccessorRequest) (ReferenceDeleteHandle, error)
+}
+
+// ReferenceIntent is the owner-attested, exact provider operation retained after
+// an ambiguous publication or deletion outcome.
+type ReferenceIntent struct {
+	Ref             session.EnvironmentRef
+	Principal       *session.Principal
+	BindingID       session.SessionID
+	SourceBindingID session.SessionID
+	OperationID     string
+	PendingDelete   bool
+}
+
+// ReferenceIntentLifecycle is the optional host reconciliation seam. Its list is
+// scoped by the provider to the authenticated mTLS client and bounded by limit.
+type ReferenceIntentLifecycle interface {
+	ListReferenceIntents(context.Context, int) ([]ReferenceIntent, error)
+	CommitReferenceIntent(context.Context, ReferenceIntent) error
+	ConfirmReferenceIntentDelete(context.Context, ReferenceIntent) error
+	CancelReferenceIntentDelete(context.Context, ReferenceIntent) error
+}
+
+type PlacementSuccessorReservoir interface {
+	ReserveSuccessor(context.Context, PlacementSuccessorRequest) (PlacementBinding, error)
+}
+
 // PlacementDiscoveryRequest scopes alternate-worktree discovery to an owned
 // source and its exact current placement.
 type PlacementDiscoveryRequest struct {
@@ -271,6 +338,14 @@ type PlacementReattachRequest struct {
 	Ref       session.EnvironmentRef
 	Principal *session.Principal
 	Scope     PlacementScope
+	// BindingID identifies the durable reference being reattached.
+	BindingID session.SessionID
+}
+
+// PlacementValidator performs side-effect-free startup validation. Providers
+// whose Bind allocates resources implement this seam so preflight never binds.
+type PlacementValidator interface {
+	ValidatePlacement(context.Context) error
 }
 
 // PlacementBinder is the server-owned choke point around one deployment
@@ -357,14 +432,14 @@ func configuredPlacementBinder(cfg Config) (*PlacementBinder, error) {
 	return NewPlacementBinder(cfg.PlacementProvider)
 }
 
-func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
+func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal, bindingID session.SessionID) (string, *PlacementBinding, error) {
 	selector := DefaultPlacement()
 	if profile == ProfileNoFS {
 		selector = NoFSPlacement()
 	}
 	binding, err := s.placementBinder.Bind(ctx, PlacementBindRequest{
 		Selector: selector, Principal: owner, Scope: s.cfg.PlacementScope,
-		Operation: PlacementOperationCreate,
+		Operation: PlacementOperationCreate, BindingID: bindingID,
 	})
 	if err != nil {
 		s.logPlacementProviderError(ctx, "bind", err)
@@ -390,7 +465,17 @@ func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session
 	if !sess.EnvironmentRef.Valid() {
 		return nil, fmt.Errorf("%w: placement did not provide an exact environment ref", ErrInvalidPlacementBinding)
 	}
-	return s.persistCreatedSession(ctx, sess, owner, request)
+	persisted, err := s.persistCreatedSession(ctx, sess, owner, request)
+	if err != nil || placement == nil || placement.Commit == nil {
+		return persisted, err
+	}
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := placement.Commit(commitCtx); err != nil {
+		s.logPlacementProviderError(ctx, "commit reference", err)
+		return persisted, fmt.Errorf("%w: session %q persisted but reference publication must be retried", ErrInternal, sess.ID)
+	}
+	return persisted, nil
 }
 
 type schedulePlacement struct {
@@ -543,7 +628,7 @@ func (s *Service) sessionPlacement(ctx context.Context, sess *session.Session) (
 		binding.Close = nil
 		return binding, nil
 	}
-	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
+	binding, err := s.ReattachPlacementForBinding(ctx, sess.EnvironmentRef, sess.ID)
 	if err != nil {
 		s.placementAttachMu.Unlock()
 		return PlacementBinding{}, err

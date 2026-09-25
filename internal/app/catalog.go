@@ -177,7 +177,8 @@ type catalogSession struct {
 	// EXACTLY as in the default profile — guarded by TestNoFSCatalogProfile,
 	// which pins the EXACT name-set delta. Always false for the build-time shared
 	// catalog (a process always has a default-profile shared engine).
-	noFS bool
+	noFS   bool
+	remote bool
 	// mode is the session's permission mode (the per-session factory passes the
 	// session's resolved mode; the build-time shared catalog leaves it
 	// ModeDefault). The Schedule registration reads it to register the
@@ -224,7 +225,7 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 	classified := newClassifiedCatalog()
 	cat := classified.catalog
 	classified.captureEach(coreToolClassification, func() {
-		registerCoreTools(cfg, cat, s.narrate, s.noFS, a.searchProvider)
+		registerCoreTools(cfg, cat, s.narrate, s.noFS, s.remote, a.searchProvider)
 	})
 	for _, sessionTool := range s.sessionTools {
 		// A direct global manager retains ownership of its existing query wrapper.
@@ -295,27 +296,31 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		refMgr = s.clientMgr
 	}
 	var subagentClose func() error
-	classified.captureEach(delegationToolClassification, func() {
-		subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
-	})
-	// Parallel is ABSENT under the no-FS profile (not merely disarmed): every
-	// branch is a force-copy filesystem fork and the deliverable is a preserved
-	// fork PATH — both meaningless without a filesystem.
-	if !s.noFS {
+	if !s.remote {
+		classified.captureEach(delegationToolClassification, func() {
+			subagentClose = registerSubagentTrio(ctx, cfg, cat, reg, store, hooks, *a, s, refMgr)
+		})
+	}
+	// Parallel is ABSENT under no-FS and remote execution profiles.
+	if !s.noFS && !s.remote {
 		classified.captureEach(delegationToolClassification, func() {
 			registerParallelTool(ctx, cfg, cat, reg, store, hooks, *a, s)
 		})
 	}
-	classified.captureEach(delegationToolClassification, func() {
-		registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
-	})
+	if !s.remote {
+		classified.captureEach(delegationToolClassification, func() {
+			registerTeamTools(ctx, cfg, cat, reg, store, *a, s, refMgr)
+		})
+	}
 	classified.capture(server.ClassificationEntry{Kind: server.KindCallerOwned,
 		Rationale: "memory tools resolve the verified caller through the caller-partitioned store"}, func() {
 		registerMemoryFamilies(ctx, cfg, cat, *a)
 	})
-	classified.captureEach(scheduleToolClassification, func() {
-		registerScheduleTool(ctx, cfg, cat, a, s)
-	})
+	if !s.remote {
+		classified.captureEach(scheduleToolClassification, func() {
+			registerScheduleTool(ctx, cfg, cat, a, s)
+		})
+	}
 	classified.captureEach(func(t tool.Tool) (server.ClassificationEntry, bool) {
 		return skillToolClassification(t, *a, s)
 	}, func() {
@@ -656,7 +661,7 @@ func registerSkillFamily(ctx context.Context, cfg Config, cat *tool.Catalog, a c
 			cfg.diag().Log(ctx, port.LevelWarn, "registering skills failed; Skill tool disabled", "err", err)
 		}
 	}
-	if !s.noFS {
+	if !s.noFS && !s.remote {
 		if a.learnedSkills != nil && cfg.SkillsDraftDir != "" {
 			inventory := make([]learning.SkillInventoryItem, 0, len(a.skills))
 			for _, meta := range a.skills {

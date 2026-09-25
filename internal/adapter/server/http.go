@@ -20,6 +20,7 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/creatediag"
 )
 
 // HTTPHandler is the HTTP/SSE adapter over the shared Service. It serves the
@@ -479,6 +480,11 @@ func toContentParts(parts []promptContentBody) ([]session.Content, error) {
 
 // createSession handles POST /v1/sessions.
 func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
+	if h.svc.cfg.ExecutionAccess != nil {
+		r = r.WithContext(creatediag.Start(r.Context(), h.svc.Diagnostics()))
+	}
+	creatediag.Note(r.Context(), "http_handler", "begin", 0)
+	defer func() { creatediag.Note(r.Context(), "http_handler", "returned", 1) }()
 	var body createSessionBody
 	// STRICT decode. An unknown field is a 400, not a silent drop.
 	//
@@ -549,6 +555,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	responseDone := creatediag.Begin(r.Context(), "http_response")
 	scaps := h.svc.sessionCapabilitiesFor(sess)
 	writeJSON(w, http.StatusCreated, createSessionResp{
 		SessionID:           string(sess.ID),
@@ -556,6 +563,7 @@ func (h *HTTPHandler) createSession(w http.ResponseWriter, r *http.Request) {
 		ResolvedModel:       resolvedModelToJSON(h.svc.resolvedModelFor(sess)),
 		Placement:           placementMetadataToJSON(sess.Placement),
 	})
+	responseDone(r.Context().Err())
 }
 
 // getSession handles GET /v1/sessions/{id}.

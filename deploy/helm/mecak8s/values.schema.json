@@ -116,6 +116,20 @@
       }
     },
     "workspace": {"type": "string"},
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "endpoint", "profile", "tlsSecret", "caKey", "certKey", "keyKey"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "endpoint": {"type": "string", "anyOf": [{"const": ""}, {"pattern": "^(?:[A-Za-z0-9.-]+|\\[[0-9A-Fa-f:]+\\]):[0-9]+$"}]},
+        "profile": {"type": "string"},
+        "tlsSecret": {"type": "string"},
+        "caKey": {"type": "string", "minLength": 1},
+        "certKey": {"type": "string", "minLength": 1},
+        "keyKey": {"type": "string", "minLength": 1}
+      }
+    },
     "imagePullSecrets": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
     "mcp": {
       "type": "object",
@@ -371,6 +385,17 @@
     "podAnnotations": {"type": "object"}
   },
   "allOf": [
+    {
+      "if": {"properties": {"execution": {"properties": {"enabled": {"const": true}}}}},
+      "then": {
+        "properties": {
+          "workspace": {"maxLength": 0},
+          "execution": {"properties": {"endpoint": {"minLength": 1}, "profile": {"minLength": 1}, "tlsSecret": {"minLength": 1}}},
+          "redis": {"properties": {"filesystem": {"properties": {"enabled": {"const": false}}}}},
+          "oidc": {"properties": {"enabled": {"const": true}}}
+        }
+      }
+    },
     {
       "if": {"properties": {"redis": {"properties": {"filesystem": {"properties": {"enabled": {"const": true}}}}}}},
       "then": {"properties": {"workspace": {"maxLength": 0}}}
