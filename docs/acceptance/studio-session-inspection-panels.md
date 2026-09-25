@@ -4,7 +4,7 @@
 **Work classification:** Bounded — Studio adds browser presentation and authenticated BFF projections over published SDK operations. [ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui.md) owns the browser boundary, and [ADR 0291](../adr/0291-server-owned-session-placement.md) already owns successor placement.
 **Decision record:** None — this plan uses existing soul inspection, source-session-scoped worktree selectors, and server-owned placement without changing trust, durable ownership, or daemon authority.
 **Phase:** Studio design alignment
-**Status:** proposed, 2026-09-25. Reconciled with merged #1847 chat and #1848 interaction implementation #1909. The #1849 activity seam remains provisional; the directing human authorized an early stacked implementation, with final panel reconciliation after #1907 merges.
+**Status:** proposed, 2026-09-25. Reconciled with merged #1847 chat, the #1848 interaction plan, and #1909's authorization review prerequisite. #1848's layered Escape UI and the #1849 activity seam remain pending; the directing human authorized an early stacked implementation.
 **Delivery:** Split. The BFF additions and shared panel behavior require an independent interface review. Early stacked implementation remains provisional until this plan merges.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1850](https://github.com/stacklok/mecatl/issues/1850).
@@ -13,7 +13,7 @@
 
 A long chat gains a message minimap that navigates its own transcript. One responsive, resizable panel frame hosts reply threads, local file and tool previews, and a browser-local Markdown canvas. Session inspection shows details, transcripts, the connection's resolved soul, eligible session worktrees, and the existing consent-gated debug action. Inspect-only sessions have a separate read-only entry point.
 
-The merged [chat plan](studio-chat-transcript-composer.md) and [implementation #1886](https://github.com/stacklok/mecatl/pull/1886) supply transcript rows, render-local anchors, preview callbacks, and the existing BFF run union. The merged [#1848 interaction plan](studio-chat-approvals-review-escape.md) and [implementation #1909](https://github.com/stacklok/mecatl/pull/1909) own Escape priority and authorization review content. [#1849 Plan / Interface PR #1885](https://github.com/stacklok/mecatl/pull/1885) is unmerged and provisional; it owns delegated-activity projection and panel content, currently mounted by [implementation #1907](https://github.com/stacklok/mecatl/pull/1907). #1907 and #1909 both edit `content-preview-panel.tsx`; #1907 also gives activity a local Escape handler. #1850 extracts their shared frame after #1907 settles, keeps their content ownership intact, and routes Escape through #1848's central priority. The eventual public behavior belongs in `user-docs/building/deployment/studio.md`; this plan does not describe it as shipped.
+The merged [chat plan](studio-chat-transcript-composer.md) and [implementation #1886](https://github.com/stacklok/mecatl/pull/1886) supply transcript rows, render-local anchors, preview callbacks, and the existing BFF run union. The merged [#1848 interaction plan](studio-chat-approvals-review-escape.md) owns Escape priority. [Implementation #1909](https://github.com/stacklok/mecatl/pull/1909) supplies authorization review content and exact control prerequisites; its PR explicitly leaves layered Escape and other browser interactions to later #1848 work. [#1849 Plan / Interface PR #1885](https://github.com/stacklok/mecatl/pull/1885) is unmerged and provisional; it owns delegated-activity projection and panel content, currently mounted by [implementation #1907](https://github.com/stacklok/mecatl/pull/1907). #1907 and #1909 both edit `content-preview-panel.tsx`; #1907 also gives activity a local Escape handler. #1850 extracts their shared frame after #1907 settles and keeps their content ownership intact. The frame's close action must yield to the #1848 Escape priority when that browser work lands. The eventual public behavior belongs in `user-docs/building/deployment/studio.md`; this plan does not describe it as shipped.
 
 ## Human decisions
 
@@ -115,7 +115,7 @@ The authenticated [runtime schema](../../apps/contracts/src/schemas/runtime.ts) 
 | Item | Defer-to | Decision |
 | --- | --- | --- |
 | Delegation event parsing, card contents, roster, tasks, findings, and traces | [#1849](https://github.com/stacklok/mecatl/issues/1849) | #1885 remains provisional until merged; #1850 owns only the shared host. |
-| Approval verdicts, authorization operation, and Escape priority | [#1848](https://github.com/stacklok/mecatl/issues/1848) | Reuse the merged #1888 interaction contract and #1909 content. |
+| Approval verdicts, authorization operation, and Escape priority | [#1848](https://github.com/stacklok/mecatl/issues/1848) | Reuse the merged #1888 interaction contract and #1909 authorization content; layered Escape browser work is still pending. |
 | New worktree identity, path authority, trust policy, or in-place session rebinding | separate Architectural decision | [ADR 0291](../adr/0291-server-owned-session-placement.md) already provides scoped successor selection. |
 | Server-synced canvas, a durable parent-message ID, PDF/text sending, and remote file reads | later contract | Existing browser-local canvas, forked threads, and image-only send remain the bound. |
 
@@ -128,6 +128,6 @@ The authenticated [runtime schema](../../apps/contracts/src/schemas/runtime.ts) 
 
 ## Deferred decisions and known risks
 
-- #1885's activity contract and #1907 implementation are in flight. The directing human authorized early stacked implementation against this proposed plan; reconcile #1907's final content props and local Escape handling with the merged #1909 authorization content before claiming AC4.3. A material change to that seam requires a Plan / Interface amendment.
+- #1885's activity contract and #1907 implementation are in flight, and #1848's layered Escape browser work remains pending after #1909. The directing human authorized early stacked implementation against this proposed plan; reconcile #1907's final content props and local Escape handling with #1848's central priority and the merged #1909 authorization content before claiming AC4.2 or AC4.3. A material change to those seams requires a Plan / Interface amendment.
 - Render-local transcript IDs cannot prove a durable parent-message identity. The local thread association validates a recorded ordinal and digest; changed or ambiguous history requires explicit relinking rather than guessing.
 - A stronger soul access rule or a new placement/trust decision would change the work classification to Architectural and require a new or superseding ADR before implementation.
