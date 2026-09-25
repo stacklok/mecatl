@@ -145,6 +145,9 @@ func TestNativeBuildPreservesIndependentContext(t *testing.T) {
 						if scope.SessionID == "" || scope.Principal == nil {
 							t.Error("source bound without session identity")
 						}
+						if scope.AcquireExecutionWorkspace != nil {
+							t.Error("independent source received execution workspace capability")
+						}
 						binds.Add(1)
 						return prompt.NewDirCommandExpander(source, "commands"), func() error { closes.Add(1); return nil }, nil
 					}},
@@ -188,6 +191,9 @@ func TestNativeBuildPreservesIndependentContext(t *testing.T) {
 			for range run.Events() {
 			}
 			built.Service.FinishRun(sess.ID, run)
+			if backend.ensureCalls != 1 || backend.attachCalls != 2 || backend.fileCalls != 0 {
+				t.Fatalf("run lazily touched native provider: ensure=%d attach=%d files=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
+			}
 			if len(requests) != 1 {
 				t.Fatalf("model requests=%d", len(requests))
 			}

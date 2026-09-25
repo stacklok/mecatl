@@ -103,7 +103,11 @@ func TestHarnessContextGeneratedIDPublicationCollision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			ref := session.EnvironmentRef{Kind: "kubernetes", ID: "placement", Revision: "v1"}
-			placement := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), memledger.New(), nil)}}
+			commits := 0
+			placement := &repairPlacementProvider{binding: PlacementBinding{
+				Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), memledger.New(), nil),
+				Commit: func(context.Context) error { commits++; return nil },
+			}}
 			eng := repairEngine()
 			winnerService, err := NewService(Config{Engine: eng, Store: store, PlacementProvider: placement, PlacementScope: "test", SharedEngineRoot: "/bound"})
 			if err != nil {
@@ -112,6 +116,7 @@ func TestHarnessContextGeneratedIDPublicationCollision(t *testing.T) {
 			defer winnerService.Close()
 			resolver := &failedCreateSourceResolver{}
 			closes := 0
+			winnerCommits := 0
 			var winner *session.Session
 			loser, err := NewService(Config{
 				Engine: eng, Store: store, OwnershipEnforced: true,
@@ -129,6 +134,10 @@ func TestHarnessContextGeneratedIDPublicationCollision(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					if commits != 1 {
+						t.Fatalf("winner commits=%d, want 1", commits)
+					}
+					winnerCommits = commits
 					return SessionEngineResult{Engine: eng, Close: func() error { closes++; return nil }}, nil
 				},
 			})
@@ -147,6 +156,13 @@ func TestHarnessContextGeneratedIDPublicationCollision(t *testing.T) {
 				}
 			} else if got != nil {
 				t.Fatal("adopted an unauthorized or different winner")
+			}
+			wantCommits := winnerCommits
+			if tc.want == nil {
+				wantCommits++
+			}
+			if commits != wantCommits {
+				t.Fatalf("commits=%d, want %d (winner=%d)", commits, wantCommits, winnerCommits)
 			}
 			if closes != 1 || len(resolver.retired) != 1 || len(loser.sessionEngines) != 0 || len(loser.reservedIDs) != 0 || placement.reattaches != 0 {
 				t.Fatalf("loser lifecycle: closes=%d retirements=%v engines=%d reservations=%d attaches=%d", closes, resolver.retired, len(loser.sessionEngines), len(loser.reservedIDs), placement.reattaches)
