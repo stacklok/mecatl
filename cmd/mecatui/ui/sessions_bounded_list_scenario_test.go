@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -75,6 +76,37 @@ func TestMecatuiSessionsBoundedList_Scenario1_GeometryPresentationAndIndicators(
 		}
 	}
 
+	gutter := sessionsScenarioState(sessionsScenarioRows(2))
+	gutter.sessions[0].Title = strings.Repeat("wrapped ", 5)
+	if _, _ = gutter.Render(40, 12); gutter.list == nil {
+		t.Fatal("gutter scenario did not construct its list")
+	}
+	view := gutter.list.ViewWithIndicators(gutter.rowBudget, false)
+	var selected, continuation, unselected *bounded.ListRow
+	for i := range view.Rows {
+		row := &view.Rows[i]
+		switch {
+		case row.Selected && row.CursorMarker:
+			selected = row
+		case row.Selected && row.ItemLine > 0:
+			continuation = row
+		case !row.Selected && row.ItemLine == 0:
+			unselected = row
+		}
+	}
+	if selected == nil || continuation == nil || unselected == nil {
+		t.Fatalf("gutter scenario lacks selected/continuation/unselected rows: %+v", view)
+	}
+	selectedPresentation := presentListRow(*selected, gutter.deps.theme.Style("accent"), gutter.deps.theme.Style("muted"))
+	continuationPresentation := presentListRow(*continuation, gutter.deps.theme.Style("accent"), gutter.deps.theme.Style("muted"))
+	unselectedPresentation := presentListRow(*unselected, gutter.deps.theme.Style("accent"), gutter.deps.theme.Style("muted"))
+	if !strings.HasPrefix(selectedPresentation.Text, "▶✓ ") || !strings.HasPrefix(continuationPresentation.Text, "   ") || !strings.HasPrefix(unselectedPresentation.Text, " ✓ ") {
+		t.Fatalf("selection, continuation, or unselected gutter drifted: selected=%q continuation=%q unselected=%q", selectedPresentation.Text, continuationPresentation.Text, unselectedPresentation.Text)
+	}
+	if selectedPresentation.Style.Render("same row") == unselectedPresentation.Style.Render("same row") {
+		t.Fatal("selected and unselected session rows use the same style")
+	}
+
 	st := sessionsScenarioState([]client.SessionListItem{{ID: "raw-id", Title: "unsafe\tname\nnext\u202e", Kind: client.SessionKindMain, State: "running"}})
 	got, _ := st.Render(40, 8)
 	if plain := ansi.Strip(got); strings.ContainsAny(plain, "\t\u202e") || !strings.Contains(plain, "unsafenamenext") || st.list.CursorID() != "raw-id" {
@@ -109,13 +141,38 @@ func TestMecatuiSessionsBoundedList_Scenario1_NavigationPagingAndWheelOwnership(
 	if st.list.Cursor() != 0 {
 		t.Fatalf("rebound Up selected %d", st.list.Cursor())
 	}
-	beforeOffset := st.list.Offset()
-	st.HandleKey(sessionsScenarioKey("n"))
-	if st.list.Cursor() != 0 || st.list.Offset() <= beforeOffset {
-		t.Fatalf("page down skipped oversized selected segments: cursor=%d offset=%d", st.list.Cursor(), st.list.Offset())
-	}
-	for st.list.Cursor() == 0 {
+	oversizedID := st.list.CursorID()
+	seenLines := map[int]bool{}
+	offsets := []int{}
+	for st.list.CursorID() == oversizedID {
+		view := st.list.ViewWithIndicators(st.rowBudget, false)
+		offsets = append(offsets, st.list.Offset())
+		for _, row := range view.Rows {
+			if row.ID == oversizedID {
+				seenLines[row.ItemLine] = true
+			}
+		}
 		st.HandleKey(sessionsScenarioKey("n"))
+	}
+	if len(offsets) < 2 {
+		t.Fatalf("oversized row did not expose multiple physical windows: offsets=%v", offsets)
+	}
+	for i := 1; i < len(offsets); i++ {
+		if offsets[i] <= offsets[i-1] {
+			t.Fatalf("oversized row did not advance through successive physical offsets: %v", offsets)
+		}
+	}
+	maxLine := 0
+	for line := range seenLines {
+		maxLine = max(maxLine, line)
+	}
+	for line := 0; line <= maxLine; line++ {
+		if !seenLines[line] {
+			t.Fatalf("oversized row skipped physical segment %d before cursor changed: seen=%v offsets=%v", line, seenLines, offsets)
+		}
+	}
+	if st.list.CursorID() == oversizedID {
+		t.Fatalf("oversized row never paged to its successor: offsets=%v", offsets)
 	}
 	st.HandleKey(sessionsScenarioKey("b"))
 	if st.list.Cursor() != len(st.filtered)-1 {
@@ -151,14 +208,30 @@ func TestMecatuiSessionsBoundedList_Scenario1_StableIdentityAcrossSurfaceRefresh
 
 	st.filter.SetValue("keep")
 	st.syncFilter()
-	st.sessions = append([]client.SessionListItem{{ID: "new", Title: "keep new", Kind: client.SessionKindMain}}, st.sessions...)
-	st.syncFilter()
+	if cmd := st.applyPage(client.SessionInventoryPageMsg{Cursor: "page-2", Page: client.SessionInventoryPage{
+		Sessions: []client.SessionListItem{{ID: "page-append", Title: "keep appended", Kind: client.SessionKindMain}}, NextCursor: "page-3",
+	}}); cmd != nil {
+		t.Fatal("unwired page append unexpectedly scheduled a command")
+	}
 	if st.list.CursorID() != selected {
-		t.Fatalf("filter/page append lost selected ID: %q", st.list.CursorID())
+		t.Fatalf("real page append lost selected ID: %q", st.list.CursorID())
 	}
 	gotTop := st.list.View().Rows[0]
 	if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine {
-		t.Fatalf("refresh lost top semantic anchor: got=%+v want=%+v", gotTop, top)
+		t.Fatalf("page append lost top semantic anchor: got=%+v want=%+v", gotTop, top)
+	}
+
+	replacementPage := append([]client.SessionListItem(nil), st.sessions...)
+	st.loadState = sessionsInitialLoading
+	if cmd := st.applyPage(client.SessionInventoryPageMsg{Page: client.SessionInventoryPage{Sessions: replacementPage}}); cmd != nil {
+		t.Fatal("unwired page replacement unexpectedly scheduled a command")
+	}
+	if st.list.CursorID() != selected {
+		t.Fatalf("real page replacement lost selected ID: %q", st.list.CursorID())
+	}
+	gotTop = st.list.View().Rows[0]
+	if gotTop.ID != top.ID || gotTop.ItemLine != top.ItemLine {
+		t.Fatalf("page replacement lost top semantic anchor: got=%+v want=%+v", gotTop, top)
 	}
 
 	for i := range st.sessions {
@@ -229,6 +302,11 @@ func TestMecatuiSessionsBoundedList_Scenario1_PreservesActionsAndNonInventorySta
 	for _, setup := range []func(*sessionsState){
 		func(st *sessionsState) { st.loading, st.loadState = true, sessionsInitialLoading },
 		func(st *sessionsState) { st.sessions = nil; st.syncFilter() },
+		func(st *sessionsState) {
+			st.sessions = nil
+			st.syncFilter()
+			st.err, st.loadState = errors.New("initial page failed"), sessionsInitialPageError
+		},
 		func(st *sessionsState) { st.tab = tabStorageHealth },
 	} {
 		st := sessionsScenarioState(sessionsScenarioRows(2))
