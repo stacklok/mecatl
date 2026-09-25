@@ -495,6 +495,23 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	return m, nil, false
 }
 
+const (
+	startupResumeRefreshDelay   = 100 * time.Millisecond
+	startupResumeRefreshRetries = 10
+)
+
+type startupResumeRefreshRetryMsg struct {
+	sessionID string
+	attempt   int
+}
+
+func (m Model) startupResumeRefreshRetryCmd(attempt int) tea.Cmd {
+	id := m.sessionID
+	return tea.Tick(startupResumeRefreshDelay, func(time.Time) tea.Msg {
+		return startupResumeRefreshRetryMsg{sessionID: id, attempt: attempt}
+	})
+}
+
 func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 	m.submitStatusLine()
 	cmd := (&m).maybeKittyTransmit()
@@ -505,7 +522,7 @@ func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
 		cmd = tea.Batch(cmd, liveCmd)
 	}
 	if m.sessionID != "" && m.deps.Session != nil {
-		cmd = tea.Batch(cmd, client.RefreshResolvedModelCmd(m.deps.Ctx, m.deps.Session, m.sessionID))
+		cmd = tea.Batch(cmd, client.RefreshStartupResumeCmd(m.deps.Ctx, m.deps.Session, m.sessionID))
 	}
 	if m.workspaceEnrollmentActive() {
 		m.enrollment = workspaceEnrollmentState{}
@@ -664,6 +681,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	case startupResumeReadyMsg:
 		mm, cmd := m.finishStartupResume()
 		return mm, cmd, true
+	case startupResumeRefreshRetryMsg:
+		if msg.sessionID != m.sessionID || !m.startupAdopted || m.deps.Session == nil {
+			return m, nil, true
+		}
+		return m, client.RefreshStartupResumeRetryCmd(m.deps.Ctx, m.deps.Session, msg.sessionID, msg.attempt), true
 	case reconnectMsg:
 		// Live-feed reconnect loop msgs (issue #387): degraded-state markers and
 		// the catch-up event msgs ride the reconnect channel. Handled here (a
@@ -1133,8 +1155,16 @@ func (m Model) onResolvedModelMsg(msg client.ResolvedModelMsg) (Model, tea.Cmd, 
 	}
 	m.sessionCreatedAt = msg.CreatedAt
 	m.activePlacement = msg.Placement
+	if occupancy := msg.ContextOccupancy; msg.AdoptContextOccupancy && m.startupAdopted && occupancy != nil {
+		m.contextTokens = occupancy.InputTokens
+		m.contextUnknown = false
+		m.contextEstimated = occupancy.Estimated
+	}
 	if (&m).setResolvedSessionModel(msg.Resolved) {
 		m.refreshView()
+	}
+	if msg.AdoptContextOccupancy && m.startupAdopted && m.resolvedSessionModel.ContextWindow == 0 && msg.StartupResumeRefreshAttempt < startupResumeRefreshRetries {
+		return m, m.startupResumeRefreshRetryCmd(msg.StartupResumeRefreshAttempt + 1), true
 	}
 	return m, nil, true
 }

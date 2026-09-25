@@ -65,6 +65,37 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeSubmitsSnapshotSta
 	}
 }
 
+func TestResumableSessionStatusMetrics_Scenario3_StartupRefreshSubmitsPersistedOccupancy(t *testing.T) {
+	const sessionID = "resumed-main"
+	source := &statusSourceFake{changed: make(chan struct{})}
+	conv := &fakeConv{getSessionSnapshots: []client.SessionSnapshot{{
+		ResolvedModel:    client.ResolvedModel{ContextWindow: 200_000},
+		ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
+	}}}
+	m := New(Deps{
+		Session: conv, StatusSource: source, Theme: theme.New("aztec", theme.AztecPalette()), NoAltScreen: true,
+		Resume: &client.ResumeSelection{Row: client.SessionListItem{ID: sessionID}, Snapshot: client.SessionSnapshot{}},
+	})
+
+	updated, cmd := m.Update(startupResumeReadyMsg{})
+	m = updated.(Model)
+	if got := source.inputCount(); got != 1 {
+		t.Fatalf("startup status submissions = %d, want 1", got)
+	}
+	var refreshed client.ResolvedModelMsg
+	for _, msg := range flattenBatch(cmd) {
+		if result, ok := msg.(client.ResolvedModelMsg); ok {
+			refreshed = result
+		}
+	}
+	updated, _ = m.Update(refreshed)
+	m = updated.(Model)
+	input, ok := source.lastInput()
+	if m.contextTokens != 40_000 || !m.contextEstimated || !ok || source.inputCount() != 2 || input.Context.Used.Raw != 40_000 || !input.Context.Known || !input.Context.Estimated || input.Context.Window.Raw != 200_000 {
+		t.Fatalf("refreshed startup status = %#v (count=%d), want persisted occupancy", input, source.inputCount())
+	}
+}
+
 func TestResumableSessionStatusMetrics_Scenario3_SessionSwitchRestoresStatus(t *testing.T) {
 	adopted := client.SessionSnapshot{
 		ResolvedModel:    client.ResolvedModel{ProviderID: "provider-b", ModelID: "model-b", ContextWindow: 200_000},
