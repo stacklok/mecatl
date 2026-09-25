@@ -6,6 +6,8 @@ import { resolve } from "node:path";
 import type { RunStreamEvent } from "@mecatl-studio/contracts";
 import { type Bootstrapped, bootstrap } from "../../server/src/bootstrap";
 import { silentLogger } from "../../server/src/log";
+import { serializeEvent } from "../../server/src/mecatl/chat";
+import { withRealMockDaemon } from "../../server/test/integration/real-mock-daemon";
 import { expect, test } from "./fixtures";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -336,4 +338,194 @@ test("approves and denies exact asks through the browser journey", async ({
   await page.keyboard.press("Escape");
   await expect(composer).toHaveValue("");
   await page.close();
+});
+
+test("accepts real ordinary and plan asks once, then rejects their exact duplicates", async ({
+  context,
+  offlineBff,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await withRealMockDaemon("chat-approval-real.json", async (client) => {
+    const real = await bootstrap({
+      environment: { MECATL_DEV_MOCK: "1", STUDIO_LOG_LEVEL: "error" },
+      logger: silentLogger,
+      runtime: { createClient: async () => client },
+    });
+    await real.runtime.ready();
+    try {
+      offlineBff.json("GET", "/api/v1/auth/session", {
+        account: "approval-proof",
+        mode: "oidc",
+        status: "authenticated",
+      });
+      offlineBff.json("GET", "/api/v1/status", {
+        connection: "reachable",
+        signInRequired: false,
+      });
+      offlineBff.json("GET", "/api/v1/runtime", {
+        capabilities: { image: false, posture: "managed" },
+        connection: "online",
+        features: ["exact_plan_ask_control"],
+      });
+      offlineBff.json("GET", "/api/v1/settings/runtime", {
+        models: [],
+        modelsSupported: false,
+      });
+
+      const observed: { kind: "ordinary" | "plan"; runId: string; askId: string }[] = [];
+      for (const kind of ["ordinary", "plan"] as const) {
+        const created = await real.app.request("/api/v1/sessions", {
+          body: JSON.stringify({
+            mode: kind === "plan" ? "plan" : "default",
+            reasoningEffort: "default",
+            toolAccess: "all",
+          }),
+          headers: csrf,
+          method: "POST",
+        });
+        expect(created.status).toBe(201);
+        const { id: sessionId } = (await created.json()) as { id: string };
+        const prefix = `/api/v1/sessions/${sessionId}`;
+        const session = await client.sessions.get(sessionId);
+        const run = await session.run(`Prepare ${kind} approval`, {
+          serverOwnedPlanContinuation: true,
+        });
+        const frames: RunStreamEvent[] = [started(sessionId, run.id)];
+        let askId = "";
+        for await (const emitted of run) {
+          frames.push({ event: serializeEvent(emitted), type: "run.event" });
+          if (emitted.kind === "permission.ask") {
+            expect(emitted.payload.tool).toBe(kind === "plan" ? "PresentPlan" : "Write");
+            askId = emitted.payload.askId;
+            break;
+          }
+        }
+        expect(askId).not.toBe("");
+        observed.push({ askId, kind, runId: run.id });
+
+        const path = `${prefix}/runs/${run.id}/${kind === "plan" ? "plan-asks" : "permissions"}/${encodeURIComponent(askId)}`;
+        const verdict = kind === "plan" ? "approve" : "allow_once";
+        let successfulStatus = 0;
+        let duplicateStatus = 0;
+        let duplicateCode = "";
+        offlineBff.on("GET", "/api/v1/sessions", () => ({
+          body: JSON.stringify({
+            complete: true,
+            items: [
+              {
+                capabilities: { delete: false, deleteReason: "", rename: false, renameReason: "" },
+                createdAt: "2026-09-24T00:00:00Z",
+                debugTargetSessionId: "",
+                id: sessionId,
+                modelId: "offline",
+                state: "running",
+                title: "Real approval",
+                turns: 1,
+                updatedAt: "2026-09-24T00:00:00Z",
+              },
+            ],
+          }),
+          contentType: "application/json",
+        }));
+        offlineBff.json("GET", prefix, {
+          capabilities: { image: false, manualCompaction: false, modelSelection: false },
+          id: sessionId,
+          mode: kind === "plan" ? "plan" : "default",
+          state: "running",
+          usage: {
+            cacheReadTokens: "0",
+            cacheWriteTokens: "0",
+            inputTokens: "0",
+            outputTokens: "0",
+            reasoningTokens: "0",
+          },
+        });
+        offlineBff.json("GET", `${prefix}/transcript`, {
+          complete: true,
+          messages: [],
+          sessionId,
+        });
+        const activity = createServer((_request, response) => {
+          response.writeHead(200, { "Content-Type": "text/event-stream" });
+          response.write(stream(frames));
+        });
+        await new Promise<void>((resolveListen) => activity.listen(0, "127.0.0.1", resolveListen));
+        const address = activity.address();
+        if (!address || typeof address === "string") throw new Error("missing activity port");
+        offlineBff.proxyLoopback(
+          "GET",
+          `${prefix}/activity`,
+          `http://127.0.0.1:${address.port}${prefix}/activity`,
+        );
+        offlineBff.on("POST", path, async (request) => {
+          const response = await real.app.request(path, {
+            body: request.postData() ?? "",
+            headers: csrf,
+            method: "POST",
+          });
+          if (response.status === 204) successfulStatus = response.status;
+          const body = await response.text();
+          if (response.status === 409) {
+            duplicateStatus = response.status;
+            duplicateCode = (JSON.parse(body) as { code: string }).code;
+          }
+          return {
+            body,
+            contentType: response.headers.get("content-type") ?? "application/problem+json",
+            status: response.status,
+          };
+        });
+        try {
+          await page.goto(`/workspace/chat?sessionId=${sessionId}`);
+          const card = page.getByRole("region", {
+            name: kind === "plan" ? "Plan review" : "Permission required: Write",
+          });
+          await expect(card).toBeVisible();
+          const second = await context.newPage();
+          await second.goto(`/workspace/chat?sessionId=${sessionId}`);
+          await expect(
+            second.getByRole("region", {
+              name: kind === "plan" ? "Plan review" : "Permission required: Write",
+            }),
+          ).toBeVisible();
+          await card
+            .getByRole("button", {
+              name: kind === "plan" ? "Approve & run" : "Allow once",
+            })
+            .click();
+          await expect.poll(() => successfulStatus).toBe(204);
+          expect(offlineBff.requestsFor("POST", path)[0]?.postDataJSON()).toEqual({ verdict });
+          if (kind === "ordinary") {
+            expect((await session.snapshot()).state).not.toBe("completed");
+          }
+          await second
+            .getByRole("region", {
+              name: kind === "plan" ? "Plan review" : "Permission required: Write",
+            })
+            .getByRole("button", {
+              name: kind === "plan" ? "Approve & run" : "Allow once",
+            })
+            .click();
+          await expect.poll(() => duplicateStatus).toBe(409);
+          expect(duplicateCode).toBe(kind === "ordinary" ? "ask_not_pending" : "stale_run_control");
+          expect(offlineBff.requestsFor("POST", path)).toHaveLength(2);
+          await second.close();
+          if (kind === "ordinary") {
+            await expect
+              .poll(async () => (await session.snapshot()).state, { timeout: 10_000 })
+              .toBe("completed");
+          }
+        } finally {
+          activity.closeAllConnections();
+          activity.close();
+        }
+      }
+      expect(observed).toHaveLength(2);
+      expect(observed[0]?.askId).not.toBe(observed[1]?.askId);
+    } finally {
+      if (!page.isClosed()) await page.close();
+      await real.runtime.close();
+    }
+  });
 });
