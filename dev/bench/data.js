@@ -274605,6 +274605,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790338707511,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "aponcedeleonch@stacklok.com",
+            "name": "Alejandro Ponce de Leon",
+            "username": "aponcedeleonch"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4c28406fdd15a68fa089625b8ad9daaffa900db2",
+          "message": "feat: correlate provider requests with the root session (#1883)\n\nCo-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T15:21:48+03:00",
+          "tree_id": "0e126827686e759a8cec7baeb67fbe8c90baf395",
+          "url": "https://github.com/stacklok/mecatl/commit/4c28406fdd15a68fa089625b8ad9daaffa900db2"
+        },
+        "date": 1790339588517,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3299,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 91.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -360029,6 +360068,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790339585457,
+  "lastUpdate": 1790339589598,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
