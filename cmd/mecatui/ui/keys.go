@@ -27,6 +27,8 @@ type keyMap struct {
 	// is non-destructive (the queue is moved into the input, not dropped). It is live
 	// both mid-run and while a paused queue is held.
 	EditBack key.Binding
+	// HistoryNext traverses toward newer submitted prompts at the editor boundary.
+	HistoryNext key.Binding
 	// Paste (ctrl+v) reads the OS clipboard: an image stages as an inline media
 	// attachment ([Image #N]), text inserts into the prompt. Distinct from a
 	// bracketed paste (tea.PasteMsg, handled by onPaste) which never reaches here.
@@ -208,7 +210,11 @@ func defaultKeys() keyMap {
 		),
 		EditBack: key.NewBinding(
 			key.WithKeys("up"),
-			key.WithHelp("↑", "edit queued"),
+			key.WithHelp("↑", "previous prompt / edit queued"),
+		),
+		HistoryNext: key.NewBinding(
+			key.WithKeys("down"),
+			key.WithHelp("↓", "next prompt"),
 		),
 		Paste: key.NewBinding(
 			key.WithKeys("ctrl+v"),
@@ -401,6 +407,9 @@ func applyKeyOverrides(km keyMap, ov map[string][]string) keyMap {
 		},
 		"EditBack": func(chords []string) {
 			km.EditBack = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.EditBack.Help().Desc))
+		},
+		"HistoryNext": func(chords []string) {
+			km.HistoryNext = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.HistoryNext.Help().Desc))
 		},
 		"Paste": func(chords []string) {
 			km.Paste = key.NewBinding(key.WithKeys(chords...), key.WithHelp(join(chords), km.Paste.Help().Desc))

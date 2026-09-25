@@ -7,6 +7,40 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+func TestContentRevisionTracksMutationsNotMovement(t *testing.T) {
+	editor := New(Config{})
+	start := editor.ContentRevision()
+	editor.Rewrite("same")
+	first := editor.ContentRevision()
+	if first <= start {
+		t.Fatal("rewrite did not advance content revision")
+	}
+	editor.Rewrite("same")
+	if editor.ContentRevision() <= first {
+		t.Fatal("byte-identical host rewrite did not advance content revision")
+	}
+
+	movement := editor.ContentRevision()
+	editor.UpdateKey(tea.KeyPressMsg{Code: tea.KeyLeft})
+	editor.SelectAll()
+	editor.ClearSelection()
+	if editor.ContentRevision() != movement {
+		t.Fatal("cursor or selection movement advanced content revision")
+	}
+	editor.UpdateKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if editor.ContentRevision() <= movement {
+		t.Fatal("typed mutation did not advance content revision")
+	}
+
+	editor.Rewrite("x")
+	editor.SelectAll()
+	identical := editor.ContentRevision()
+	editor.UpdateKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if editor.ContentRevision() <= identical {
+		t.Fatal("byte-identical selection replacement did not advance content revision")
+	}
+}
+
 func TestHostMutationsClearSelection(t *testing.T) {
 	editor := New(Config{})
 	editor.Rewrite("before")

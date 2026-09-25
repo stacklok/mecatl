@@ -34,6 +34,7 @@ type LineInfo struct {
 type Editor struct {
 	model                textarea.Model
 	mouseSelectionActive bool
+	contentRevision      uint64
 }
 
 // New builds the configured Mecatl prompt editor.
@@ -57,22 +58,37 @@ func New(cfg Config) Editor {
 
 // UpdateKey applies an upstream keyboard operation, including its native selection behavior.
 func (e *Editor) UpdateKey(msg tea.KeyPressMsg) tea.Cmd {
+	before := e.model.Value()
+	hadSelection := e.model.HasSelection()
 	var cmd tea.Cmd
 	e.model, cmd = e.model.Update(msg)
+	if e.model.Value() != before || hadSelection && (msg.Text != "" || key.Matches(msg, e.model.KeyMap.InsertNewline)) {
+		e.contentRevision++
+	}
 	return cmd
 }
 
 // UpdatePaste applies an upstream paste operation, including its native selection behavior.
 func (e *Editor) UpdatePaste(msg tea.PasteMsg) tea.Cmd {
+	before := e.model.Value()
+	hadSelection := e.model.HasSelection()
 	var cmd tea.Cmd
 	e.model, cmd = e.model.Update(msg)
+	if e.model.Value() != before || hadSelection && msg.Content != "" {
+		e.contentRevision++
+	}
 	return cmd
 }
 
 // InsertText replaces any selected text with user-provided text.
 func (e *Editor) InsertText(s string) {
+	before := e.model.Value()
+	hadSelection := e.model.HasSelection()
 	e.model.DeleteSelection()
 	e.model.InsertString(s)
+	if e.model.Value() != before || hadSelection {
+		e.contentRevision++
+	}
 }
 
 // PasteText applies a user-provided paste with the same selection behavior as typing.
@@ -82,7 +98,11 @@ func (e *Editor) PasteText(s string) {
 
 // DeleteSelection deletes selected text, if any.
 func (e *Editor) DeleteSelection() {
+	before := e.model.Value()
 	e.model.DeleteSelection()
+	if e.model.Value() != before {
+		e.contentRevision++
+	}
 }
 
 // InsertNewline replaces any selected text with a user-provided newline.
@@ -96,12 +116,14 @@ func (e *Editor) InsertNewline() {
 func (e *Editor) Rewrite(s string) {
 	e.ClearSelection()
 	e.model.SetValue(s)
+	e.contentRevision++
 }
 
 // Reset clears prompt text for a host-owned operation and clears selection first.
 func (e *Editor) Reset() {
 	e.ClearSelection()
 	e.model.Reset()
+	e.contentRevision++
 }
 
 // BeginMouseSelection starts a mouse selection at editor-relative coordinates.
@@ -175,6 +197,9 @@ func (e *Editor) Blur() {
 // Focused reports whether the prompt has keyboard focus.
 func (e Editor) Focused() bool { return e.model.Focused() }
 
+// ContentRevision advances on prompt-content mutation, including host rewrites.
+func (e Editor) ContentRevision() uint64 { return e.contentRevision }
+
 // Value returns the prompt text.
 func (e Editor) Value() string { return e.model.Value() }
 
@@ -189,6 +214,22 @@ func (e *Editor) SetPlaceholder(s string) { e.model.Placeholder = s }
 
 // Empty reports whether the prompt contains no text.
 func (e Editor) Empty() bool { return e.model.Value() == "" }
+
+// AtFirstVisualRow reports whether moving up would clamp at the first visual row.
+func (e Editor) AtFirstVisualRow() bool {
+	beforeLine, beforeColumn := e.model.Line(), e.model.Column()
+	clone := e.model
+	clone.CursorUp()
+	return clone.Line() == beforeLine && clone.Column() == beforeColumn
+}
+
+// AtLastVisualRow reports whether moving down would clamp at the last visual row.
+func (e Editor) AtLastVisualRow() bool {
+	beforeLine, beforeColumn := e.model.Line(), e.model.Column()
+	clone := e.model
+	clone.CursorDown()
+	return clone.Line() == beforeLine && clone.Column() == beforeColumn
+}
 
 // SetWidth updates the prompt's layout width.
 func (e *Editor) SetWidth(n int) { e.model.SetWidth(n) }

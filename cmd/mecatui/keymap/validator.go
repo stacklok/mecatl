@@ -23,6 +23,7 @@ var validActions = map[string]struct{}{
 	"Cancel":           {},
 	"ClearPrompt":      {},
 	"EditBack":         {},
+	"HistoryNext":      {},
 	"Paste":            {},
 	"SelectAll":        {},
 	"CopySelection":    {},
@@ -62,17 +63,45 @@ var validActions = map[string]struct{}{
 // scope membership per action.
 var (
 	globalOpen = map[string]struct{}{
-		"Submit": {}, "Newline": {}, "Cancel": {}, "ClearPrompt": {}, "EditBack": {}, "Paste": {}, "SelectAll": {}, "CopySelection": {}, "Quit": {}, "QuitD": {},
+		"Submit": {}, "Newline": {}, "Cancel": {}, "ClearPrompt": {}, "EditBack": {}, "HistoryNext": {}, "Paste": {}, "SelectAll": {}, "CopySelection": {}, "Quit": {}, "QuitD": {},
 		"Suspend": {},
 		"ScrollU": {}, "ScrollD": {}, "ScrollTop": {}, "ScrollBottom": {},
 		"ModeSwitch": {}, "MCPPanel": {}, "Resources": {}, "Prompts": {},
 		"Agents": {}, "ExpandTools": {}, "Help": {}, "Effort": {},
+	}
+	defaultGlobal = map[string][]string{
+		"Submit": {"enter"}, "Newline": {"shift+enter", "ctrl+j", "ctrl+enter", "alt+enter"},
+		"Cancel": {"esc"}, "ClearPrompt": {"ctrl+u"}, "EditBack": {"up"}, "HistoryNext": {"down"},
+		"Paste": {"ctrl+v"}, "SelectAll": {"ctrl+g"}, "CopySelection": {"ctrl+y"},
+		"Quit": {"ctrl+c"}, "QuitD": {"ctrl+d"}, "Suspend": {"ctrl+z"},
+		"ScrollU": {"pgup"}, "ScrollD": {"pgdown"}, "ScrollTop": {"home"}, "ScrollBottom": {"end"},
+		"ModeSwitch": {"shift+tab"}, "MCPPanel": {"ctrl+o"}, "Resources": {"ctrl+r"}, "Prompts": {"f8"},
+		"Agents": {"f6"}, "ExpandTools": {"ctrl+t"}, "Help": {"?"}, "Effort": {"f7"},
 	}
 	overlayInternal = map[string]struct{}{
 		"Up": {}, "Down": {}, "Choose": {}, "Close": {}, "Refresh": {}, "Tasks": {}, "Findings": {},
 		"JumpTop": {}, "JumpEnd": {}, "NextTab": {}, "CancelChild": {}, "RawArgs": {},
 	}
 )
+
+// ActionNames returns the complete sorted public action-name catalog.
+func ActionNames() []string {
+	names := make([]string, 0, len(validActions))
+	for name := range validActions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// GlobalDefaults returns a copy of the effective global default chord catalog.
+func GlobalDefaults() map[string][]string {
+	defaults := make(map[string][]string, len(defaultGlobal))
+	for action, chords := range defaultGlobal {
+		defaults[action] = append([]string(nil), chords...)
+	}
+	return defaults
+}
 
 // Parse normalises the input map, rejecting unknown action names and empty chords.
 func Parse(in map[string][]string) (Resolved, error) {
@@ -121,6 +150,11 @@ func Validate(res Resolved) error {
 	}
 	// 3) Reject collisions within globalOpen scope.
 	if err := rejectScopeCollisions(res, globalOpen, "global"); err != nil {
+		return err
+	}
+	// Every explicit global override must remain disjoint from every other
+	// global action after defaults and overrides are composed.
+	if err := rejectEffectiveGlobalCollisions(res); err != nil {
 		return err
 	}
 	// 3b) RawArgs and Refresh share default chord r in disjoint surfaces; an
@@ -173,6 +207,27 @@ func Validate(res Resolved) error {
 	// a chord would arm one and confirm the other (an armed ctrl+c confirmed by
 	// ctrl+d) — the two quit keys must never share a chord.
 	return rejectPairOverlap(res.ByAction["Quit"], res.ByAction["QuitD"], "Quit", "QuitD")
+}
+
+func rejectEffectiveGlobalCollisions(res Resolved) error {
+	for action, chords := range res.ByAction {
+		if _, global := globalOpen[action]; !global {
+			continue
+		}
+		for other := range globalOpen {
+			if other == action {
+				continue
+			}
+			effective := res.ByAction[other]
+			if len(effective) == 0 {
+				effective = defaultGlobal[other]
+			}
+			if err := rejectPairOverlap(chords, effective, action, other); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // isBarePrintableRune reports true for a single-rune chord (length==1).

@@ -1267,7 +1267,8 @@ show the plain prompt-hint card.
 |---|---|
 | `enter` (idle) | send the prompt |
 | `enter` (while a run streams) | **steer the current run** when supported (applies at the next turn boundary); otherwise **queue a follow-up** (staged; the whole queue is **merged into one prompt** and sent when the turn ends) |
-| `↑` (empty input, non-empty queue) | **edit queued** — pull the merged staged follow-ups back into the input for revising (non-destructive; the queue is emptied into the textarea, not dropped). Works both mid-run and while a paused queue is held. |
+| `↑` (editable queue or pending steer) | **edit queued** - pull the merged staged follow-ups back into the input for revising. The queue is emptied into the textarea, not dropped. This works both mid-run and while a paused queue is held, and takes precedence over submitted-prompt history. |
+| `↑` / `↓` (first / last visual prompt row) | move backward or forward through the 100 most recent text messages committed during the current client attachment. `↓` after the newest entry restores the pre-browse draft. Interior multiline and wrapped rows retain cursor movement. Editing recalled text exits browsing. History is suspended while the draft owns staged media, a staged large paste, or pending prompt media. Recall never reattaches media. |
 | `shift+enter`, `ctrl+j`, `ctrl+enter`, or `alt+enter` | newline in the input. All four are bound unconditionally; which ones a terminal can send depends on whether it implements the Kitty keyboard protocol or `modifyOtherKeys` (Enter's legacy CR byte has nowhere to put a modifier). `ctrl+j` is a plain LF and always arrives; `alt+enter` is `ESC CR` and needs Option/Alt sent as Meta. The prompt hint names `shift+enter` and falls back to the binding's first legacy-safe chord once that capability is unconfirmed (an explicit no-enhancements reply, or an unanswered capability query at the `keyboardProbeDeadline`). |
 | paste (bracketed) | replace the active prompt selection, or insert clipboard text at the caret; a single pasted **media-file path** is staged as an attachment instead, and a **large** paste (≥ 2000 chars — alone or combined with the current input — or ≥ 30 lines) is staged behind a `[Pasted text #N]` placeholder, replacing the active selection before insertion or otherwise appending at the end of the input, expanding on send (ignored while an overlay/modal is open) |
 | `ctrl+v` | read the OS clipboard — a clipboard **image** stages as an `[Image #N]` attachment (when supported), else replace the active prompt selection with clipboard **text** (see below) |
@@ -1409,7 +1410,8 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `Newline` | `shift+enter`, `ctrl+j`, `ctrl+enter`, `alt+enter` | global | newline in the input; the prompt hint advertises the FIRST chord, falling back to the first that survives legacy encoding (`chordSurvivesLegacyEncoding`) once key disambiguation is unconfirmed, so order the chords by preference |
 | `Cancel` | `esc` | global | cancel the running turn; the separate physical double-`esc` compatibility gesture clears an eligible idle draft within 500ms and is not remappable |
 | `ClearPrompt` | `ctrl+u` | global | clear the entire unsent draft, including staged attachments and large-paste placeholders |
-| `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
+| `EditBack` | `up` | global | retrieve an editable queued follow-up or pending steer; otherwise recall the previous submitted text at the first visual prompt row |
+| `HistoryNext` | `down` | global | move toward newer submitted text at the last visual prompt row, then restore the pre-browse draft |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
 | `SelectAll` | `ctrl+g` | global | select all prompt text; the `/models` picker keeps its `SetGlobalDefault` binding |
 | `CopySelection` | `ctrl+y` | global | copy the active prompt or conversation selection; no selection is a no-op |
@@ -1525,7 +1527,8 @@ An invalid override fails startup with a `keymap:` error. The rules
   actions — and the approval keys — may be bare: they only fire while a modal or
   overlay owns the keyboard.)
 - **No collisions within a scope**: two global actions may not share a chord,
-  and two overlay actions may not share one either.
+  including an explicit override that matches another global action's default.
+  Two overlay actions may not share one either.
 - **Approval consistency**: `Deny` may not share a chord with `Allow`,
   `AllowAlways`, `Submit`, or `Cancel`.
 - **`Submit` ≠ `Newline`**: the send key and the newline key must be distinct.

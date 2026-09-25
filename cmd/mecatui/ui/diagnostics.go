@@ -206,6 +206,7 @@ func (m Model) startInitialPrompt() (tea.Model, tea.Cmd, bool) {
 }
 
 func (m Model) submitDiagnosticsReport() (tea.Model, tea.Cmd) {
+	m.markSyntheticPrompt()
 	if m.phase == phaseRunning {
 		return m.enqueuePrompt()
 	}
