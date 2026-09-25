@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 
@@ -33,12 +37,18 @@ type Server struct {
 	handles         map[string]*serverHandle            // Process-local handles retained until expiry or shutdown cleanup.
 	owners          map[session.SessionID]*sessionOwner // Logical-session ownership retained beyond individual handles.
 	closed          bool                                // Rejects new work once Shutdown begins.
+	activeExecutes  int                                 // Dispatched executions counted against cfg.MaxActiveExecutes.
 	pendingControls int                                 // Lifecycle controls awaiting settlement.
 
 	// Shutdown and cancellation machinery.
 	// stop requests sweeper shutdown; done closes after the sweeper exits.
 	stop chan struct{}
 	done chan struct{}
+	// executeCtx is cancelled by executeStop when Shutdown begins.
+	executeCtx  context.Context
+	executeStop context.CancelFunc
+	// executeWG joins dispatched executions before session-handle cleanup.
+	executeWG sync.WaitGroup
 }
 
 // NewServer constructs one authoritative broker-process instance.
@@ -72,7 +82,8 @@ func NewServer(service mcpbroker.Service, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mcpbrokergrpc: mint broker instance ID: %w", err)
 	}
-	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), done: make(chan struct{}), stop: make(chan struct{})}
+	executeCtx, executeStop := context.WithCancel(context.Background())
+	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
 	go s.sweep()
 	return s, nil
 }
@@ -97,6 +108,32 @@ func (s *Server) TraceRPC(ctx context.Context, operation, outcome string, fields
 	s.diagnostics.Log(ctx, level, "broker RPC", append([]any{"operation", operation, "outcome", outcome, "inbound_credential_kind", "workload_jwt"}, fields...)...)
 }
 
+func (s *Server) traceUnknownTool(ctx context.Context, a *serverHandle, requested string) {
+	const previewLimit = 8
+	names := make([]string, 0, len(a.tools))
+	for name := range a.tools {
+		names = append(names, diagnosticToolName(name))
+	}
+	sort.Strings(names)
+	truncated := len(names) > previewLimit
+	if truncated {
+		names = names[:previewLimit]
+	}
+	s.TraceRPC(ctx, "execute", "unknown_tool", "tool", diagnosticToolName(requested), "registered_tool_count", len(a.tools), "registered_tool_preview", strings.Join(names, ","), "registered_tool_preview_truncated", truncated)
+}
+
+func diagnosticToolName(name string) string {
+	const limit = 128
+	lower := strings.ToLower(name)
+	if len(name) > limit || !utf8.ValidString(name) || strings.Contains(lower, "secret") || strings.Contains(lower, "token") || strings.Contains(lower, "bearer") {
+		return "[redacted]"
+	}
+	return name
+}
+
+// ExecuteDeadline returns the server-side upper bound used for Execute calls.
+func (s *Server) ExecuteDeadline() time.Duration { return s.cfg.ExecuteDeadline }
+
 // RegisterServer registers an explicitly owned server so its cleanup can be joined.
 func RegisterServer(reg grpc.ServiceRegistrar, server *Server) {
 	brokerv1.RegisterBrokerServiceServer(reg, server)
@@ -111,9 +148,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.closed = true
 	close(s.stop)
+	handles := make([]*serverHandle, 0, len(s.handles))
 	toClose := make([]*serverHandle, 0, len(s.handles))
 	for id, handle := range s.handles {
 		delete(s.handles, id)
+		handles = append(handles, handle)
 		if handle.terminal == lifecycleNone {
 			toClose = append(toClose, handle)
 		}
@@ -127,6 +166,22 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err != nil && ctx.Err() != nil {
 			return ctx.Err()
 		}
+	}
+	s.executeStop()
+	executeDone := make(chan struct{})
+	go func() {
+		s.executeWG.Wait()
+		close(executeDone)
+	}()
+	select {
+	case <-executeDone:
+		s.mu.Lock()
+		for _, handle := range handles {
+			releaseReceiptsLocked(handle)
+		}
+		s.mu.Unlock()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 	select {
 	case <-s.done:

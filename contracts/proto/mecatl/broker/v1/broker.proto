@@ -25,6 +25,11 @@ service BrokerService {
   // Delete removes only the exact logical session and binding in the current incarnation.
   // It is potentially ambiguous after transport loss and must not be blindly retried.
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  // Execute dispatches one descriptor-advertised invocation. The attachment and
+  // incarnation must be current. An identical call_id/invocation joins or replays only
+  // within its receipt lease; changed content fails before dispatch. After lost transport,
+  // retry only with exact structured DISPATCH_NOT_STARTED proof for this method.
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
 }
 
 // BrokerErrorReason is the closed structured reason vocabulary in BrokerErrorDetail.
@@ -36,6 +41,9 @@ enum BrokerErrorReason {
   BROKER_ERROR_REASON_STATE_UNAVAILABLE = 1;
   // Attachment closed; not proof that an earlier Execute did not dispatch.
   BROKER_ERROR_REASON_ATTACHMENT_CLOSED = 2;
+  // Exact proof that dispatch_method was not started. Only exact Execute method permits
+  // ordinary pre-dispatch Execute failure handling.
+  BROKER_ERROR_REASON_DISPATCH_NOT_STARTED = 4;
   // Capacity rejection. It is Execute replay-safe only with exact Execute dispatch_method.
   BROKER_ERROR_REASON_CAPACITY_REACHED = 5;
   // Client's broker incarnation is stale; recover only before a new prompt, never replay.
@@ -66,6 +74,8 @@ message AttachResponse {
   string handle = 2;
   // Validated closed attach outcome (created or reattached).
   string outcome = 3;
+  // Frozen descriptor capability snapshot for this attachment.
+  repeated ToolDescriptor tools = 4;
   // Current random broker incarnation to pin; stale values are rejected.
   string broker_incarnation = 5;
 }
@@ -114,4 +124,81 @@ message DeleteRequest {
 message DeleteResponse {
   // Closed delete outcome.
   string outcome = 1;
+}
+
+// ToolDescriptor is an attachment-frozen remote tool capability advertisement.
+message ToolDescriptor {
+  // Stable advertised tool name used by invocation, not a filesystem path.
+  string name = 1;
+  // Valid UTF-8 model-visible tool description from the broker peer.
+  string description = 2;
+  // UTF-8 JSON-object schema bytes; untrusted descriptor data, never executable content.
+  bytes schema = 3;
+  // Read-only scheduling capability.
+  bool read_only = 4;
+  // Run-local dispatch barrier capability even when read_only.
+  bool dispatch_serial = 5;
+  // Authorization request/abort capability.
+  bool authorization_capable = 6;
+}
+
+// ExecuteRequest is a receipt-protected invocation.
+message ExecuteRequest {
+  // Current ephemeral attachment capability.
+  string handle = 1;
+  // Exact advertised descriptor name.
+  string name = 2;
+  // Opaque call identity; reuse requires byte-identical invocation within receipt lease.
+  string call_id = 3;
+  // Sensitive untrusted JSON-object args; never log, guess, or execute outside descriptor.
+  bytes args = 4;
+  // Optional opaque provider item identity.
+  string item_id = 5;
+  // Current pinned broker incarnation, checked before dispatch.
+  string broker_incarnation = 6;
+}
+// ExecuteResponse carries the receipt-protected result.
+message ExecuteResponse {
+  // Result for requested call_id; textual values are valid UTF-8.
+  ToolResult result = 1;
+}
+// ToolResult is a model-visible tool completion.
+message ToolResult {
+  // Exact opaque requested call identity.
+  string call_id = 1;
+  // Valid UTF-8 model-visible summary; never raw binary.
+  string content = 2;
+  // Whether content and parts represent an error.
+  bool is_error = 3;
+  // Structured text, resource, and binary content blocks.
+  repeated ResultPart parts = 4;
+}
+// ResultPart is one structured tool-result component.
+message ResultPart {
+  // Valid UTF-8 neutral content-block taxonomy.
+  string block_kind = 1;
+  // Valid UTF-8 neutral media-kind taxonomy.
+  string media_kind = 2;
+  // MIME token preserved byte-exact by the neutral layer.
+  string mime_type = 3;
+  // Raw binary, not UTF-8 text; never log or coerce to text.
+  bytes data = 4;
+  // Valid UTF-8 opaque untrusted resource URL/reference, not a local path.
+  string url = 5;
+  // Valid UTF-8 text payload.
+  string text = 6;
+  // Valid UTF-8 resource/display name.
+  string name = 7;
+  // Valid UTF-8 display title.
+  string title = 8;
+  // Valid UTF-8 description.
+  string description = 9;
+  // Declared resource size when applicable.
+  int64 size = 10;
+  // Valid UTF-8 audience labels.
+  repeated string audience = 11;
+  // Relative resource priority when applicable.
+  double priority = 12;
+  // Valid UTF-8 source last-modified presentation value.
+  string last_modified = 13;
 }

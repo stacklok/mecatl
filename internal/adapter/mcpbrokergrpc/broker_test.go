@@ -1,6 +1,7 @@
 package mcpbrokergrpc_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -9,7 +10,9 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/reflect/protodesc"
 
@@ -197,4 +200,207 @@ func newRemote(t *testing.T, local mcpbroker.Service) mcpbroker.Service {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return mcpbrokergrpc.NewClient(conn)
+}
+
+func TestSingletonBrokerRemediation_Scenario1_HostilePeerBoundary(t *testing.T) {
+	remote := newRemote(t, newBroker())
+	attachment, _, err := remote.AttachSession(context.Background(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := session.NewToolCall("call-1", "read", []byte(`{"nested":{"value":"preserve"}}`))
+	result, err := attachment.Tools()[0].Execute(context.Background(), call, tool.Environment{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.CallID != call.ID || result.Content != "summary" || len(result.Parts) != 2 || result.Parts[0].Text != "text" || string(result.Parts[1].Data) != "\x00\xff" {
+		t.Fatalf("ToolResult = %#v, want complete lossless result", result)
+	}
+	if _, err := attachment.Tools()[0].Execute(context.Background(), session.NewToolCall("call-2", "read", []byte("{")), tool.Environment{}); err == nil {
+		t.Fatal("malformed arguments were accepted")
+	}
+
+	exact := newRemote(t, byteExactBroker{})
+	exactAttachment, _, err := exact.AttachSession(t.Context(), "byte-exact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exactSchema := []byte("{\n  \"type\": \"object\"\n}")
+	if !bytes.Equal(exactAttachment.Tools()[0].Spec().Schema, exactSchema) {
+		t.Fatalf("schema changed: %q", exactAttachment.Tools()[0].Spec().Schema)
+	}
+	exactArgs := []byte(`{"text":"é","n":1}`)
+	result, err = exactAttachment.Tools()[0].Execute(t.Context(), session.NewToolCall("exact-call", "exact", exactArgs), tool.Environment{})
+	if err != nil || result.Content != string(exactArgs) || len(result.Parts) != 2 || result.Parts[0].Text != "é" || result.Parts[1].MIMEType != "application/x-exact" || !bytes.Equal(result.Parts[1].Data, []byte{0, 0xff, 1}) {
+		t.Fatalf("byte-exact round trip = %#v, %v", result, err)
+	}
+
+	for _, peer := range []struct {
+		name string
+		conn grpc.ClientConnInterface
+	}{
+		{name: "malformed schema", conn: malformedAttachConn{}},
+		{name: "unknown attach outcome", conn: hostilePeerConn{attachOutcome: "future"}},
+		{name: "invalid UTF-8 descriptor", conn: hostilePeerConn{descriptorName: string([]byte{0xff})}},
+	} {
+		t.Run(peer.name, func(t *testing.T) {
+			if _, _, err := mcpbrokergrpc.NewClient(peer.conn).AttachSession(t.Context(), "hostile"); err == nil {
+				t.Fatal("hostile attach response was accepted")
+			}
+		})
+	}
+	for _, response := range []*brokerv1.ToolResult{
+		{CallId: "hostile-call", Content: string([]byte{0xff})},
+		{CallId: "hostile-call", Parts: []*brokerv1.ResultPart{{BlockKind: "future"}}},
+	} {
+		client := mcpbrokergrpc.NewClient(hostilePeerConn{result: response})
+		peerAttachment, _, attachErr := client.AttachSession(t.Context(), "hostile-result")
+		if attachErr != nil {
+			t.Fatal(attachErr)
+		}
+		if _, executeErr := peerAttachment.Tools()[0].Execute(t.Context(), session.NewToolCall("hostile-call", "exact", []byte(`{}`)), tool.Environment{}); executeErr == nil {
+			t.Fatalf("hostile result %#v was accepted", response)
+		}
+	}
+}
+
+type byteExactBroker struct{}
+
+func (byteExactBroker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
+	return &byteExactAttachment{}, mcpbroker.AttachCreated, nil
+}
+func (byteExactBroker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
+	return mcpbroker.DeleteNotFound, nil
+}
+
+type byteExactAttachment struct{ attachment }
+
+func (byteExactAttachment) Tools() []tool.Tool { return []tool.Tool{byteExactTool{}} }
+
+type byteExactTool struct{}
+
+func (byteExactTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "exact", Description: "é", Schema: []byte("{\n  \"type\": \"object\"\n}")}
+}
+func (byteExactTool) ReadOnly() bool { return true }
+func (byteExactTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	return session.NewToolResultWithParts(call.ID, string(call.Args), []session.Content{
+		session.NewTextBlock("é"),
+		{BlockKind: session.BlockEmbeddedResource, MIMEType: "application/x-exact", Data: []byte{0, 0xff, 1}},
+	}), nil
+}
+
+type hostilePeerConn struct {
+	attachOutcome  string
+	descriptorName string
+	result         *brokerv1.ToolResult
+}
+
+func (c hostilePeerConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
+	switch {
+	case strings.HasSuffix(method, "/Attach"):
+		outcome := c.attachOutcome
+		if outcome == "" {
+			outcome = string(mcpbroker.AttachCreated)
+		}
+		name := c.descriptorName
+		if name == "" {
+			name = "exact"
+		}
+		*reply.(*brokerv1.AttachResponse) = brokerv1.AttachResponse{Binding: "binding", Handle: "handle", Outcome: outcome, BrokerIncarnation: "incarnation", Tools: []*brokerv1.ToolDescriptor{{Name: name, Description: "exact", Schema: []byte(`{"type":"object"}`)}}}
+	case strings.HasSuffix(method, "/Execute"):
+		*reply.(*brokerv1.ExecuteResponse) = brokerv1.ExecuteResponse{Result: c.result}
+	default:
+		return errors.New("unexpected method")
+	}
+	return nil
+}
+func (hostilePeerConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+	return nil, errors.New("unexpected stream")
+}
+
+func TestInitialProductionMCPBroker_RejectsNonObjectToolSchema(t *testing.T) {
+	t.Run("server", func(t *testing.T) {
+		broker := &invalidDescriptorBroker{}
+		remote := newRemote(t, broker)
+		if _, _, err := remote.AttachSession(t.Context(), "invalid-schema"); err == nil || status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("AttachSession with boolean schema = %v, want invalid descriptor rejection", err)
+		}
+		if broker.attachment == nil || !broker.attachment.aborted {
+			t.Fatal("created logical attachment was not aborted after descriptor rejection")
+		}
+	})
+	t.Run("client", func(t *testing.T) {
+		aborts := 0
+		client := mcpbrokergrpc.NewClient(malformedAttachConn{aborts: &aborts})
+		if _, _, err := client.AttachSession(t.Context(), "invalid-schema"); err == nil || !strings.Contains(err.Error(), "malformed tool descriptor") {
+			t.Fatalf("AttachSession with peer boolean schema = %v, want client descriptor rejection", err)
+		}
+		if aborts != 1 {
+			t.Fatalf("malformed created attachment aborts = %d, want 1", aborts)
+		}
+	})
+}
+
+type malformedAttachConn struct{ aborts *int }
+
+func (c malformedAttachConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
+	if strings.HasSuffix(method, "/Abort") {
+		if c.aborts != nil {
+			*c.aborts++
+		}
+		*reply.(*brokerv1.AbortResponse) = brokerv1.AbortResponse{}
+		return nil
+	}
+	response := reply.(*brokerv1.AttachResponse)
+	*response = brokerv1.AttachResponse{
+		Handle:            "handle",
+		Binding:           "binding",
+		BrokerIncarnation: "incarnation",
+		Outcome:           string(mcpbroker.AttachCreated),
+		Tools: []*brokerv1.ToolDescriptor{{
+			Name: "invalid", Description: "invalid", Schema: []byte(`true`),
+		}},
+	}
+	return nil
+}
+func (malformedAttachConn) NewStream(context.Context, *grpc.StreamDesc, string, ...grpc.CallOption) (grpc.ClientStream, error) {
+	return nil, errors.New("unexpected stream")
+}
+
+type invalidDescriptorBroker struct{ attachment *invalidDescriptorAttachment }
+
+func (b *invalidDescriptorBroker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
+	b.attachment = &invalidDescriptorAttachment{}
+	return b.attachment, mcpbroker.AttachCreated, nil
+}
+func (*invalidDescriptorBroker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
+	return mcpbroker.DeleteNotFound, nil
+}
+
+type invalidDescriptorAttachment struct {
+	attachment
+	aborted bool
+}
+
+func (a *invalidDescriptorAttachment) Abort(ctx context.Context) error {
+	a.aborted = true
+	return a.attachment.Abort(ctx)
+}
+
+func (*invalidDescriptorAttachment) Tools() []tool.Tool { return []tool.Tool{invalidSchemaTool{}} }
+
+type invalidSchemaTool struct{ serialTool }
+
+func (invalidSchemaTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "invalid", Description: "invalid", Schema: []byte(`true`)}
+}
+
+func hasBrokerReason(err error, want brokerv1.BrokerErrorReason) bool {
+	for _, detail := range status.Convert(err).Details() {
+		if typed, ok := detail.(*brokerv1.BrokerErrorDetail); ok && typed.GetReason() == want {
+			return true
+		}
+	}
+	return false
 }

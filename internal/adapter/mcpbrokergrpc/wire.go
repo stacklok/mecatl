@@ -4,15 +4,44 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/session"
+	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
 )
 
+func descriptors(in []tool.Tool) ([]*brokerv1.ToolDescriptor, map[string]tool.Tool, error) {
+	out := make([]*brokerv1.ToolDescriptor, 0, len(in))
+	tools := make(map[string]tool.Tool, len(in))
+	for _, t := range in {
+		if t == nil {
+			return nil, nil, errors.New("nil tool")
+		}
+		spec := t.Spec()
+		if spec.Name == "" || !utf8.ValidString(spec.Name) || !utf8.ValidString(spec.Description) || !validJSONObject(spec.Schema) {
+			return nil, nil, errors.New("invalid tool descriptor")
+		}
+		if _, ok := tools[spec.Name]; ok {
+			return nil, nil, errors.New("duplicate tool descriptor")
+		}
+		_, serial := t.(tool.DispatchSerial)
+		_, auth := t.(tool.AuthorizationRequester)
+		out = append(out, &brokerv1.ToolDescriptor{Name: spec.Name, Description: spec.Description, Schema: append([]byte(nil), spec.Schema...), ReadOnly: t.ReadOnly(), DispatchSerial: serial, AuthorizationCapable: auth})
+		tools[spec.Name] = t
+	}
+	return out, tools, nil
+}
+func validJSONObject(raw []byte) bool {
+	var object map[string]json.RawMessage
+	return json.Unmarshal(raw, &object) == nil && object != nil
+}
 func newHandle() (string, error) {
 	b := make([]byte, 24)
 	if _, e := rand.Read(b); e != nil {
@@ -22,7 +51,6 @@ func newHandle() (string, error) {
 }
 func invalid(msg string) error { return status.Error(codes.InvalidArgument, msg) }
 
-//nolint:unparam // method is set by Execute RPCs.
 func reasonStatus(code codes.Code, message string, reason brokerv1.BrokerErrorReason, method string) error {
 	st := status.New(code, message)
 	withDetail, err := st.WithDetails(&brokerv1.BrokerErrorDetail{Reason: reason, DispatchMethod: method})
@@ -53,8 +81,6 @@ func brokerStatus(err error) error {
 func validAttachOutcome(v string) bool {
 	return v == string(mcpbroker.AttachCreated) || v == string(mcpbroker.AttachReattached)
 }
-
-//nolint:unparam // dispatch method is read by Execute RPCs.
 func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 	var found *brokerv1.BrokerErrorDetail
 	for _, detail := range status.Convert(err).Details() {
@@ -78,13 +104,29 @@ func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 			return 0, "", false, errors.New("mcpbrokergrpc: malformed broker error reason")
 		}
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED:
-		if found.GetDispatchMethod() != "" {
+		if found.GetDispatchMethod() != "" && found.GetDispatchMethod() != executeMethod {
 			return 0, "", false, errors.New("mcpbrokergrpc: malformed capacity reason")
+		}
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED:
+		if found.GetDispatchMethod() != executeMethod {
+			return 0, "", false, errors.New("mcpbrokergrpc: malformed dispatch proof")
 		}
 	default:
 		return 0, "", false, errors.New("mcpbrokergrpc: unknown broker error reason")
 	}
 	return found.GetReason(), found.GetDispatchMethod(), true, nil
+}
+
+func dispatchNotStarted(err error) bool {
+	reason, method, ok, protocolErr := brokerReason(err)
+	return protocolErr == nil && ok && method == executeMethod &&
+		(reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED ||
+			reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED)
+}
+
+func isDefinitiveSessionLoss(err error) bool {
+	reason, _, ok, protocolErr := brokerReason(err)
+	return protocolErr == nil && ok && (reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE || reason == brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST)
 }
 
 func clientError(err error) error {
@@ -110,7 +152,81 @@ func clientError(err error) error {
 		return mcpbroker.ErrAttachmentClosed
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED:
 		return mcpbroker.ErrCapacity
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED:
+		return err
 	default:
 		return errors.New("mcpbrokergrpc: unknown broker error reason")
 	}
+}
+
+const (
+	maxInvocationCallIDBytes = 256
+	maxInvocationNameBytes   = 256
+	maxInvocationItemIDBytes = 1024
+	maxInvocationArgsBytes   = 256 << 10
+)
+
+func callFrom(name, id string, args []byte, item string) (session.ToolCall, error) {
+	if !validInvocationText(name, maxInvocationNameBytes) || !validInvocationText(id, maxInvocationCallIDBytes) || (item != "" && !validInvocationText(item, maxInvocationItemIDBytes)) || len(args) == 0 || len(args) > maxInvocationArgsBytes || !json.Valid(args) {
+		return session.ToolCall{}, errors.New("mcpbrokergrpc: malformed invocation")
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(args, &object) != nil {
+		return session.ToolCall{}, errors.New("mcpbrokergrpc: malformed invocation")
+	}
+	return session.ToolCall{ID: session.ToolCallID(id), Name: name, Args: append([]byte(nil), args...), ItemID: item}, nil
+}
+
+func validInvocationText(value string, maximum int) bool {
+	if value == "" || len(value) > maximum || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+func resultToWire(r session.ToolResult) (*brokerv1.ToolResult, error) {
+	if r.CallID == "" || !utf8.ValidString(string(r.CallID)) || !utf8.ValidString(r.Content) || !validParts(r.Parts) {
+		return nil, errors.New("mcpbrokergrpc: malformed tool result")
+	}
+	parts := make([]*brokerv1.ResultPart, 0, len(r.Parts))
+	for _, p := range r.Parts {
+		parts = append(parts, &brokerv1.ResultPart{BlockKind: string(p.BlockKind), MediaKind: string(p.Kind), MimeType: p.MIMEType, Data: append([]byte(nil), p.Data...), Url: p.URL, Text: p.Text, Name: p.Name, Title: p.Title, Description: p.Description, Size: p.Size, Audience: append([]string(nil), p.Audience...), Priority: p.Priority, LastModified: p.LastModified})
+	}
+	return &brokerv1.ToolResult{CallId: string(r.CallID), Content: r.Content, IsError: r.IsError, Parts: parts}, nil
+}
+func resultFromWire(r *brokerv1.ToolResult) (session.ToolResult, error) {
+	if r == nil || r.GetCallId() == "" || !utf8.ValidString(r.GetCallId()) || !utf8.ValidString(r.GetContent()) {
+		return session.ToolResult{}, errors.New("mcpbrokergrpc: malformed tool result")
+	}
+	parts := make([]session.Content, 0, len(r.GetParts()))
+	for _, p := range r.GetParts() {
+		if p == nil {
+			return session.ToolResult{}, errors.New("mcpbrokergrpc: malformed result part")
+		}
+		q := session.Content{BlockKind: session.BlockKind(p.GetBlockKind()), Kind: session.MediaKind(p.GetMediaKind()), MIMEType: p.GetMimeType(), Data: append([]byte(nil), p.GetData()...), URL: p.GetUrl(), Text: p.GetText(), Name: p.GetName(), Title: p.GetTitle(), Description: p.GetDescription(), Size: p.GetSize(), Audience: append([]string(nil), p.GetAudience()...), Priority: p.GetPriority(), LastModified: p.GetLastModified()}
+		parts = append(parts, q)
+	}
+	if !validParts(parts) {
+		return session.ToolResult{}, errors.New("mcpbrokergrpc: malformed tool result")
+	}
+	return session.ToolResult{CallID: session.ToolCallID(r.GetCallId()), Content: r.GetContent(), IsError: r.GetIsError(), Parts: parts}, nil
+}
+func validParts(parts []session.Content) bool {
+	for _, p := range parts {
+		for _, s := range []string{string(p.BlockKind), string(p.Kind), p.MIMEType, p.URL, p.Text, p.Name, p.Title, p.Description, p.LastModified} {
+			if !utf8.ValidString(s) {
+				return false
+			}
+		}
+		for _, a := range p.Audience {
+			if !utf8.ValidString(a) {
+				return false
+			}
+		}
+	}
+	return session.ValidateToolResultParts(parts) == nil
 }

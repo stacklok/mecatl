@@ -43,6 +43,11 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	if err != nil {
 		return nil, brokerStatus(err)
 	}
+	desc, tools, err := descriptors(a.Tools())
+	if err != nil {
+		s.discardUnpublishedHandle(a, outcome)
+		return nil, invalid(err.Error())
+	}
 	h, err := newHandle()
 	if err != nil {
 		s.discardUnpublishedHandle(a, outcome)
@@ -66,9 +71,9 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 		owner.published = true
 	}
 	now := time.Now()
-	s.handles[h] = &serverHandle{sessionHandle: a, principal: principal, logicalID: logicalID, owner: owner, binding: string(a.Binding()), expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{})}
+	s.handles[h] = &serverHandle{sessionHandle: a, principal: principal, logicalID: logicalID, owner: owner, binding: string(a.Binding()), tools: tools, expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{}), receipts: make(map[session.ToolCallID]*executeReceipt)}
 	attached = true
-	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), BrokerIncarnation: s.instanceID}, nil
+	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.instanceID}, nil
 }
 
 func (s *Server) discardUnpublishedHandle(handle mcpbroker.Attachment, outcome mcpbroker.AttachOutcome) {
