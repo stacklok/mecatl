@@ -1517,6 +1517,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           const candidate = payloadRecord(payload);
           if (
             candidate?.authorizationId === authorization.authorizationId &&
+            candidate.callId === authorization.callId &&
             typeof candidate.status === "string" &&
             candidate.status.length > 0 &&
             (_kind === "authorization.required"

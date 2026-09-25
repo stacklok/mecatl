@@ -583,6 +583,64 @@ describe("mounted chat workspace BFF boundary", () => {
     },
   );
 
+  it("keeps authorization controls uncertain when the control status belongs to another call", async () => {
+    window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
+    const bff = new BffFixture(session("chat-a", "authorizing"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const control = heldStream();
+    const recheckPath = "/api/v1/sessions/chat-a/authorizations/auth-1/recheck";
+    const cancelPath = "/api/v1/sessions/chat-a/authorizations/auth-1/cancel";
+    bff.nextReplies.set(recheckPath, [Promise.resolve(control.response)]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await waitFor(() => expect(bff.requestsFor("GET", "/activity")).toHaveLength(1));
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(
+        runEvent("tool.call", "1", "", "run-a", { args: "{}", id: "call-1", name: "Calendar" }),
+      );
+      activity.send(
+        runEvent("authorization.required", "2", "", "run-a", {
+          authorizationId: "auth-1",
+          callId: "call-1",
+          displayName: "Calendar connector",
+          status: "pending",
+        }),
+      );
+      activity.close();
+    });
+    const row = (await screen.findByText("Tool: Calendar")).closest("li");
+    if (!row) throw new Error("Tool row missing");
+    fireEvent.click(within(row).getByRole("button", { name: "Review authorization" }));
+    const review = screen.getByRole("complementary", { name: "Authorization review" });
+    fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
+    await waitFor(() => expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1));
+
+    await act(async () => {
+      control.send(
+        runEvent("authorization.resolved", "3", "", "", {
+          authorizationId: "auth-1",
+          callId: "another-call",
+          displayName: "Other connector",
+          status: "granted",
+        }),
+      );
+      control.close();
+    });
+    await waitFor(() => expect(within(review).getByText(/outcome.*uncertain/i)).toBeTruthy());
+    expect(within(review).getByText("Pending authorization")).toBeTruthy();
+    expect(within(review).getByRole("button", { name: "Recheck" }).hasAttribute("disabled")).toBe(
+      true,
+    );
+    expect(
+      within(review).getByRole("button", { name: "Cancel authorization" }).hasAttribute("disabled"),
+    ).toBe(true);
+    fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
+    fireEvent.click(within(review).getByRole("button", { name: "Cancel authorization" }));
+    expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1);
+    expect(bff.requestsAt("POST", cancelPath)).toHaveLength(0);
+  });
+
   it("reconciles an uncertain pending handoff only after newer durable activity", async () => {
     window.localStorage.setItem("studio.profile.show-tool-calls", "visible");
     const bff = new BffFixture(session("chat-a", "authorizing"));
