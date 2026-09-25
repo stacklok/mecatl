@@ -13,6 +13,90 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+func TestReattachEnsuresReadinessBeforeResolvingExactPlacement(t *testing.T) {
+	socket := testUnixSocketPath(t)
+	claim := binding{Owner: "local", SessionID: "placement", EnvironmentID: "logical", Ref: "logical@7", Generation: 7}
+	readinessCalls := 0
+	client, err := NewPlacementProvider("unix://"+socket, "/source", "microvm-local", "deployment", func(context.Context) error {
+		readinessCalls++
+		listener, listenErr := net.Listen("unix", socket)
+		if listenErr != nil {
+			return listenErr
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		go func() {
+			defer listener.Close()
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			defer conn.Close()
+			var request lifecycleRequest
+			if readFrame(conn, &request) != nil {
+				return
+			}
+			if writeFrame(conn, lifecycleResponse{Binding: claim, AcquisitionID: "0123456789abcdef0123456789abcdef"}) != nil {
+				return
+			}
+			if readFrame(conn, &request) == nil {
+				_ = writeFrame(conn, lifecycleResponse{Binding: claim, AcquisitionID: request.AcquisitionID})
+			}
+		}()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	placement, err := client.Reattach(t.Context(), server.PlacementReattachRequest{Ref: session.EnvironmentRef{Kind: kindMicroVM, ID: "placement.logical", Revision: "7"}, Scope: "deployment"})
+	if err != nil {
+		t.Fatalf("Reattach: %v", err)
+	}
+	if readinessCalls != 1 {
+		t.Fatalf("readiness calls = %d, want 1", readinessCalls)
+	}
+	if err := placement.Close(); err != nil {
+		t.Fatalf("close placement: %v", err)
+	}
+}
+
+func TestReattachValidatesBeforeReadiness(t *testing.T) {
+	readinessCalls := 0
+	readinessErr := errors.New("readiness failed")
+	client, err := NewPlacementProvider("unix:///run/unused-microvmd.sock", "/source", "microvm-local", "deployment", func(context.Context) error {
+		readinessCalls++
+		return readinessErr
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := session.EnvironmentRef{Kind: kindMicroVM, ID: "placement.logical", Revision: "7"}
+	for _, tc := range []struct {
+		name    string
+		request server.PlacementReattachRequest
+		wantErr bool
+	}{
+		{name: "scope", request: server.PlacementReattachRequest{Ref: valid, Scope: "other"}, wantErr: true},
+		{name: "ref", request: server.PlacementReattachRequest{Ref: session.EnvironmentRef{Kind: kindMicroVM, ID: "invalid", Revision: "7"}, Scope: "deployment"}, wantErr: true},
+		{name: "no-fs", request: server.PlacementReattachRequest{Ref: session.EnvironmentRef{Kind: session.EnvKindNoFS, ID: "no-fs", Revision: "nofs-v1"}, Scope: "deployment"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.Reattach(t.Context(), tc.request)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Reattach(%+v) error = %v, want error %t", tc.request, err, tc.wantErr)
+			}
+		})
+	}
+	if readinessCalls != 0 {
+		t.Fatalf("readiness calls after invalid requests = %d, want 0", readinessCalls)
+	}
+	if _, err := client.Reattach(t.Context(), server.PlacementReattachRequest{Ref: valid, Scope: "deployment"}); !errors.Is(err, readinessErr) {
+		t.Fatalf("Reattach readiness error = %v, want %v", err, readinessErr)
+	}
+	if readinessCalls != 1 {
+		t.Fatalf("readiness calls = %d, want 1", readinessCalls)
+	}
+}
+
 func TestPlacementProviderUsesOpaqueDaemonProfileAndExactRef(t *testing.T) {
 	socket := testUnixSocketPath(t)
 	listener, err := net.Listen("unix", socket)

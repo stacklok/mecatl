@@ -253,6 +253,11 @@ func (c *Client) Reattach(ctx context.Context, request server.PlacementReattachR
 	if err := ctx.Err(); err != nil {
 		return server.PlacementBinding{}, err
 	}
+	if c.readiness != nil {
+		if err := c.readiness(ctx); err != nil {
+			return server.PlacementBinding{}, fmt.Errorf("microvm readiness: %w", err)
+		}
+	}
 	resolveCtx, cancelResolve := context.WithTimeoutCause(ctx, resolvePhaseTimeout, errors.New("microvmd resolve phase timed out"))
 	defer cancelResolve()
 	response, owner, err := c.acquire(resolveCtx, lifecycleRequest{

@@ -108,6 +108,42 @@ func TestMicroVMDirectBuildResolvesExecutionBeforeSources(t *testing.T) {
 	}
 }
 
+func TestMicroVMRestartReattachUsesConfiguredReadiness(t *testing.T) {
+	daemon := startPlacementTestDaemon(t)
+	cfg := microVMHarnessConfig(t, daemon, "repository")
+	cfg.PermissionConfigs = nil
+	cfg.StoreDir = t.TempDir()
+	manager := &placementReadyManager{endpoint: daemon.endpoint()}
+	cfg.MicroVMManagerFactory = func() (MicroVMReadyManager, string, error) {
+		return manager, daemon.endpoint(), nil
+	}
+
+	first, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := first.Service.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		first.Close()
+		t.Fatal(err)
+	}
+	if manager.calls != 1 {
+		first.Close()
+		t.Fatalf("initial readiness calls = %d, want 1", manager.calls)
+	}
+	first.Close()
+
+	second, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	assertSuccessfulRun(t, second.Service, sess.ID, "continue")
+	if manager.calls != 2 {
+		t.Fatalf("restart readiness calls = %d, want 2", manager.calls)
+	}
+}
+
 func TestMicroVMConfigurationCopiesDelegationMaps(t *testing.T) {
 	daemon := startPlacementTestDaemon(t)
 	base := microVMHarnessConfig(t, daemon, "repository")
