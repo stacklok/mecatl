@@ -86,6 +86,9 @@ var (
 	// ErrProtectedRouteUnsupported reports the P08 boundary: OAuth routes are
 	// declared by P07 but are not executable until protected-route custody lands.
 	ErrProtectedRouteUnsupported = errors.New("mcpbroker: protected route unsupported")
+	// ErrInvalidSessionID means the caller supplied an identifier outside the
+	// broker's bounded logical-session grammar.
+	ErrInvalidSessionID = errors.New("mcpbroker: invalid session ID")
 )
 
 // ToolDefinition is the neutral result of discovering one tool on a configured
@@ -118,9 +121,9 @@ type Catalogue struct {
 }
 
 // Compile validates anonymous P07 declarations and neutral discovery results.
-// occupied contains names already visible to the model; collisions are rejected
+// reservedToolNames contains names already visible to the model; collisions are rejected
 // before any session attachment is created.
-func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occupied []string) (*Catalogue, error) {
+func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, reservedToolNames []string) (*Catalogue, error) {
 	backends := make(map[string]permconfig.MCPServerProfile, len(config.Routes))
 	for _, declaration := range config.Routes {
 		key := strings.ToLower(declaration.Name)
@@ -144,10 +147,10 @@ func Compile(config mcpauthority.BrokerConfig, discovered []ToolDefinition, occu
 		backends[key] = declaration
 	}
 
-	seen := make(map[string]struct{}, len(occupied)+len(discovered))
-	for _, name := range occupied {
+	seen := make(map[string]struct{}, len(reservedToolNames)+len(discovered))
+	for _, name := range reservedToolNames {
 		if name == "" {
-			return nil, fmt.Errorf("%w: occupied tool name is empty", ErrInvalidCatalogue)
+			return nil, fmt.Errorf("%w: reserved tool name is empty", ErrInvalidCatalogue)
 		}
 		seen[name] = struct{}{}
 	}
@@ -201,6 +204,10 @@ func (c *Catalogue) Specs() []tool.ToolSpec {
 		out[i] = copySpec(route.spec)
 	}
 	return out
+}
+
+func validLogicalSessionID(id session.SessionID) bool {
+	return contract.ValidLogicalSessionID(id)
 }
 
 // SessionRef is an opaque reference to one in-process logical-session incarnation.
@@ -333,8 +340,8 @@ func (r *Runtime) AttachSession(ctx context.Context, id session.SessionID) (cont
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	if id == "" {
-		return nil, "", fmt.Errorf("%w: session ID is required", ErrInvalidCatalogue)
+	if !validLogicalSessionID(id) {
+		return nil, "", ErrInvalidSessionID
 	}
 	r.mu.Lock()
 	if r.closed {
