@@ -118,9 +118,6 @@ const (
 // PendingApprovalEvent is one safe projection from the exact-run continuation.
 type PendingApprovalEvent struct {
 	Kind     PendingApprovalEventKind
-	Cursor   string
-	RunID    string
-	AskID    string
 	Approval *PendingApproval
 	Message  tea.Msg
 }
@@ -200,9 +197,16 @@ func (w *PendingApprovalWatch) Recv() (PendingApprovalEvent, error) {
 				w.Close()
 				return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
 			}
-			return PendingApprovalEvent{Kind: PendingApprovalEventBoundary, Cursor: frame.GetCursor()}, nil
+			return PendingApprovalEvent{Kind: PendingApprovalEventBoundary}, nil
 		}
-		if frame.GetCursor() == "" || ev.GetRunId() == "" {
+		if frame.GetCursor() == "" {
+			w.Close()
+			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
+		}
+		if ev.GetRunId() == "" {
+			if ev.GetType() == "session.title" && ev.GetTitle() != nil {
+				continue
+			}
 			w.Close()
 			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
 		}
@@ -219,7 +223,7 @@ func (w *PendingApprovalWatch) Recv() (PendingApprovalEvent, error) {
 }
 
 func projectPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event) (PendingApprovalEvent, error) {
-	out := PendingApprovalEvent{Kind: PendingApprovalEventOther, Cursor: cursor, RunID: ev.GetRunId()}
+	out := PendingApprovalEvent{Kind: PendingApprovalEventOther}
 	switch ev.GetType() {
 	case "permission.ask":
 		approval, supported, err := approvalFromEvent(sessionID, cursor, ev)
@@ -229,17 +233,17 @@ func projectPendingApprovalEvent(sessionID, cursor string, ev *mecatlv1.Event) (
 		if !supported {
 			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalUnsupportedAsk)
 		}
-		out.Kind, out.AskID, out.Approval = PendingApprovalEventAsk, approval.AskID, &approval
+		out.Kind, out.Approval = PendingApprovalEventAsk, &approval
 	case "approval":
 		if !validApprovalEvent(ev) {
 			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
 		}
-		out.Kind, out.AskID = PendingApprovalEventResolved, ev.GetApproval().GetAskId()
+		out.Kind = PendingApprovalEventResolved
 	case "permission.retract":
 		if ev.GetRunId() == "" || ev.GetAsk() == nil || ev.GetAsk().GetAskId() == "" {
 			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)
 		}
-		out.Kind, out.AskID = PendingApprovalEventRetracted, ev.GetAsk().GetAskId()
+		out.Kind = PendingApprovalEventRetracted
 	case "result":
 		if ev.GetRunId() == "" || ev.GetResult() == nil || !validResultStop(ev.GetResult().GetStop()) {
 			return PendingApprovalEvent{}, pendingApprovalFailure(PendingApprovalMalformed)

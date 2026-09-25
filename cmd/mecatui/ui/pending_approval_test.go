@@ -244,7 +244,7 @@ func TestPendingApprovalRecoveryTeatestPhase(t *testing.T) {
 		t.Fatalf("deny controls = %d, %v", resolves, verdict)
 	}
 	watch.events <- pendingApprovalWatchResult{event: client.PendingApprovalEvent{
-		Kind: client.PendingApprovalEventTerminal, RunID: "run", Message: client.ResultMsg{Stop: "end_turn"},
+		Kind: client.PendingApprovalEventTerminal, Message: client.ResultMsg{Stop: "end_turn"},
 	}}
 	progress.wait(t, phaseIdle, 5*time.Second)
 	if _, prompts := converseService.snapshot(); len(prompts) != 0 {

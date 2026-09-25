@@ -35,17 +35,54 @@ func TestPendingApprovalRecoveryLateControlCannotOverwriteLaterAsk(t *testing.T)
 	m := pendingRecoveryModel(t, controller, "")
 	old := m.pendingRecovery.approval
 
-	cmd := (&m).resolvePendingApprovalCmd(client.VerdictAllowOnce)
+	next, choose := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = next.(Model)
 	result := make(chan tea.Msg, 1)
-	go func() { result <- cmd() }()
+	var execute func(tea.Cmd)
+	execute = func(cmd tea.Cmd) {
+		if cmd == nil {
+			return
+		}
+		switch msg := cmd().(type) {
+		case tea.BatchMsg:
+			for _, child := range msg {
+				execute(child)
+			}
+		case pendingApprovalResolvedMsg:
+			result <- msg
+		}
+	}
+	go execute(choose)
 	receivePendingTest(t, started)
 	var releaseOnce sync.Once
 	releaseControl := func() { releaseOnce.Do(func() { close(release) }) }
 	defer releaseControl()
 
+	// The first choice removes the approval surface before its acknowledgement.
+	// Repeating the same key while that RPC is blocked must not submit it again.
+	next, repeated := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	m = next.(Model)
+	repeatedDone := make(chan struct{})
+	go func() {
+		execute(repeated)
+		close(repeatedDone)
+	}()
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), scaleWait(5*time.Second))
+	defer cancelWait()
+	select {
+	case <-repeatedDone:
+	case <-started:
+		t.Fatal("repeated approval input started a second RPC")
+	case <-waitCtx.Done():
+		t.Fatalf("repeated approval input did not settle: %v", waitCtx.Err())
+	}
+	if calls, _, _ := controller.counts(); calls != 1 {
+		t.Fatalf("resolve calls while acknowledgement blocked = %d, want one", calls)
+	}
+
 	later := old
 	later.AskID, later.Tool, later.Cursor = "ask-later", "Shell", "cursor-later"
-	next, _ := m.Update(pendingApprovalWatchMsg{generation: m.pendingRecovery.generation, event: client.PendingApprovalEvent{
+	next, _ = m.Update(pendingApprovalWatchMsg{generation: m.pendingRecovery.generation, event: client.PendingApprovalEvent{
 		Kind: client.PendingApprovalEventAsk, Approval: &later,
 	}})
 	m = next.(Model)
@@ -277,7 +314,7 @@ func TestPendingApprovalRecoverySkipsUnmappedTelemetryOnlyAfterChoice(t *testing
 			beforePhase := m.phase
 			resolves, cancels, _ := controller.counts()
 			next, cmd := m.Update(pendingApprovalWatchMsg{generation: m.pendingRecovery.generation, event: client.PendingApprovalEvent{
-				Kind: client.PendingApprovalEventOther, RunID: "run", Cursor: "next",
+				Kind: client.PendingApprovalEventOther,
 			}})
 			m = next.(Model)
 			if state == "before-choice" || state == "later-ask" {
@@ -289,7 +326,7 @@ func TestPendingApprovalRecoverySkipsUnmappedTelemetryOnlyAfterChoice(t *testing
 					t.Fatal("incidental telemetry changed run state or failed to rearm watch")
 				}
 				next, _ = m.Update(pendingApprovalWatchMsg{generation: m.pendingRecovery.generation, event: client.PendingApprovalEvent{
-					Kind: client.PendingApprovalEventTerminal, RunID: "run", Message: client.ResultMsg{Stop: "end_turn"},
+					Kind: client.PendingApprovalEventTerminal, Message: client.ResultMsg{Stop: "end_turn"},
 				}})
 				m = next.(Model)
 				if m.phase != phaseIdle || m.pendingRecovery != nil || !controller.watch.isClosed() {

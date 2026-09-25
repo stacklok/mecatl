@@ -511,6 +511,7 @@ func TestPendingApprovalStartupRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dial first server: %v", err)
 			}
+			t.Cleanup(func() { _ = conn.Close() })
 			svc := mecatlv1.NewHarnessServiceClient(conn)
 			created, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
 			if err != nil {
@@ -538,6 +539,7 @@ func TestPendingApprovalStartupRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dial persistence probe: %v", err)
 			}
+			t.Cleanup(func() { _ = probe.Close() })
 			persisted, err := probe.DiscoverPendingApproval(ctx, created.GetSessionId())
 			if err != nil || persisted.RunID != originalRun || persisted.AskID != originalAsk {
 				t.Fatalf("persist initial ask before restart: candidate=%+v err=%v", persisted, err)

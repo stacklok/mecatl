@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -284,7 +285,7 @@ func TestPendingApprovalContinuationKeepsCanonicalTelemetryProjection(t *testing
 			}
 			defer watch.Close()
 			event, err := watch.Recv()
-			if err != nil || event.Kind != PendingApprovalEventOther || event.Message != nil || event.Cursor != "c2" || event.RunID != "run-1" {
+			if err != nil || event.Kind != PendingApprovalEventOther || event.Message != nil {
 				t.Fatalf("telemetry projection = %+v, %v", event, err)
 			}
 			event, err = watch.Recv()
@@ -317,8 +318,30 @@ func TestPendingApprovalContinuationFiltersForeignRuns(t *testing.T) {
 	}
 	defer watch.Close()
 	event, err := watch.Recv()
-	if err != nil || event.AskID != "ask-2" {
+	if err != nil || event.Approval == nil || event.Approval.AskID != "ask-2" {
 		t.Fatalf("event = %#v, err = %v", event, err)
+	}
+}
+
+func TestPendingApprovalContinuationSkipsRunlessSessionTitle(t *testing.T) {
+	service := &pendingApprovalWireServer{frames: []*mecatlv1.WatchSessionEventsResponse{
+		watchFrame("c2", "replay", &mecatlv1.Event{Type: "session.title", Title: &mecatlv1.SessionTitle{Title: "Recovered session"}}),
+		watchFrame("c2", "live", nil),
+		watchFrame("c3", "live", ordinaryAsk("other-run", "other-ask")),
+		watchFrame("c4", "live", ordinaryAsk("run-1", "ask-2")),
+	}}
+	watch, err := newPendingApprovalWireClient(t, service).WatchPendingApprovalRun(t.Context(), PendingApproval{SessionID: "session-1", RunID: "run-1", AskID: "ask-1", Cursor: "c1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Close()
+	boundary, err := watch.Recv()
+	if err != nil || boundary.Kind != PendingApprovalEventBoundary {
+		t.Fatalf("boundary after runless title = %#v, err = %v", boundary, err)
+	}
+	event, err := watch.Recv()
+	if err != nil || event.Kind != PendingApprovalEventAsk || event.Approval == nil || event.Approval.RunID != "run-1" || event.Approval.AskID != "ask-2" {
+		t.Fatalf("recovered-run event = %#v, err = %v", event, err)
 	}
 }
 
@@ -330,17 +353,19 @@ func TestPendingApprovalContinuationUsesRetainedCursorAndCloses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer watch.Close()
+	t.Cleanup(watch.Close)
 	event, err := watch.Recv()
 	askMsg, projected := event.Message.(PermissionAskMsg)
 	if err != nil || event.Kind != PendingApprovalEventAsk || event.Approval == nil || event.Approval.AskID != "ask-2" || !projected || askMsg.AskID != "ask-2" {
 		t.Fatalf("event = %#v, err = %v", event, err)
 	}
 	watch.Close()
+	waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	select {
 	case <-done:
-	case <-t.Context().Done():
-		t.Fatal("closing the watch did not release its server read loop")
+	case <-waitCtx.Done():
+		t.Fatalf("closing the watch did not release its server read loop: %v", waitCtx.Err())
 	}
 	service.mu.Lock()
 	defer service.mu.Unlock()
