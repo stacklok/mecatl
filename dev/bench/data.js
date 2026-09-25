@@ -249238,6 +249238,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790341975453,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e5039f8e64d7cfa6984c487cd977414ac9a1e2e6",
+          "message": "test(sdk): enforce SDK/TUI high-level parity (#1471) (#1917)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>",
+          "timestamp": "2026-09-25T15:18:58+02:00",
+          "tree_id": "62f8c73ac4bb9153af3cb009c1035ef8eede51e6",
+          "url": "https://github.com/stacklok/mecatl/commit/e5039f8e64d7cfa6984c487cd977414ac9a1e2e6"
+        },
+        "date": 1790343062349,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -362039,6 +362073,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790343059379,
+  "lastUpdate": 1790343063330,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
