@@ -247448,6 +247448,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790335252747,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "25c60a04937b12482779ec0e77762c9c296436d8",
+          "message": "perf(app): avoid full catalogue copies for model metadata lookups (#1927)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T15:00:05+03:00",
+          "tree_id": "96058609926fa3fee6a312a3041896ab855b7243",
+          "url": "https://github.com/stacklok/mecatl/commit/25c60a04937b12482779ec0e77762c9c296436d8"
+        },
+        "date": 1790338702868,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -359484,6 +359518,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790338699146,
+  "lastUpdate": 1790338704071,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
