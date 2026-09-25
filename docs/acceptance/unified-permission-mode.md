@@ -2,9 +2,9 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural - it changes the operator/deployment surface of all four composition roots, adds two boot refusals that stop shipped defaults from starting, and flips the headless child-ask reviewer to default-on, which grants an autonomous approval capability by default.
-**Decision record:** [ADR 0351](../adr/0351-one-permission-mode-vocabulary.md)
+**Decision record:** [ADR 0365](../adr/0365-one-permission-mode-vocabulary.md)
 **Phase:** operator surface consolidation
-**Status:** proposed, 2026-09-22. Provenance: the [PR #1455 review comment](https://github.com/stacklok/mecatl/pull/1455#discussion_r4062802901) reporting that the two-knob posture plus guardrails setup is undiscoverable and that the gate-free tier silently demotes the checker, plus an investigation of the same complaint from the subagent side recorded in ADR 0351.
+**Status:** proposed, 2026-09-22. Provenance: the [PR #1455 review comment](https://github.com/stacklok/mecatl/pull/1455#discussion_r4062802901) reporting that the two-knob posture plus guardrails setup is undiscoverable and that the gate-free tier silently demotes the checker, plus an investigation of the same complaint from the subagent side recorded in ADR 0365.
 **Delivery:** Split. Six scenarios spanning composition, four command roots, the TUI, and user documentation, including two refusals that stop currently-valid deployments from booting and a default that grants autonomous approval; the human contract review is the point of the exercise.
 **Expected tasks:** 6
 **Issue:** none yet. The review comment above is the provenance and the plan PR references it as ordinary text.
@@ -118,15 +118,15 @@ permits edits and the token would name a distinction the evaluator does not make
 
 Each token maps to an exact pair of existing values, so the flag is a parse plus a lookup and
 neither mechanism is bent to a new purpose. See
-[ADR 0351](../adr/0351-one-permission-mode-vocabulary.md).
+[ADR 0365](../adr/0365-one-permission-mode-vocabulary.md).
 
 **Acceptance:**
 - AC1.1: Each of the seven tokens resolves to exactly the posture and default-session-mode pair the ADR table names, and an unknown token is a startup error naming the valid set.
-  - verify: `TestADR_0351_TokenTableResolvesExactPairs`
+  - verify: `TestADR_0365_TokenTableResolvesExactPairs`
 - AC1.2: `trusted` resolves to the trusted posture with the default session mode, so a deployment using it today sees no behaviour change.
-  - verify: `TestADR_0351_TrustedKeepsCurrentMeaning`
+  - verify: `TestADR_0365_TrustedKeepsCurrentMeaning`
 - AC1.3: `trusted-accept-edits` resolves to the trusted posture with the accept-edits session mode, the combination that was previously only reachable by passing two flags.
-  - verify: `TestADR_0351_TrustedAcceptEditsIsNameable`
+  - verify: `TestADR_0365_TrustedAcceptEditsIsNameable`
 - AC1.4: The flag writes only the two existing fields and introduces no third source of permission state.
   - verify: inspection - the guarantee is the absence of a new mechanism, which is proved by reading the resolution path rather than by exercising it.
 
@@ -138,17 +138,17 @@ builds on the configure-equals-enable model of
 
 **Acceptance:**
 - AC2.1: A token whose posture half is `auto` or `yolo`, with no checker configured by either enable path and no kill-switch, makes `Build` fail and the process exit non-zero before serving.
-  - verify: `TestADR_0351_AllowAllTokenRequiresChecker`
+  - verify: `TestADR_0365_AllowAllTokenRequiresChecker`
 - AC2.2: The refusal names the token and all three fixes: the checker flag, the `guardrail` model slot, and the kill-switch.
-  - verify: `TestADR_0351_CheckerRefusalNamesEveryFix`
+  - verify: `TestADR_0365_CheckerRefusalNamesEveryFix`
 - AC2.3: The gate keys on the resolved token with no exemption for a flag default, and every shipped allow-all default boots because it declares its checker choice explicitly.
-  - verify: `TestADR_0351_ShippedAllowAllDefaultsDeclareCheckerChoice`
+  - verify: `TestADR_0365_ShippedAllowAllDefaultsDeclareCheckerChoice`
 - AC2.4: At the gate-free token both the refusal and the startup line state that a configured checker is observability-only there, naming the veto, the human ask, and fail-closed as the properties it does not have.
-  - verify: `TestADR_0351_GateFreeTokenStatesCheckerIsAdvisoryOnly`
+  - verify: `TestADR_0365_GateFreeTokenStatesCheckerIsAdvisoryOnly`
 - AC2.5: A token whose posture half is `strict` or `trusted` never requires a checker.
-  - verify: `TestADR_0351_NonAllowAllTokensRequireNoChecker`
+  - verify: `TestADR_0365_NonAllowAllTokensRequireNoChecker`
 - AC2.6: The startup line reports the checker as exactly one of `enforcing`, `advisory`, or `disabled`, so a configured checker at the gate-free tier reads `advisory` and never as protection.
-  - verify: `TestADR_0351_StartupLineNamesCheckerState`
+  - verify: `TestADR_0365_StartupLineNamesCheckerState`
 
 ### Scenario 3 - a headless root refuses a token it cannot honour
 
@@ -157,13 +157,13 @@ trust from posture, so a token whose defining increment is trust cannot be honou
 
 **Acceptance:**
 - AC3.1: `trusted` or `trusted-accept-edits` on a headless root with no trust source makes `Build` fail, naming the trust flag, the declarative setting, and a non-trust token.
-  - verify: `TestADR_0351_HeadlessTrustTokenRefused`
+  - verify: `TestADR_0365_HeadlessTrustTokenRefused`
 - AC3.2: The same tokens start when any legitimate trust source is present, because the gate runs after the trust fold.
-  - verify: `TestADR_0351_HeadlessTrustTokenAcceptsEveryTrustSource`
+  - verify: `TestADR_0365_HeadlessTrustTokenAcceptsEveryTrustSource`
 - AC3.3: `auto` and `yolo` on a headless root with no trust source still start, still admit no project ingestion, and WARN naming the withheld trust.
-  - verify: `TestADR_0351_HeadlessAllowAllStartsWithoutTrust`
+  - verify: `TestADR_0365_HeadlessAllowAllStartsWithoutTrust`
 - AC3.4: A trust-naming token on an interactive root grants project trust with no refusal and no WARN.
-  - verify: `TestADR_0351_InteractiveTrustTokenGrantsTrust`
+  - verify: `TestADR_0365_InteractiveTrustTokenGrantsTrust`
 
 ### Scenario 4 - the subagent restriction is visible, and adjudicated rather than denied
 
@@ -171,43 +171,43 @@ Under allow-all a subagent keeps the command-substitution guard the main agent l
 substitution the classifier cannot prove read-only is denied headless while the main agent's
 identical command runs. That friction is what pushes an operator toward the gate-free tier and
 its silent checker demotion, as recorded in
-[ADR 0351](../adr/0351-one-permission-mode-vocabulary.md) and the
+[ADR 0365](../adr/0365-one-permission-mode-vocabulary.md) and the
 [AGENTS.md](../../AGENTS.md) four-step child-ask model.
 
 **Acceptance:**
 - AC4.1: An allow-all token narrates the subagent asymmetry at startup, stating that subagents keep the substitution guard and naming the reviewer as the supported way to adjudicate rather than deny.
-  - verify: `TestADR_0351_AllowAllNarratesSubagentAsymmetry`
+  - verify: `TestADR_0365_AllowAllNarratesSubagentAsymmetry`
 - AC4.2: A headless allow-all deployment with no explicit reviewer value engages the reviewer by default, resolving its model through the existing slot with the parent-model fallback.
-  - verify: `TestADR_0351_HeadlessAllowAllDefaultsReviewerOn`
+  - verify: `TestADR_0365_HeadlessAllowAllDefaultsReviewerOn`
 - AC4.3: `--subagent-ask-reviewer off` restores today's behaviour. When the default is in effect, the startup line says in plain words that a model may approve headless subagent permission requests, that each adjudication spends tokens, and names `--subagent-ask-reviewer off` as the opt-out.
-  - verify: `TestADR_0351_ReviewerDefaultIsOptOutAndNarrated`
+  - verify: `TestADR_0365_ReviewerDefaultIsOptOutAndNarrated`
 - AC4.4: Where no reviewer model resolves, behaviour is byte-identical to today and a WARN names the fix, so the default can never silently fail open into something other than the existing denial.
-  - verify: `TestADR_0351_ReviewerDefaultDegradesToTodayBehaviour`
+  - verify: `TestADR_0365_ReviewerDefaultDegradesToTodayBehaviour`
 - AC4.5: The reviewer default changes no non-headless and no non-allow-all deployment.
-  - verify: `TestADR_0351_ReviewerDefaultIsConfinedToHeadlessAllowAll`
+  - verify: `TestADR_0365_ReviewerDefaultIsConfinedToHeadlessAllowAll`
 - AC4.6: The startup line narrates the subagent reviewer and the guardrails checker as two separate items under their own names, and neither item describes itself in the other's terms.
-  - verify: `TestADR_0351_ReviewerAndCheckerNarratedSeparately`
+  - verify: `TestADR_0365_ReviewerAndCheckerNarratedSeparately`
 
 ### Scenario 5 - the vocabulary is discoverable where operators look
 
 The originating complaint was discoverability, and it is independent of the vocabulary change:
 a keybinding cycle can only offer what the operator already configured, and there is no picker
 to grey entries out in. This targets the two surfaces that can show an operator a value they
-did NOT set. See [ADR 0351](../adr/0351-one-permission-mode-vocabulary.md).
+did NOT set. See [ADR 0365](../adr/0365-one-permission-mode-vocabulary.md).
 
 **Acceptance:**
 - AC5.1: The session mode cycle is unchanged, and this plan makes no discoverability claim for it.
-  - verify: `TestADR_0351_ModeSwitchCycleUnchanged`
+  - verify: `TestADR_0365_ModeSwitchCycleUnchanged`
 - AC5.2: The help overlay lists every token, states which half of each is process-wide and which is a session default, gives the exact invocation, and states that cycling the session mode never changes the posture half.
-  - verify: `TestADR_0351_HelpOverlayShowsVocabularyAndScopeSplit`
+  - verify: `TestADR_0365_HelpOverlayShowsVocabularyAndScopeSplit`
 - AC5.3: The header shows the active session mode, and additionally shows the process-wide posture whenever it is above strict, so an allow-all session does not present as merely default. The posture already reaches every client through the existing `Capabilities.posture` field, so this holds under `mecatui connect` with no wire change; today's badge covers only `auto` and `yolo` and gains `trusted`.
-  - verify: `TestADR_0351_HeaderShowsPostureWhenAboveStrict`
+  - verify: `TestADR_0365_HeaderShowsPostureWhenAboveStrict`
 - AC5.4: Starting under `auto` and cycling the session mode through `plan` and back to `default`, the header shows the `auto` posture at every step, so returning to `default` never reads as turning autonomy off.
-  - verify: `TestADR_0351_HeaderKeepsPostureAcrossModeCycle`
+  - verify: `TestADR_0365_HeaderKeepsPostureAcrossModeCycle`
 - AC5.5: The help overlay's restart guidance names whose restart it is: with the embedded server it gives the mecatui relaunch invocation, and under `mecatui connect` it states that the server operator must change `mecated`'s configuration and restart it, offering no local invocation.
-  - verify: `TestADR_0351_HelpOverlayNamesWhoseRestart`
+  - verify: `TestADR_0365_HelpOverlayNamesWhoseRestart`
 - AC5.6: One build-once startup line reports the resolved token, both halves it set, the checker state, and the reviewer state, each as a separately scannable item.
-  - verify: `TestADR_0351_StartupLineReportsTokenBothHalvesCheckerAndReviewer`
+  - verify: `TestADR_0365_StartupLineReportsTokenBothHalvesCheckerAndReviewer`
 - AC5.7: `user-docs/features/permissions-and-posture.md` documents the token table, the scope split, whose restart a posture change needs, both refusals, the three checker states, the reviewer default and its opt-out, and the subagent asymmetry. It describes the outcome as launch-time configuration and discovery, not runtime selection of autonomy from the TUI, and `task docs` passes.
   - verify: inspection - prose completeness is a human review judgment under the AGENTS.md rule against pinning documentation prose in tests; `task docs` mechanically proves links and generated reference freshness.
 
@@ -219,13 +219,13 @@ Compatibility is the condition for shipping: `mecak8s` defaults to `--posture au
 
 **Acceptance:**
 - AC6.1: `--posture`, `--yolo`, and mecatui `--mode` still resolve to the equivalent token, each emitting exactly one deprecation WARN naming `--permission-mode`.
-  - verify: `TestADR_0351_DeprecatedAliasesStillResolve`
+  - verify: `TestADR_0365_DeprecatedAliasesStillResolve`
 - AC6.2: An alias combination with no single-token equivalent still resolves to the pair it produces today, so deprecation never removes an expressible configuration before the aliases are removed.
-  - verify: `TestADR_0351_AliasCombinationsStillResolve`
+  - verify: `TestADR_0365_AliasCombinationsStillResolve`
 - AC6.3: Unconfigured interactive `mecated`, unconfigured headless `mecated`, `mecak8s` at its default, and `mecatui --mode plan` each produce the same posture and session mode as today.
-  - verify: `TestADR_0351_DefaultsReproduceCurrentBehaviour`
+  - verify: `TestADR_0365_DefaultsReproduceCurrentBehaviour`
 - AC6.4: The operator-tier `permissionMode:` key is honoured from the user-global and CLI tiers, an explicit flag outranks it, and a project-tier occurrence is ignored with a WARN.
-  - verify: `TestADR_0351_PermissionModeIsOperatorTierOnly`
+  - verify: `TestADR_0365_PermissionModeIsOperatorTierOnly`
 - AC6.5: No proto, engine API, or persisted surface changed: `task api:check` passes with no `task api:update`, and a snapshot written before the change loads with an unchanged mode.
   - verify: `TestInvariant_NoWireOrDomainSurfaceChanged`
 
