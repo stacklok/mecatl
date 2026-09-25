@@ -246016,6 +246016,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790327004745,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "409ea74e89044c9d67a138aa8efbf09e17fb1fd8",
+          "message": "feat: integrate contextual guardrails into execution and approvals (#1510)\n\nCo-authored-by: mecatl <noreply@stacklok.com>",
+          "timestamp": "2026-09-25T12:07:19+03:00",
+          "tree_id": "c26fac570874781a8fcec21226f9106cbe684ab3",
+          "url": "https://github.com/stacklok/mecatl/commit/409ea74e89044c9d67a138aa8efbf09e17fb1fd8"
+        },
+        "date": 1790327906454,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -357440,6 +357474,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790327903344,
+  "lastUpdate": 1790327907322,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
