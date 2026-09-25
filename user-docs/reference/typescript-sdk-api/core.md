@@ -13,6 +13,8 @@ import Heading from "@theme/Heading";
 
 This reference describes the declarations exported by `@stacklok-oss/mecatl-sdk`.
 
+For entry points and runtime support, see the [SDK API overview](./index.md).
+
 ## Symbol index
 
 | Symbol | Kind |

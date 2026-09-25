@@ -1570,7 +1570,7 @@ jobs:
       # records the tag. findings.json + junit.xml land in matlatl-out/.
       - name: matlatl docs gate (strict)
         id: matlatl
-        uses: stacklok/matlatl@166a04c0fec85155f5be150eab34e3451672b033 # v0.0.8
+        uses: stacklok/matlatl@8f312e28ac54fdba8efb806c0b6d626ade8ef863 # v0.0.9
         with:
           strict: "true"
 
@@ -1583,11 +1583,10 @@ jobs:
     if: needs.changes.outputs.site_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # `user-docs/` (the mecatl.dev site content) is excluded from the matlatl
-    # corpus above — see .matlatlignore — because its Docusaurus content-root
-    # links aren't matlatl-relative. Without this job nothing on the PR path
-    # checks it at all. Vercel builds previews and production after the change
-    # reaches GitHub, so this required job remains the pre-merge content gate.
+    # matlatl checks user-docs links and graph structure; this complementary
+    # gate verifies Docusaurus rendering and site-specific link resolution.
+    # Vercel builds previews and production after the change reaches GitHub,
+    # so this required job remains the pre-merge site build gate.
     # The SDK reference check fails when its committed declaration-based
     # pages drift. `npm run build` is the SAME command the deploy workflow uses,
     # and Docusaurus's own `onBrokenLinks: 'throw'` (docusaurus.config.ts) fails

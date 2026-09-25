@@ -355,6 +355,8 @@ function renderReference({ description, entryPoint, items, position, sharedRefer
       ? `This reference describes the declarations exported by \`${entryPoint}\`.`
       : `This page lists declarations added or changed by \`${entryPoint}\`. The entry point also exports the [shared core API](${sharedReference}).`,
     "",
+    "For entry points and runtime support, see the [SDK API overview](./index.md).",
+    "",
     ...renderSymbolIndex(items),
   ];
 
