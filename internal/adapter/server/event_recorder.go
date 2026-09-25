@@ -137,7 +137,7 @@ func (r *RunEventRecorder) appendPending(p *pendingDelta) {
 
 func (r *RunEventRecorder) append(ev session.Event) {
 	ctx := r.ctx
-	if verdictCtx := r.svc.exactPlanApprovalContext(r.id, ev); verdictCtx != nil {
+	if verdictCtx := r.svc.takeExactApprovalContext(r.id, ev); verdictCtx != nil {
 		ctx = verdictCtx
 	}
 	if err := r.svc.appendEvent(ctx, r.id, ev); err != nil {
@@ -149,11 +149,11 @@ func (r *RunEventRecorder) append(ev session.Event) {
 	}
 }
 
-// exactPlanApprovalContext selects the accepted verdict caller for only the
-// matching live plan approval. The recorder uses its original run context for
-// every other event, including unrelated approvals.
-func (s *Service) exactPlanApprovalContext(id session.SessionID, ev session.Event) context.Context {
-	if ev.Type != session.EvApproval || ev.Approval == nil || ev.Approval.Origin != session.ApprovalOriginPlan {
+// takeExactApprovalContext selects the accepted verdict caller for only the
+// matching live approval, then drops the saved context. The recorder uses its
+// original run context for other events, including in-stream approvals.
+func (s *Service) takeExactApprovalContext(id session.SessionID, ev session.Event) context.Context {
+	if ev.Type != session.EvApproval || ev.Approval == nil || ev.Approval.AskID == "" {
 		return nil
 	}
 	s.mu.Lock()
@@ -165,8 +165,7 @@ func (s *Service) exactPlanApprovalContext(id session.SessionID, ev session.Even
 	}
 	st.persistMu.Lock()
 	defer st.persistMu.Unlock()
-	if st.resolvedAskID != ev.Approval.AskID {
-		return nil
-	}
-	return st.exactPlanApprovalCtx
+	ctx := st.exactApprovalContexts[ev.Approval.AskID]
+	delete(st.exactApprovalContexts, ev.Approval.AskID)
+	return ctx
 }

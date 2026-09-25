@@ -36,14 +36,14 @@ func exactPlanActorService(t *testing.T) (*server.Service, *memstore.EventLog) {
 	return svc, log
 }
 
-func assertExactPlanApprovalActor(t *testing.T, log *memstore.EventLog, id session.SessionID, runID, askID string, want *session.Principal) {
+func assertExactApprovalActor(t *testing.T, log *memstore.EventLog, id session.SessionID, runID, askID string, want *session.Principal) {
 	t.Helper()
 	approvals, otherEvents := 0, 0
 	for _, ev := range readEventLog(t, log, id) {
 		if ev.Type == session.EvApproval && ev.RunID == runID && ev.Approval != nil && ev.Approval.AskID == askID {
 			approvals++
 			if got := ownerOf(ev.Actor); got != ownerOf(want) || (ev.Actor == nil) != (want == nil) {
-				t.Fatalf("exact plan approval actor = %+v, want %+v", ev.Actor, want)
+				t.Fatalf("exact approval actor = %+v, want %+v", ev.Actor, want)
 			}
 			continue
 		}
@@ -107,7 +107,7 @@ func TestADR_0204_ExactPlanApprovalUsesVerdictCaller(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		assertExactPlanApprovalActor(t, log, sess.ID, runID, askID, bob)
+		assertExactApprovalActor(t, log, sess.ID, runID, askID, bob)
 	})
 
 	t.Run("verified HTTP verdict caller", func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestADR_0204_ExactPlanApprovalUsesVerdictCaller(t *testing.T) {
 			t.Fatal("HTTP prompt did not finish after deny")
 		}
 		cancelPrompt()
-		assertExactPlanApprovalActor(t, log, sess.ID, runID, askID, bob)
+		assertExactApprovalActor(t, log, sess.ID, runID, askID, bob)
 	})
 
 	t.Run("direct verdict with no caller", func(t *testing.T) {
@@ -198,6 +198,6 @@ func TestADR_0204_ExactPlanApprovalUsesVerdictCaller(t *testing.T) {
 		}
 		recorder.Close()
 		svc.FinishRun(sess.ID, run)
-		assertExactPlanApprovalActor(t, log, sess.ID, run.RunID(), askID, nil)
+		assertExactApprovalActor(t, log, sess.ID, run.RunID(), askID, nil)
 	})
 }

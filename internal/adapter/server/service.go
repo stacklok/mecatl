@@ -1348,11 +1348,12 @@ type runState struct {
 	persistMu sync.Mutex
 	// These fields are guarded by persistMu. The resolution fields close the
 	// delivery race when a control reaches a run before its relay persists the ask.
-	// exactPlanApprovalCtx carries only the accepted exact verdict to its append.
-	resolvedAskID        string
-	exactPlanApprovalCtx context.Context
-	acceptedApproval     *agent.ApprovalResolution
-	cancelSignaled       bool
+	// exactApprovalContexts carries only accepted exact verdicts to their
+	// matching appends; in-stream resolutions never add an entry.
+	resolvedAskID         string
+	exactApprovalContexts map[string]context.Context
+	acceptedApproval      *agent.ApprovalResolution
+	cancelSignaled        bool
 	// planContinuation reserves one detached relay before an exact plan allow is
 	// consumed. The terminal relay transfers this ownership to the proceed run.
 	// Guarded by Service.mu.
@@ -1375,6 +1376,15 @@ func (st *runState) approvalRun() *agent.Run {
 		return nil
 	}
 	return st.run
+}
+
+// recordExactApprovalContext is called only after an exact live control has
+// atomically consumed its ask, while persistMu is held.
+func (st *runState) recordExactApprovalContext(ctx context.Context, askID string) {
+	if st.exactApprovalContexts == nil {
+		st.exactApprovalContexts = make(map[string]context.Context)
+	}
+	st.exactApprovalContexts[askID] = context.WithoutCancel(ctx)
 }
 
 // keyedMutex is a map of per-key mutexes with reference counting, so a caller can
@@ -4988,6 +4998,7 @@ func (s *Service) resolveLiveRunAsk(ctx context.Context, id session.SessionID, s
 	switch run.ResolveOrdinaryAsk(askID, verdict) {
 	case agent.AskResolutionResolved:
 		st.resolvedAskID = askID
+		st.recordExactApprovalContext(ctx, askID)
 		return RunAskAcknowledgement{RunID: run.RunID(), AskID: askID}, nil
 	case agent.AskResolutionPlanOriginated:
 		return RunAskAcknowledgement{}, ErrPlanResolutionRequired
@@ -5018,6 +5029,7 @@ func (s *Service) resolveLiveScopedRunAsk(ctx context.Context, id session.Sessio
 		return RunAskAcknowledgement{}, err
 	}
 	st.resolvedAskID = resolution.AskID
+	st.recordExactApprovalContext(ctx, resolution.AskID)
 	return RunAskAcknowledgement{RunID: run.RunID(), AskID: resolution.AskID}, nil
 }
 
@@ -7066,7 +7078,7 @@ func (s *Service) finishRelayRun(ctx context.Context, id session.SessionID, run 
 // verified caller who drove this request — so the loop stays storage- and
 // identity-agnostic and every emit site leaves Actor nil. Callers pass a
 // cancel-detached ctx (context.WithoutCancel), which preserves the context VALUES
-// and therefore the caller. For a live exact plan verdict, the recorder passes
+// and therefore the caller. For a live exact verdict, the recorder passes
 // that control's context for only its matching EvApproval. A request with no
 // verified caller leaves it nil — absence is never fabricated. Do not add a
 // second stamping path.

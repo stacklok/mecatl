@@ -97,9 +97,8 @@ func (s *Service) resolveLivePlanAsk(ctx context.Context, id session.SessionID, 
 	st.resolvedAskID = askID
 	// The live relay retains the run starter's context. Only this exact
 	// approval belongs to the caller of ResolvePlanAsk, including when that
-	// caller has no verified principal. Detach cancellation before the unary
-	// request ends so its durable append can finish independently.
-	st.exactPlanApprovalCtx = context.WithoutCancel(ctx)
+	// caller has no verified principal.
+	st.recordExactApprovalContext(ctx, askID)
 	st.planContinuation = continuation
 	return RunAskAcknowledgement{RunID: run.RunID(), AskID: askID}, nil
 }
