@@ -4,7 +4,7 @@
 **Work classification:** Bounded — the existing selectable session inventory adopts the established package-private bounded-list contract, changing its ephemeral cursor/physical-row geometry without changing a public API, persistence boundary, protocol, or system architecture.
 **Decision record:** None — this is a focused application of the landed Mecatui bounded-control contract; its surface-local geometry and navigation belong in this plan rather than a durable architecture record.
 **Phase:** bounded-list adoption, sessions inventory slice
-**Status:** proposed, 2026-09-24. The operator selected this as the next independently reviewed #1742 slice; all material interaction decisions are recorded below for Plan / Interface review.
+**Status:** in-progress, 2026-09-25. Implementation is proceeding on the approved Plan / Interface contract for #1895.
 **Delivery:** Split. Session filtering, incremental pagination, capability-authorized actions, and compact geometry need contract review before implementation changes their shared state path.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1895](https://github.com/stacklok/mecatl/issues/1895).
