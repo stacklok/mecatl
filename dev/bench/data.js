@@ -277781,6 +277781,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790353365558,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd71c52701509e10f2782a0acfc885f2f7bd8c21",
+          "message": "feat(studio): show session delegation activity (#1907)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T18:22:03+02:00",
+          "tree_id": "f18d245ebde6cd8a4c614e87bbeff77e40e7318e",
+          "url": "https://github.com/stacklok/mecatl/commit/cd71c52701509e10f2782a0acfc885f2f7bd8c21"
+        },
+        "date": 1790354079524,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3325.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 118.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -364117,6 +364156,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790354076007,
+  "lastUpdate": 1790354080529,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
