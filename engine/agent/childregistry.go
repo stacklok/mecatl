@@ -178,8 +178,9 @@ type childRunRegistry struct {
 	// unregisterAsk is the ANSWERED-vs-PENDING gate for ask retraction: bound by
 	// Engine.Run (alongside emit) to Run.unregisterChildAsk (the parent run's
 	// childAskRouter.unregister), it reports whether the askID was still
-	// registered (pending) and removed. route() deletes an answered ask's entry,
-	// so false means the verdict already resolved the ask (or it never surfaced)
+	// registered (pending) and removed. An accepted resolution deletes an
+	// answered ask's entry, so false means the verdict already resolved the ask
+	// (or it never surfaced)
 	// and retractAsks must NOT emit a permission.retract for it. Like emit it is
 	// set once before the run goroutine starts and only read after. nil on an
 	// unbound registry (unit tests) ⇒ retracts are skipped, never a panic. A
@@ -797,10 +798,11 @@ func snapshotAsksLocked(e *childEntry) []string {
 // retractAsks unregisters each taken askID from the parent's router and emits a
 // permission.retract for the ones that were still PENDING: the bound
 // unregisterAsk gate reports whether the router actually removed an entry —
-// route() already deletes an answered ask's, so a stale already-answered id
-// fails the gate and emits nothing (no spurious retract racing a just-delivered
-// verdict). An UNBOUND registry (nil unregisterAsk — unit tests that never ran
-// Engine.Run) skips the retracts entirely, never panics. NO registry lock
+// an accepted resolution already deletes an answered ask's entry, so a stale
+// already-answered id fails the gate and emits nothing (no spurious retract
+// racing a just-delivered verdict). An UNBOUND registry (nil unregisterAsk —
+// unit tests that never ran Engine.Run) skips the retracts entirely, never
+// panics. NO registry lock
 // is held here — the mu-never-across-a-send rule; see retractAsksVia for the
 // {sealed-check, unregister, emit} atomic section and its lock order. Each
 // retract is a guarded send that gives up on emitAbort/hardAbort like every

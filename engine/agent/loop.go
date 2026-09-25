@@ -1688,8 +1688,8 @@ func (e *Engine) prepareRun(ctx context.Context, sess *session.Session, req RunR
 	// unregisterAsk is the answered-vs-pending gate for ask retraction at a
 	// child's registry terminal (markDoneResult — the chokepoint every
 	// ctx-driven unwind funnels through) and the drain's abandoned sweep:
-	// route() removes an ANSWERED ask's router entry, so only an unregister that
-	// genuinely removed one (a still-pending surfaced ask) draws a
+	// An accepted resolution removes an ANSWERED ask's router entry, so only
+	// an unregister that removed a still-pending surfaced ask draws a
 	// permission.retract. A headless/child run installs no router, so every
 	// unregister reports false and no retract is ever emitted — correct:
 	// nothing was ever surfaced.

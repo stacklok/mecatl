@@ -151,8 +151,8 @@ func (r *askRegistry) discard(askID string) bool {
 // own askIDs — the parent consults the router FIRST and falls through to its own
 // registry on a miss. It is owned by the parent Run (one per interactive parent run);
 // child Runs never surface further (subagents cannot recurse), so they carry no router.
-// It is safe for concurrent use: register/unregister/route may be called from the
-// drain/forwarder goroutine, the readControl goroutine, and the child's own loop.
+// It is safe for concurrent use: registration, resolution, and retraction may
+// run in the drain/forwarder goroutine, readControl goroutine, or child's loop.
 type childAskRouter struct {
 	mu       sync.Mutex
 	byAskID  map[string]childAskRoute
@@ -193,14 +193,6 @@ func (r *childAskRouter) registerSurfaced(ask session.PendingAsk, child *Run, tu
 			approval: session.ApprovalPayload{AskID: ask.AskID, Tool: ask.Tool, Origin: ask.Origin}}
 	}
 	r.mu.Unlock()
-}
-
-// route reports child ownership for internal tests. Production callers use
-// routeResolution so they can return a stale or invalid verdict error. Only an
-// accepted verdict removes the child route; a stale route remains retractable.
-func (r *childAskRouter) route(askID string, v session.ApprovalVerdict) bool {
-	owned, _ := r.routeResolution(ApprovalResolution{AskID: askID, Verdict: v})
-	return owned
 }
 
 func (r *childAskRouter) routeResolution(resolution ApprovalResolution) (bool, error) {
@@ -314,7 +306,7 @@ func (r *childAskRouter) closeEvents() []session.Event {
 // unregister drops a surfaced child ask from the router without routing a
 // verdict, reporting whether an entry was actually removed (a locked
 // check-and-delete). The bool is the ANSWERED-vs-PENDING gate the retraction
-// paths key on: route() already deletes an answered ask's entry, so false
+// paths key on: an accepted resolution deletes an answered ask's entry, so false
 // means the verdict was routed (or the ask never surfaced) and the caller
 // must NOT emit a permission.retract — the client already resolved its modal.
 // The retraction paths (childRunRegistry.retractAsks, reached from
