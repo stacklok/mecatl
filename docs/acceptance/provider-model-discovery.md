@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — establishes one publication owner and provider-local readiness, retry, and freshness rules across composition, run admission, and inventory projections.
-**Decision record:** [ADR 0360](../adr/0360-provider-scoped-model-discovery.md)
+**Decision record:** [ADR 0362](../adr/0362-provider-scoped-model-discovery.md)
 **Phase:** Discovery ownership and context-safe run admission
 **Status:** proposed, 2026-09-24. The six recorded policies remain resolved; deployment clarifications and additional verification await plan review. The plan PR remains unmerged.
 **Delivery:** Split. Review the discovery and admission contract before implementation.
