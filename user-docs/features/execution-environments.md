@@ -94,8 +94,8 @@ It has no force-takeover recovery and is not a hostile multi-tenancy boundary.
 
 Remote deployments retain operator-global prompt rules and skills. A deployment can
 programmatically compose independently configured harness context sources for
-instructions and slash commands. Sources that require execution files acquire
-only the session's exact backend; independent sources do not. Permission rules
+instructions and slash commands without acquiring native execution files. PVC-backed
+context remains unselected in this slice. Permission rules
 from enabled user-global settings and explicit permission files also apply,
 including configured Deny and Ask rules under `auto` posture. Project permission
 files are excluded. Local project trust cannot admit host-local `AGENTS.md`,
