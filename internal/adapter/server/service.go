@@ -5490,6 +5490,10 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 	if !leaseHeld() {
 		return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
 	}
+	env, err = s.acquireExecution(requestLeaseCtx, st, sess, sess.RunID(), env)
+	if err != nil {
+		return RunAskAcknowledgement{}, err
+	}
 
 	ownedCtx, stopOwned := s.detachedControlContext(ctx)
 	ownedLeaseCtx, stopOwnedLease, _ := s.mutationLeaseContext(ownedCtx, id)
@@ -5529,6 +5533,7 @@ func (s *Service) resolvePersistedRunAsk(ctx context.Context, id session.Session
 		return RunAskAcknowledgement{}, err
 	}
 	promoted = true
+	s.startExecutionRenewal(id, st, run)
 	go func() {
 		defer s.detachedControlWG.Done()
 		s.relayDetachedControlRun(ownedLeaseCtx, id, run)
