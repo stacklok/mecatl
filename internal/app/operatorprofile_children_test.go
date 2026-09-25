@@ -40,7 +40,7 @@ func TestUserFacingChildRolesInjectFreshVolatileOperatorProfile(t *testing.T) {
 			var requests []port.LLMRequest
 			provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, mockllm.TextTurn("done"), mockllm.TextTurn("done"))
 			cfg := Config{Model: "m", operatorProfileSource: store}
-			eng := newChildEngineForProvider(cfg, role, provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+			eng := newChildEngineForProvider(cfg, role, provider, testProviderModel("m"), fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
 
 			runChildProfileTurn(t, eng, "child-1", "Answer in English, exactly.")
 			rememberProfile(context.Background(), t, store, tool.MemoryEntry{Key: "user/output/language", Value: "Prefer Japanese by default."})

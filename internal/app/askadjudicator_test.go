@@ -222,11 +222,11 @@ func TestChildDepsClearAskAdjudicator(t *testing.T) {
 	cfg := Config{Model: "m", SubagentAskReviewerModel: "gpt-5-mini", SubagentAskReviewerMaxDenies: 5}
 	pc := promptConfig(cfg, "")
 
-	forProvider := childEngineDepsForProvider(cfg, "task", provider, "m", func() int { return defaultContextWindowTokens }, tool.NewCatalog(), pc, hookexec.New(nil))
+	forProvider := childEngineDepsForProvider(cfg, "task", provider, testProviderModel("m"), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), pc, hookexec.New(nil))
 	if forProvider.ChildAskReviewer != nil || forProvider.ChildAskReviewMaxDenies != 0 {
 		t.Fatalf("childEngineDepsForProvider must clear the adjudicator (no nesting)")
 	}
-	plain := childEngineDeps(cfg, "task", provider, tool.NewCatalog(), "m", fixedDefaultWindow, pc, hookexec.New(nil))
+	plain := childEngineDeps(cfg, "task", provider, testProviderModel("m"), tool.NewCatalog(), fixedDefaultWindow, pc, hookexec.New(nil))
 	if plain.ChildAskReviewer != nil {
 		t.Fatalf("childEngineDeps must not carry the adjudicator")
 	}
@@ -298,7 +298,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 			mockllm.TextTurn("lead: inspected"),
 			mockllm.TextTurn("CONSOLIDATED: done"),
 		)
-		eng := agent.NewEngine(childEngineDepsForProvider(cfg, "member:lead", memberLLM, "m", func() int { return defaultContextWindowTokens }, cat, promptConfig(cfg, ""), nil))
+		eng := agent.NewEngine(childEngineDepsForProvider(cfg, "member:lead", memberLLM, testProviderModel("m"), func() int { return defaultContextWindowTokens }, cat, promptConfig(cfg, ""), nil))
 		return agent.MemberBuild{Engine: eng, IsolateReadOnly: true}
 	}
 	teamTool := agent.NewTeamTool(memberFactory, agent.WithTeamToolReadOnlyForker(appFakeForker{}), agent.WithTeamToolReadLedgerFactory(testReadLedger))
@@ -315,7 +315,7 @@ func TestAskReviewerE2EHeadlessTeamAllow(t *testing.T) {
 		{Kind: port.ChunkDone},
 	}})
 
-	deps := engineDepsForProvider(cfg, parentLLM, "m", func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), hookexec.New(nil), nil, nil)
+	deps := engineDepsForProvider(cfg, parentLLM, testProviderModel("m"), func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), hookexec.New(nil), nil, nil)
 	cat := tool.NewCatalog()
 	cat.MustRegister(teamTool)
 	deps.Catalog = cat
