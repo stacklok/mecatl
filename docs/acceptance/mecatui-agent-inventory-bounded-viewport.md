@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes the local, user-visible geometry and browsing contract of one existing mecatui inventory without changing a public API, persistence boundary, protocol, security boundary, or system architecture.
 **Decision record:** None — the pointer-owned viewport, centered-card geometry, and legacy-overlay ownership remain confined to `cmd/mecatui/ui`; their rationale belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-inventory adoption, agent-definition inventory slice
-**Status:** proposed, 2026-09-25. The directing operator selected the responsive centered-card and 128-column policy.
+**Status:** in-progress, 2026-09-25. Implementation began from the merged Plan / Interface baseline; the directing operator selected the responsive centered-card and 128-column policy.
 **Delivery:** Split. The user-visible geometry, compact fallback, and keyboard-ownership contract need plan/interface review before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1897](https://github.com/stacklok/mecatl/issues/1897).
