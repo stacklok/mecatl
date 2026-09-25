@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -271,16 +270,18 @@ func TestMicroVMOwnerDisconnectReclaimsRegistration(t *testing.T) {
 	}
 
 	processFixture := newOwnershipFixture(t)
-	dir, err := os.Open(t.TempDir())
+	// Use the same private short-path convention as the host adapter fixtures.
+	// Darwin's /dev/fd does not support Linux's directory-fd path traversal.
+	socketDir, err := os.MkdirTemp("/tmp", "mecatl-microvm-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dir.Close()
-	fdRoot := "/proc/self/fd"
-	if runtime.GOOS == "darwin" {
-		fdRoot = "/dev/fd"
-	}
-	parentSocket := filepath.Join(fdRoot, strconv.Itoa(int(dir.Fd())), "owner.sock")
+	t.Cleanup(func() {
+		if err := os.RemoveAll(socketDir); err != nil {
+			t.Errorf("remove private socket directory: %v", err)
+		}
+	})
+	parentSocket := filepath.Join(socketDir, "owner.sock")
 	listener, err := net.Listen("unix", parentSocket)
 	if err != nil {
 		t.Fatal(err)
@@ -296,10 +297,8 @@ func TestMicroVMOwnerDisconnectReclaimsRegistration(t *testing.T) {
 		defer conn.Close()
 		serveDone <- processFixture.daemon.ServeConn(t.Context(), conn)
 	}()
-	childSocket := filepath.Join(fdRoot, "3", "owner.sock")
 	command := exec.Command(os.Args[0], "-test.run=^TestMicroVMOwnerDisconnectReclaimsRegistration$")
-	command.ExtraFiles = []*os.File{dir}
-	command.Env = append(os.Environ(), "MECATL_TEST_MICROVM_OWNER_ENDPOINT="+childSocket)
+	command.Env = append(os.Environ(), "MECATL_TEST_MICROVM_OWNER_ENDPOINT="+parentSocket)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("owner subprocess: %v\n%s", err, output)
 	}

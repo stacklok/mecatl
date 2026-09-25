@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -192,24 +191,12 @@ func newMultiBuildFixture(t *testing.T) *multiBuildFixture {
 		t.Fatal(err)
 	}
 
-	socketDir := filepath.Join(root, "socket")
-	if err := os.Mkdir(socketDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := os.Open(socketDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = dir.Close() })
-	fdRoot := "/proc/self/fd"
-	if runtime.GOOS == "darwin" {
-		fdRoot = "/dev/fd"
-	}
-	socket := filepath.Join(fdRoot, fmt.Sprint(dir.Fd()), "ownership.sock")
+	socket := placementTestSocketPath(t)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = listener.Close() })
 	auth, err := control.NewService(control.ServiceConfig{AccountUID: uint32(os.Getuid()), PeerAuthenticator: controltest.StaticPeerAuthenticator{UID: uint32(os.Getuid())}})
 	if err != nil {
 		t.Fatal(err)

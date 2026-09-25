@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// DevelopmentReleaseSchema identifies the local development descriptor format.
 const DevelopmentReleaseSchema = "mecatl-microvm-development-release/v1"
 
 // DevelopmentReleaseDescriptor is the deliberately narrow local equivalent of
@@ -131,7 +132,7 @@ func openOwnerOnlyRegular(path string, maxBytes int64) (*os.File, error) {
 		_ = file.Close()
 		return nil, err
 	}
-	if stat.Uid != uint32(os.Getuid()) || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() < 0 || info.Size() > maxBytes {
+	if int64(stat.Uid) != int64(os.Getuid()) || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() < 0 || info.Size() > maxBytes {
 		_ = file.Close()
 		return nil, errors.New("path must be an owner-only regular non-symlink file owned by the current user")
 	}

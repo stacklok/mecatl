@@ -241,8 +241,17 @@ func TestMicroVMEnvironments_Scenario3_SourceStateCaptureIsExactOrFails(t *testi
 }
 
 func TestPreparePreservesCapturedPermissionsAcrossUmask(t *testing.T) {
+	for _, masks := range []struct{ source, prepared int }{{0o077, 0o022}, {0o022, 0o077}} {
+		t.Run(fmt.Sprintf("%03o-to-%03o", masks.source, masks.prepared), func(t *testing.T) {
+			testPreparePermissionsAcrossUmask(t, masks.source, masks.prepared)
+		})
+	}
+}
+
+func testPreparePermissionsAcrossUmask(t *testing.T, sourceMask, preparedMask int) {
+	t.Helper()
 	requireGit(t)
-	oldUmask := unix.Umask(0o077)
+	oldUmask := unix.Umask(sourceMask)
 	t.Cleanup(func() { unix.Umask(oldUmask) })
 
 	source := newRepository(t)
@@ -276,8 +285,33 @@ func TestPreparePreservesCapturedPermissionsAcrossUmask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	unix.Umask(0o022)
-	prepared, err := New().Prepare(context.Background(), Request{
+	external := filepath.Join(canonicalTestTempDir(t), "external.txt")
+	writeTestFile(t, external, []byte("outside\n"), 0o600)
+	for link, target := range map[string]string{"untracked-link": external, "dangling-link": "absent"} {
+		if err := os.Symlink(target, filepath.Join(source, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	unix.Umask(preparedMask)
+	preparer := New()
+	preparer.afterWorktree = func(root string) error {
+		for _, name := range []string{"tracked-link", "untracked-link", "dangling-link"} {
+			sourceInfo, err := os.Lstat(filepath.Join(source, name))
+			if err != nil {
+				return err
+			}
+			preparedInfo, err := os.Lstat(filepath.Join(root, name))
+			if err != nil {
+				return err
+			}
+			if sourceInfo.Mode() != preparedInfo.Mode() {
+				t.Errorf("%s mode: source=%s prepared=%s", name, sourceInfo.Mode(), preparedInfo.Mode())
+			}
+		}
+		return nil
+	}
+	prepared, err := preparer.Prepare(context.Background(), Request{
 		Source: source, WorktreePath: filepath.Join(canonicalTestTempDir(t), "session-worktree"),
 		MetadataPath: filepath.Join(canonicalTestTempDir(t), "guest-git"), Branch: "mecatl/permissions",
 	})
@@ -298,11 +332,52 @@ func TestPreparePreservesCapturedPermissionsAcrossUmask(t *testing.T) {
 			t.Errorf("mode for %q = %04o, want %04o", file.path, got, file.mode.Perm())
 		}
 	}
-	if info, statErr := os.Lstat(filepath.Join(prepared.WorktreePath, "tracked-link")); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("tracked symlink = %v, %v", info, statErr)
+	for _, name := range []string{"tracked-link", "untracked-link", "dangling-link"} {
+		want, err := os.Readlink(filepath.Join(source, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.Readlink(filepath.Join(prepared.WorktreePath, name)); err != nil || got != want {
+			t.Errorf("%s target = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	if info, err := os.Stat(external); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("external symlink target permissions changed: %v, %v", info, err)
 	}
 	if _, statErr := os.Lstat(filepath.Join(prepared.WorktreePath, "removed.txt")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("removed tracked file remains: %v", statErr)
+	}
+}
+
+func TestRestoreCapturedPermissionsRejectsTypeAndParentChanges(t *testing.T) {
+	for _, kind := range []string{"regular-to-symlink", "symlink-to-regular", "external-parent"} {
+		t.Run(kind, func(t *testing.T) {
+			root := canonicalTestTempDir(t)
+			external := canonicalTestTempDir(t)
+			victim := filepath.Join(external, "file")
+			writeTestFile(t, victim, []byte("outside\n"), 0o600)
+			file := capturedFile{path: "file", mode: 0o640}
+			switch kind {
+			case "regular-to-symlink":
+				if err := os.Symlink(victim, filepath.Join(root, "file")); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink-to-regular":
+				file.mode = os.ModeSymlink | 0o700
+				writeTestFile(t, filepath.Join(root, "file"), []byte("replacement\n"), 0o600)
+			case "external-parent":
+				file.path = "parent/file"
+				if err := os.Symlink(external, filepath.Join(root, "parent")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := restoreCapturedPermissions(root, []capturedFile{file}); err == nil {
+				t.Fatal("accepted substituted captured path")
+			}
+			if info, err := os.Stat(victim); err != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("external target permissions changed: %v, %v", info, err)
+			}
+		})
 	}
 }
 

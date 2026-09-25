@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/stacklok/mecatl/environment/microvm/gitexec"
 )
 
@@ -892,15 +894,23 @@ func restoreCapturedPermissions(root string, groups ...[]capturedFile) error {
 	defer func() { _ = workspace.Close() }()
 	for _, files := range groups {
 		for _, file := range files {
-			if file.mode == 0 || !file.mode.IsRegular() {
+			if file.mode == 0 {
 				continue
 			}
 			info, err := workspace.Lstat(filepath.FromSlash(file.path))
 			if err != nil {
 				return err
 			}
-			if !info.Mode().IsRegular() {
-				return fmt.Errorf("captured regular file %q changed type", file.path)
+			if info.Mode().Type() != file.mode.Type() {
+				return fmt.Errorf("captured file %q changed type", file.path)
+			}
+			if file.mode&os.ModeSymlink != 0 {
+				if info.Mode().Perm() != file.mode.Perm() {
+					if err := restoreSymlinkPermissions(workspace, file); err != nil {
+						return err
+					}
+				}
+				continue
 			}
 			if err := workspace.Chmod(filepath.FromSlash(file.path), file.mode.Perm()); err != nil {
 				return err
@@ -908,6 +918,18 @@ func restoreCapturedPermissions(root string, groups ...[]capturedFile) error {
 		}
 	}
 	return nil
+}
+
+// Darwin applies umask to symlink permissions; Linux always creates them as 0777.
+// Bind the parent through the workspace and never chmod the link's target.
+func restoreSymlinkPermissions(workspace *os.Root, file capturedFile) error {
+	path := filepath.FromSlash(file.path)
+	parent, err := workspace.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	return unix.Fchmodat(int(parent.Fd()), filepath.Base(path), uint32(file.mode.Perm()), unix.AT_SYMLINK_NOFOLLOW)
 }
 
 func outputClose(file *os.File) error {

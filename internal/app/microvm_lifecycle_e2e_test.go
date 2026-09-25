@@ -44,7 +44,7 @@ type placementTestDaemon struct {
 	deleteClaims  []string
 }
 
-func startPlacementTestDaemon(t *testing.T) *placementTestDaemon {
+func placementTestSocketPath(t *testing.T) string {
 	t.Helper()
 	socketDir, err := os.MkdirTemp("/tmp", "mecatl-microvm-")
 	if err != nil {
@@ -57,7 +57,12 @@ func startPlacementTestDaemon(t *testing.T) *placementTestDaemon {
 			t.Errorf("remove short private socket directory: %v", err)
 		}
 	})
-	listener, err := net.Listen("unix", socketPath)
+	return socketPath
+}
+
+func startPlacementTestDaemon(t *testing.T) *placementTestDaemon {
+	t.Helper()
+	listener, err := net.Listen("unix", placementTestSocketPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1097,7 +1097,7 @@ jobs:
           create-storage-record: false
 
   publish-studio:
-    needs: guard
+    needs: validate-release-ref
     name: Build, publish, sign, attest Mecatl Studio image
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -1116,12 +1116,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
-          ref: ${{ env.VERSION }}
+          ref: ${{ github.sha }}
 
-      # A workflow_dispatch of an older tag checks out that tag while
-      # github.sha stays the default-branch commit that started the run.
-      # Label the revision actually built, or the image identifies a commit it
-      # does not contain.
+      - name: Assert checkout is the immutable run commit
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      # Record the validated immutable checkout in the image revision label.
       - name: Resolve the built revision
         id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
