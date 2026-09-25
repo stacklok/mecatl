@@ -730,7 +730,7 @@ CreateSessionRequest opens a new session.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `mode` | `PermissionMode` |  |  | mode is the permission posture; unspecified defaults to DEFAULT. |
+| `mode` | `PermissionMode` |  |  | mode is the permission posture; unspecified uses the server&#39;s configured default session mode, which is DEFAULT unless the operator chose a permission mode that starts sessions elsewhere. |
 | `limits` | `Limits` |  |  | limits are the optional stop conditions. |
 | `provider_id` | `string` |  |  | provider_id selects which configured provider backs this session, by its stable registry id (&#34;openai&#34; / &#34;openrouter&#34;). Empty =&gt; the agent definition&#39;s base provider when bound, otherwise the server default provider. An unknown/unavailable id is a loud InvalidArgument, never a silent fallback. The provider is FIXED for the session lifetime (reasoning-replay + byte-stable prefix are provider-private); &#34;switch provider&#34; = new session. Keys are NEVER on the wire — only this id. (multi-provider Phase 0, S3.) |
 | `model_id` | `string` |  |  | model_id is an opaque literal model selector, never expanded as an alias. With provider_id alone, the provider&#39;s default model applies. With neither field, an agent-bound session uses its definition&#39;s base provider/model pair; an ordinary session uses the deployment default. An id ListModels did not advertise is passed through VERBATIM. Provider and model are distinct fields, never slash-joined. model_id WITHOUT provider_id requires agent_definition_name to supply the base provider; otherwise it is InvalidArgument. |
