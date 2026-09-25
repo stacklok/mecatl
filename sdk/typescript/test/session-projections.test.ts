@@ -313,7 +313,7 @@ describe("session projections", () => {
         "mcpRefresh",
         "memory",
         "modelSelection",
-        "pdfArtifacts",
+        "artifacts",
         "posture",
         "reflection",
         "scheduling",

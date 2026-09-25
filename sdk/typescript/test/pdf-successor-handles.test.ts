@@ -24,7 +24,7 @@ interface Fixture {
   readonly downloads: string[];
 }
 
-function fixture(kind: "grpc" | "http", pdfArtifacts: boolean): Fixture {
+function fixture(kind: "grpc" | "http", artifacts: boolean): Fixture {
   const reads: Fixture["reads"] = [];
   const uploads: string[] = [];
   const downloads: string[] = [];
@@ -34,7 +34,7 @@ function fixture(kind: "grpc" | "http", pdfArtifacts: boolean): Fixture {
         createSession: () => ({ sessionId: "source", sessionCapabilities: { pdf: false } }),
         getCompatibilityInfo: () => ({
           apiMajor: 1,
-          capabilities: { pdfArtifacts },
+          capabilities: { artifacts },
           features: ["server_info"],
         }),
         forkSession: () => ({ sessionId: "forked" }),
@@ -51,13 +51,13 @@ function fixture(kind: "grpc" | "http", pdfArtifacts: boolean): Fixture {
             },
           };
         },
-        uploadPdf: async (requests) => {
+        uploadArtifact: async (requests) => {
           for await (const request of requests) {
             if (request.payload.case === "metadata") uploads.push(request.payload.value.sessionId);
           }
-          return { artifactId, name: "report.pdf", sha256, size: 14n };
+          return { artifactId, name: "report.pdf", mimeType: "application/pdf", sha256, size: 14n };
         },
-        downloadPdf: async function* (request) {
+        downloadArtifact: async function* (request) {
           downloads.push(request.sessionId);
           yield { chunk: bytes };
         },
@@ -74,7 +74,7 @@ function fixture(kind: "grpc" | "http", pdfArtifacts: boolean): Fixture {
       if (path === "/v1/compatibility") {
         return Response.json({
           api_major: 1,
-          capabilities: { pdf_artifacts: pdfArtifacts },
+          capabilities: { artifacts: artifacts },
           features: ["server_info"],
         });
       }
@@ -86,13 +86,19 @@ function fixture(kind: "grpc" | "http", pdfArtifacts: boolean): Fixture {
       }
       if (path.endsWith("/fork")) return Response.json({ session_id: "forked" }, { status: 201 });
       if (path.endsWith("/clear")) return Response.json({ session_id: "cleared" }, { status: 201 });
-      if (path.endsWith("/pdfs")) {
+      if (path.endsWith("/artifacts")) {
         uploads.push(affinity ?? "");
         if (init?.body === undefined) throw new Error("PDF upload has no request body");
         await (init.body as ReadableStream<Uint8Array>).pipeTo(new WritableStream());
-        return Response.json({ artifact_id: artifactId, name: "report.pdf", sha256, size: 14 });
+        return Response.json({
+          artifact_id: artifactId,
+          name: "report.pdf",
+          mime_type: "application/pdf",
+          sha256,
+          size: 14,
+        });
       }
-      if (path.includes("/pdfs/")) {
+      if (path.includes("/artifacts/")) {
         downloads.push(path.split("/")[3] ?? "");
         return new Response(bytes, { headers: { "content-type": "application/pdf" } });
       }
@@ -117,30 +123,40 @@ describe.each(["grpc", "http"] as const)("%s PDF successor handles", (kind) => {
     const forked = await client.sessions.fork(source.id, { modelId: "pdf-model" });
     const cleared = await forked.clear();
 
-    await expect(source.uploadPdf(pdf, { name: "report.pdf" })).rejects.toBeInstanceOf(
-      PromptValidationError,
-    );
-    await expect(forked.uploadPdf(pdf, { name: "report.pdf" })).resolves.toEqual({
-      kind: "pdf",
+    await expect(
+      source.uploadArtifact(pdf, { name: "report.pdf", mimeType: "application/pdf" }),
+    ).resolves.toMatchObject({ artifactId });
+    await expect(
+      forked.uploadArtifact(pdf, { name: "report.pdf", mimeType: "application/pdf" }),
+    ).resolves.toEqual({
       artifactId,
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      size: 14n,
+      sha256,
     });
-    await expect(cleared.uploadPdf(pdf, { name: "report.pdf" })).rejects.toBeInstanceOf(
-      PromptValidationError,
-    );
+    await expect(
+      cleared.uploadArtifact(pdf, { name: "report.pdf", mimeType: "application/pdf" }),
+    ).resolves.toMatchObject({ artifactId });
     await expect(cleared.run([pdfPart(artifactId)])).rejects.toBeInstanceOf(PromptValidationError);
 
     const chunks: Uint8Array[] = [];
-    for await (const chunk of cleared.downloadPdf(artifactId)) chunks.push(chunk);
+    for await (const chunk of cleared.downloadArtifact(artifactId)) chunks.push(chunk);
     expect(chunks).toEqual([bytes]);
 
     expect((await forked.snapshot()).sessionCapabilities?.pdf).toBe(true);
     expect((await cleared.snapshot()).sessionCapabilities?.pdf).toBe(false);
-    await expect(forked.uploadPdf(pdf, { name: "report.pdf" })).resolves.toEqual({
-      kind: "pdf",
+    await expect(
+      forked.uploadArtifact(pdf, { name: "report.pdf", mimeType: "application/pdf" }),
+    ).resolves.toEqual({
       artifactId,
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      size: 14n,
+      sha256,
     });
     chunks.length = 0;
-    for await (const chunk of cleared.downloadPdf(artifactId)) chunks.push(chunk);
+    for await (const chunk of cleared.downloadArtifact(artifactId)) chunks.push(chunk);
     expect(chunks).toEqual([bytes]);
 
     expect(reads).toEqual([
@@ -149,7 +165,7 @@ describe.each(["grpc", "http"] as const)("%s PDF successor handles", (kind) => {
       { sessionId: "forked", affinity: "forked" },
       { sessionId: "cleared", affinity: "cleared" },
     ]);
-    expect(uploads).toEqual(["forked", "forked"]);
+    expect(uploads).toEqual(["source", "forked", "cleared", "forked"]);
     expect(downloads).toEqual(["cleared", "cleared"]);
     await client.close();
   });
@@ -160,14 +176,14 @@ describe.each(["grpc", "http"] as const)("%s PDF successor handles", (kind) => {
     const forked = await client.sessions.fork(source.id, { modelId: "pdf-model" });
     const cleared = await forked.clear();
 
-    await expect(forked.uploadPdf(pdf, { name: "report.pdf" })).rejects.toBeInstanceOf(
-      UnsupportedFeatureError,
-    );
     await expect(
-      forked.downloadPdf(artifactId)[Symbol.asyncIterator]().next(),
+      forked.uploadArtifact(pdf, { name: "report.pdf", mimeType: "application/pdf" }),
     ).rejects.toBeInstanceOf(UnsupportedFeatureError);
     await expect(
-      cleared.downloadPdf(artifactId)[Symbol.asyncIterator]().next(),
+      forked.downloadArtifact(artifactId)[Symbol.asyncIterator]().next(),
+    ).rejects.toBeInstanceOf(UnsupportedFeatureError);
+    await expect(
+      cleared.downloadArtifact(artifactId)[Symbol.asyncIterator]().next(),
     ).rejects.toBeInstanceOf(UnsupportedFeatureError);
     expect(uploads).toEqual([]);
     expect(downloads).toEqual([]);

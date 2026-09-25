@@ -19,6 +19,7 @@ export type {
   SessionLimits,
   SessionMcpServer,
   Sessions,
+  UploadedArtifact,
 } from "./client.js";
 export { connect } from "./client.js";
 export type { CredentialOptions, CredentialProvider } from "./credentials.js";

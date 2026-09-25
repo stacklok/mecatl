@@ -18,7 +18,7 @@ import {
   TransportError,
   UnsupportedFeatureError,
 } from "./errors.js";
-import type { ConverseRequest, UploadPdfRequest } from "./gen/mecatl/v1/harness_pb.js";
+import type { ConverseRequest, UploadArtifactRequest } from "./gen/mecatl/v1/harness_pb.js";
 import { normalizeHttpWktJson } from "./http-wkt.js";
 import { PDF_CHUNK_BYTES, PDF_MAX_BYTES } from "./pdf-upload.js";
 import { registerRawJson, registerTransport } from "./raw.js";
@@ -436,13 +436,13 @@ class HttpTransport implements Transport {
     const firstInput = first.done ? create(method.input) : create(method.input, first.value);
     const jsonInput = encodeInput(method, firstInput);
     const effectiveSignal = timeoutSignal(signal, timeoutMs);
-    if (method.name === "DownloadPdf") {
+    if (method.name === "DownloadArtifact") {
       const resolved = resolveHTTPBinaryRoute(method, jsonInput);
       if (
         resolved?.classification.requestBody !== "none" ||
         resolved.classification.response !== "binary"
       ) {
-        throw new UnsupportedFeatureError("http_DownloadPdf", { transport: "http" });
+        throw new UnsupportedFeatureError("http_DownloadArtifact", { transport: "http" });
       }
       await iterator.return?.();
       const response = await this.#request(
@@ -453,10 +453,12 @@ class HttpTransport implements Transport {
       );
       if (!response.ok) await this.#problem(response);
       if (
-        !(response.headers.get("content-type") ?? "").toLowerCase().startsWith("application/pdf") ||
+        (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() !==
+          "application/pdf" ||
         response.body === null
       ) {
-        throw malformedSuccess("DownloadPdf returned an invalid PDF stream", response);
+        await response.body?.cancel().catch(() => undefined);
+        throw malformedSuccess("DownloadArtifact returned an invalid PDF stream", response);
       }
       const reader = response.body.getReader();
       const output = method.output;
@@ -478,7 +480,7 @@ class HttpTransport implements Transport {
             }
             total += next.value.byteLength;
             if (total > PDF_MAX_BYTES) {
-              throw malformedSuccess("DownloadPdf exceeds the PDF size limit", response);
+              throw malformedSuccess("DownloadArtifact exceeds the PDF size limit", response);
             }
             for (let offset = 0; offset < next.value.byteLength; offset += PDF_CHUNK_BYTES) {
               yield create(output, {
@@ -501,20 +503,22 @@ class HttpTransport implements Transport {
         trailer: new Headers(),
       };
     }
-    if (method.name === "UploadPdf") {
-      const firstFrame = firstInput as unknown as UploadPdfRequest;
+    if (method.name === "UploadArtifact") {
+      const firstFrame = firstInput as unknown as UploadArtifactRequest;
       if (
         firstFrame.payload.case !== "metadata" ||
         firstFrame.payload.value.mimeType !== "application/pdf"
       ) {
-        throw new ProtocolError("UploadPdf must start with PDF metadata", { transport: "http" });
+        throw new ProtocolError("UploadArtifact must start with PDF metadata", {
+          transport: "http",
+        });
       }
       const resolved = resolveHTTPBinaryRoute(method, jsonInput);
       if (
         resolved?.classification.requestBody !== "binary" ||
         resolved.classification.response !== "json"
       ) {
-        throw new UnsupportedFeatureError("http_UploadPdf", { transport: "http" });
+        throw new UnsupportedFeatureError("http_UploadArtifact", { transport: "http" });
       }
       let sourceFailure: unknown;
       let complete = false;
@@ -530,19 +534,19 @@ class HttpTransport implements Transport {
                 controller.close();
                 return;
               }
-              const frame = create(method.input, next.value) as unknown as UploadPdfRequest;
+              const frame = create(method.input, next.value) as unknown as UploadArtifactRequest;
               if (
                 frame.payload.case !== "chunk" ||
                 frame.payload.value.byteLength === 0 ||
                 frame.payload.value.byteLength > PDF_CHUNK_BYTES
               ) {
-                throw new ProtocolError("UploadPdf contains an invalid chunk", {
+                throw new ProtocolError("UploadArtifact contains an invalid chunk", {
                   transport: "http",
                 });
               }
               total += frame.payload.value.byteLength;
               if (total > PDF_MAX_BYTES) {
-                throw new ProtocolError("UploadPdf exceeds the PDF size limit", {
+                throw new ProtocolError("UploadArtifact exceeds the PDF size limit", {
                   transport: "http",
                 });
               }
@@ -584,7 +588,7 @@ class HttpTransport implements Transport {
       if (!complete) void iterator.return?.().catch(() => undefined);
       if (!response.ok) await this.#problem(response);
       if (!complete) {
-        throw new ProtocolError("UploadPdf returned before the PDF request stream completed", {
+        throw new ProtocolError("UploadArtifact returned before the PDF request stream completed", {
           status: response.status,
           transport: "http",
         });
@@ -597,7 +601,7 @@ class HttpTransport implements Transport {
           ignoreUnknownFields: true,
         });
       } catch {
-        throw malformedSuccess("UploadPdf returned invalid artifact metadata", response);
+        throw malformedSuccess("UploadArtifact returned invalid artifact metadata", response);
       }
       registerRawJson(message, raw);
       return {

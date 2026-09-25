@@ -4,6 +4,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 /** Stable server error codes, kept in parity with the Go registry. @public */
 export const MECATL_ERROR_CODES = [
   "activity_gap",
+  "artifacts_unavailable",
   "ask_not_pending",
   "approval_grant_ineligible",
   "approval_intent_mismatch",
@@ -48,7 +49,6 @@ export const MECATL_ERROR_CODES = [
   "no_schedule_store",
   "not_awaiting_plan",
   "not_found",
-  "pdf_artifacts_unavailable",
   "placement_binding_invalid",
   "placement_changed",
   "placement_selector_invalid",

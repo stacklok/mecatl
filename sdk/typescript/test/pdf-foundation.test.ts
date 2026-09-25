@@ -37,8 +37,7 @@ it("projects PDF references and capabilities from events, snapshots, and transcr
   );
   expect(snapshot?.sessionCapabilities?.pdf).toBe(true);
   expect(
-    projectServerCapabilities(create(ServerCapabilitiesSchema, { pdfArtifacts: true }))
-      .pdfArtifacts,
+    projectServerCapabilities(create(ServerCapabilitiesSchema, { artifacts: true })).artifacts,
   ).toBe(true);
 
   const transcript = projectSessionTranscript(

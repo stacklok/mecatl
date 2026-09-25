@@ -75,7 +75,7 @@ export interface HTTPTransportClassification {
   readonly response: HTTPResponseKind;
 }
 
-/** A reviewed binary route; its stream is handled by the PDF transport path. */
+/** A reviewed binary route; its stream is handled by the artifact transport path. */
 export interface HTTPBinaryTransportClassification {
   readonly kind: "http-binary";
   readonly method: HTTPMethod;
@@ -401,7 +401,7 @@ export function resolveHTTPRoute(
   };
 }
 
-/** Resolves a reviewed binary route for the PDF transport path. */
+/** Resolves a reviewed binary route for the artifact transport path. */
 export function resolveHTTPBinaryRoute(
   method: DescMethodUnary | DescMethodStreaming,
   input: JsonRecord,
@@ -502,15 +502,15 @@ const rpcCatalogRows = [
     http: grpcOnly("No HTTP route is defined for this guardrail RPC."),
   }),
   rpc({
-    key: "HarnessService.UploadPdf",
+    key: "HarnessService.UploadArtifact",
     service: "HarnessService",
-    method: "UploadPdf",
+    method: "UploadArtifact",
     shape: "client_streaming",
-    backingService: "UploadPdf",
-    grpc: grpc(HarnessService.method.uploadPdf),
+    backingService: "UploadArtifact",
+    grpc: grpc(HarnessService.method.uploadArtifact),
     http: httpBinary(
       "POST",
-      "/v1/sessions/{id}/pdfs",
+      "/v1/sessions/{id}/artifacts",
       ["id=metadata.session_id"],
       ["name=metadata.name"],
       "binary",
@@ -518,15 +518,15 @@ const rpcCatalogRows = [
     ),
   }),
   rpc({
-    key: "HarnessService.DownloadPdf",
+    key: "HarnessService.DownloadArtifact",
     service: "HarnessService",
-    method: "DownloadPdf",
+    method: "DownloadArtifact",
     shape: "server_streaming",
-    backingService: "DownloadPdf",
-    grpc: grpc(HarnessService.method.downloadPdf),
+    backingService: "DownloadArtifact",
+    grpc: grpc(HarnessService.method.downloadArtifact),
     http: httpBinary(
       "GET",
-      "/v1/sessions/{id}/pdfs/{artifact_id}",
+      "/v1/sessions/{id}/artifacts/{artifact_id}",
       ["id=session_id", "artifact_id=artifact_id"],
       [],
       "none",

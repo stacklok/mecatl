@@ -43,12 +43,11 @@ import {
   type WorkspaceEnrollment,
 } from "./mcp-workspace-enrollment.js";
 import {
-  assertPdfCapability,
+  assertArtifactCapability,
   encodePrompt,
-  type PdfPromptPart,
   type PromptCapabilities,
   type PromptInput,
-  pdfPart,
+  validateArtifactId,
 } from "./media.js";
 import {
   type Agents,
@@ -211,6 +210,15 @@ export interface ForkSessionOptions {
 export interface ClearSessionOptions {
   /** Opaque source-scoped selector for an existing worktree. */
   worktreeSelector?: string;
+}
+
+/** Bounded metadata for one session-owned uploaded artifact. @public */
+export interface UploadedArtifact {
+  readonly artifactId: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly size: bigint;
+  readonly sha256: string;
 }
 
 /** A durable Mecatl session handle. @public */
@@ -379,17 +387,17 @@ export interface Session {
    * Streams one PDF into a session-owned artifact for later prompts or steers.
    *
    * @param source - Browser Blob or async source of PDF bytes.
-   * @param options - A safe PDF basename.
+   * @param options - A safe basename and the PDF MIME type.
    * @param requestOptions - Request headers, cancellation signal, and deadline.
-   * @returns A session-bound PDF prompt reference.
+   * @returns An opaque artifact ID and validated metadata for a later prompt.
    * @throws `UnsupportedFeatureError` when artifact storage is unavailable.
-   * @throws `PromptValidationError` for an invalid source or unsupported model.
+   * @throws `PromptValidationError` for invalid upload metadata or source bytes.
    */
-  uploadPdf(
+  uploadArtifact(
     source: Blob | AsyncIterable<Uint8Array>,
-    options: { name: string },
+    options: { name: string; mimeType: "application/pdf" },
     requestOptions?: RequestOptions,
-  ): Promise<PdfPromptPart>;
+  ): Promise<UploadedArtifact>;
   /**
    * Streams a session-owned PDF artifact in ordered byte chunks.
    *
@@ -401,7 +409,7 @@ export interface Session {
    * @returns An async byte stream with no whole-file buffer.
    * @throws `UnsupportedFeatureError` when artifact storage is unavailable.
    */
-  downloadPdf(artifactId: string, requestOptions?: RequestOptions): AsyncIterable<Uint8Array>;
+  downloadArtifact(artifactId: string, requestOptions?: RequestOptions): AsyncIterable<Uint8Array>;
   /**
    * Starts a run and resolves once its first run-ID-bearing event arrives.
    *
@@ -603,7 +611,7 @@ function promptCapabilities(
     readonly audio: boolean;
     readonly image: boolean;
     readonly pdf?: boolean;
-    readonly pdfArtifacts?: boolean;
+    readonly artifacts?: boolean;
   },
 ): PromptCapabilities | undefined {
   const value = sessionCapabilities ?? serverCapabilities;
@@ -613,7 +621,7 @@ function promptCapabilities(
         audio: value.audio,
         image: value.image,
         pdf: sessionCapabilities?.pdf ?? serverCapabilities?.pdf === true,
-        pdfArtifacts: serverCapabilities?.pdfArtifacts === true,
+        artifacts: serverCapabilities?.artifacts === true,
       };
 }
 
@@ -879,15 +887,15 @@ class SessionImpl implements Session {
     return this.#baseOperations.getSessionHandle(response.sessionId, requestOptions);
   }
 
-  async uploadPdf(
+  async uploadArtifact(
     source: PdfSource,
-    options: { name: string },
+    options: { name: string; mimeType: "application/pdf" },
     requestOptions?: RequestOptions,
-  ): Promise<PdfPromptPart> {
+  ): Promise<UploadedArtifact> {
     this.#operations.assertOpen();
     assertRequestNotAborted(requestOptions, this.#operations.transportKind);
-    validatePdfUpload(source, options?.name);
-    assertPdfCapability(this.#promptCapabilities);
+    validatePdfUpload(source, options?.name, options?.mimeType);
+    assertArtifactCapability(this.#promptCapabilities);
     const signals = [this.#operations.clientSignal];
     if (requestOptions?.signal !== undefined) signals.push(requestOptions.signal);
     if (requestOptions?.timeoutMs !== undefined && requestOptions.timeoutMs > 0) {
@@ -896,17 +904,10 @@ class SessionImpl implements Session {
     const signal = AbortSignal.any(signals);
     let localFailure: unknown;
     let failedLocally = false;
-    let response:
-      | {
-          artifactId: string;
-          name: string;
-          size: bigint;
-          sha256: string;
-        }
-      | undefined;
+    let response: UploadedArtifact | undefined;
     try {
       for await (const frame of this.#operations.stream(
-        HarnessService.method.uploadPdf,
+        HarnessService.method.uploadArtifact,
         pdfUploadFrames(
           source,
           this.id,
@@ -921,7 +922,7 @@ class SessionImpl implements Session {
         { ...requestOptions, signal },
       )) {
         if (response !== undefined) {
-          throw new ProtocolError("UploadPdf returned more than one response", {
+          throw new ProtocolError("UploadArtifact returned more than one response", {
             transport: this.#operations.transportKind,
           });
         }
@@ -938,31 +939,34 @@ class SessionImpl implements Session {
       response.artifactId !== response.artifactId.trim() ||
       /[\p{Cc}\p{Cf}]/u.test(response.artifactId) ||
       response.name !== options.name ||
+      response.mimeType !== options.mimeType ||
       typeof response.size !== "bigint" ||
       response.size < 1n ||
       response.size > BigInt(PDF_MAX_BYTES) ||
       typeof response.sha256 !== "string" ||
       !/^[a-f0-9]{64}$/u.test(response.sha256)
     ) {
-      throw new ProtocolError("UploadPdf returned invalid artifact metadata", {
+      throw new ProtocolError("UploadArtifact returned invalid artifact metadata", {
         transport: this.#operations.transportKind,
       });
     }
-    return pdfPart(response.artifactId);
+    return {
+      artifactId: response.artifactId,
+      name: response.name,
+      mimeType: response.mimeType,
+      size: response.size,
+      sha256: response.sha256,
+    };
   }
 
-  async *downloadPdf(
+  async *downloadArtifact(
     artifactId: string,
     requestOptions?: RequestOptions,
   ): AsyncIterable<Uint8Array> {
     this.#operations.assertOpen();
     assertRequestNotAborted(requestOptions, this.#operations.transportKind);
-    pdfPart(artifactId);
-    if (this.#promptCapabilities?.pdfArtifacts !== true) {
-      throw new UnsupportedFeatureError("pdf_artifacts", {
-        transport: this.#operations.transportKind,
-      });
-    }
+    validateArtifactId(artifactId);
+    assertArtifactCapability(this.#promptCapabilities);
     const cancel = new AbortController();
     const signals = [this.#operations.clientSignal, cancel.signal];
     if (requestOptions?.signal !== undefined) signals.push(requestOptions.signal);
@@ -971,7 +975,7 @@ class SessionImpl implements Session {
     let total = 0;
     const frames = this.#operations
       .stream(
-        HarnessService.method.downloadPdf,
+        HarnessService.method.downloadArtifact,
         (async function* () {
           yield { sessionId, artifactId };
         })(),
@@ -989,13 +993,13 @@ class SessionImpl implements Session {
           chunk.byteLength === 0 ||
           chunk.byteLength > PDF_CHUNK_BYTES
         ) {
-          throw new ProtocolError("DownloadPdf returned an invalid chunk", {
+          throw new ProtocolError("DownloadArtifact returned an invalid chunk", {
             transport: this.#operations.transportKind,
           });
         }
         total += chunk.byteLength;
         if (total > PDF_MAX_BYTES) {
-          throw new ProtocolError("DownloadPdf exceeds the PDF size limit", {
+          throw new ProtocolError("DownloadArtifact exceeds the PDF size limit", {
             transport: this.#operations.transportKind,
           });
         }

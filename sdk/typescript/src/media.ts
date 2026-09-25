@@ -49,7 +49,7 @@ export interface AudioPromptPart {
   readonly url?: string;
 }
 
-/** A session-owned PDF uploaded with Session.uploadPdf(). @public */
+/** A reference to a session-owned PDF uploaded with Session.uploadArtifact(). @public */
 export interface PdfPromptPart {
   /** PDF part discriminator. */
   readonly kind: "pdf";
@@ -103,21 +103,26 @@ export function audioPart(options: MediaPartOptions): AudioPromptPart {
  *
  * The server checks that the selected session owns the artifact ID.
  *
- * @param artifactId - Opaque ID returned by Session.uploadPdf().
+ * @param artifactId - Opaque ID from Session.uploadArtifact() or a PDF result block.
  * @returns A PDF prompt part containing only the artifact ID.
  * @throws `PromptValidationError` when the ID is empty or malformed.
  * @public
  */
 export function pdfPart(artifactId: string): PdfPromptPart {
+  validateArtifactId(artifactId);
+  return { kind: "pdf", artifactId };
+}
+
+/** Rejects malformed opaque artifact IDs before a transfer or prompt. */
+export function validateArtifactId(artifactId: string): void {
   if (
     typeof artifactId !== "string" ||
     artifactId.trim() === "" ||
     artifactId !== artifactId.trim() ||
     /[\p{Cc}\p{Cf}]/u.test(artifactId)
   ) {
-    invalid("prompt", "PDF artifact ID must be a non-empty opaque ID");
+    invalid("prompt", "artifact ID must be a non-empty opaque ID");
   }
-  return { kind: "pdf", artifactId };
 }
 
 /**
@@ -213,15 +218,20 @@ export interface PromptCapabilities {
   /** Echoed capability for this session's selected provider and model. */
   readonly pdf?: boolean;
   /** Deployment capability advertised in server compatibility. */
-  readonly pdfArtifacts?: boolean;
+  readonly artifacts?: boolean;
 }
 
-/** The server advertises artifact storage separately from per-model PDF input. */
-export function assertPdfCapability(capabilities: PromptCapabilities | undefined): void {
-  if (capabilities?.pdfArtifacts !== true) {
-    throw new UnsupportedFeatureError("pdf_artifacts", { transport: "local" });
+/** Artifact transfers need the deployment capability, independent of model input. */
+export function assertArtifactCapability(capabilities: PromptCapabilities | undefined): void {
+  if (capabilities?.artifacts !== true) {
+    throw new UnsupportedFeatureError("artifacts_unavailable", { transport: "local" });
   }
-  if (capabilities.pdf !== true) {
+}
+
+/** PDF prompt use also needs the selected session model's PDF input capability. */
+export function assertPdfCapability(capabilities: PromptCapabilities | undefined): void {
+  assertArtifactCapability(capabilities);
+  if (capabilities?.pdf !== true) {
     invalid("capability", "session capability rejects PDF input");
   }
 }

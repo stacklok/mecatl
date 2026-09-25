@@ -1,7 +1,7 @@
 import type { MessageInitShape } from "@bufbuild/protobuf";
 
 import { normalizeError, PromptValidationError, type TransportKind } from "./errors.js";
-import type { UploadPdfRequestSchema } from "./gen/mecatl/v1/harness_pb.js";
+import type { UploadArtifactRequestSchema } from "./gen/mecatl/v1/harness_pb.js";
 
 /** The server's PDF upload limits, also enforced before SDK transport writes. */
 export const PDF_CHUNK_BYTES = 256 << 10;
@@ -14,7 +14,10 @@ function invalid(reason: "mime_type" | "prompt" | "size", message: string): neve
 }
 
 /** Validate the basename before any source bytes or transport frames are consumed. */
-export function validatePdfUpload(source: PdfSource, name: string): void {
+export function validatePdfUpload(source: PdfSource, name: string, mimeType: string): void {
+  if (mimeType !== "application/pdf") {
+    invalid("mime_type", "artifact MIME type must be application/pdf");
+  }
   if (
     typeof name !== "string" ||
     name.trim() !== name ||
@@ -97,7 +100,7 @@ export async function* pdfUploadFrames(
   signal: AbortSignal,
   transport: TransportKind,
   onFailure?: (cause: unknown) => void,
-): AsyncIterable<MessageInitShape<typeof UploadPdfRequestSchema>> {
+): AsyncIterable<MessageInitShape<typeof UploadArtifactRequestSchema>> {
   try {
     if (signal.aborted) throw normalizeError(signal.reason, transport);
     yield {

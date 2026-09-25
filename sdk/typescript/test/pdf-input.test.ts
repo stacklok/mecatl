@@ -6,11 +6,13 @@ import {
   connect,
   createHttpTransport,
   PromptValidationError,
+  ProtocolError,
   pdfPart,
   type Run,
   SESSION_ID_HEADER_NAME,
   textPart,
   UnsupportedFeatureError,
+  type UploadedArtifact,
 } from "../src/index.js";
 
 const sessionId = "pdf-session";
@@ -32,13 +34,19 @@ describe("SDK PDF input", () => {
         createSession: () => ({ sessionId, sessionCapabilities: { pdf: true } }),
         getCompatibilityInfo: () => ({
           apiMajor: 1,
-          capabilities: { pdfArtifacts: true },
+          capabilities: { artifacts: true },
           features: ["prompt_free_controls"],
         }),
-        uploadPdf: async (requests, context) => {
+        uploadArtifact: async (requests, context) => {
           uploadHeaders.push(new Headers(context.requestHeader));
           for await (const request of requests) uploaded.push(request);
-          return { artifactId, name: "report.pdf", sha256, size: 300_003n };
+          return {
+            artifactId,
+            name: "report.pdf",
+            mimeType: "application/pdf",
+            sha256,
+            size: 300_003n,
+          };
         },
         converse: async function* (requests) {
           prompt = (await requests[Symbol.asyncIterator]().next()).value;
@@ -59,15 +67,22 @@ describe("SDK PDF input", () => {
       yield new Uint8Array();
       yield last;
     }
-    const pdf = await session.uploadPdf(
+    const uploadedArtifact = await session.uploadArtifact(
       source(),
-      { name: "report.pdf" },
+      { name: "report.pdf", mimeType: "application/pdf" },
       {
         headers: { "x-caller": "kept" },
         timeoutMs: 4_321,
       },
     );
-    expect(pdf).toEqual({ kind: "pdf", artifactId });
+    expect(uploadedArtifact).toEqual({
+      artifactId,
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      size: 300_003n,
+      sha256,
+    });
+    expectTypeOf(uploadedArtifact).toEqualTypeOf<UploadedArtifact>();
     expect(uploadHeaders[0]?.get("x-caller")).toBe("kept");
     expect(uploadHeaders[0]?.get(SESSION_ID_HEADER_NAME)).toBe(sessionId);
     expect(uploaded[0]).toMatchObject({
@@ -86,8 +101,10 @@ describe("SDK PDF input", () => {
     );
     expect(Buffer.concat(chunks)).toEqual(Buffer.concat([first, last]));
 
-    await (await session.run([textPart("inspect"), pdf])).result();
-    await session.controls("run-pdf").steer([pdf], { messageId: "steer-pdf" });
+    await (await session.run([textPart("inspect"), pdfPart(uploadedArtifact.artifactId)])).result();
+    await session
+      .controls("run-pdf")
+      .steer([pdfPart(uploadedArtifact.artifactId)], { messageId: "steer-pdf" });
     for (const part of [
       (prompt as { kind: { value: { parts: unknown[] } } }).kind.value.parts[0],
       (steer as { parts: unknown[] }).parts[0],
@@ -105,7 +122,35 @@ describe("SDK PDF input", () => {
     await client.close();
   });
 
-  it("rejects unsafe names, forged references, and absent PDF capability before upload", async () => {
+  it("rejects a non-PDF MIME type in server upload metadata", async () => {
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        createSession: () => ({ sessionId, sessionCapabilities: { pdf: false } }),
+        getCompatibilityInfo: () => ({
+          apiMajor: 1,
+          capabilities: { artifacts: true },
+          features: ["server_info"],
+        }),
+        uploadArtifact: async (requests) => {
+          for await (const _request of requests) {
+            /* consume the stream */
+          }
+          return { artifactId, name: "report.pdf", mimeType: "text/plain", size: 14n, sha256 };
+        },
+      });
+    });
+    const client = connect({ transport });
+    const session = await client.sessions.create({});
+    await expect(
+      session.uploadArtifact(new Blob(["%PDF-1.7\n%%EOF"], { type: "application/pdf" }), {
+        name: "report.pdf",
+        mimeType: "application/pdf",
+      }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    await client.close();
+  });
+
+  it("permits storage without model PDF input and rejects invalid metadata or PDF prompts", async () => {
     let uploadCalls = 0;
     let steerCalls = 0;
     const transport = createRouterTransport((router) => {
@@ -113,12 +158,12 @@ describe("SDK PDF input", () => {
         createSession: () => ({ sessionId, sessionCapabilities: { pdf: false } }),
         getCompatibilityInfo: () => ({
           apiMajor: 1,
-          capabilities: { pdfArtifacts: true },
+          capabilities: { artifacts: true },
           features: ["prompt_free_controls"],
         }),
-        uploadPdf: async () => {
+        uploadArtifact: async () => {
           uploadCalls += 1;
-          return { artifactId };
+          return { artifactId, name: "report.pdf", mimeType: "application/pdf", size: 14n, sha256 };
         },
         steerRun: () => {
           steerCalls += 1;
@@ -132,19 +177,31 @@ describe("SDK PDF input", () => {
 
     expect(() => pdfPart("")).toThrowError(PromptValidationError);
     expect(() => pdfPart(" \n ")).toThrowError(PromptValidationError);
-    await expect(session.uploadPdf(source, { name: "../report.pdf" })).rejects.toBeInstanceOf(
-      PromptValidationError,
-    );
-    await expect(session.uploadPdf(source, { name: "report.pdf" })).rejects.toMatchObject({
-      reason: "capability",
-    });
+    await expect(
+      session.uploadArtifact(source, { name: "../report.pdf", mimeType: "application/pdf" }),
+    ).rejects.toBeInstanceOf(PromptValidationError);
+    await expect(
+      session.uploadArtifact(source, {
+        name: "report.pdf",
+        mimeType: "text/plain" as "application/pdf",
+      }),
+    ).rejects.toMatchObject({ reason: "mime_type" });
+    await expect(
+      session.uploadArtifact(new Blob([source], { type: "text/plain" }), {
+        name: "report.pdf",
+        mimeType: "application/pdf",
+      }),
+    ).rejects.toMatchObject({ reason: "mime_type" });
+    await expect(
+      session.uploadArtifact(source, { name: "report.pdf", mimeType: "application/pdf" }),
+    ).resolves.toMatchObject({ artifactId, mimeType: "application/pdf" });
     await expect(session.run([pdfPart(artifactId)])).rejects.toMatchObject({
       reason: "capability",
     });
     await expect(session.controls("run-pdf").steer([pdfPart(artifactId)])).rejects.toMatchObject({
       reason: "capability",
     });
-    expect(uploadCalls).toBe(0);
+    expect(uploadCalls).toBe(1);
     expect(steerCalls).toBe(0);
     await client.close();
 
@@ -156,9 +213,9 @@ describe("SDK PDF input", () => {
     });
     const oldClient = connect({ transport: oldTransport });
     const oldSession = await oldClient.sessions.create({});
-    await expect(oldSession.uploadPdf(source, { name: "report.pdf" })).rejects.toBeInstanceOf(
-      UnsupportedFeatureError,
-    );
+    await expect(
+      oldSession.uploadArtifact(source, { name: "report.pdf", mimeType: "application/pdf" }),
+    ).rejects.toMatchObject({ feature: "artifacts_unavailable" });
     await expect(oldSession.run([pdfPart(artifactId)])).rejects.toBeInstanceOf(
       UnsupportedFeatureError,
     );
@@ -172,7 +229,7 @@ describe("SDK PDF input", () => {
       if (path === "/v1/compatibility") {
         return Response.json({
           api_major: 1,
-          capabilities: { pdf_artifacts: true },
+          capabilities: { artifacts: true },
           features: ["prompt_free_controls"],
         });
       }
@@ -214,7 +271,7 @@ describe("SDK PDF input", () => {
       if (url.pathname === "/v1/compatibility") {
         return Response.json({
           api_major: 1,
-          capabilities: { pdf_artifacts: true },
+          capabilities: { artifacts: true },
           features: ["server_info"],
         });
       }
@@ -233,7 +290,13 @@ describe("SDK PDF input", () => {
       } finally {
         reader.releaseLock();
       }
-      return Response.json({ artifact_id: artifactId, name: "A & B.pdf", size: 300_003, sha256 });
+      return Response.json({
+        artifact_id: artifactId,
+        name: "A & B.pdf",
+        mime_type: "application/pdf",
+        size: 300_003,
+        sha256,
+      });
     };
     const client = connect({
       transport: createHttpTransport({
@@ -249,16 +312,22 @@ describe("SDK PDF input", () => {
     vi.spyOn(blob, "arrayBuffer").mockImplementation(() => {
       throw new Error("Blob.arrayBuffer() must not be called");
     });
-    const pdf = await session.uploadPdf(
+    const pdf = await session.uploadArtifact(
       blob,
-      { name: "A & B.pdf" },
+      { name: "A & B.pdf", mimeType: "application/pdf" },
       {
         headers: { "x-caller": "kept" },
       },
     );
-    expect(pdf).toEqual({ kind: "pdf", artifactId });
+    expect(pdf).toEqual({
+      artifactId,
+      name: "A & B.pdf",
+      mimeType: "application/pdf",
+      size: 300_003n,
+      sha256,
+    });
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url.pathname).toBe(`/v1/sessions/${sessionId}/pdfs`);
+    expect(calls[0]?.url.pathname).toBe(`/v1/sessions/${sessionId}/artifacts`);
     expect(calls[0]?.url.searchParams.get("name")).toBe("A & B.pdf");
     expect(calls[0]?.init.credentials).toBe("include");
     expect(new Headers(calls[0]?.init.headers).get("content-type")).toBe("application/pdf");
@@ -281,14 +350,14 @@ describe("SDK PDF input", () => {
         createSession: () => ({ sessionId, sessionCapabilities: { pdf: true } }),
         getCompatibilityInfo: () => ({
           apiMajor: 1,
-          capabilities: { pdfArtifacts: true },
+          capabilities: { artifacts: true },
           features: ["server_info"],
         }),
-        uploadPdf: async (requests) => {
+        uploadArtifact: async (requests) => {
           for await (const request of requests) {
             if (request.payload.case === "chunk") sentChunks.push(request.payload.value);
           }
-          return { artifactId, name: "report.pdf", sha256, size: 1n };
+          return { artifactId, name: "report.pdf", mimeType: "application/pdf", sha256, size: 1n };
         },
       });
     });
@@ -298,9 +367,9 @@ describe("SDK PDF input", () => {
     async function* malformed(): AsyncIterable<Uint8Array> {
       yield "not bytes" as unknown as Uint8Array;
     }
-    await expect(session.uploadPdf(malformed(), { name: "report.pdf" })).rejects.toBeInstanceOf(
-      PromptValidationError,
-    );
+    await expect(
+      session.uploadArtifact(malformed(), { name: "report.pdf", mimeType: "application/pdf" }),
+    ).rejects.toBeInstanceOf(PromptValidationError);
     expect(sentChunks).toHaveLength(0);
 
     const piece = new Uint8Array(256 * 1024);
@@ -308,7 +377,9 @@ describe("SDK PDF input", () => {
       for (let index = 0; index < 80; index += 1) yield piece;
       yield new Uint8Array([1]);
     }
-    await expect(session.uploadPdf(oversized(), { name: "report.pdf" })).rejects.toMatchObject({
+    await expect(
+      session.uploadArtifact(oversized(), { name: "report.pdf", mimeType: "application/pdf" }),
+    ).rejects.toMatchObject({
       reason: "size",
     });
     expect(sentChunks).toHaveLength(80);
@@ -331,14 +402,14 @@ describe("SDK PDF input", () => {
         createSession: () => ({ sessionId, sessionCapabilities: { pdf: true } }),
         getCompatibilityInfo: () => ({
           apiMajor: 1,
-          capabilities: { pdfArtifacts: true },
+          capabilities: { artifacts: true },
           features: ["server_info"],
         }),
-        uploadPdf: async (requests) => {
+        uploadArtifact: async (requests) => {
           for await (const request of requests) {
             if (request.payload.case === "chunk") sawChunk();
           }
-          return { artifactId, name: "report.pdf", sha256, size: 1n };
+          return { artifactId, name: "report.pdf", mimeType: "application/pdf", sha256, size: 1n };
         },
       });
     });
@@ -354,9 +425,9 @@ describe("SDK PDF input", () => {
         sourceClosed = true;
       }
     }
-    const upload = session.uploadPdf(
+    const upload = session.uploadArtifact(
       source(),
-      { name: "report.pdf" },
+      { name: "report.pdf", mimeType: "application/pdf" },
       { signal: controller.signal },
     );
     await firstChunk;
@@ -387,7 +458,7 @@ describe("SDK PDF input", () => {
       if (path === "/v1/compatibility") {
         return Response.json({
           api_major: 1,
-          capabilities: { pdf_artifacts: true },
+          capabilities: { artifacts: true },
           features: ["server_info"],
         });
       }
@@ -426,7 +497,11 @@ describe("SDK PDF input", () => {
         };
       },
     };
-    const upload = session.uploadPdf(source, { name: "report.pdf" }, { signal: controller.signal });
+    const upload = session.uploadArtifact(
+      source,
+      { name: "report.pdf", mimeType: "application/pdf" },
+      { signal: controller.signal },
+    );
     await firstChunk;
     expect(pulls).toBe(1);
     controller.abort(new Error("cancelled"));

@@ -7,6 +7,7 @@ import {
   connect,
   createHttpTransport,
   type EventContentBlock,
+  ProtocolError,
   SESSION_ID_HEADER_NAME,
   type Session,
   UnsupportedFeatureError,
@@ -26,7 +27,7 @@ describe("SDK PDF download", () => {
         createSession: () => ({ sessionId }),
         getCompatibilityInfo: () => ({
           apiMajor: 1,
-          capabilities: { pdfArtifacts: true },
+          capabilities: { artifacts: true },
           features: ["server_info"],
         }),
         converse: async function* () {
@@ -51,7 +52,7 @@ describe("SDK PDF download", () => {
           };
           yield { event: { runId: "run-pdf", type: "result", result: { stop: "end_turn" } } };
         },
-        downloadPdf: async function* (request, context) {
+        downloadArtifact: async function* (request, context) {
           observed.push(request);
           headers.push(new Headers(context.requestHeader));
           yield { chunk: pdf.subarray(0, 256 * 1024) };
@@ -73,14 +74,16 @@ describe("SDK PDF download", () => {
       sha256: digest,
       size: BigInt(pdf.byteLength),
     });
-    expectTypeOf<Session["downloadPdf"]>().toEqualTypeOf<
+    expectTypeOf<Session["downloadArtifact"]>().toEqualTypeOf<
       (
         artifactId: string,
         requestOptions?: import("../src/index.js").RequestOptions,
       ) => AsyncIterable<Uint8Array>
     >();
     const chunks: Uint8Array[] = [];
-    for await (const chunk of session.downloadPdf(artifactId, { headers: { "x-caller": "kept" } }))
+    for await (const chunk of session.downloadArtifact(artifactId, {
+      headers: { "x-caller": "kept" },
+    }))
       chunks.push(chunk);
     expect(chunks).toHaveLength(2);
     expect(Buffer.concat(chunks)).toEqual(Buffer.from(pdf));
@@ -99,10 +102,10 @@ describe("SDK PDF download", () => {
         createSession: () => ({ sessionId }),
         getCompatibilityInfo: () => ({
           apiMajor: 1,
-          capabilities: { pdfArtifacts: true },
+          capabilities: { artifacts: true },
           features: ["server_info"],
         }),
-        downloadPdf: async function* () {
+        downloadArtifact: async function* () {
           yield { chunk: pdf.subarray(0, 10) };
           yield { chunk: pdf.subarray(10, 20) };
         },
@@ -111,7 +114,7 @@ describe("SDK PDF download", () => {
     const baseStream = transport.stream.bind(transport);
     transport.stream = async (...args) => {
       const response = await baseStream(...args);
-      if (args[0].name !== "DownloadPdf") return response;
+      if (args[0].name !== "DownloadArtifact") return response;
       const original = response.message[Symbol.asyncIterator]();
       return {
         ...response,
@@ -130,7 +133,7 @@ describe("SDK PDF download", () => {
     };
     const client = connect({ transport });
     const session = await client.sessions.create({});
-    const iterator = session.downloadPdf(artifactId)[Symbol.asyncIterator]();
+    const iterator = session.downloadArtifact(artifactId)[Symbol.asyncIterator]();
     expect((await iterator.next()).value).toEqual(pdf.subarray(0, 10));
     await iterator.return?.();
     expect(abortedAtReturn).toBe(true);
@@ -151,7 +154,7 @@ describe("SDK PDF download", () => {
       if (url.pathname === "/v1/compatibility")
         return Response.json({
           api_major: 1,
-          capabilities: { pdf_artifacts: true },
+          capabilities: { artifacts: true },
           features: ["server_info"],
         });
       if (url.pathname === "/v1/sessions") return Response.json({ session_id: sessionId });
@@ -185,13 +188,13 @@ describe("SDK PDF download", () => {
     });
     const session = await client.sessions.create({});
     const iterator = session
-      .downloadPdf(artifactId, { headers: { "x-caller": "kept" } })
+      .downloadArtifact(artifactId, { headers: { "x-caller": "kept" } })
       [Symbol.asyncIterator]();
     expect(requests).toHaveLength(0);
     const first = await iterator.next();
     expect(first.value).toEqual(pieces[0]);
     expect(pulls).toBeLessThan(pieces.length);
-    expect(requests[0]?.url.pathname).toBe(`/v1/sessions/${sessionId}/pdfs/${artifactId}`);
+    expect(requests[0]?.url.pathname).toBe(`/v1/sessions/${sessionId}/artifacts/${artifactId}`);
     expect(requests[0]?.init.credentials).toBe("include");
     expect(new Headers(requests[0]?.init.headers).get("x-configured")).toBe("yes");
     expect(new Headers(requests[0]?.init.headers).get("x-caller")).toBe("kept");
@@ -201,9 +204,39 @@ describe("SDK PDF download", () => {
     pulls = 0;
     cancelled = false;
     const all: Uint8Array[] = [];
-    for await (const chunk of session.downloadPdf(artifactId)) all.push(chunk);
+    for await (const chunk of session.downloadArtifact(artifactId)) all.push(chunk);
     expect(Buffer.concat(all)).toEqual(Buffer.from(pdf));
     expect(createHash("sha256").update(Buffer.concat(all)).digest("hex")).toBe(digest);
+    await client.close();
+  });
+
+  it("rejects a false PDF content type and closes the HTTP response body", async () => {
+    let cancelled = false;
+    const fetch: typeof globalThis.fetch = async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/compatibility") {
+        return Response.json({
+          api_major: 1,
+          capabilities: { artifacts: true },
+          features: ["server_info"],
+        });
+      }
+      if (path === "/v1/sessions") return Response.json({ session_id: sessionId });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { "content-type": "application/pdf-malformed" } },
+      );
+    };
+    const client = connect({ baseUrl: "https://mecatl.test", fetch });
+    const session = await client.sessions.create({});
+    await expect(
+      session.downloadArtifact(artifactId)[Symbol.asyncIterator]().next(),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    expect(cancelled).toBe(true);
     await client.close();
   });
 
@@ -213,7 +246,7 @@ describe("SDK PDF download", () => {
       router.service(HarnessService, {
         createSession: () => ({ sessionId }),
         getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
-        downloadPdf: async function* () {
+        downloadArtifact: async function* () {
           calls++;
           yield { chunk: pdf };
         },
@@ -221,7 +254,7 @@ describe("SDK PDF download", () => {
     });
     const client = connect({ transport });
     const session = await client.sessions.create({});
-    const next = session.downloadPdf(artifactId)[Symbol.asyncIterator]().next();
+    const next = session.downloadArtifact(artifactId)[Symbol.asyncIterator]().next();
     await expect(next).rejects.toBeInstanceOf(UnsupportedFeatureError);
     expect(calls).toBe(0);
     await client.close();

@@ -109,7 +109,7 @@ export interface ManualDreamCapabilities {
 
 /** Optional server features captured with a session snapshot. @public */
 export interface ServerCapabilities {
-  readonly pdfArtifacts: boolean;
+  readonly artifacts: boolean;
   readonly mcp: boolean;
   readonly slashCommands: boolean;
   readonly memory: boolean;
@@ -240,7 +240,7 @@ function manualDream(value: ProtoManualDreamCapabilities): ManualDreamCapabiliti
 /** Internal shared projection for server- and session-scoped capability responses. */
 export function projectServerCapabilities(value: ProtoServerCapabilities): ServerCapabilities {
   return {
-    pdfArtifacts: value.pdfArtifacts,
+    artifacts: value.artifacts,
     agents: value.agents,
     audio: value.audio,
     shell: value.shell,
