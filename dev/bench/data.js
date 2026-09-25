@@ -272223,6 +272223,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790323861161,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17e315f0bdc10d8fd014eec8f8367d760af8f2eb",
+          "message": "docs: centralize aggregate verification ownership (#1915)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T11:52:07+03:00",
+          "tree_id": "f33bcab7c79a2ca97e9759ebdbc7844831dfaac2",
+          "url": "https://github.com/stacklok/mecatl/commit/17e315f0bdc10d8fd014eec8f8367d760af8f2eb"
+        },
+        "date": 1790327009067,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3320,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -356963,6 +357002,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790327005853,
+  "lastUpdate": 1790327010185,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
