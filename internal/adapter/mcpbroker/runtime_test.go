@@ -553,3 +553,27 @@ func TestRuntimeCloseAndDrainUsesOneProcessDeadline(t *testing.T) {
 		t.Fatalf("drain elapsed %v, want one %v process deadline", elapsed, timeout)
 	}
 }
+
+func TestRuntimeRejectsInvalidLogicalSessionIDs(t *testing.T) {
+	catalogue, err := Compile(anonymousConfig(), discoveredTools(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue, func(context.Context, SessionRef, string, session.ToolCall) (session.ToolResult, error) {
+		return session.ToolResult{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	for _, id := range []session.SessionID{"", "bad\x00id", "bad\xffid", session.SessionID(strings.Repeat("x", contract.MaxLogicalSessionIDBytes+1))} {
+		if _, _, err := runtime.AttachSession(context.Background(), id); !errors.Is(err, ErrInvalidSessionID) {
+			t.Fatalf("AttachSession(%q) error = %v, want invalid ID", id, err)
+		}
+	}
+	attachment, _, err := runtime.AttachSession(context.Background(), session.SessionID(strings.Repeat("x", contract.MaxLogicalSessionIDBytes)))
+	if err != nil {
+		t.Fatalf("AttachSession(max length) error = %v", err)
+	}
+	_, _ = attachment.Close(context.Background())
+}
