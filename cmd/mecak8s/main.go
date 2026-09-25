@@ -75,6 +75,7 @@ func run() error {
 		diag = slogdiag.New(os.Stderr, true, port.LevelDebug)
 	}
 	cfg.diagnostics = diag
+	warnDeprecatedPermissionFlags(diag, cfg)
 
 	ctx, stop := signalCtx()
 	defer stop()
