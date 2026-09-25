@@ -26,6 +26,34 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
+type providerContextCapture struct {
+	provider port.LLMProvider
+	mu       sync.Mutex
+	pairs    [][2]session.SessionID
+}
+
+func (p *providerContextCapture) Capabilities() port.ProviderCapabilities {
+	return p.provider.Capabilities()
+}
+
+func (p *providerContextCapture) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	active, _ := port.SessionIDFromContext(ctx)
+	root, _ := port.RootSessionIDFromContext(ctx)
+	p.mu.Lock()
+	p.pairs = append(p.pairs, [2]session.SessionID{active, root})
+	p.mu.Unlock()
+	return p.provider.Stream(ctx, req)
+}
+
+func (p *providerContextCapture) assertLast(t *testing.T, want session.SessionID) {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.pairs) == 0 || p.pairs[len(p.pairs)-1] != [2]session.SessionID{want, want} {
+		t.Fatalf("provider correlation = %v, want final authoritative pair [%s %s]", p.pairs, want, want)
+	}
+}
+
 type teamRootCaptureProvider struct {
 	mu    sync.Mutex
 	pairs [][2]session.SessionID

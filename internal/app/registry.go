@@ -881,7 +881,7 @@ func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
 		providerOpenAICodex,
 		"policy-owned",
 		openaicodex.BaseURL,
-		openai.WithHTTPClient(withRootSessionCorrelation(policy.HTTPClient())),
+		openai.WithHTTPClient(policy.HTTPClientWithFinalTransport(withCodexSessionCorrelationTransport)),
 		openai.WithMaxRetries(0),
 	)
 	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy)}

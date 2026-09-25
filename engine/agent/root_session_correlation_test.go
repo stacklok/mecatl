@@ -196,9 +196,10 @@ func (p *rootCaptureProvider) snapshot() (active, root []session.SessionID) {
 // the causal root from the context it is started under. A new child family belongs
 // in this table: a row that fails means the family detached from its parent context.
 func TestRootSessionProviderCorrelation_Scenario1_EveryChildFamilyInheritsRoot(t *testing.T) {
-	const parentID, root = session.SessionID("s1"), session.SessionID("main")
-	// delegated rows run parent turns that call the family's tool(s); the parent
-	// session is the root because the run is entered with no inherited root.
+	const root = session.SessionID("main")
+	// delegated rows run parent turns under an inherited root that differs from
+	// the active parent session, so replacing the root with the immediate parent
+	// is observable rather than accidentally satisfying the assertion.
 	delegated := func(t *testing.T, calls []session.ToolCall, tools ...tool.Tool) {
 		t.Helper()
 		turns := make([]mockllm.Turn, 0, len(calls)+1)
@@ -207,7 +208,7 @@ func TestRootSessionProviderCorrelation_Scenario1_EveryChildFamilyInheritsRoot(t
 		}
 		parentLLM := mockllm.New(append(turns, mockllm.TextTurn("parent done"))...)
 		eng := newEngine(agent.Deps{LLM: parentLLM, Catalog: catalogWith(t, tools...)})
-		_ = drainWithTimeout(t, eng.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
+		_ = drainWithTimeout(t, eng.Run(port.WithRootSessionID(context.Background(), root), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}))
 	}
 	rooted := port.WithRootSessionID(context.Background(), root)
 	families := []struct {
@@ -216,22 +217,22 @@ func TestRootSessionProviderCorrelation_Scenario1_EveryChildFamilyInheritsRoot(t
 		wantRoot   session.SessionID
 		drive      func(t *testing.T, llm port.LLMProvider)
 	}{
-		{"subagent-foreground", agent.SubagentSessionPrefix, parentID, func(t *testing.T, llm port.LLMProvider) {
+		{"subagent-foreground", agent.SubagentSessionPrefix, root, func(t *testing.T, llm port.LLMProvider) {
 			delegated(t, []session.ToolCall{session.NewToolCall("fg", "Subagent", []byte(`{"prompt":"inspect"}`))},
 				agent.NewSubagentTool(childEngineWith(llm, tool.NewCatalog())))
 		}},
-		{"subagent-background", agent.SubagentSessionPrefix, parentID, func(t *testing.T, llm port.LLMProvider) {
+		{"subagent-background", agent.SubagentSessionPrefix, root, func(t *testing.T, llm port.LLMProvider) {
 			// The status wait parks the parent until the detached child finishes.
 			delegated(t, []session.ToolCall{
 				session.NewToolCall("bg", "Subagent", []byte(`{"prompt":"inspect","background":true}`)),
 				session.NewToolCall("wait", "SubagentStatus", []byte(`{"agent_id":"subagent-s1-bg","wait_ms":30000}`)),
 			}, agent.NewSubagentTool(childEngineWith(llm, tool.NewCatalog())), agent.NewSubagentStatusTool())
 		}},
-		{"parallel-branch", agent.ParallelSessionPrefix, parentID, func(t *testing.T, llm port.LLMProvider) {
+		{"parallel-branch", agent.ParallelSessionPrefix, root, func(t *testing.T, llm port.LLMProvider) {
 			delegated(t, []session.ToolCall{session.NewToolCall("par", "Parallel", []byte(`{"tasks":["one","two"]}`))},
 				agent.NewParallelTool(childEngineWith(llm, tool.NewCatalog()), &memForker{}))
 		}},
-		{"team-member", agent.TeamSessionPrefix, parentID, func(t *testing.T, llm port.LLMProvider) {
+		{"team-member", agent.TeamSessionPrefix, root, func(t *testing.T, llm port.LLMProvider) {
 			factory := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {
 				cat := tool.NewCatalog()
 				for _, tl := range agent.MemberTools(tm, spec.Name, nil) {
@@ -250,9 +251,12 @@ func TestRootSessionProviderCorrelation_Scenario1_EveryChildFamilyInheritsRoot(t
 				TaskPrompt: "inspect", Categories: []agent.ModelRouteCategory{{Name: "fast"}},
 			})
 		}},
-		{"fork-judge", "fork-judge-", root, func(_ *testing.T, llm port.LLMProvider) {
+		{"parallel-judge", "fork-judge-", root, func(t *testing.T, llm port.LLMProvider) {
+			branchEngine := childEngineWith(mockllm.New(mockllm.TextTurn("a"), mockllm.TextTurn("b")), tool.NewCatalog())
 			judge := agent.NewEngineJudge(newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}))
-			_, _, _ = judge.Judge(rooted, []agent.BranchSummary{{Label: "branch-0", Summary: "a"}, {Label: "branch-1", Summary: "b"}}, "pick one")
+			parallel := agent.NewParallelTool(branchEngine, &memForker{},
+				agent.WithParallelConcurrency(1), agent.WithParallelJudge(judge))
+			delegated(t, []session.ToolCall{session.NewToolCall("judge", "Parallel", []byte(`{"tasks":["one","two"],"join":"judge"}`))}, parallel)
 		}},
 		{"ask-reviewer", "ask-reviewer-", root, func(_ *testing.T, llm port.LLMProvider) {
 			reviewer := agent.NewEngineAskReviewer(newEngine(agent.Deps{LLM: llm, Catalog: tool.NewCatalog()}))

@@ -341,27 +341,30 @@ func TestSDKRunControls_CloseJoinsDetachedControlRelay(t *testing.T) {
 	if err := store.Save(t.Context(), parked); err != nil {
 		t.Fatal(err)
 	}
-	provider := &closeJoinProvider{entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+	blockingProvider := &closeJoinProvider{entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
+	provider := &providerContextCapture{provider: blockingProvider}
 	var releaseOnce sync.Once
-	defer releaseOnce.Do(func() { close(provider.release) })
+	defer releaseOnce.Do(func() { close(blockingProvider.release) })
 	var ran atomic.Int64
 	svc := newControlLifecycleService(t, store, provider, &ran, nil, nil)
-	if _, err := svc.ResolveRunAsk(t.Context(), parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce); err != nil {
+	forged := port.WithSessionID(port.WithRootSessionID(t.Context(), "forged-root"), "forged-active")
+	if _, err := svc.ResolveRunAsk(forged, parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce); err != nil {
 		t.Fatalf("ResolveRunAsk: %v", err)
 	}
-	<-provider.entered
+	<-blockingProvider.entered
+	provider.assertLast(t, parked.ID)
 	closed := make(chan struct{})
 	go func() {
 		svc.Close()
 		close(closed)
 	}()
-	<-provider.cancelled
+	<-blockingProvider.cancelled
 	select {
 	case <-closed:
 		t.Fatal("Service.Close returned before its detached control relay settled")
 	case <-time.After(25 * time.Millisecond):
 	}
-	releaseOnce.Do(func() { close(provider.release) })
+	releaseOnce.Do(func() { close(blockingProvider.release) })
 	select {
 	case <-closed:
 	case <-time.After(time.Second):

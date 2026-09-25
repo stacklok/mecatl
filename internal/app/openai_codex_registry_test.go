@@ -64,7 +64,7 @@ func codexRegistryConfig(t *testing.T) Config {
 
 func codexPolicyOptions(policy openaicodex.RequestPolicy) []openaiadapter.Option {
 	return []openaiadapter.Option{
-		openaiadapter.WithHTTPClient(policy.HTTPClient()),
+		openaiadapter.WithHTTPClient(policy.HTTPClientWithFinalTransport(withCodexSessionCorrelationTransport)),
 		openaiadapter.WithMaxRetries(0),
 	}
 }
@@ -222,7 +222,8 @@ func (c *codexCaptureTransport) snapshot() []codexCapturedRequest {
 
 func streamCodexTestRequest(t *testing.T, provider port.LLMProvider) {
 	t.Helper()
-	stream, err := provider.Stream(context.Background(), port.LLMRequest{
+	ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), "active-session"), "root-session")
+	stream, err := provider.Stream(ctx, port.LLMRequest{
 		Model:    "gpt-5",
 		Messages: []session.Message{session.NewUserMessage("hello")},
 	})
@@ -287,6 +288,10 @@ func TestOpenAICodexOptionsSurviveEveryRemint(t *testing.T) {
 			req.header.Get("Content-Type") != "application/json" ||
 			req.header.Get("X-Stainless-Retry-Count") != "0" {
 			t.Errorf("request %d lost one or more fixed request-policy values", i)
+		}
+		if req.header.Get("X-Mecatl-Session-ID") != "active-session" || req.header.Get(rootSessionIDHeader) != "root-session" {
+			t.Errorf("request %d correlation = active %q root %q", i,
+				req.header.Get("X-Mecatl-Session-ID"), req.header.Get(rootSessionIDHeader))
 		}
 	}
 }

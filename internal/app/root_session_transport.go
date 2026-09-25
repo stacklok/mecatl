@@ -3,6 +3,7 @@ package app
 import (
 	"net/http"
 
+	"github.com/stacklok/mecatl/contracts/sessionaffinity"
 	"github.com/stacklok/mecatl/engine/port"
 )
 
@@ -19,34 +20,40 @@ func withRootSessionCorrelation(client *http.Client) *http.Client {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	clone.Transport = rootSessionRoundTripper{base: base}
+	clone.Transport = withRootSessionCorrelationTransport(base)
 	return clone
 }
 
-type rootSessionRoundTripper struct {
-	base http.RoundTripper
+func withRootSessionCorrelationTransport(base http.RoundTripper) http.RoundTripper {
+	return sessionCorrelationRoundTripper{base: base}
 }
 
-func (t rootSessionRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+// withCodexSessionCorrelationTransport runs inside the Codex request policy,
+// after its trusted header reconstruction. It derives both correlation fields
+// from trusted context without broadening the policy's incoming allowlist.
+func withCodexSessionCorrelationTransport(base http.RoundTripper) http.RoundTripper {
+	return sessionCorrelationRoundTripper{base: base, includeActive: true}
+}
+
+type sessionCorrelationRoundTripper struct {
+	base          http.RoundTripper
+	includeActive bool
+}
+
+func (t sessionCorrelationRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	out := req.Clone(req.Context())
 	if out.Header == nil {
 		out.Header = make(http.Header)
 	}
 	out.Header.Del(rootSessionIDHeader)
-	if id, ok := port.RootSessionIDFromContext(req.Context()); ok && validRootSessionID(string(id)) {
+	if id, ok := port.RootSessionIDFromContext(req.Context()); ok && sessionaffinity.ValidValue(string(id)) {
 		out.Header.Set(rootSessionIDHeader, string(id))
 	}
-	return t.base.RoundTrip(out)
-}
-
-func validRootSessionID(id string) bool {
-	if len(id) == 0 || len(id) > 256 || id[0] == ' ' || id[len(id)-1] == ' ' {
-		return false
-	}
-	for i := 0; i < len(id); i++ {
-		if id[i] < 0x20 || id[i] > 0x7e {
-			return false
+	if t.includeActive {
+		out.Header.Del(sessionaffinity.HeaderName)
+		if id, ok := port.SessionIDFromContext(req.Context()); ok && sessionaffinity.ValidValue(string(id)) {
+			out.Header.Set(sessionaffinity.HeaderName, string(id))
 		}
 	}
-	return true
+	return t.base.RoundTrip(out)
 }

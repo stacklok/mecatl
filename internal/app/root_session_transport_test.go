@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,14 +15,54 @@ import (
 	"testing"
 	"time"
 
+	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
+	openaioption "github.com/openai/openai-go/v3/option"
+
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/toolhivellm"
+	anthropicprovider "github.com/stacklok/mecatl/provider/anthropic"
+	openairesponse "github.com/stacklok/mecatl/provider/openai"
+	openaichatprovider "github.com/stacklok/mecatl/provider/openaichat"
 )
+
+func TestRootSessionProviderCorrelation_ConfiguredGuardrailDispatchPreservesRoot(t *testing.T) {
+	checker := &recordingProvider{inner: mockllm.New(mockllm.TextTurn(`{"safe":true,"reason":"ok"}`))}
+	cfg := Config{
+		UseMock:         true,
+		GuardrailsModel: "checker-model",
+		GuardrailsRules: []GuardrailRule{{Match: "Grep", Phases: []string{"pre"}, Mode: "block"}},
+	}
+	hooks := buildGuardrailsHooks(cfg, nil, checker, providerMock, "parent-model", hookexec.New(nil), nil)
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(stubTool{name: "Grep"})
+	parent := mockllm.New(
+		mockllm.ToolCallTurn(session.NewToolCall("guarded", "Grep", []byte(`{}`))),
+		mockllm.TextTurn("done"),
+	)
+	engine := agent.NewEngine(agent.Deps{
+		LLM: parent, Catalog: catalog, Hooks: hooks, Model: "parent-model",
+		Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil),
+	})
+	sess := session.New("s1", session.ModeDefault,
+		session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"},
+		session.Limits{}, time.Unix(1, 0))
+	for range engine.Run(port.WithRootSessionID(context.Background(), "main"), sess, memEnvironment("/ws"), agent.RunRequest{Text: "go"}).Events() {
+	}
+
+	model, active, root := checker.lastObservation()
+	if model != "checker-model" || !strings.HasPrefix(string(active), "guardrail-checker-") || root != "main" {
+		t.Fatalf("configured guardrail provider observation = model %q active %q root %q", model, active, root)
+	}
+}
 
 func TestRootSessionProviderCorrelation_Scenario2_ProviderAttemptsCarryBothIDs(t *testing.T) {
 	providers := []struct {
@@ -81,50 +122,214 @@ func TestRootSessionProviderCorrelation_Scenario2_ProviderAttemptsCarryBothIDs(t
 }
 
 func TestRootSessionProviderCorrelation_Scenario2_ConcurrentProviderIsolation(t *testing.T) {
-	const count = 16
-	seen := make(chan string, count*8)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		seen <- req.Header.Get("X-Mecatl-Session-ID") + "/" + req.Header.Get(rootSessionIDHeader)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":{"message":"retry","type":"server_error"}}`))
-	}))
-	defer srv.Close()
-	provider := newOpenAICompatEntry(Config{LLMMaxAttempts: 2}, providerOpenAI, "test", srv.URL).provider
-	var wg sync.WaitGroup
-	for i := 0; i < count; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			active, root := fmt.Sprintf("active-%d", i), fmt.Sprintf("root-%d", i)
-			ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), session.SessionID(active)), session.SessionID(root))
-			seq, _ := provider.Stream(ctx, port.LLMRequest{Model: "gpt-5", Messages: []session.Message{session.NewUserMessage("hello")}})
-			if seq != nil {
-				for range seq {
+	providers := []struct {
+		name  string
+		model string
+		entry func(string) providerEntry
+	}{
+		{"openai-responses", "gpt-5", func(baseURL string) providerEntry {
+			return newOpenAICompatEntry(Config{LLMMaxAttempts: 2}, providerOpenAI, "test", baseURL,
+				openairesponse.WithMaxRetries(0))
+		}},
+		{"openai-chat-completions", "test-model", func(baseURL string) providerEntry {
+			return newOpenCodeEntry(Config{LLMMaxAttempts: 2}, providerOpenCode, "test", baseURL,
+				openaichatprovider.WithRequestOption(openaioption.WithMaxRetries(0)))
+		}},
+		{"anthropic", "claude-sonnet-4-5", func(baseURL string) providerEntry {
+			return newAnthropicEntryFor(Config{LLMMaxAttempts: 2}, providerAnthropic, "test", baseURL, newLiveMetaStore(), false,
+				anthropicprovider.WithRequestOption(anthropicoption.WithMaxRetries(0)))
+		}},
+	}
+
+	for _, tc := range providers {
+		t.Run(tc.name, func(t *testing.T) {
+			const concurrent = 2
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			release := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			stageArrivals := [2]int{}
+			payloadAttempts := make(map[string]int, concurrent)
+			type observedRequest struct{ payload, active, root string }
+			var (
+				mu       sync.Mutex
+				observed []observedRequest
+			)
+			handlerErr := make(chan error, concurrent*2)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					handlerErr <- fmt.Errorf("read request: %w", err)
+					return
+				}
+				payload := ""
+				for i := 0; i < concurrent; i++ {
+					candidate := fmt.Sprintf("payload-%d", i)
+					if strings.Contains(string(body), candidate) {
+						payload = candidate
+						break
+					}
+				}
+				if payload == "" {
+					handlerErr <- fmt.Errorf("request has no unique payload attribution: %s", body)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+
+				mu.Lock()
+				stage := payloadAttempts[payload]
+				payloadAttempts[payload]++
+				if stage < len(release) {
+					stageArrivals[stage]++
+					if stageArrivals[stage] == concurrent {
+						close(release[stage])
+					}
+				}
+				observed = append(observed, observedRequest{payload, req.Header.Get("X-Mecatl-Session-ID"), req.Header.Get(rootSessionIDHeader)})
+				mu.Unlock()
+				if stage >= len(release) {
+					handlerErr <- fmt.Errorf("payload %q made unexpected attempt %d", payload, stage+1)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				select {
+				case <-release[stage]:
+				case <-req.Context().Done():
+					handlerErr <- fmt.Errorf("attempt %d for %q canceled at barrier: %w", stage+1, payload, req.Context().Err())
+					return
+				case <-ctx.Done():
+					handlerErr <- fmt.Errorf("attempt %d barrier for %q: %w", stage+1, payload, ctx.Err())
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":{"message":"retry","type":"server_error"}}`))
+			}))
+			defer srv.Close()
+
+			provider := tc.entry(srv.URL).provider
+			attemptResult := make(chan error, concurrent)
+			var wg sync.WaitGroup
+			for i := 0; i < concurrent; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					active, root := fmt.Sprintf("active-%d", i), fmt.Sprintf("root-%d", i)
+					requestCtx := port.WithRootSessionID(port.WithSessionID(ctx, session.SessionID(active)), session.SessionID(root))
+					seq, err := provider.Stream(requestCtx, port.LLMRequest{
+						Model: tc.model, Messages: []session.Message{session.NewUserMessage(fmt.Sprintf("payload-%d", i))},
+					})
+					if err == nil && seq != nil {
+						for _, streamErr := range seq {
+							if streamErr != nil {
+								err = streamErr
+							}
+						}
+					}
+					attemptResult <- err
+				}(i)
+			}
+			wg.Wait()
+			close(attemptResult)
+			for err := range attemptResult {
+				if err == nil {
+					t.Error("two failed outer attempts returned nil error")
+				} else if ctx.Err() != nil {
+					t.Errorf("provider did not finish before bound: %v", err)
 				}
 			}
-		}(i)
+			close(handlerErr)
+			for err := range handlerErr {
+				t.Error(err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(observed) != concurrent*2 {
+				t.Fatalf("requests = %d, want %d (exactly two outer attempts per payload): %+v", len(observed), concurrent*2, observed)
+			}
+			for i := 0; i < concurrent; i++ {
+				payload := fmt.Sprintf("payload-%d", i)
+				if payloadAttempts[payload] != 2 {
+					t.Errorf("%s attempts = %d, want 2", payload, payloadAttempts[payload])
+				}
+				for _, got := range observed {
+					if got.payload == payload && (got.active != fmt.Sprintf("active-%d", i) || got.root != fmt.Sprintf("root-%d", i)) {
+						t.Errorf("%s correlation = active %q root %q", payload, got.active, got.root)
+					}
+				}
+			}
+		})
 	}
-	wg.Wait()
-	close(seen)
-	got := make(map[string]int, count)
-	for pair := range seen {
-		got[pair]++
+}
+
+func TestRootSessionProviderCorrelation_OpenAIEncryptedContentFallback(t *testing.T) {
+	type capturedRequest struct {
+		header http.Header
+		body   []byte
 	}
-	attempts := 0
-	for i := 0; i < count; i++ {
-		want := fmt.Sprintf("active-%d/root-%d", i, i)
-		if got[want] < 2 {
-			t.Errorf("isolated pair %q attempts = %d, want at least 2; got %v", want, got[want], got)
+	var captured []capturedRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+			return
 		}
-		if attempts == 0 {
-			attempts = got[want]
-		} else if got[want] != attempts {
-			t.Errorf("isolated pair %q attempts = %d, want %d", want, got[want], attempts)
+		captured = append(captured, capturedRequest{header: req.Header.Clone(), body: body})
+		if len(captured) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"invalid_encrypted_content","message":"Encrypted content could not be verified or decrypted"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: response.output_text.delta\n"+
+			`data: {"type":"response.output_text.delta","sequence_number":0,"delta":"recovered"}`+"\n\n"+
+			"event: response.completed\n"+
+			`data: {"type":"response.completed","sequence_number":1,"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	entry := newOpenAICompatEntry(Config{LLMMaxAttempts: 1}, providerOpenAI, "test", srv.URL,
+		openairesponse.WithMaxRetries(0))
+	assistant := session.NewAssistantMessage("visible history", `{"v":1,"items":[{"i":"rs_bad","e":"opaque-blob"}]}`, nil)
+	ctx := port.WithRootSessionID(port.WithSessionID(context.Background(), "active-session"), "root-session")
+	seq, err := entry.provider.Stream(ctx, port.LLMRequest{Model: "gpt-5", Messages: []session.Message{
+		session.NewUserMessage("recover"), assistant,
+	}})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for _, streamErr := range seq {
+		if streamErr != nil {
+			t.Fatalf("stream: %v", streamErr)
 		}
 	}
-	if len(got) != count {
-		t.Errorf("unexpected cross-stamped pairs: %v", got)
+	if len(captured) != 2 {
+		t.Fatalf("inference requests = %d, want initial plus cleaned replay", len(captured))
+	}
+	for i, request := range captured {
+		if request.header.Get("X-Mecatl-Session-ID") != "active-session" || request.header.Get(rootSessionIDHeader) != "root-session" {
+			t.Errorf("inference request %d correlation = active %q root %q", i+1,
+				request.header.Get("X-Mecatl-Session-ID"), request.header.Get(rootSessionIDHeader))
+		}
+	}
+	for i, wantReasoning := range []int{1, 0} {
+		var wire struct {
+			Input []map[string]any `json:"input"`
+		}
+		if err := json.Unmarshal(captured[i].body, &wire); err != nil {
+			t.Fatalf("decode inference request %d: %v", i+1, err)
+		}
+		gotReasoning := 0
+		for _, item := range wire.Input {
+			if item["type"] == "reasoning" {
+				gotReasoning++
+			}
+		}
+		if gotReasoning != wantReasoning {
+			t.Errorf("inference request %d reasoning items = %d, want %d", i+1, gotReasoning, wantReasoning)
+		}
 	}
 }
 
@@ -331,14 +536,11 @@ func TestRootSessionProviderCorrelation_Scenario2_EveryEntryCarriesBothIDs(t *te
 	entries := []struct {
 		name  string
 		model string
-		// ownedHeaders marks an endpoint whose request policy rebuilds the complete
-		// header set from constants, so neither correlation field reaches the wire.
-		ownedHeaders bool
 		// entry builds the entry against baseURL; capture is the transport for
 		// entries whose endpoint is fixed and can only be observed below the SDK.
 		entry func(t *testing.T, baseURL string, capture http.RoundTripper) providerEntry
 	}{
-		{"openai-bearer-token-file", "gpt-5", false, func(t *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"openai-bearer-token-file", "gpt-5", func(t *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			reg, err := buildProviderRegistry(Config{
 				OpenAIBearerTokenFile: tokenFile, LLMMaxAttempts: 1,
 				ProviderOverrides: permconfig.ProviderOverrides{providerOpenAI: {BaseURL: baseURL}},
@@ -352,7 +554,7 @@ func TestRootSessionProviderCorrelation_Scenario2_EveryEntryCarriesBothIDs(t *te
 			}
 			return entry
 		}},
-		{"openai-codex", "gpt-5", true, func(t *testing.T, _ string, capture http.RoundTripper) providerEntry {
+		{"openai-codex", "gpt-5", func(t *testing.T, _ string, capture http.RoundTripper) providerEntry {
 			entry, err := newOpenAICodexEntry(Config{
 				LLMMaxAttempts: 1, OpenAICodexCredential: codexRegistryCredential(t),
 				openAICodexNow: func() time.Time { return codexRegistryNow }, openAICodexTransport: capture,
@@ -362,7 +564,7 @@ func TestRootSessionProviderCorrelation_Scenario2_EveryEntryCarriesBothIDs(t *te
 			}
 			return entry
 		}},
-		{"native-oidc", "native-model", false, func(t *testing.T, _ string, capture http.RoundTripper) providerEntry {
+		{"native-oidc", "native-model", func(t *testing.T, _ string, capture http.RoundTripper) providerEntry {
 			entry, err := newNativeProviderEntry(Config{LLMMaxAttempts: 1, nativeEndpointTransport: capture},
 				nativeDefinition("native"), &nativeBearerFixture{token: "native-token"})
 			if err != nil {
@@ -370,28 +572,28 @@ func TestRootSessionProviderCorrelation_Scenario2_EveryEntryCarriesBothIDs(t *te
 			}
 			return entry
 		}},
-		{"custom-openai-responses", "test-model", false, func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"custom-openai-responses", "test-model", func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			return newCustomProviderEntry(cfg, custom("openai-responses", baseURL), "key", newLiveMetaStore())
 		}},
-		{"custom-openai-chat-completions", "test-model", false, func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"custom-openai-chat-completions", "test-model", func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			return newCustomProviderEntry(cfg, custom("openai-chat-completions", baseURL), "key", newLiveMetaStore())
 		}},
-		{"custom-anthropic-messages", "claude-sonnet-4-5", false, func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"custom-anthropic-messages", "claude-sonnet-4-5", func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			return newCustomProviderEntry(cfg, custom("anthropic-messages", baseURL), "key", newLiveMetaStore())
 		}},
-		{"toolhive-proxy-openai", "gpt-5", false, func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"toolhive-proxy-openai", "gpt-5", func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			openAI, _ := toolhiveEntries(toolhiveModeProxy, baseURL)
 			return openAI
 		}},
-		{"toolhive-proxy-anthropic", "claude-sonnet-4-5", false, func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"toolhive-proxy-anthropic", "claude-sonnet-4-5", func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			_, anthropicEntry := toolhiveEntries(toolhiveModeProxy, baseURL)
 			return anthropicEntry
 		}},
-		{"toolhive-direct-openai", "gpt-5", false, func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"toolhive-direct-openai", "gpt-5", func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			openAI, _ := toolhiveEntries(toolhiveModeDirect, baseURL)
 			return openAI
 		}},
-		{"toolhive-direct-anthropic", "claude-sonnet-4-5", false, func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
+		{"toolhive-direct-anthropic", "claude-sonnet-4-5", func(_ *testing.T, baseURL string, _ http.RoundTripper) providerEntry {
 			_, anthropicEntry := toolhiveEntries(toolhiveModeDirect, baseURL)
 			return anthropicEntry
 		}},
@@ -432,9 +634,6 @@ func TestRootSessionProviderCorrelation_Scenario2_EveryEntryCarriesBothIDs(t *te
 				t.Fatal("no inference request reached the endpoint")
 			}
 			wantActive, wantRoot := active, root
-			if tc.ownedHeaders {
-				wantActive, wantRoot = "", ""
-			}
 			for i, headers := range got {
 				if headers.Get("X-Mecatl-Session-ID") != wantActive || headers.Get(rootSessionIDHeader) != wantRoot {
 					t.Fatalf("request %d correlation = active %q root %q, want active %q root %q",

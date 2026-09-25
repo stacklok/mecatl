@@ -4,12 +4,12 @@
 **Work classification:** Architectural — adds a durable outbound HTTP correlation contract and an exported engine context API across delegation, model routing, independently versioned providers, and the Jev adapter while preserving the existing affinity contract.
 **Decision record:** [ADR 0360](../adr/0360-root-session-provider-correlation.md)
 **Phase:** delegated model-request correlation
-**Status:** proposed, 2026-09-24. Exact interface contract ready for human Plan / Interface review; it remains proposed until this plan PR merges.
-**Delivery:** Split docs → implementation. On 2026-09-24 the directing human asked for the design and implementation branches to be pushed and stacked, and confirmed "yes, keep on going", so the implementation proceeds as a stacked PR on this proposed-docs commit before the plan merges. This does not mark the plan approved, authorize any merge, relax contract-drift stops, or remove either human merge gate.
-**Expected tasks:** 1 (implemented on the stacked implementation branch).
+**Status:** landed in this implementation candidate; authoritative on merge.
+**Delivery:** Split docs → implementation. Plan / Interface PR #1882 merged as approved baseline `8f049d8a4`; this implementation candidate carries the verified contract and its `landed` transition.
+**Expected tasks:** 1 (implemented in this candidate).
 **Issue:** None — directed operator request.
-**Plan PR:** [#1882](https://github.com/stacklok/mecatl/pull/1882).
-**Approved baseline:** absent until contract approval by merge.
+**Plan PR:** [#1882](https://github.com/stacklok/mecatl/pull/1882), merged.
+**Approved baseline:** `8f049d8a4`.
 
 Add an outbound-only `X-Mecatl-Root-Session-ID` alongside the existing active-session
 `X-Mecatl-Session-ID`. Provider calls made by a main run and its nested engines, plus both

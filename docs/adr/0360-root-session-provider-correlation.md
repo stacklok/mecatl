@@ -1,6 +1,6 @@
 # ADR 0360 — Separate root-conversation correlation from active-session identity
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-24
 - Scope: agent run context, provider calls made inside main/delegated run trees, direct teams, official LLM-provider composition, and the Jev delegated-model router.
 - Supersedes: ADR 0216 only where one outbound header was the complete correlation surface; retains its active-session header semantics.
