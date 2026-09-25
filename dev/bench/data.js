@@ -251744,6 +251744,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790366172725,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "851b437b13087d4f6ec4933c4e62fe917de9af99",
+          "message": "feat(mecatui): restore session status metrics (#1891)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T13:43:58-07:00",
+          "tree_id": "99709c0a6c1e9dbb1c2db6075b8dce0689fa66a6",
+          "url": "https://github.com/stacklok/mecatl/commit/851b437b13087d4f6ec4933c4e62fe917de9af99"
+        },
+        "date": 1790369731577,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -365616,6 +365650,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790369728346,
+  "lastUpdate": 1790369733089,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
