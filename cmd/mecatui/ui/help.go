@@ -41,8 +41,8 @@ const helpKeyWidth = 22
 // renderHelpOverlay draws the "?" keys-&-features overlay centred over the
 // conversation region. When the body is taller than the offered height, it windows
 // complete ANSI lines and reserves a row for its scroll indicator.
-func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height, scroll int, hk helpKeys) string {
-	body := helpBody(th, caps, hk)
+func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height, scroll int, hk helpKeys, embedded bool) string {
+	body := helpBodyFor(th, caps, hk, embedded)
 	if height <= 0 {
 		return centerCard(th, body, width, height)
 	}
@@ -89,6 +89,20 @@ func helpWindowHeight(th theme.Theme, height, total int) int {
 // hk carries the LIVE key markings from the model's keyMap, so a rebinding
 // propagates here.
 func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
+	return helpBodyFor(th, caps, hk, true)
+}
+
+// helpBody renders the overlay body for this model's transport: the permission
+// mode section's restart guidance differs between the embedded server and
+// `mecatui connect` (ADR 0365).
+func (m Model) helpBody() string {
+	return helpBodyFor(m.deps.Theme, m.caps, m.helpKeyMarkings(), m.deps.Embedded)
+}
+
+// helpBodyFor is helpBody with an explicit transport. embedded selects whose
+// restart a posture change needs: the operator's own mecatui relaunch, or the
+// remote server operator's mecated restart.
+func helpBodyFor(th theme.Theme, caps client.Capabilities, hk helpKeys, embedded bool) string {
 	muted := th.Style("muted")
 	var b strings.Builder
 
@@ -151,6 +165,8 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		helpRow{key: hk.expandTools, action: "show or hide tool details"},
 	)
 	writeHelpRows(&b, th, inspectRows)
+
+	writeHelpPermissionModes(&b, th, hk, embedded)
 
 	b.WriteString("\n" + muted.Render("Conversation and navigation") + "\n")
 	writeHelpRows(&b, th, []helpRow{
@@ -220,6 +236,58 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 	// override never leaves an unusable scrollable overlay.
 	b.WriteString("\n" + muted.Render(hk.close+" close · "+hk.navUp+"/"+hk.navDown+" scroll · "+hk.scroll+" page · "+hk.jump+" jump"))
 	return b.String()
+}
+
+// PermissionModeEntry is one row of the ADR 0365 permission-mode vocabulary as
+// the TUI displays it: the token, the process-wide posture it sets, and the
+// session mode new sessions start in (the TUI spelling).
+type PermissionModeEntry struct {
+	Name        string
+	Posture     string
+	SessionMode string
+}
+
+// PermissionModeVocabulary is the token table the help overlay lists. The ui
+// cannot import the composition layer, so this is a display copy; a test in the
+// mecatui main package pins it to app.ParsePermissionMode so the two never drift.
+func PermissionModeVocabulary() []PermissionModeEntry {
+	return []PermissionModeEntry{
+		{Name: "plan", Posture: postureStrict, SessionMode: "plan"},
+		{Name: "default", Posture: postureStrict, SessionMode: client.ModeDefaultString},
+		{Name: "accept-edits", Posture: postureStrict, SessionMode: "accept-edits"},
+		{Name: "trusted", Posture: postureTrusted, SessionMode: client.ModeDefaultString},
+		{Name: "trusted-accept-edits", Posture: postureTrusted, SessionMode: "accept-edits"},
+		{Name: "auto", Posture: postureAuto, SessionMode: client.ModeDefaultString},
+		{Name: "yolo", Posture: postureYolo, SessionMode: client.ModeDefaultString},
+	}
+}
+
+// writeHelpPermissionModes lists every permission-mode token with its two
+// halves, states that the posture half is process-wide while the session half is
+// only a new-session default, that cycling the session mode never changes the
+// posture, and whose restart a posture change needs (ADR 0365, AC5.2/AC5.5).
+// Runtime selection of a posture from the TUI is deliberately not offered.
+func writeHelpPermissionModes(b *strings.Builder, th theme.Theme, hk helpKeys, embedded bool) {
+	b.WriteString("\n" + th.Style("muted").Render("Permission modes (--permission-mode, set at launch)") + "\n")
+	vocab := PermissionModeVocabulary()
+	rows := make([]helpRow, 0, len(vocab))
+	for _, e := range vocab {
+		rows = append(rows, helpRow{key: e.Name, action: "posture " + e.Posture + " (process-wide) · new sessions start in " + e.SessionMode})
+	}
+	writeHelpRows(b, th, rows)
+	writeHelpMutedLines(b, th,
+		"The posture half applies to the whole server and is fixed when it starts.",
+		"The session half is only the default for new sessions.",
+		"Cycling the session mode ("+hk.modeSwitch+") never changes the posture half.",
+	)
+	if embedded {
+		writeHelpMutedLines(b, th,
+			"To change the posture, quit and relaunch: mecatui --permission-mode <token>")
+		return
+	}
+	writeHelpMutedLines(b, th,
+		"This client is connected to a remote server, which owns the posture.",
+		"To change it, the server operator must change mecated's configuration and restart it.")
 }
 
 // writeHelpMutedLines renders each line independently so helpRenderedLines can

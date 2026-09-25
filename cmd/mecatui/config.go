@@ -228,6 +228,17 @@ type config struct {
 	// key. Mapped onto app.Config.Posture/PostureFlagSet in embeddedConfig.
 	posture        string
 	postureFlagSet bool
+	// permissionMode is the ADR 0365 named token (--permission-mode). It writes the
+	// embedded server's posture half (app.Config.PermissionMode) and this client's
+	// requested session mode. modeFlagSet/yoloFlagSet record the deprecated aliases
+	// so the combination error and the one-per-alias deprecation WARN key on what
+	// the operator actually typed.
+	permissionMode        string
+	permissionModeFlagSet bool
+	modeFlagSet           bool
+	yoloFlagSet           bool
+	// permissionModeToken is the parsed --permission-mode token (zero when unset).
+	permissionModeToken app.PermissionModeToken
 	// reasoningEffort is the operator-tier reasoning-effort default (ADR 0055) for
 	// the EMBEDDED server. reasoningEffortFlagSet records an explicit
 	// --reasoning-effort so CLI out-ranks the operator-global settings.yaml
@@ -376,7 +387,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs := flag.NewFlagSet("mecatui", flag.ContinueOnError)
 	fs.SetOutput(out)
 	fs.StringVar(&cfg.workspace, "workspace", "", "set the embedded server workspace to DIR (default: current directory)")
-	fs.StringVar(&cfg.mode, "mode", "default", "start sessions in permission mode: default, plan, or accept-edits")
+	fs.StringVar(&cfg.mode, "mode", "default", "deprecated, use --permission-mode: start sessions in permission mode: default, plan, or accept-edits")
+	fs.StringVar(&cfg.permissionMode, "permission-mode", "", "set the permission mode: "+strings.Join(app.PermissionModeNames(), ", ")+"; the posture half is process-wide for the embedded server, the session half is only the default for new sessions")
 	fs.Func("debug-mcp", "attach configured streaming-HTTP MCP server NAME to debug sessions (repeatable)", func(value string) error {
 		cfg.debugMCP = append(cfg.debugMCP, value)
 		return nil
@@ -440,9 +452,9 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.anthropicCacheTTL, "anthropic-cache-ttl", "", "set Anthropic prompt-cache lifetime to 5m or 1h; other values are ignored with a warning")
 	fs.BoolVar(&cfg.trustProject, "trust-project", false, "enable project instructions, persona, skills, commands, and allow rules; use only with projects you trust")
 	fs.BoolVar(&cfg.allowAllTools, "yolo", false,
-		"use yolo posture: allow tools by default and disable delegated-agent command-injection safeguards; explicit deny and ask rules still apply")
+		"deprecated, use --permission-mode yolo: allow tools by default and disable delegated-agent command-injection safeguards; explicit deny and ask rules still apply")
 	fs.StringVar(&cfg.posture, "posture", "",
-		"set the permission posture: strict, trusted, auto, or yolo (default: strict); auto and yolo reduce safeguards and are refused as root outside a sandbox")
+		"deprecated, use --permission-mode: set the permission posture: strict, trusted, auto, or yolo (default: strict); auto and yolo reduce safeguards and are refused as root outside a sandbox")
 	fs.StringVar(&cfg.reasoningEffort, "reasoning-effort", "",
 		"set the default reasoning effort: auto, low, medium, high, xhigh, or max")
 	fs.BoolVar(&cfg.quiet, "quiet", false,
@@ -652,6 +664,12 @@ func recordExplicitFlag(f *flag.Flag, cfg *config) {
 		cfg.debugFlagSet = true
 	case "posture":
 		cfg.postureFlagSet = true
+	case "permission-mode":
+		cfg.permissionModeFlagSet = true
+	case "mode":
+		cfg.modeFlagSet = true
+	case "yolo":
+		cfg.yoloFlagSet = true
 	case "shell":
 		cfg.shellFlagSet = true
 	case "subagent-model-router":
@@ -697,6 +715,9 @@ func finalizeParsedConfig(fs *flag.FlagSet, cfg *config) error {
 	// settings.yaml keys (mirrors mecated). Extracted to recordExplicitFlag to keep
 	// this function under the cyclomatic-complexity bound.
 	fs.Visit(func(f *flag.Flag) { recordExplicitFlag(f, cfg) })
+	if err := parsePermissionModeFlag(cfg); err != nil {
+		return err
+	}
 
 	if cfg.authToken == "" {
 		cfg.authToken = os.Getenv("MECATL_AUTH_TOKEN")
@@ -898,6 +919,9 @@ func (c config) validate() error {
 	default:
 		return fmt.Errorf("invalid --mode %q (want default|plan|accept-edits)", c.mode)
 	}
+	if err := validatePermissionModeFlags(c); err != nil {
+		return err
+	}
 	// Provider/posture checks apply ONLY to paths that may embed (ADR 0087 Phase
 	// 1); the predicate + its rationale live once on config.mayEmbed.
 	if c.mayEmbed() {
@@ -964,11 +988,22 @@ func embeddedAuthoritativePosture(c config) app.Posture {
 		Workspace:               c.workspace,
 		PermissionsConventional: true,
 		ImportClaudePermissions: true,
-		Posture:                 app.ParsePosture(c.posture),
-		PostureFlagSet:          c.postureFlagSet,
+		Posture:                 embeddedFlagPosture(c),
+		PostureFlagSet:          c.postureFlagSet || c.permissionModeFlagSet,
 		AllowAllTools:           c.allowAllTools,
 		TrustProject:            c.trustProject,
 	})
+}
+
+// embeddedFlagPosture is the posture the CLI flags request for the pre-TUI checks:
+// an explicit --permission-mode token's posture half, else the deprecated --posture.
+// Build applies the token through app.Config.PermissionMode itself; this only keeps
+// the pre-launch refusal and WARN in step with it.
+func embeddedFlagPosture(c config) app.Posture {
+	if c.permissionModeFlagSet {
+		return c.permissionModeToken.Posture
+	}
+	return app.ParsePosture(c.posture)
 }
 
 // embeddedPrivileged is the "root && !sandbox" predicate fed to the posture refusal

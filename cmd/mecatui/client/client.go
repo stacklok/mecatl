@@ -696,6 +696,17 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 	}
 }
 
+// RequestModeFromString maps the mode a client REQUESTS for a new session. It is
+// ModeFromString except that an empty mode means "no preference" and goes out
+// UNSPECIFIED, so the server applies its own configured default mode (ADR 0365)
+// instead of receiving an explicit DEFAULT.
+func RequestModeFromString(s string) mecatlv1.PermissionMode {
+	if s == "" {
+		return mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED
+	}
+	return ModeFromString(s)
+}
+
 // ModeString maps the proto enum to the CLI/UI spelling. Unknown/unspecified values
 // degrade to "default", matching the server boundary.
 func ModeString(m mecatlv1.PermissionMode) string {

@@ -225,6 +225,7 @@ func runWithOptions(argv []string, options runOptions) error {
 	// mecatui.log file writer. See docs/adr/0020-diagnostics.md.
 	installBaselineSlog(cfg.quiet)
 
+	warnDeprecatedPermissionFlags(os.Stderr, cfg)
 	warnEmbeddedPosture(cfg)
 
 	reg := buildRegistry(cfg.workspace, cfg.themeDir)
@@ -315,12 +316,13 @@ func runWithOptions(argv []string, options runOptions) error {
 	defer func() { _ = statusSource.Close(context.Background()) }()
 
 	connectionMode := resolveConnectionMode(cfg)
+	requestedMode, modeServerDefault := cfg.requestedSessionMode()
 	// Held concretely (not just as the ui interface) because this run OWNS its
 	// shutdown: a /connect restart re-enters runWithOptions and builds a fresh
 	// notifier, so this one must be settled first (see closeAgentLifecycleHook).
 	agentHook := agenthook.New(os.Environ())
 	deps := applyLaunchIntent(cfg, ui.Deps{
-		Session:                 &sessionAdapter{cl: cl, mode: cfg.mode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
+		Session:                 &sessionAdapter{cl: cl, mode: requestedMode, debugTarget: cfg.debugTarget, debugMCP: cfg.debugMCP},
 		AgentHook:               agentLifecycleHook(agentHook),
 		Conv:                    cl,
 		MCP:                     cl,
@@ -374,11 +376,12 @@ func runWithOptions(argv []string, options runOptions) error {
 		// live/config-first server-side — never recomputed by the client. Embedded mode's
 		// --context-window-override and an external mecated's flag both move the engine
 		// trigger and this echoed denominator.
-		Model:     cfg.model,
-		Workspace: uiWorkspace,
-		Mode:      cfg.mode,
-		Resume:    resume,
-		Ctx:       ctx,
+		Model:             cfg.model,
+		Workspace:         uiWorkspace,
+		Mode:              requestedMode,
+		ModeServerDefault: modeServerDefault,
+		Resume:            resume,
+		Ctx:               ctx,
 		// Build identity for the welcome splash (explicit linker stamp, or a
 		// VCS-derived source-build ID when embedded metadata is available).
 		Version: buildinfo.BuildID,
@@ -1356,6 +1359,11 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// escape it.
 		Posture:        app.ParsePosture(cfg.posture),
 		PostureFlagSet: cfg.postureFlagSet,
+		// ADR 0365 named token: Build resolves its posture half and puts its
+		// session half on the server's DefaultMode. An explicit flag out-ranks the
+		// deprecated --posture and both YAML keys.
+		PermissionMode:        cfg.permissionMode,
+		PermissionModeFlagSet: cfg.permissionModeFlagSet,
 		// Reasoning-effort tier (ADR 0055): operator-tier only; reasoningEffortFlagSet
 		// lets CLI out-rank the operator-global settings.yaml reasoning-effort: key.
 		ReasoningEffort:        cfg.reasoningEffort,
@@ -1598,13 +1606,13 @@ func (s *sessionAdapter) CreateSession(ctx context.Context, sel client.ModelSele
 		if mode == "" {
 			mode = s.mode
 		}
-		id, target, caps, resolved, err := s.cl.CreateDebugSession(ctx, s.debugTarget, client.ModeFromString(mode), sel, s.debugMCP...)
+		id, target, caps, resolved, err := s.cl.CreateDebugSession(ctx, s.debugTarget, client.RequestModeFromString(mode), sel, s.debugMCP...)
 		if target != "" {
 			s.debugTarget = target
 		}
 		return id, caps, resolved, err
 	}
-	return s.cl.CreateSession(ctx, client.ModeFromString(mode), sel)
+	return s.cl.CreateSession(ctx, client.RequestModeFromString(mode), sel)
 }
 
 func (s *sessionAdapter) DebugTargetID() string { return s.debugTarget }

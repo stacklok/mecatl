@@ -2270,7 +2270,7 @@ func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // helpScrollGeometry derives the same complete rendered lines and window used by
 // renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
 func (m Model) helpScrollGeometry() (total, window int) {
-	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
+	lines := helpRenderedLines(m.helpBody())
 	return len(lines), helpWindowHeight(m.deps.Theme, m.vp.Height(), len(lines))
 }
 
@@ -2544,7 +2544,35 @@ func (m Model) desiredMode() string {
 	if m.activeMode != "" {
 		return m.activeMode
 	}
+	if m.deps.ModeServerDefault {
+		// No session mode known yet and none requested: let the server's default apply.
+		return ""
+	}
 	return client.ModeString(client.ModeFromString(m.deps.Mode))
+}
+
+// initialActiveMode seeds the model's active mode. Under ModeServerDefault it is
+// unknown until the server reports the created session's mode.
+func initialActiveMode(deps Deps) string {
+	if deps.ModeServerDefault {
+		return ""
+	}
+	return client.ModeString(client.ModeFromString(deps.Mode))
+}
+
+// createdSessionMode is the mode a freshly created session is in. An explicit
+// request is what the server applied; an unspecified request (ModeServerDefault)
+// is read back from the server, because CreateSessionResponse carries no mode. A
+// failed read-back reports "" so the header keeps its fallback rather than guess.
+func createdSessionMode(deps Deps, id, requested string) string {
+	if requested != "" || deps.Session == nil {
+		return requested
+	}
+	snap, err := deps.Session.GetSession(deps.Ctx, id)
+	if err != nil {
+		return ""
+	}
+	return snap.Mode
 }
 
 func (m Model) switchMode(mode string) (tea.Model, tea.Cmd) {
@@ -4926,7 +4954,7 @@ func (m Model) createSessionCmd() tea.Cmd {
 	return func() tea.Msg {
 		id, caps, resolved, err := deps.Session.CreateSession(deps.Ctx, sel, m.desiredMode())
 		if err == nil {
-			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()}
+			return client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: createdSessionMode(deps, id, m.desiredMode())}
 		}
 		if sel.IsZero() || !client.IsInvalidArgument(err) {
 			reason, _ := client.AuthFailure(err, deps.BearerBacked)
@@ -4943,7 +4971,7 @@ func (m Model) createSessionCmd() tea.Cmd {
 			return client.ConnectErrMsg{Err: err}
 		}
 		return connectFallbackMsg{
-			ready:    client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: m.desiredMode()},
+			ready:    client.SessionReadyMsg{SessionID: id, Capabilities: caps, ResolvedModel: resolved, Mode: createdSessionMode(deps, id, m.desiredMode())},
 			rejected: sel,
 			err:      err,
 		}
