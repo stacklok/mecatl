@@ -248880,6 +248880,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790341253482,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0e75a7782365dbf4b5edb1e0f6061cf9f83812eb",
+          "message": "docs: improve gRPC schema table readability (#1842)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T14:58:25+02:00",
+          "tree_id": "d0e97245f0e58f940362cb92be8bd4e6f4b84c8d",
+          "url": "https://github.com/stacklok/mecatl/commit/0e75a7782365dbf4b5edb1e0f6061cf9f83812eb"
+        },
+        "date": 1790341975453,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -361528,6 +361562,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790341972477,
+  "lastUpdate": 1790341976235,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
