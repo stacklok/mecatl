@@ -60,6 +60,7 @@ export function ContentPreviewPanel({
   authorizationDisabled = false,
   authorizationUncertain = false,
   canvas,
+  escapeHint = false,
   onAuthorizationOperation,
   onRefreshAuthorizationActivity,
   onCanvasChange,
@@ -70,6 +71,7 @@ export function ContentPreviewPanel({
   authorizationDisabled?: boolean;
   authorizationUncertain?: boolean;
   canvas: string;
+  escapeHint?: boolean;
   onAuthorizationOperation?: (
     operation: AuthorizationOperation,
     authorization: AuthorizationHandoff,
@@ -104,6 +106,7 @@ export function ContentPreviewPanel({
       authorizationDisabled={authorizationDisabled}
       authorizationUncertain={authorizationUncertain}
       canvas={canvas}
+      escapeHint={escapeHint}
       onAuthorizationOperation={onAuthorizationOperation}
       onRefreshAuthorizationActivity={onRefreshAuthorizationActivity}
       onCanvasChange={onCanvasChange}
@@ -118,6 +121,7 @@ function GenericPreviewPanel({
   authorizationDisabled,
   authorizationUncertain,
   canvas,
+  escapeHint,
   onAuthorizationOperation,
   onRefreshAuthorizationActivity,
   onCanvasChange,
@@ -128,6 +132,7 @@ function GenericPreviewPanel({
   authorizationDisabled: boolean;
   authorizationUncertain: boolean;
   canvas: string;
+  escapeHint: boolean;
   onAuthorizationOperation?: (
     operation: AuthorizationOperation,
     authorization: AuthorizationHandoff,
@@ -222,6 +227,7 @@ function GenericPreviewPanel({
           >
             {previewTitle(preview)}
           </h2>
+          {escapeHint && <span className="text-xs text-muted-foreground">Esc to Close</span>}
           <Button aria-label="Close preview" onClick={close} size="icon" variant="ghost">
             <PanelRightClose aria-hidden="true" />
           </Button>

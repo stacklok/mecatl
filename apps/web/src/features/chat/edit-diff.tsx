@@ -313,9 +313,17 @@ function DiffRows({
             data-diff={line.kind}
             className={cn("flex min-w-max px-2", ROW_CLASS[line.kind])}
           >
-            <span className={cn("w-4 shrink-0 select-none text-center", GUTTER_CLASS[line.kind])}>
+            <span
+              aria-hidden="true"
+              className={cn("w-4 shrink-0 select-none text-center", GUTTER_CLASS[line.kind])}
+            >
               {GUTTER[line.kind]}
             </span>
+            {line.kind !== "context" && (
+              <span className="sr-only">
+                {line.kind === "added" ? "Added line: " : "Removed line: "}
+              </span>
+            )}
             <span className="whitespace-pre pl-1">{line.text}</span>
           </div>
         ))}

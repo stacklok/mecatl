@@ -13,6 +13,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearUserScopedStorage } from "../../lib/account-storage";
 import { setRequestRecoveryState } from "../../lib/api-client";
@@ -22,6 +23,8 @@ import type { ApprovalRequest } from "./approval-panel";
 import { applyRunDelivery, type ChatMessage, initialRunDeliveryState } from "./chat-state";
 import { ChatTranscript } from "./chat-transcript";
 import { ChatWorkspace, Message } from "./chat-workspace";
+import { EscapeHintContext } from "./escape-hint-context";
+import { PlanReviewCard } from "./plan-review-card";
 import { SideThreadPanel } from "./side-thread-panel";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -82,6 +85,7 @@ class Fixture {
   readonly requests: Array<{ body: unknown; method: string; pathname: string }> = [];
   readonly verdicts: Array<Promise<Response>> = [];
   runtimeFeatures: string[] = [];
+  sessionState = "running";
 
   readonly fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -108,7 +112,7 @@ class Fixture {
           debugTargetSessionId: "",
           id,
           modelId: "test-model",
-          state: "running",
+          state: this.sessionState,
           title: `Chat ${id}`,
           titleProvenance: "",
           titleRevision: "0",
@@ -124,7 +128,7 @@ class Fixture {
         capabilities: { image: false, manualCompaction: false, modelSelection: false },
         id: pathname.split("/")[4],
         mode: "default",
-        state: "running",
+        state: this.sessionState,
         usage: {
           cacheReadTokens: "0",
           cacheWriteTokens: "0",
@@ -433,6 +437,9 @@ describe("ordinary approval interactions", () => {
       const sessionId = side ? "thread-a" : "chat-a";
       await act(async () => {
         fixture.stream.send({ runId: "run-a", sessionId, type: "run.started" });
+      });
+      expect(await screen.findByText("Esc to Stop")).toBeTruthy();
+      await act(async () => {
         fixture.stream.send(
           event("tool.call", "1", "run-a", { args: editArgs, id: "call-a", name: "Edit" }),
         );
@@ -638,5 +645,83 @@ describe("side-thread plan review", () => {
         },
       ]),
     );
+  });
+});
+
+describe("shortcut hints", () => {
+  it("renders truthful shortcut hints and restores focus", async () => {
+    for (const side of [false, true]) {
+      const fixture = new Fixture();
+      await mount(fixture, side);
+      const sessionId = side ? "thread-a" : "chat-a";
+      await act(async () => {
+        fixture.stream.send({ runId: "run-a", sessionId, type: "run.started" });
+        fixture.stream.send(
+          event("permission.ask", "1", "run-a", {
+            askId: "ask-a",
+            args: editArgs,
+            reason: "Needs file access",
+            tool: "Edit",
+          }),
+        );
+      });
+      const card = await screen.findByRole("region", { name: "Permission required: Edit" });
+      expect(within(card).getByText("Esc to Deny")).toBeTruthy();
+      expect(card.querySelector('[data-diff="added"]')?.textContent).toContain("Added line");
+      expect(card.querySelector('[data-diff="removed"]')?.textContent).toContain("Removed line");
+      expect(screen.queryByText("Esc to Stop")).toBeNull();
+      const deny = within(card).getByRole("button", { name: "Deny" });
+      deny.focus();
+      expect(document.activeElement).toBe(deny);
+      fixture.verdicts.push(Promise.resolve(new Response(null, { status: 204 })));
+      await userEvent.setup().keyboard(side ? " " : "{Enter}");
+      await waitFor(() => expect(fixture.posts()).toHaveLength(1));
+      expect(fixture.posts()[0]?.body).toEqual({ verdict: "deny" });
+      expect(fixture.requests.filter((request) => request.pathname.endsWith("/runs"))).toHaveLength(
+        0,
+      );
+      cleanup();
+    }
+
+    const planAsk = ask({ args: '{"plan":"Review first"}', tool: "PresentPlan" });
+    const rendered = render(
+      <EscapeHintContext.Provider value={planAsk}>
+        <PlanReviewCard approval={planAsk} disabled={false} onRespond={() => {}} />
+      </EscapeHintContext.Provider>,
+    );
+    expect(screen.getByText("Esc to Iterate")).toBeTruthy();
+    rendered.rerender(
+      <EscapeHintContext.Provider value={planAsk}>
+        <PlanReviewCard approval={planAsk} disabled onRespond={() => {}} />
+      </EscapeHintContext.Provider>,
+    );
+    expect(screen.queryByText("Esc to Iterate")).toBeNull();
+    cleanup();
+
+    const fixture = new Fixture();
+    fixture.sessionState = "idle";
+    await mount(fixture);
+    const canvas = screen.getByRole("button", { name: "Open local canvas" });
+    canvas.focus();
+    fireEvent.click(canvas);
+    expect(await screen.findByText("Esc to Close")).toBeTruthy();
+    const close = screen
+      .getAllByRole("button", { name: "Close preview" })
+      .at(-1) as HTMLButtonElement;
+    close.focus();
+    fireEvent.keyDown(close, { key: "Escape" });
+    fireEvent.keyUp(close, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Esc to Close")).toBeNull());
+    expect(document.activeElement).toBe(canvas);
+    fireEvent.click(canvas);
+    const closeAgain = screen
+      .getAllByRole("button", { name: "Close preview" })
+      .at(-1) as HTMLButtonElement;
+    closeAgain.focus();
+    fireEvent.click(closeAgain);
+    expect(document.activeElement).toBe(canvas);
+    const composer = screen.getByRole("textbox", { name: "Message Mecatl" });
+    await userEvent.setup().type(composer, "unsent draft");
+    expect(await screen.findByText("Esc twice to clear draft")).toBeTruthy();
   });
 });

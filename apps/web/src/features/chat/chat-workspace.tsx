@@ -158,6 +158,7 @@ import {
 } from "./delegation-fleet";
 import { type DelegationAnchor, placeDelegationCards } from "./delegation-placement";
 import { DraftGreeting } from "./draft-greeting";
+import { EscapeHintContext } from "./escape-hint-context";
 import { clearFailedRun, readFailedRun, saveFailedRun } from "./failed-run-storage";
 import { FailedTurnCard } from "./failed-turn-card";
 import { pickLatestEligibleChat } from "./latest-chat";
@@ -2668,15 +2669,24 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 </Badge>
               )}
               {controlTarget(runTarget, sessionId) && (
-                <Button
-                  disabled={controlPending}
-                  onClick={() => void stopRun()}
-                  size="sm"
-                  variant="outline"
-                >
-                  <Square aria-hidden="true" className="fill-current" />
-                  Stop
-                </Button>
+                <>
+                  <Button
+                    disabled={controlPending}
+                    onClick={() => void stopRun()}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <Square aria-hidden="true" className="fill-current" />
+                    Stop
+                  </Button>
+                  {!escapeAsk &&
+                    !contentPreview &&
+                    !sidebarOpen &&
+                    isRunning &&
+                    !controlPending && (
+                      <span className="text-xs text-muted-foreground">Esc to Stop</span>
+                    )}
+                </>
               )}
             </div>
           )}
@@ -2709,53 +2719,55 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
                 )}
               </div>
             ) : (
-              <ChatTranscript
-                agentName={agentName}
-                approvalDisabled={(candidate) =>
-                  candidate.tool === "PresentPlan"
-                    ? planApprovalDisabled(candidate)
-                    : ordinaryApprovalDisabled(candidate)
-                }
-                approvalUncertain={(candidate) =>
-                  candidate.tool === "PresentPlan"
-                    ? planApprovalUncertain(candidate)
-                    : ordinaryApprovalUncertain(candidate)
-                }
-                approvals={approvals}
-                delegationsByMessageId={delegationPlacement.byMessageId}
-                messages={messages}
-                onOpenActivity={(focus, opener) => {
-                  activityOpener.current = opener;
-                  activityOpenerFocus.current = focus;
-                  setActivityFocus(focus);
-                  setActivityFocusRequest((value) => value + 1);
-                  setContentPreview({ kind: "activity" });
-                }}
-                onOpenThread={(message) => void openSideThread(message)}
-                onReviewAuthorization={(authorization) =>
-                  setContentPreview({ authorization, kind: "authorization" })
-                }
-                onPreviewImage={(image) =>
-                  setContentPreview({ file: imagePreview(image, true), kind: "file" })
-                }
-                onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
-                onRespondToApproval={(candidate, verdict) =>
-                  void respondToApproval(candidate, verdict)
-                }
-                onRespondToPlan={(candidate, verdict) => void respondToPlan(candidate, verdict)}
-                planUnavailableReason={planUnavailableReason}
-                showToolCalls={showToolCalls}
-                streamingMessageId={
-                  isRunning && messages.at(-1)?.role === "assistant"
-                    ? messages.at(-1)?.id
-                    : undefined
-                }
-                threadDisabled={forkSession.isPending}
-                threadSessionIdForMessage={(message) =>
-                  threadMap[threadKeyForMessage(message)]?.sessionId
-                }
-                userName={userName}
-              />
+              <EscapeHintContext.Provider value={escapeAsk}>
+                <ChatTranscript
+                  agentName={agentName}
+                  approvalDisabled={(candidate) =>
+                    candidate.tool === "PresentPlan"
+                      ? planApprovalDisabled(candidate)
+                      : ordinaryApprovalDisabled(candidate)
+                  }
+                  approvalUncertain={(candidate) =>
+                    candidate.tool === "PresentPlan"
+                      ? planApprovalUncertain(candidate)
+                      : ordinaryApprovalUncertain(candidate)
+                  }
+                  approvals={approvals}
+                  delegationsByMessageId={delegationPlacement.byMessageId}
+                  messages={messages}
+                  onOpenActivity={(focus, opener) => {
+                    activityOpener.current = opener;
+                    activityOpenerFocus.current = focus;
+                    setActivityFocus(focus);
+                    setActivityFocusRequest((value) => value + 1);
+                    setContentPreview({ kind: "activity" });
+                  }}
+                  onOpenThread={(message) => void openSideThread(message)}
+                  onReviewAuthorization={(authorization) =>
+                    setContentPreview({ authorization, kind: "authorization" })
+                  }
+                  onPreviewImage={(image) =>
+                    setContentPreview({ file: imagePreview(image, true), kind: "file" })
+                  }
+                  onPreviewTool={(tool) => setContentPreview({ kind: "tool", tool })}
+                  onRespondToApproval={(candidate, verdict) =>
+                    void respondToApproval(candidate, verdict)
+                  }
+                  onRespondToPlan={(candidate, verdict) => void respondToPlan(candidate, verdict)}
+                  planUnavailableReason={planUnavailableReason}
+                  showToolCalls={showToolCalls}
+                  streamingMessageId={
+                    isRunning && messages.at(-1)?.role === "assistant"
+                      ? messages.at(-1)?.id
+                      : undefined
+                  }
+                  threadDisabled={forkSession.isPending}
+                  threadSessionIdForMessage={(message) =>
+                    threadMap[threadKeyForMessage(message)]?.sessionId
+                  }
+                  userName={userName}
+                />
+              </EscapeHintContext.Provider>
             )}
             {delegationPlacement.unanchored.length > 0 && (
               <DelegationCardRow
@@ -2889,6 +2901,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           }
           workingBehavior={enterSendBehavior}
         />
+        {!escapeAsk &&
+          !contentPreview &&
+          !sidebarOpen &&
+          !isRunning &&
+          composerDraftPresent &&
+          !escapeClearHint && (
+            <p className="mx-auto mb-2 max-w-3xl px-4 text-xs text-muted-foreground">
+              Esc twice to clear draft
+            </p>
+          )}
         {escapeClearHint && (
           <p className="mx-auto mb-2 max-w-3xl px-4 text-xs text-muted-foreground" role="status">
             Press Escape again to clear the unsent draft.
@@ -2897,6 +2919,7 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
       </section>
       {displayedPreview && (
         <ContentPreviewPanel
+          escapeHint={!escapeAsk}
           activity={{
             fallbackOpener: sessionActivityControl.current,
             fleet: visibleDelegationFleet,
@@ -2917,7 +2940,11 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
           onCanvasChange={canvas.setValue}
           onAuthorizationOperation={operateAuthorization}
           onRefreshAuthorizationActivity={refreshAuthorizationActivity}
-          onClose={() => setContentPreview(undefined)}
+          onClose={() => {
+            setContentPreview(undefined);
+            const opener = panelOpener.current;
+            if (opener?.isConnected) opener.focus();
+          }}
           preview={displayedPreview}
         />
       )}

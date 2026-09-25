@@ -79,6 +79,21 @@ export function ShortcutReference() {
           </div>
         </div>
 
+        <section className="mt-5 rounded-2xl border bg-card p-5">
+          <h2 className="text-sm font-semibold">Escape in a chat</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Each press handles one layer. Escape first closes an open dialog or menu and returns
+            focus to its trigger. With no overlay, it clears a text selection, denies the pending
+            tool ask or iterates a plan review, closes a side panel, then stops a live run. With
+            none of those active, press Escape twice within half a second to clear an unsent draft.
+            Release the key between presses. A pending authorization panel closes without deciding a
+            permission ask.
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            A focused verdict button uses Enter or Space. Its action does not send the composer.
+          </p>
+        </section>
+
         <div className="mt-8 grid gap-5 md:grid-cols-2">
           {shortcutGroups.map((group) => (
             <section className="rounded-2xl border bg-card p-5" key={group}>

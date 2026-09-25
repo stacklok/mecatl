@@ -40,7 +40,7 @@ export const shortcutRegistry = [
   },
   {
     combo: "esc",
-    description: "Close the chat list or stop the running turn",
+    description: "Act on the top chat layer (see Escape order below)",
     group: "General",
     id: "close.esc",
   },

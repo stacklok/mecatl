@@ -5,6 +5,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
 import { parseDiffArgs, ToolDiff } from "./edit-diff";
+import { useActiveEscapeAsk } from "./escape-hint-context";
 
 const destructiveTool = /\b(delete|remove|drop|revoke|destroy|purge|rm)\b/iu;
 
@@ -37,6 +38,7 @@ export function ApprovalPanel({
   total?: number;
 }) {
   const destructive = destructiveTool.test(approval.tool);
+  const escapeHint = useActiveEscapeAsk(approval) && !disabled;
   const hasArgs = approval.args.trim().length > 0;
   const showDiff =
     hasArgs &&
@@ -104,6 +106,7 @@ export function ApprovalPanel({
           Deny
         </Button>
       </div>
+      {escapeHint && <p className="mt-2 text-xs text-muted-foreground">Esc to Deny</p>}
     </section>
   );
 }

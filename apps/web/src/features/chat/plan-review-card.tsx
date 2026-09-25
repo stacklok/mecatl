@@ -2,6 +2,7 @@
 
 import { Button } from "../../components/ui/button";
 import type { ApprovalRequest } from "./approval-panel";
+import { useActiveEscapeAsk } from "./escape-hint-context";
 
 export type PlanVerdict = "approve" | "accept_edits" | "iterate";
 
@@ -19,6 +20,7 @@ export function PlanReviewCard({
   uncertain?: boolean;
   unavailableReason?: string;
 }) {
+  const escapeHint = useActiveEscapeAsk(approval) && !disabled && !unavailableReason;
   let plan = "";
   let note = "";
   try {
@@ -79,6 +81,7 @@ export function PlanReviewCard({
           </Button>
         </div>
       )}
+      {escapeHint && <p className="mt-2 text-xs text-muted-foreground">Esc to Iterate</p>}
       <details className="mt-3 text-xs">
         <summary>Raw arguments</summary>
         <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border bg-background p-3 font-mono">

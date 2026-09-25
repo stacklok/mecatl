@@ -73,6 +73,7 @@ import {
   retractApproval,
 } from "./chat-state";
 import { Message } from "./chat-workspace";
+import { EscapeHintContext } from "./escape-hint-context";
 import { groupModels, ModelEffortMenu } from "./model-effort-menu";
 import { exactPlanControlAvailability, followPlanContinuationFromBff } from "./plan-continuation";
 import { PlanReviewCard, type PlanVerdict } from "./plan-review-card";
@@ -239,7 +240,7 @@ export function SideThreadPanel({
   }
 
   return (
-    <>
+    <EscapeHintContext.Provider value={escapeAsk}>
       <button
         aria-label="Close thread"
         className="absolute inset-0 z-30 bg-black/35 min-[760px]:hidden"
@@ -307,6 +308,7 @@ export function SideThreadPanel({
           <Button aria-label="Close thread" onClick={onClose} size="icon" variant="ghost">
             <PanelRightClose aria-hidden="true" />
           </Button>
+          {!escapeAsk && <span className="text-xs text-muted-foreground">Esc to Close</span>}
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -392,6 +394,9 @@ export function SideThreadPanel({
               <Square aria-hidden="true" className="fill-current" />
               Stop
             </Button>
+            {!escapeAsk && !run.controlPending && (
+              <span className="ml-2 text-xs text-muted-foreground">Esc to Stop</span>
+            )}
           </div>
         )}
 
@@ -451,6 +456,9 @@ export function SideThreadPanel({
             </div>
           </div>
         </form>
+        {!escapeAsk && !run.isRunning && prompt && !escapeClearHint && (
+          <p className="px-4 pb-2 text-xs text-muted-foreground">Esc twice to clear draft</p>
+        )}
         {escapeClearHint && (
           <p className="px-4 pb-2 text-xs text-muted-foreground" role="status">
             Press Escape again to clear the unsent draft.
@@ -473,7 +481,7 @@ export function SideThreadPanel({
           </div>
         ) : null}
       </aside>
-    </>
+    </EscapeHintContext.Provider>
   );
 }
 
