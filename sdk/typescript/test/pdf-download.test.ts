@@ -95,6 +95,103 @@ describe("SDK PDF download", () => {
     await client.close();
   });
 
+  it("decodes an HTTP tool-result artifact and downloads its PDF through configured fetch", async () => {
+    const returnedId = "http-tool-result-artifact";
+    const pieces = [
+      pdf.subarray(0, 100_000),
+      pdf.subarray(100_000, 200_000),
+      pdf.subarray(200_000),
+    ];
+    const downloads: Array<{ path: string; init: RequestInit }> = [];
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/compatibility") {
+        return Response.json({
+          api_major: 1,
+          capabilities: { artifacts: true },
+          features: ["server_info"],
+        });
+      }
+      if (path === "/v1/sessions") return Response.json({ session_id: sessionId });
+      if (path === `/v1/sessions/${sessionId}/prompt`) {
+        const toolResult = {
+          run_id: "run-http-artifact",
+          type: "tool.result",
+          tool_result: {
+            call_id: "call-http-artifact",
+            blocks: [
+              {
+                kind: 7,
+                artifact_id: returnedId,
+                mime_type: "application/pdf",
+                name: "result.pdf",
+                size: pdf.byteLength,
+                sha256: digest,
+              },
+            ],
+          },
+        };
+        const result = {
+          run_id: "run-http-artifact",
+          type: "result",
+          result: { stop: "end_turn" },
+        };
+        return new Response(
+          `data: ${JSON.stringify(toolResult)}\n\ndata: ${JSON.stringify(result)}\n\n`,
+          {
+            headers: { "content-type": "text/event-stream" },
+          },
+        );
+      }
+      downloads.push({ path, init: init ?? {} });
+      let nextPiece = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const piece = pieces[nextPiece++];
+          if (piece === undefined) controller.close();
+          else controller.enqueue(piece);
+        },
+      });
+      return new Response(body, { headers: { "content-type": "application/pdf" } });
+    };
+    const client = connect({
+      transport: createHttpTransport({
+        baseUrl: "https://mecatl.test",
+        fetch,
+        credentials: "include",
+        headers: { "x-configured": "yes" },
+      }),
+    });
+    const session = await client.sessions.create({});
+    let block: EventContentBlock | undefined;
+    for await (const event of await session.run("create a PDF")) {
+      if (event.kind === "tool.result") block = event.payload.blocks[0];
+    }
+    expect(block).toMatchObject({
+      kind: 7,
+      artifactId: returnedId,
+      mimeType: "application/pdf",
+      name: "result.pdf",
+      size: BigInt(pdf.byteLength),
+      sha256: digest,
+    });
+    if (block === undefined) throw new Error("tool result had no artifact block");
+    expect(block.data).toEqual(new Uint8Array());
+
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of session.downloadArtifact(block.artifactId)) chunks.push(chunk);
+    expect(chunks).toHaveLength(3);
+    const downloaded = Buffer.concat(chunks);
+    expect(downloaded).toEqual(Buffer.from(pdf));
+    expect(downloaded.byteLength).toBe(Number(block.size));
+    expect(createHash("sha256").update(downloaded).digest("hex")).toBe(block.sha256);
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]?.path).toBe(`/v1/sessions/${sessionId}/artifacts/${returnedId}`);
+    expect(downloads[0]?.init.credentials).toBe("include");
+    expect(new Headers(downloads[0]?.init.headers).get("x-configured")).toBe("yes");
+    await client.close();
+  });
+
   it("cancels a gRPC download before returning its transport iterator", async () => {
     let abortedAtReturn = false;
     const transport = createRouterTransport((router) => {
