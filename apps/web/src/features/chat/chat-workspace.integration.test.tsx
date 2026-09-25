@@ -136,10 +136,26 @@ function runEvent(
 
 function session(id: string, state = "idle") {
   return {
-    capabilities: { delete: true, deleteReason: "", rename: true, renameReason: "" },
+    capabilities: {
+      copyId: true,
+      copyIdReason: "",
+      delete: true,
+      deleteReason: "",
+      fork: true,
+      forkReason: "",
+      inspect: true,
+      inspectReason: "",
+      publicChat: true,
+      publicChatReason: "",
+      rename: true,
+      renameReason: "",
+      viewTranscript: true,
+      viewTranscriptReason: "",
+    },
     createdAt: "2026-09-24T12:00:00.000Z",
     debugTargetSessionId: "",
     id,
+    kind: "main",
     modelId: "test-model",
     state,
     title: `Chat ${id}`,
@@ -398,6 +414,119 @@ afterEach(() => {
 });
 
 describe("mounted chat workspace BFF boundary", () => {
+  it("consumes selection and a pending ask before closing the side panel", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const permissionPath = "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-a";
+    bff.nextReplies.set(permissionPath, [Promise.resolve(new Response(null, { status: 204 }))]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    fireEvent.click(screen.getByRole("button", { name: "Open local canvas" }));
+    const panel = screen.getByRole("complementary", { name: "Local canvas" });
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(runEvent("user_prompt", "1", "Selected prompt"));
+      activity.send(
+        runEvent("permission.ask", "2", "", "run-a", {
+          askId: "ask-a",
+          tool: "Shell",
+        }),
+      );
+    });
+    expect(await screen.findByText("Permission required")).toBeTruthy();
+    const selection = window.getSelection();
+    const prompt = screen.getByText("Selected prompt");
+    const range = document.createRange();
+    range.selectNodeContents(prompt);
+    selection?.addRange(range);
+    expect(selection?.toString()).toBe("Selected prompt");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(selection?.toString()).toBe("");
+    expect(bff.requestsAt("POST", permissionPath)).toHaveLength(0);
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(bff.requestsAt("POST", permissionPath)).toHaveLength(1));
+    expect(bff.requestsAt("POST", permissionPath)[0]?.body).toEqual({ verdict: "deny" });
+    await waitFor(() => expect(screen.queryByText("Permission required")).toBeNull());
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+    expect(screen.getByRole("complementary", { name: "Local canvas" })).toBe(panel);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Local canvas" })).toBeNull();
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+  });
+
+  it("keeps activity open while Escape denies an ask, then restores its opener", async () => {
+    const bff = new BffFixture(session("chat-a", "awaiting"));
+    const activity = heldStream();
+    bff.activityResponses.set("", [activity.response]);
+    const permissionPath = "/api/v1/sessions/chat-a/runs/run-a/permissions/ask-a";
+    bff.nextReplies.set(permissionPath, [Promise.resolve(new Response(null, { status: 204 }))]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    await act(async () => {
+      activity.send(runStarted());
+      activity.send(runEvent("user_prompt", "1", "Open delegated work"));
+      activity.send(
+        runEvent("tool.call", "2", "", "run-a", {
+          args: "{}",
+          id: "call-a",
+          name: "Subagent",
+        }),
+      );
+      activity.send(
+        runEvent("subagent.start", "3", "", "run-a", {
+          childId: "child-a",
+          goal: "Inspect",
+          parentCallId: "call-a",
+        }),
+      );
+      activity.send(
+        runEvent("permission.ask", "4", "", "run-a", { askId: "ask-a", tool: "Shell" }),
+      );
+    });
+    const opener = await screen.findByRole("button", { name: /Subagent child-a/u });
+    opener.focus();
+    fireEvent.click(opener);
+    const panel = await screen.findByRole("complementary", { name: "Session activity" });
+    expect(await within(panel).findByRole("heading", { name: "Subagent child-a" })).toBeTruthy();
+    expect(await screen.findByText("Permission required")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(bff.requestsAt("POST", permissionPath)).toHaveLength(1));
+    expect(bff.requestsAt("POST", permissionPath)[0]?.body).toEqual({ verdict: "deny" });
+    expect(screen.getByRole("complementary", { name: "Session activity" })).toBe(panel);
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Session activity" })).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(bff.requestsFor("POST", "/cancel")).toHaveLength(0);
+  });
+
+  it("skips inspect-only rows in chat navigation", async () => {
+    const inspect = {
+      ...session("inspect"),
+      capabilities: {
+        ...session("inspect").capabilities,
+        publicChat: false,
+        publicChatReason: "inspect_only_kind",
+      },
+      kind: "child",
+      title: "Inspect-only child",
+    };
+    const bff = new BffFixture(session("chat-a"), inspect, session("chat-b"));
+    await mountWorkspace(bff, "chat-a");
+    expect(
+      screen.getByRole("heading", { name: "Inspect-only sessions", hidden: true }),
+    ).toBeTruthy();
+    screen.getByRole("button", { name: "Chat options" }).focus();
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(await screen.findByRole("heading", { name: "Chat chat-b" })).toBeTruthy();
+    expect(bff.requestsAt("GET", "/api/v1/sessions/inspect/transcript")).toHaveLength(0);
+  });
+
   it("does not treat a broken continuation as the earlier authorization park", async () => {
     const bff = new BffFixture(session("chat-a", "authorizing"));
     const activity = heldStream();
@@ -511,7 +640,7 @@ describe("mounted chat workspace BFF boundary", () => {
       recheck.send(runEvent("result", "6", "", "run-next", { stop: "end_turn" }));
       recheck.close();
     });
-    fireEvent.click(within(review).getByRole("button", { name: "Close preview" }));
+    fireEvent.click(within(review).getByRole("button", { name: "Close panel" }));
     expect(
       bff.requestsAt("POST", "/api/v1/sessions/chat-a/authorizations/auth-1/cancel"),
     ).toHaveLength(0);
@@ -628,7 +757,7 @@ describe("mounted chat workspace BFF boundary", () => {
       fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
       expect(bff.requestsAt("POST", cancelPath)).toHaveLength(0);
       expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1);
-      fireEvent.click(within(review).getByRole("button", { name: "Close preview" }));
+      fireEvent.click(within(review).getByRole("button", { name: "Close panel" }));
       fireEvent.click(within(row).getByRole("button", { name: "Review authorization" }));
       const reopened = screen.getByRole("complementary", { name: "Authorization review" });
       expect(
@@ -1130,6 +1259,127 @@ describe("mounted chat workspace BFF boundary", () => {
     expect(screen.queryByText("First")).toBeNull();
     expect(screen.getAllByText("Tool: Read")).toHaveLength(1);
     expect(screen.getAllByText("Tool: Calendar")).toHaveLength(1);
+  });
+
+  it("anchors two equal recorded replies while Fork receives the full source session", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [
+        { images: [], role: "user", text: "same", toolCalls: [] },
+        { images: [], role: "assistant", text: "first answer", toolCalls: [] },
+        { images: [], role: "user", text: "same", toolCalls: [] },
+        { images: [], role: "assistant", text: "later turn", toolCalls: [] },
+      ],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    bff.nextReplies.set("/api/v1/sessions/chat-a/fork", [
+      Promise.resolve(json({ id: "thread-a" }, 201)),
+      Promise.resolve(json({ id: "thread-b" }, 201)),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    const roots = screen.getAllByRole("article", { name: "You message" });
+    expect(roots).toHaveLength(2);
+    const firstReply = within(roots[0] as HTMLElement).getByRole("button", {
+      name: "Reply in side thread",
+    });
+    fireEvent.click(firstReply);
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(1),
+    );
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")[0]?.body).toEqual({
+      model: { id: "current", providerId: "provider" },
+      reasoningEffort: "medium",
+    });
+    expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript").length).toBeGreaterThan(1);
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Thread" })).getByRole("button", {
+        name: "Close thread",
+      }),
+    );
+    fireEvent.click(
+      within(roots[1] as HTMLElement).getByRole("button", { name: "Reply in side thread" }),
+    );
+    await waitFor(() =>
+      expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(2),
+    );
+    const stored = JSON.parse(window.localStorage.getItem("studio.chat.threads.chat-a") ?? "null");
+    expect(stored.version).toBe(2);
+    expect(
+      stored.entries.map((entry: { ordinal: number; sessionId: string }) => [
+        entry.ordinal,
+        entry.sessionId,
+      ]),
+    ).toEqual([
+      [0, "thread-a"],
+      [2, "thread-b"],
+    ]);
+    expect(screen.getByText("later turn")).toBeTruthy();
+    expect(bff.transcripts.get("chat-a")?.messages.map((message) => message.text)).toEqual([
+      "same",
+      "first answer",
+      "same",
+      "later turn",
+    ]);
+    fireEvent.click(
+      within(screen.getByRole("complementary", { name: "Thread" })).getByRole("button", {
+        name: "Close thread",
+      }),
+    );
+    fireEvent.click(
+      within(roots[0] as HTMLElement).getByRole("button", { name: "Open side thread" }),
+    );
+    const reopened = await screen.findByRole("complementary", { name: "Thread" });
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(2);
+    fireEvent.click(within(reopened).getByRole("button", { name: "Close thread" }));
+  });
+
+  it("does not fork from a cached transcript when its authoritative refresh fails", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "saved question", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    bff.nextReplies.set("/api/v1/sessions/chat-a/transcript", [
+      Promise.resolve(json({ detail: "temporarily unavailable", status: 503 }, 503)),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Reply in side thread" }));
+    await waitFor(() =>
+      expect(bff.requestsAt("GET", "/api/v1/sessions/chat-a/transcript")).toHaveLength(2),
+    );
+    await screen.findByText("Could not refresh the saved transcript. Try again.");
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(0);
+  });
+
+  it("waits for a saved match when the selected row changed before Fork", async () => {
+    const bff = new BffFixture(session("chat-a"));
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "original", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    bff.nextReplies.set("/api/v1/sessions/chat-a", [
+      Promise.resolve(detailResponse("chat-a", "idle", { model: currentModel })),
+    ]);
+    await mountConnectedWorkspace(bff, "chat-a");
+    bff.transcripts.set("chat-a", {
+      complete: true,
+      messages: [{ images: [], role: "user", text: "changed", toolCalls: [] }],
+      sessionId: "chat-a",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Reply in side thread" }));
+    expect(
+      await screen.findByText("Wait for this message to be saved before starting a side thread."),
+    ).toBeTruthy();
+    expect(bff.requestsAt("POST", "/api/v1/sessions/chat-a/fork")).toHaveLength(0);
   });
 
   it("creates a draft with its selected controls and excludes a disabled model", async () => {

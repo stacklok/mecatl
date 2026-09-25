@@ -7,6 +7,7 @@ export interface LocalFilePreview {
   dataUrl?: string;
   kind: LocalFileKind;
   name: string;
+  reason?: "oversized" | "unsupported";
   sent?: boolean;
   size: number;
   type: string;
@@ -83,10 +84,10 @@ export function localFileKind(name: string, type: string): LocalFileKind {
 export async function readLocalFile(file: File): Promise<LocalFilePreview> {
   const kind = localFileKind(file.name, file.type);
   const base = { kind, name: file.name, size: file.size, type: file.type };
-  if (file.size > maxPreviewBytes) return { ...base, kind: "unsupported" };
+  if (file.size > maxPreviewBytes) return { ...base, kind: "unsupported", reason: "oversized" };
   if (kind === "image" || kind === "pdf") return { ...base, dataUrl: await readDataUrl(file) };
   if (kind !== "unsupported") return { ...base, content: await file.text() };
-  return base;
+  return { ...base, reason: "unsupported" };
 }
 
 export async function readImageAttachment(file: File): Promise<ImageAttachment> {

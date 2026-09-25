@@ -276,18 +276,13 @@ describe("session activity content", () => {
     await act(async () => teamTab.click());
     expect(teamTab.getAttribute("aria-selected")).toBe("true");
     await act(async () =>
-      node
-        .querySelector('aside[aria-label="Session activity"]')
-        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+      (
+        node.querySelector(
+          'aside[aria-label="Session activity"] button[aria-label="Close panel"]',
+        ) as HTMLButtonElement
+      ).click(),
     );
     expect(node.querySelector('aside[aria-label="Session activity"]')).toBeNull();
-    expect(document.activeElement).toBe(card);
-
-    await act(async () => card.click());
-    const closeButton = node.querySelector(
-      'button[aria-label="Close preview"]',
-    ) as HTMLButtonElement;
-    await act(async () => closeButton.click());
     expect(document.activeElement).toBe(card);
 
     await act(async () => card.click());
@@ -300,7 +295,7 @@ describe("session activity content", () => {
     await act(async () =>
       (
         node.querySelector(
-          'aside[aria-label="Session activity"] button[aria-label="Close preview"]',
+          'aside[aria-label="Session activity"] button[aria-label="Close panel"]',
         ) as HTMLButtonElement
       ).click(),
     );
@@ -318,9 +313,11 @@ describe("session activity content", () => {
     ).toBe(true);
     expect(document.activeElement?.textContent).toBe("Session activity");
     await act(async () =>
-      node
-        .querySelector('aside[aria-label="Session activity"]')
-        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+      (
+        node.querySelector(
+          'aside[aria-label="Session activity"] button[aria-label="Close panel"]',
+        ) as HTMLButtonElement
+      ).click(),
     );
     expect(document.activeElement).toBe(control);
 
@@ -334,9 +331,11 @@ describe("session activity content", () => {
       "Parallel",
     );
     await act(async () =>
-      node
-        .querySelector('aside[aria-label="Session activity"]')
-        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+      (
+        node.querySelector(
+          'aside[aria-label="Session activity"] button[aria-label="Close panel"]',
+        ) as HTMLButtonElement
+      ).click(),
     );
     expect(document.activeElement).toBe(parallelCard);
 
@@ -353,9 +352,11 @@ describe("session activity content", () => {
       "Stopped: budget",
     );
     await act(async () =>
-      node
-        .querySelector('aside[aria-label="Session activity"]')
-        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
+      (
+        node.querySelector(
+          'aside[aria-label="Session activity"] button[aria-label="Close panel"]',
+        ) as HTMLButtonElement
+      ).click(),
     );
     expect(document.activeElement).toBe(workerCard);
   });

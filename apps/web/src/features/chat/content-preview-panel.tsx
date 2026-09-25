@@ -5,21 +5,13 @@ import {
   FileText,
   ListTree,
   NotebookPen,
-  PanelRightClose,
   Pencil,
   ScanEye,
   ShieldCheck,
 } from "lucide-react";
-import {
-  type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
-import { maxPanelWidth, minPanelWidth, usePanelWidth } from "../../lib/panel-width";
 import {
   type AuthorizationHandoff,
   type AuthorizationOperation,
@@ -31,6 +23,7 @@ import type { DelegationFleet } from "./delegation-fleet";
 import { SessionActivityContent } from "./delegation-panel";
 import type { LocalFilePreview } from "./local-file-preview";
 import { MarkdownMessage } from "./markdown-message";
+import { SidePanelShell } from "./side-panel-shell";
 import { SideThreadPanel } from "./side-thread-panel";
 import type { ToolActivity } from "./tool-activity";
 
@@ -53,6 +46,21 @@ interface ActivityPreviewState {
   onFocusChange: (focus?: DelegationFocus) => void;
   opener?: HTMLButtonElement | null;
   openerFocus?: DelegationFocus;
+}
+
+/** Find the live card again if a transcript refresh replaced the original opener. */
+export function restoreActivityOpenerFocus({
+  fallbackOpener,
+  opener,
+  openerFocus,
+}: Pick<ActivityPreviewState, "fallbackOpener" | "opener" | "openerFocus">) {
+  const replacement = openerFocus
+    ? [...document.querySelectorAll<HTMLButtonElement>("button[data-delegation-focus]")].find(
+        (button) => button.dataset.delegationFocus === JSON.stringify(openerFocus),
+      )
+    : undefined;
+  const target = (opener?.isConnected ? opener : undefined) ?? replacement ?? fallbackOpener;
+  target?.focus();
 }
 
 export function ContentPreviewPanel({
@@ -79,14 +87,8 @@ export function ContentPreviewPanel({
   onClose: () => void;
   preview: ContentPreview;
 }) {
-  // A thread has its own composer, model picker, and independent SSE run —
-  // fully unlike the read-only file/tool/canvas previews below — so it owns
-  // its own frame (resize, mobile backdrop, maximize) rather than sharing
-  // the generic header/body shell `GenericPreviewPanel` renders. `key` forces
-  // a clean remount when the user opens a *different* thread while one is
-  // already showing. This dispatch must stay hook-free: `GenericPreviewPanel`
-  // is a genuinely separate component so its `usePanelWidth()` is never
-  // called conditionally on the same instance.
+  // A thread owns its composer and SSE run, while the frame is shared.
+  // A different thread gets a fresh content instance.
   if (preview.kind === "thread") {
     return (
       <SideThreadPanel
@@ -137,129 +139,66 @@ function GenericPreviewPanel({
   onClose: () => void;
   preview: StaticPreview;
 }) {
-  const width = usePanelWidth("contentPreview");
   const title = useRef<HTMLHeadingElement>(null);
   const lastActivityFocusRequest = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (preview.kind !== "activity" || !activity) return;
     if (lastActivityFocusRequest.current === activity.focusRequest) return;
     lastActivityFocusRequest.current = activity.focusRequest;
-    if (!activity?.focus) title.current?.focus();
+    if (!activity.focus) title.current?.focus();
   }, [preview.kind, activity]);
 
   function close() {
     onClose();
-    if (preview.kind !== "activity") return;
-    const replacement = activity?.openerFocus
-      ? [...document.querySelectorAll<HTMLButtonElement>("button[data-delegation-focus]")].find(
-          (button) => button.dataset.delegationFocus === JSON.stringify(activity.openerFocus),
-        )
-      : undefined;
-    const target =
-      (activity?.opener?.isConnected ? activity.opener : undefined) ??
-      replacement ??
-      activity?.fallbackOpener;
-    target?.focus();
-  }
-
-  function startResize(event: ReactPointerEvent<HTMLButtonElement>) {
-    event.currentTarget.focus();
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = width.value;
-    const resize = (moveEvent: PointerEvent) =>
-      width.setValue(startWidth - moveEvent.clientX + startX);
-    const finish = () => {
-      window.removeEventListener("pointermove", resize);
-      window.removeEventListener("pointerup", finish);
-    };
-    window.addEventListener("pointermove", resize);
-    window.addEventListener("pointerup", finish);
+    if (preview.kind === "activity" && activity) restoreActivityOpenerFocus(activity);
   }
 
   return (
-    <>
-      <button
-        aria-label="Close preview"
-        className="absolute inset-0 z-30 bg-black/35 min-[760px]:hidden"
-        onClick={close}
-        type="button"
-      />
-      <aside
-        aria-label={previewTitle(preview)}
-        className="absolute inset-x-0 bottom-0 z-40 flex h-[94dvh] flex-col rounded-t-2xl border bg-background shadow-2xl min-[760px]:relative min-[760px]:inset-auto min-[760px]:order-3 min-[760px]:h-full min-[760px]:w-[var(--content-panel-width)] min-[760px]:shrink-0 min-[760px]:rounded-none min-[760px]:border-y-0 min-[760px]:border-r-0"
-        style={{ "--content-panel-width": `${width.value}px` } as CSSProperties}
-        onKeyDown={(event) => {
-          if (preview.kind === "activity" && event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            close();
-          }
-        }}
-      >
-        <button
-          aria-label="Resize preview panel"
-          className="absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none border-0 bg-transparent p-0 hover:bg-brand/20 min-[760px]:block"
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") width.setValue(width.value + 12);
-            else if (event.key === "ArrowRight") width.setValue(width.value - 12);
-            else return;
-            event.preventDefault();
-          }}
-          onPointerDown={startResize}
-          title={`Resize preview (${minPanelWidth}–${maxPanelWidth}px)`}
-          type="button"
+    <SidePanelShell
+      autoFocusClose={preview.kind !== "activity"}
+      icon={
+        preview.kind === "authorization" ? (
+          <ShieldCheck aria-hidden="true" className="size-4 text-brand-ink" />
+        ) : preview.kind === "activity" ? (
+          <ListTree aria-hidden="true" className="size-4 text-brand-ink" />
+        ) : preview.kind === "canvas" ? (
+          <NotebookPen aria-hidden="true" className="size-4 text-brand-ink" />
+        ) : preview.kind === "tool" ? (
+          <Braces aria-hidden="true" className="size-4 text-brand-ink" />
+        ) : (
+          <FileText aria-hidden="true" className="size-4 text-brand-ink" />
+        )
+      }
+      onClose={close}
+      restoreFocusOnClose={preview.kind !== "activity"}
+      title={previewTitle(preview)}
+      titleRef={title}
+      titleTabIndex={preview.kind === "activity" ? -1 : undefined}
+    >
+      {preview.kind === "authorization" ? (
+        <AuthorizationReview
+          key={`${preview.authorization.sessionId}\u0000${preview.authorization.authorizationId}\u0000${authorizationUncertain}`}
+          authorization={preview.authorization}
+          disabled={authorizationDisabled || !onAuthorizationOperation}
+          uncertain={authorizationUncertain}
+          onOperate={onAuthorizationOperation ?? (async () => undefined)}
+          onRefreshActivity={onRefreshAuthorizationActivity}
         />
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          {preview.kind === "authorization" ? (
-            <ShieldCheck aria-hidden="true" className="size-4 text-brand-ink" />
-          ) : preview.kind === "activity" ? (
-            <ListTree aria-hidden="true" className="size-4 text-brand-ink" />
-          ) : preview.kind === "canvas" ? (
-            <NotebookPen aria-hidden="true" className="size-4 text-brand-ink" />
-          ) : preview.kind === "tool" ? (
-            <Braces aria-hidden="true" className="size-4 text-brand-ink" />
-          ) : (
-            <FileText aria-hidden="true" className="size-4 text-brand-ink" />
-          )}
-          <h2
-            className="min-w-0 flex-1 truncate text-sm font-semibold"
-            ref={title}
-            tabIndex={preview.kind === "activity" ? -1 : undefined}
-          >
-            {previewTitle(preview)}
-          </h2>
-          <Button aria-label="Close preview" onClick={close} size="icon" variant="ghost">
-            <PanelRightClose aria-hidden="true" />
-          </Button>
-        </header>
-        <div className="min-h-0 flex-1 overflow-auto">
-          {preview.kind === "authorization" ? (
-            <AuthorizationReview
-              key={`${preview.authorization.sessionId}\u0000${preview.authorization.authorizationId}\u0000${authorizationUncertain}`}
-              authorization={preview.authorization}
-              disabled={authorizationDisabled || !onAuthorizationOperation}
-              uncertain={authorizationUncertain}
-              onOperate={onAuthorizationOperation ?? (async () => undefined)}
-              onRefreshActivity={onRefreshAuthorizationActivity}
-            />
-          ) : preview.kind === "activity" && activity ? (
-            <SessionActivityContent
-              key={activity.focusRequest}
-              fleet={activity.fleet}
-              focus={activity.focus}
-              onFocusChange={activity.onFocusChange}
-            />
-          ) : preview.kind === "canvas" ? (
-            <LocalCanvasEditor onChange={onCanvasChange} value={canvas} />
-          ) : preview.kind === "tool" ? (
-            <ToolResultPreview tool={preview.tool} />
-          ) : preview.kind === "file" ? (
-            <FilePreview file={preview.file} />
-          ) : null}
-        </div>
-      </aside>
-    </>
+      ) : preview.kind === "activity" && activity ? (
+        <SessionActivityContent
+          key={activity.focusRequest}
+          fleet={activity.fleet}
+          focus={activity.focus}
+          onFocusChange={activity.onFocusChange}
+        />
+      ) : preview.kind === "canvas" ? (
+        <LocalCanvasEditor onChange={onCanvasChange} value={canvas} />
+      ) : preview.kind === "tool" ? (
+        <ToolResultPreview tool={preview.tool} />
+      ) : preview.kind === "file" ? (
+        <FilePreview file={preview.file} />
+      ) : null}
+    </SidePanelShell>
   );
 }
 
@@ -341,11 +280,28 @@ function FilePreview({ file }: { file: LocalFilePreview }) {
 }
 
 function FilePreviewContent({ file }: { file: LocalFilePreview }) {
-  if (file.kind === "image" && file.dataUrl) {
+  if (file.kind === "image" && file.dataUrl?.startsWith("data:image/")) {
     return <img alt={file.name} className="max-w-full p-4" src={file.dataUrl} />;
   }
-  if (file.kind === "pdf" && file.dataUrl) {
-    return <iframe className="h-full w-full border-0" src={file.dataUrl} title={file.name} />;
+  if (file.kind === "image" && file.dataUrl && isWebUrl(file.dataUrl)) {
+    return (
+      <p className="p-5 text-sm">
+        Remote images do not load in the preview.{" "}
+        <a href={file.dataUrl} rel="noreferrer" target="_blank">
+          Open remote image
+        </a>
+      </p>
+    );
+  }
+  if (file.kind === "pdf" && file.dataUrl?.startsWith("data:application/pdf")) {
+    return (
+      <p className="p-5 text-sm">
+        Inline PDF preview is unavailable under this site’s content policy.{" "}
+        <a download={file.name} href={file.dataUrl}>
+          Download PDF
+        </a>
+      </p>
+    );
   }
   if (file.kind === "markdown" && file.content !== undefined) {
     return (
@@ -368,9 +324,23 @@ function FilePreviewContent({ file }: { file: LocalFilePreview }) {
   }
   return (
     <div className="grid min-h-64 place-content-center p-6 text-center text-sm text-muted-foreground">
-      <p>No browser preview is available for this file.</p>
+      <p>
+        {file.reason === "oversized"
+          ? "This file is larger than the 5 MB preview limit."
+          : file.reason === "unsupported"
+            ? "This file type is not supported for inline preview."
+            : "No browser preview is available for this file."}
+      </p>
     </div>
   );
+}
+
+function isWebUrl(value: string) {
+  try {
+    return ["https:", "http:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
 }
 
 function previewTitle(preview: StaticPreview) {

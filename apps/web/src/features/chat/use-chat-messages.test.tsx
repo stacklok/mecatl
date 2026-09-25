@@ -46,3 +46,29 @@ it("keeps a draft run's live rows when its new session opens", () => {
   rerender({ sessionId: "new-chat" });
   expect(result.current.messages.map((message) => message.content)).toEqual(["Draft prompt"]);
 });
+
+it("keeps live rows when the first saved transcript arrives after an authorization park", () => {
+  const owner = { current: undefined };
+  const { result, rerender } = renderHook(
+    ({ isRunning, transcript }) => useChatMessages("chat-a", isRunning, transcript, owner),
+    {
+      initialProps: {
+        isRunning: true,
+        transcript: undefined as SessionTranscriptResponse | undefined,
+      },
+    },
+  );
+  act(() =>
+    result.current.setMessages([
+      { content: "Pending authorization", id: "live", role: "assistant" },
+    ]),
+  );
+
+  rerender({
+    isRunning: false,
+    transcript: { complete: true, messages: [], sessionId: "chat-a" },
+  });
+  expect(result.current.messages.map((message) => message.content)).toEqual([
+    "Pending authorization",
+  ]);
+});
