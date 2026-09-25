@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this adds user-visible selection and clipboard behavior across existing mecatui body surfaces, but changes no durable API, persistence, authority, or subsystem boundary.
 **Decision record:** None — the behavior is local terminal-client interaction built from existing mouse-capture, selection, clipboard, and surface-ownership contracts.
 **Phase:** focused capability — local mecatui selection UX
-**Status:** proposed, 2026-09-25. Ready for Plan / Interface review.
+**Status:** landed in this implementation candidate, 2026-09-25. Authoritative only after human merge.
 **Delivery:** Split. The behavior crosses root input routing, legacy overlays, modal surfaces, tests, and public documentation, so the plan and implementation remain separate review layers.
 **Expected tasks:** 1
 **Plan PR:** [#1928](https://github.com/stacklok/mecatl/pull/1928)

@@ -107,6 +107,78 @@ func TestPermissionModalNonDiffToolFallback(t *testing.T) {
 	}
 }
 
+func TestPermissionModalTextCanBeSelectedAndCopied(t *testing.T) {
+	const marker = "approval reason copy-me"
+	m := approvalModel(t, pendingAsk{
+		AskID:  "sess-copy:1:shell-1",
+		Tool:   "Shell",
+		Args:   `{"command":"printf copy-me"}`,
+		Reason: marker,
+	})
+	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m, cmd := selectBodyMarker(t, m, marker)
+
+	if got := m.bodyFrame.selectedText(); got != marker {
+		t.Fatalf("selected approval text = %q, want %q", got, marker)
+	}
+	payload, ok := osc52Payload(collectLeaves(cmd))
+	if !ok || payload != marker {
+		t.Fatalf("clipboard payload = %q (ok=%v), want %q", payload, ok, marker)
+	}
+	if !strings.Contains(stripANSIstr(m.statusMsg), "copied 23 chars") {
+		t.Fatalf("copy status = %q", stripANSIstr(m.statusMsg))
+	}
+
+	m, cmd = pressKey(m, tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	payload, ok = osc52Payload(collectLeaves(cmd))
+	if !ok || payload != marker {
+		t.Fatalf("CopySelection payload = %q (ok=%v), want %q", payload, ok, marker)
+	}
+
+	x, y := m.bodyFrame.origin.x, m.bodyFrame.origin.y
+	m, cmd = releaseMouse(m, x, y)
+	if cmd != nil || m.bodyFrame.selectedText() != marker {
+		t.Fatal("a later mouse release must not mutate or recopy a retained approval selection")
+	}
+	m, _ = pressKey(m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.modal == nil || m.phase != phaseAwaitingApproval {
+		t.Fatal("the first escape with an approval selection must clear it without resolving the ask")
+	}
+	if got := m.bodyFrame.selectedText(); got != "" {
+		t.Fatalf("approval selection after escape = %q, want empty", got)
+	}
+}
+
+func TestFullScreenApprovalTextCanBeSelectedAndCopied(t *testing.T) {
+	t.Run("arguments", func(t *testing.T) {
+		const marker = "ARGS-COPY-MARKER"
+		m := approvalModel(t, pendingAsk{
+			AskID: "sess-copy:1:shell-args",
+			Tool:  "Shell",
+			Args:  `{"command":"printf ARGS-COPY-MARKER"}`,
+		})
+		m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+		approvalSurfaceOf(t, m).argsViewOpen = true
+		_, cmd := selectBodyMarker(t, m, marker)
+		payload, ok := osc52Payload(collectLeaves(cmd))
+		if !ok || payload != marker {
+			t.Fatalf("full-screen arguments payload = %q (ok=%v), want %q", payload, ok, marker)
+		}
+	})
+
+	t.Run("plan", func(t *testing.T) {
+		const marker = "PLAN-COPY-MARKER"
+		m := planAskModel(t, true)
+		m.deps.NoAltScreen = false
+		approvalSurfaceOf(t, m).ask.Args = `{"plan":"PLAN-COPY-MARKER"}`
+		_, cmd := selectBodyMarker(t, m, marker)
+		payload, ok := osc52Payload(collectLeaves(cmd))
+		if !ok || payload != marker {
+			t.Fatalf("plan-review payload = %q (ok=%v), want %q", payload, ok, marker)
+		}
+	})
+}
+
 // TestPermissionModalNonShellKeepsJSON: a non-diff, non-Shell ask renders the
 // pretty-printed JSON args (the pretty tier only decodes Shell commands).
 func TestPermissionModalNonShellKeepsJSON(t *testing.T) {

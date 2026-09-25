@@ -516,11 +516,12 @@ type promptRecovery struct {
 // Model is the root Elm model. It owns the conversation, the bubbles widgets, the
 // renderer (glamour cache), the active run stream, and the per-run cancel func.
 type Model struct {
-	deps    Deps
-	keys    keyMap
-	rend    *renderer
-	hits    *hitRegions // reference state shared with value-receiver View copies
-	metrics *renderedSurfaceMetrics
+	deps      Deps
+	keys      keyMap
+	rend      *renderer
+	hits      *hitRegions // reference state shared with value-receiver View copies
+	metrics   *renderedSurfaceMetrics
+	bodyFrame *bodyRenderFrame // root-owned render capture shared with View copies
 
 	phase     phase
 	sessionID string
@@ -1073,6 +1074,7 @@ func New(deps Deps) Model {
 		rend:             newRenderer(th, hk),
 		hits:             &hitRegions{},
 		metrics:          &renderedSurfaceMetrics{},
+		bodyFrame:        &bodyRenderFrame{},
 		phase:            phaseConnecting,
 		prompt:           prompt,
 		sp:               sp,
