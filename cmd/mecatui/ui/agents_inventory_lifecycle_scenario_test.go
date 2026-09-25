@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,51 +14,42 @@ import (
 func TestMecatuiAgentInventoryBoundedViewport_Scenario2_CurrentOpenOwnsResult(t *testing.T) {
 	m := newAgentsInvModel(t, sampleAgents(), client.Capabilities{Agents: true})
 
-	opened, first := m.openAgentsInv()
+	opened, staleOpen := m.openAgentsInv()
 	m = opened.(Model)
 	closed, _ := m.closeAgentsInv()
 	m = closed.(Model)
-	opened, second := m.openAgentsInv()
+	opened, current := m.openAgentsInv()
 	m = opened.(Model)
-
-	stale := first()
-	updated, _ := m.updateAgentsInvMsg(stale)
-	m = updated.(Model)
-	if !m.agentsInv.loading || len(m.agentsInv.agents) != 0 || m.agentsInv.err != nil || m.agentsInv.viewport != nil {
-		t.Fatalf("stale result changed reopened state: %#v", m.agentsInv)
-	}
-	updated, _ = m.updateAgentsInvMsg(agentsInvResultMsg{
-		generation: m.agentsInv.generation - 1,
-		result:     client.AgentsMsg{Err: errors.New("stale")},
-	})
-	m = updated.(Model)
-	if !m.agentsInv.loading || m.agentsInv.err != nil || m.agentsInv.viewport != nil {
-		t.Fatalf("stale error changed reopened state: %#v", m.agentsInv)
-	}
-
-	updated, handled := m.updateAgentsInvMsg(second())
-	if !handled {
-		t.Fatal("current result was not handled")
-	}
+	m.agentsInv.viewport = agentsTestViewport(7)
+	updated, _ := m.Update(current())
 	m = updated.(Model)
 	if m.agentsInv.loading || len(m.agentsInv.agents) != 2 || m.agentsInv.err != nil || m.agentsInv.viewport == nil {
 		t.Fatalf("current result did not replace the snapshot: %#v", m.agentsInv)
 	}
-	m.agentsInv.viewport = agentsTestViewport(7)
-	if m.agentsInv.viewport.Offset() != 7 {
-		t.Fatal("precondition: viewport did not move away from the top")
-	}
-	opened, third := m.openAgentsInv()
-	m = opened.(Model)
-	updated, _ = m.updateAgentsInvMsg(third())
-	m = updated.(Model)
 	if got := m.agentsInv.viewport.Offset(); got != 0 {
 		t.Fatalf("current successful result offset = %d, want 0", got)
 	}
 
+	m.agentsInv.viewport = agentsTestViewport(7)
+	wantAgents := append([]client.Agent(nil), m.agentsInv.agents...)
+	wantOffset := m.agentsInv.viewport.Offset()
+	for _, stale := range []tea.Msg{
+		staleOpen(),
+		client.AgentsMsg{Err: errors.New("stale-bare")},
+	} {
+		updated, _ = m.Update(stale)
+		m = updated.(Model)
+		if m.agentsInv.loading || m.agentsInv.err != nil || !reflect.DeepEqual(m.agentsInv.agents, wantAgents) || m.agentsInv.viewport == nil || m.agentsInv.viewport.Offset() != wantOffset {
+			t.Fatalf("stale result %T changed current state: %#v", stale, m.agentsInv)
+		}
+	}
+
 	closed, _ = m.closeAgentsInv()
 	m = closed.(Model)
-	updated, _ = m.updateAgentsInvMsg(third())
+	updated, _ = m.Update(agentsInvResultMsg{
+		generation: m.agentsInv.generation,
+		result:     client.AgentsMsg{Agents: []client.Agent{{Name: "closed-stale"}}},
+	})
 	m = updated.(Model)
 	if m.agentsInv.view != agentsInvNone || m.agentsInv.loading || len(m.agentsInv.agents) != 0 || m.agentsInv.err != nil || m.agentsInv.viewport != nil {
 		t.Fatalf("closed result changed state: %#v", m.agentsInv)
