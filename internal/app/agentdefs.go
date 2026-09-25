@@ -1286,7 +1286,7 @@ func resolveAgentRegistry(ctx context.Context, cfg Config) *agents.Registry {
 	// (projectIngestionAdmitted). The user-tier + explicit defs stay active
 	// regardless ("ask the human" mode, not "do nothing").
 	if cfg.AgentsConventional && cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
-		cfg.diag().Log(ctx, port.LevelWarn, "agent definitions: project-tier defs WITHHELD (untrusted workspace or project ingestion not granted); user-tier and explicit defs stay active. Pass --trust-project (on a headless root) or run --posture auto on an interactive root to admit its project agent defs",
+		cfg.diag().Log(ctx, port.LevelWarn, "agent definitions: project-tier defs WITHHELD (untrusted workspace or project ingestion not granted); user-tier and explicit defs stay active. Pass --trust-project (on a headless root) or run --permission-mode auto on an interactive root to admit its project agent defs",
 			"workspace", cfg.Workspace, "dirs", ".mecatl/agents,.claude/agents")
 	}
 	sources := agents.ResolveSources(agents.ResolveOptions{

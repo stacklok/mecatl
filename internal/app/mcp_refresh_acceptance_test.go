@@ -43,8 +43,9 @@ func TestMCPSourceReconciliation_Scenario4_RealBuildPublicationAndExplicitGrant(
 	)
 	built, err := buildIsolated(t, ctx, Config{
 		Workspace: workspace, StoreDir: storeDir, MockProvider: provider, NoSoul: true,
-		AllowAllTools: true,
-		MCPServers:    []mcp.ServerConfig{{Name: "live", URL: newMCPTestServer(t)}},
+		AllowAllTools:      true,
+		GuardrailsDisabled: true,
+		MCPServers:         []mcp.ServerConfig{{Name: "live", URL: newMCPTestServer(t)}},
 	})
 	if err != nil {
 		t.Fatalf("Build with published MCP runtime: %v", err)

@@ -455,6 +455,7 @@ func TestRouterRoutesChildToClassifiedModelE2E(t *testing.T) {
 		},
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -517,6 +518,7 @@ func TestRouterOffIsByteIdenticalE2E(t *testing.T) {
 		Model:     "gpt-5",
 		// OFF (ADR 0042): no taxonomy ⇒ byte-identical to no router (no classifier call).
 		AllowAllTools:       true,
+		GuardrailsDisabled:  true,
 		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
@@ -607,6 +609,7 @@ func TestRouterCategorySelectorEmptyReasonReducesOnWireE2E(t *testing.T) {
 		},
 		RouterDefaultCategory: "small",
 		AllowAllTools:         true,
+		GuardrailsDisabled:    true,
 		envDetector:           fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
 		liveModelHTTPClient:   offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {

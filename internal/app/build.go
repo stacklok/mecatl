@@ -4618,7 +4618,7 @@ func resolveRulesSeam(ctx context.Context, cfg Config) prompt.RulesSource {
 	// same gate as agents/skills): untrusted, or the ingestion grant withheld. The
 	// user-tier lanes stay active regardless.
 	if cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
-		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace or project ingestion not granted); user-tier rules stay active. Pass --trust-project (on a headless root) or run --posture auto on an interactive root to admit its project rules",
+		cfg.diag().Log(ctx, port.LevelWarn, "rules: project-tier rules WITHHELD (untrusted workspace or project ingestion not granted); user-tier rules stay active. Pass --trust-project (on a headless root) or run --permission-mode auto on an interactive root to admit its project rules",
 			"workspace", cfg.Workspace, "dirs", ".mecatl/rules,.claude/rules")
 	}
 	sources := rules.ResolveSources(rules.ResolveOptions{
@@ -5002,7 +5002,7 @@ func slashCommandDecision(cfg Config) diagFact {
 	if cfg.Workspace != "" && !projectIngestionAdmitted(cfg) {
 		return diagFact{
 			level: port.LevelWarn,
-			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace or project ingestion not granted); raw text passes through. Pass --trust-project (on a headless root) or run --posture auto on an interactive root, or pass --commands-dir to enable project slash commands",
+			msg:   "slash commands: project-tier command dirs WITHHELD (untrusted workspace or project ingestion not granted); raw text passes through. Pass --trust-project (on a headless root) or run --permission-mode auto on an interactive root, or pass --commands-dir to enable project slash commands",
 			args:  []any{"dirs", ".mecatl/commands,.claude/commands"},
 		}
 	}
@@ -8864,9 +8864,12 @@ const (
 		"exactly three, one per session, in your <env> as `permission-mode`. `default` resolves each call " +
 		"deny→ask→allow; `plan` denies mutations and expects a plan presented for approval; `acceptEdits` " +
 		"(accept-edits in mecatui) auto-allows Edit and Write only, leaving Shell and every other mutating " +
-		"tool on the normal rules. mecatui shows the mode in its header, takes `--mode` at launch, and " +
-		"cycles default → plan → accept-edits on shift+tab. (2) OPERATOR POSTURE: deployment-wide via " +
-		"--posture, rising strict < trusted < auto < yolo. auto and yolo widen what a call is authorized " +
+		"tool on the normal rules. mecatui shows the mode in its header, takes a starting mode at launch, and " +
+		"cycles default → plan → accept-edits on shift+tab. (2) OPERATOR POSTURE: deployment-wide and fixed " +
+		"at startup, rising strict < trusted < auto < yolo. The operator sets both with one --permission-mode " +
+		"token (plan, default, accept-edits, trusted, trusted-accept-edits, auto, yolo): its posture half " +
+		"is process-wide, its mode half is only the default a new session starts in, and cycling the session " +
+		"mode never changes the posture. auto and yolo widen what a call is authorized " +
 		"to do, not only how much runs without asking: both set an allow-all rule for every tool call. " +
 		"Posture raises project trust on INTERACTIVE roots only: a HEADLESS deployment does NOT trust the " +
 		"checkout by posture alone. Project ingestion and the read-only child shell follow from project " +

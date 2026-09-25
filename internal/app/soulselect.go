@@ -303,7 +303,7 @@ func selectSoulSource(cfg Config, io baselineIO, gate soulGate) (prompt.SoulSour
 	// trusted AND the ingestion grant (projectIngestionAdmitted). A not-admitted
 	// project soul is dropped silently-but-LOGGED (Warn), never an error.
 	if !projectIngestionAdmitted(cfg) {
-		cfg.diag().Log(context.Background(), port.LevelWarn, "soul: a project-sourced soul was discovered but is NOT INGESTED (untrusted workspace or project ingestion not granted); dropping it (no fragment). Pass --trust-project (on a headless root) or run --posture auto on an interactive root to honour a soul discovered in this repo (only for a repo you trust)",
+		cfg.diag().Log(context.Background(), port.LevelWarn, "soul: a project-sourced soul was discovered but is NOT INGESTED (untrusted workspace or project ingestion not granted); dropping it (no fragment). Pass --trust-project (on a headless root) or run --permission-mode auto on an interactive root to honour a soul discovered in this repo (only for a repo you trust)",
 			"path", projectPath)
 		return nil, soulMeta{Provenance: soulProject, Trusted: false, SHA256: projRes.SHA256, Size: projRes.Size}
 	}
