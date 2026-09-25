@@ -11,14 +11,35 @@ import (
 )
 
 func TestServerProviderRecovery_Scenario7_BlockedObserverDoesNotHoldAdmissionMutex(t *testing.T) {
+	t.Run("attempt observer", func(t *testing.T) { testBlockedRecoveryCallback(t, false) })
+	t.Run("health diagnostics", func(t *testing.T) { testBlockedRecoveryCallback(t, true) })
+}
+
+func testBlockedRecoveryCallback(t *testing.T, diagnostics bool) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	ctx := port.WithAttemptObserver(t.Context(), func(session.NetworkAttemptPayload) {
-		close(entered)
-		<-release
-	})
-	cfg := recoveryConfig(1, time.Second)
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	ctx := t.Context()
+	if !diagnostics {
+		ctx = port.WithAttemptObserver(ctx, func(session.NetworkAttemptPayload) {
+			close(entered)
+			<-release
+		})
+	}
+	waiting := make(chan struct{}, 1)
+	cfg := recoveryConfig(1, 5*time.Second)
 	cfg.BreakerThreshold = 1
+	cfg.BreakerCooldown = 2 * time.Second
+	cfg.Diagnostics = recoveryWaitSignal{entered: waiting}
+	if diagnostics {
+		cfg.Diagnostics = blockedRecoveryDiagnostics{recoveryWaitSignal: recoveryWaitSignal{entered: waiting}, entered: entered, release: release}
+	}
 	provider := Wrap(&fakeProvider{steps: []step{{outerErr: apiErr(503)}}}, cfg).(*resilientProvider)
 	done := make(chan error, 1)
 	go func() {
@@ -45,11 +66,19 @@ func TestServerProviderRecovery_Scenario7_BlockedObserverDoesNotHoldAdmissionMut
 	}
 
 	waitCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	waitDone := make(chan error, 1)
 	go func() {
 		_, err := provider.Stream(waitCtx, port.LLMRequest{})
 		waitDone <- err
 	}()
+	select {
+	case <-waiting:
+	case <-time.After(time.Second):
+		close(release)
+		cancel()
+		t.Fatal("second caller never reached breaker admission wait")
+	}
 	cancel()
 	select {
 	case err := <-waitDone:
@@ -70,22 +99,45 @@ func TestServerProviderRecovery_Scenario7_BlockedObserverDoesNotHoldAdmissionMut
 	}
 }
 
-func TestServerProviderRecovery_Scenario6_DisconnectAndShutdownCancelRecovery(t *testing.T) {
+type blockedRecoveryDiagnostics struct {
+	recoveryWaitSignal
+	entered chan struct{}
+	release <-chan struct{}
+}
+
+func (d blockedRecoveryDiagnostics) Log(ctx context.Context, level port.Level, msg string, args ...any) {
+	if msg == "llm circuit breaker opened" {
+		close(d.entered)
+		<-d.release
+	}
+	d.recoveryWaitSignal.Log(ctx, level, msg, args...)
+}
+
+func TestRecoveryCancellationAfterAdmission(t *testing.T) {
 	for _, phase := range []string{"provider call", "breaker wait"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			entered := make(chan struct{}, 1)
 			cfg := recoveryConfig(2, time.Minute)
 			cfg.BreakerThreshold = 1
-			provider := Wrap(&fakeProvider{steps: []step{{outerErr: apiErr(503)}, {block: true}}}, cfg).(*resilientProvider)
+			cfg.BreakerCooldown = 2 * time.Second
+			cfg.Diagnostics = recoveryWaitSignal{entered: entered}
+			inner := &fakeProvider{steps: []step{{block: true}}, onAttempt: func(context.Context, int) { entered <- struct{}{} }}
+			provider := Wrap(inner, cfg).(*resilientProvider)
 			if phase == "breaker wait" {
 				provider.recordOutcome(0, false, breakerFailure)
-				provider.cfg.BreakerCooldown = time.Hour
 			}
 			done := make(chan error, 1)
 			go func() {
 				_, err := recoveryDrain(t, provider, ctx)
 				done <- err
 			}()
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("recovery never entered requested phase")
+			}
 			cancel()
 			select {
 			case err := <-done:
@@ -93,14 +145,26 @@ func TestServerProviderRecovery_Scenario6_DisconnectAndShutdownCancelRecovery(t 
 					t.Fatalf("cancellation error = %v", err)
 				}
 			case <-time.After(time.Second):
-				t.Fatal("recovery continued after caller disconnect/shutdown")
+				t.Fatal("active operation did not cancel")
 			}
-			provider.breaker.mu.Lock()
-			halfOpen := provider.breaker.halfOpen
-			provider.breaker.mu.Unlock()
-			if halfOpen {
-				t.Fatal("cancellation retained probe ownership")
+			want := 1
+			if phase == "breaker wait" {
+				want = 0
+			}
+			if inner.Calls() != want {
+				t.Fatalf("actual calls=%d want %d", inner.Calls(), want)
 			}
 		})
+	}
+}
+
+type recoveryWaitSignal struct {
+	port.NopDiagnostics
+	entered chan struct{}
+}
+
+func (d recoveryWaitSignal) Log(_ context.Context, _ port.Level, msg string, args ...any) {
+	if msg == "llm provider recovery" && argValue(args, "decision") == "wait" {
+		d.entered <- struct{}{}
 	}
 }

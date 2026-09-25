@@ -629,7 +629,6 @@ type Model struct {
 	queuedMedia                  client.MediaResult // media owned by the local merge queue; sent with the merged follow-up
 	pendingPromptMedia           client.MediaResult // prepared queue media handed to submitPrompt without reconstructing markers
 	queuePaused                  string             // non-empty when a run ended on a non-clean stop with a non-empty queue: the stop reason holding the queue (see drainQueue/renderQueue)
-	failedStepRetryTried         bool               // one-shot guard for automatic typed precommit retry; reset by a genuine prompt or session replacement
 	failedStepRetryRun           bool               // current Converse stream was opened with RetryStart
 	failedStepRetryAuthoritative bool               // current retry emitted turn.start and therefore called the model
 	team                         teamState          // unified f6 agents overlay: container open flag + Teams-tab state (view==teamNone when closed)
@@ -1223,7 +1222,6 @@ func (m Model) resetSessionDerived() Model {
 	m.queuedMedia = client.MediaResult{}
 	m.pendingPromptMedia = client.MediaResult{}
 	m.queuePaused = ""
-	m.failedStepRetryTried = false
 	m.failedStepRetryRun = false
 	m.failedStepRetryAuthoritative = false
 	// Drop staged-but-unsent media attachments: /clear wipes the session-derived

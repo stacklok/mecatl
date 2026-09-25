@@ -532,7 +532,6 @@ func (m Model) applySessionReady(msg client.SessionReadyMsg) (tea.Model, tea.Cmd
 		m.sessionState = sessionStateIdle
 	}
 	m = m.syncDebugTarget()
-	m.failedStepRetryTried = false
 	m.browsingStartupSessions = false
 	m.closeModal()
 	m.statusContextRoot = ""
@@ -3521,9 +3520,6 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 		m.startupRetryPrompt = m.prompt.Value()
 		m.startupFirstPromptPending = true
 	}
-	// This is a genuine new user turn, so it starts a fresh one-retry budget.
-	// Automatic failed-step retry bypasses submitPrompt and therefore cannot re-arm itself.
-	m.failedStepRetryTried = false
 	m.promptRecovery = nil
 	// Only a plain text prompt is recoverable. Attachments, media, and staged file
 	// parts have one-shot lifecycle and must never be replayed implicitly.

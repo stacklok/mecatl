@@ -174,19 +174,3 @@ func TestStreamErrorAlwaysPausesQueue(t *testing.T) {
 		t.Fatalf("stream error must pause without replay: queued=%v paused=%q frames=%#v", m.queued, m.queuePaused, conv.send.frames())
 	}
 }
-
-func TestGenuinePromptAndSessionReplacementResetFailedStepRetryAttempt(t *testing.T) {
-	m, _ := newQueueModel(t)
-	m.failedStepRetryTried = true
-	m = startRunning(t, m, "new prompt")
-	if m.failedStepRetryTried {
-		t.Fatal("genuine prompt did not reset failed-step retry attempt state")
-	}
-
-	m = m.endRun("end_turn")
-	m.failedStepRetryTried = true
-	mm, _, _ := m.applySessionReady(client.SessionReadyMsg{SessionID: "replacement"})
-	if mm.(Model).failedStepRetryTried {
-		t.Fatal("session replacement did not reset failed-step retry attempt state")
-	}
-}
