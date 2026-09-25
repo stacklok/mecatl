@@ -14,10 +14,20 @@ export const sessionModelSelectionSchema = z.object({
 });
 
 export const sessionActionCapabilitiesSchema = z.object({
+  copyId: z.boolean(),
+  copyIdReason: z.string(),
   delete: z.boolean(),
   deleteReason: z.string(),
+  fork: z.boolean(),
+  forkReason: z.string(),
+  inspect: z.boolean(),
+  inspectReason: z.string(),
+  publicChat: z.boolean(),
+  publicChatReason: z.string(),
   rename: z.boolean(),
   renameReason: z.string(),
+  viewTranscript: z.boolean(),
+  viewTranscriptReason: z.string(),
 });
 
 export const sessionSummarySchema = z.object({
@@ -26,6 +36,7 @@ export const sessionSummarySchema = z.object({
   /** Non-empty when this session is an AI-debug chat bound to that target. */
   debugTargetSessionId: z.string(),
   id: z.string(),
+  kind: z.string(),
   modelId: z.string(),
   state: z.string(),
   title: z.string(),
@@ -71,11 +82,26 @@ export const sessionDetailResponseSchema = z.object({
     modelSelection: z.boolean(),
   }),
   id: z.string(),
+  kind: z.string(),
   mode: sessionModeSchema,
   model: sessionModelSelectionSchema
     .extend({
       contextWindow: z.string(),
       reasoningEffort: reasoningEffortSchema,
+    })
+    .optional(),
+  placement: z
+    .object({
+      kind: z.string(),
+      label: z.string(),
+      branch: z.string(),
+      revision: z.string(),
+    })
+    .optional(),
+  relationship: z
+    .object({
+      debugTargetSessionId: z.string().optional(),
+      parentSessionId: z.string().optional(),
     })
     .optional(),
   state: z.string(),
@@ -93,6 +119,11 @@ export const setSessionModeResponseSchema = z.object({
 export const forkSessionRequestSchema = z.object({
   model: sessionModelSelectionSchema,
   reasoningEffort: reasoningEffortSchema,
+  worktreeSelector: z.string().min(1).optional(),
+});
+
+export const clearSessionRequestSchema = z.object({
+  worktreeSelector: z.string().min(1).optional(),
 });
 
 export const forkSessionResponseSchema = z.object({
@@ -287,6 +318,7 @@ export const runStreamEventSchema = z.discriminatedUnion("type", [
 ]);
 
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
+export type ClearSessionRequest = z.infer<typeof clearSessionRequestSchema>;
 export type ForkSessionRequest = z.infer<typeof forkSessionRequestSchema>;
 export type ListSessionsResponse = z.infer<typeof listSessionsResponseSchema>;
 export type RunStreamEvent = z.infer<typeof runStreamEventSchema>;
