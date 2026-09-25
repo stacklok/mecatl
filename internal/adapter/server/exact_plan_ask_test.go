@@ -488,7 +488,7 @@ func TestStudioPlanAsk_Scenario2_DuplicateAndStaleVerdicts(t *testing.T) {
 			if _, err := fresh.ResumeWith(); err != nil {
 				panic(err)
 			}
-			if err := fresh.PauseForApproval(session.PendingAsk{AskID: "replacement", Tool: "PresentPlan", Call: "plan-call", PlanOriginated: true}); err != nil {
+			if err := fresh.PauseForApproval(session.PendingAsk{AskID: "replacement", Tool: "PresentPlan", Call: "plan-call", Origin: session.ApprovalOriginPlan}); err != nil {
 				panic(err)
 			}
 			if err := store.Save(context.Background(), fresh); err != nil {
@@ -552,7 +552,7 @@ func (l *notifyingPlanAskLog) Append(ctx context.Context, id session.SessionID, 
 	if err := l.EventLog.Append(ctx, id, ev); err != nil {
 		return err
 	}
-	if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin() == session.AskOriginPlan {
+	if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan {
 		l.asks <- ev
 	}
 	return nil

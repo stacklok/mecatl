@@ -17,8 +17,8 @@ func TestADR_0362_PlanContinuationFailureWire(t *testing.T) {
 	}
 	event := (&mecatlv1.Event{}).ProtoReflect().Descriptor()
 	failureField := event.Fields().ByName("plan_continuation_failure")
-	if failureField == nil || failureField.Number() != 25 || failureField.Message().FullName() != "mecatl.v1.PlanContinuationFailure" {
-		t.Fatalf("Event.plan_continuation_failure = %v, want message field 25", failureField)
+	if failureField == nil || failureField.Number() != 26 || failureField.Message().FullName() != "mecatl.v1.PlanContinuationFailure" {
+		t.Fatalf("Event.plan_continuation_failure = %v, want message field 26", failureField)
 	}
 	assertExactProtoFields(t, failureField.Message(), map[protoreflect.Name]protoreflect.FieldNumber{
 		"plan_run_id": 1,

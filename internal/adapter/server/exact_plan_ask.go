@@ -108,7 +108,7 @@ func (s *Service) validatePersistedPlanAsk(sess *session.Session, expectedRunID,
 		return checkExpectedRun(expectedRunID, "")
 	}
 	pending, ok := sess.PendingAsk()
-	if !ok || pending.AskID != askID || pending.Origin() != session.AskOriginPlan {
+	if !ok || pending.AskID != askID || pending.Origin != session.ApprovalOriginPlan || pending.Guardrail != nil {
 		return ErrAskNotPending
 	}
 	return s.validatePersistedWorkspace(sess)
