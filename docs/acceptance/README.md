@@ -136,6 +136,10 @@ PR after verification. There is no cleanup or status-only PR.
 - [Acceptance-proof resolution efficiency](acceptance-proof-resolution-efficiency.md) — keeps plan-proof resolution fail closed while avoiding duplicate task execution within the existing Doc validation runner; Vitest batching is deferred. Status: proposed.
 - [Workspace enrollment preserves session authority](workspace-enrollment-authority.md) — preserves all still-authorized composed tools while atomically replacing the authenticated broker bundle; already-corrupted snapshots remain narrowed by explicit compatibility decision. Status: proposed.
 - [Contextual investigative guardrails](contextual-guardrails.md) — proposed Architectural contract for one contextual action/inbound reviewer, exact post-mutation permission re-evaluation, session-only exact repeat grants, held-result release-once, main/worker trajectory, session-provider-bound guardrail-slot routing, and separate durable-machine/transient-human status. Product choices are approved; implementation builds capacity calibration and quality-measurement deliverables, while separately authorized real-model release validation is required before any production-readiness claim. Status: proposed.
+- [Native Kubernetes execution provider](native-kubernetes-execution.md) — separately deployed,
+  optional controller/executor service in this monorepo, with retained workspaces and kind
+  qualification. Status: draft; implementation is planned as a draft PR stacked on the plan PR.
+
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this
