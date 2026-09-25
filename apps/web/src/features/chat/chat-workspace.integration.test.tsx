@@ -527,7 +527,7 @@ describe("mounted chat workspace BFF boundary", () => {
       recheck.send(runEvent("result", "6", "", "run-next", { stop: "end_turn" }));
       recheck.close();
     });
-    fireEvent.click(within(review).getByRole("button", { name: "Close preview" }));
+    fireEvent.click(within(review).getByRole("button", { name: "Close panel" }));
     expect(
       bff.requestsAt("POST", "/api/v1/sessions/chat-a/authorizations/auth-1/cancel"),
     ).toHaveLength(0);
@@ -644,7 +644,7 @@ describe("mounted chat workspace BFF boundary", () => {
       fireEvent.click(within(review).getByRole("button", { name: "Recheck" }));
       expect(bff.requestsAt("POST", cancelPath)).toHaveLength(0);
       expect(bff.requestsAt("POST", recheckPath)).toHaveLength(1);
-      fireEvent.click(within(review).getByRole("button", { name: "Close preview" }));
+      fireEvent.click(within(review).getByRole("button", { name: "Close panel" }));
       fireEvent.click(within(row).getByRole("button", { name: "Review authorization" }));
       const reopened = screen.getByRole("complementary", { name: "Authorization review" });
       expect(

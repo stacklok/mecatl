@@ -25,12 +25,11 @@ export function useChatMessages(
   useEffect(() => {
     if (!sessionId || isRunning || !transcript) return;
     const saved = messagesFromTranscript(transcript.messages);
+    loadedTranscriptSession.current = sessionId;
     setMessages((current) => {
-      if (loadedTranscriptSession.current !== sessionId || current.length === 0) {
-        loadedTranscriptSession.current = sessionId;
-        return saved;
-      }
-      return reconcileRecordedMessages(current, saved);
+      // A live authorization park can finish before the first transcript fetch.
+      // Its rows still need reconciliation with that snapshot, even when empty.
+      return current.length === 0 ? saved : reconcileRecordedMessages(current, saved);
     });
   }, [isRunning, sessionId, transcript]);
 
