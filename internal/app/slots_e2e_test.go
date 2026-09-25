@@ -63,7 +63,7 @@ func TestCompactionSlotE2ESummaryModel(t *testing.T) {
 		ModelSlots:   map[string]string{slotCompaction: slotCheap},
 		ModelAliases: map[string]string{slotCheap: cheapModel},
 	}
-	deps := engineDepsForProvider(cfg, summaryLLM, sessionModel, func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), nil, nil, nil)
+	deps := engineDepsForProvider(cfg, summaryLLM, testProviderModel(sessionModel), func() int { return defaultContextWindowTokens }, nil, childPermPolicy(cfg), nil, nil, nil)
 	cc, ok := deps.Compactor.(agent.CascadeCompactor)
 	if !ok {
 		t.Fatalf("Compactor type = %T, want CascadeCompactor", deps.Compactor)

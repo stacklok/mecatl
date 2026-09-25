@@ -152,11 +152,8 @@ type Config struct {
 	// closed, so a composition root that never sets it refuses the field.
 	ClientMCPOnCreate bool
 	Model             string
-	// auxiliaryProviderID is the composition-resolved provider attribution for
-	// direct auxiliary calls; it is never a selector or client-facing control.
-	auxiliaryProviderID string
-	UseOpenAI           bool
-	OpenAIKey           string
+	UseOpenAI         bool
+	OpenAIKey         string
 	// OpenAIBearerTokenFile is a rotating credential source for only the OpenAI
 	// registry entry. The adapter reads it for every request.
 	OpenAIBearerTokenFile string
@@ -2597,10 +2594,6 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 			reflectionCfg.Workspace = workspace
 			reflectionCfg.LearningMode, reflectionCfg.LearningSensitivity, reflectionCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 			reflectionCfg.Model = sess.ModelID
-			reflectionCfg.auxiliaryProviderID = sess.ProviderID
-			if reflectionCfg.auxiliaryProviderID == "" {
-				reflectionCfg.auxiliaryProviderID = reg.Default()
-			}
 			reflectionCfg.attemptRepository = assets.attemptRepository
 			reflectionCfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 			reflectionCfg.learningSourceStore = store
@@ -2619,7 +2612,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				// provider's own default above; cfg.Model belongs to reg.Default().
 				reflectionCfg.Model = cfg.Model
 			}
-			explicitReflection := buildExplicitReflectionObserver(reflectionCfg, reflectionProvider, reflectionCfg.Model, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, buildProcedureProcessor(reflectionCfg, assets))
+			reflectionProviderID := sess.ProviderID
+			if reflectionProviderID == "" {
+				reflectionProviderID = reg.Default()
+			}
+			explicitReflection := buildExplicitReflectionObserver(reflectionCfg, reflectionProvider, session.ProviderModelID{ProviderID: reflectionProviderID, ModelID: reflectionCfg.Model}, assets.userModelStore, assets.memStore, assets.reflectionRepository, assets.reflectionCoordinator, buildProcedureProcessor(reflectionCfg, assets))
 			if explicitReflection == nil {
 				return server.ReflectionReceipt{}, errors.New("reflection is not configured")
 			}
@@ -3165,9 +3162,7 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 			policy = permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 		}
 		policy = sessiondebug.NewPermissionPolicy(policy, store, target, expectedFingerprint, expectedOwner, cfg.OwnershipEnforced, cfg.Headless, mounted)
-		debugCfg := cfg
-		debugCfg.auxiliaryProviderID = providerID
-		deps := engineDepsForProvider(debugCfg, provider, model, reg.windowResolver(cfg, providerID, model), store, policy, hookexec.New(nil), nil, prompt.NewMultiAssembler())
+		deps := engineDepsForProvider(cfg, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, reg.windowResolver(cfg, providerID, model), store, policy, hookexec.New(nil), nil, prompt.NewMultiAssembler())
 		deps.Catalog = cat
 		deps.CommandExpander = nil
 		deps.OperatorProfileSource = nil
@@ -3424,16 +3419,13 @@ func sessionEngineFactoryWithTools(
 		learningCfg.Workspace = workspace
 		learningCfg.LearningMode, learningCfg.LearningSensitivity, learningCfg.SkillActivationPolicy = learningPolicyForWorkspace(cfg, workspace)
 		learningCfg.Model = resolvedModel
-		learningCfg.auxiliaryProviderID = resolvedProviderID
 		learningCfg.attemptRepository = runtimeAssets.attemptRepository
 		learningCfg.automaticAdmissionLedger = runtimeAssets.automaticAdmissionLedger
 		learningCfg.learningSourceStore = store
-		engineCfg := cfg
-		engineCfg.auxiliaryProviderID = resolvedProviderID
-		deps := engineDepsForProvider(engineCfg, resolvedProvider, resolvedModel, windowFn, store, policy, hooks, mcpProvider, instructions)
+		deps := engineDepsForProvider(cfg, resolvedProvider, session.ProviderModelID{ProviderID: resolvedProviderID, ModelID: resolvedModel}, windowFn, store, policy, hooks, mcpProvider, instructions)
 		attachOperatorProfile(&deps, runtimeAssets.userModelStore)
 		deps.LearningMode = learningCfg.LearningMode
-		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, learningCfg.Model, runtimeAssets.userModelStore, runtimeAssets.memStore, runtimeAssets.reflectionRepository, runtimeAssets.reflectionCoordinator, runtimeAssets.learningAdmissionGate, buildProcedureProcessor(learningCfg, runtimeAssets)), runtimeAssets.reflectionLifecycle)
+		deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(learningCfg, resolvedProvider, session.ProviderModelID{ProviderID: resolvedProviderID, ModelID: learningCfg.Model}, runtimeAssets.userModelStore, runtimeAssets.memStore, runtimeAssets.reflectionRepository, runtimeAssets.reflectionCoordinator, runtimeAssets.learningAdmissionGate, buildProcedureProcessor(learningCfg, runtimeAssets)), runtimeAssets.reflectionLifecycle)
 		deps.Catalog = cat
 		// Fire-result delivery drain (ADR 0075): the per-session engine's Step 2a
 		// drain reads the SAME durable queue as the main engine. nil (no
@@ -4362,12 +4354,11 @@ func buildEngine(ctx context.Context, cfg Config, reg *providerRegistry, provide
 	cfg.attemptRepository = assets.attemptRepository
 	cfg.automaticAdmissionLedger = assets.automaticAdmissionLedger
 	cfg.learningSourceStore = store
-	cfg.auxiliaryProviderID = reg.Default()
 	deps := baseEngineDeps(cfg, reg, provider, engineStore, sharedPolicy, mainHooks, mcpProvider, instructions)
 	attachGuardrailReviewer(&deps, buildGuardrailsActionReviewer(cfg, reg, provider, reg.Default(), guardrailWaiver), cfg.guardrailDetails)
 	attachOperatorProfile(&deps, userModelStore)
 	deps.LearningMode = cfg.LearningMode
-	deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(cfg, provider, reg.ResolvedDefaultModel(), userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmissionGate, buildProcedureProcessor(cfg, assets)), assets.reflectionLifecycle)
+	deps.LearningObserver = bindMaterializationLifecycle(buildReflectionObserver(cfg, provider, session.ProviderModelID{ProviderID: reg.Default(), ModelID: reg.ResolvedDefaultModel()}, userModelStore, memStore, assets.reflectionRepository, assets.reflectionCoordinator, learningAdmissionGate, buildProcedureProcessor(cfg, assets)), assets.reflectionLifecycle)
 	deps.Catalog = cat
 	// MODEL-VISIBLE Schedule affordance (ADR 0073, the ADR-0070 gate), on the
 	// SHARED engine too — the SAME wiring the per-session factory applies
@@ -4717,7 +4708,7 @@ func baseEngineDeps(
 	// the live Swap, with NO rehydration and NO defaultSessionNeedsLiveWindow trigger
 	// (both removed). An operator --context-window-override still WINS (inside the
 	// resolver).
-	return engineDepsForProvider(cfg, provider, cfg.Model, reg.windowResolver(cfg, reg.Default(), cfg.Model), store, policy, hooks, mcpProvider, instructions)
+	return engineDepsForProvider(cfg, provider, session.ProviderModelID{ProviderID: reg.Default(), ModelID: cfg.Model}, reg.windowResolver(cfg, reg.Default(), cfg.Model), store, policy, hooks, mcpProvider, instructions)
 }
 
 // engineDepsForProvider re-derives the COMPLETE set of provider-closing agent.Deps
@@ -4767,7 +4758,7 @@ func baseEngineDeps(
 func engineDepsForProvider(
 	cfg Config,
 	provider port.LLMProvider,
-	model string,
+	providerModel session.ProviderModelID,
 	windowFn func() int,
 	store port.SessionStore,
 	policy port.PermissionPolicy,
@@ -4775,6 +4766,7 @@ func engineDepsForProvider(
 	mcpProvider mcp.Provider,
 	instructions prompt.InstructionAssembler,
 ) agent.Deps {
+	model := providerModel.ModelID
 	// modelCfg is cfg with the provider-closing Model overridden, so promptConfig
 	// (Env.Model + agencyDelta), buildTokenCounter (tiktoken vocab), and buildCompactor
 	// (Model field) all close over the REQUESTED model rather than cfg.Model. Every
@@ -4821,12 +4813,12 @@ func engineDepsForProvider(
 		Diagnostics:           cfg.diag(),
 		PromptConfig:          promptConfig(modelCfg, cfg.gitStatus),
 		Model:                 model,
-		ProviderModel:         session.ProviderModelID{ProviderID: modelCfg.auxiliaryProviderID, ModelID: model},
+		ProviderModel:         providerModel,
 		ContextWindow:         windowFn,
 		CompactionRatio:       defaultCompactionRatio,
 		OperatorProfileSource: cfg.operatorProfileSource,
 		TokenCounter:          counter,
-		Compactor:             buildCompactor(compactorCfg, provider, compactorCounter),
+		Compactor:             buildCompactor(compactorCfg, provider, session.ProviderModelID{ProviderID: providerModel.ProviderID, ModelID: compactorCfg.Model}, compactorCounter),
 		CommandExpander:       buildCommandExpander(cfg, mcpProvider),
 		// No-progress nudge budget: operator-tunable (cfg), inherited by children
 		// (childEngineDepsForProvider keeps this field). Zero → NewEngine applies the
@@ -5539,18 +5531,15 @@ func buildTokenCounterWithDecision(cfg Config) (agent.TokenCounter, diagFact) {
 // It does NOT log — the build-once composition fact is emitted ONCE in Build via
 // the injected Diagnostics (see logBuildConfigFacts); this builder runs per
 // session AND per child engine.
-func buildCompactor(cfg Config, provider port.LLMProvider, counter agent.TokenCounter) agent.Compactor {
+func buildCompactor(cfg Config, provider port.LLMProvider, providerModel session.ProviderModelID, counter agent.TokenCounter) agent.Compactor {
 	switch cfg.Compaction {
 	case "cascade":
 		return agent.CascadeCompactor{
-			Counter:      counter,
-			BudgetTokens: int(float64(defaultContextWindowTokens) * defaultCompactionTargetRatio),
-			LLM:          provider,
-			Model:        cfg.Model,
-			ProviderModel: session.ProviderModelID{
-				ProviderID: cfg.auxiliaryProviderID,
-				ModelID:    cfg.Model,
-			},
+			Counter:       counter,
+			BudgetTokens:  int(float64(defaultContextWindowTokens) * defaultCompactionTargetRatio),
+			LLM:           provider,
+			Model:         cfg.Model,
+			ProviderModel: providerModel,
 		}
 	default:
 		return agent.HeuristicCompactor{}
@@ -6454,8 +6443,8 @@ func buildUserModelReviewEngine(cfg Config, reg *providerRegistry, providerID st
 		}
 	}
 	mustValidateClassifiedCatalog(classified, "user-model review tool catalog")
-	return newChildEngine(cfg, "usermodel-review", provider, classified.catalog, cfg.Model,
-		reg.windowResolver(cfg, providerID, cfg.Model), promptConfig(cfg, cfg.gitStatus))
+	return newChildEngineForProvider(cfg, "usermodel-review", provider, session.ProviderModelID{ProviderID: providerID, ModelID: cfg.Model},
+		reg.windowResolver(cfg, providerID, cfg.Model), classified.catalog, promptConfig(cfg, cfg.gitStatus), nil)
 }
 
 // braveSearchEndpoint is the Brave Web Search API endpoint the BRAVE_API_KEY tier
@@ -6815,16 +6804,16 @@ func childOperatorProfileSource(cfg Config, role string) prompt.OperatorProfileS
 // the prompt config. It is the single source of truth for that boilerplate so the
 // five child-engine builders (Subagent explorer, Fork branch, Fork judge, per-def Subagent
 // engine, team member) cannot drift apart.
-func newChildEngine(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, windowFn func() int, pc prompt.Config) *agent.Engine {
-	return newChildEngineWithHooks(cfg, role, provider, cat, model, windowFn, pc, hookexec.New(nil))
+func newChildEngine(cfg Config, role string, provider port.LLMProvider, providerModel session.ProviderModelID, cat *tool.Catalog, windowFn func() int, pc prompt.Config) *agent.Engine {
+	return newChildEngineWithHooks(cfg, role, provider, providerModel, cat, windowFn, pc, hookexec.New(nil))
 }
 
 // newChildEngineWithHooks is newChildEngine with an explicit HookRunner, so a
 // per-def Subagent/member engine can scope its own lifecycle hooks (from a def's
 // `hooks:` map) instead of the inert default. A nil hooks runner falls back to an
 // inert one, preserving the no-hooks contract.
-func newChildEngineWithHooks(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, windowFn func() int, pc prompt.Config, hooks port.HookRunner) *agent.Engine {
-	return agent.NewEngine(childEngineDeps(cfg, role, provider, cat, model, windowFn, pc, hooks))
+func newChildEngineWithHooks(cfg Config, role string, provider port.LLMProvider, providerModel session.ProviderModelID, cat *tool.Catalog, windowFn func() int, pc prompt.Config, hooks port.HookRunner) *agent.Engine {
+	return agent.NewEngine(childEngineDeps(cfg, role, provider, providerModel, cat, windowFn, pc, hooks))
 }
 
 // childEngineDeps builds the agent.Deps for the DEFAULT-provider child shape
@@ -6833,7 +6822,8 @@ func newChildEngineWithHooks(cfg Config, role string, provider port.LLMProvider,
 // newChildEngineForProvider: the engine's deps are private, so a test can only
 // assert this literal's fields (e.g. that Clock is wired — issue #53) against
 // the helper, never through the constructed *agent.Engine.
-func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *tool.Catalog, model string, windowFn func() int, pc prompt.Config, hooks port.HookRunner) agent.Deps {
+func childEngineDeps(cfg Config, role string, provider port.LLMProvider, providerModel session.ProviderModelID, cat *tool.Catalog, windowFn func() int, pc prompt.Config, hooks port.HookRunner) agent.Deps {
+	model := providerModel.ModelID
 	if hooks == nil {
 		hooks = hookexec.New(nil)
 	}
@@ -6856,7 +6846,7 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 		Hooks:              hooks,
 		PromptConfig:       pc,
 		Model:              model,
-		ProviderModel:      session.ProviderModelID{ProviderID: cfg.auxiliaryProviderID, ModelID: model},
+		ProviderModel:      providerModel,
 		// Diagnostics is LIVE for child engines (correlated by session + the agent
 		// role below) so interleaved child diagnostics are readable on the operator
 		// channel — this is DISTINCT from Sink/ToolCallRecorder (telemetry/audit),
@@ -6899,8 +6889,8 @@ func childEngineDeps(cfg Config, role string, provider port.LLMProvider, cat *to
 // gets its switched model's window, and an INHERITED-DEFAULT child (a def that pins no
 // provider on a default session) now gets the PARENT model's REAL window too (issue
 // #64). Resolve-at-use: a post-construction live Swap self-corrects the child too.
-func newChildEngineForProvider(cfg Config, role string, provider port.LLMProvider, model string, windowFn func() int, cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner) *agent.Engine {
-	return agent.NewEngine(childEngineDepsForProvider(cfg, role, provider, model, windowFn, cat, pc, hooks))
+func newChildEngineForProvider(cfg Config, role string, provider port.LLMProvider, providerModel session.ProviderModelID, windowFn func() int, cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner) *agent.Engine {
+	return agent.NewEngine(childEngineDepsForProvider(cfg, role, provider, providerModel, windowFn, cat, pc, hooks))
 }
 
 // childEngineDepsForProvider builds the agent.Deps for a child/member engine bound
@@ -6909,7 +6899,7 @@ func newChildEngineForProvider(cfg Config, role string, provider port.LLMProvide
 // shape. It is split out from newChildEngineForProvider so a test can assert the
 // child Deps directly (Sink/ToolCallRecorder role-scoped-or-nil, Compactor/TokenCounter
 // keyed on the CHILD's model) — the engine's deps are otherwise private.
-func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvider, model string, windowFn func() int, cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner) agent.Deps {
+func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvider, providerModel session.ProviderModelID, windowFn func() int, cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner) agent.Deps {
 	if hooks == nil {
 		hooks = hookexec.New(nil)
 	}
@@ -6920,7 +6910,7 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 	// agency delta keyed on `model`) is then REPLACED with the caller's pc, which the
 	// per-def path composes with the def body — but the Model/TokenCounter/Compactor/
 	// ContextWindow it derived are kept (those are the contamination-sensitive fields).
-	deps := engineDepsForProvider(cfg, provider, model, windowFn,
+	deps := engineDepsForProvider(cfg, provider, providerModel, windowFn,
 		nil, // store: child engines never persist (disables Learn entirely)
 		// The child policy: allow-all floor + AudienceSubagent pin + the
 		// workspace-pinned config resolver (issue #32) — see childPermPolicy.
@@ -7030,7 +7020,7 @@ func buildChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMPr
 // ContextWindow are private once inside the engine).
 func childExplorerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) agent.Deps {
 	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-	return childEngineDepsForProvider(cfg, "task", provider, model, windowFn,
+	return childEngineDepsForProvider(cfg, "task", provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
 		readOnlyExplorerCatalog(runner), explorerPromptConfig(modelCfgFor(cfg, model)), nil)
 }
 
@@ -7154,7 +7144,7 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 	// excluded — readOnlyExplorerCatalog never adds them — so a branch can't recurse.)
 	childCat := writableExplorerCatalog(runner, "parallel child tool catalog")
 
-	return childEngineDepsForProvider(cfg, "parallel", provider, model, windowFn,
+	return childEngineDepsForProvider(cfg, "parallel", provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
 
@@ -7175,7 +7165,7 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 // explorer and Parallel branches.
 func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) *agent.Engine {
 	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-	return agent.NewEngine(writableExplorerDeps(cfg, provider, model, "task:read-write", windowFn, runner))
+	return agent.NewEngine(writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, "task:read-write", windowFn, runner))
 }
 
 // writableExplorerDeps builds the agent.Deps for a WRITABLE explorer child engine on a
@@ -7192,9 +7182,10 @@ func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, pro
 // distinguishable in raw role-tagged diagnostics. The caller owns model + windowFn
 // resolution (resolveDefaultChildModel for the default engine; the override id VERBATIM
 // with childWindowFor for the factory — the buildParallelEngineFactory discipline).
-func writableExplorerDeps(cfg Config, provider port.LLMProvider, model, role string, windowFn func() int, runner tool.CommandRunner) agent.Deps {
+func writableExplorerDeps(cfg Config, provider port.LLMProvider, providerModel session.ProviderModelID, role string, windowFn func() int, runner tool.CommandRunner) agent.Deps {
+	model := providerModel.ModelID
 	childCat := writableExplorerCatalog(runner, "writable subagent tool catalog")
-	return childEngineDepsForProvider(cfg, role, provider, model, windowFn,
+	return childEngineDepsForProvider(cfg, role, provider, providerModel, windowFn,
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
 
@@ -7222,7 +7213,7 @@ func buildWritableSubagentEngineFactory(cfg Config, provReg *providerRegistry, p
 			return nil, false
 		}
 		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		deps := writableExplorerDeps(cfg, provider, model, "task:read-write:model="+model, windowFn, mainRunner)
+		deps := writableExplorerDeps(cfg, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, "task:read-write:model="+model, windowFn, mainRunner)
 		return agent.NewEngine(deps), true
 	}
 }
@@ -7261,7 +7252,7 @@ func buildParallelEngineFactory(cfg Config, provReg *providerRegistry, provider 
 		// mirrors parallelChildDeps exactly (Read/Grep/Glob/Edit/Write + Shell when wired).
 		childCat := writableExplorerCatalog(runner, "routed parallel child tool catalog")
 		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		deps := childEngineDepsForProvider(cfg, "parallel:model="+model, provider, model, windowFn,
+		deps := childEngineDepsForProvider(cfg, "parallel:model="+model, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
 			childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 		return agent.NewEngine(deps), true
 	}
@@ -7286,10 +7277,9 @@ func buildParallelJudgeEngine(cfg Config, reg *providerRegistry, providerID stri
 // parallelJudgeDeps exposes the judge's composition inputs for focused wiring
 // tests; the Engine keeps its dependencies private after construction.
 func parallelJudgeDeps(cfg Config, reg *providerRegistry, providerID string, provider port.LLMProvider) agent.Deps {
-	cfg.auxiliaryProviderID = providerID
-	deps := childEngineDepsForProvider(cfg, "parallel-judge", provider, cfg.Model,
+	providerModel := session.ProviderModelID{ProviderID: providerID, ModelID: cfg.Model}
+	deps := childEngineDepsForProvider(cfg, "parallel-judge", provider, providerModel,
 		reg.windowResolver(cfg, providerID, cfg.Model), tool.NewCatalog(), promptConfig(cfg, cfg.gitStatus), nil)
-	deps.ProviderModel = session.ProviderModelID{ProviderID: providerID, ModelID: cfg.Model}
 	return deps
 }
 
@@ -7345,12 +7335,12 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 		model = parentModel
 	}
 	windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-	cfg.auxiliaryProviderID = parentProviderID
+	providerModel := session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}
 	// newChildEngineForProvider's deps builder: the reviewer compacts/counts/
 	// prompts on ITS resolved model with a re-derived window — and, crucially,
 	// childEngineDepsForProvider forces ChildAskReviewer nil, so the reviewer
 	// engine can never carry a nested reviewer (no construct-recursion).
-	deps := childEngineDepsForProvider(cfg, "ask-reviewer", provider, model, windowFn,
+	deps := childEngineDepsForProvider(cfg, "ask-reviewer", provider, providerModel, windowFn,
 		tool.NewCatalog(), promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 	// Disable the no-progress nudge on the reviewer engine: its session caps at
 	// MaxTurns=1, and an EMPTY (verdict-less) first turn must terminate cleanly in
@@ -7358,7 +7348,6 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 	// no-verdict failure), not be nudged into a second call before the turn cap
 	// trips. A negative value is the explicit "disable nudging" sentinel.
 	deps.MaxNoProgressNudges = -1
-	deps.ProviderModel = session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}
 	return deps, true
 }
 
@@ -7484,12 +7473,10 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 // before its dependencies become private inside the per-call Engine.
 func modelRouterDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, classifierModel string) agent.Deps {
 	windowFn := childWindowFor(cfg, provReg, parentProviderID, classifierModel)
-	utilityCfg := cfg
-	utilityCfg.auxiliaryProviderID = parentProviderID
-	deps := childEngineDepsForProvider(utilityCfg, "model-router", provider, classifierModel, windowFn,
+	providerModel := session.ProviderModelID{ProviderID: parentProviderID, ModelID: classifierModel}
+	deps := childEngineDepsForProvider(cfg, "model-router", provider, providerModel, windowFn,
 		tool.NewCatalog(), promptConfig(modelCfgFor(cfg, classifierModel), cfg.gitStatus), nil)
 	deps.MaxNoProgressNudges = -1
-	deps.ProviderModel = session.ProviderModelID{ProviderID: parentProviderID, ModelID: classifierModel}
 	return deps
 }
 
@@ -7723,7 +7710,7 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, hooks port.HookRunner, store port.SessionStore, a catalogAssets) tool.Tool {
 	newNoFSChild := func(role, model string, windowFn func() int) *agent.Engine {
 		pc := applyNoFSPosture(explorerPromptConfig(modelCfgFor(cfg, model)), noFSMemberNote)
-		return newChildEngineForProvider(cfg, role, provider, model, windowFn, noFSChildCatalog(ctx, cfg, a), pc, nil)
+		return newChildEngineForProvider(cfg, role, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn, noFSChildCatalog(ctx, cfg, a), pc, nil)
 	}
 	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
 	opts := []agent.SubagentOption{
@@ -7775,7 +7762,7 @@ func buildSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider 
 		// different model.
 		childCat := readOnlyExplorerCatalog(runner)
 		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		eng := newChildEngineForProvider(cfg, "task:model="+model, provider, model, windowFn,
+		eng := newChildEngineForProvider(cfg, "task:model="+model, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
 			childCat, explorerPromptConfig(modelCfgFor(cfg, model)), nil)
 		return eng, true
 	}
@@ -7846,7 +7833,7 @@ func buildAgentModelEngineFactory(ctx context.Context, cfg Config, provReg *prov
 		}
 		windowFn := childWindowFor(cfg, provReg, pid, model)
 
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":model="+model, reg.Detail(def.Name), childProvider, model, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, "task:"+def.Name+":model="+model, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
 			baseSubagentTools(cfg), false /*allowMutating*/, runner != nil, skillIdx, defaultHooks, runner, mainMgr)
 		// The def has no inline servers (rejected above), so mcpClose is nil; call it
 		// defensively in case a future reference-only path ever returns one (a reference
@@ -7906,7 +7893,7 @@ func buildAgentWritableEngineFactories(ctx context.Context, cfg Config, provReg 
 			role += ":model=" + model
 		}
 
-		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, role, reg.Detail(def.Name), childProvider, model, windowFn,
+		eng, mcpClose, names, _, skillCount := buildAgentDefEngine(ctx, cfg, def, role, reg.Detail(def.Name), childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn,
 			baseSubagentTools(cfg), true /*allowMutating*/, mainRunner != nil /*allowShell*/, skillIdx, defaultHooks, mainRunner, mainMgr)
 		if mcpClose != nil {
 			if err := mcpClose(); err != nil {
@@ -8206,7 +8193,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			}
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
-			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, provider, model, windowFn, cat, pc, nil)
+			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn, cat, pc, nil)
 			return agent.MemberBuild{Engine: eng, Close: generationClose, MCPToolNames: exempt}
 		}
 		classified := newClassifiedCatalog()
@@ -8227,6 +8214,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			model         = defaultModel
 			pc            = promptConfig(modelCfgFor(cfg, defaultModel), cfg.gitStatus)
 			childProvider = provider
+			providerID    = parentProviderID
 			windowFn      = defaultWindowFn
 			mode          session.PermissionMode
 			// memberLimits carries ONLY the def-set per-round stop conditions (zero =
@@ -8320,7 +8308,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// Resolve the def's (provider, model, window) via the SHARED helper: a
 			// pinned-and-known provider switches the member engine; a def pinning none
 			// inherits the parent. resolve ONCE; thread the model into agentPromptConfig.
-			childProvider, _, model, windowFn = resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
+			childProvider, providerID, model, windowFn = resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
 			bodies, missing := preloadedSkillBodies(def, skillIdx)
 			for _, name := range missing {
 				cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def references an unknown skill; not preloaded",
@@ -8378,7 +8366,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 		// compacts/counts on its own model (contamination fix); an inherited-default
 		// member now resolves the parent model's REAL window via childWindowFor too
 		// (issue #64), flooring to 128k only for a genuinely uncatalogued model.
-		eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, model, windowFn, cat, pc, memberHooks)
+		eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn, cat, pc, memberHooks)
 		memberClose := sync.OnceValue(func() error {
 			var mcpErr, generationErr error
 			if mcpClose != nil {

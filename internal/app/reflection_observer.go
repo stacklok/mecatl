@@ -802,7 +802,7 @@ func processReflectionOutcome(
 func buildReflectionObserver(
 	cfg Config,
 	provider port.LLMProvider,
-	model string,
+	providerModel session.ProviderModelID,
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
@@ -812,7 +812,7 @@ func buildReflectionObserver(
 	if cfg.LearningMode == learning.Off {
 		return nil
 	}
-	return buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, admission, procedure...)
+	return buildConfiguredReflectionObserver(cfg, provider, providerModel, operatorMemory, projectMemory, repository, coordinator, admission, procedure...)
 }
 
 func bindMaterializationLifecycle(observer learning.Observer, lifecycle *materializationLifecycle) learning.Observer {
@@ -825,7 +825,7 @@ func bindMaterializationLifecycle(observer learning.Observer, lifecycle *materia
 func buildExplicitReflectionObserver(
 	cfg Config,
 	provider port.LLMProvider,
-	model string,
+	providerModel session.ProviderModelID,
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
@@ -834,14 +834,14 @@ func buildExplicitReflectionObserver(
 	if cfg.LearningMode == learning.Off {
 		cfg.LearningMode = learning.Review
 	}
-	observer, _ := buildConfiguredReflectionObserver(cfg, provider, model, operatorMemory, projectMemory, repository, coordinator, nil, procedure...).(*reflectionObserver)
+	observer, _ := buildConfiguredReflectionObserver(cfg, provider, providerModel, operatorMemory, projectMemory, repository, coordinator, nil, procedure...).(*reflectionObserver)
 	return observer
 }
 
 func buildConfiguredReflectionObserver(
 	cfg Config,
 	provider port.LLMProvider,
-	model string,
+	providerModel session.ProviderModelID,
 	operatorMemory, projectMemory tool.MemoryStore,
 	repository learning.ProposalRepository,
 	coordinator *reflectionCoordinator,
@@ -851,15 +851,17 @@ func buildConfiguredReflectionObserver(
 	if provider == nil || repository == nil {
 		return nil
 	}
+	model := providerModel.ModelID
 	if selected, ok := resolveSlotModel(cfg, slotReflection, model); ok && selected != "" {
 		model = selected
+		providerModel.ModelID = model
 	}
 	if cfg.LearningSensitivity == learning.SensitivityUnset {
 		cfg.LearningSensitivity = learning.Balanced
 	}
 	modelCfg := cfg
 	modelCfg.Model = model
-	reflector, err := agent.NewEvidenceReflector(provider, session.ProviderModelID{ProviderID: cfg.auxiliaryProviderID, ModelID: model}, buildTokenCounter(modelCfg), agent.ReflectionLimits{})
+	reflector, err := agent.NewEvidenceReflector(provider, providerModel, buildTokenCounter(modelCfg), agent.ReflectionLimits{})
 	if err != nil {
 		cfg.diag().Log(context.Background(), port.LevelWarn, "automatic reflection unavailable", "error", err)
 		return nil

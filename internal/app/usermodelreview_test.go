@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -532,13 +533,13 @@ func TestServiceExplicitReflectionReceiptsMatchReviewAndAutoPolicy(t *testing.T)
 		t.Run(tc.mode.String(), func(t *testing.T) {
 			workspace := t.TempDir()
 			provider := mockllm.New(mockllm.TextTurn(`{"kind":"proposed","candidates":[{"kind":"operator_fact","key":"user/output","value":"concise","evidence":["m:0"]}]}`))
-			cfg := Config{Model: "model", Workspace: workspace, auxiliaryProviderID: "test", LearningMode: tc.mode}
-			if tc.mode == learning.Off && buildReflectionObserver(cfg, provider, cfg.Model, memmemory.New(), nil, memproposal.New(), nil, nil) != nil {
+			cfg := Config{Model: "model", Workspace: workspace, LearningMode: tc.mode}
+			if tc.mode == learning.Off && buildReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memmemory.New(), nil, memproposal.New(), nil, nil) != nil {
 				t.Fatal("off mode wired an automatic reflection observer")
 			}
 			repository := memproposal.New()
 			memory := memmemory.New()
-			observer := buildExplicitReflectionObserver(cfg, provider, cfg.Model, memory, nil, repository, nil)
+			observer := buildExplicitReflectionObserver(cfg, provider, testProviderModel(cfg.Model), memory, nil, repository, nil)
 			trajectory := learning.NewTrajectory("explicit-policy", workspace, session.StopEndTurn, session.Usage{}, []session.Message{session.NewUserMessage("Remember that I prefer concise output")})
 			trajectory.Current = learning.MessageSpan{Start: 0, End: 1}
 			receipt, err := observer.Reflect(context.Background(), trajectory, false)
@@ -656,6 +657,28 @@ func TestUserModelReviewEngineCatalogIsReduced(t *testing.T) {
 	}
 	if len(request.Tools) != 1 || request.Tools[0].Name != memory.RememberUserToolName {
 		t.Fatalf("review request tools = %v, want only %s", request.Tools, memory.RememberUserToolName)
+	}
+}
+
+// TestUserModelReviewEngineCascadeCompactorIdentity covers the common child-engine
+// deps builder used by buildUserModelReviewEngine. Its Engine retains deps privately,
+// so this is the narrow observable seam for the nested compactor attribution.
+func TestUserModelReviewEngineCascadeCompactorIdentity(t *testing.T) {
+	const (
+		providerID = "selected-non-default"
+		model      = "user-review-model"
+	)
+	cfg := Config{Model: model, Compaction: "cascade"}
+	deps := childEngineDepsForProvider(cfg, "usermodel-review", mockllm.New(),
+		session.ProviderModelID{ProviderID: providerID, ModelID: model},
+		func() int { return defaultContextWindowTokens }, nil, prompt.Config{}, nil)
+	compactor, ok := deps.Compactor.(agent.CascadeCompactor)
+	if !ok {
+		t.Fatalf("compactor = %T, want agent.CascadeCompactor", deps.Compactor)
+	}
+	want := session.ProviderModelID{ProviderID: providerID, ModelID: model}
+	if compactor.ProviderModel != want {
+		t.Fatalf("cascade ProviderModel = %+v, want %+v", compactor.ProviderModel, want)
 	}
 }
 

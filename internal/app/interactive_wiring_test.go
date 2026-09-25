@@ -23,7 +23,7 @@ func TestInteractiveWiringMainCarriesCfgChildForcesFalse(t *testing.T) {
 
 	// Main deps with Interactive=true must carry it through.
 	mainOn := engineDepsForProvider(
-		Config{Model: "m", Interactive: true}, provider, "m", func() int { return defaultContextWindowTokens },
+		Config{Model: "m", Interactive: true}, provider, testProviderModel("m"), func() int { return defaultContextWindowTokens },
 		nil, policy, hookexec.New(nil), nil, nil)
 	if !mainOn.Interactive {
 		t.Fatalf("main deps with cfg.Interactive=true must carry Interactive=true")
@@ -31,7 +31,7 @@ func TestInteractiveWiringMainCarriesCfgChildForcesFalse(t *testing.T) {
 
 	// Main deps with Interactive=false must carry false (headless daemon / demo).
 	mainOff := engineDepsForProvider(
-		Config{Model: "m", Interactive: false}, provider, "m", func() int { return defaultContextWindowTokens },
+		Config{Model: "m", Interactive: false}, provider, testProviderModel("m"), func() int { return defaultContextWindowTokens },
 		nil, policy, hookexec.New(nil), nil, nil)
 	if mainOff.Interactive {
 		t.Fatalf("main deps with cfg.Interactive=false must carry Interactive=false")
@@ -41,7 +41,7 @@ func TestInteractiveWiringMainCarriesCfgChildForcesFalse(t *testing.T) {
 	// a subagent never surfaces a further-nested ask, so it installs no router.
 	pc := promptConfig(Config{Model: "m"}, "")
 	child := childEngineDepsForProvider(
-		Config{Model: "m", Interactive: true}, "task", provider, "m", func() int { return defaultContextWindowTokens },
+		Config{Model: "m", Interactive: true}, "task", provider, testProviderModel("m"), func() int { return defaultContextWindowTokens },
 		tool.NewCatalog(), pc, hookexec.New(nil))
 	if child.Interactive {
 		t.Fatalf("child deps must force Interactive=false even when cfg.Interactive=true (nested-surfacing fail-safe)")

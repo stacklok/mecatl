@@ -98,11 +98,11 @@ func TestBuildConfigFactsLogOnceAcrossChildDerivations(t *testing.T) {
 
 	// Now derive the MAIN engine deps and N child engine deps — the per-session and
 	// per-child paths that USED to re-log each fact. None of these may emit a fact.
-	_ = engineDepsForProvider(cfg, provider, cfg.Model, func() int { return defaultContextWindowTokens },
+	_ = engineDepsForProvider(cfg, provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens },
 		nil, nil, nil, nil, nil)
 	const nChildren = 5
 	for range nChildren {
-		_ = childEngineDepsForProvider(cfg, "", provider, cfg.Model, func() int { return defaultContextWindowTokens },
+		_ = childEngineDepsForProvider(cfg, "", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens },
 			tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	}
 
