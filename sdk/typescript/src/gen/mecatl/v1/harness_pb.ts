@@ -81,7 +81,9 @@ export const LimitsSchema: GenMessage<Limits> = /*@__PURE__*/
  */
 export type CreateSessionRequest = Message<"mecatl.v1.CreateSessionRequest"> & {
   /**
-   * mode is the permission posture; unspecified defaults to DEFAULT.
+   * mode is the permission posture; unspecified uses the server's configured
+   * default session mode, which is DEFAULT unless the operator chose a
+   * permission mode that starts sessions elsewhere.
    *
    * @generated from field: mecatl.v1.PermissionMode mode = 2;
    */

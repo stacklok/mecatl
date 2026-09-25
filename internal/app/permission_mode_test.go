@@ -597,3 +597,20 @@ func TestInvariant_NoWireOrDomainSurfaceChanged(t *testing.T) {
 		}
 	}
 }
+
+// TestADR_0365_AuthoritativePostureFoldsPermissionModeKey pins that the cmd
+// fast paths (root refusal, pre-launch WARN) see an operator-YAML-only
+// permissionMode: allow-all token, not only an explicit flag.
+func TestADR_0365_AuthoritativePostureFoldsPermissionModeKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operator.yaml")
+	if err := os.WriteFile(path, []byte("permissionMode: yolo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Workspace: t.TempDir(), PermissionConfigs: []string{path}, Diagnostics: port.NopDiagnostics{}}
+	if got := ResolveAuthoritativePosture(cfg); got != PostureYolo {
+		t.Fatalf("authoritative posture = %s, want yolo from the permissionMode: key", got)
+	}
+	if PostureRefusalReason(ResolveAuthoritativePosture(cfg), true) == nil {
+		t.Fatal("a YAML-only permissionMode: yolo must hit the root/no-sandbox refusal fast path")
+	}
+}
