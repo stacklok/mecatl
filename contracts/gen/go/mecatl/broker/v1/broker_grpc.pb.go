@@ -19,12 +19,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BrokerService_Attach_FullMethodName  = "/mecatl.broker.v1.BrokerService/Attach"
-	BrokerService_Commit_FullMethodName  = "/mecatl.broker.v1.BrokerService/Commit"
-	BrokerService_Abort_FullMethodName   = "/mecatl.broker.v1.BrokerService/Abort"
-	BrokerService_Close_FullMethodName   = "/mecatl.broker.v1.BrokerService/Close"
-	BrokerService_Delete_FullMethodName  = "/mecatl.broker.v1.BrokerService/Delete"
-	BrokerService_Execute_FullMethodName = "/mecatl.broker.v1.BrokerService/Execute"
+	BrokerService_Attach_FullMethodName               = "/mecatl.broker.v1.BrokerService/Attach"
+	BrokerService_Commit_FullMethodName               = "/mecatl.broker.v1.BrokerService/Commit"
+	BrokerService_Abort_FullMethodName                = "/mecatl.broker.v1.BrokerService/Abort"
+	BrokerService_Close_FullMethodName                = "/mecatl.broker.v1.BrokerService/Close"
+	BrokerService_Delete_FullMethodName               = "/mecatl.broker.v1.BrokerService/Delete"
+	BrokerService_Execute_FullMethodName              = "/mecatl.broker.v1.BrokerService/Execute"
+	BrokerService_RequestAuthorization_FullMethodName = "/mecatl.broker.v1.BrokerService/RequestAuthorization"
+	BrokerService_AbortAuthorization_FullMethodName   = "/mecatl.broker.v1.BrokerService/AbortAuthorization"
+	BrokerService_PresentAuthorization_FullMethodName = "/mecatl.broker.v1.BrokerService/PresentAuthorization"
+	BrokerService_AuthorizationStatus_FullMethodName  = "/mecatl.broker.v1.BrokerService/AuthorizationStatus"
+	BrokerService_CancelAuthorization_FullMethodName  = "/mecatl.broker.v1.BrokerService/CancelAuthorization"
 )
 
 // BrokerServiceClient is the client API for BrokerService service.
@@ -57,6 +62,17 @@ type BrokerServiceClient interface {
 	// within its receipt lease; changed content fails before dispatch. After lost transport,
 	// retry only with exact structured DISPATCH_NOT_STARTED proof for this method.
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
+	// RequestAuthorization starts authorization for an exact attachment invocation using
+	// current handle/incarnation. Returned refs are opaque, attachment-bound, and expiring.
+	RequestAuthorization(ctx context.Context, in *RequestAuthorizationRequest, opts ...grpc.CallOption) (*RequestAuthorizationResponse, error)
+	// AbortAuthorization abandons an authorization ref. A lost response is ambiguous.
+	AbortAuthorization(ctx context.Context, in *AbortAuthorizationRequest, opts ...grpc.CallOption) (*AbortAuthorizationResponse, error)
+	// PresentAuthorization returns an ephemeral browser URL. Do not log or persist it.
+	PresentAuthorization(ctx context.Context, in *PresentAuthorizationRequest, opts ...grpc.CallOption) (*PresentAuthorizationResponse, error)
+	// AuthorizationStatus reads an authorization ref without renewing absolute leases.
+	AuthorizationStatus(ctx context.Context, in *AuthorizationStatusRequest, opts ...grpc.CallOption) (*AuthorizationStatusResponse, error)
+	// CancelAuthorization cancels a ref; retry/replay remains process- and lease-bound.
+	CancelAuthorization(ctx context.Context, in *CancelAuthorizationRequest, opts ...grpc.CallOption) (*CancelAuthorizationResponse, error)
 }
 
 type brokerServiceClient struct {
@@ -127,6 +143,56 @@ func (c *brokerServiceClient) Execute(ctx context.Context, in *ExecuteRequest, o
 	return out, nil
 }
 
+func (c *brokerServiceClient) RequestAuthorization(ctx context.Context, in *RequestAuthorizationRequest, opts ...grpc.CallOption) (*RequestAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RequestAuthorizationResponse)
+	err := c.cc.Invoke(ctx, BrokerService_RequestAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) AbortAuthorization(ctx context.Context, in *AbortAuthorizationRequest, opts ...grpc.CallOption) (*AbortAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AbortAuthorizationResponse)
+	err := c.cc.Invoke(ctx, BrokerService_AbortAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) PresentAuthorization(ctx context.Context, in *PresentAuthorizationRequest, opts ...grpc.CallOption) (*PresentAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PresentAuthorizationResponse)
+	err := c.cc.Invoke(ctx, BrokerService_PresentAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) AuthorizationStatus(ctx context.Context, in *AuthorizationStatusRequest, opts ...grpc.CallOption) (*AuthorizationStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthorizationStatusResponse)
+	err := c.cc.Invoke(ctx, BrokerService_AuthorizationStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) CancelAuthorization(ctx context.Context, in *CancelAuthorizationRequest, opts ...grpc.CallOption) (*CancelAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelAuthorizationResponse)
+	err := c.cc.Invoke(ctx, BrokerService_CancelAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BrokerServiceServer is the server API for BrokerService service.
 // All implementations must embed UnimplementedBrokerServiceServer
 // for forward compatibility.
@@ -157,6 +223,17 @@ type BrokerServiceServer interface {
 	// within its receipt lease; changed content fails before dispatch. After lost transport,
 	// retry only with exact structured DISPATCH_NOT_STARTED proof for this method.
 	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
+	// RequestAuthorization starts authorization for an exact attachment invocation using
+	// current handle/incarnation. Returned refs are opaque, attachment-bound, and expiring.
+	RequestAuthorization(context.Context, *RequestAuthorizationRequest) (*RequestAuthorizationResponse, error)
+	// AbortAuthorization abandons an authorization ref. A lost response is ambiguous.
+	AbortAuthorization(context.Context, *AbortAuthorizationRequest) (*AbortAuthorizationResponse, error)
+	// PresentAuthorization returns an ephemeral browser URL. Do not log or persist it.
+	PresentAuthorization(context.Context, *PresentAuthorizationRequest) (*PresentAuthorizationResponse, error)
+	// AuthorizationStatus reads an authorization ref without renewing absolute leases.
+	AuthorizationStatus(context.Context, *AuthorizationStatusRequest) (*AuthorizationStatusResponse, error)
+	// CancelAuthorization cancels a ref; retry/replay remains process- and lease-bound.
+	CancelAuthorization(context.Context, *CancelAuthorizationRequest) (*CancelAuthorizationResponse, error)
 	mustEmbedUnimplementedBrokerServiceServer()
 }
 
@@ -184,6 +261,21 @@ func (UnimplementedBrokerServiceServer) Delete(context.Context, *DeleteRequest) 
 }
 func (UnimplementedBrokerServiceServer) Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Execute not implemented")
+}
+func (UnimplementedBrokerServiceServer) RequestAuthorization(context.Context, *RequestAuthorizationRequest) (*RequestAuthorizationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestAuthorization not implemented")
+}
+func (UnimplementedBrokerServiceServer) AbortAuthorization(context.Context, *AbortAuthorizationRequest) (*AbortAuthorizationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AbortAuthorization not implemented")
+}
+func (UnimplementedBrokerServiceServer) PresentAuthorization(context.Context, *PresentAuthorizationRequest) (*PresentAuthorizationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PresentAuthorization not implemented")
+}
+func (UnimplementedBrokerServiceServer) AuthorizationStatus(context.Context, *AuthorizationStatusRequest) (*AuthorizationStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AuthorizationStatus not implemented")
+}
+func (UnimplementedBrokerServiceServer) CancelAuthorization(context.Context, *CancelAuthorizationRequest) (*CancelAuthorizationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelAuthorization not implemented")
 }
 func (UnimplementedBrokerServiceServer) mustEmbedUnimplementedBrokerServiceServer() {}
 func (UnimplementedBrokerServiceServer) testEmbeddedByValue()                       {}
@@ -314,6 +406,96 @@ func _BrokerService_Execute_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BrokerService_RequestAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequestAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).RequestAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_RequestAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).RequestAuthorization(ctx, req.(*RequestAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_AbortAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AbortAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).AbortAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_AbortAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).AbortAuthorization(ctx, req.(*AbortAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_PresentAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PresentAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).PresentAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_PresentAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).PresentAuthorization(ctx, req.(*PresentAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_AuthorizationStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthorizationStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).AuthorizationStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_AuthorizationStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).AuthorizationStatus(ctx, req.(*AuthorizationStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_CancelAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).CancelAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_CancelAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).CancelAuthorization(ctx, req.(*CancelAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BrokerService_ServiceDesc is the grpc.ServiceDesc for BrokerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -344,6 +526,26 @@ var BrokerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Execute",
 			Handler:    _BrokerService_Execute_Handler,
+		},
+		{
+			MethodName: "RequestAuthorization",
+			Handler:    _BrokerService_RequestAuthorization_Handler,
+		},
+		{
+			MethodName: "AbortAuthorization",
+			Handler:    _BrokerService_AbortAuthorization_Handler,
+		},
+		{
+			MethodName: "PresentAuthorization",
+			Handler:    _BrokerService_PresentAuthorization_Handler,
+		},
+		{
+			MethodName: "AuthorizationStatus",
+			Handler:    _BrokerService_AuthorizationStatus_Handler,
+		},
+		{
+			MethodName: "CancelAuthorization",
+			Handler:    _BrokerService_CancelAuthorization_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

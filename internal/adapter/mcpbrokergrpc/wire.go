@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
 	"github.com/stacklok/mecatl/engine/session"
@@ -74,6 +75,8 @@ func brokerStatus(err error) error {
 		return reasonStatus(codes.Unavailable, "broker state unavailable", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
 	case errors.Is(err, mcpbroker.ErrCapacity):
 		return reasonStatus(codes.ResourceExhausted, "broker capacity reached", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED, "")
+	case errors.Is(err, mcpbroker.ErrAuthorizationNotFound):
+		return reasonStatus(codes.NotFound, "authorization not found", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND, "")
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}
@@ -99,7 +102,8 @@ func brokerReason(err error) (brokerv1.BrokerErrorReason, string, bool, error) {
 	switch found.GetReason() {
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE,
 		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_INCARNATION_LOST,
-		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED:
+		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED,
+		brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND:
 		if found.GetDispatchMethod() != "" {
 			return 0, "", false, errors.New("mcpbrokergrpc: malformed broker error reason")
 		}
@@ -150,6 +154,8 @@ func clientError(err error) error {
 		return errors.Join(mcpbroker.ErrStateUnavailable, mcpbroker.ErrBrokerIncarnationLost)
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_ATTACHMENT_CLOSED:
 		return mcpbroker.ErrAttachmentClosed
+	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_AUTHORIZATION_NOT_FOUND:
+		return mcpbroker.ErrAuthorizationNotFound
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_CAPACITY_REACHED:
 		return mcpbroker.ErrCapacity
 	case brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_DISPATCH_NOT_STARTED:
@@ -229,4 +235,26 @@ func validParts(parts []session.Content) bool {
 		}
 	}
 	return session.ValidateToolResultParts(parts) == nil
+}
+func authToWire(a session.ExternalAuthorization) *brokerv1.Authorization {
+	return &brokerv1.Authorization{Id: a.ID, Binding: string(a.Binding), ExpiresAt: timestamppb.New(a.ExpiresAt)}
+}
+func authFromWire(a *brokerv1.Authorization) (session.ExternalAuthorization, error) {
+	if a == nil || a.GetId() == "" || a.GetBinding() == "" || !utf8.ValidString(a.GetId()) || !utf8.ValidString(a.GetBinding()) || a.GetExpiresAt() == nil || !a.GetExpiresAt().IsValid() {
+		return session.ExternalAuthorization{}, errors.New("mcpbrokergrpc: malformed authorization")
+	}
+	return session.ExternalAuthorization{ID: a.GetId(), Binding: session.AuthorizationBinding(a.GetBinding()), ExpiresAt: a.GetExpiresAt().AsTime()}, nil
+}
+func validAuthorizationStatus(s session.AuthorizationStatus) bool {
+	switch s {
+	case session.AuthorizationPending, session.AuthorizationGranted, session.AuthorizationDenied,
+		session.AuthorizationCancelled, session.AuthorizationExpired, session.AuthorizationInterrupted,
+		session.AuthorizationFailed, session.AuthorizationClosed:
+		return true
+	default:
+		return false
+	}
+}
+func validCancelOutcome(out mcpbroker.CancelOutcome) bool {
+	return out == mcpbroker.CancelCancelled || out == mcpbroker.CancelAlreadyCancelled || out == mcpbroker.CancelAlreadyResolved
 }

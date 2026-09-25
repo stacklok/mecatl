@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 
@@ -173,16 +174,43 @@ func (a *clientSessionHandle) Close(ctx context.Context) (mcpbroker.CloseOutcome
 	return mcpbroker.CloseOutcome(r.GetOutcome()), nil
 }
 
-var errAuthorizationUnsupported = errors.New("mcpbrokergrpc: authorization not supported by this broker protocol version")
-
-func (*clientSessionHandle) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
-	return "", errAuthorizationUnsupported
+func (a *clientSessionHandle) PresentAuthorization(ctx context.Context, auth session.ExternalAuthorization) (string, error) {
+	rpcCtx, cancel := context.WithTimeout(ctx, a.client.cfg.RPCDeadline)
+	defer cancel()
+	r, err := a.client.rpc.PresentAuthorization(rpcCtx, &brokerv1.PresentAuthorizationRequest{Handle: a.handle, Authorization: authToWire(auth), BrokerIncarnation: a.instanceID})
+	if err != nil {
+		return "", clientError(err)
+	}
+	if r.GetUrl() == "" || !utf8.ValidString(r.GetUrl()) {
+		return "", errors.New("mcpbrokergrpc: malformed presentation response")
+	}
+	return r.GetUrl(), nil
 }
-func (*clientSessionHandle) AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error) {
-	return "", errAuthorizationUnsupported
+func (a *clientSessionHandle) AuthorizationStatus(ctx context.Context, auth session.ExternalAuthorization) (session.AuthorizationStatus, error) {
+	rpcCtx, cancel := context.WithTimeout(ctx, a.client.cfg.RPCDeadline)
+	defer cancel()
+	r, err := a.client.rpc.AuthorizationStatus(rpcCtx, &brokerv1.AuthorizationStatusRequest{Handle: a.handle, Authorization: authToWire(auth), BrokerIncarnation: a.instanceID})
+	if err != nil {
+		return "", clientError(err)
+	}
+	out := session.AuthorizationStatus(r.GetStatus())
+	if !validAuthorizationStatus(out) {
+		return "", errors.New("mcpbrokergrpc: invalid authorization status")
+	}
+	return out, nil
 }
-func (*clientSessionHandle) CancelAuthorization(context.Context, session.ExternalAuthorization) (mcpbroker.CancelOutcome, error) {
-	return "", errAuthorizationUnsupported
+func (a *clientSessionHandle) CancelAuthorization(ctx context.Context, auth session.ExternalAuthorization) (mcpbroker.CancelOutcome, error) {
+	rpcCtx, cancel := context.WithTimeout(ctx, a.client.cfg.RPCDeadline)
+	defer cancel()
+	r, err := a.client.rpc.CancelAuthorization(rpcCtx, &brokerv1.CancelAuthorizationRequest{Handle: a.handle, Authorization: authToWire(auth), BrokerIncarnation: a.instanceID})
+	if err != nil {
+		return "", clientError(err)
+	}
+	out := mcpbroker.CancelOutcome(r.GetOutcome())
+	if !validCancelOutcome(out) {
+		return "", errors.New("mcpbrokergrpc: invalid cancel outcome")
+	}
+	return out, nil
 }
 
 var _ mcpbroker.Service = (*Client)(nil)

@@ -57,6 +57,34 @@ type remoteSerialTool struct{ *remoteTool }
 
 func (*remoteSerialTool) DispatchSerialTool() {}
 
+type remoteAuthorizationTool struct{ *remoteTool }
+
+func (t *remoteAuthorizationTool) RequestAuthorization(ctx context.Context, call session.ToolCall) (session.ExternalAuthorization, bool, error) {
+	rpcCtx, cancel := context.WithTimeout(ctx, t.client.cfg.RPCDeadline)
+	defer cancel()
+	r, e := t.client.rpc.RequestAuthorization(rpcCtx, &brokerv1.RequestAuthorizationRequest{Handle: t.handle, Name: call.Name, CallId: string(call.ID), Args: append([]byte(nil), call.Args...), ItemId: call.ItemID, BrokerIncarnation: t.instanceID})
+	if e != nil {
+		return session.ExternalAuthorization{}, false, clientError(e)
+	}
+	if !r.GetRequired() {
+		if r.GetAuthorization() != nil {
+			return session.ExternalAuthorization{}, false, errors.New("mcpbrokergrpc: unexpected authorization")
+		}
+		return session.ExternalAuthorization{}, false, nil
+	}
+	a, e := authFromWire(r.GetAuthorization())
+	return a, true, e
+}
+func (t *remoteAuthorizationTool) AbortAuthorization(ctx context.Context, a session.ExternalAuthorization) error {
+	rpcCtx, cancel := context.WithTimeout(ctx, t.client.cfg.RPCDeadline)
+	defer cancel()
+	_, e := t.client.rpc.AbortAuthorization(rpcCtx, &brokerv1.AbortAuthorizationRequest{Handle: t.handle, Authorization: authToWire(a), BrokerIncarnation: t.instanceID})
+	return clientError(e)
+}
+
+type remoteAuthorizationSerialTool struct{ *remoteAuthorizationTool }
+
+func (*remoteAuthorizationSerialTool) DispatchSerialTool() {}
 func remoteTools(c *Client, r *brokerv1.AttachResponse) ([]tool.Tool, error) {
 	out := make([]tool.Tool, 0, len(r.GetTools()))
 	seen := map[string]bool{}
@@ -66,7 +94,14 @@ func remoteTools(c *Client, r *brokerv1.AttachResponse) ([]tool.Tool, error) {
 		}
 		seen[d.GetName()] = true
 		base := &remoteTool{client: c, handle: r.GetHandle(), instanceID: r.GetBrokerIncarnation(), spec: tool.ToolSpec{Name: d.GetName(), Description: d.GetDescription(), Schema: append([]byte(nil), d.GetSchema()...)}, readOnly: d.GetReadOnly()}
-		if d.GetDispatchSerial() {
+		if d.GetAuthorizationCapable() {
+			a := &remoteAuthorizationTool{remoteTool: base}
+			if d.GetDispatchSerial() {
+				out = append(out, &remoteAuthorizationSerialTool{a})
+			} else {
+				out = append(out, a)
+			}
+		} else if d.GetDispatchSerial() {
 			out = append(out, &remoteSerialTool{base})
 		} else {
 			out = append(out, base)
