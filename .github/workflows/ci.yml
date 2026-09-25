@@ -751,12 +751,14 @@ jobs:
     needs: changes
     # macOS is ~10x a Linux minute. Native Go tests, so gate on Go relevance
     # (macos_go — skips docs/site/SDK-frontend-only changes) and on drafts.
+    # Restoring the macOS Go cache can take over 10 minutes before the native
+    # tests and FreeBSD cross-build begin.
     if: >-
       needs.changes.outputs.docs_only != 'true'
       && needs.changes.outputs.macos_go == 'true'
       && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: macos-14
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
