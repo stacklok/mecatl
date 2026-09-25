@@ -1378,6 +1378,10 @@ type runState struct {
 	exactApprovalContexts map[string]context.Context
 	acceptedApproval      *agent.ApprovalResolution
 	cancelSignaled        bool
+	// terminalEventAdmitted prevents drain from preserving an old awaiting
+	// snapshot while a terminal append is in flight, even if that append fails.
+	// Guarded by persistMu; it is not an owner-cancellation signal.
+	terminalEventAdmitted bool
 	// planContinuation reserves one detached relay before an exact plan allow is
 	// consumed. The terminal relay transfers this ownership to the proceed run.
 	// Guarded by Service.mu.
@@ -3438,7 +3442,7 @@ func (s *Service) snapshotDrainState() (map[session.SessionID]*runState, []sessi
 			// A caller control that crossed persistMu first owns the disposition.
 			// Preserve only an unresolved, successfully persisted handoff that
 			// shutdown itself is about to cancel in memory.
-			if st.awaiting.Load() && st.awaitingAskID != "" && !st.cancelSignaled && st.resolvedAskID == "" {
+			if st.awaiting.Load() && st.awaitingAskID != "" && !st.cancelSignaled && st.resolvedAskID == "" && !st.terminalEventAdmitted {
 				st.preservedAskID = st.awaitingAskID
 				st.preserveDurable.Store(true)
 			}
@@ -7401,6 +7405,53 @@ func (s *Service) finishRelayRun(ctx context.Context, id session.SessionID, run 
 	s.FinishRun(id, run)
 }
 
+// admitRunEvent orders the durable projection against shutdown without holding
+// persistMu across EventLog I/O. An admitted terminal or matching retraction
+// invalidates the old handoff before drain can freeze it, regardless of append
+// success. After the freeze, omit only the shutdown-local cancellation records;
+// the live wire is unchanged.
+func (s *Service) admitRunEvent(id session.SessionID, ev session.Event) bool {
+	if ev.RunID == "" {
+		return true
+	}
+	s.mu.Lock()
+	st := s.runs[id]
+	s.mu.Unlock()
+	if st == nil {
+		return true
+	}
+	st.persistMu.Lock()
+	defer st.persistMu.Unlock()
+	s.mu.Lock()
+	current := s.runs[id] == st && st.run != nil && st.run.RunID() == ev.RunID
+	s.mu.Unlock()
+	if !current {
+		return true
+	}
+	if st.preserveDurable.Load() {
+		switch ev.Type {
+		case session.EvResult:
+			if ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+				return false
+			}
+		case session.EvPermissionRetract:
+			if ev.Ask != nil && ev.Ask.AskID == st.preservedAskID {
+				return false
+			}
+		}
+	} else {
+		switch ev.Type {
+		case session.EvResult:
+			st.terminalEventAdmitted = true
+		case session.EvPermissionRetract:
+			if ev.Ask != nil && ev.Ask.AskID != "" && ev.Ask.AskID == st.awaitingAskID {
+				st.resolvedAskID = ev.Ask.AskID
+			}
+		}
+	}
+	return true
+}
+
 // appendEvent durably records one projected relay event to the configured
 // EventLog. A nil EventLog is a no-op. The caller owns failure diagnostics so a
 // run-scoped recorder can make the warning sticky while continuing later
@@ -7420,41 +7471,8 @@ func (s *Service) appendEvent(ctx context.Context, id session.SessionID, ev sess
 		return nil
 	}
 
-	// A matching live run crosses the same lifecycle barrier as drain. An append
-	// admitted before the freeze completes normally; after the freeze, only the
-	// shutdown-local cancellation projection of the preserved ask is omitted.
-	// The live wire remains unchanged.
-	var lifecycle *runState
-	if ev.RunID != "" {
-		s.mu.Lock()
-		candidate := s.runs[id]
-		s.mu.Unlock()
-		if candidate != nil {
-			candidate.persistMu.Lock()
-			s.mu.Lock()
-			current := s.runs[id] == candidate && candidate.run != nil && candidate.run.RunID() == ev.RunID
-			s.mu.Unlock()
-			if current {
-				lifecycle = candidate
-			} else {
-				candidate.persistMu.Unlock()
-			}
-		}
-	}
-	if lifecycle != nil {
-		defer lifecycle.persistMu.Unlock()
-		if lifecycle.preserveDurable.Load() {
-			switch ev.Type {
-			case session.EvResult:
-				if ev.Result != nil && ev.Result.Stop == session.StopCancelled {
-					return nil
-				}
-			case session.EvPermissionRetract:
-				if ev.Ask != nil && ev.Ask.AskID == lifecycle.preservedAskID {
-					return nil
-				}
-			}
-		}
+	if !s.admitRunEvent(id, ev) {
+		return nil
 	}
 	if !s.mutationLeaseHeld(id) {
 		return fmt.Errorf("%w: %q", ErrSessionLeasedElsewhere, id)
@@ -8817,9 +8835,10 @@ func (s *Service) FinishRun(id session.SessionID, run *agent.Run) {
 		return
 	}
 	s.mu.Lock()
-	st, ok := s.runs[id]
+	st := s.runs[id]
+	matches := st != nil && st.run == run
 	s.mu.Unlock()
-	if !ok || st.run != run {
+	if !matches {
 		return
 	}
 	parked := run.Outcome() == agent.RunOutcomeAuthorizationPending
