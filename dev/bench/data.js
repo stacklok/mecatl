@@ -363966,9 +363966,123 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790353358225,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "4377202+samuv@users.noreply.github.com",
+            "name": "Samuele V",
+            "username": "samuv"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd71c52701509e10f2782a0acfc885f2f7bd8c21",
+          "message": "feat(studio): show session delegation activity (#1907)\n\nSigned-off-by: Samuele Verzi <samu@stacklok.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>",
+          "timestamp": "2026-09-25T18:22:03+02:00",
+          "tree_id": "f18d245ebde6cd8a4c614e87bbeff77e40e7318e",
+          "url": "https://github.com/stacklok/mecatl/commit/cd71c52701509e10f2782a0acfc885f2f7bd8c21"
+        },
+        "date": 1790354069811,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "background_subagents/allocs_per_op",
+            "value": 798,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "background_subagents/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "background_subagents/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "compaction_cycle/allocs_per_op",
+            "value": 3134,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "compaction_cycle/tokens_total",
+            "value": 40110,
+            "unit": "tokens"
+          },
+          {
+            "name": "compaction_cycle/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "single_session_long/allocs_per_op",
+            "value": 32671,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "single_session_long/tokens_total",
+            "value": 521040,
+            "unit": "tokens"
+          },
+          {
+            "name": "single_session_long/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "team_fanout/allocs_per_op",
+            "value": 2118,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "team_fanout/tokens_total",
+            "value": 12880,
+            "unit": "tokens"
+          },
+          {
+            "name": "team_fanout/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_scrollback_view_steady/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_scrollback_view_steady/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/tokens_total",
+            "value": 0,
+            "unit": "tokens"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/goroutine_delta",
+            "value": 0,
+            "unit": "goroutines"
+          }
+        ]
       }
     ]
   },
-  "lastUpdate": 1790354066078,
+  "lastUpdate": 1790354071428,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
