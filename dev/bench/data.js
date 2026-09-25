@@ -274208,6 +274208,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790335256740,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "25c60a04937b12482779ec0e77762c9c296436d8",
+          "message": "perf(app): avoid full catalogue copies for model metadata lookups (#1927)\n\nCo-authored-by: mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T15:00:05+03:00",
+          "tree_id": "96058609926fa3fee6a312a3041896ab855b7243",
+          "url": "https://github.com/stacklok/mecatl/commit/25c60a04937b12482779ec0e77762c9c296436d8"
+        },
+        "date": 1790338707511,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3323,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -359518,6 +359557,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790338704071,
+  "lastUpdate": 1790338708719,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
