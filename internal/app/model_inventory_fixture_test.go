@@ -3,9 +3,10 @@ package app
 import (
 	"sync/atomic"
 
+	"google.golang.org/protobuf/proto"
+
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/internal/adapter/server"
-	"google.golang.org/protobuf/proto"
 )
 
 // modelInventoryFixture drives consumer-only tests. Discovery lifecycle tests
