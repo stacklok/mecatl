@@ -140,10 +140,26 @@ test("a fresh legacy inventory title updates the chat header and folder row", as
       complete: true,
       items: [
         {
-          capabilities: { delete: false, deleteReason: "", rename: false, renameReason: "" },
+          capabilities: {
+            copyId: true,
+            copyIdReason: "",
+            delete: false,
+            deleteReason: "",
+            fork: true,
+            forkReason: "",
+            inspect: true,
+            inspectReason: "",
+            publicChat: true,
+            publicChatReason: "",
+            rename: false,
+            renameReason: "",
+            viewTranscript: true,
+            viewTranscriptReason: "",
+          },
           createdAt: "2026-09-24T12:00:00Z",
           debugTargetSessionId: "",
           id: "chat-a",
+          kind: "main",
           modelId: "offline",
           state: "idle",
           title,
@@ -159,6 +175,7 @@ test("a fresh legacy inventory title updates the chat header and folder row", as
   offlineBff.json("GET", "/api/v1/sessions/chat-a", {
     capabilities: { image: false, manualCompaction: false, modelSelection: false },
     id: "chat-a",
+    kind: "main",
     mode: "default",
     state: "idle",
     usage: {
@@ -190,6 +207,7 @@ test("a fresh legacy inventory title updates the chat header and folder row", as
   });
   await page.clock.install({ time: new Date("2026-09-24T12:00:00Z") });
   await page.goto("/workspace/chat?sessionId=chat-a");
+  await expect(page.getByRole("textbox", { name: "Message Mecatl" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Legacy title" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Project" })).toBeVisible();
   title = "Renamed legacy title";
