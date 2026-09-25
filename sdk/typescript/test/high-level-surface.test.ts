@@ -450,7 +450,16 @@ describe("SDK high-level RPC surface", () => {
       expect(operations.get(key), `${key} must be invoked by ${row.operation}`).toContain(
         row.operation,
       );
-      expect(row.kind === "session" ? row.operation.startsWith("Session.") : true).toBe(true);
+      const expectedPrefix =
+        row.kind === "session" ? "Session." : row.kind === "namespace" ? "Client." : undefined;
+      if (expectedPrefix !== undefined) {
+        expect(
+          row.operation.startsWith(expectedPrefix),
+          `${key} has the wrong ${row.kind} operation`,
+        ).toBe(true);
+      } else {
+        expect(row.operation).toMatch(/^(McpAuthorization|RunControls|Team)\./u);
+      }
     }
   });
 
