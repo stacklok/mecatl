@@ -496,6 +496,7 @@ func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 }
 
 func (m Model) finishStartupResume() (tea.Model, tea.Cmd) {
+	m.submitStatusLine()
 	cmd := (&m).maybeKittyTransmit()
 	if contextCmd := m.refreshStatusContextCmd(); contextCmd != nil {
 		cmd = tea.Batch(cmd, contextCmd)

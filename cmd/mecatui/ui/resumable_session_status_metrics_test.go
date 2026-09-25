@@ -35,6 +35,36 @@ func TestResumableSessionStatusMetrics_Scenario3_StartupResumeRestoresStatus(t *
 	}
 }
 
+func TestResumableSessionStatusMetrics_Scenario3_StartupResumeSubmitsSnapshotStatus(t *testing.T) {
+	resume := &client.ResumeSelection{
+		Row: client.SessionListItem{ID: "resumed-main", Title: "Restored chat"},
+		Snapshot: client.SessionSnapshot{
+			ResolvedModel:    client.ResolvedModel{ContextWindow: 200_000},
+			Usage:            client.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000},
+			ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
+		},
+	}
+	source := &statusSourceFake{changed: make(chan struct{})}
+	m := New(Deps{Resume: resume, StatusSource: source, Theme: theme.New("aztec", theme.AztecPalette()), NoAltScreen: true})
+	if source.inputCount() != 0 {
+		t.Fatal("startup submitted status before adoption")
+	}
+
+	updated, _ := m.Update(startupResumeReadyMsg{})
+	m = updated.(Model)
+	if got := source.inputCount(); got != 1 {
+		t.Fatalf("startup status submissions = %d, want 1", got)
+	}
+	input, ok := source.lastInput()
+	if !ok || input.Usage.Input.Raw != 120_000 || input.Usage.Output.Raw != 4_000 || input.Usage.CacheRead.Raw != 90_000 ||
+		input.Context.Used.Raw != 40_000 || !input.Context.Known || !input.Context.Estimated || input.Context.Window.Raw != 200_000 {
+		t.Fatalf("startup status input = %#v, want restored snapshot occupancy and usage", input)
+	}
+	if m.phase != phaseIdle || !m.prompt.Focused() {
+		t.Fatalf("status submitted before resumed chat became interactive: phase=%v focused=%t", m.phase, m.prompt.Focused())
+	}
+}
+
 func TestResumableSessionStatusMetrics_Scenario3_SessionSwitchRestoresStatus(t *testing.T) {
 	adopted := client.SessionSnapshot{
 		ResolvedModel:    client.ResolvedModel{ProviderID: "provider-b", ModelID: "model-b", ContextWindow: 200_000},
