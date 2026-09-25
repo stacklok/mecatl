@@ -418,7 +418,8 @@ type modeBody struct {
 }
 
 type promptBody struct {
-	Text string `json:"text"`
+	Text                        string `json:"text"`
+	ServerOwnedPlanContinuation bool   `json:"server_owned_plan_continuation,omitempty"`
 	// Parts carries non-text media (image/audio) alongside the text. Each part
 	// names its kind ("image"/"audio"), mime type, and EITHER base64 data OR a url.
 	Parts []promptContentBody `json:"parts,omitempty"`
@@ -953,7 +954,13 @@ func (h *HTTPHandler) prompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	var run *agent.Run
+	var err error
+	if body.ServerOwnedPlanContinuation {
+		run, err = h.svc.StartInteractiveRunContentWithPlanContinuation(r.Context(), id, body.Text, parts)
+	} else {
+		run, err = h.svc.StartInteractiveRunContent(r.Context(), id, body.Text, parts)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return

@@ -130,6 +130,7 @@ const EvParallelEnd EventType = "parallel.end"
 const EvParallelStart EventType = "parallel.start"
 const EvPermissionAsk EventType = "permission.ask"
 const EvPermissionRetract EventType = "permission.retract"
+const EvPlanContinuationFailed EventType = "plan.continuation_failed"
 const EvProviderRoute EventType = "provider.route"
 const EvReasoningDelta EventType = "reasoning.delta"
 const EvRecoverNotice EventType = "recover_notice"
@@ -344,7 +345,7 @@ type Conversation struct{Messages []Message}
 type Counters struct{Turns int; ToolCalls int; ConsecutiveFailures int}
 type EnvironmentKind string
 type EnvironmentRef struct{Kind EnvironmentKind; ID string; Revision string}
-type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Authorization *AuthorizationPayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
+type Event struct{Type EventType; Seq int64; Turn int; Text string; Title *TitlePayload; ToolCall *ToolCall; ToolResult *ToolResult; Ask *PendingAsk; ModelRetry *ModelRetryPayload; RequestManifest *RequestManifestPayload; NetworkAttempt *NetworkAttemptPayload; Authorization *AuthorizationPayload; PlanContinuationFailure *PlanContinuationFailurePayload; Result *ResultPayload; TurnEnd *TurnEndPayload; Hook *HookPayload; Approval *ApprovalPayload; CompactionArchive *CompactionArchivePayload; UserPrompt *UserPromptPayload; Subagent *SubagentPayload; Team *TeamPayload; Parallel *ParallelPayload; RunID string; Actor *Principal; Schedule *SchedulePayload; Steer *SteerPayload}
 type EventType string
 type ExternalAuthorization struct{ID string; DisplayName string; Binding AuthorizationBinding; ExpiresAt time.Time}
 type ExternalBinding string
@@ -368,6 +369,7 @@ type PendingAuthorization struct{Authorization ExternalAuthorization; Call ToolC
 type PendingWorkspaceEnrollment struct{ID WorkspaceEnrollmentID; RequiredServices uint32; ExpiresAt time.Time}
 type PermissionMode string
 type PlacementMetadata struct{Kind string "json:\"kind,omitempty\""; Label string "json:\"label,omitempty\""; Branch string "json:\"branch,omitempty\""; Revision string "json:\"revision,omitempty\""}
+type PlanContinuationFailurePayload struct{PlanRunID string; AskID string}
 type Principal struct{Issuer string; Subject string; GrantType GrantType; Name string}
 type RequestManifestPayload struct{Provider string "json:\"provider,omitempty\""; Model string "json:\"model,omitempty\""; ReasoningEffort string "json:\"reasoning_effort,omitempty\""; ContextWindow int "json:\"context_window,omitempty\""; ToolNames []string "json:\"tool_names\""; ToolDecisions []RequestToolDecision "json:\"tool_decisions\""; AdvertisedToolSchemaBytes int "json:\"advertised_tool_schema_bytes\""; MessageCount int "json:\"message_count\""; MessageBytes int "json:\"message_bytes\""; Prompt []RequestPromptComponent "json:\"prompt\""}
 type RequestPromptComponent struct{Kind string "json:\"kind\""; Provenance string "json:\"provenance\""; Bytes int "json:\"bytes\""}

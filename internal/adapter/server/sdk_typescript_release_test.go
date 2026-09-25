@@ -259,6 +259,7 @@ func TestSDKTypescriptRelease_Scenario1_PublicServiceProjectionParity(t *testing
 		"SettleIfStale",
 		"StaleRunningCandidates",
 		"StartInteractiveRunContent",
+		"StartInteractiveRunContentWithPlanContinuation",
 		"StartRun",
 		"StartScheduledRunContent",
 		"Steer",

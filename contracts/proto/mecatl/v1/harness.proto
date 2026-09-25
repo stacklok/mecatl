@@ -1535,6 +1535,9 @@ message Prompt {
   string text = 2;
   // parts carries non-text media (image/audio) alongside the text.
   repeated Content parts = 3;
+  // server_owned_plan_continuation opts this run into exact plan-ask controls
+  // and makes the daemon responsible for starting its approved proceed run.
+  bool server_owned_plan_continuation = 4;
 }
 
 // ResumeApproval releases a paused permission.ask, allowing or denying the
@@ -1858,6 +1861,13 @@ message Authorization {
   string display_name = 5;
 }
 
+// PlanContinuationFailure correlates a known failed server-owned proceed start.
+// No execution run exists, so Event.run_id is empty.
+message PlanContinuationFailure {
+  string plan_run_id = 1;
+  string ask_id = 2;
+}
+
 // Event mirrors the domain session.Event one-for-one. `type` is the string
 // event kind; the structured submessages are populated per kind.
 message Event {
@@ -1973,6 +1983,9 @@ message Event {
   // approval ask whose submitted control was rejected and carries only a stable
   // machine category; raw arguments and refusal rationale never enter it.
   ControlRefused control_refused = 25;
+  // plan_continuation_failure is a session-scoped, content-safe indication
+  // that an accepted plan allow could not start its proceed run.
+  PlanContinuationFailure plan_continuation_failure = 26;
 }
 
 // ControlRefused is the metadata-only acknowledgement for a rejected in-stream

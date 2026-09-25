@@ -1356,6 +1356,9 @@ type runState struct {
 	// consumed. The terminal relay transfers this ownership to the proceed run.
 	// Guarded by Service.mu.
 	planContinuation *planContinuation
+	// serverOwnedPlanContinuation is fixed at public run admission. It gates live
+	// exact plan verdicts and excludes in-stream plan verdicts on that run.
+	serverOwnedPlanContinuation bool
 	// preserveDurable prevents a shutdown-cancelled local awaiting run from
 	// overwriting the already-durable PendingAsk handoff point.
 	preserveDurable atomic.Bool
@@ -4476,7 +4479,7 @@ func (s *Service) StartRun(ctx context.Context, id session.SessionID, text strin
 // fail closed. The trusted scheduler uses StartScheduledRunContent instead.
 func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
-	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false, false)
 }
 
 // StartInteractiveRunContent starts a public HTTP/gRPC run whose transport can
@@ -4484,7 +4487,15 @@ func (s *Service) StartRunContent(ctx context.Context, id session.SessionID, tex
 // StartRunContent so protected calls fail without parking.
 func (s *Service) StartInteractiveRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
-	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, true)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, true, false)
+}
+
+// StartInteractiveRunContentWithPlanContinuation opts a public run into
+// daemon-owned continuation for an exact plan ask. Existing callers retain
+// their client-owned proceed path through StartInteractiveRunContent.
+func (s *Service) StartInteractiveRunContentWithPlanContinuation(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
+	generation := s.captureRunEntryGeneration(id)
+	return s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, true, true)
 }
 
 // StartScheduledRunContent is the trusted scheduler-purpose entry. It admits
@@ -4493,7 +4504,7 @@ func (s *Service) StartInteractiveRunContent(ctx context.Context, id session.Ses
 // scheduler composition calls it directly.
 func (s *Service) StartScheduledRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content) (*agent.Run, error) {
 	generation := s.captureRunEntryGeneration(id)
-	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler, generation, false)
+	return s.startRunContent(ctx, id, text, parts, runPurposeScheduler, generation, false, false)
 }
 
 // RetryFailedRun resumes the failed model step from the persisted conversation state
@@ -4644,7 +4655,7 @@ const (
 	scheduleFireSessionPrefix = "sched--"
 )
 
-func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization bool) (*agent.Run, error) {
+func (s *Service) startRunContent(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization, serverOwnedPlanContinuation bool) (*agent.Run, error) {
 	if s.draining.Load() {
 		return nil, fmt.Errorf("%w: %q", ErrUnavailable, id)
 	}
@@ -4667,7 +4678,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 	// reload prevents the preflight from becoming a durable grant.
 	unlock := s.runEntryMu.lock(id)
 	defer unlock()
-	return s.startRunContentLocked(ctx, id, text, parts, purpose, generation, canPresentAuthorization)
+	return s.startRunContentLocked(ctx, id, text, parts, purpose, generation, canPresentAuthorization, serverOwnedPlanContinuation)
 }
 
 // startRunContentLocked is also used by an accepted plan verdict's terminal
@@ -4675,7 +4686,7 @@ func (s *Service) startRunContent(ctx context.Context, id session.SessionID, tex
 // prevents a competing prompt from taking the continuation's place.
 //
 //nolint:gocyclo // Run-entry repair, lease, engine resolve, and launch share one ordered transaction.
-func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization bool) (*agent.Run, error) {
+func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionID, text string, parts []session.Content, purpose runPurpose, generation runEntryGeneration, canPresentAuthorization, serverOwnedPlanContinuation bool) (*agent.Run, error) {
 	if err := s.validateRunEntryGeneration(id, generation); err != nil {
 		return nil, err
 	}
@@ -4704,11 +4715,34 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	// run has finished driving but its relay has not called FinishRun yet. Remove
 	// that exact run before reopening so the finished relay's later FinishRun
 	// cannot deregister the continuation that replaces it.
-	if registered, ok := s.LookupRun(id); ok {
-		if !sess.State.IsTerminal() {
-			return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
+	s.mu.Lock()
+	registeredState := s.runs[id]
+	var registered *agent.Run
+	if registeredState != nil {
+		registered = registeredState.run
+	}
+	s.mu.Unlock()
+	if registered != nil {
+		// A live exact verdict takes persistMu before reserving the
+		// continuation. Keep that barrier through terminal cleanup so it cannot
+		// reserve between our check and removal of the old run.
+		registeredState.persistMu.Lock()
+		s.mu.Lock()
+		current := s.runs[id] == registeredState && registeredState.run == registered
+		reserved := current && registeredState.planContinuation != nil
+		s.mu.Unlock()
+		if reserved {
+			registeredState.persistMu.Unlock()
+			return nil, fmt.Errorf("%w: session %q has an accepted plan continuation", ErrFailedPrecondition, id)
 		}
-		s.deregister(id, registered)
+		if current {
+			if !sess.State.IsTerminal() {
+				registeredState.persistMu.Unlock()
+				return nil, fmt.Errorf("%w: session %q already has an active run", ErrFailedPrecondition, id)
+			}
+			s.deregister(id, registered)
+		}
+		registeredState.persistMu.Unlock()
 	}
 	// NOTE (ADR 0062): there is NO prompt-channel scan here. The guardrails
 	// approve-once flow is OUT-OF-BAND — a PreToolUse guardrail block surfaces to the
@@ -4725,6 +4759,7 @@ func (s *Service) startRunContentLocked(ctx context.Context, id session.SessionI
 	if err != nil {
 		return nil, err
 	}
+	st.serverOwnedPlanContinuation = serverOwnedPlanContinuation
 	promoted := false
 	defer s.cleanupRunAdmission(id, st, &promoted)
 	// Cross-process single-writer gate: take the session lease after runEntryMu and
@@ -5489,7 +5524,7 @@ func (s *Service) Steer(ctx context.Context, id session.SessionID, text string, 
 // genuinely-live session is not slowed by the grace. An unknown session id
 // surfaces ErrNotFound from the first funnel call.
 func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, text string, parts []session.Content, generation runEntryGeneration) (*agent.Run, error) {
-	run, err := s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
+	run, err := s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false, false)
 	if err == nil {
 		s.notifySteerPromotionRegistered()
 		return run, nil // no live run blocked the entry — promoted immediately
@@ -5510,7 +5545,7 @@ func (s *Service) promotedSteerRun(ctx context.Context, id session.SessionID, te
 	// Registry cleared: the original relay finished and the run's final terminal
 	// state is durable. Drive the follow-up through the hardened funnel, which
 	// now sees the terminal state and reopens it.
-	run, err = s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false)
+	run, err = s.startRunContent(ctx, id, text, parts, runPurposeChat, generation, false, false)
 	if err == nil {
 		s.notifySteerPromotionRegistered()
 	}
@@ -6293,12 +6328,29 @@ func (s *Service) resolveRunState(id session.SessionID, st *runState, target *ag
 		}
 		return fmt.Errorf("%w: ask was already resolved", agent.ErrApprovalNotPending)
 	}
-	if err := target.ResolveApproval(resolution); err != nil {
+	if st.serverOwnedPlanContinuation && resolution.ReviewID == "" && resolution.Kind == "" {
+		// This run's plan gate belongs to ResolvePlanAsk. Ordinary root and
+		// surfaced child asks keep their in-stream delivery path. Scoped
+		// guardrail controls use ResolveApproval's explicit review identity.
+		if !validRunAskVerdict(resolution.Verdict) {
+			return agent.ErrApprovalGrantIneligible
+		}
+		switch target.ResolveOrdinaryAsk(resolution.AskID, resolution.Verdict) {
+		case agent.AskResolutionPlanOriginated:
+			return ErrPlanResolutionRequired
+		case agent.AskResolutionNotPending:
+			return agent.ErrApprovalNotPending
+		case agent.AskResolutionResolved:
+		default:
+			return agent.ErrApprovalNotPending
+		}
+	} else if err := target.ResolveApproval(resolution); err != nil {
 		return err
 	}
 	// Set only after atomic validation+submission succeeds. If permission.ask is
 	// still buffered, its relay observes this marker and skips the stale snapshot.
 	st.resolvedAskID = resolution.AskID
+	st.acceptedApproval = &resolution
 	return nil
 }
 
@@ -6646,7 +6698,7 @@ func (s *Service) approvePlan(ctx context.Context, id session.SessionID, targetM
 		// (loadAndReopen → engineAndEnvironmentFor CASE 1 rebuild on the flipped
 		// mode → execute model). The StopPlanApproved-completed session is
 		// reopened to idle by loadAndReopen.
-		cont, cerr := s.startRunContent(ctx, id, proceed, nil, runPurposeChat, generation, false)
+		cont, cerr := s.startRunContent(ctx, id, proceed, nil, runPurposeChat, generation, false, false)
 		if cerr != nil {
 			// Surface the continuation-launch failure honestly on the stream as a
 			// synthetic terminal result so the relay's client sees a terminal
@@ -7122,12 +7174,11 @@ func (s *Service) relayEvent(ctx context.Context, id session.SessionID, ev sessi
 //     Deps.Interactive is false). An interactive deployment surfaces the ask to
 //     the human instead; auto-approve must NOT pre-empt a human.
 //
-// When all three hold it auto-resolves the ask via the EXISTING ApprovePlan path
-// (ModeDefault + a loud note), emitting a LOUD diagnostic so the operator sees
-// that NO HUMAN reviewed the plan. It NEVER fires for a non-plan ask (a policy/
-// hook ask is still the human's/auto-deny's responsibility), NEVER fires
-// interactively, and is NEVER load-bearing for safety (the engine still gates
-// the PresentPlan — this merely resolves the parked ask).
+// When all three hold, an opted-in live run uses exact plan resolution and its
+// reserved server continuation. Legacy live and restored runs keep their
+// existing auto-approve choreography. The loud diagnostic tells the operator
+// that no human reviewed the plan. This never resolves an ordinary ask and does
+// not bypass the PresentPlan gate.
 func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID, ev session.Event) {
 	if !s.cfg.PlanModeAutoApprove || s.cfg.Interactive {
 		return
@@ -7158,6 +7209,21 @@ func (s *Service) MaybeAutoApprovePlan(ctx context.Context, id session.SessionID
 	// Case 1 is the common headless path (the run is parked in-process); case 2
 	// covers a restart where the process that parked the ask died.
 	if run, ok := s.LookupRun(id); ok {
+		s.mu.Lock()
+		st := s.runs[id]
+		serverOwned := st != nil && st.run == run && st.serverOwnedPlanContinuation
+		s.mu.Unlock()
+		if serverOwned {
+			// The explicit headless operator setting uses the same exact control
+			// as a human verdict on this opted-in run. Its terminal relay owns the
+			// one proceed run; do not launch the legacy observer's copy.
+			if _, err := s.ResolvePlanAsk(ctx, id, run.RunID(), ev.Ask.AskID, session.VerdictAllowOnce); err != nil {
+				s.cfg.Diagnostics.Log(ctx, port.LevelWarn,
+					"plan_mode_auto_approve: auto-approve failed (ask stays parked)",
+					"session", string(id))
+			}
+			return
+		}
 		// Live run: deliver the verdict through the Service-owned lifecycle gate.
 		// Clear may have marked this exact run cancelling after LookupRun; in that
 		// case refuse both the verdict and its continuation.
@@ -7267,7 +7333,7 @@ func (s *Service) autoApproveContinuation(ctx context.Context, id session.Sessio
 	// mode → execute model). The StopPlanApproved-completed session is reopened
 	// to idle by loadAndReopen.
 	proceed := agent.PlanApprovedProceedText + "\n\nOperator note: auto-approved: no human reviewed this plan"
-	cont, cerr := s.startRunContent(logCtx, id, proceed, nil, runPurposeChat, generation, false)
+	cont, cerr := s.startRunContent(logCtx, id, proceed, nil, runPurposeChat, generation, false, false)
 	if cerr != nil {
 		s.cfg.Diagnostics.Log(logCtx, port.LevelWarn,
 			"plan_mode_auto_approve: continuation run failed to start",
@@ -8143,9 +8209,14 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 	removeCapability := false
 	var stopRunContext context.CancelFunc
 	var releaseOperation func()
+	var abandonedContinuation *planContinuation
+	var abandonedRun *agent.Run
 	s.mu.Lock()
 	if s.runs[id] == st {
 		delete(s.runs, id)
+		abandonedContinuation = st.planContinuation
+		abandonedRun = st.run
+		st.planContinuation = nil
 		stopRunContext = st.runContextStop
 		st.runContextStop = nil
 		releaseOperation = st.operationRelease
@@ -8158,6 +8229,16 @@ func (s *Service) removeRunState(id session.SessionID, st *runState) {
 		}
 	}
 	s.mu.Unlock()
+	if abandonedContinuation != nil {
+		// A removal outside the terminal transfer still owns its reservation.
+		// Release it exactly once, including shutdown and other teardown paths.
+		if abandonedRun != nil && abandonedRun.Outcome() == agent.RunOutcomeCompleted {
+			if stop, ok := st.sess.RecordedStopReason(); ok && stop == session.StopPlanApproved {
+				s.recordPlanContinuationFailure(abandonedContinuation.ctx, id, abandonedContinuation)
+			}
+		}
+		abandonedContinuation.release(s)
+	}
 	if stopRunContext != nil {
 		stopRunContext()
 	}

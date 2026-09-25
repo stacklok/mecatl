@@ -519,7 +519,12 @@ func (h *HarnessServer) startConverse(ctx context.Context, first *mecatlv1.Conve
 		if err := validateGRPCSessionAffinity(ctx, string(id)); err != nil {
 			return "", nil, false, err
 		}
-		run, err := h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
+		var run *agent.Run
+		if prompt.GetServerOwnedPlanContinuation() {
+			run, err = h.svc.StartInteractiveRunContentWithPlanContinuation(ctx, id, prompt.GetText(), parts)
+		} else {
+			run, err = h.svc.StartInteractiveRunContent(ctx, id, prompt.GetText(), parts)
+		}
 		if err != nil {
 			return "", nil, false, toStatus(err)
 		}

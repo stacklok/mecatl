@@ -160,6 +160,12 @@ func toProto(ev session.Event) *mecatlv1.Event {
 	if ev.Authorization != nil {
 		out.Authorization = toProtoAuthorization(*ev.Authorization)
 	}
+	if ev.PlanContinuationFailure != nil {
+		out.PlanContinuationFailure = &mecatlv1.PlanContinuationFailure{
+			PlanRunId: valid(ev.PlanContinuationFailure.PlanRunID),
+			AskId:     valid(ev.PlanContinuationFailure.AskID),
+		}
+	}
 	if ev.Result != nil {
 		out.Result = toProtoResult(*ev.Result)
 	}

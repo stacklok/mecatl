@@ -152,6 +152,9 @@ const (
 	// EvAuthorizationResolved closes a previously required authorization lifecycle
 	// after its matching tool result has been durably recorded.
 	EvAuthorizationResolved EventType = "authorization.resolved"
+	// EvPlanContinuationFailed records a known server-owned proceed-start failure
+	// after the approved plan run has already emitted its terminal result.
+	EvPlanContinuationFailed EventType = "plan.continuation_failed"
 	// EvResult is the terminal event: success / limit / error / cancelled.
 	EvResult EventType = "result"
 	// EvUserPrompt is emitted when a USER-ROLE message is recorded into the
@@ -1462,6 +1465,14 @@ type AuthorizationPayload struct {
 	Status          AuthorizationStatus
 }
 
+// PlanContinuationFailurePayload safely correlates a known failed proceed start
+// to the approved plan ask. The failed execution run never began, so this event
+// remains session-scoped and contains no prompt, error, or tool arguments.
+type PlanContinuationFailurePayload struct {
+	PlanRunID string
+	AskID     string
+}
+
 // Valid reports whether the payload uses the bounded authorization identifier
 // grammar, has a non-zero expiry, and carries a closed lifecycle status.
 func (p AuthorizationPayload) Valid() bool {
@@ -1522,6 +1533,9 @@ type Event struct {
 	// It contains only safe lifecycle correlation; private continuation state and
 	// sensitive tool or backend data never enter the event.
 	Authorization *AuthorizationPayload
+	// PlanContinuationFailure is set on EvPlanContinuationFailed and carries
+	// only the approved plan's run and ask IDs.
+	PlanContinuationFailure *PlanContinuationFailurePayload
 	// Result is set on EvResult.
 	Result *ResultPayload
 	// TurnEnd is set on EvTurnEnd (this turn's usage + elapsed time).

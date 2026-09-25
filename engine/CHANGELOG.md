@@ -17,6 +17,13 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `port.RootSessionIDFromContext` so trusted engine composition can preserve one
   causal session identity across nested runs without changing active session
   identity. Added (minor).
+
+- **Plan continuation failure correlation** — adds
+  `session.EvPlanContinuationFailed` and
+  `session.PlanContinuationFailurePayload` for a session-scoped, content-safe
+  signal when an approved plan cannot start its server-owned proceed run while
+  the daemon still holds the session lease. Added (minor).
+
 - **Exact plan-ask resolution** — adds `agent.Run.ResolvePlanAsk` and
   `agent.AskResolutionNotPlan`. The new method consumes only a root
   plan-originated ask and reports ordinary asks without changing them.

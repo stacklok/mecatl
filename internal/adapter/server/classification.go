@@ -283,10 +283,13 @@ var serviceAccessTable = map[string]ClassificationEntry{
 	"Subscribe":                 {KindCallerOwned, "authorizes via GetSession before registering a live subscriber (issue #368)"},
 
 	// --- caller-owned: live run verbs ---
-	"RetryFailedRun":               {KindCallerOwned, "authorizes and reloads under runEntryMu before failed-step retry eligibility and launch"},
-	"StartRun":                     {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
-	"StartRunContent":              {KindCallerOwned, "authorizes before the public chat-purpose kind gate and shared run-entry path"},
-	"StartInteractiveRunContent":   {KindCallerOwned, "same owner-checked run-entry path with browser-authorization presentation enabled for HTTP/gRPC"},
+	"RetryFailedRun":             {KindCallerOwned, "authorizes and reloads under runEntryMu before failed-step retry eligibility and launch"},
+	"StartRun":                   {KindCallerOwned, "delegates to StartRunContent's run-entry authorization"},
+	"StartRunContent":            {KindCallerOwned, "authorizes before the public chat-purpose kind gate and shared run-entry path"},
+	"StartInteractiveRunContent": {KindCallerOwned, "same owner-checked run-entry path with browser-authorization presentation enabled for HTTP/gRPC"},
+
+	"StartInteractiveRunContentWithPlanContinuation": {KindCallerOwned, "same owner-checked public run-entry path with explicit daemon-owned plan continuation"},
+
 	"StartScheduledRunContent":     {KindCallerOwned, "trusted scheduler-purpose entry; authorizes the schedule owner before its kind gate and shared run-entry path"},
 	"Approve":                      {KindCallerOwned, "delegates to ApproveRun's authorization"},
 	"ApproveRun":                   {KindCallerOwned, "same-process path authorizes via the registered run's owning session; the cross-process resumeFromAwaiting path authorizes via loadAndReopen"},

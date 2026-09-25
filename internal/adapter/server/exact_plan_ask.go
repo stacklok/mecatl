@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
@@ -14,9 +15,19 @@ import (
 // attached to the old runState until that run's terminal relay transfers it to
 // the fresh proceed run. The context is independent of the unary request.
 type planContinuation struct {
-	ctx        context.Context
-	stop       context.CancelFunc
-	generation runEntryGeneration
+	ctx         context.Context
+	stop        context.CancelFunc
+	generation  runEntryGeneration
+	planRunID   string
+	askID       string
+	releaseOnce sync.Once
+}
+
+func (c *planContinuation) release(s *Service) {
+	c.releaseOnce.Do(func() {
+		c.stop()
+		s.detachedControlWG.Done()
+	})
 }
 
 // ResolvePlanAsk resolves one plan-originated ask on the exact authorized run.
@@ -58,6 +69,9 @@ func (s *Service) resolveLivePlanAsk(ctx context.Context, id session.SessionID, 
 	if err != nil {
 		return RunAskAcknowledgement{}, err
 	}
+	if !st.serverOwnedPlanContinuation {
+		return RunAskAcknowledgement{}, fmt.Errorf("%w: live run owns its plan continuation", ErrFailedPrecondition)
+	}
 	if st.planContinuation != nil {
 		return RunAskAcknowledgement{}, ErrAskNotPending
 	}
@@ -67,13 +81,12 @@ func (s *Service) resolveLivePlanAsk(ctx context.Context, id session.SessionID, 
 			return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
 		}
 		ownedCtx, stop := s.detachedControlContext(ctx)
-		continuation = &planContinuation{ctx: ownedCtx, stop: stop, generation: generation}
+		continuation = &planContinuation{ctx: ownedCtx, stop: stop, generation: generation, planRunID: run.RunID(), askID: askID}
 	}
 	result := run.ResolvePlanAsk(askID, verdict)
 	if result != agent.AskResolutionResolved {
 		if continuation != nil {
-			continuation.stop()
-			s.detachedControlWG.Done()
+			continuation.release(s)
 		}
 		return RunAskAcknowledgement{}, ErrAskNotPending
 	}
@@ -129,6 +142,9 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 	if err != nil {
 		return RunAskAcknowledgement{}, err
 	}
+	// A restored ask has no live stream owner. Its resumed run belongs to this
+	// exact control and keeps the same verdict gate until it terminates.
+	st.serverOwnedPlanContinuation = true
 	promoted := false
 	defer s.cleanupRunAdmission(id, st, &promoted)
 	if err := s.acquireLease(admissionCtx, id); err != nil {
@@ -191,13 +207,12 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 			return RunAskAcknowledgement{}, fmt.Errorf("%w: %q", ErrUnavailable, id)
 		}
 		contCtx, stopCont := s.detachedControlContext(ctx)
-		continuation = &planContinuation{ctx: contCtx, stop: stopCont, generation: generation}
+		continuation = &planContinuation{ctx: contCtx, stop: stopCont, generation: generation, planRunID: expectedRunID, askID: askID}
 	}
 	continuationReserved := continuation != nil
 	defer func() {
 		if continuationReserved {
-			continuation.stop()
-			s.detachedControlWG.Done()
+			continuation.release(s)
 		}
 	}()
 	run, err := s.promoteDetachedRunAdmission(ctx, id, st, stopRun, func() *agent.Run {
@@ -220,8 +235,9 @@ func (s *Service) resolvePersistedPlanAsk(ctx context.Context, id session.Sessio
 	return RunAskAcknowledgement{RunID: expectedRunID, AskID: askID}, nil
 }
 
-// finishExactPlanRun performs the terminal-boundary transfer while holding the
-// per-session entry lock. It is called only after the old event stream drained.
+// finishExactPlanRun persists and removes the terminal plan run, then transfers
+// its reserved continuation and entry lock to a detached worker. The old wire
+// stream can close while the fresh run waits for lease or model admission.
 func (s *Service) finishExactPlanRun(ctx context.Context, id session.SessionID, run *agent.Run) bool {
 	s.mu.Lock()
 	st := s.runs[id]
@@ -231,11 +247,11 @@ func (s *Service) finishExactPlanRun(ctx context.Context, id session.SessionID, 
 		return false
 	}
 	entryUnlock := s.runEntryMu.lock(id)
-	defer entryUnlock()
 	s.mu.Lock()
 	st = s.runs[id]
 	if st == nil || st.run != run || st.planContinuation == nil {
 		s.mu.Unlock()
+		entryUnlock()
 		return false
 	}
 	continuation := st.planContinuation
@@ -245,21 +261,46 @@ func (s *Service) finishExactPlanRun(ctx context.Context, id session.SessionID, 
 	stop, stopped := st.sess.RecordedStopReason()
 	s.removeRunState(id, st)
 	if !stopped || stop != session.StopPlanApproved {
-		continuation.stop()
-		s.detachedControlWG.Done()
+		continuation.release(s)
+		entryUnlock()
 		return true
 	}
-	proceed, err := s.startRunContentLocked(continuation.ctx, id, agent.PlanApprovedProceedText, nil, runPurposeChat, continuation.generation, false)
-	if err != nil {
-		s.cfg.Diagnostics.Log(continuation.ctx, port.LevelWarn, "accepted plan continuation failed to start", "session", string(id), "error", err.Error())
-		continuation.stop()
-		s.detachedControlWG.Done()
-		return true
-	}
-	go func() {
-		defer s.detachedControlWG.Done()
-		defer continuation.stop()
-		s.relayDetachedControlRun(continuation.ctx, id, proceed)
-	}()
+	// The reservation was counted before verdict acceptance. Pass both that
+	// ownership and the still-held run-entry lock to the detached worker. A
+	// competing prompt stays behind this exact continuation even after the old
+	// stream has closed; Close joins the worker through detachedControlWG.
+	go s.startExactPlanContinuation(id, continuation, entryUnlock)
 	return true
+}
+
+func (s *Service) startExactPlanContinuation(id session.SessionID, continuation *planContinuation, entryUnlock func()) {
+	unlockOnce := sync.OnceFunc(entryUnlock)
+	defer continuation.release(s)
+	defer unlockOnce()
+	proceed, err := s.startRunContentLocked(continuation.ctx, id, agent.PlanApprovedProceedText, nil, runPurposeChat, continuation.generation, false, false)
+	if err != nil {
+		s.recordPlanContinuationFailure(continuation.ctx, id, continuation)
+		s.cfg.Diagnostics.Log(continuation.ctx, port.LevelWarn, "accepted plan continuation failed to start", "session", string(id))
+		return
+	}
+	unlockOnce()
+	s.relayDetachedControlRun(continuation.ctx, id, proceed)
+}
+
+func (s *Service) recordPlanContinuationFailure(ctx context.Context, id session.SessionID, continuation *planContinuation) {
+	ev := session.Event{
+		Type: session.EvPlanContinuationFailed,
+		PlanContinuationFailure: &session.PlanContinuationFailurePayload{
+			PlanRunID: continuation.planRunID,
+			AskID:     continuation.askID,
+		},
+	}
+	logCtx := context.WithoutCancel(ctx)
+	if err := s.appendEvent(logCtx, id, ev); err != nil {
+		// A lost lease forbids both durable mutation and an unrecorded claim of
+		// failure. The successor owner may still start the continuation.
+		s.cfg.Diagnostics.Log(logCtx, port.LevelWarn, "plan continuation failure event could not be recorded", "session", string(id))
+		return
+	}
+	s.PublishSessionEvent(id, ev)
 }
