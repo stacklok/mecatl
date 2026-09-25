@@ -28,7 +28,12 @@ describe("exact plan ask SDK control", () => {
         requestOptions?: RequestOptions,
       ) => Promise<void>
     >();
-    const requests: Array<{ sessionId: string; askId: string; expectedRunId: string; verdict: number }> = [];
+    const requests: Array<{
+      sessionId: string;
+      askId: string;
+      expectedRunId: string;
+      verdict: number;
+    }> = [];
     const client = connect({
       transport: createRouterTransport((router) => {
         router.service(HarnessService, {

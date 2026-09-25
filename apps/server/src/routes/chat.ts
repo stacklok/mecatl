@@ -2,7 +2,6 @@
 
 import { createRoute, type OpenAPIHono, z } from "@hono/zod-openapi";
 import {
-  type RunStreamEvent,
   clearSessionResponseSchema,
   compactSessionResponseSchema,
   createSessionRequestSchema,
@@ -11,6 +10,7 @@ import {
   forkSessionResponseSchema,
   listSessionsResponseSchema,
   problemDetailsSchema,
+  type RunStreamEvent,
   renameSessionRequestSchema,
   renameSessionResponseSchema,
   resolvePermissionRequestSchema,
