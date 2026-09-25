@@ -102,14 +102,68 @@ func convTopRow(m Model) int {
 	return sumHeight(above)
 }
 
-// bodyOwnerOpen is the single inventory of overlays and modals that replace the
-// conversation body and own Escape before root prompt handling.
-func bodyOwnerOpen(m Model) bool {
-	return m.sessionDetailsOpen || m.showHelp || m.team.view != teamNone ||
-		m.agentsInv.view != agentsInvNone || m.modal != nil ||
-		m.userModel.view != userModelNone || m.reflections.view != reflectionsNone ||
-		m.dream.view != dreamClosed || m.connect.open || m.effort.view != effortNone ||
-		m.worktrees.view != worktreesNone || m.schedule.view != scheduleNone
+// currentBodyOwner is the authoritative identity resolver for renderBody's exact
+// precedence. The live conversation and empty-session welcome are the only
+// rendered bodies without an owner.
+func currentBodyOwner(m Model) bodyOwner {
+	switch {
+	case m.phase == phaseFatal:
+		return bodyOwner{kind: bodyOwnerFatal}
+	case m.phase == phaseAuthorizing:
+		return bodyOwner{kind: bodyOwnerAuthorization}
+	case m.sessionDetailsOpen:
+		return bodyOwner{kind: bodyOwnerSessionDetails}
+	case m.showHelp:
+		return bodyOwner{kind: bodyOwnerHelp}
+	case m.team.view != teamNone:
+		return bodyOwner{kind: bodyOwnerAgents}
+	case m.agentsInv.view != agentsInvNone:
+		return bodyOwner{kind: bodyOwnerAgentsInventory}
+	case m.modal != nil:
+		return bodyOwner{kind: bodyOwnerModal, modal: m.modal}
+	case m.userModel.view != userModelNone:
+		return bodyOwner{kind: bodyOwnerUserModel}
+	case m.reflections.view != reflectionsNone:
+		return bodyOwner{kind: bodyOwnerReflections}
+	case m.dream.view != dreamClosed:
+		return bodyOwner{kind: bodyOwnerDream}
+	case m.effort.view != effortNone:
+		return bodyOwner{kind: bodyOwnerEffort}
+	case m.worktrees.view != worktreesNone:
+		return bodyOwner{kind: bodyOwnerWorktrees}
+	case m.schedule.view != scheduleNone:
+		return bodyOwner{kind: bodyOwnerSchedule}
+	case m.connect.open:
+		return bodyOwner{kind: bodyOwnerConnect}
+	case m.phase == phaseReplay:
+		return bodyOwner{kind: bodyOwnerReplay}
+	default:
+		return bodyOwner{}
+	}
+}
+
+func bodyOwnerOpen(m Model) bool { return currentBodyOwner(m).valid() }
+
+func (m Model) selectedBodyText() string {
+	if m.bodyFrame == nil {
+		return ""
+	}
+	if !m.bodyFrame.owns(currentBodyOwner(m)) {
+		m.bodyFrame.reset()
+		return ""
+	}
+	return m.bodyFrame.selectedText()
+}
+
+func (m Model) clearBodySelection() bool {
+	if m.bodyFrame == nil {
+		return false
+	}
+	if !m.bodyFrame.owns(currentBodyOwner(m)) {
+		m.bodyFrame.reset()
+		return false
+	}
+	return m.bodyFrame.clearSelection()
 }
 
 // selectable reports whether a left-click may START a selection right now. It is
@@ -163,6 +217,152 @@ func screenToContent(m Model, x, y int) (line, col int, ok bool) {
 	stripped := ansi.Strip(lines[line])
 	col = graphemeColForCellX(stripped, x+m.vp.XOffset())
 	return line, col, true
+}
+
+type bodyOwnerKind uint8
+
+const (
+	bodyOwnerNone bodyOwnerKind = iota
+	bodyOwnerFatal
+	bodyOwnerAuthorization
+	bodyOwnerSessionDetails
+	bodyOwnerHelp
+	bodyOwnerAgents
+	bodyOwnerAgentsInventory
+	bodyOwnerModal
+	bodyOwnerUserModel
+	bodyOwnerReflections
+	bodyOwnerDream
+	bodyOwnerEffort
+	bodyOwnerWorktrees
+	bodyOwnerSchedule
+	bodyOwnerConnect
+	bodyOwnerReplay
+)
+
+// bodyOwner identifies the one surface that currently replaces the conversation.
+// modal is part of the identity so reopening a new surface invalidates selection
+// even when its rendered text is byte-identical.
+type bodyOwner struct {
+	kind  bodyOwnerKind
+	modal surface
+}
+
+func (o bodyOwner) valid() bool { return o.kind != bodyOwnerNone }
+
+func sameBodyOwner(a, b bodyOwner) bool {
+	if a.kind != b.kind {
+		return false
+	}
+	if a.kind != bodyOwnerModal {
+		return true
+	}
+	return a.modal == b.modal // every surface is pointer-backed by contract
+}
+
+type bodyRenderFrame struct {
+	owner     bodyOwner
+	body      string
+	origin    cellPoint
+	bounds    cellRect
+	selection selection
+	selecting bool
+	enabled   bool
+}
+
+func (f *bodyRenderFrame) capture(owner bodyOwner, body string, origin cellPoint, bounds cellRect, enabled bool, style lipgloss.Style) string {
+	if !sameBodyOwner(f.owner, owner) || f.body != body || f.origin != origin || f.bounds != bounds || f.enabled != enabled {
+		f.selection = selection{}
+		f.selecting = false
+	}
+	f.owner, f.body, f.origin, f.bounds, f.enabled = owner, body, origin, bounds, enabled
+	if enabled && f.selection.active {
+		return styleSelection(body, f.selection, style)
+	}
+	return body
+}
+
+func (f *bodyRenderFrame) owns(owner bodyOwner) bool {
+	return f.enabled && owner.valid() && sameBodyOwner(f.owner, owner)
+}
+
+func (f *bodyRenderFrame) clearSelection() bool {
+	if !f.selection.active {
+		return false
+	}
+	f.selection = selection{}
+	f.selecting = false
+	return true
+}
+
+func (f *bodyRenderFrame) reset() {
+	*f = bodyRenderFrame{}
+}
+
+func (f *bodyRenderFrame) selectedText() string {
+	if !f.enabled || !f.selection.active || f.selection.empty() {
+		return ""
+	}
+	return selectedText(f.body, f.selection)
+}
+
+func (f *bodyRenderFrame) begin(x, y int) {
+	if !f.enabled || !f.owner.valid() || !f.bounds.contains(x, y) {
+		return
+	}
+	line, col, ok := textPosition(f.body, x-f.origin.x, y-f.origin.y, false)
+	if !ok {
+		return
+	}
+	f.selection = selection{active: true, anchorL: line, anchorC: col, headL: line, headC: col}
+	f.selecting = true
+}
+
+func (f *bodyRenderFrame) extend(x, y int) {
+	if !f.enabled || !f.selecting {
+		return
+	}
+	line, col, ok := textPosition(f.body, x-f.origin.x, y-f.origin.y, true)
+	if !ok {
+		return
+	}
+	f.selection.headL, f.selection.headC = line, col
+}
+
+func (f *bodyRenderFrame) end(x, y int) (string, bool) {
+	if !f.selecting {
+		return "", false
+	}
+	f.extend(x, y)
+	f.selecting = false
+	if f.selection.empty() {
+		f.selection = selection{}
+		return "", true
+	}
+	return f.selectedText(), true
+}
+
+// textPosition maps local rendered-text cells to the logical coordinates used by
+// selection. A press requires an in-bounds row; an active drag may clamp beyond
+// the body so releasing just outside the decision card still selects to its edge.
+func textPosition(content string, x, y int, clamp bool) (line, col int, ok bool) {
+	if content == "" {
+		return 0, 0, false
+	}
+	lines := strings.Split(content, "\n")
+	if y < 0 || y >= len(lines) {
+		if !clamp {
+			return 0, 0, false
+		}
+		y = max(0, min(y, len(lines)-1))
+	}
+	if clamp && x < 0 {
+		x = 0
+	}
+	if x < 0 {
+		return 0, 0, false
+	}
+	return y, graphemeColForCellX(ansi.Strip(lines[y]), x), true
 }
 
 // graphemeColForCellX converts a display cell X into a GRAPHEME-CLUSTER column on

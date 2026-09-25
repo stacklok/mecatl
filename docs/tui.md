@@ -1293,11 +1293,11 @@ show the plain prompt-hint card.
 | mouse wheel | scroll the visible body owner by one physical line (**alt screen only**). Agents and `/models` consume wheel input without moving their logical cursor or scrolling the hidden conversation; compact and `vp short` Agents views consume it without changing state. With no overlay owner, the conversation scrolls. |
 | primary click (`/models` row) | move the Models cursor to the clicked visible row without switching models; press `enter` to activate it (**alt screen only**) |
 | mouse click (prompt text) | place the prompt caret; drag from it to select prompt text (**alt screen only**; see below) |
-| mouse drag (left) | select text in the prompt or conversation — dragging in the conversation to an edge auto-scrolls; prompt release does **not** copy (alt screen only; see below) |
-| double / triple-click (left) | select word / whole line in the conversation (copies; alt screen only) |
-| `ctrl+y` | copy the active prompt or conversation selection; no selection is a no-op |
-| right-click | copy the active prompt or conversation selection; no selection is a no-op |
-| middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
+| mouse drag (left) | select text in the prompt, conversation, or any visible panel/overlay — dragging in the conversation to an edge auto-scrolls; prompt release does **not** copy (alt screen + mouse capture only; see below) |
+| double / triple-click (left) | select word / whole line in the conversation (copies; alt screen + mouse capture only) |
+| `ctrl+y` | copy the active prompt, conversation, or visible panel/overlay selection; no selection is a no-op except where the overlay assigns its own action |
+| right-click | copy the active prompt, conversation, or visible panel/overlay selection; no selection is a no-op |
+| middle-click | with no panel or overlay active, **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
 | `/` | slash-command palette (built-in `/clear`, `/help`, `/quit`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
@@ -1412,7 +1412,7 @@ safe there). Actions marked *(approval)* are the permission-modal keys.
 | `EditBack` | `up` | global | pull the queued follow-ups back into the input (empty input only) |
 | `Paste` | `ctrl+v` | global | paste a clipboard image as an attachment, else clipboard text |
 | `SelectAll` | `ctrl+g` | global | select all prompt text; the `/models` picker keeps its `SetGlobalDefault` binding |
-| `CopySelection` | `ctrl+y` | global | copy the active prompt or conversation selection; no selection is a no-op |
+| `CopySelection` | `ctrl+y` | global | copy the active prompt, conversation, or visible panel/overlay selection; with no selection, keep any action owned by the visible overlay |
 | `Quit` | `ctrl+c` | global | graceful quit (double-press; first press clears the input or arms) |
 | `QuitD` | `ctrl+d` | global | EOF-habit quit (double-press, empty prompt only; independent of `Quit`) |
 | `Suspend` | `ctrl+z` | global | suspend the TUI to the shell (`fg` resumes; the engine keeps running) |
@@ -1978,19 +1978,30 @@ the **word** under the cursor (a maximal run of word characters, whitespace, or
 punctuation) and a **triple-click** selects the **whole logical line** — both
 highlight and copy immediately, just like copy-on-select; a fourth click at the same
 spot cycles back to a plain anchor. A **right-click** or **`ctrl+y`** copies
-the active prompt or conversation selection; with no selection either action is a
-no-op. Conversation selection still copies on release; prompt selection does not.
+the active prompt, conversation, or visible panel/overlay selection. With no
+selection, right-click is a no-op; **`ctrl+y`** keeps any action assigned by the
+visible overlay, notably MCP authorization **Copy Link**. Conversation, panel,
+and overlay selections copy on release and remain highlighted for a later copy;
+prompt selection does not copy on release. This shared behavior covers
+permission and plan views, help, session details and stored transcripts, agent
+panels, inventories, pickers, authorization, connect, and fatal errors.
+Clickable buttons retain priority over text selection.
 **`esc`** clears an active selection **before** its other
 meanings (cancel a running turn or close an overlay); with no selection, it cancels
 an active run directly while preserving the draft, queued follow-ups, and steer. At
 idle it leaves the draft intact; the paused-queue case clears only that queue.
-Conversation selection is **blocked** while
-an overlay/modal owns the screen (permission ask, `/mcp`, `/team`, `/agents`,
-`/skills`, `/soul`, `/usermodel`, `/models`, help, the fatal screen) — a press there
-starts nothing, and opening an overlay clears an in-progress conversation selection
-while stopping a prompt drag without changing an already completed prompt selection.
-An existing prompt selection is preserved through those non-content changes. The wheel
-still scrolls while a selection exists, without clearing it.
+While a panel or overlay is visible, the hidden conversation and prompt cannot
+be selected, copied, pasted into, or mutated by mouse gestures. Opening an
+overlay preserves a completed prompt selection but clears the conversation
+selection under the existing overlay-open contract; the preserved prompt
+selection becomes active again only after the overlay closes. The wheel can
+change overlay content or navigation; the next rendered frame safely invalidates
+any selection whose visible text or geometry changed.
+
+In-app panel and overlay selection requires the alternate screen **and** mouse
+capture. In inline mode or with `--no-mouse`, mecatui creates no in-app selection
+or highlight and leaves click-drag selection and middle-click behavior to the
+terminal.
 
 The copy uses **OSC52** (`tea.SetClipboard`) as the primary path and **also**
 mirrors the payload into the platform clipboard binary as a best-effort fallback —
