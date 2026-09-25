@@ -387,8 +387,8 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 		cfg.debugMCP = append(cfg.debugMCP, value)
 		return nil
 	})
-	fs.StringVar(&cfg.resumeID, "resume", "", "continue the main chat with SESSION_ID (conflicts with --resume-latest)")
-	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "continue the most recent resumable main chat, or start a new chat if none is available (conflicts with --resume)")
+	fs.StringVar(&cfg.resumeID, "resume", "", "continue a stored main chat or supported ordinary pending approval with SESSION_ID (conflicts with --resume-latest)")
+	fs.BoolVar(&cfg.resumeLatest, "resume-latest", false, "continue the most recent resumable main chat, excluding pending approvals, or start a new chat if none is available (conflicts with --resume)")
 	fs.StringVar(&cfg.prompt, "prompt", "", "submit TEXT when the session is ready; the TUI remains open for follow-ups")
 	fs.StringVar(&cfg.prompt, "p", "", "short form of --prompt")
 	fs.StringVar(&cfg.promptFile, "prompt-file", "", "submit the contents of FILE when the session is ready; appended after --prompt when both are set")

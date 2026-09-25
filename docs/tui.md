@@ -493,18 +493,25 @@ mecatui connect 127.0.0.1:8080 --resume-latest
 
 Adoption does not create a temporary session: mecatui loads and displays the stored
 transcript, placement label, mode, model, and capabilities, then targets the same opaque ID.
-`--mode` describes only a newly created session; an adopted chat keeps its stored values. Scheduled runs, child runs, unknown legacy rows, chats
-awaiting approval, active chats, and rows without a complete authoritative transcript
-are not eligible. Exact `--resume` reports why its row cannot be continued; `--resume-latest`
-skips ineligible or unreadable rows and tries the next one. A genuine inventory-list
-failure still surfaces rather than being masked as "start new".
+`--mode` describes only a newly created session; an adopted chat keeps its stored values.
+Scheduled runs, child runs, unknown legacy rows, active chats, and rows without a complete
+authoritative transcript are not eligible for ordinary continuation. Exact `--resume` can
+instead open the guarded recovery path for an owned main chat with one supported pending
+ordinary approval. `--resume-latest` always excludes chats awaiting approval, skips other
+ineligible or unreadable rows, and tries the next one. Exact `--resume` reports why a row
+cannot be continued or safely recovered. A genuine inventory-list failure still surfaces
+rather than being masked as "start new".
 
-The read-only startup lookup does not reopen, recover, abandon, or acquire a lease.
-Those checks remain atomic at the ordinary run-entry funnel when the first new prompt
-is sent. If that attachment fails, the stored transcript remains visible and no
-fallback session is created: press `r` to retry the preserved prompt or `esc` to go
-Back and edit it. Combining a resume selector with `--prompt` or `--prompt-file`
-adopts the transcript first and then submits the seed exactly once as the next turn.
+The ordinary continuation lookup does not reopen, recover, abandon, or acquire a
+lease. Those checks remain atomic at the ordinary run-entry funnel when the first
+new prompt is sent. Exact pending-approval recovery instead verifies a durable
+watch and waits for the owner's choice; see
+[Recover a pending approval](https://github.com/stacklok/mecatl/blob/main/user-docs/mecatui/sessions.md#recover-a-pending-approval).
+If ordinary attachment fails, the stored transcript remains visible and no
+fallback session is created: press `r` to retry the preserved prompt or `esc` to
+go Back and edit it. Combining a resume selector with `--prompt` or
+`--prompt-file` submits the seed exactly once after an ordinary continuation;
+during pending-approval recovery it remains an unsent draft.
 
 On an ordinary clean exit, after the terminal has left the alternate screen and cleanup
 has completed, mecatui writes exactly one handoff line to **stderr**:
@@ -545,8 +552,8 @@ a short directive with a longer brief. The seed fires ONCE: a `/models` restart 
 |---|---|---|
 | `--workspace` | cwd | **embedded only:** trusted operator configuration for the hosted server's default root; never sent in CreateSession and rejected by every `connect` form |
 | `--mode` | `default` | permission posture for a new session: `default` \| `plan` \| `accept-edits`; an adopted chat keeps its stored mode |
-| `--resume` | – | continue the owned main chat with this exact opaque session ID; loads its authoritative transcript without creating a throwaway session; mutually exclusive with `--resume-latest` |
-| `--resume-latest` | off | continue the newest eligible owned main chat with an available authoritative transcript; excludes active, awaiting, scheduled, child, and unknown sessions; when none is eligible, start a new chat; mutually exclusive with `--resume` |
+| `--resume` | – | continue the owned stored main chat with this exact opaque session ID, or recover its supported pending ordinary approval; mutually exclusive with `--resume-latest` |
+| `--resume-latest` | off | continue the newest eligible owned main chat with an available authoritative transcript; excludes active, pending-approval, scheduled, child, and unknown sessions; when none is eligible, start a new chat; mutually exclusive with `--resume` |
 | `-p` / `--prompt` | – | seed prompt auto-submitted once the first session is ready (the CLI task to launch with). The TUI stays interactive for follow-ups; this is NOT a one-shot. Both `--prompt` and `--prompt-file` may be given (literal first, joined by a blank line). Fires ONCE — a `/models` restart or `/clear` never re-submits it |
 | `--prompt-file` | – | path to a file whose contents are the seed prompt body. Read at startup (fail-fast on unreadable). Joined after `--prompt` when both are given. Same once-only semantics as `--prompt` |
 | `--theme` | `aztec` | theme name (also `MECATUI_THEME`); giving either pins the theme and disables the light/dark auto-detect below |

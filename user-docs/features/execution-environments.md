@@ -110,8 +110,19 @@ content reads; Remove remains non-recursive.
 The optional Kubernetes execution provider stores environment ownership in a
 namespaced `ExecutionEnvironment`. Provider replicas coordinate through
 Kubernetes resource-version compare-and-swap; a replica restart does not clear
-another replica's operation. Operation lease expiry fences the environment and
-retains the unresolved operation identity for administrator recovery.
+another replica's operation. When a caller resolves a persisted ordinary
+approval after a server restart, the server reacquires native run ownership,
+renews it while the resumed run drains, and releases it after the drain. A lost
+or cancelled operation can still leave the environment in `FenceUnknown`, which
+requires the documented manual recovery path. There is no force takeover.
+
+Operation lease expiry fences the environment and retains the unresolved
+operation identity for administrator recovery. A `503` response with
+`placement_unavailable` is generic: check provider readiness, the configured
+profile's capacity, and retained allocations. Use the existing
+[administrative lifecycle operation](../building/deployment/mecak8s.md#run-an-administrative-lifecycle-operation)
+to retire an eligible environment and delete its retained storage when you need
+to free capacity.
 
 Workspace PVCs are retained by default. Removing the last session reference,
 deleting a session, uninstalling the chart, or deleting the provider does not

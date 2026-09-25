@@ -169,7 +169,9 @@ PVC, custom-resource, or controller management permissions.
 The provider supplies run-wide ownership, transactional references, controlled
 replacement and retirement, durable grant revocation, and reloadable TLS and
 signing material. Production isolation requires a CNI that enforces NetworkPolicy
-and a RuntimeClass that supplies the isolation promised by your platform.
+and a RuntimeClass that supplies the isolation promised by your platform. See
+[Native Kubernetes lifecycle and retention](/features/execution-environments.md#native-kubernetes-lifecycle-and-retention)
+for restart recovery, fencing, and placement-capacity behavior.
 
 Before installation, provide these values through your trusted image and Secret
 delivery system:
