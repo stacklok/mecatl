@@ -50,8 +50,8 @@ func TestMecatuiCardLayout_Scenario2_DelegationRowsFitBodyWidth(t *testing.T) {
 	t.Run("roster", func(t *testing.T) {
 		m := newMCPModel(t, aztec(), nil)
 		m = seedTeam(m, func(c *conversation) {
-			c.setTeamStart("t1", "", []client.TeamMemberSpec{{Name: long, Role: long}})
-			c.addTeamMember(member(long, "tool.call", client.TeamMsg{ToolName: long}))
+			c.startTeamCard("t1", "", []client.TeamMemberSpec{{Name: long, Role: long}})
+			c.updateTeamCardMember(member(long, "tool.call", client.TeamMsg{ToolName: long}))
 		})
 		m.agentsTab = tabTeams
 		m.team = teamState{view: teamRoster}
@@ -61,8 +61,8 @@ func TestMecatuiCardLayout_Scenario2_DelegationRowsFitBodyWidth(t *testing.T) {
 	t.Run("task", func(t *testing.T) {
 		m := newMCPModel(t, aztec(), nil)
 		m = seedTeam(m, func(c *conversation) {
-			c.setTeamStart("t1", "", []client.TeamMemberSpec{{Name: "lead"}})
-			c.setTeamTasks("t1", []client.TeamTask{{ID: long, Description: long, State: taskStatePending, Assignee: long, Deps: []string{long}}})
+			c.startTeamCard("t1", "", []client.TeamMemberSpec{{Name: "lead"}})
+			c.updateTeamCardTasks("t1", []client.TeamTask{{ID: long, Description: long, State: taskStatePending, Assignee: long, Deps: []string{long}}})
 		})
 		m.agentsTab = tabTeams
 		m.team = teamState{view: teamTasks}
@@ -72,8 +72,8 @@ func TestMecatuiCardLayout_Scenario2_DelegationRowsFitBodyWidth(t *testing.T) {
 	t.Run("finding", func(t *testing.T) {
 		m := newMCPModel(t, aztec(), nil)
 		m = seedTeam(m, func(c *conversation) {
-			c.setTeamStart("t1", "", []client.TeamMemberSpec{{Name: "lead"}})
-			c.setTeamFindings("t1", []client.TeamFinding{{Member: long, Body: long + "   "}})
+			c.startTeamCard("t1", "", []client.TeamMemberSpec{{Name: "lead"}})
+			c.updateTeamCardFindings("t1", []client.TeamFinding{{Member: long, Body: long + "   "}})
 		})
 		m.agentsTab = tabTeams
 		m.team = teamState{view: teamFindings}

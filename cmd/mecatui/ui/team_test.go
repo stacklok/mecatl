@@ -31,7 +31,7 @@ func teamCard(t *testing.T, expand bool, build func(c *conversation)) string {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{"goal":"ship the feature"}`)
 	build(c)
-	return stripANSIstr(r.renderBlock(0, &c.blocks[0], expand))
+	return stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], expand))
 }
 
 // member builds a TeamMember msg for the canonical team t1.
@@ -48,10 +48,10 @@ func member(name, inner string, m client.TeamMsg) client.TeamMsg {
 func TestTeamStartInitializesLanes(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	if !c.setTeamStart("t1", "", roster()) {
-		t.Fatal("setTeamStart should attribute to the Team card")
+	if !c.startTeamCard("t1", "", roster()) {
+		t.Fatal("startTeamCard should attribute to the Team card")
 	}
-	lanes := c.blocks[0].teamLanes
+	lanes := c.testTeamOverlay(0).teamLanes
 	if len(lanes) != 2 {
 		t.Fatalf("want 2 lanes, got %d", len(lanes))
 	}
@@ -69,15 +69,15 @@ func TestTeamStartInitializesLanes(t *testing.T) {
 func TestTeamMemberRoutesByName(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", roster())
+	c.startTeamCard("t1", "", roster())
 
-	c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
-	c.addTeamMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", IsError: false}))
-	c.addTeamMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 200, OutputTokens: 30}}))
-	c.addTeamMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+	c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", IsError: false}))
+	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 200, OutputTokens: 30}}))
+	c.updateTeamCardMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
 
-	lead := c.blocks[0].teamLanes[0]
-	scout := c.blocks[0].teamLanes[1]
+	lead := c.testTeamOverlay(0).teamLanes[0]
+	scout := c.testTeamOverlay(0).teamLanes[1]
 	if scout.toolCount != 1 || scout.current != "Grep" {
 		t.Errorf("scout lane: count=%d current=%q, want 1/Grep", scout.toolCount, scout.current)
 	}
@@ -94,9 +94,9 @@ func TestTeamMemberRoutesByName(t *testing.T) {
 // current tool/state and token totals — with the lead tagged.
 func TestTeamLiveCollapsed(t *testing.T) {
 	out := teamCard(t, false, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
-		c.addTeamMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
+		c.startTeamCard("t1", "", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 1200, OutputTokens: 80}}))
 	})
 	if !strings.Contains(out, "team ·") || !strings.Contains(out, "2 members") {
 		t.Errorf("live card should show a team header with the member count, got %q", out)
@@ -129,7 +129,7 @@ func TestTeamLeadAnchoredFirst(t *testing.T) {
 		{Name: "lead", Lead: true, Mutating: true},
 	}
 	out := teamCard(t, false, func(c *conversation) {
-		c.setTeamStart("t1", "", leadLast)
+		c.startTeamCard("t1", "", leadLast)
 	})
 	lines := strings.Split(out, "\n")
 	var laneLines []string
@@ -149,15 +149,15 @@ func TestTeamLeadAnchoredFirst(t *testing.T) {
 func TestTeamLaneOrderDoesNotMutate(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", []client.TeamMemberSpec{
+	c.startTeamCard("t1", "", []client.TeamMemberSpec{
 		{Name: "scout"}, {Name: "lead", Lead: true},
 	})
-	order := teamLaneOrder(c.blocks[0].teamLanes)
+	order := teamLaneOrder(c.testTeamOverlay(0).teamLanes)
 	if order[0] != 1 {
 		t.Errorf("lead (index 1) should sort to the front, got order %v", order)
 	}
-	if c.blocks[0].teamLanes[0].name != "scout" || c.blocks[0].teamLanes[1].name != "lead" {
-		t.Errorf("teamLanes order must not be mutated, got %+v", c.blocks[0].teamLanes)
+	if c.testTeamOverlay(0).teamLanes[0].name != "scout" || c.testTeamOverlay(0).teamLanes[1].name != "lead" {
+		t.Errorf("teamLanes order must not be mutated, got %+v", c.testTeamOverlay(0).teamLanes)
 	}
 }
 
@@ -218,41 +218,41 @@ func TestTeamLaneStateMapping(t *testing.T) {
 func TestTeamLaneIdleResetsOnActivity(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", roster())
+	c.startTeamCard("t1", "", roster())
 
-	scout := func() *teamLane { return &c.blocks[0].teamLanes[1] }
+	scout := func() *teamLane { return &c.testTeamOverlay(0).teamLanes[1] }
 
 	// round 0: starts working on a tool.
-	c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	if scout().idle {
 		t.Fatal("after tool.call: lane must be working, got idle")
 	}
 	// round 0 result → idle, current cleared.
-	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{}))
 	if !scout().idle || scout().current != "" {
 		t.Fatalf("after result: want idle && current=='', got idle=%v current=%q", scout().idle, scout().current)
 	}
 	// round 1 first activity = message.delta → idle cleared.
-	c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "again"}))
+	c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "again"}))
 	if scout().idle {
 		t.Fatal("after message.delta on next round: idle must be cleared")
 	}
 	// round 1 result → idle again.
-	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{}))
 	if !scout().idle {
 		t.Fatal("after round-1 result: want idle again")
 	}
 	// tool.call also clears idle.
-	c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Read"}))
+	c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Read"}))
 	if scout().idle {
 		t.Fatal("tool.call must clear idle")
 	}
 	// back to idle, then turn.end clears it too.
-	c.addTeamMember(member("scout", "result", client.TeamMsg{}))
+	c.updateTeamCardMember(member("scout", "result", client.TeamMsg{}))
 	if !scout().idle {
 		t.Fatal("want idle before turn.end check")
 	}
-	c.addTeamMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 10}}))
+	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 10}}))
 	if scout().idle {
 		t.Fatal("turn.end must clear idle")
 	}
@@ -267,7 +267,7 @@ func TestTeamLaneCapRollup(t *testing.T) {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
 	out := teamCard(t, false, func(c *conversation) {
-		c.setTeamStart("t1", "", big)
+		c.startTeamCard("t1", "", big)
 	})
 	laneLines := 0
 	for _, ln := range strings.Split(out, "\n") {
@@ -290,10 +290,10 @@ func TestTeamLaneCapRollup(t *testing.T) {
 func TestTeamLiveNoFlicker(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", roster())
-	c.addTeamMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 100}}))
-	c.addTeamMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 50}}))
-	if got := c.blocks[0].teamLanes[1].usage.InputTokens; got != 150 {
+	c.startTeamCard("t1", "", roster())
+	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 100}}))
+	c.updateTeamCardMember(member("scout", "turn.end", client.TeamMsg{Usage: client.Usage{InputTokens: 50}}))
+	if got := c.testTeamOverlay(0).teamLanes[1].usage.InputTokens; got != 150 {
 		t.Errorf("lane usage should accumulate monotonically, got %d want 150", got)
 	}
 }
@@ -302,12 +302,12 @@ func TestTeamLiveNoFlicker(t *testing.T) {
 // forwarded message lines (clamped) and tool chips with ✓/✗ glyphs.
 func TestTeamExpandedTrace(t *testing.T) {
 	out := teamCard(t, true, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "searching for the bug"}))
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
-		c.addTeamMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches in dispatch.go"}))
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Read"}))
-		c.addTeamMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Read", IsError: true}))
+		c.startTeamCard("t1", "", roster())
+		c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "searching for the bug"}))
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep", Detail: "pattern: handleErr"}))
+		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Grep", Detail: "3 matches in dispatch.go"}))
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Read"}))
+		c.updateTeamCardMember(member("scout", "tool.result", client.TeamMsg{ToolName: "Read", IsError: true}))
 	})
 	if !strings.Contains(out, "searching for the bug") {
 		t.Errorf("expanded card should show the member message line, got %q", out)
@@ -329,14 +329,14 @@ func TestTeamExpandedTrace(t *testing.T) {
 // between members' trace blocks so boundaries are clear at 3+ members.
 func TestTeamExpandedSeparatesMembers(t *testing.T) {
 	out := teamCard(t, true, func(c *conversation) {
-		c.setTeamStart("t1", "", []client.TeamMemberSpec{
+		c.startTeamCard("t1", "", []client.TeamMemberSpec{
 			{Name: "lead", Lead: true, Mutating: true},
 			{Name: "scout"},
 			{Name: "builder", Mutating: true},
 		})
-		c.addTeamMember(member("lead", "message.delta", client.TeamMsg{Text: "planning"}))
-		c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "scanning"}))
-		c.addTeamMember(member("builder", "message.delta", client.TeamMsg{Text: "editing"}))
+		c.updateTeamCardMember(member("lead", "message.delta", client.TeamMsg{Text: "planning"}))
+		c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "scanning"}))
+		c.updateTeamCardMember(member("builder", "message.delta", client.TeamMsg{Text: "editing"}))
 	})
 	// Each member's trace block is preceded by a blank line (after the first). The
 	// card border pads every line, so a separator line is whitespace-only between
@@ -360,11 +360,11 @@ func TestTeamExpandedSeparatesMembers(t *testing.T) {
 func TestTeamExpandedCapsTrace(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", roster())
+	c.startTeamCard("t1", "", roster())
 	for i := 0; i < maxTeamTrace+5; i++ {
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Read"}))
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Read"}))
 	}
-	if got := len(c.blocks[0].teamLanes[1].trace); got != maxTeamTrace {
+	if got := len(c.testTeamOverlay(0).teamLanes[1].trace); got != maxTeamTrace {
 		t.Errorf("lane trace should cap at %d, got %d", maxTeamTrace, got)
 	}
 }
@@ -374,10 +374,10 @@ func TestTeamExpandedCapsTrace(t *testing.T) {
 func TestTeamMessageCoalesces(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	c.setTeamStart("t1", "", roster())
-	c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "look"}))
-	c.addTeamMember(member("scout", "message.delta", client.TeamMsg{Text: "ing"}))
-	tr := c.blocks[0].teamLanes[1].trace
+	c.startTeamCard("t1", "", roster())
+	c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "look"}))
+	c.updateTeamCardMember(member("scout", "message.delta", client.TeamMsg{Text: "ing"}))
+	tr := c.testTeamOverlay(0).teamLanes[1].trace
 	if len(tr) != 1 || tr[0].text != "looking" {
 		t.Errorf("message deltas should coalesce, got %+v", tr)
 	}
@@ -388,9 +388,9 @@ func TestTeamMessageCoalesces(t *testing.T) {
 // summary rendered via the normal result body path.
 func TestTeamResolved(t *testing.T) {
 	out := teamCard(t, false, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
-		c.setTeamEnd("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, nil)
+		c.startTeamCard("t1", "", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.finishTeamCard("t1", "", 4, "end_turn", client.Usage{InputTokens: 5200, OutputTokens: 410}, nil)
 		c.resolveTool("t1", "team shipped the feature", false)
 	})
 	if !strings.Contains(out, "4 rounds") {
@@ -411,8 +411,8 @@ func TestTeamResolved(t *testing.T) {
 // glyph and stop:error, with the error text in the result slot.
 func TestTeamErrorResolves(t *testing.T) {
 	out := teamCard(t, false, func(c *conversation) {
-		c.setTeamStart("t1", "", roster())
-		c.setTeamEnd("t1", "", 1, "error", client.Usage{}, nil)
+		c.startTeamCard("t1", "", roster())
+		c.finishTeamCard("t1", "", 1, "error", client.Usage{}, nil)
 		c.resolveTool("t1", "Team: the run failed", true)
 	})
 	if !strings.Contains(out, "✗") {
@@ -436,8 +436,8 @@ func TestTeamManyMembersLegible(t *testing.T) {
 		{Name: "tester", Mutating: true},
 	}
 	out := teamCard(t, false, func(c *conversation) {
-		c.setTeamStart("t1", "", big)
-		c.addTeamMember(member("builder", "tool.call", client.TeamMsg{ToolName: "Write"}))
+		c.startTeamCard("t1", "", big)
+		c.updateTeamCardMember(member("builder", "tool.call", client.TeamMsg{ToolName: "Write"}))
 	})
 	for _, name := range []string{"lead", "scout", "builder", "tester"} {
 		if !strings.Contains(out, name) {
@@ -455,18 +455,18 @@ func TestTeamAttributionByParentCallID(t *testing.T) {
 	c := &conversation{}
 	c.addTool("ta", "Team", `{}`)
 	c.addTool("tb", "Team", `{}`)
-	if !c.setTeamStart("ta", "", []client.TeamMemberSpec{{Name: "a1"}}) ||
-		!c.setTeamStart("tb", "", []client.TeamMemberSpec{{Name: "b1"}}) {
+	if !c.startTeamCard("ta", "", []client.TeamMemberSpec{{Name: "a1"}}) ||
+		!c.startTeamCard("tb", "", []client.TeamMemberSpec{{Name: "b1"}}) {
 		t.Fatal("both starts should attribute")
 	}
-	c.addTeamMember(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "ta", Member: "a1", InnerKind: "tool.call", ToolName: "Grep"})
-	c.addTeamMember(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "tb", Member: "b1", InnerKind: "tool.call", ToolName: "Read"})
+	c.updateTeamCardMember(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "ta", Member: "a1", InnerKind: "tool.call", ToolName: "Grep"})
+	c.updateTeamCardMember(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "tb", Member: "b1", InnerKind: "tool.call", ToolName: "Read"})
 
-	if c.blocks[0].teamLanes[0].current != "Grep" {
-		t.Errorf("card ta mis-attributed: %+v", c.blocks[0].teamLanes[0])
+	if c.testTeamOverlay(0).teamLanes[0].current != "Grep" {
+		t.Errorf("card ta mis-attributed: %+v", c.testTeamOverlay(0).teamLanes[0])
 	}
-	if c.blocks[1].teamLanes[0].current != "Read" {
-		t.Errorf("card tb mis-attributed: %+v", c.blocks[1].teamLanes[0])
+	if c.testTeamOverlay(1).teamLanes[0].current != "Read" {
+		t.Errorf("card tb mis-attributed: %+v", c.testTeamOverlay(1).teamLanes[0])
 	}
 }
 
@@ -474,14 +474,14 @@ func TestTeamAttributionByParentCallID(t *testing.T) {
 // is silently dropped (no panic, returns false).
 func TestTeamMissAttributionIsSafe(t *testing.T) {
 	c := &conversation{}
-	if c.setTeamStart("nope", "", roster()) {
-		t.Errorf("setTeamStart should miss when no Team card matches")
+	if c.startTeamCard("nope", "", roster()) {
+		t.Errorf("startTeamCard should miss when no Team card matches")
 	}
-	if c.addTeamMember(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "nope", Member: "x"}) {
-		t.Errorf("addTeamMember should miss when no Team card matches")
+	if c.updateTeamCardMember(client.TeamMsg{Kind: client.TeamMember, ParentCallID: "nope", Member: "x"}) {
+		t.Errorf("updateTeamCardMember should miss when no Team card matches")
 	}
-	if c.setTeamEnd("nope", "", 0, "end_turn", client.Usage{}, nil) {
-		t.Errorf("setTeamEnd should miss when no Team card matches")
+	if c.finishTeamCard("nope", "", 0, "end_turn", client.Usage{}, nil) {
+		t.Errorf("finishTeamCard should miss when no Team card matches")
 	}
 }
 
@@ -491,11 +491,11 @@ func TestTeamMissAttributionIsSafe(t *testing.T) {
 func TestTeamMemberCreatesLaneWhenRosterMissed(t *testing.T) {
 	c := &conversation{}
 	c.addTool("t1", "Team", `{}`)
-	// No setTeamStart — the member arrives "cold".
-	if !c.addTeamMember(member("ghost", "tool.call", client.TeamMsg{ToolName: "Glob"})) {
-		t.Fatal("addTeamMember should attribute to the Team card even without a roster")
+	// No startTeamCard — the member arrives "cold".
+	if !c.updateTeamCardMember(member("ghost", "tool.call", client.TeamMsg{ToolName: "Glob"})) {
+		t.Fatal("updateTeamCardMember should attribute to the Team card even without a roster")
 	}
-	lanes := c.blocks[0].teamLanes
+	lanes := c.testTeamOverlay(0).teamLanes
 	if len(lanes) != 1 || lanes[0].name != "ghost" || lanes[0].current != "Glob" {
 		t.Errorf("a cold member should create its own lane, got %+v", lanes)
 	}

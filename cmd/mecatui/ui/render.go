@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // maxToolResultLines caps how many visible display rows of a tool result are
@@ -135,6 +136,10 @@ type renderer struct {
 	// long the scrollback is. Touched only on the update goroutine.
 	blockRenders int
 
+	// snapshotLoads counts detached model payload snapshots requested after metadata
+	// lookup. It is the test seam proving settled cache hits do not clone model state.
+	snapshotLoads int
+
 	// cardPrepares counts all migrated functional-card preparations. The counter is
 	// deliberately below renderBlock's composite-key guard so tests can prove a
 	// settled frame performs no snapshot or preparation.
@@ -166,9 +171,9 @@ type renderer struct {
 	inputView  string
 	inputValid bool
 
-	// renderedBlocksScratch is renderer-owned allocation reuse for one block-render
-	// pass. Consumers receive the returned slice from walkBlocks explicitly.
-	renderedBlocksScratch []string
+	// Render-pass scratch is renderer-owned allocation reuse. It carries no logical
+	// payload beyond the cache-miss preparation that produced each rendered entry.
+	renderPassScratch []renderPass
 
 	// vpViewCache/vpViewValid memoize the rendered VIEWPORT OUTPUT — the OUTERMOST
 	// render layer, above blockRenderCache. View() calls vp.View() which runs
@@ -581,21 +586,6 @@ func stripVS16(s string) string {
 	}, s)
 }
 
-// walkBlocks renders every block using the renderer-owned reusable backing slice.
-// It returns that render-pass output explicitly with the lowest changed block index.
-func (r *renderer) walkBlocks(c *conversation, expand bool) ([]string, int) {
-	firstChanged := len(c.blocks)
-	r.renderedBlocksScratch = r.renderedBlocksScratch[:0]
-	for i := range c.blocks {
-		before := r.blockRenders
-		r.renderedBlocksScratch = append(r.renderedBlocksScratch, r.renderBlock(i, &c.blocks[i], expand))
-		if r.blockRenders != before && i < firstChanged {
-			firstChanged = i
-		}
-	}
-	return r.renderedBlocksScratch, firstChanged
-}
-
 // renderConversationLines returns the conversation as single newline-free lines
 // ready for vp.SetContentLines. It reuses the cached prefix of settled blocks and
 // builds only the changed suffix.
@@ -625,7 +615,94 @@ func (r *renderer) walkBlocks(c *conversation, expand bool) ([]string, int) {
 // prefix lines being newline-free — they are split single lines, but
 // SetContentLines is free to re-split them and the fresh array still absorbs the
 // result.
-func (r *renderer) renderConversationLines(c *conversation, expand bool) []string {
+// renderPasses reads cheap typed metadata first. A detached payload snapshot is
+// materialized only for a whole-card cache miss; settled cards never clone or
+// prepare their payload merely to prove their cached output is still valid.
+func (r *renderer) renderPasses(c *scrollback.Conversation, expand bool) ([]renderPass, int) {
+	n := c.Len()
+	firstChanged := n
+	if cap(r.renderPassScratch) < n {
+		r.renderPassScratch = make([]renderPass, n)
+	} else {
+		r.renderPassScratch = r.renderPassScratch[:n]
+	}
+	passes := r.renderPassScratch
+	for i := 0; i < n; i++ {
+		meta := c.MetadataAt(i)
+		pass := renderPass{
+			id:       uint64(meta.ID),
+			revision: rendererRevision(meta.Revision),
+			kind:     meta.Kind,
+		}
+		key := blockRenderKey{revision: pass.revision, context: r.renderContext(expand)}
+		if entry, ok := r.blocks.renderedBlock(i, key); ok {
+			pass.text, pass.rows = entry.out, entry.rows
+			passes[i] = pass
+			continue
+		}
+		r.snapshotLoads++
+		pass.text = r.renderSnapshot(i, c.SnapshotAt(i), expand)
+		entry, _ := r.blocks.renderedBlock(i, key)
+		pass.rows = entry.rows
+		passes[i] = pass
+		if i < firstChanged {
+			firstChanged = i
+		}
+	}
+	return passes, firstChanged
+}
+
+// renderSnapshot dispatches each sealed scrollback payload deliberately. The
+// renderer owns this adaptation: scrollback itself remains a logical model with
+// no dependency on presentation, markdown, or client event types.
+func (r *renderer) renderSnapshot(idx int, s scrollback.BlockSnapshot, expand bool) string {
+	switch p := s.Payload.(type) {
+	case scrollback.UserCardSnapshot:
+		return r.renderUserSnapshot(idx, s, p, expand)
+	case scrollback.AssistantCardSnapshot:
+		return r.renderAssistantSnapshot(idx, s, p, expand)
+	case scrollback.ToolCardSnapshot:
+		return r.renderToolSnapshot(idx, s, p, expand)
+	case scrollback.NoticeCardSnapshot:
+		return r.renderNoticeSnapshot(idx, s, p, expand)
+	case scrollback.TurnStatCardSnapshot:
+		return r.renderTurnStatSnapshot(idx, s, p, expand)
+	case scrollback.ErrorCardSnapshot:
+		return r.renderErrorSnapshot(idx, s, p, expand)
+	case scrollback.HookCardSnapshot:
+		return r.renderHookSnapshot(idx, s, p, expand)
+	case scrollback.DeliveryCardSnapshot:
+		return r.renderDeliverySnapshot(idx, s, p, expand)
+	case scrollback.SubagentCardSnapshot:
+		return r.renderSubagentSnapshot(idx, s, p, expand)
+	case scrollback.TeamCardSnapshot:
+		return r.renderTeamSnapshot(idx, s, p, expand)
+	default:
+		return ""
+	}
+}
+
+func (r *renderer) renderAssistantSnapshot(idx int, s scrollback.BlockSnapshot, p scrollback.AssistantCardSnapshot, expand bool) string {
+	return r.renderCachedSnapshot(idx, uint64(s.ID), rendererRevision(s.Revision), expand, func(blockID uint64) blockRenderOutput {
+		out := r.renderAssistantSnapshotFresh(idx, p, expand)
+		out = r.indentLines(out)
+		return blockRenderOutput{
+			text: out,
+			rows: r.assistantProvenanceRows(blockID, p, out, expand),
+		}
+	})
+}
+
+func (r *renderer) renderAssistantSnapshotFresh(idx int, p scrollback.AssistantCardSnapshot, expand bool) string {
+	label := r.th.Style("assistantLabel").Render("● mecatl")
+	body := padLines(r.markdownAt(idx, p.Text), assistantBodyHang)
+	if reasoning := r.renderReasoningSnapshot(p, expand); reasoning != "" {
+		body = padLines(reasoning, assistantBodyHang) + "\n" + body
+	}
+	return label + "\n\n" + body
+}
+
+func (r *renderer) renderConversationLines(c *scrollback.Conversation, expand bool) []string {
 	return r.renderConversationFrame(c, expand).lines
 }
 
@@ -653,14 +730,14 @@ const (
 
 // blockSepAfter returns the inter-block separator to write AFTER block i (i.e.
 // before block i+1).
-func blockSepAfter(conversationBlocks []block, i int) string {
-	switch conversationBlocks[i].kind {
-	case blockTool:
+func blockSepAfter(kinds []scrollback.Kind, i int) string {
+	switch kinds[i] {
+	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 		return interBlockSepNone
-	case blockTurnStat:
+	case scrollback.KindTurnStat:
 		return interBlockSepCompact
-	case blockAssistant:
-		if i+1 < len(conversationBlocks) && conversationBlocks[i+1].kind == blockTurnStat {
+	case scrollback.KindAssistant:
+		if i+1 < len(kinds) && kinds[i+1] == scrollback.KindTurnStat {
 			return interBlockSepNone
 		}
 	}
@@ -669,99 +746,18 @@ func blockSepAfter(conversationBlocks []block, i int) string {
 
 // blockBlankLinesAfter is the lines-path mirror of blockSepAfter: it returns the
 // number of blank "" lines to insert before block i (i.e. after block i-1).
-func blockBlankLinesAfter(conversationBlocks []block, i int) int {
-	switch conversationBlocks[i-1].kind {
-	case blockTool:
+func blockBlankLinesAfter(kinds []scrollback.Kind, i int) int {
+	switch kinds[i-1] {
+	case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
 		return interBlockBlankLinesNone
-	case blockTurnStat:
+	case scrollback.KindTurnStat:
 		return interBlockBlankLinesCompact
-	case blockAssistant:
-		if i < len(conversationBlocks) && conversationBlocks[i].kind == blockTurnStat {
+	case scrollback.KindAssistant:
+		if i < len(kinds) && kinds[i] == scrollback.KindTurnStat {
 			return interBlockBlankLinesNone
 		}
 	}
 	return interBlockBlankLinesCompact
-}
-
-// renderBlock is the CACHED per-block entry point: it returns the memoized
-// render when the block's revision, the wrap width, and the expand toggle all
-// match the cached entry, and otherwise renders fresh, stores the result, and
-// bumps blockRenders (the cache-miss test seam). idx is the block's stable conversation index (blocks are append-only within a
-// conversation; resetBlockCaches handles index reuse across rebuilds).
-// Correctness rests on the block.rev discipline: every post-append mutation of a
-// render-visible field bumps rev through a conversation gateway, so a cache hit
-// can never be stale. Update-goroutine-only.
-func (r *renderer) renderBlock(idx int, b *block, expand bool) string {
-	key := r.blockRenderKey(b, expand)
-	if entry, ok := r.blocks.renderedBlock(idx, key); ok {
-		return entry.out
-	}
-	var (
-		out  string
-		rows []renderedRow
-	)
-	if prepared, ok := r.prepareStructuredBlock(b, expand); ok {
-		out = prepared.Text()
-		rows = blockProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)
-	} else {
-		out = r.renderBlockFresh(idx, b, expand)
-	}
-	// contentWidth preserves a positive width for a tiny renderer. A tool card uses
-	// that cell for its frameless fallback, so it cannot also carry the usual indent.
-	if b.kind != blockTool || r.width > r.indent {
-		out = r.indentLines(out)
-	}
-	r.blocks.storeRendered(idx, blockEntry{key: key, out: out, rows: rows})
-	r.blockRenders++
-	return out
-}
-
-// renderBlockFresh renders one block per its kind. Assistant text goes through
-// glamour; everything else is plain themed lipgloss. idx is the block's stable
-// conversation index, used to memoize the (expensive) assistant glamour render
-// across the per-delta full-scrollback re-render — see markdownAt (the inner
-// memo layer below renderBlock's whole-block cache).
-func (r *renderer) renderBlockFresh(idx int, b *block, expand bool) string {
-	switch b.kind {
-	case blockUser:
-		return r.prepareUserBlock(b).Text()
-	case blockAssistant:
-		// Assistant text is rendered through glamour, which neutralises escape
-		// sequences itself — do NOT sanitize here or markdown breaks. The turn's
-		// reasoning summary (if any) renders dim and collapsed ABOVE the answer.
-		// The label "● mecatl" stays at the base indent; the BODY (reasoning summary +
-		// markdown answer) hangs by assistantBodyHang so it sits under "mecatl" — matching
-		// the user block's body-under-"you" alignment. The markdown was already wrapped at
-		// contentWidth()-hang (see markdown), so hang + base never overflows r.width.
-		// ONE blank line separates the label from the body (a little vertical breathing
-		// room under "● mecatl") — within-block spacing, distinct from the inter-turn
-		// 2-line join gap. The user block is deliberately NOT given this gap: its gold rail
-		// visually connects label→body, and a mid-gap would break the rail.
-		label := r.th.Style("assistantLabel").Render("● mecatl")
-		body := padLines(r.markdownAt(idx, b.raw), assistantBodyHang)
-		if reasoning := r.renderReasoning(b, expand); reasoning != "" {
-			body = padLines(reasoning, assistantBodyHang) + "\n" + body
-		}
-		// label + blank line + body. The blank line is unindented (it is empty).
-		return label + "\n\n" + body
-	case blockTool:
-		return r.renderTool(b, expand)
-	case blockNotice:
-		return r.prepareNoticeBlock(b).Text()
-	case blockHook:
-		return r.prepareHookBlock(b).Text()
-	case blockTurnStat:
-		return r.prepareTurnStatBlock(b).Text()
-	case blockError:
-		if b.permanent {
-			return r.preparePermanentErrorBlock(b, expand).Text()
-		}
-		return r.prepareErrorBlock(b).Text()
-	case blockDelivery:
-		return r.prepareDeliveryBlock(b).Text()
-	default:
-		return r.wrapStyled(terminaltext.Sanitize(b.raw), lipgloss.NewStyle())
-	}
 }
 
 // reasoningCaveat is the dim one-line disclaimer prepended to the EXPANDED
@@ -781,16 +777,16 @@ const reasoningCaveat = "— summary of the model's reasoning; may not reflect i
 // asked to see it — matching how resultBody handles tool results). Streamed
 // reasoning is never a trust anchor: hidden unless explicitly asked for, and
 // clearly labelled as a lossy summary.
-func (r *renderer) renderReasoning(b *block, expand bool) string {
-	if b.reasoning == "" {
+func (r *renderer) renderReasoningSnapshot(p scrollback.AssistantCardSnapshot, expand bool) string {
+	if p.Reasoning == "" {
 		return ""
 	}
 	style := r.th.Style("reasoning")
-	text := terminaltext.Sanitize(strings.TrimRight(b.reasoning, "\n"))
+	text := terminaltext.Sanitize(strings.TrimRight(p.Reasoning, "\n"))
 	n := lineCount(text)
 	expandMark := r.marks.expandTools
 	if !expand {
-		if b.reasoningStreaming {
+		if p.ReasoningStreaming {
 			return style.Render("reasoning…")
 		}
 		return style.Render("reasoning summary · " + plural(n, "line") + " · " + expandMark + " expand")
@@ -806,7 +802,7 @@ func (r *renderer) renderReasoning(b *block, expand bool) string {
 // it through st. A content width at or below the frame (e.g. the width-0 team focus
 // renderer, team.go) means "unknown/tiny: do not wrap" and the body renders unwrapped.
 // Wrapping against contentWidth (not r.width) keeps the body within budget once
-// renderBlock prefixes each line with `indent` spaces.
+// Whole-card rendering prefixes each line with `indent` spaces.
 func (r *renderer) wrapStyled(s string, st lipgloss.Style) string {
 	frame := st.GetHorizontalFrameSize()
 	cw := r.contentWidth()
@@ -1014,40 +1010,6 @@ func wrapToolCardRegion(region string, bodyWidth int) string {
 // diff, or — for an ordinary tool — the compact key:value summary when collapsed
 // and the full pretty JSON when expanded. Returns "" when there is nothing to
 // show. See renderTool for the per-branch rationale.
-func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
-	var args string
-	switch {
-	case b.team:
-		// Delegation rows must be bounded while still raw. renderTeam applies styles
-		// only after preparing its body-width rows, so no ANSI padding can induce a
-		// second wrap below the card frame.
-		return r.renderTeam(b, expand, bodyWidth)
-	case b.subagent:
-		// See the Team path above; Subagent has the same styled metadata/trace body.
-		return r.renderSubagent(b, expand, bodyWidth)
-	default:
-		if diff, ok := r.renderToolDiffAtWidth(b.toolName, b.toolArgs, expand, bodyWidth); ok {
-			// Edit/Write render their change as a diff in place of the raw JSON args.
-			return diff
-		}
-		if expand {
-			// Expanded: always the FULL pretty-printed JSON (the inspect path; the summary
-			// is collapsed-only, so ctrl+t reveals everything). Wrap raw JSON before its
-			// style so the card row budget is ANSI-independent.
-			if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-				return renderToolCardText(r.th.Style("toolArgs"), jsonArgs, bodyWidth)
-			}
-		} else if summary, ok := r.summarizeArgs(b.toolArgs); ok {
-			// Collapsed: the compact key:value summary in place of raw JSON (issue #24).
-			args = summary
-		} else if jsonArgs := prettyJSON(b.toolArgs); jsonArgs != "" {
-			// Collapsed but the args aren't a JSON object (bare array/scalar/odd shape):
-			// fall back to the existing pretty-JSON behaviour.
-			args = r.th.Style("toolArgs").Render(jsonArgs)
-		}
-	}
-	return wrapToolCardRegion(args, bodyWidth)
-}
 
 // renderToolResult renders the RESULT region of a resolved tool card. Collapsed,
 // a LARGE JSON result is summarized to prominent fields + a size line (issue #24,
@@ -1062,27 +1024,6 @@ func (r *renderer) renderToolArgs(b *block, expand bool, bodyWidth int) string {
 // represented in the model-facing resultBody, so they are not double-rendered. A nil
 // resultBlocks (the common text-only case) leaves the existing render path
 // byte-unchanged.
-func (r *renderer) renderToolResult(b *block, expand bool, bodyWidth int) string {
-	lines, hiddenSummaryFields := r.renderToolResultLines(b, expand)
-	for _, blk := range b.resultBlocks {
-		if line, ok := renderResultBlockLine(blk); ok {
-			lines = append(lines, toolResultLine{text: line, style: resultLineArtifact})
-		}
-	}
-	if !expand {
-		lines = r.truncateResultDisplayLines(lines, bodyWidth, hiddenSummaryFields)
-	} else {
-		lines = wrapResultDisplayLines(lines, bodyWidth)
-	}
-	var out strings.Builder
-	for i, line := range lines {
-		if i > 0 {
-			out.WriteByte('\n')
-		}
-		out.WriteString(r.renderToolResultLine(line))
-	}
-	return out.String()
-}
 
 type resultLineStyle uint8
 
@@ -1102,20 +1043,6 @@ type toolResultLine struct {
 // renderToolResultLines returns unwrapped, terminal-safe result rows. The enclosing
 // renderToolResult combines these with typed artifact rows before applying the shared
 // collapsed display-row budget.
-func (r *renderer) renderToolResultLines(b *block, expand bool) ([]toolResultLine, int) {
-	if summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, expand); ok {
-		return resultLines(summary, resultLineSummary), hiddenFields
-	}
-	body := terminaltext.Sanitize(strings.TrimRight(b.resultBody, "\n"))
-	if body == "" {
-		return nil, 0
-	}
-	style := resultLineBody
-	if b.resultError {
-		style = resultLineError
-	}
-	return resultLines(body, style), 0
-}
 
 func resultLines(text string, style resultLineStyle) []toolResultLine {
 	lines := strings.Split(text, "\n")
@@ -1194,45 +1121,6 @@ func renderResultBlockLine(blk client.ContentBlock) (string, bool) {
 // The goal title always leads (a muted line) so a card is self-contained and
 // legible even with several concurrent subagents interleaved. All subagent-derived
 // strings (goal, tool names, previews) are terminal-sanitized.
-func (r *renderer) renderSubagent(b *block, expand bool, bodyWidth int) string {
-	muted := r.th.Style("muted")
-	var out strings.Builder
-	if b.subGoal != "" {
-		out.WriteString(renderDelegationToolCardText(muted, "↳ "+terminaltext.Sanitize(b.subGoal), bodyWidth))
-		out.WriteString("\n")
-	}
-	modelLabel := delegationModelLabel(b.subRoutedCategory, b.subRoutedModel, b.subRoutingReason, b.subModel, b.subRoutingDecision)
-	if expand && b.subRoutingDecision != nil {
-		modelLabel = ""
-	}
-	if modelLabel != "" {
-		out.WriteString(renderDelegationToolCardText(muted, modelLabel, bodyWidth))
-		out.WriteString("\n")
-	}
-	if expand {
-		if detail := routingDecisionDetail(b.subRoutingDecision, b.subModel, b.subRoutingReason); detail != "" {
-			out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
-			out.WriteString("\n")
-		}
-	}
-
-	if b.subDone {
-		out.WriteString(renderDelegationToolCardText(muted, subagentResolvedLine(b), bodyWidth))
-		return strings.TrimRight(out.String(), "\n")
-	}
-
-	if expand {
-		out.WriteString(renderDelegationToolCardText(muted, "subagent · "+boundedPreviewsSubNote, bodyWidth))
-		if trace := r.renderTraceAtWidth(b.subTrace, bodyWidth); trace != "" {
-			out.WriteString("\n")
-			out.WriteString(trace)
-		}
-		return strings.TrimRight(out.String(), "\n")
-	}
-
-	out.WriteString(renderDelegationToolCardText(muted, r.subagentLiveLine(b), bodyWidth))
-	return strings.TrimRight(out.String(), "\n")
-}
 
 // subagentModelLabel renders the model surface for a delegation as a muted one-line
 // cue. It shows the OPT-IN router's bare metadata as "routed: <category> → <model>"
@@ -1370,29 +1258,9 @@ func routingDecisionDetail(decision *client.RoutingDecision, actualModel, reason
 // (ADR 0079 AC3.1). The tool name is sanitized (server-derived). The trace chord
 // reads the LIVE ExpandTools marking (r.marks.expandTools) so an override propagates
 // (issue #457).
-func (r *renderer) subagentLiveLine(b *block) string {
-	current := "…"
-	if b.subCurrent != "" {
-		current = terminaltext.Sanitize(b.subCurrent)
-	}
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · %s trace",
-		current,
-		humanizeTokens(b.subUsage.InputTokens),
-		humanizeTokens(b.subUsage.OutputTokens),
-		plural(b.subToolCount, "tool"),
-		r.marks.expandTools)
-}
 
 // subagentResolvedLine is the muted one-line summary shown once the child run has
 // finished: duration, token totals, final tool count, and the stop reason.
-func subagentResolvedLine(b *block) string {
-	return fmt.Sprintf("subagent · %s · ↑%s ↓%s · %s · stop:%s",
-		humanizeDuration(b.subDurationMs),
-		humanizeTokens(b.subUsage.InputTokens),
-		humanizeTokens(b.subUsage.OutputTokens),
-		plural(b.subToolCount, "tool"),
-		subagentStopLabel(b.subStop))
-}
 
 // chipSep is the two-space gap between adjacent child-tool chips in the expanded
 // trace row.
@@ -1528,67 +1396,12 @@ func teamLaneOrder(lanes []teamLane) []int {
 //
 // All member-derived text (names, message lines, tool names, previews) is
 // terminal-sanitized before it reaches lipgloss.
-func (r *renderer) renderTeam(b *block, expand bool, bodyWidth int) string {
-	muted := r.th.Style("muted")
-	var out strings.Builder
-
-	if b.teamDone {
-		out.WriteString(renderDelegationToolCardText(muted, teamResolvedLine(b), bodyWidth))
-		if !expand {
-			return out.String()
-		}
-	} else {
-		out.WriteString(renderDelegationToolCardText(muted, r.teamHeader(b, expand), bodyWidth))
-	}
-
-	order := teamLaneOrder(b.teamLanes)
-	shown := order
-	if len(shown) > maxTeamLanes {
-		shown = order[:maxTeamLanes]
-	}
-	nameW := teamNameWidth(b.teamLanes, shown)
-	for n, idx := range shown {
-		ln := &b.teamLanes[idx]
-		if expand && n > 0 {
-			// A blank line between members' blocks so boundaries read clearly at 3+.
-			out.WriteString("\n")
-		}
-		out.WriteString("\n")
-		out.WriteString(renderDelegationToolCardText(muted, teamLaneLine(ln, nameW, b.teamDone), bodyWidth))
-		if expand {
-			if detail := routingDecisionDetail(ln.routingDecision, ln.model, ln.routingReason); detail != "" {
-				out.WriteString("\n")
-				out.WriteString(renderDelegationToolCardText(muted, detail, bodyWidth))
-			}
-			if tr := r.renderTraceAtWidth(ln.trace, bodyWidth); tr != "" {
-				out.WriteString("\n")
-				out.WriteString(tr)
-			}
-		}
-	}
-	if extra := len(order) - len(shown); extra > 0 {
-		// The inline card caps at maxTeamLanes; the rest live in the agents overlay.
-		// Advertise it on the roll-up so a capped card is the discovery point for the
-		// full, windowed roster. The chord reads the LIVE Agents marking so an override
-		// propagates (issue #457).
-		out.WriteString("\n")
-		out.WriteString(renderDelegationToolCardText(muted, fmt.Sprintf("  · +%d more · %s", extra, r.marks.agents), bodyWidth))
-	}
-	return out.String()
-}
 
 // teamHeader is the muted lead line summarising the team's shape: the member count
 // and the expand-tools affordance, whose verb tracks the toggle (trace when collapsed,
 // collapse when expanded). The round count is carried only on team.end, so it is
 // shown on the resolved line rather than fabricated live. The chord reads the LIVE
 // ExpandTools marking (r.marks.expandTools) so an override propagates (issue #457).
-func (r *renderer) teamHeader(b *block, expand bool) string {
-	verb := r.marks.expandTools + " trace"
-	if expand {
-		verb = r.marks.expandTools + " collapse"
-	}
-	return "team · " + plural(len(b.teamLanes), "member") + " · " + verb
-}
 
 // teamNameWidth is the column width member BARE names are padded to on the
 // collapsed lane lines: the longest shown bare name, capped at maxTeamNameWidth,
@@ -1839,22 +1652,11 @@ func renderTraceToolRow(row string, offset, glyphStart int, name string, glyphSt
 // stopped non-resumably — a "N stopped" count tell. The count is the calm inline
 // card's only signal of a stopped member (the per-member glyph lives in the modal
 // overlay), so it appears only when stopped > 0.
-func teamResolvedLine(b *block) string {
-	line := fmt.Sprintf("team · %s · ↑%s ↓%s · stop:%s",
-		plural(b.teamRounds, "round"),
-		humanizeTokens(b.teamUsage.InputTokens),
-		humanizeTokens(b.teamUsage.OutputTokens),
-		subagentStopLabel(b.teamStop))
-	if n := teamStoppedCount(b); n > 0 {
-		line += fmt.Sprintf(" · %d stopped", n)
-	}
-	return line
-}
 
 // teamStoppedCount reports how many member lanes ended STOPPED (non-resumable /
 // budget-exhausted). It drives the inline-card "N stopped" tell and the overlay
 // roster sub-header count.
-func teamStoppedCount(b *block) int {
+func teamStoppedCount(b *teamOverlaySnapshot) int {
 	n := 0
 	for i := range b.teamLanes {
 		if b.teamLanes[i].stopped {
@@ -2596,17 +2398,6 @@ func (*renderer) summarizeResult(body string) (string, bool) {
 // object/array). The expanded view, an error result, and a non-JSON/line-shaped
 // result all return ok=false so renderTool falls through to the existing styled,
 // line-capped/full body path (Read and prose results unchanged).
-func (r *renderer) summarizeResolvedResult(b *block, expand bool) (string, bool) {
-	summary, _, ok := r.summarizeResolvedResultDetail(b, expand)
-	return summary, ok
-}
-
-func (*renderer) summarizeResolvedResultDetail(b *block, expand bool) (string, int, bool) {
-	if expand || b.resultError {
-		return "", 0, false
-	}
-	return summarizeResultDetail(b.resultBody)
-}
 
 // collapseMarker formats the "+N more line(s) · <expand> expand" affordance shown
 // when a tool result or diff side is line-capped. The verb matches the footer

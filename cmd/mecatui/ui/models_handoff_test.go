@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 func newModelSwitchHandoff(t *testing.T, loader client.SessionTranscripter) (Model, *fakeConv) {
@@ -85,15 +86,16 @@ func TestModelSwitchAdoptsAuthoritativeTargetTranscript(t *testing.T) {
 	if strings.Contains(view, "local source only") {
 		t.Fatalf("conversation must be target-authoritative:\n%s", view)
 	}
-	if len(m.conv.blocks) != 4 {
-		t.Fatalf("adopted transcript blocks = %d, want user, assistant, tool, assistant", len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != 4 {
+		t.Fatalf("adopted transcript blocks = %d, want user, assistant, tool, assistant", len(m.conv.testBlocks()))
 	}
-	tool := m.conv.blocks[2]
-	if m.conv.blocks[0].kind != blockUser || m.conv.blocks[1].kind != blockAssistant || tool.kind != blockTool || m.conv.blocks[3].kind != blockAssistant {
-		t.Fatalf("adopted block order = %#v", m.conv.blocks)
+	cards := m.conv.testBlocks()
+	if cards[0].Payload.Kind() != scrollback.KindUser || cards[1].Payload.Kind() != scrollback.KindAssistant || cards[2].Payload.Kind() != scrollback.KindTool || cards[3].Payload.Kind() != scrollback.KindAssistant {
+		t.Fatalf("adopted card order = %#v", cards)
 	}
-	if tool.toolName != "Read" || tool.toolArgs != `{"path":"target.txt"}` || !tool.resolved || tool.resultBody != "target tool result" {
-		t.Fatalf("adopted tool block = %#v", tool)
+	tool := cards[2].Payload.(scrollback.ToolCardSnapshot)
+	if tool.Call.Name != "Read" || tool.Call.Arguments != `{"path":"target.txt"}` || !tool.Resolved || tool.Result.Body != "target tool result" {
+		t.Fatalf("adopted tool card = %#v", tool)
 	}
 	if got, want := conv.ops(), []string{"create", "transcript", "close"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("handoff operation order = %v, want %v", got, want)

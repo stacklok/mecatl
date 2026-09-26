@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
+
 // mdEntry is one memoized assistant-block render: the source text and wrap width
 // it was produced from (the validity key) plus the rendered ANSI output.
 type mdEntry struct {
@@ -31,6 +33,23 @@ type blockEntry struct {
 	rows []renderedRow
 }
 
+// blockRenderOutput is the cache-output protocol for a freshly rendered card.
+// It carries only rendered text and lockstep structural provenance.
+type blockRenderOutput struct {
+	text string
+	rows []renderedRow
+}
+
+// renderPass is the renderer-owned handoff from cache lookup to frame assembly.
+// It retains only cache identity, rendered output, and lockstep provenance.
+type renderPass struct {
+	id       uint64
+	revision int
+	kind     scrollback.Kind
+	text     string
+	rows     []renderedRow
+}
+
 // joinPrefixState is the validity key of the cached incremental-join prefix.
 // Width and expand are the global presentation axes that change every block's
 // render. Per-block revisions are unnecessary because a prefix contains only
@@ -59,9 +78,6 @@ type blockRenderCache struct {
 	// markdown holds assistant glamour output, keyed by conversation index and
 	// validated by mdEntry.src and mdEntry.width.
 	markdown map[int]mdEntry
-	// frameRows holds provenance for fallback-rendered blocks, keyed by index and
-	// validated by frameBlockEntry.key. Structured rows stay in rendered instead.
-	frameRows map[int]frameBlockEntry
 	// prefixLines, prefixN, and prefixKey cache the unchanged prefix for
 	// incremental frame assembly. A live-tail re-render rebuilds only the suffix.
 	//
@@ -120,23 +136,6 @@ func (c *blockRenderCache) storeMarkdown(index int, entry mdEntry) {
 	c.markdown[index] = entry
 }
 
-// frameRowsFor returns fallback frame provenance when its whole-block validity
-// key matches. Structured-card provenance is intentionally owned by renderedBlock.
-func (c *blockRenderCache) frameRowsFor(index int, key blockRenderKey) ([]renderedRow, bool) {
-	entry, ok := c.frameRows[index]
-	return entry.rows, ok && entry.key == key
-}
-
-// storeFrameRows records fallback frame provenance for one block index and its
-// whole-block validity key. It does not affect the assembled prefix: callers use
-// it only while assembling the current frame from an already selected render.
-func (c *blockRenderCache) storeFrameRows(index int, entry frameBlockEntry) {
-	if c.frameRows == nil {
-		c.frameRows = map[int]frameBlockEntry{}
-	}
-	c.frameRows[index] = entry
-}
-
 // prefix returns the cached unchanged leading range only when both its coverage
 // and its global presentation identity match the requested frame.
 func (c *blockRenderCache) prefix(key joinPrefixState, n int) ([]string, []renderedRow, bool) {
@@ -171,7 +170,6 @@ func (c *blockRenderCache) invalidatePrefixAt(index int) {
 func (c *blockRenderCache) reset() {
 	c.rendered = map[int]blockEntry{}
 	c.markdown = map[int]mdEntry{}
-	c.frameRows = map[int]frameBlockEntry{}
 	c.prefixLines = c.prefixLines[:0]
 	c.prefixProvenance = c.prefixProvenance[:0]
 	c.prefixN = 0
@@ -197,6 +195,17 @@ func (r *renderer) renderContext(expanded bool) renderContextKey {
 	}
 }
 
-func (r *renderer) blockRenderKey(b *block, expanded bool) blockRenderKey {
-	return blockRenderKey{revision: b.rev, context: r.renderContext(expanded)}
+// renderCachedSnapshot admits a logical card to the renderer-owned cache using
+// only its identity and revision. The family-specific closure is invoked only on
+// a cache miss and returns the complete cache output; no broad conversation
+// record crosses this seam.
+func (r *renderer) renderCachedSnapshot(index int, id uint64, revision int, expanded bool, fresh func(uint64) blockRenderOutput) string {
+	key := blockRenderKey{revision: revision, context: r.renderContext(expanded)}
+	if entry, ok := r.blocks.renderedBlock(index, key); ok {
+		return entry.out
+	}
+	output := fresh(id)
+	r.blocks.storeRendered(index, blockEntry{key: key, out: output.text, rows: output.rows})
+	r.blockRenders++
+	return output.text
 }

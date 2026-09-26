@@ -46,7 +46,7 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 		tasks[i] = teamTask{id: fmt.Sprintf("task-%d", i), state: taskStatePending}
 		findings[i] = teamFinding{member: "lead", body: fmt.Sprintf("finding-%d", i)}
 	}
-	team := &block{teamLanes: lanes, teamTasks: tasks, teamFindings: findings}
+	team := &teamOverlaySnapshot{teamLanes: lanes, teamTasks: tasks, teamFindings: findings}
 	th := aztec()
 
 	// Each window still gets precisely its calculated row budget: the long
@@ -85,8 +85,8 @@ func TestDelegationOverlayChromeLongKeyLabelsStayOneRow(t *testing.T) {
 		{"empty subagents", renderSubagentRoster(th, subagentState{}, nil, hk, height, bodyWidth)},
 		{"empty parallel", renderParallelRoster(th, parallelState{}, nil, hk, height, bodyWidth)},
 		{"empty teams", renderTeamsTab(th, teamState{}, nil, hk, bodyWidth, height)},
-		{"empty tasks", renderTeamTasks(th, &block{}, hk, height, bodyWidth)},
-		{"empty findings", renderTeamFindings(th, &block{}, hk, height, bodyWidth)},
+		{"empty tasks", renderTeamTasks(th, &teamOverlaySnapshot{}, hk, height, bodyWidth)},
+		{"empty findings", renderTeamFindings(th, &teamOverlaySnapshot{}, hk, height, bodyWidth)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertRows(tc.name, tc.out)

@@ -470,10 +470,11 @@ func (m Model) scrollIndicator() string {
 const changedFilesIndicatorLimit = 999
 
 func (m Model) changedFilesIndicator() string {
-	n := len(m.conv.filesChanged)
-	if n == 0 {
+	appendix, ok := m.conv.scrollback.AppendixSnapshot()
+	if !ok || len(appendix.Files) == 0 {
 		return ""
 	}
+	n := len(appendix.Files)
 	if n > changedFilesIndicatorLimit {
 		return "✎ 999+ files"
 	}

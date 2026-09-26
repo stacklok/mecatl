@@ -151,7 +151,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		for i := range lanes {
 			lanes[i].name = fmt.Sprintf("member-%d", i)
 		}
-		b := &block{toolID: "call-t1", teamID: "t1", teamLanes: lanes}
+		b := &teamOverlaySnapshot{callID: "call-t1", teamID: "t1", teamLanes: lanes}
 		before := teamSelectableList(th, teamState{}, b, hk, 80)
 		control, _, _ := before.configuredControl(th, 12)
 		control.SetCursor(5)
@@ -206,11 +206,11 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 		}
 
 		lanes := []teamLane{{name: "one"}, {name: "two"}}
-		firstBlock := &block{toolID: "call-t1", teamID: "t1", teamLanes: lanes}
+		firstBlock := &teamOverlaySnapshot{callID: "call-t1", teamID: "t1", teamLanes: lanes}
 		firstTeam := teamSelectableList(th, teamState{}, firstBlock, hk, 80)
 		control, _, _ = firstTeam.configuredControl(th, 12)
 		control.SetCursor(1)
-		secondBlock := &block{toolID: "call-t2", teamID: "t2", teamLanes: lanes}
+		secondBlock := &teamOverlaySnapshot{callID: "call-t2", teamID: "t2", teamLanes: lanes}
 		secondTeam := teamSelectableList(th, teamState{roster: control}, secondBlock, hk, 80)
 		control, _, _ = secondTeam.configuredControl(th, 12)
 		if got := control.CursorID(); got != teamLaneListID(secondBlock, "two") {
@@ -243,7 +243,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 			lanes[i].name = fmt.Sprintf("member-%d", i)
 		}
 		lanes[5].name = "c"
-		team := &block{toolID: "a:b", teamID: "metadata", teamLanes: lanes}
+		team := &teamOverlaySnapshot{callID: "a:b", teamID: "metadata", teamLanes: lanes}
 		teamList := teamSelectableList(th, teamState{}, team, hk, 80)
 		control, _, _ = teamList.configuredControl(th, 16)
 		control.SetCursor(5)
@@ -260,7 +260,7 @@ func TestMecatuiBoundedScrollCursor_Scenario2_LateHandlesKeepStableListIDs(t *te
 			t.Fatalf("delimiter-bearing member anchor={%q,%d} want {%q,%d}", got.ID, got.ItemLine, memberTop.ID, memberTop.ItemLine)
 		}
 
-		collisionShape := &block{toolID: "a", teamID: "other-metadata", teamLanes: []teamLane{{name: "b:c"}}}
+		collisionShape := &teamOverlaySnapshot{callID: "a", teamID: "other-metadata", teamLanes: []teamLane{{name: "b:c"}}}
 		collisionList := teamSelectableList(th, teamState{roster: control}, collisionShape, hk, 80)
 		control, _, _ = collisionList.configuredControl(th, 16)
 		if got, old := control.CursorID(), wantMember; got != teamLaneListID(collisionShape, "b:c") || got == old {
@@ -727,8 +727,8 @@ func boundedScenarioGroups(n int) []parallelGroup {
 	return groups
 }
 
-func boundedScenarioTeam(n int) *block {
-	b := &block{kind: blockTool, team: true}
+func boundedScenarioTeam(n int) *teamOverlaySnapshot {
+	b := &teamOverlaySnapshot{}
 	for i := range n {
 		name := fmt.Sprintf("member-%02d", i)
 		b.teamLanes = append(b.teamLanes, teamLane{name: name, role: "asymmetric multiline role", trace: boundedScenarioTrace("trace-" + name)})
@@ -758,7 +758,7 @@ func boundedScenarioAgentsModel(t *testing.T, mode string) Model {
 	m := resize(newMCPModel(t, aztec(), nil), 80, 30)
 	m.conv.subagentFleet = boundedScenarioFleet(12)
 	m.conv.parallelGroups = boundedScenarioGroups(10)
-	m.conv.blocks = append(m.conv.blocks, *boundedScenarioTeam(10))
+	m.conv.addTeamFixture(*boundedScenarioTeam(10))
 	m.team = teamState{view: teamRoster}
 	switch mode {
 	case "subagent-roster":

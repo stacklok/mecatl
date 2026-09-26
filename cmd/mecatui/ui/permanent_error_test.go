@@ -6,6 +6,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestPermanentErrorBlockRendersSummary asserts that a permanent-error block
@@ -16,7 +17,7 @@ func TestPermanentErrorBlockRendersSummary(t *testing.T) {
 	c := &conversation{}
 	c.addPermanentError("invalid_encrypted_content: the provider rejected the encrypted payload")
 
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 
 	if !strings.Contains(out, "invalid_encrypted_content: the provider rejected the encrypted payload") {
 		t.Errorf("collapsed permanent error must contain the first-line summary, got %q", out)
@@ -33,7 +34,7 @@ func TestPermanentErrorBlockUsesLiveExpandToolsChord(t *testing.T) {
 	c := &conversation{}
 	c.addPermanentError("invalid request")
 
-	out := stripANSIstr(m.rend.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(m.rend.renderSnapshot(0, c.testBlocks()[0], false))
 	if !strings.Contains(out, "ctrl+f11 shows details") || strings.Contains(out, "ctrl+t shows details") {
 		t.Errorf("collapsed permanent error must use the live details chord, got %q", out)
 	}
@@ -47,7 +48,7 @@ func TestPermanentErrorBlockCollapsedHidesRaw(t *testing.T) {
 	raw := "error_code_4xx: the request was rejected by the provider\nmore detail on second line\nand third line"
 	c.addPermanentError(raw)
 
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 
 	if strings.Contains(out, "more detail on second line") {
 		t.Errorf("collapsed permanent error must NOT show raw second line, got %q", out)
@@ -68,7 +69,7 @@ func TestPermanentErrorBlockExpandShowsRaw(t *testing.T) {
 	raw := "error_code_4xx: the request was rejected\nsecond line detail"
 	c.addPermanentError(raw)
 
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], true))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
 
 	if !strings.Contains(out, "raw payload") {
 		t.Errorf("expanded permanent error must show raw payload header, got %q", out)
@@ -88,7 +89,7 @@ func TestTransientErrorRendersAsToday(t *testing.T) {
 	c := &conversation{}
 	c.addError("upstream 503: service temporarily unavailable")
 
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 
 	if !strings.Contains(out, "upstream 503: service temporarily unavailable") {
 		t.Errorf("transient error must render raw text verbatim, got %q", out)
@@ -113,18 +114,16 @@ func TestResultMsgPermanentUsesAddPermanentError(t *testing.T) {
 	})
 
 	// The block should be a permanent-error block.
-	var lastBlock *block
-	if len(m.conv.blocks) > 0 {
-		lastBlock = &m.conv.blocks[len(m.conv.blocks)-1]
+	lastCard := m.conv.testBlocks()[len(m.conv.testBlocks())-1]
+	lastError, ok := lastCard.Payload.(scrollback.ErrorCardSnapshot)
+	if !ok {
+		t.Fatalf("expected Error card, got %T", lastCard.Payload)
 	}
-	if lastBlock == nil || lastBlock.kind != blockError {
-		t.Fatalf("expected blockError kind, got %v", lastBlock)
+	if !lastError.Permanent {
+		t.Error("permanent ResultMsg must set Permanent")
 	}
-	if !lastBlock.permanent {
-		t.Errorf("permanent ResultMsg must set block.permanent=true, got %v", lastBlock.permanent)
-	}
-	if !strings.Contains(lastBlock.raw, "invalid_encrypted_content") {
-		t.Errorf("raw error text must survive in block, got %q", lastBlock.raw)
+	if !strings.Contains(lastError.Text, "invalid_encrypted_content") {
+		t.Errorf("raw error text lost: %q", lastError.Text)
 	}
 }
 
@@ -141,15 +140,13 @@ func TestTransientResultMsgUsesAddError(t *testing.T) {
 		Usage:     client.Usage{InputTokens: 10, OutputTokens: 2},
 	})
 
-	var lastBlock *block
-	if len(m.conv.blocks) > 0 {
-		lastBlock = &m.conv.blocks[len(m.conv.blocks)-1]
+	lastCard := m.conv.testBlocks()[len(m.conv.testBlocks())-1]
+	lastError, ok := lastCard.Payload.(scrollback.ErrorCardSnapshot)
+	if !ok {
+		t.Fatalf("expected Error card, got %T", lastCard.Payload)
 	}
-	if lastBlock == nil || lastBlock.kind != blockError {
-		t.Fatalf("expected blockError kind, got %v", lastBlock)
-	}
-	if lastBlock.permanent {
-		t.Errorf("non-permanent ResultMsg must leave block.permanent=false, got %v", lastBlock.permanent)
+	if lastError.Permanent {
+		t.Error("non-permanent ResultMsg set Permanent")
 	}
 }
 
@@ -159,21 +156,22 @@ func TestTransientResultMsgUsesAddError(t *testing.T) {
 func TestRecoverNoticeRendersAsScrollbackBlock(t *testing.T) {
 	m, _, _ := newTestModel(t, theme.New("aztec", theme.AztecPalette()))
 	m.phase = phaseRunning
-	before := len(m.conv.blocks)
+	before := len(m.conv.testBlocks())
 
 	m = applyAll(m, client.RecoverNoticeMsg{
 		Text: "this session's last turn failed on a permanent provider error",
 	})
 
-	if len(m.conv.blocks) != before+1 {
+	if len(m.conv.testBlocks()) != before+1 {
 		t.Fatalf("RecoverNoticeMsg added %d scrollback block(s), want 1 (durable warning block)",
-			len(m.conv.blocks)-before)
+			len(m.conv.testBlocks())-before)
 	}
-	blk := m.conv.blocks[len(m.conv.blocks)-1]
-	if blk.kind != blockNotice || !blk.recover {
-		t.Errorf("RecoverNoticeMsg block = %+v, want blockNotice with recover=true", blk)
+	blk := m.conv.testBlocks()[len(m.conv.testBlocks())-1]
+	notice, ok := blk.Payload.(scrollback.NoticeCardSnapshot)
+	if !ok || !notice.Recover {
+		t.Errorf("RecoverNoticeMsg card = %+v, want recovery notice", blk)
 	}
-	out := stripANSIstr(m.rend.renderBlock(0, &blk, false))
+	out := stripANSIstr(m.rend.renderSnapshot(0, blk, false))
 	if !strings.Contains(out, "permanent provider error") {
 		t.Errorf("recover-notice block must render the advisory text, got %q", out)
 	}
@@ -192,7 +190,7 @@ func TestPermanentErrorSummarySanitizesControlSequences(t *testing.T) {
 	c := &conversation{}
 	c.addPermanentError(raw)
 
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 
 	// No raw ESC (0x1b) or CR may survive into the rendered summary.
 	if strings.Contains(out, "\x1b") {
@@ -209,7 +207,7 @@ func TestPermanentErrorSummarySanitizesControlSequences(t *testing.T) {
 	}
 	// The expanded raw view must ALSO be sanitized (it already was — this guards
 	// against a regression that routes the raw view unsanitized).
-	expanded := stripANSIstr(r.renderBlock(0, &c.blocks[0], true))
+	expanded := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
 	if strings.Contains(expanded, "\x1b") {
 		t.Errorf("expanded raw view must be sanitized, got %q", expanded)
 	}

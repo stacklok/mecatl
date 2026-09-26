@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // overrideAll rebinds EVERY rebindable action to a distinct sentinel chord so a
@@ -80,15 +81,15 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 	)
 	t.Run("reasoning collapsed/expanded header", func(t *testing.T) {
 		r := remderRenderer()
-		b := block{reasoning: "line one\nline two"}
-		collapsed := stripANSIstr(r.renderReasoning(&b, false))
+		b := scrollback.AssistantCardSnapshot{Reasoning: "line one\nline two"}
+		collapsed := stripANSIstr(r.renderReasoningSnapshot(b, false))
 		if !strings.Contains(collapsed, wantExpand+" expand") {
 			t.Errorf("collapsed reasoning header should carry %q, got %q", wantExpand+" expand", collapsed)
 		}
 		if strings.Contains(collapsed, "ctrl+t") {
 			t.Errorf("collapsed reasoning header still shows the default ctrl+t: %q", collapsed)
 		}
-		expanded := stripANSIstr(r.renderReasoning(&b, true))
+		expanded := stripANSIstr(r.renderReasoningSnapshot(b, true))
 		if !strings.Contains(expanded, wantExpand+" collapse") {
 			t.Errorf("expanded reasoning header should carry %q, got %q", wantExpand+" collapse", expanded)
 		}
@@ -99,9 +100,9 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 
 	t.Run("subagent live line trace affordance", func(t *testing.T) {
 		r := remderRenderer()
-		b := block{subCurrent: "Grep", subToolCount: 2,
-			subUsage: client.Usage{InputTokens: 100, OutputTokens: 20}}
-		line := r.subagentLiveLine(&b)
+		b := subagentCardPresentation{current: "Grep", toolCount: 2,
+			usage: client.Usage{InputTokens: 100, OutputTokens: 20}}
+		line := r.subagentPresentationLiveLine(b)
 		if !strings.Contains(line, wantExpand+" trace") {
 			t.Errorf("subagent live line should carry %q trace, got %q", wantExpand, line)
 		}
@@ -112,15 +113,15 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 
 	t.Run("team header trace/collapse affordance", func(t *testing.T) {
 		r := remderRenderer()
-		b := block{teamLanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
-		collapsed := r.teamHeader(&b, false)
+		b := teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
+		collapsed := r.teamPresentationHeader(b, false)
 		if !strings.Contains(collapsed, wantExpand+" trace") {
 			t.Errorf("collapsed team header should carry %q trace, got %q", wantExpand, collapsed)
 		}
 		if strings.Contains(collapsed, "ctrl+t") {
 			t.Errorf("collapsed team header still shows the default ctrl+t: %q", collapsed)
 		}
-		expanded := r.teamHeader(&b, true)
+		expanded := r.teamPresentationHeader(b, true)
 		if !strings.Contains(expanded, wantExpand+" collapse") {
 			t.Errorf("expanded team header should carry %q collapse, got %q", wantExpand, expanded)
 		}
@@ -136,8 +137,8 @@ func TestInlineCardsReflectKeyOverride(t *testing.T) {
 		for i := 0; i < maxTeamLanes+2; i++ {
 			big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 		}
-		c.setTeamStart("t1", "", big)
-		out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+		c.startTeamCard("t1", "", big)
+		out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 		if !strings.Contains(out, "more · "+wantAgents) {
 			t.Errorf("team roll-up should carry the live agents chord %q, got %q", wantAgents, out)
 		}
@@ -326,10 +327,10 @@ func TestFooterReflectsKeyOverride(t *testing.T) {
 		m.phase = phaseIdle
 		m.conv = conversation{}
 		m.conv.addTool("t1", "Team", `{"goal":"ship"}`)
-		m.conv.setTeamStart("t1", "team-abc", roster())
-		m.conv.addTeamMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
-		m.conv.setSubagentStart("p1", "scout", "", "", "", "")
-		m.conv.addSubagentTool(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "p1", ToolName: "Grep", ToolCount: 1})
+		m.conv.startTeamCard("t1", "team-abc", roster())
+		m.conv.updateTeamCardMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
+		m.conv.startSubagentCard("p1", "scout", "", "", "", "")
+		m.conv.updateSubagentCard(client.SubagentMsg{Kind: client.SubagentTool, ParentCallID: "p1", ToolName: "Grep", ToolCount: 1})
 		m.refreshView()
 		got := stripANSIstr(m.fitFooter("ready", 160))
 		if !strings.Contains(got, "ctrl+f9") {
@@ -556,8 +557,8 @@ func TestDefaultFooterHelp(t *testing.T) {
 	m.phase = phaseIdle
 	m.conv = conversation{}
 	m.conv.addTool("t1", "Team", `{"goal":"ship"}`)
-	m.conv.setTeamStart("t1", "team-abc", roster())
-	m.conv.addTeamMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
+	m.conv.startTeamCard("t1", "team-abc", roster())
+	m.conv.updateTeamCardMember(member("lead", "tool.call", client.TeamMsg{ToolName: "Edit"}))
 	m.refreshView()
 	got = stripANSIstr(m.fitFooter("ready", 160))
 	if !strings.Contains(got, "f6 agents") {
@@ -572,24 +573,24 @@ func TestDefaultFooterHelp(t *testing.T) {
 func TestDefaultInlineCardsBytesUnchanged(t *testing.T) {
 	r := newTestRenderer()
 	// Reasoning header.
-	b := block{reasoning: "line one\nline two"}
-	if got := stripANSIstr(r.renderReasoning(&b, false)); !strings.Contains(got, "ctrl+t expand") {
+	b := scrollback.AssistantCardSnapshot{Reasoning: "line one\nline two"}
+	if got := stripANSIstr(r.renderReasoningSnapshot(b, false)); !strings.Contains(got, "ctrl+t expand") {
 		t.Errorf("default reasoning header should carry ctrl+t expand, got %q", got)
 	}
-	if got := stripANSIstr(r.renderReasoning(&b, true)); !strings.Contains(got, "ctrl+t collapse") {
+	if got := stripANSIstr(r.renderReasoningSnapshot(b, true)); !strings.Contains(got, "ctrl+t collapse") {
 		t.Errorf("default reasoning header should carry ctrl+t collapse, got %q", got)
 	}
 	// Subagent live line.
-	sb := block{subCurrent: "Grep", subToolCount: 1}
-	if got := r.subagentLiveLine(&sb); !strings.Contains(got, "ctrl+t trace") {
+	sb := subagentCardPresentation{current: "Grep", toolCount: 1}
+	if got := r.subagentPresentationLiveLine(sb); !strings.Contains(got, "ctrl+t trace") {
 		t.Errorf("default subagent live line should carry ctrl+t trace, got %q", got)
 	}
 	// Team header.
-	tb := block{teamLanes: []teamLane{{name: "lead", lead: true}}}
-	if got := r.teamHeader(&tb, false); !strings.Contains(got, "ctrl+t trace") {
+	tb := teamCardPresentation{lanes: []teamLane{{name: "lead", lead: true}}}
+	if got := r.teamPresentationHeader(tb, false); !strings.Contains(got, "ctrl+t trace") {
 		t.Errorf("default team header should carry ctrl+t trace, got %q", got)
 	}
-	if got := r.teamHeader(&tb, true); !strings.Contains(got, "ctrl+t collapse") {
+	if got := r.teamPresentationHeader(tb, true); !strings.Contains(got, "ctrl+t collapse") {
 		t.Errorf("default team header should carry ctrl+t collapse, got %q", got)
 	}
 	// Collapse + arg rollup markers.
@@ -607,8 +608,8 @@ func TestDefaultInlineCardsBytesUnchanged(t *testing.T) {
 	for i := 0; i < maxTeamLanes+2; i++ {
 		big = append(big, client.TeamMemberSpec{Name: "m" + string(rune('a'+i))})
 	}
-	c.setTeamStart("t1", "", big)
-	if got := stripANSIstr(r.renderBlock(0, &c.blocks[0], false)); !strings.Contains(got, "more · f6") {
+	c.startTeamCard("t1", "", big)
+	if got := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false)); !strings.Contains(got, "more · f6") {
 		t.Errorf("default team roll-up should carry f6, got %q", got)
 	}
 }
@@ -681,7 +682,7 @@ func TestAgentsOverlayHintsReflectKeyOverride(t *testing.T) {
 func TestTeamOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
-	b := &block{teamLanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
+	b := &teamOverlaySnapshot{teamLanes: []teamLane{{name: "lead", lead: true}, {name: "scout"}}}
 	t.Run("roster", func(t *testing.T) {
 		got := stripANSIstr(renderTeamRoster(th, teamState{}, b, hk, 0))
 		for _, want := range []string{"ctrl+f26/ctrl+f27 select", "ctrl+f17 focus", "ctrl+f21 cancel", "ctrl+f22 tasks", "ctrl+f23 findings", "ctrl+f18 switch", "ctrl+f16 close"} {

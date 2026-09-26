@@ -5,6 +5,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // maxTraceEntries caps how many trace entries a delegation lane (a subagent block,
@@ -197,151 +198,6 @@ type teamFinding struct {
 	body   string
 }
 
-// blockKind classifies a scrollback block so the renderer knows how to style it.
-type blockKind int
-
-const (
-	blockUser      blockKind = iota // a user prompt
-	blockAssistant                  // streamed assistant markdown (+ optional reasoning summary)
-	blockTool                       // a tool call (+ its resolved result)
-	blockNotice                     // compaction / muted info
-	blockTurnStat                   // muted per-turn usage + elapsed stat line
-	blockError                      // an error notice
-	blockHook                       // a structured hook notice (phase + decision)
-	blockDelivery                   // a fire-result delivery note (scheduled-task affordance + outcome)
-)
-
-// block is one entry in the conversation scrollback. Assistant blocks accumulate
-// streamed deltas in raw (re-rendered through glamour each delta); tool blocks
-// carry their call args and, once resolved, their result. Keeping the raw text
-// on the block (not a pre-rendered string) lets a theme/width change re-render
-// the whole history correctly.
-type block struct {
-	id   uint64
-	kind blockKind
-
-	// rev is the block's render revision: bumped on EVERY post-append mutation of a
-	// render-visible field. The renderer's per-block cache (renderer.blocks)
-	// keys on it, so a settled block (rev unchanged) joins the conversation string
-	// from cache while a mutated block re-renders fresh. Blocks must therefore be
-	// mutated only through conversation methods — the bump sites are exactly four
-	// gateways (currentAssistant, subagentBlock, teamBlock, and resolveTool's
-	// matched branch), which together front every post-append mutator. The
-	// cache-equivalence oracle in render_cache_test.go is the drift tripwire: a
-	// mutation path that bypasses a bump renders stale and fails the oracle.
-	rev int
-
-	raw string // user text, assistant markdown buffer, or notice text
-
-	// media holds one placeholder line per non-text part attached to a USER block
-	// (blockUser), e.g. "image/png (inline)". It is populated when a prompt
-	// attaches media via the @-mention menu (mention.go → client.ExpandMentions):
-	// each part renders a clear "📎 …" placeholder line below the text so a
-	// multimodal prompt is never silently shown as text-only. Empty for a text-only
-	// prompt.
-	media []string
-
-	// Reasoning is an ATTRIBUTE of the assistant block, not a sibling: a turn's
-	// reasoning-summary deltas and answer-text deltas can interleave on the wire
-	// (separate SSE events), so all of a turn's reasoning accumulates here and
-	// renders as one dim, collapsed header above the merged answer. reasoning is
-	// the accumulated summary text; reasoningStreaming is true while reasoning is
-	// still arriving and the answer text has not started (drives the live
-	// "reasoning…" affordance).
-	reasoning          string
-	reasoningStreaming bool
-
-	// Tool-block fields.
-	toolID      string
-	toolName    string
-	toolArgs    string
-	resolved    bool
-	resultBody  string
-	resultError bool
-	// permanent marks a blockError as a PERMANENT provider rejection — retrying
-	// cannot succeed. When true, the renderer shows a one-line human summary
-	// instead of the raw error text, with the raw payload available on expand
-	// (ctrl+t). Meangless for non-error blocks.
-	permanent bool
-	// recover marks a blockNotice as a recover-notice advisory (a session that
-	// failed on a PERMANENT provider error was recovered for re-entry). The
-	// renderer styles it as a WARNING (⚠ glyph) rather than a muted compaction
-	// notice, so it stands out as actionable. It is a DURABLE scrollback block
-	// (not a transient statusMsg) so the run's first event does not overwrite it
-	// before the user reads it. Meaningful only for blockNotice.
-	recover bool
-	// resultBlocks carries the typed content blocks relayed from the server for a tool
-	// result (when the result carried structured Parts — resource links, images, …).
-	// The renderer surfaces user-audience artifacts (resource links, images) IN
-	// ADDITION to the model-facing resultBody text, so e.g. a github MCP resource_link
-	// shows as a distinct artifact line rather than buried in/below the text body.
-	// nil (the common text-only case) leaves the existing render path byte-unchanged.
-	resultBlocks []client.ContentBlock
-
-	// deliveryFireID is the fire id of a blockDelivery note (empty for every
-	// other block kind). It labels the delivery card's subtitle so the operator
-	// can correlate the card to a `sched--<name>-…` fire session without it being
-	// buried in the fenced body.
-	deliveryFireID string
-
-	// Subagent fields (attached to a Subagent tool block): the BOUNDED projection
-	// of the Subagent's child run (ADR 0079). subagent is true once a subagent.start
-	// has been attributed to this block; subGoal is the card title; subCurrent is
-	// the child's live current-tool name; subTrace is the capped shared trace of
-	// child tool chips + message lines; subToolCount is the running/final child
-	// tool count; subUsage, subStop, and subDurationMs are the resolved end stats
-	// (subDone gates them). The previews are bounded/scrubbed/client-only — they
-	// never enter the parent conversation (gauntlet #7).
-	subagent      bool
-	subGoal       string
-	subCurrent    string // latest child tool name, "" when none yet
-	subTrace      []teamTrace
-	subToolCount  int
-	subUsage      client.Usage
-	subStop       string
-	subDurationMs int64
-	subDone       bool
-	// subRoutedCategory/subRoutedModel are the opt-in model router's bare metadata
-	// for this delegation (a category label + a model id), set on subagent.start
-	// only when the router classified it (ADR 0031). Empty when no router ran. BARE
-	// metadata — never child content — so gauntlet #7 holds.
-	subRoutedCategory string
-	subRoutedModel    string
-	// subRoutingReason names WHY the opt-in router did NOT classify this delegation
-	// (issue #397 / ADR 0083): empty on a routed hit, else a bounded gate/miss string.
-	// BARE metadata — never child content — so gauntlet #7 holds.
-	subRoutingReason   string
-	subRoutingDecision *client.RoutingDecision
-	// subModel is the concrete model id the child ACTUALLY ran on (issue #112 /
-	// ADR 0035), regardless of how it was chosen. When routed, equals subRoutedModel.
-	// BARE metadata — never child content — so gauntlet #7 holds.
-	subModel string
-
-	// Team fields (attached to a Team tool block): the BOUNDED projection of an
-	// in-process team's run. team is true once a team.start has been attributed to
-	// this block; teamLanes are the per-member lanes in roster order (the order the
-	// model formed the team), looked up by name when routing team.member events;
-	// teamRounds/teamStop/teamUsage are the resolved end stats (teamDone gates
-	// them). Member content lives in each lane's capped trace; nothing here enters
-	// the parent conversation.
-	team         bool
-	teamID       string // the team's stable id (e.g. "team-p1"), shown in the live footer summary segment
-	teamLanes    []teamLane
-	teamTasks    []teamTask    // the team's shared task list (f6 task sub-view)
-	teamFindings []teamFinding // the team's shared findings ledger (f6 findings view)
-	teamRounds   int
-	teamStop     string
-	teamUsage    client.Usage
-	teamDone     bool
-
-	// Hook-block fields (blockHook): the structured phase/tool/decision used to
-	// render a hook notice distinctly from a compaction notice and colour a
-	// blocked hook.
-	hookPhase    string
-	hookTool     string
-	hookDecision string // "info" | "blocked" | "modified"
-}
-
 // subagentLane is the flat, fleet-level projection of ONE Subagent child run, keyed by
 // ChildID. It mirrors the per-Subagent-block subagent fields (subGoal/subTrace/…) but is
 // collected ACROSS all Subagent cards into conversation.subagentFleet, so the footer
@@ -393,14 +249,8 @@ type subagentLane struct {
 // f6 Subagents tab. It is part of the conversation so a /clear (which rebuilds
 // the conversation) drops it too.
 type conversation struct {
-	blocks      []block
-	nextBlockID uint64
-	// filesChanged preserves first-seen order; filesSeen tracks membership. The
-	// appendix receives its identity at the first distinct change, even though it
-	// is not yet a physical rendered block.
-	filesChanged           []string
-	filesSeen              map[string]struct{}
-	changedFilesAppendixID uint64
+	// scrollback is the authoritative logical conversation document.
+	scrollback scrollback.Conversation
 	// subagentFleet preserves first-seen order; fleetIndex maps ChildID → its slot so
 	// repeated tool/end events for a child update the same lane in O(1).
 	subagentFleet []subagentLane
@@ -413,42 +263,44 @@ type conversation struct {
 	parallelIndex  map[string]int
 }
 
-// appendBlock assigns the next UI-local document identity before adding a block.
-func (c *conversation) appendBlock(b block) {
-	c.nextBlockID++
-	b.id = c.nextBlockID
-	c.blocks = append(c.blocks, b)
+func rendererRevision(revision uint64) int {
+	if revision > uint64(^uint(0)>>1) {
+		panic("scrollback revision exceeds renderer capacity")
+	}
+	return int(revision)
+}
+
+func artifacts(blocks []client.ContentBlock) []scrollback.Artifact {
+	out := make([]scrollback.Artifact, len(blocks))
+	for i, b := range blocks {
+		out[i] = scrollback.Artifact{Kind: string(b.Kind), MIMEType: b.MimeType, Data: b.Data, URL: b.URL, Text: b.Text, Name: b.Name, Title: b.Title, Description: b.Description}
+	}
+	return out
+}
+
+func contentBlocks(artifacts []scrollback.Artifact) []client.ContentBlock {
+	out := make([]client.ContentBlock, len(artifacts))
+	for i, a := range artifacts {
+		out[i] = client.ContentBlock{Kind: client.ContentBlockKind(a.Kind), MimeType: a.MIMEType, Data: a.Data, URL: a.URL, Text: a.Text, Name: a.Name, Title: a.Title, Description: a.Description}
+	}
+	return out
 }
 
 // recordFileChange records a first-seen mutated workspace path. The synthetic
 // appendix gets one stable identity at its first distinct member.
 func (c *conversation) recordFileChange(path string) {
-	if path == "" {
-		return
-	}
-	if c.filesSeen == nil {
-		c.filesSeen = make(map[string]struct{})
-	}
-	if _, ok := c.filesSeen[path]; ok {
-		return
-	}
-	c.filesSeen[path] = struct{}{}
-	c.filesChanged = append(c.filesChanged, path)
-	if c.changedFilesAppendixID == 0 {
-		c.nextBlockID++
-		c.changedFilesAppendixID = c.nextBlockID
-	}
+	c.scrollback.RecordFileChange(path)
 }
 
 // isEmpty reports whether the conversation has no blocks yet — the first-run
 // state, before any prompt is sent. The zero-state welcome card renders in the
 // empty viewport while this holds (and vanishes the instant the first block,
 // e.g. the user prompt, is appended).
-func (c *conversation) isEmpty() bool { return len(c.blocks) == 0 }
+func (c *conversation) isEmpty() bool { return c.scrollback.Len() == 0 }
 
 // addUser appends a text-only user-prompt block.
-func (c *conversation) addUser(text string) {
-	c.appendBlock(block{kind: blockUser, raw: text})
+func (c *conversation) addUser(text string) scrollback.BlockID {
+	return c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text})
 }
 
 // addUserWithMedia appends a user-prompt block carrying media-part placeholders.
@@ -456,14 +308,14 @@ func (c *conversation) addUser(text string) {
 // (inline)" / "audio/wav (url)"); the renderer shows each as a "📎 …" line below
 // the text so a multimodal prompt is never silently rendered as text-only. With
 // no media it is equivalent to addUser.
-func (c *conversation) addUserWithMedia(text string, media []string) {
-	c.appendBlock(block{kind: blockUser, raw: text, media: media})
+func (c *conversation) addUserWithMedia(text string, media []string) scrollback.BlockID {
+	return c.scrollback.Messages().AddUser(scrollback.UserInput{Text: text, Media: media})
 }
 
 // startAssistant opens a fresh, empty assistant block to accumulate deltas into.
 // Called on turn.start so each turn is its own markdown block.
 func (c *conversation) startAssistant() {
-	c.appendBlock(block{kind: blockAssistant})
+	c.scrollback.Messages().AddAssistant(scrollback.AssistantInput{})
 }
 
 // appendAssistant appends streamed text to the current assistant block, opening
@@ -472,160 +324,32 @@ func (c *conversation) startAssistant() {
 // "reasoning…" live affordance (the reasoning summary, if any, freezes into its
 // static collapsed header).
 func (c *conversation) appendAssistant(text string) {
-	if b := c.currentAssistant(); b != nil {
-		b.raw += text
-		b.reasoningStreaming = false
-		return
-	}
-	c.appendBlock(block{kind: blockAssistant, raw: text})
+	c.scrollback.Messages().AppendAssistant(text)
 }
 
-// reviseAssistant REPLACES the current assistant block's raw content with text
-// (rather than growing it like appendAssistant). It opens a fresh assistant block
-// if the last block is not one, mirroring appendAssistant's defensive shape.
-//
-// It exists for the streaming-floor benchmark (scrollback_bench_test.go): calling
-// it with a same-LENGTH but byte-DIFFERENT string each op makes markdownAt's
-// src-keyed cache MISS every op (render.go markdownAt keys on (src, width); the
-// rev bump that currentAssistant() performs misses blockCache; a fresh per-block
-// render bumps blockRenders, so the join cache also misses — the worst-case
-// streaming floor where the whole scrollback re-joins each op) WITHOUT growing
-// b.raw. Because the live block stays a fixed size, the per-op work is constant
-// and allocs/op is INDEPENDENT of b.N — the join still all-misses (the worst-case
-// streaming floor) but the live block does not grow. The mutation rides the
-// currentAssistant() gateway (the codebase's sole rev-bump path for assistant
-// blocks) so it never pokes block.rev directly.
 func (c *conversation) reviseAssistant(text string) {
-	if b := c.currentAssistant(); b != nil {
-		b.raw = text
-		b.reasoningStreaming = false
-		return
-	}
-	c.appendBlock(block{kind: blockAssistant, raw: text})
+	c.scrollback.Messages().ReviseAssistant(text)
 }
 
-// appendReasoning accumulates streamed reasoning-summary text into the current
-// turn's assistant block. Reasoning is an attribute of that block (not a
-// reordered sibling) precisely because reasoning and answer deltas can interleave
-// within one turn — folding it in means a single reasoning region always renders,
-// above the merged answer, with a truthful line count. A reasoning delta arriving
-// before any assistant block (e.g. a delta racing turn.start) opens one rather
-// than dropping the text.
 func (c *conversation) appendReasoning(text string) {
-	b := c.currentAssistant()
-	if b == nil {
-		c.appendBlock(block{kind: blockAssistant})
-		b = &c.blocks[len(c.blocks)-1]
-	}
-	b.reasoning += text
-	// Reasoning is still "live" only while the answer text has not started.
-	if b.raw == "" {
-		b.reasoningStreaming = true
-	}
+	c.scrollback.Messages().AppendReasoning(text)
 }
 
-// endReasoningStream clears the live "reasoning…" affordance on the current
-// assistant block (called on turn.end), so a turn that streamed reasoning but no
-// answer text settles into the static collapsed header.
 func (c *conversation) endReasoningStream() {
-	if b := c.currentAssistant(); b != nil {
-		b.reasoningStreaming = false
-	}
-}
-
-// currentAssistant returns the trailing assistant block (the one being streamed
-// into this turn) or nil when the last block is not an assistant block.
-//
-// It bumps the block's render revision (rev) before returning non-nil: it is the
-// sole gateway for the assistant mutators (appendAssistant / appendReasoning /
-// endReasoningStream), so bumping here keeps every mutation path invalidating the
-// render cache. A read-only future caller pays only a spurious re-render of one
-// block — never a stale frame.
-func (c *conversation) currentAssistant() *block {
-	if n := len(c.blocks); n > 0 && c.blocks[n-1].kind == blockAssistant {
-		c.blocks[n-1].rev++
-		return &c.blocks[n-1]
-	}
-	return nil
+	c.scrollback.Messages().EndReasoningStream()
 }
 
 // addTurnStat appends a muted per-turn usage/elapsed stat line.
 func (c *conversation) addTurnStat(text string) {
-	c.appendBlock(block{kind: blockTurnStat, raw: text})
+	c.scrollback.Notices().AddTurnStat(text)
 }
 
-// addTool appends a running tool-call block.
 func (c *conversation) addTool(id, name, args string) {
-	c.appendBlock(block{
-		kind:     blockTool,
-		toolID:   id,
-		toolName: name,
-		toolArgs: args,
-	})
+	c.scrollback.Tools().Add(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
 }
 
-// resolveTool marks the tool block matching callID (its toolID) as resolved with
-// its result. Matching is by id only — never by tool name — mirroring the
-// tool_call.id ⇄ tool_result.call_id contract. Returns false if no match (the
-// caller can then render an orphan result notice). blocks carries the typed content
-// blocks relayed from the server (resource links, images, …) so the renderer can
-// surface user-audience artifacts distinctly; omitted/nil leaves the existing text
-// path byte-unchanged. The variadic shape keeps the common text-only call sites
-// (no blocks relayed) unchanged.
 func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.toolID == callID && !b.resolved {
-			b.rev++ // render-visible mutation (a possibly NON-tail block): invalidate its cache entry
-			b.resolved = true
-			b.resultBody = body
-			b.resultError = isErr
-			if len(blocks) > 0 {
-				b.resultBlocks = blocks
-			}
-			return true
-		}
-	}
-	return false
-}
-
-// subagentBlock returns the unresolved Subagent tool block whose toolID matches
-// parentCallID, or nil if none. Matching is by id only — the SAME contract as
-// resolveTool — so a subagent.* event is attributed to its originating Subagent card
-// even with several Subagent cards interleaved. It scans from the end so the most
-// recent matching call wins.
-//
-// It bumps the block's render revision (rev) before returning non-nil: it is the
-// gateway for the three subagent mutators (setSubagentStart / addSubagentTool /
-// setSubagentEnd), all of which mutate render-visible subagent fields — possibly
-// on a NON-tail block (a background subagent.end lands after later blocks were
-// appended), so the renderer's per-block cache must be invalidated here.
-func (c *conversation) subagentBlock(parentCallID string) *block {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.toolID == parentCallID {
-			b.rev++
-			return b
-		}
-	}
-	return nil
-}
-
-// setSubagentStart marks the Subagent block matching parentCallID as a subagent and
-// records its goal title and routed-category metadata. Returns false when no
-// matching block exists.
-func (c *conversation) setSubagentStart(parentCallID, goal, routedCategory, routedModel, routingReason, model string) bool {
-	b := c.subagentBlock(parentCallID)
-	if b == nil {
-		return false
-	}
-	b.subagent = true
-	b.subGoal = goal
-	b.subRoutedCategory = routedCategory
-	b.subRoutedModel = routedModel
-	b.subRoutingReason = routingReason
-	b.subModel = model
-	return true
+	return c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)})
 }
 
 // cloneRoutingDecision takes ownership of optional scalar presence as well as the
@@ -644,38 +368,6 @@ func cloneRoutingDecision(in *client.RoutingDecision) *client.RoutingDecision {
 		out.MinimumConfidence = &v
 	}
 	return &out
-}
-
-func (c *conversation) setSubagentRoutingDecision(parentCallID, childID string, decision *client.RoutingDecision) {
-	if b := c.subagentBlock(parentCallID); b != nil {
-		b.subRoutingDecision = cloneRoutingDecision(decision)
-	}
-	if childID != "" {
-		c.fleetLane(childID).routingDecision = cloneRoutingDecision(decision)
-	}
-}
-
-// addSubagentTool routes one subagent.tool projection into the matching Subagent
-// block's trace per the event's InnerKind: a tool.call sets the live current tool
-// and appends a pending chip (with its bounded arg preview); a tool.result
-// finalises the chip (error state + result preview); a message.delta extends a
-// capped message line. A turn.end carries the child's cumulative usage, which the
-// live status line (subagentLiveLine) renders mid-run; the trace is capped at
-// maxTraceEntries (oldest entries dropped); the count is the authoritative running
-// total carried by the event, not len(trace). Returns false when no match.
-func (c *conversation) addSubagentTool(msg client.SubagentMsg) bool {
-	b := c.subagentBlock(msg.ParentCallID)
-	if b == nil {
-		return false
-	}
-	b.subagent = true
-	// ToolCount and Usage are cumulative totals stamped on every projection (see
-	// SubagentPayload docs), so they are assigned unconditionally — always current,
-	// never 0-after-positive. A turn.end projection advances the live usage mid-run.
-	b.subToolCount = msg.ToolCount
-	b.subUsage = msg.Usage
-	b.subTrace, b.subCurrent = routeTraceEvent(b.subTrace, b.subCurrent, msg.InnerKind, msg.ToolName, msg.Detail, msg.Text, msg.IsError)
-	return true
 }
 
 // routeTraceEvent is the shared InnerKind→trace projection every delegation family
@@ -699,22 +391,6 @@ func routeTraceEvent(trace []teamTrace, current, innerKind, toolName, detail, te
 		}
 	}
 	return trace, current
-}
-
-// setSubagentEnd records the resolved end stats (usage, final tool count, stop,
-// duration) on the matching Subagent block. Returns false when no match.
-func (c *conversation) setSubagentEnd(parentCallID string, usage client.Usage, toolCount int, stop string, durationMs int64) bool {
-	b := c.subagentBlock(parentCallID)
-	if b == nil {
-		return false
-	}
-	b.subagent = true
-	b.subDone = true
-	b.subUsage = usage
-	b.subToolCount = toolCount
-	b.subStop = stop
-	b.subDurationMs = durationMs
-	return true
 }
 
 // fleetLane returns the existing subagentLane for childID (creating one in first-seen
@@ -1027,237 +703,24 @@ func (c *conversation) liveParallel() bool {
 	return false
 }
 
-// teamBlock returns the Team tool block whose toolID matches parentCallID, or nil
-// if none. Matching is by id only — the SAME contract as resolveTool/subagentBlock
-// — so a team.* event is attributed to its originating Team card even with several
-// tool cards interleaved. It scans from the end so the most recent match wins.
-//
-// It bumps the block's render revision (rev) before returning non-nil: it is the
-// gateway for the five team mutators (setTeamStart / addTeamMember / setTeamEnd /
-// setTeamTasks / setTeamFindings) — note setTeamTasks/setTeamFindings flip the
-// render-visible b.team flag even though tasks/findings themselves render only in
-// the f6 overlay, so they invalidate too. latestTeamBlock/liveTeamBlock (the
-// overlay READ path) deliberately do NOT bump.
-func (c *conversation) teamBlock(parentCallID string) *block {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.toolID == parentCallID {
-			b.rev++
-			return b
+// latestTeamBlock returns the most-recent Team card with member lanes, or nil if
+// no team has been seen this session. It scans from the end so a fresh team
+// supersedes an earlier one — the f6 overlay always reflects the latest team. The
+// returned snapshot is detached; the overlay reads a fresh projection on each
+// update. A team card with no lanes yet (team.start not seen, or empty roster) is
+// skipped so the overlay never opens onto an empty roster.
+func (c *conversation) latestTeamBlock() *teamOverlaySnapshot {
+	for i := c.scrollback.Len() - 1; i >= 0; i-- {
+		if c.scrollback.MetadataAt(i).Kind != scrollback.KindTeam {
+			continue
 		}
-	}
-	return nil
-}
-
-// setTeamStart marks the Team block matching parentCallID as a team, records its
-// stable team id (for the live footer summary segment), and seeds its per-member
-// lanes from the roster (in roster order). teamID is set only when non-empty so a
-// later defensive set from a team.member/team.end event never erases a known id.
-// Returns false when no matching block exists.
-func (c *conversation) setTeamStart(parentCallID, teamID string, roster []client.TeamMemberSpec) bool {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
-		return false
-	}
-	b.team = true
-	if teamID != "" {
-		b.teamID = teamID
-	}
-	b.teamLanes = make([]teamLane, 0, len(roster))
-	for _, m := range roster {
-		b.teamLanes = append(b.teamLanes, teamLane{
-			name:            m.Name,
-			role:            m.Role,
-			mutating:        m.Mutating,
-			lead:            m.Lead,
-			routedCategory:  m.RoutedCategory,
-			routedModel:     m.RoutedModel,
-			routingReason:   m.RoutingReason,
-			routingDecision: cloneRoutingDecision(m.RoutingDecision),
-			model:           m.Model,
-		})
-	}
-	return true
-}
-
-// lane returns a pointer to the lane for member, creating one (appended in
-// arrival order) if the roster did not list it — so a team.member event is never
-// dropped just because team.start was missed or the roster was partial.
-func (b *block) lane(member string) *teamLane {
-	for i := range b.teamLanes {
-		if b.teamLanes[i].name == member {
-			return &b.teamLanes[i]
+		snapshot := c.scrollback.SnapshotAt(i)
+		payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot)
+		if !ok {
+			continue
 		}
-	}
-	b.teamLanes = append(b.teamLanes, teamLane{name: member})
-	return &b.teamLanes[len(b.teamLanes)-1]
-}
-
-// addTeamMember routes one team.member projection to its member lane on the Team
-// block matching parentCallID, accumulating per the inner kind: a message.delta
-// appends/extends a message trace line; a tool.call sets the lane's current tool
-// and appends a (pending) tool chip; a tool.result finalises the chip's error
-// state; a turn.end/result carries usage and (for result) marks the lane IDLE
-// (finished its round, not terminal); forward activity (delta / tool.call /
-// turn.end) clears idle again. Team-terminal lives on block.teamDone, set only by
-// setTeamEnd — never on a lane. The trace is capped at maxTeamTrace (oldest
-// entries dropped). Returns false when no matching Team block exists.
-func (c *conversation) addTeamMember(msg client.TeamMsg) bool {
-	b := c.teamBlock(msg.ParentCallID)
-	if b == nil {
-		return false
-	}
-	b.team = true
-	// Defensively backfill the team id: team.start can be missed (the same race the
-	// lane() fallback guards against), so a team.member carrying the id seeds it.
-	// Only overwrite when non-empty so a known id is never erased.
-	if msg.TeamID != "" {
-		b.teamID = msg.TeamID
-	}
-	ln := b.lane(msg.Member)
-	// Backfill the member's session id (the CancelChild handle) from any member event
-	// carrying it; only overwrite when non-empty so a known id is never erased.
-	if msg.MemberSessionID != "" {
-		ln.sessionID = msg.MemberSessionID
-	}
-	switch msg.InnerKind {
-	case "message.delta":
-		ln.idle = false
-		ln.appendMessage(msg.Text)
-	case "tool.call":
-		ln.idle = false
-		ln.current = msg.ToolName
-		ln.toolCount++
-		ln.appendTool(msg.ToolName, msg.Detail, false)
-	case "tool.result":
-		ln.markToolResult(msg.ToolName, msg.Detail, msg.IsError)
-	case "turn.end":
-		ln.idle = false
-		ln.usage = sumUsage(ln.usage, msg.Usage)
-		// The context meter tracks CURRENT occupancy, not cumulative cost: assign the
-		// most recent turn's input tokens (matching the main meter's
-		// m.contextTokens = msg.Usage.InputTokens), and keep the window sticky so a
-		// later turn.end that omits it (0) does not erase a known denominator.
-		ln.ctxUsed = msg.Usage.InputTokens
-		if msg.ContextWindow > 0 {
-			ln.ctxWindow = msg.ContextWindow
-		}
-	case "result":
-		ln.idle = true
-		ln.current = ""
-		if msg.Usage != (client.Usage{}) {
-			ln.usage = sumUsage(ln.usage, msg.Usage)
-		}
-		if msg.Text != "" {
-			ln.appendMessage(msg.Text)
-		}
-		if msg.Cause != "" {
-			ln.cause = msg.Cause // last failed round's cause wins; rendered only when benched (stopped/error)
-		}
-	}
-	return true
-}
-
-// appendMessage adds a member message line to the lane trace via the shared
-// traceAppendMessage projection (coalescing streamed deltas).
-func (ln *teamLane) appendMessage(text string) {
-	ln.trace = traceAppendMessage(ln.trace, text)
-}
-
-// appendTool adds a tool chip (pending; error + result detail resolved later by
-// markToolResult). detail here is the call's bounded arg preview.
-func (ln *teamLane) appendTool(name, detail string, isError bool) {
-	ln.trace = traceAppendTool(ln.trace, name, detail, isError)
-}
-
-// markToolResult finalises the most recent matching pending tool chip via the
-// shared traceMarkToolResult projection (result preview supersedes the arg preview).
-func (ln *teamLane) markToolResult(name, detail string, isError bool) {
-	ln.trace = traceMarkToolResult(ln.trace, name, detail, isError)
-}
-
-// setTeamEnd records the resolved end stats (rounds, stop, summed usage) on the
-// Team block matching parentCallID, defensively backfilling the team id (only when
-// non-empty) in case team.start was missed. It also applies the per-member terminal
-// disposition snapshot onto the matching lanes (by name), so a stopped member renders
-// "✗ stopped — <reason>" instead of the blanket "✓ done" once the team has ended.
-// Returns false when no match.
-func (c *conversation) setTeamEnd(parentCallID, teamID string, rounds int, stop string, usage client.Usage, dispositions []client.TeamMemberDisposition) bool {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
-		return false
-	}
-	b.team = true
-	if teamID != "" {
-		b.teamID = teamID
-	}
-	b.teamDone = true
-	b.teamRounds = rounds
-	b.teamStop = stop
-	b.teamUsage = usage
-	for _, d := range dispositions {
-		ln := b.lane(d.Name)
-		ln.stopped = d.Stopped
-		ln.stopReason = d.Reason
-		ln.errorRounds = d.ErrorRounds
-	}
-	return true
-}
-
-// setTeamTasks replaces the shared task-list snapshot on the Team block matching
-// parentCallID. The server emits a fresh full snapshot on every task transition
-// (de-duped on change), so a replace is correct — the latest snapshot is the whole
-// truth. Returns false when no match. Member content is never touched.
-func (c *conversation) setTeamTasks(parentCallID string, tasks []client.TeamTask) bool {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
-		return false
-	}
-	b.team = true
-	out := make([]teamTask, 0, len(tasks))
-	for _, tk := range tasks {
-		deps := make([]string, len(tk.Deps))
-		copy(deps, tk.Deps)
-		out = append(out, teamTask{
-			id:       tk.ID,
-			desc:     tk.Description,
-			state:    tk.State,
-			assignee: tk.Assignee,
-			deps:     deps,
-		})
-	}
-	b.teamTasks = out
-	return true
-}
-
-// setTeamFindings replaces the cached findings-ledger snapshot on the Team block
-// identified by parentCallID. Like setTeamTasks, the server emits a fresh full
-// snapshot on every change (de-duped), so a replace is correct. Returns false on no
-// match. Findings carry only the recording member + a bounded body preview.
-func (c *conversation) setTeamFindings(parentCallID string, findings []client.TeamFinding) {
-	b := c.teamBlock(parentCallID)
-	if b == nil {
-		return
-	}
-	b.team = true
-	out := make([]teamFinding, 0, len(findings))
-	for _, f := range findings {
-		out = append(out, teamFinding{member: f.Member, body: f.Body})
-	}
-	b.teamFindings = out
-}
-
-// latestTeamBlock returns the most-recent tool block that carries team lanes (a
-// Team card with at least one member lane), or nil if no team has been seen this
-// session. It scans from the end so a fresh team supersedes an earlier one — the
-// f6 overlay always reflects the latest team. The block is returned by
-// pointer so the overlay reads the live, accumulating lane state (it never
-// mutates it). A team card with no lanes yet (team.start not seen, or empty
-// roster) is skipped so the overlay never opens onto an empty roster.
-func (c *conversation) latestTeamBlock() *block {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		b := &c.blocks[i]
-		if b.kind == blockTool && b.team && len(b.teamLanes) > 0 {
+		b := teamOverlaySnapshotFromSnapshot(snapshot.ID, payload)
+		if len(b.teamLanes) > 0 {
 			return b
 		}
 	}
@@ -1268,7 +731,7 @@ func (c *conversation) latestTeamBlock() *block {
 // teamDone) — the footer's live-activity signal. Distinct from latestTeamBlock,
 // which returns the most-recent team done-or-not so the f6 overlay can still
 // review a finished roster.
-func (c *conversation) liveTeamBlock() *block {
+func (c *conversation) liveTeamBlock() *teamOverlaySnapshot {
 	b := c.latestTeamBlock()
 	if b == nil || b.teamDone {
 		return nil
@@ -1278,18 +741,13 @@ func (c *conversation) liveTeamBlock() *block {
 
 // addNotice appends a muted info block (compaction / permission verb).
 func (c *conversation) addNotice(text string) {
-	c.appendBlock(block{kind: blockNotice, raw: text})
+	c.scrollback.Notices().AddNotice(text)
 }
 
 // retractLatestNotice removes a provisional notice after its transport reply is
 // refused. It leaves unrelated notices untouched.
 func (c *conversation) retractLatestNotice(text string) {
-	for i := len(c.blocks) - 1; i >= 0; i-- {
-		if c.blocks[i].kind == blockNotice && c.blocks[i].raw == text {
-			c.blocks = append(c.blocks[:i:i], c.blocks[i+1:]...)
-			return
-		}
-	}
+	c.scrollback.Notices().RetractLatestNotice(text)
 }
 
 // addRecoverNotice appends a WARNING-styled recover-notice block (a session that
@@ -1299,22 +757,11 @@ func (c *conversation) retractLatestNotice(text string) {
 // bullet — and durable rather than a transient statusMsg so the run's first
 // event does not overwrite it before the user reads it.
 func (c *conversation) addRecoverNotice(text string) {
-	c.appendBlock(block{kind: blockNotice, raw: text, recover: true})
+	c.scrollback.Notices().AddRecoveryNotice(text)
 }
 
-// addDelivery appends a fire-result delivery note block: a scheduled-task
-// affordance + the schedule name + the outcome body, visually distinct from a
-// user prompt, the model's text, and a notice. scheduleName + fireID label the
-// card; text is the full recorded note (the same fenced-untrusted content the
-// engine recorded) — the renderer strips the fence markers + redundant
-// provenance header for display (they are machine markers, not content).
 func (c *conversation) addDelivery(scheduleName, fireID, text string) {
-	c.appendBlock(block{
-		kind:           blockDelivery,
-		toolName:       scheduleName, // reused for the schedule-name label
-		deliveryFireID: fireID,
-		raw:            text,
-	})
+	c.scrollback.Notices().AddDeliveryWithSchedule(scheduleName, fireID, text)
 }
 
 // addHook appends a structured hook-notice block carrying the lifecycle phase,
@@ -1322,23 +769,14 @@ func (c *conversation) addDelivery(scheduleName, fireID, text string) {
 // distinctly from a plain notice — a hook glyph + phase, with the outcome
 // coloured (blocked stands out from a benign info/modified notice).
 func (c *conversation) addHook(text, phase, tool, decision string) {
-	c.appendBlock(block{
-		kind:         blockHook,
-		raw:          text,
-		hookPhase:    phase,
-		hookTool:     tool,
-		hookDecision: decision,
-	})
+	c.scrollback.Notices().AddHookText(text, phase, tool, decision)
 }
 
 // addError appends an error block.
 func (c *conversation) addError(text string) {
-	c.appendBlock(block{kind: blockError, raw: text})
+	c.scrollback.Notices().AddError(text, false)
 }
 
-// addPermanentError appends a permanent-error block: the error is a server-classified
-// PERMANENT provider rejection and retrying cannot help. The renderer shows a one-line
-// human summary; the raw error payload is available on expand (ctrl+t).
 func (c *conversation) addPermanentError(text string) {
-	c.appendBlock(block{kind: blockError, raw: text, permanent: true})
+	c.scrollback.Notices().AddError(text, true)
 }

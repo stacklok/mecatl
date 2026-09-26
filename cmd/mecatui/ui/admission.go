@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // admissionSubmission is volatile and bounded by the ordinary preparation limits.
@@ -19,7 +20,7 @@ type admissionSubmission struct {
 	staged                 map[string]stagedAttachment
 	pastes                 map[string]string
 	nextMediaN, nextPasteN int
-	blockID                uint64
+	blockID                scrollback.BlockID
 	rejected               bool
 }
 
@@ -36,7 +37,6 @@ func (m *Model) retainAdmission(text string, media client.MediaResult) {
 		sessionID: m.sessionID, streamGen: m.streamGen + 1,
 		draft: draft, text: text, media: media.Clone(), pendingMedia: m.pendingPromptMedia.Clone(),
 		staged: staged, pastes: pastes, nextMediaN: m.nextMediaN, nextPasteN: m.nextPasteN,
-		blockID: m.conv.nextBlockID + 1,
 	}
 }
 
@@ -48,7 +48,7 @@ func (m Model) ownsAdmission() bool {
 func (m Model) rejectAdmission() Model {
 	r := m.admissionSubmission
 	m = m.endRun("")
-	m.conv.blocks = slices.DeleteFunc(m.conv.blocks, func(b block) bool { return b.id == r.blockID })
+	m.conv.scrollback.Messages().RemoveUser(r.blockID)
 	m = m.resetDocumentProjection()
 	r.streamGen, r.rejected = m.streamGen, true
 	m.admissionSubmission = r
@@ -105,8 +105,7 @@ func (m Model) onAdmissionKey(msg tea.KeyPressMsg, s *admissionRecoveryState) (t
 		r := m.admissionSubmission
 		m.closeModal()
 		r.streamGen, r.rejected = m.streamGen+1, false
-		m.conv.addUserWithMedia(r.text, r.media.Descriptors)
-		r.blockID = m.conv.nextBlockID
+		r.blockID = m.conv.addUserWithMedia(r.text, r.media.Descriptors)
 		m.phase = phaseRunning
 		_ = m.prompt.Focus()
 		m.statusMsg = "running…"

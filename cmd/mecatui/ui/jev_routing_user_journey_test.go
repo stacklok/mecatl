@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestADR_0352_Scenario7_UserJourney pins AC7.1 from the Jev router plan: the
@@ -63,18 +64,12 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	// alter any card, roster, or focus view.
 	decision.CandidateModel = "mutated-candidate"
 
-	var subBlock *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "sub-call" {
-			subBlock = &m.conv.blocks[i]
-			break
-		}
-	}
-	if subBlock == nil {
-		t.Fatal("Subagent tool block was not created")
+	subBlock, ok := m.conv.scrollback.SnapshotForCall("sub-call")
+	if !ok {
+		t.Fatal("Subagent card was not created")
 	}
 	r := newTestRenderer()
-	compact := stripANSIstr(r.renderBlock(0, subBlock, false))
+	compact := stripANSIstr(r.renderSnapshot(0, subBlock, false))
 	for _, want := range []string{
 		"model: gpt-6-astra · fallback: low-confidence",
 		"candidate: medium → gpt-5.6-terra · confidence 0.42 < threshold 0.50",
@@ -87,34 +82,24 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 		t.Errorf("compact card replaced the actual model or retained a mutable decision pointer:\n%s", compact)
 	}
 
-	expanded := stripANSIstr(r.renderBlock(0, subBlock, true))
+	expanded := stripANSIstr(r.renderSnapshot(0, subBlock, true))
 	assertRoutingDetail(t, "expanded completed Subagent card", expanded)
 	if got := strings.Count(expanded, "candidate: medium"); got != 1 {
 		t.Errorf("expanded fallback duplicated compact candidate cue %d times:\n%s", got, expanded)
 	}
-	var acceptedBlock *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "accepted-call" {
-			acceptedBlock = &m.conv.blocks[i]
-			break
-		}
+	acceptedBlock, ok := m.conv.scrollback.SnapshotForCall("accepted-call")
+	if !ok {
+		t.Fatal("accepted Subagent card was not created")
 	}
-	if acceptedBlock == nil {
-		t.Fatal("accepted Subagent tool block was not created")
-	}
-	acceptedExpanded := stripANSIstr(r.renderBlock(0, acceptedBlock, true))
+	acceptedExpanded := stripANSIstr(r.renderSnapshot(0, acceptedBlock, true))
 	assertAcceptedRoutingDetail(t, "expanded accepted Subagent card", acceptedExpanded)
-	var teamBlock *block
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "team-call" {
-			teamBlock = &m.conv.blocks[i]
-			break
-		}
+	teamBlock, ok := m.conv.scrollback.SnapshotForCall("team-call")
+	if !ok {
+		t.Fatal("Team card was not created")
 	}
-	if teamBlock == nil {
-		t.Fatal("Team tool block was not created")
-	}
-	completedTeamExpanded := stripANSIstr(r.renderBlock(0, teamBlock, true))
+	teamPayload := teamBlock.Payload.(scrollback.TeamCardSnapshot)
+	teamPresentation := teamCardPresentationFromSnapshot(teamPayload)
+	completedTeamExpanded := stripANSIstr(r.renderSnapshot(0, teamBlock, true))
 	assertRoutingDetail(t, "expanded completed Team card", completedTeamExpanded)
 	for _, tc := range []struct {
 		name, want string
@@ -126,12 +111,12 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 		{name: "retried", want: "done (retried)", retries: 1},
 	} {
 		t.Run("completed Team lane "+tc.name, func(t *testing.T) {
-			terminal := *teamBlock
-			terminal.teamLanes = append([]teamLane(nil), teamBlock.teamLanes...)
-			terminal.teamLanes[0].stopped = tc.stopped
-			terminal.teamLanes[0].stopReason = teamStopReasonCancelled
-			terminal.teamLanes[0].errorRounds = tc.retries
-			view := stripANSIstr(r.renderTeam(&terminal, true, 100))
+			terminal := teamPresentation
+			terminal.lanes = append([]teamLane(nil), teamPresentation.lanes...)
+			terminal.lanes[0].stopped = tc.stopped
+			terminal.lanes[0].stopReason = teamStopReasonCancelled
+			terminal.lanes[0].errorRounds = tc.retries
+			view := stripANSIstr(r.renderTeamPresentation(terminal, true, 100))
 			if !strings.Contains(view, "lead [lead] · "+tc.want+" ·") || strings.Contains(view, "Read…") {
 				t.Errorf("completed Team lane did not show %q:\n%s", tc.want, view)
 			}
@@ -141,8 +126,8 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 
 	// Historic team.end events carried no per-member routing decision. Their compact
 	// terminal summary remains exactly the pre-router one-line fallback.
-	historicalTeam := &block{team: true, teamDone: true, teamRounds: 1, teamStop: "end_turn"}
-	if got, want := stripANSIstr(r.renderTeam(historicalTeam, false, 0)), "team · 1 round · ↑0 ↓0 · stop:done"; got != want {
+	historicalTeam := teamCardPresentation{done: true, rounds: 1, stop: "end_turn"}
+	if got, want := stripANSIstr(r.renderTeamPresentation(historicalTeam, false, 0)), "team · 1 round · ↑0 ↓0 · stop:done"; got != want {
 		t.Errorf("historical compact completed Team = %q, want %q", got, want)
 	}
 
@@ -150,13 +135,11 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 70})
 	m = mm.(Model)
 	conversationView := stripANSIstr(m.View().Content)
-	if got, want := len(m.conv.blocks), 3; got != want {
+	if got, want := len(m.conv.testBlocks()), 3; got != want {
 		t.Fatalf("Parallel lifecycle created an inline conversation block: got %d blocks, want %d", got, want)
 	}
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].toolID == "parallel-call" {
-			t.Fatal("Parallel lifecycle created a new inline routing card")
-		}
+	if _, ok := m.conv.scrollback.SnapshotForCall("parallel-call"); ok {
+		t.Fatal("Parallel lifecycle created a new inline routing card")
 	}
 	if !strings.Contains(conversationView, "model: gpt-6-astra") {
 		t.Errorf("conversation View omitted the accepted Subagent actual model:\n%s", conversationView)
@@ -223,7 +206,7 @@ func TestADR_0352_Scenario7_UserJourney(t *testing.T) {
 			}
 			cardRenderer := newTestRenderer()
 			cardRenderer.width = width
-			completedTeam := stripANSIstr(cardRenderer.renderBlock(0, teamBlock, true))
+			completedTeam := stripANSIstr(cardRenderer.renderSnapshot(0, teamBlock, true))
 			if strings.TrimSpace(completedTeam) == "" || !strings.Contains(completedTeam, "backend: jev") {
 				t.Errorf("completed Team expanded routing detail disappeared at width %d:\n%s", width, completedTeam)
 			}

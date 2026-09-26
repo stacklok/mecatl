@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestFooterContextMeterWithWindow drives a result through Update and asserts the
@@ -171,7 +172,7 @@ func TestFooterTeamSegmentTiers(t *testing.T) {
 		Usage: client.Usage{InputTokens: 140000, OutputTokens: 345, CacheReadTokens: 70000},
 	})
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster()) // lead + scout, both working → 2/2
+		c.startTeamCard("t1", "team-x", roster()) // lead + scout, both working → 2/2
 	})
 	left := "ready"
 
@@ -237,8 +238,8 @@ func TestFooterTeamDoneDropsSegment(t *testing.T) {
 		Usage: client.Usage{InputTokens: 140000},
 	})
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster())
-		c.setTeamEnd("t1", "team-x", 3, "end_turn", client.Usage{InputTokens: 100}, nil)
+		c.startTeamCard("t1", "team-x", roster())
+		c.finishTeamCard("t1", "team-x", 3, "end_turn", client.Usage{InputTokens: 100}, nil)
 	})
 	footer := stripANSIstr(m.fitFooter("ready", 200))
 	if strings.Contains(footer, teamLiveGlyph) || strings.Contains(footer, "team-x") {
@@ -347,8 +348,8 @@ func TestTeamOverlayF6MidRunEndToEnd(t *testing.T) {
 	m := newMCPModel(t, aztec(), nil)
 	m.caps.Teams = true
 	m = seedTeam(m, func(c *conversation) {
-		c.setTeamStart("t1", "team-x", roster())
-		c.addTeamMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
+		c.startTeamCard("t1", "team-x", roster())
+		c.updateTeamCardMember(member("scout", "tool.call", client.TeamMsg{ToolName: "Grep"}))
 	})
 	m.phase = phaseRunning
 
@@ -502,11 +503,11 @@ func TestReasoningInterleavedRendersOnce(t *testing.T) {
 
 	// Exactly one assistant block, with both reasoning fragments merged into it.
 	var asst int
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockAssistant {
+	for _, card := range m.conv.testBlocks() {
+		if assistant, ok := card.Payload.(scrollback.AssistantCardSnapshot); ok {
 			asst++
-			if m.conv.blocks[i].reasoning != "step one\nstep two\n" {
-				t.Errorf("reasoning not merged onto the block: %q", m.conv.blocks[i].reasoning)
+			if assistant.Reasoning != "step one\nstep two\n" {
+				t.Errorf("reasoning not merged onto the card: %q", assistant.Reasoning)
 			}
 		}
 	}
@@ -596,13 +597,13 @@ func TestTurnEndTrivialSuppressed(t *testing.T) {
 	m = applyAll(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m.phase = phaseRunning
 
-	before := len(m.conv.blocks)
+	before := len(m.conv.testBlocks())
 	// Tiny tokens, no clock → trivial → suppressed.
 	m = applyAll(m, client.TurnEndMsg{Turn: 1, Usage: client.Usage{InputTokens: 5, OutputTokens: 2}, DurationMs: 0})
 	// Tiny tokens, sub-second duration → still trivial → suppressed.
 	m = applyAll(m, client.TurnEndMsg{Turn: 2, Usage: client.Usage{InputTokens: 10, OutputTokens: 0}, DurationMs: 300})
-	if len(m.conv.blocks) != before {
-		t.Errorf("trivial turns should add no stat block; blocks grew %d→%d", before, len(m.conv.blocks))
+	if len(m.conv.testBlocks()) != before {
+		t.Errorf("trivial turns should add no stat block; blocks grew %d→%d", before, len(m.conv.testBlocks()))
 	}
 
 	// A turn over the duration threshold is NOT trivial even with tiny tokens.

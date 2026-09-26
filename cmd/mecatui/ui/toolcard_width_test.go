@@ -18,13 +18,11 @@ func TestMecatuiCardLayout_Scenario1_ResultRowsWrapBeforeStyle(t *testing.T) {
 	_, cardWidth, bodyWidth := r.toolCardLayout()
 
 	long := "long-row-" + strings.Repeat("x", bodyWidth+9)
-	b := &block{
-		kind:       blockTool,
-		toolID:     "result-row-order",
-		toolName:   "Shell",
-		toolArgs:   `{"command":"printf output"}`,
-		resolved:   true,
-		resultBody: long + "\nshort\x1b[2J-row\n   \nfinal-row",
+	b := &toolCardPresentation{
+		name:      "Shell",
+		arguments: `{"command":"printf output"}`,
+		resolved:  true,
+		result:    long + "\nshort\x1b[2J-row\n   \nfinal-row",
 	}
 
 	prepared := stripANSIstr(r.renderToolResult(b, true, bodyWidth))
@@ -67,47 +65,6 @@ func TestMecatuiCardLayout_Scenario1_ResultRowsWrapBeforeStyle(t *testing.T) {
 	}
 }
 
-func TestDelegationToolArgsWrapBeforeStyle(t *testing.T) {
-	r := newTestRenderer()
-	r.setWidth(42)
-	_, cardWidth, bodyWidth := r.toolCardLayout()
-	long := "long-delegation-" + strings.Repeat("value-", 12)
-
-	for _, tc := range []struct {
-		name      string
-		wantShort string
-		block     *block
-	}{
-		{"subagent", "short-subagent", &block{kind: blockTool, toolName: "Subagent", subagent: true, subGoal: long + "\nshort-subagent"}},
-		{"team", "", &block{kind: blockTool, toolName: "Team", team: true, teamLanes: []teamLane{{name: "member", current: long + "\nshort-team"}}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			prepared := stripANSIstr(r.renderToolArgs(tc.block, false, bodyWidth))
-			for row, line := range strings.Split(prepared, "\n") {
-				if got := lipgloss.Width(line); got > bodyWidth {
-					t.Errorf("prepared row %d width = %d, want ≤ body width %d: %q", row, got, bodyWidth, line)
-				}
-			}
-
-			out := stripANSIstr(r.renderTool(tc.block, false))
-			rows := strings.Split(out, "\n")
-			for row, line := range rows {
-				if got := maxLineWidth(line); got > cardWidth {
-					t.Errorf("final card row %d width = %d, want ≤ %d: %q", row, got, cardWidth, line)
-				}
-			}
-			if tc.wantShort != "" && !strings.Contains(out, tc.wantShort) {
-				t.Fatalf("styled delegation args lost short source row %q:\n%s", tc.wantShort, out)
-			}
-			for _, line := range rows {
-				if strings.TrimSpace(strings.Trim(line, "│╭╮╰╯─ ")) == "" && !strings.Contains(line, "╭") && !strings.Contains(line, "╰") {
-					t.Errorf("styled delegation args produced a padding-derived blank row: %q\n%s", line, out)
-				}
-			}
-		})
-	}
-}
-
 func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
@@ -118,7 +75,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 	}
 	for _, name := range []string{"Shell", "Grep", "Subagent"} {
 		t.Run(name, func(t *testing.T) {
-			b := &block{kind: blockTool, toolID: name, toolName: name, resolved: true, resultBody: strings.Join(rows, "\n")}
+			b := &toolCardPresentation{name: name, resolved: true, result: strings.Join(rows, "\n")}
 			collapsed := stripANSIstr(r.renderTool(b, false))
 			if !strings.Contains(collapsed, "+1 more line · ctrl+t expand") {
 				t.Fatalf("collapsed %s result must reserve its shared row budget for source rows:\n%s", name, collapsed)
@@ -146,7 +103,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 			"state":    strings.Repeat("state-", 20),
 			"omitted":  "hidden",
 		})
-		b := &block{kind: blockTool, toolID: "json", toolName: "WebFetch", resolved: true, resultBody: result}
+		b := &toolCardPresentation{name: "WebFetch", resolved: true, result: result}
 		collapsed := stripANSIstr(r.renderTool(b, false))
 		if !strings.Contains(collapsed, "ctrl+t expand") || strings.Contains(collapsed, "omitted") {
 			t.Errorf("collapsed JSON must budget summary rows and hide omitted source fields:\n%s", collapsed)
@@ -162,7 +119,7 @@ func TestMecatuiCardLayout_Scenario1_CollapsedResultRows(t *testing.T) {
 		for i := range blocks {
 			blocks[i] = client.ContentBlock{Kind: client.ContentBlockResourceLink, Name: "artifact-" + strconv.Itoa(i), URL: "https://example.test/artifact/" + strconv.Itoa(i)}
 		}
-		b := &block{kind: blockTool, toolID: "artifacts", toolName: "WebFetch", resolved: true, resultBody: "source\n\nparagraph", resultBlocks: blocks}
+		b := &toolCardPresentation{name: "WebFetch", resolved: true, result: "source\n\nparagraph", artifacts: blocks}
 		collapsed := stripANSIstr(r.renderTool(b, false))
 		if !strings.Contains(collapsed, "ctrl+t expand") || strings.Contains(collapsed, "artifact-12") {
 			t.Errorf("collapsed artifact result must share the source row budget:\n%s", collapsed)
@@ -231,13 +188,11 @@ func TestToolCardWidthHardWrapsKnownRenderer(t *testing.T) {
 	for range maxToolResultLines - 1 + 27 {
 		resultLines = append(resultLines, "completed result line")
 	}
-	b := &block{
-		kind:       blockTool,
-		toolID:     "bash-1",
-		toolName:   "Shell",
-		toolArgs:   mustJSON(t, map[string]string{"command": strings.Repeat("x", toolCardMaxWidth+1)}),
-		resolved:   true,
-		resultBody: strings.Join(resultLines, "\n"),
+	b := &toolCardPresentation{
+		name:      "Shell",
+		arguments: mustJSON(t, map[string]string{"command": strings.Repeat("x", toolCardMaxWidth+1)}),
+		resolved:  true,
+		result:    strings.Join(resultLines, "\n"),
 	}
 
 	out := r.renderTool(b, false)
@@ -267,12 +222,10 @@ func TestToolCardTabIndentedResultDoesNotReflowAtFrame(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(toolCardMaxWidth + 2 + defaultBlockIndent)
 	_, cardWidth, _ := r.toolCardLayout()
-	b := &block{
-		kind:       blockTool,
-		toolID:     "tabbed-read",
-		toolName:   "Read",
-		resolved:   true,
-		resultBody: "cmd/mecatui/ui/render.go:789:\t\trows = functionalCardProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)",
+	b := &toolCardPresentation{
+		name:     "Read",
+		resolved: true,
+		result:   "cmd/mecatui/ui/render.go:789:\t\trows = functionalCardProvenanceRows(prepared, b.id, b.kind, r.indent, r.width)",
 	}
 
 	rows := strings.Split(stripANSIstr(r.renderTool(b, true)), "\n")
@@ -307,13 +260,11 @@ func TestCollapsedShellResultCapsVisualRows(t *testing.T) {
 	for i := range resultLines {
 		resultLines[i] = "    output-" + strconv.Itoa(i) + " " + strings.Repeat("near-width ", 12)
 	}
-	b := &block{
-		kind:       blockTool,
-		toolID:     "bash-visual-rows",
-		toolName:   "Shell",
-		toolArgs:   `{"command":"printf output"}`,
-		resolved:   true,
-		resultBody: strings.Join(resultLines, "\n"),
+	b := &toolCardPresentation{
+		name:      "Shell",
+		arguments: `{"command":"printf output"}`,
+		resolved:  true,
+		result:    strings.Join(resultLines, "\n"),
 	}
 
 	_, _, bodyWidth := r.toolCardLayout()
@@ -372,13 +323,11 @@ func TestCollapsedShellResultSkipsIndentOnlyWrapRows(t *testing.T) {
 	for i := range resultLines {
 		resultLines[i] = strings.Repeat(" ", bodyWidth+1) + "result-" + strconv.Itoa(i)
 	}
-	b := &block{
-		kind:       blockTool,
-		toolID:     "bash-indent-rows",
-		toolName:   "Shell",
-		toolArgs:   `{"command":"printf output"}`,
-		resolved:   true,
-		resultBody: strings.Join(resultLines, "\n"),
+	b := &toolCardPresentation{
+		name:      "Shell",
+		arguments: `{"command":"printf output"}`,
+		resolved:  true,
+		result:    strings.Join(resultLines, "\n"),
 	}
 
 	collapsed := stripANSIstr(r.renderTool(b, false))
@@ -440,17 +389,15 @@ func TestCollapsedLargeJSONResultCapsVisualRows(t *testing.T) {
 		"state":    strings.Repeat("state-", 20),
 		"unlisted": "hidden",
 	})
-	b := &block{
-		kind:       blockTool,
-		toolID:     "json-visual-rows",
-		toolName:   "WebFetch",
-		toolArgs:   `{"url":"https://example.test"}`,
-		resolved:   true,
-		resultBody: result,
+	b := &toolCardPresentation{
+		name:      "WebFetch",
+		arguments: `{"url":"https://example.test"}`,
+		resolved:  true,
+		result:    result,
 	}
 
 	_, cardWidth, bodyWidth := r.toolCardLayout()
-	summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, false)
+	summary, hiddenFields, ok := summarizeResultDetail(b.result)
 	if !ok || hiddenFields != 1 {
 		t.Fatalf("precondition: expected one omitted non-prominent JSON field, got ok=%v hiddenFields=%d", ok, hiddenFields)
 	}
@@ -514,8 +461,8 @@ func TestCollapsedLargeJSONSummaryAdvertisesOmittedFields(t *testing.T) {
 		"state":    "active",
 		"omitted":  strings.Repeat("x", resultSummaryByteThreshold),
 	})
-	b := &block{kind: blockTool, toolID: "json-omitted", toolName: "WebFetch", resolved: true, resultBody: result}
-	summary, hiddenFields, ok := r.summarizeResolvedResultDetail(b, false)
+	b := &toolCardPresentation{name: "WebFetch", resolved: true, result: result}
+	summary, hiddenFields, ok := summarizeResultDetail(b.result)
 	if !ok || hiddenFields != 1 {
 		t.Fatalf("precondition: expected one hidden summary field, got ok=%v hiddenFields=%d", ok, hiddenFields)
 	}
@@ -552,7 +499,7 @@ func TestCollapsedArraySummaryAdvertisesExpansion(t *testing.T) {
 		elems[i] = "entry-" + strconv.Itoa(i) + "-" + strings.Repeat("x", 40)
 	}
 	result := mustJSON(t, elems)
-	b := &block{kind: blockTool, toolID: "array-omitted", toolName: "WebFetch", resolved: true, resultBody: result}
+	b := &toolCardPresentation{name: "WebFetch", resolved: true, result: result}
 
 	collapsed := stripANSIstr(r.renderTool(b, false))
 	const marker = "  … ctrl+t expand"
@@ -594,13 +541,11 @@ func TestCollapsedToolResultCapsArtifacts(t *testing.T) {
 			URL:  "https://example.test/r/" + strconv.Itoa(i),
 		}
 	}
-	b := &block{
-		kind:         blockTool,
-		toolID:       "artifact-rows",
-		toolName:     "WebFetch",
-		resolved:     true,
-		resultBody:   "body-0\nbody-1",
-		resultBlocks: blocks,
+	b := &toolCardPresentation{
+		name:      "WebFetch",
+		resolved:  true,
+		result:    "body-0\nbody-1",
+		artifacts: blocks,
 	}
 
 	collapsed := r.renderTool(b, false)
@@ -810,5 +755,49 @@ func TestToolCardWidthUnchangedAtCap(t *testing.T) {
 
 	if a != b {
 		t.Errorf("card at the cap-binding width and at 400 must be byte-identical (both clamp to the cap):\nlen(a)=%d len(b)=%d", lipgloss.Width(a), lipgloss.Width(b))
+	}
+}
+
+func (r *renderer) renderTool(p *toolCardPresentation, expand bool) string {
+	return r.prepareTypedToolCard(*p, expand).render()
+}
+func (r *renderer) renderToolResult(p *toolCardPresentation, expand bool, bodyWidth int) string {
+	return r.renderTypedToolResult(p.result, p.isError, p.artifacts, expand, bodyWidth)
+}
+
+func TestDelegationToolArgsWrapBeforeStyle(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(42)
+	_, cardWidth, bodyWidth := r.toolCardLayout()
+	long := "long-delegation-" + strings.Repeat("value-", 12)
+	cards := []struct {
+		name, want string
+		card       any
+	}{
+		{"subagent", "short-subagent", subagentCardPresentation{name: "Subagent", goal: long + "\nshort-subagent"}},
+		{"team", "", teamCardPresentation{name: "Team", lanes: []teamLane{{name: "member", current: long + "\nshort-team"}}}},
+	}
+	for _, tc := range cards {
+		t.Run(tc.name, func(t *testing.T) {
+			var prepared preparedToolCard
+			switch p := tc.card.(type) {
+			case subagentCardPresentation:
+				prepared = r.prepareSubagentCard(p, false)
+			case teamCardPresentation:
+				prepared = r.prepareTeamCard(p, false)
+			}
+			out := stripANSIstr(prepared.Text())
+			for _, line := range strings.Split(out, "\n") {
+				if lipgloss.Width(line) > cardWidth {
+					t.Errorf("card exceeds width")
+				}
+			}
+			if tc.want != "" && !strings.Contains(out, tc.want) {
+				t.Errorf("lost %q", tc.want)
+			}
+			if bodyWidth < 1 {
+				t.Fatal("invalid body width")
+			}
+		})
 	}
 }

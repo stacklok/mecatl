@@ -6,13 +6,14 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // countNoticeBlocks returns how many scrollback notice blocks the conversation holds.
 func countNoticeBlocks(m Model) int {
 	n := 0
-	for i := range m.conv.blocks {
-		if m.conv.blocks[i].kind == blockNotice {
+	for _, card := range m.conv.testBlocks() {
+		if _, ok := card.Payload.(scrollback.NoticeCardSnapshot); ok {
 			n++
 		}
 	}

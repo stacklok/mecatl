@@ -306,13 +306,13 @@ func TestPaletteCompleteTitleForArguments(t *testing.T) {
 		if got := m.prompt.Value(); got != "/title " {
 			t.Fatalf("input = %q, want argument entry for /title", got)
 		}
-		if len(m.conv.blocks) != 0 {
-			t.Fatalf("selecting /title must not execute the bare read: %#v", m.conv.blocks)
+		if len(m.conv.testBlocks()) != 0 {
+			t.Fatalf("selecting /title must not execute the bare read: %#v", m.conv.testBlocks())
 		}
 		mm, cmd := m.submitPrompt()
 		m = mm.(Model)
-		if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Session title:") {
-			t.Fatalf("enter after palette completion = blocks=%#v cmd=%v, want title read", m.conv.blocks, cmd != nil)
+		if cmd != nil || len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "Session title:") {
+			t.Fatalf("enter after palette completion = blocks=%#v cmd=%v, want title read", m.conv.testBlocks(), cmd != nil)
 		}
 		if got := m.prompt.Value(); got != "" {
 			t.Fatalf("input after title read = %q, want cleared", got)

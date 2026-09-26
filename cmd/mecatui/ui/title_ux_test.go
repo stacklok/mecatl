@@ -56,8 +56,8 @@ func TestSessionTitleGeneration_Scenario1_BareTitleCommandReadsAndClearsInput(t 
 
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
-	if cmd != nil || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Fallback") || !strings.Contains(m.conv.blocks[0].raw, "unknown") {
-		t.Fatalf("notice/cmd = %#v/%v, want local provenance notice", m.conv.blocks, cmd != nil)
+	if cmd != nil || len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "Fallback") || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "unknown") {
+		t.Fatalf("notice/cmd = %#v/%v, want local provenance notice", m.conv.testBlocks(), cmd != nil)
 	}
 	if got := m.prompt.Value(); got != "" {
 		t.Fatalf("input = %q, want cleared input", got)
@@ -73,8 +73,8 @@ func TestSessionTitleGeneration_Scenario1_WhitespaceTitleCommandReadsAndClearsIn
 
 			mm, cmd := m.submitPrompt()
 			m = mm.(Model)
-			if cmd != nil || m.sessionTitle != "Fallback" || len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "Fallback") || !strings.Contains(m.conv.blocks[0].raw, "generated") {
-				t.Fatalf("%q title/notice/cmd = %q/%#v/%v, want local title notice", input, m.sessionTitle, m.conv.blocks, cmd != nil)
+			if cmd != nil || m.sessionTitle != "Fallback" || len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "Fallback") || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "generated") {
+				t.Fatalf("%q title/notice/cmd = %q/%#v/%v, want local title notice", input, m.sessionTitle, m.conv.testBlocks(), cmd != nil)
 			}
 			if got := m.prompt.Value(); got != "" {
 				t.Fatalf("%q left input %q, want cleared input", input, got)
@@ -151,8 +151,8 @@ func TestSessionTitleGeneration_Scenario1_TitleCommandIsClientOnly(t *testing.T)
 	m.prompt.Rewrite("/title Local")
 	mm, cmd := m.submitPrompt()
 	m = mm.(Model)
-	if len(m.conv.blocks) != 0 || m.phase != phaseIdle || cmd == nil {
-		t.Fatalf("/title changed conversation/phase or omitted rename: blocks=%d phase=%v cmd=%v", len(m.conv.blocks), m.phase, cmd != nil)
+	if len(m.conv.testBlocks()) != 0 || m.phase != phaseIdle || cmd == nil {
+		t.Fatalf("/title changed conversation/phase or omitted rename: blocks=%d phase=%v cmd=%v", len(m.conv.testBlocks()), m.phase, cmd != nil)
 	}
 }
 
@@ -188,7 +188,7 @@ func TestSessionTitleGeneration_Scenario4_QuietFailureOffersManualTitle(t *testi
 	m := titleModel(t, &titleRenamer{})
 	failed := client.SessionTitleMsg{Title: "Fallback", Provenance: "fallback", GenerationState: "exhausted", LatestAttempt: client.TitleAttemptSummary{ID: "a1"}}
 	m = applyAll(m, failed, failed)
-	if len(m.conv.blocks) != 1 || !strings.Contains(m.conv.blocks[0].raw, "/title <text>") || strings.Contains(m.conv.blocks[0].raw, "provider") {
-		t.Fatalf("failure notices = %#v", m.conv.blocks)
+	if len(m.conv.testBlocks()) != 1 || !strings.Contains(testCardText(m.conv.testBlocks()[0]), "/title <text>") || strings.Contains(testCardText(m.conv.testBlocks()[0]), "provider") {
+		t.Fatalf("failure notices = %#v", m.conv.testBlocks())
 	}
 }

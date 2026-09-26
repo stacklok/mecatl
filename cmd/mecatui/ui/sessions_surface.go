@@ -373,7 +373,7 @@ func (s *sessionsState) Render(width, height int) (string, []ClickableRegion) {
 		s.transcriptRend.setWidth(width)
 		s.transcriptVP.SetWidth(width)
 		s.transcriptVP.SetHeight(height)
-		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript, false))
+		s.transcriptVP.SetContentLines(s.transcriptRend.renderConversationLines(&s.transcript.scrollback, false))
 		if s.transcriptStuck {
 			s.transcriptVP.GotoBottom()
 		}

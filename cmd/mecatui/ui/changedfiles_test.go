@@ -4,6 +4,7 @@ package ui
 // feature derived from observed tool.call events (no proto/server change).
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -53,12 +54,12 @@ func TestRecordFileChangeDedupesAndOrders(t *testing.T) {
 	m.conv.recordFileChange("b.go") // dup
 
 	want := []string{"a.go", "b.go", "c.go"}
-	if len(m.conv.filesChanged) != len(want) {
-		t.Fatalf("filesChanged = %v, want %v", m.conv.filesChanged, want)
+	if len(m.conv.testChangedFiles()) != len(want) {
+		t.Fatalf("filesChanged = %v, want %v", m.conv.testChangedFiles(), want)
 	}
 	for i := range want {
-		if m.conv.filesChanged[i] != want[i] {
-			t.Fatalf("filesChanged = %v, want %v", m.conv.filesChanged, want)
+		if m.conv.testChangedFiles()[i] != want[i] {
+			t.Fatalf("filesChanged = %v, want %v", m.conv.testChangedFiles(), want)
 		}
 	}
 }
@@ -76,8 +77,8 @@ func TestChangedFilesAccumulatesFromToolCalls(t *testing.T) {
 		client.ToolCallMsg{ID: "4", Name: "Edit", Args: `{"path":"edited.go","old_string":"b","new_string":"c"}`}, // dup path
 	)
 	want := []string{"edited.go", "made.go"}
-	if strings.Join(m.conv.filesChanged, ",") != strings.Join(want, ",") {
-		t.Errorf("filesChanged = %v, want %v", m.conv.filesChanged, want)
+	if strings.Join(m.conv.testChangedFiles(), ",") != strings.Join(want, ",") {
+		t.Errorf("filesChanged = %v, want %v", m.conv.testChangedFiles(), want)
 	}
 }
 
@@ -118,7 +119,9 @@ func TestStatusLineHeaderReservationOnlyAddsGapForSystemLane(t *testing.T) {
 		t.Fatalf("header availability without a right lane = %d, want %d", got, want)
 	}
 
-	m.conv.filesChanged = make([]string, 100)
+	for i := 0; i < 100; i++ {
+		m.conv.recordFileChange(fmt.Sprintf("changed-%d.go", i))
+	}
 	if tail := m.changedFilesIndicator(); tail != "✎ 100 files" {
 		t.Fatalf("100-file indicator = %q", tail)
 	}
@@ -127,7 +130,9 @@ func TestStatusLineHeaderReservationOnlyAddsGapForSystemLane(t *testing.T) {
 		t.Fatalf("header availability with changed-files lane = %d, want %d", got, want)
 	}
 
-	m.conv.filesChanged = make([]string, 10_000)
+	for i := 100; i < 10_000; i++ {
+		m.conv.recordFileChange(fmt.Sprintf("changed-%d.go", i))
+	}
 	if got, want := m.changedFilesIndicator(), "✎ 999+ files"; got != want {
 		t.Fatalf("changed-files indicator must remain bounded: %q, want %q", got, want)
 	}

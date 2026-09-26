@@ -49,14 +49,10 @@ func TestMecatuiCardLayout_Scenario4_DynamicCardTextIsTerminalSafe(t *testing.T)
 	r.setWidth(width)
 	_, cardWidth, _ := r.toolCardLayout()
 	t.Run("tool card", func(t *testing.T) {
-		out := r.renderTool(&block{
-			kind:       blockTool,
-			toolID:     "unsafe-tool",
-			toolName:   "Read-" + value,
-			toolArgs:   `{"path":"` + value + `"}`,
-			resolved:   true,
-			resultBody: value,
-		}, true)
+		out := r.prepareTypedToolCard(toolCardPresentation{
+			name: "Read-" + value, arguments: `{"path":"` + value + `"}`,
+			resolved: true, result: value,
+		}, true).render()
 		assertPlainCard(t, "tool card", out, cardWidth)
 	})
 

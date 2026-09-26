@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestConversationIndentUniform pins the left-margin indent: EVERY non-blank line of a
@@ -53,8 +54,7 @@ func TestConversationIndentWidth0(t *testing.T) {
 	if r.indent != 0 {
 		t.Fatalf("bare renderer indent = %d, want 0", r.indent)
 	}
-	b := block{kind: blockNotice, raw: "x"}
-	out := r.renderBlock(0, &b, false)
+	out := r.renderSnapshot(0, testSnapshot(0, scrollback.NoticeCardSnapshot{Text: "x"}), false)
 	if strings.HasPrefix(ansi.Strip(out), " ") {
 		t.Errorf("bare renderer (indent 0) must not indent: %q", out)
 	}

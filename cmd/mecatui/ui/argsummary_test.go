@@ -21,8 +21,8 @@ func mustJSON(t *testing.T, v any) string {
 // renderToolBlock builds a minimal tool block and renders it through renderTool —
 // the real card path, so the head/args/result wiring is exercised end to end.
 func (r *renderer) renderToolBlock(name, args string, expand bool) string {
-	b := &block{kind: blockTool, toolID: "call-1", toolName: name, toolArgs: args}
-	return r.renderTool(b, expand)
+	p := toolCardPresentation{name: name, arguments: args}
+	return r.prepareTypedToolCard(p, expand).render()
 }
 
 // longBody is a ~4 KB, 72-line string used to exercise the collapsed long-string
@@ -469,16 +469,8 @@ func TestMCPCardExpandedGolden(t *testing.T) {
 // result + blocks wiring is exercised end to end. A peer of renderToolBlock (which
 // builds an unresolved call-only block for the args goldens).
 func (r *renderer) renderResolvedToolBlock(name, args, body string, blocks []client.ContentBlock, expand bool) string {
-	b := &block{
-		kind:         blockTool,
-		toolID:       "call-1",
-		toolName:     name,
-		toolArgs:     args,
-		resolved:     true,
-		resultBody:   body,
-		resultBlocks: blocks,
-	}
-	return r.renderTool(b, expand)
+	p := toolCardPresentation{name: name, arguments: args, resolved: true, result: body, artifacts: blocks}
+	return r.prepareTypedToolCard(p, expand).render()
 }
 
 // TestMCPCardBlocksGolden pins a resolved MCP card whose result carries typed
@@ -540,8 +532,14 @@ func TestResultBodyExpandedUnchanged(t *testing.T) {
 	})
 	// summarizeResolvedResult gates on collapsed-only: expanded → ok=false, so the
 	// full sanitized body renders through resultBody.
-	b := &block{kind: blockTool, resolved: true, resultBody: result}
-	if _, ok := r.summarizeResolvedResult(b, true); ok {
+	lines, _ := r.renderTypedToolResultLines(result, false, true)
+	if got := strings.Join(func() []string {
+		out := make([]string, len(lines))
+		for i := range lines {
+			out[i] = lines[i].text
+		}
+		return out
+	}(), "\n"); got != result {
 		t.Error("expanded result must not be summarized")
 	}
 	full := r.resultBody(result, true)

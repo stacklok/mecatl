@@ -24,10 +24,10 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 	r := newTestRenderer()
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{"prompt":"investigate the loop"}`)
-	c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
+	c.startSubagentCard("p1", "investigate the loop", "", "", "", "")
 	addSubTool(c, "p1", "Grep", false, 1)
 	addSubTool(c, "p1", "Read", false, 2)
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 
 	if !strings.Contains(out, "subagent · Read ·") {
 		t.Errorf("collapsed running card must name the live current tool (the latest one), got %q", out)
@@ -42,8 +42,8 @@ func TestDelegationObservability_Scenario3_CollapsedCardShowsCurrentTool(t *test
 		t.Errorf("collapsed card carries no heartbeat ticker, got %q", out)
 	}
 	// A resolved card shows the stat line, NOT the live tool name.
-	c.setSubagentEnd("p1", client.Usage{InputTokens: 1200, OutputTokens: 80}, 2, "end_turn", 2500)
-	resolved := stripANSIstr(r.renderBlock(0, &c.blocks[0], false))
+	c.finishSubagentCard("p1", client.Usage{InputTokens: 1200, OutputTokens: 80}, 2, "end_turn", 2500)
+	resolved := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], false))
 	if !strings.Contains(resolved, "stop:done") {
 		t.Errorf("resolved card should show the stat line, got %q", resolved)
 	}
@@ -73,7 +73,7 @@ func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *t
 		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
 		InnerKind: "message.delta", Text: "looking into the loop", ToolCount: 1,
 	})
-	out := stripANSIstr(r.renderBlock(0, &c.blocks[0], true))
+	out := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
 
 	if !strings.Contains(out, "✓ Grep") {
 		t.Errorf("expanded card should show the Team-format tool chip, got %q", out)
@@ -95,7 +95,7 @@ func TestDelegationObservability_Scenario3_ExpandedCardShowsBoundedPreviews(t *t
 		Kind: client.SubagentTool, ParentCallID: "p1", ChildID: "c1",
 		InnerKind: "tool.call", ToolName: "Read", Detail: longDetail, ToolCount: 2,
 	})
-	out = stripANSIstr(r.renderBlock(0, &c.blocks[0], true))
+	out = stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
 	if strings.Contains(out, strings.Repeat("x", maxTraceDetailLen+40)) {
 		t.Errorf("expanded card must bound the detail preview to maxTraceDetailLen, got %q", out)
 	}
@@ -159,7 +159,7 @@ func TestDelegationObservability_Scenario3_HonestyNoteIsBoundedPreviews(t *testi
 	c := &conversation{}
 	c.addTool("p1", "Subagent", `{"prompt":"investigate"}`)
 	applySubagentTo(c, client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "p1", ChildID: "c1", Goal: "investigate"})
-	card := stripANSIstr(r.renderBlock(0, &c.blocks[0], true))
+	card := stripANSIstr(r.renderSnapshot(0, c.testBlocks()[0], true))
 	if !strings.Contains(card, "bounded previews") {
 		t.Errorf("expanded Subagent card should carry the bounded-previews note, got %q", card)
 	}

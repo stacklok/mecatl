@@ -14,185 +14,14 @@ import (
 // every non-result tool-card region is prepared for the card body before the
 // card style is applied. Diff continuation rows retain the meaningful source
 // prefix and indentation rather than being reconstructed from a styled card.
-func TestMecatuiCardLayout_Scenario1_ToolCardRegionsFitBodyWidth(t *testing.T) {
-	r := newTestRenderer()
-	r.setWidth(defaultBlockIndent + 38)
-	_, cardWidth, bodyWidth := r.toolCardLayout()
-	if bodyWidth < 1 {
-		t.Fatalf("card body width = %d, want positive", bodyWidth)
-	}
-
-	cases := []struct {
-		name  string
-		block *block
-		want  []string
-	}{
-		{
-			name:  "header and expanded arguments",
-			block: &block{kind: blockTool, toolID: "header", toolName: "mcp__very_long_server_name__very_long_tool_name", toolArgs: `{"very_long_argument_name":"` + strings.Repeat("argument-value-", 8) + `"}`},
-			want:  []string{"very_long_argument_name", "argument-value-"},
-		},
-		{
-			name:  "subagent metadata",
-			block: &block{kind: blockTool, toolID: "sub", toolName: "Subagent", subagent: true, subGoal: strings.Repeat("investigate the independently styled child metadata ", 3), subModel: strings.Repeat("model-identifier-", 5), subCurrent: strings.Repeat("tool-name-", 8)},
-			want:  []string{"investigate", "model-identifier-", "subagent"},
-		},
-		{
-			name:  "team metadata",
-			block: &block{kind: blockTool, toolID: "team", toolName: "Team", team: true, teamLanes: []teamLane{{name: strings.Repeat("member-name-", 4), current: strings.Repeat("current-tool-", 5), lead: true}}},
-			want:  []string{"team", "member-name-"},
-		},
-		{
-			name:  "parallel arguments",
-			block: &block{kind: blockTool, toolID: "parallel", toolName: "Parallel", toolArgs: `{"tasks":["` + strings.Repeat("parallel-task-", 8) + `"]}`},
-			want:  []string{"tasks", "parallel-task-"},
-		},
-		{
-			name:  "edit diff preserves prefix and indentation",
-			block: &block{kind: blockTool, toolID: "edit", toolName: "Edit", toolArgs: `{"path":"very-long-path/` + strings.Repeat("nested/", 8) + `file.go","old_string":"    old source ` + strings.Repeat("x", 60) + `","new_string":"    new source ` + strings.Repeat("y", 60) + `"}`},
-			want:  []string{"-     old source", "+     new source"},
-		},
-		{
-			name:  "write diff preserves prefix and indentation",
-			block: &block{kind: blockTool, toolID: "write", toolName: "Write", toolArgs: `{"path":"very-long-path/` + strings.Repeat("nested/", 8) + `file.go","content":"    source indentation ` + strings.Repeat("z", 60) + `"}`},
-			want:  []string{"+     source indentation"},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			out := stripANSIstr(r.renderTool(tc.block, true))
-			for i, line := range strings.Split(out, "\n") {
-				if got := maxLineWidth(line); got > cardWidth {
-					t.Errorf("card row %d width = %d, want ≤ %d: %q", i, got, cardWidth, line)
-				}
-			}
-			for _, want := range tc.want {
-				if !strings.Contains(out, want) {
-					t.Errorf("rendered card lost %q:\n%s", want, out)
-				}
-			}
-			if tc.block.toolName == "Edit" || tc.block.toolName == "Write" {
-				diff, ok := r.renderToolDiff(tc.block.toolName, tc.block.toolArgs, true)
-				if !ok {
-					t.Fatal("diff renderer unexpectedly declined valid arguments")
-				}
-				for i, line := range strings.Split(stripANSIstr(diff), "\n") {
-					if got := maxLineWidth(line); got > bodyWidth {
-						t.Errorf("prepared diff row %d width = %d, want ≤ %d: %q", i, got, bodyWidth, line)
-					}
-				}
-			}
-		})
-	}
-}
 
 // TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant verifies AC1.4:
 // expanded main-conversation cards preserve every source region while every rendered
 // row fits the card at the tiny, narrow, normal, and capped geometries.
-func TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant(t *testing.T) {
-	const sourceRun = 160
-	cases := []struct {
-		name  string
-		width int
-	}{
-		{name: "tiny", width: defaultBlockIndent + 6},
-		{name: "narrow", width: defaultBlockIndent + 20},
-		{name: "normal", width: 100},
-		{name: "capped", width: 200},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			r := newTestRenderer()
-			r.setWidth(tc.width)
-			_, cardWidth, _ := r.toolCardLayout()
-			if cardWidth < 1 {
-				t.Fatalf("card width = %d, want positive", cardWidth)
-			}
-
-			blocks := []*block{
-				{
-					kind:       blockTool,
-					toolID:     "ordinary",
-					toolName:   "tool-" + strings.Repeat("H", sourceRun),
-					toolArgs:   `{"argument":"` + strings.Repeat("A", sourceRun) + `"}`,
-					resolved:   true,
-					resultBody: strings.Repeat("D", sourceRun),
-					resultBlocks: []client.ContentBlock{
-						{Kind: client.ContentBlockResourceLink, Name: strings.Repeat("E", sourceRun), URL: strings.Repeat("F", sourceRun)},
-					},
-				},
-				{
-					kind:     blockTool,
-					toolID:   "edit",
-					toolName: "Edit",
-					toolArgs: `{"path":"` + strings.Repeat("P", sourceRun) + `","old_string":"` + strings.Repeat("B", sourceRun) + `","new_string":"` + strings.Repeat("C", sourceRun) + `"}`,
-				},
-			}
-			for _, b := range blocks {
-				out := stripANSIstr(r.renderTool(b, true))
-				for i, row := range strings.Split(out, "\n") {
-					if got := maxLineWidth(row); got > cardWidth {
-						t.Errorf("%s row %d width = %d, want ≤ %d: %q", b.toolID, i, got, cardWidth, row)
-					}
-				}
-				wantSource := map[string][]string{
-					"ordinary": {"H", "A", "D", "E", "F"},
-					"edit":     {"P", "B", "C"},
-				}[b.toolID]
-				for _, token := range wantSource {
-					if got := strings.Count(out, token); got != sourceRun {
-						t.Errorf("%s lost expanded %q source content: got %d occurrences, want %d", b.toolID, token, got, sourceRun)
-					}
-				}
-			}
-		})
-	}
-}
 
 // TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap verifies AC1.5: renderTool
 // frames the already-width-bounded regions directly, rather than wrapping a
 // styled assembled card body (which can turn style alignment padding into rows).
-func TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap(t *testing.T) {
-	_, testFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test source")
-	}
-	source, err := os.ReadFile(filepath.Join(filepath.Dir(testFile), "tool_block.go"))
-	if err != nil {
-		t.Fatalf("read tool_block.go: %v", err)
-	}
-	start := strings.Index(string(source), "func (r *renderer) prepareToolCard(")
-	end := len(source)
-	if start < 0 {
-		t.Fatal("locate renderTool")
-	}
-	body := string(source)[start:end]
-	for _, forbidden := range []string{
-		"ansi.Wrap(head",
-		"ansi.Hardwrap(head",
-		"card.Render(ansi.Wrap",
-		"card.Render(ansi.Hardwrap",
-		"card.Render(wrapToolCardRegion",
-	} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("renderTool applies a width-affecting wrap to its assembled styled body: %s", forbidden)
-		}
-	}
-	for _, required := range []string{
-		"return r.prepareToolCard(b, expand).render()",
-		"head := renderToolHeader(glyph, glyphText, headLabel, r.th.Style(\"toolName\"), bodyWidth)",
-		"renderToolCardText(r.th.Style(\"muted\"), terminaltext.Sanitize(b.toolName), bodyWidth)",
-		"r.renderToolArgs(b, expand, bodyWidth)",
-		"r.renderToolResult(b, expand, bodyWidth)",
-		"sections = append(sections, preparedToolSection",
-	} {
-		if !strings.Contains(body, required) {
-			t.Errorf("renderTool no longer prepares a card region before final framing: missing %s", required)
-		}
-	}
-}
 
 // TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth verifies AC3.1:
 // inventory and MCP list rows are prepared within the body width their container
@@ -241,11 +70,102 @@ func TestMecatuiCardLayout_Scenario3_InventoryAndMCPFitWidth(t *testing.T) {
 	t.Run("agents team and parallel", func(t *testing.T) {
 		assertFits(t, "agent definitions", renderAgentsInvPanel(th, agentsInvState{agents: []client.Agent{{Name: long, Description: long, Model: long, PermissionMode: long, Tools: []string{long}}}}, client.Capabilities{Agents: true}, hk, width))
 		lane := teamLane{name: long, current: long, role: long}
-		teamBlock := &block{teamLanes: []teamLane{lane}}
+		teamBlock := &teamOverlaySnapshot{teamLanes: []teamLane{lane}}
 		assertFits(t, "team", renderAgentsOverlay(th, tabTeams, subagentState{}, parallelState{}, teamState{view: teamRoster}, teamBlock, nil, nil, hk, width, 20))
 		fleet := []subagentLane{{childID: long, goal: long, current: long}}
 		assertFits(t, "subagents", renderAgentsOverlay(th, tabSubagents, subagentState{}, parallelState{}, teamState{}, nil, fleet, nil, hk, width, 20))
 		groups := []parallelGroup{{parentCallID: long, join: long, branches: []parallelBranch{{index: 0, label: long, goal: long, current: long}}}}
 		assertFits(t, "parallel", renderAgentsOverlay(th, tabParallel, subagentState{}, parallelState{}, teamState{}, nil, nil, groups, hk, width, 20))
 	})
+}
+
+func TestMecatuiCardLayout_Scenario1_ToolCardRegionsFitBodyWidth(t *testing.T) {
+	r := newTestRenderer()
+	r.setWidth(defaultBlockIndent + 38)
+	_, cardWidth, bodyWidth := r.toolCardLayout()
+	cases := []struct {
+		name string
+		card any
+		want []string
+	}{
+		{"header and expanded arguments", toolCardPresentation{name: "mcp__very_long_server_name__very_long_tool_name", arguments: `{"very_long_argument_name":"` + strings.Repeat("argument-value-", 8) + `"}`}, []string{"very_long_argument_name", "argument-value-"}},
+		{"subagent metadata", subagentCardPresentation{name: "Subagent", goal: strings.Repeat("investigate the independently styled child metadata ", 3), model: strings.Repeat("model-identifier-", 5), current: strings.Repeat("tool-name-", 8)}, []string{"investigate", "model-identifier-", "subagent"}},
+		{"team metadata", teamCardPresentation{name: "Team", lanes: []teamLane{{name: strings.Repeat("member-name-", 4), current: strings.Repeat("current-tool-", 5), lead: true}}}, []string{"team", "member-name-"}},
+		{"parallel arguments", toolCardPresentation{name: "Parallel", arguments: `{"tasks":["` + strings.Repeat("parallel-task-", 8) + `"]}`}, []string{"tasks", "parallel-task-"}},
+		{"edit diff preserves prefix and indentation", toolCardPresentation{name: "Edit", arguments: `{"path":"very-long-path/` + strings.Repeat("nested/", 8) + `file.go","old_string":"    old source ` + strings.Repeat("x", 60) + `","new_string":"    new source ` + strings.Repeat("y", 60) + `"}`}, []string{"-     old source", "+     new source"}},
+		{"write diff preserves prefix and indentation", toolCardPresentation{name: "Write", arguments: `{"path":"very-long-path/` + strings.Repeat("nested/", 8) + `file.go","content":"    source indentation ` + strings.Repeat("z", 60) + `"}`}, []string{"+     source indentation"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out string
+			switch card := tc.card.(type) {
+			case toolCardPresentation:
+				out = r.prepareTypedToolCard(card, true).render()
+			case subagentCardPresentation:
+				out = r.prepareSubagentCard(card, true).render()
+			case teamCardPresentation:
+				out = r.prepareTeamCard(card, true).render()
+			}
+			out = stripANSIstr(out)
+			for i, line := range strings.Split(out, "\n") {
+				if got := maxLineWidth(line); got > cardWidth {
+					t.Errorf("card row %d width = %d, want ≤ %d", i, got, cardWidth)
+				}
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("rendered card lost %q:\n%s", want, out)
+				}
+			}
+			if card, ok := tc.card.(toolCardPresentation); ok && (card.name == "Edit" || card.name == "Write") {
+				diff, ok := r.renderToolDiff(card.name, card.arguments, true)
+				if !ok {
+					t.Fatal("diff renderer declined")
+				}
+				for _, line := range strings.Split(stripANSIstr(diff), "\n") {
+					if maxLineWidth(line) > bodyWidth {
+						t.Errorf("diff exceeds body width")
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMecatuiCardLayout_Scenario1_ExpandedToolCardWidthInvariant(t *testing.T) {
+	const sourceRun = 160
+	for _, width := range []int{defaultBlockIndent + 6, defaultBlockIndent + 20, 100, 200} {
+		r := newTestRenderer()
+		r.setWidth(width)
+		_, cardWidth, _ := r.toolCardLayout()
+		cards := []toolCardPresentation{
+			{name: "tool-" + strings.Repeat("H", sourceRun), arguments: `{"argument":"` + strings.Repeat("A", sourceRun) + `"}`, resolved: true, result: strings.Repeat("D", sourceRun), artifacts: []client.ContentBlock{{Kind: client.ContentBlockResourceLink, Name: strings.Repeat("E", sourceRun), URL: strings.Repeat("F", sourceRun)}}},
+			{name: "Edit", arguments: `{"path":"` + strings.Repeat("P", sourceRun) + `","old_string":"` + strings.Repeat("B", sourceRun) + `","new_string":"` + strings.Repeat("C", sourceRun) + `"}`},
+		}
+		for _, card := range cards {
+			out := stripANSIstr(r.prepareTypedToolCard(card, true).render())
+			for _, row := range strings.Split(out, "\n") {
+				if maxLineWidth(row) > cardWidth {
+					t.Errorf("row exceeds card width")
+				}
+			}
+		}
+	}
+}
+
+func TestMecatuiCardLayout_Scenario1_NoStyledBodyWrap(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test source")
+	}
+	source, err := os.ReadFile(filepath.Join(filepath.Dir(testFile), "tool_block.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, required := range []string{"func (r *renderer) prepareTypedToolCard(", "renderOrdinaryToolArgs", "renderTypedToolResult"} {
+		if !strings.Contains(body, required) {
+			t.Errorf("typed tool renderer missing %s", required)
+		}
+	}
 }

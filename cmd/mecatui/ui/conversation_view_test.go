@@ -19,7 +19,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	m.conv.addUser("second")
 	m.conv.addUser("third")
 	m.refreshView()
-	priorID := m.conv.blocks[0].id
+	priorID := uint64(m.conv.testBlocks()[0].ID)
 	priorRow := m.conversationView.frame.firstRegionRow(priorID, conversationRegionBody)
 	if priorRow < 0 {
 		t.Fatal("first block has no body row")
@@ -27,10 +27,12 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	m.vp.SetHeight(1)
 	m.vp.SetYOffset(priorRow)
 	m.conversationView.mode = anchored
-	// Simulate a reconstructed document rendered through the same scratch-backed
-	// renderer while the prior viewport is still visible.
-	m.conv.blocks[0].id = 99
-	m.conv.blocks[0].rev++
+	// Simulate a reconstructed document while the prior viewport is still visible.
+	// Reserving the appendix identity ensures no card reuses the old block ID.
+	m.conv = conversation{}
+	m.conv.recordFileChange("new-document.go")
+	m.conv.addUser("replacement")
+	m.rend.resetBlockCaches()
 	m.refreshView()
 	if got := m.conversationView.anchor.blockID; got != priorID {
 		t.Fatalf("captured anchor block ID = %d, want prior viewport block ID %d", got, priorID)
@@ -100,7 +102,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 	c.resolveTool("call-1", "RESULT_MARKER", false)
 	r := newCacheRenderer()
 	r.setWidth(32)
-	toolFrame := r.renderConversationFrame(c, true)
+	toolFrame := r.renderConversationFrame(&c.scrollback, true)
 	seenArguments, seenResult := false, false
 	argumentRow := -1
 	for i, line := range toolFrame.lines {
@@ -129,7 +131,7 @@ func TestADR_0301_AnchorFallbackIsDeterministic(t *testing.T) {
 		t.Fatal("wrapped argument row did not produce an anchor")
 	}
 	r.setWidth(80)
-	reflowed := r.renderConversationFrame(c, true)
+	reflowed := r.renderConversationFrame(&c.scrollback, true)
 	row, ok := reflowed.rowForAnchor(anchor)
 	if !ok || reflowed.provenance[row].region != conversationRegionArguments {
 		t.Fatalf("argument anchor after reflow = row %d, ok=%t, region=%v; want arguments", row, ok, reflowed.provenance[row].region)
@@ -165,7 +167,7 @@ func TestADR_0301_CardAndChangedFilesAppendixFallback(t *testing.T) {
 	c.resolveTool("call-1", "RESULT_MARKER", false)
 	r := newCacheRenderer()
 	r.setWidth(80)
-	frame := r.renderConversationFrame(c, false)
+	frame := r.renderConversationFrame(&c.scrollback, false)
 	resultRow := -1
 	for i, line := range frame.lines {
 		if strings.Contains(stripANSIstr(line), "RESULT_MARKER") {
@@ -211,10 +213,10 @@ func TestADR_0301_InterBlockSeparatorAnchorsAdjacentContent(t *testing.T) {
 	m := newCoalesceModel(t)
 	m.conv.addUser("first")
 	m.conv.addUser(strings.Repeat("middle content ", 12))
-	m.conv.addUser("third")
+	m.conv.addTool("third", "Read", `{"path":"third"}`)
 	m.refreshView()
 
-	wantID := m.conv.blocks[1].id
+	wantID := uint64(m.conv.testBlocks()[1].ID)
 	separator := -1
 	for i, row := range m.conversationView.frame.provenance {
 		if !row.separator {
@@ -236,11 +238,12 @@ func TestADR_0301_InterBlockSeparatorAnchorsAdjacentContent(t *testing.T) {
 	m.vp.SetYOffset(separator)
 	m.conversationView.mode = anchored
 
-	// A width reflow and a block mutation must retain the adjacent logical block,
-	// rather than restoring the indistinguishable first zero-ID separator.
+	// A width reflow and a typed block mutation must retain the adjacent logical
+	// block rather than restoring the indistinguishable first zero-ID separator.
 	m.rend.setWidth(40)
-	m.conv.blocks[2].raw = strings.Repeat("third content ", 12)
-	m.conv.blocks[2].rev++
+	if !m.conv.resolveTool("third", strings.Repeat("third content ", 12), false) {
+		t.Fatal("resolve third tool")
+	}
 	m.refreshView()
 
 	if got := m.conversationView.anchor.blockID; got != wantID {

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestSpeakerLabels pins decisions 1+2: the user block leads with "▌ you" and the
@@ -14,15 +16,15 @@ func TestSpeakerLabels(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(80)
 
-	user := block{kind: blockUser, raw: "hello there"}
-	got := stripANSIstr(r.renderBlockFresh(0, &user, false))
-	if first := firstLine(got); !strings.HasPrefix(first, "▌ you") {
+	user := testSnapshot(0, scrollback.UserCardSnapshot{Text: "hello there"})
+	got := stripANSIstr(r.renderSnapshot(0, user, false))
+	if first := strings.TrimLeft(firstLine(got), " "); !strings.HasPrefix(first, "▌ you") {
 		t.Errorf("user block must lead with %q, got first line %q", "▌ you", first)
 	}
 
-	asst := block{kind: blockAssistant, raw: "the answer"}
-	got = stripANSIstr(r.renderBlockFresh(1, &asst, false))
-	if first := firstLine(got); !strings.HasPrefix(first, "● mecatl") {
+	asst := testSnapshot(1, scrollback.AssistantCardSnapshot{Text: "the answer"})
+	got = stripANSIstr(r.renderSnapshot(1, asst, false))
+	if first := strings.TrimLeft(firstLine(got), " "); !strings.HasPrefix(first, "● mecatl") {
 		t.Errorf("assistant block must lead with %q, got first line %q", "● mecatl", first)
 	}
 }
@@ -36,8 +38,8 @@ func TestUserBlockNoBackgroundTint(t *testing.T) {
 	const w = 80
 	r.setWidth(w)
 
-	user := block{kind: blockUser, raw: "hi"} // far shorter than the column
-	out := r.renderBlockFresh(0, &user, false)
+	user := testSnapshot(0, scrollback.UserCardSnapshot{Text: "hi"}) // far shorter than the column
+	out := r.renderSnapshot(0, user, false)
 	lines := strings.Split(out, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected at least a label + body line, got %q", out)
@@ -60,9 +62,9 @@ func TestUserBlockNoBackgroundTint(t *testing.T) {
 func TestUserBlockNarrowDegrades(t *testing.T) {
 	r := newTestRenderer()
 	r.setWidth(2) // ≤ frame+1
-	user := block{kind: blockUser, raw: "hello"}
+	user := testSnapshot(0, scrollback.UserCardSnapshot{Text: "hello"})
 	// Must not panic and must still carry the body text.
-	out := stripANSIstr(r.renderBlockFresh(0, &user, false))
+	out := stripANSIstr(r.renderSnapshot(0, user, false))
 	if !strings.Contains(out, "hello") {
 		t.Errorf("narrow user block should still render the body, got %q", out)
 	}

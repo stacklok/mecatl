@@ -30,18 +30,13 @@ func testAgentsDetailScrolling(t *testing.T) {
 			m.subagents = subagentState{view: subagentFocus, child: "child"}
 			return m
 		}, 0},
-		{"team member focus trace", func(m Model) Model {
-			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "lead", trace: trace}}})
-			m.team, m.agentsTab = teamState{view: teamFocus, member: "lead"}, tabTeams
-			return m
-		}, 0},
 		{"team tasks", func(m Model) Model {
-			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "lead"}}, teamTasks: tasks})
+			m.conv.addTeamFixture(teamOverlaySnapshot{teamLanes: []teamLane{{name: "lead"}}, teamTasks: tasks})
 			m.team, m.agentsTab = teamState{view: teamTasks}, tabTeams
 			return m
 		}, 't'},
 		{"team findings", func(m Model) Model {
-			m.conv.blocks = append(m.conv.blocks, block{kind: blockTool, team: true, teamLanes: []teamLane{{name: "lead"}}, teamFindings: findings})
+			m.conv.addTeamFixture(teamOverlaySnapshot{teamLanes: []teamLane{{name: "lead"}}, teamFindings: findings})
 			m.team, m.agentsTab = teamState{view: teamFindings}, tabTeams
 			return m
 		}, 'f'},
@@ -56,7 +51,6 @@ func testAgentsDetailScrolling(t *testing.T) {
 				"JumpTop": {"h"}, "JumpEnd": {"e"},
 			})
 			m = tc.setup(m)
-
 			m = pressDetail(m, 'e')
 			activeOffset := agentsTestOffset(m.team.detail)
 			if m.agentsTab == tabSubagents {

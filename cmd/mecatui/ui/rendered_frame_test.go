@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // TestADR_0301_RenderedFrameProvenanceMatchesLines pins ADR 0301's requirement
@@ -29,8 +30,8 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 	c.recordFileChange("main.go")
 
 	r := newCacheRenderer()
-	frame := r.renderConversationFrame(c, true)
-	want := r.renderConversationLines(c, true)
+	frame := r.renderConversationFrame(&c.scrollback, true)
+	want := r.renderConversationLines(&c.scrollback, true)
 	if len(frame.lines) != len(want) || strings.Join(frame.lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("frame lines differ from incremental renderer\n got: %q\nwant: %q", frame.lines, want)
 	}
@@ -42,10 +43,10 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 			t.Errorf("row %d has no semantic region", i)
 		}
 	}
-	if !frame.hasRegion(c.blocks[1].id, conversationRegionReasoning) || !frame.hasRegion(c.blocks[1].id, conversationRegionBody) {
+	if !frame.hasRegion(uint64(c.testBlocks()[1].ID), conversationRegionReasoning) || !frame.hasRegion(uint64(c.testBlocks()[1].ID), conversationRegionBody) {
 		t.Fatal("assistant reasoning and body must retain distinct semantic regions")
 	}
-	if !frame.hasRegion(c.blocks[2].id, conversationRegionArguments) || !frame.hasRegion(c.blocks[2].id, conversationRegionResult) {
+	if !frame.hasRegion(uint64(c.testBlocks()[2].ID), conversationRegionArguments) || !frame.hasRegion(uint64(c.testBlocks()[2].ID), conversationRegionResult) {
 		t.Fatal("tool arguments and result must retain distinct semantic regions")
 	}
 	for i, line := range frame.lines {
@@ -53,8 +54,8 @@ func TestADR_0301_RenderedFrameProvenanceMatchesLines(t *testing.T) {
 			t.Fatalf("artifact row %d has region %v, want enclosing tool result", i, frame.provenance[i].region)
 		}
 	}
-	if frame.appendixID != c.changedFilesAppendixID {
-		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.changedFilesAppendixID)
+	if frame.appendixID != c.testAppendixID() {
+		t.Fatalf("expanded appendix ID = %d, want %d", frame.appendixID, c.testAppendixID())
 	}
 }
 
@@ -68,17 +69,18 @@ func TestExpandedReasoningProvenanceUsesWrappedRows(t *testing.T) {
 
 	r := newCacheRenderer()
 	r.setWidth(24)
-	frame := r.renderConversationFrame(c, true)
+	frame := r.renderConversationFrame(&c.scrollback, true)
 	if got, want := len(frame.provenance), len(frame.lines); got != want {
 		t.Fatalf("provenance rows = %d, rendered lines = %d", got, want)
 	}
 
-	assistant := &c.blocks[0]
-	wantReasoningRows := len(strings.Split(r.renderReasoning(assistant, true), "\n"))
+	assistant := c.testBlocks()[0]
+	assistantPayload := assistant.Payload.(scrollback.AssistantCardSnapshot)
+	wantReasoningRows := len(strings.Split(r.renderReasoningSnapshot(assistantPayload, true), "\n"))
 	if wantReasoningRows <= 3 {
 		t.Fatalf("narrow reasoning render has %d rows, want wrapping beyond the unwrapped rows", wantReasoningRows)
 	}
-	firstReasoning := frame.firstRegionRow(assistant.id, conversationRegionReasoning)
+	firstReasoning := frame.firstRegionRow(uint64(assistant.ID), conversationRegionReasoning)
 	if firstReasoning < 0 {
 		t.Fatal("expanded reasoning rows missing from provenance")
 	}
@@ -106,12 +108,12 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 
 	r := newCacheRenderer()
 	r.setWidth(30)
-	narrow := r.renderConversationFrame(c, true)
-	assistant := c.blocks[0]
+	narrow := r.renderConversationFrame(&c.scrollback, true)
+	assistant := c.testBlocks()[0]
 	anchorRow := -1
 	for i, line := range narrow.lines {
 		row := narrow.provenance[i]
-		if row.blockID == assistant.id && row.region == conversationRegionReasoning && strings.Contains(stripANSIstr(line), "REASONING-ANCHOR") {
+		if row.blockID == uint64(assistant.ID) && row.region == conversationRegionReasoning && strings.Contains(stripANSIstr(line), "REASONING-ANCHOR") {
 			if !row.text {
 				t.Fatal("expanded reasoning text row must be text-bearing")
 			}
@@ -124,7 +126,7 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	}
 	for i, line := range narrow.lines {
 		row := narrow.provenance[i]
-		if row.blockID == assistant.id && row.region == conversationRegionReasoning &&
+		if row.blockID == uint64(assistant.ID) && row.region == conversationRegionReasoning &&
 			(strings.Contains(stripANSIstr(line), "reasoning summary") || strings.Contains(stripANSIstr(line), reasoningCaveat)) && row.text {
 			t.Fatalf("reasoning presentation row %q must not be text-bearing", line)
 		}
@@ -136,7 +138,7 @@ func TestExpandedReasoningAnchorSurvivesReflow(t *testing.T) {
 	vp.SetYOffset(anchorRow)
 	view := conversationView{mode: anchored, frame: narrow}
 	r.setWidth(100)
-	wide := r.renderConversationFrame(c, true)
+	wide := r.renderConversationFrame(&c.scrollback, true)
 	view.replace(&vp, wide)
 
 	row := wide.provenance[vp.YOffset()]
@@ -155,7 +157,7 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 
 	assertFrame := func(step string, wantPrepares int) {
 		t.Helper()
-		got := r.renderConversationFrame(c, false)
+		got := r.renderConversationFrame(&c.scrollback, false)
 		if r.toolCardPrepares != wantPrepares {
 			t.Fatalf("%s: prepareToolCard calls = %d, want %d", step, r.toolCardPrepares, wantPrepares)
 		}
@@ -166,7 +168,7 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 
 		fresh := newCacheRenderer()
 		fresh.setWidth(r.width)
-		want := fresh.renderConversationFrame(c, false)
+		want := fresh.renderConversationFrame(&c.scrollback, false)
 		if strings.Join(got.lines, "\n") != strings.Join(want.lines, "\n") {
 			t.Fatalf("%s: cached frame lines diverged from fresh render", step)
 		}
@@ -184,13 +186,13 @@ func TestToolCardPreparationIsSharedWithFrameProvenance(t *testing.T) {
 	r.setWidth(48)
 	assertFrame("resize", 3)
 	// render at the changed expand axis directly so it covers the block-cache key.
-	frame := r.renderConversationFrame(c, true)
+	frame := r.renderConversationFrame(&c.scrollback, true)
 	if r.toolCardPrepares != 4 {
 		t.Fatalf("expand change: prepareToolCard calls = %d, want 4", r.toolCardPrepares)
 	}
 	fresh := newCacheRenderer()
 	fresh.setWidth(r.width)
-	want := fresh.renderConversationFrame(c, true)
+	want := fresh.renderConversationFrame(&c.scrollback, true)
 	if strings.Join(frame.lines, "\n") != strings.Join(want.lines, "\n") || !slices.Equal(frame.provenance, want.provenance) {
 		t.Fatal("expand change: cached frame diverged from fresh render")
 	}
@@ -205,7 +207,7 @@ func TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow(t *testin
 	c.resolveTool("call", "TOOLRESULTMARKER deliberately wraps across the card   ", false)
 	r := newCacheRenderer()
 	r.setWidth(32)
-	narrow := r.renderConversationFrame(c, true)
+	narrow := r.renderConversationFrame(&c.scrollback, true)
 
 	for _, typ := range []reflect.Type{reflect.TypeOf(renderedRow{}), reflect.TypeOf(blockEntry{}), reflect.TypeOf(renderedFrame{})} {
 		for i := 0; i < typ.NumField(); i++ {
@@ -281,7 +283,7 @@ func TestToolCardStructuralProvenanceSurvivesCacheReplacementAndReflow(t *testin
 	visible.lines = append([]string(nil), narrow.lines...)
 
 	r.setWidth(64)
-	wide := r.renderConversationFrame(c, true)
+	wide := r.renderConversationFrame(&c.scrollback, true)
 	for _, point := range points {
 		if _, _, ok := resolveSelectionPoint(visible, point); !ok {
 			t.Fatalf("old frame lost exact structural source for %#v", point)
@@ -303,11 +305,11 @@ func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 
 	r := newCacheRenderer()
 	r.setWidth(24)
-	narrow := r.renderConversationFrame(c, false)
+	narrow := r.renderConversationFrame(&c.scrollback, false)
 	var anchor readingAnchor
 	found := false
 	for i, line := range narrow.lines {
-		if row := narrow.provenance[i]; row.blockID == c.blocks[1].id && row.region == conversationRegionBody && row.text && strings.Contains(stripANSIstr(line), "eight") {
+		if row := narrow.provenance[i]; row.blockID == uint64(c.testBlocks()[1].ID) && row.region == conversationRegionBody && row.text && strings.Contains(stripANSIstr(line), "eight") {
 			anchor, found = narrow.anchorForRow(i)
 			break
 		}
@@ -320,7 +322,7 @@ func TestADR_0301_ReflowRestoresCanonicalVisibleTextOffset(t *testing.T) {
 	}
 
 	r.setWidth(100)
-	wide := r.renderConversationFrame(c, false)
+	wide := r.renderConversationFrame(&c.scrollback, false)
 	row, ok := wide.rowForAnchor(anchor)
 	if !ok {
 		t.Fatal("continuation anchor did not resolve after reflow")
@@ -346,19 +348,19 @@ func TestADR_0301_ScrollbackFrameRetainsLinearMetadataOnly(t *testing.T) {
 			c.startAssistant()
 			c.appendAssistant("stream")
 			r := newCacheRenderer()
-			first := r.renderConversationFrame(c, false)
+			first := r.renderConversationFrame(&c.scrollback, false)
 			before := r.blockRenders
 
 			c.appendAssistant(" delta")
-			second := r.renderConversationFrame(c, false)
+			second := r.renderConversationFrame(&c.scrollback, false)
 			if got := r.blockRenders - before; got != 1 {
 				t.Fatalf("streaming frame re-rendered %d blocks at depth %d, want 1", got, depth)
 			}
 			if len(second.provenance) != len(second.lines) || len(first.provenance) == 0 {
 				t.Fatal("frame provenance must be row-linear and present")
 			}
-			if r.blocks.prefixN != len(c.blocks)-1 {
-				t.Fatalf("cached prefix covers %d blocks, want settled prefix of %d", r.blocks.prefixN, len(c.blocks)-1)
+			if r.blocks.prefixN != len(c.testBlocks())-1 {
+				t.Fatalf("cached prefix covers %d blocks, want settled prefix of %d", r.blocks.prefixN, len(c.testBlocks())-1)
 			}
 		})
 	}
@@ -396,7 +398,7 @@ func TestToolCardFrameHardwrapsLongCollapsedArgumentRowsRegression(t *testing.T)
 	r := newCacheRenderer()
 	r.setWidth(24)
 
-	frame := r.renderConversationFrame(c, false)
+	frame := r.renderConversationFrame(&c.scrollback, false)
 	if got, want := len(frame.provenance), len(frame.lines); got != want {
 		t.Fatalf("provenance rows = %d, rendered lines = %d", got, want)
 	}
@@ -448,19 +450,23 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 	widths = append(widths, 1, 120, 1, 120)
 	for _, width := range widths {
 		r.setWidth(width)
-		frame := r.renderConversationFrame(c, false)
+		frame := r.renderConversationFrame(&c.scrollback, false)
 		if got, want := len(frame.provenance), len(frame.lines); got != want {
 			t.Fatalf("width %d: provenance rows = %d, rendered lines = %d", width, got, want)
 		}
 
 		want := make([]string, 0, len(frame.lines))
-		for i := range c.blocks {
+		kinds := make([]scrollback.Kind, c.scrollback.Len())
+		for i := range kinds {
+			kinds[i] = c.scrollback.MetadataAt(i).Kind
+		}
+		for i := range c.testBlocks() {
 			if i > 0 {
-				for range blockBlankLinesAfter(c.blocks, i) {
+				for range blockBlankLinesAfter(kinds, i) {
 					want = append(want, "")
 				}
 			}
-			want = append(want, strings.Split(r.renderBlock(i, &c.blocks[i], false), "\n")...)
+			want = append(want, strings.Split(r.renderSnapshot(i, c.testBlocks()[i], false), "\n")...)
 		}
 		want = append(want, "")
 		if !slices.Equal(frame.lines, want) {
@@ -482,9 +488,9 @@ func TestToolCardFrameProvenanceSurvivesNarrowResizeRegression(t *testing.T) {
 			region  regionKind
 			name    string
 		}{
-			{c.blocks[0].id, conversationRegionArguments, "unresolved arguments"},
-			{c.blocks[1].id, conversationRegionArguments, "resolved arguments"},
-			{c.blocks[1].id, conversationRegionResult, "resolved result"},
+			{uint64(c.testBlocks()[0].ID), conversationRegionArguments, "unresolved arguments"},
+			{uint64(c.testBlocks()[1].ID), conversationRegionArguments, "resolved arguments"},
+			{uint64(c.testBlocks()[1].ID), conversationRegionResult, "resolved result"},
 		} {
 			if !seen[tc.blockID][tc.region] {
 				t.Fatalf("width %d: %s has no provenance row", width, tc.name)

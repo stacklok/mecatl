@@ -1,8 +1,11 @@
 package ui
 
-import "github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
+import (
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/blocks"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
+)
 
-func blockProvenanceRows(prepared blocks.Prepared, blockID uint64, kind blockKind, indent, width int) []renderedRow {
+func blockProvenanceRows(prepared blocks.Prepared, blockID uint64, kind scrollback.Kind, indent, width int) []renderedRow {
 	if width <= indent {
 		indent = 0
 	}

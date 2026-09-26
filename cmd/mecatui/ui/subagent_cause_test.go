@@ -170,8 +170,8 @@ func TestSubagentFocusPaneWithLongCauseFitsViewport(t *testing.T) {
 func TestSubagentErrorCardShowsProviderCause(t *testing.T) {
 	const cause = "upstream 503: model overloaded"
 	out := subagentCard(t, false, func(c *conversation) {
-		c.setSubagentStart("p1", "investigate the loop", "", "", "", "")
-		c.setSubagentEnd("p1", client.Usage{}, 0, "error", 100)
+		c.startSubagentCard("p1", "investigate the loop", "", "", "", "")
+		c.finishSubagentCard("p1", client.Usage{}, 0, "error", 100)
 		// The server-composed body: the cause leads, the child's last text follows as
 		// labelled context (renderSubagentResult → subagentErrorBody).
 		c.resolveTool("p1", "Subagent: "+cause+

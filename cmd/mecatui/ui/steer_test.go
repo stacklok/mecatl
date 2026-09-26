@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 // Scenario 6 of docs/acceptance/steer-while-running.md (the mecatui half): the
@@ -192,8 +193,9 @@ func TestSteer_MediaOnlySendAndEcho(t *testing.T) {
 	}
 	mm, _ = m.Update(client.SteerEchoMsg{Parts: []client.ContentBlock{{Kind: client.ContentBlockImage, MimeType: "image/png", Data: []byte("pixels")}}, MessageID: "steer-0001"})
 	m = mm.(Model)
-	last := m.conv.blocks[len(m.conv.blocks)-1]
-	if len(last.media) != 1 || last.media[0] != "image/png (inline)" {
+	last := m.conv.testBlocks()[len(m.conv.testBlocks())-1]
+	user, ok := last.Payload.(scrollback.UserCardSnapshot)
+	if !ok || len(user.Media) != 1 || user.Media[0] != "image/png (inline)" {
 		t.Fatalf("echo media projection = %#v", last)
 	}
 }
