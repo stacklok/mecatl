@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 # SPDX-License-Identifier: Apache-2.0
 #
 # Mecatl Studio image — ghcr.io/stacklok/mecatl/studio (ADR 0351, decision 6:
@@ -61,7 +61,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build (Node 24 — matches apps/package.json `engines` and .node-version)
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:24-slim AS build
+FROM --platform=$BUILDPLATFORM node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS build
 ARG STUDIO_BUILD_ID=""
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=1
@@ -92,7 +92,7 @@ RUN pnpm --filter @mecatl-studio/server --prod deploy /out/server
 # (multi-arch index digest; linux/amd64 + linux/arm64). At that time `latest`
 # was Node v26.9.0 (image created 2026-09-17). Bump by re-running the same
 # command and replacing the digest; the tag is never used by itself.
-FROM cgr.dev/chainguard/node@sha256:1f903d44fc11a6f6e74447fc2c6a3c141f112217576be5d96c283210116b5d25
+FROM cgr.dev/chainguard/node@sha256:5d6d6287abf176121b173a0337a888900f2909f0ac06e4e096138be4898a8f92
 
 WORKDIR /app
 COPY --from=build /out/server/package.json ./package.json
