@@ -222,6 +222,7 @@ type Resolver struct {
 	operatorStorageManagement    *StorageManagementSection
 	operatorStorageManagementErr error
 	operatorCommandRunner        *CommandRunnerSection
+	operatorSystemPrompt         *SystemPromptSection
 	operatorCommandRunnerErr     error
 	operatorTemporaryStorage     *TemporaryStorageSection
 	operatorTemporaryStorageErr  error
@@ -307,6 +308,15 @@ func (r *Resolver) OperatorCredentialEnvironmentNames() []string {
 		out = append(out, name)
 	}
 	return append([]string(nil), out...)
+}
+
+// OperatorCommitCoauthor returns the optional operator setting. Nil means absent,
+// so later composition can retain its enabled-by-default behavior.
+func (r *Resolver) OperatorCommitCoauthor() *bool {
+	if r == nil || r.operatorSystemPrompt == nil {
+		return nil
+	}
+	return r.operatorSystemPrompt.CommitCoauthor
 }
 
 // OperatorCommandRunner returns the immutable effective operator-tier command-runner policy.
@@ -794,6 +804,11 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"retention: IGNORING a project-tier retention block (operator-tier only; projects cannot weaken cleanup protection)",
 				"file", src.path, "root", ws.Root())
 		}
+		if cfg.SystemPrompt != nil {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"system_prompt: IGNORING a project-tier system_prompt block (operator-tier only; configure it in user-global settings.yaml or an explicit operator file)",
+				"file", src.path, "root", ws.Root())
+		}
 		r.warnProjectCommandRunner(cfg.CommandRunner, src.path, ws.Root())
 		if cfg.TemporaryStorage != nil {
 			r.diag.Log(context.Background(), port.LevelWarn,
@@ -1067,6 +1082,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 		r.captureMCP(cfg.MCP)
 		r.captureRetention(cfg.Retention)
 		r.captureStorageManagement(cfg.StorageManagement)
+		r.captureSystemPrompt(cfg.SystemPrompt)
 		r.captureCommandRunner(cfg.CommandRunner)
 		r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
 	}
@@ -1111,6 +1127,7 @@ func (r *Resolver) loadUserRules(report *Report) []governance.Rule {
 				r.captureMCP(cfg.MCP)
 				r.captureRetention(cfg.Retention)
 				r.captureStorageManagement(cfg.StorageManagement)
+				r.captureSystemPrompt(cfg.SystemPrompt)
 				r.captureCommandRunner(cfg.CommandRunner)
 				r.captureTemporaryStorage(cfg.TemporaryStorage)
 				r.captureProviders(cfg.Providers, cfg.ProviderOverrides, cfg.CredentialStore)
@@ -1284,6 +1301,13 @@ func (r *Resolver) captureRetention(s *RetentionSection) {
 		return
 	}
 	r.operatorRetention = s
+}
+
+func (r *Resolver) captureSystemPrompt(s *SystemPromptSection) {
+	if s == nil || r.operatorSystemPrompt != nil {
+		return
+	}
+	r.operatorSystemPrompt = s
 }
 
 func (r *Resolver) captureCommandRunner(s *CommandRunnerSection) {

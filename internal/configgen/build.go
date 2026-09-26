@@ -37,6 +37,7 @@ func BuildModel(docs Docs) *Model {
 		harnessContextSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
+		systemPromptSubtree(docs),
 		commandRunnerSubtree(docs),
 		temporaryStorageSubtree(docs),
 		storageManagementSubtree(docs),
@@ -272,6 +273,18 @@ func retentionSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{Key: "retention", Tier: TierOperator, CommentedOut: true,
 		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
+}
+
+func systemPromptSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("SystemPromptSection", permconfig.SystemPromptSection{}, docs)
+	fields[0].Default, fields[0].ExampleValue = "true", "false"
+	return &Subtree{
+		Key:          "system_prompt",
+		Tier:         TierOperator,
+		CommentedOut: true,
+		Doc:          "Strict standard prompt policy. Operator-tier only; project values are ignored.",
+		Fields:       fields,
+	}
 }
 
 func commandRunnerSubtree(docs Docs) *Subtree {

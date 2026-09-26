@@ -233,6 +233,9 @@ type Config struct {
 	// StorageManagement names the verified OIDC identities allowed to operate on
 	// process-wide storage. It is strict and operator-tier only.
 	StorageManagement *StorageManagementSection `yaml:"storage_management"`
+	// SystemPrompt holds strict operator-only standard prompt settings. Project values
+	// are ignored by Resolver with a value-free warning.
+	SystemPrompt *SystemPromptSection `yaml:"system_prompt"`
 	// CommandRunner configures the built-in command interpreter and its narrowly
 	// inherited process-environment names. It is strict and operator-tier only.
 	CommandRunner *CommandRunnerSection `yaml:"command_runner"`
@@ -240,6 +243,20 @@ type Config struct {
 	// read exclusively from the user-global settings.yaml; project-tier and explicit
 	// CLI configuration values are ignored by the Resolver.
 	TemporaryStorage *TemporaryStorageSection `yaml:"temporary_storage"`
+}
+
+// SystemPromptSection is the strict operator-only standard prompt policy. It
+// intentionally exposes only typed options, never arbitrary prompt text.
+type SystemPromptSection struct {
+	// CommitCoauthor controls the standard commit co-author guidance. Nil preserves
+	// the default enabled behavior; false opts out.
+	CommitCoauthor *bool `yaml:"commit_coauthor"`
+}
+
+// UnmarshalYAML strictly decodes system-prompt policy so a misspelled key cannot
+// silently change prompt behavior.
+func (s *SystemPromptSection) UnmarshalYAML(node ast.Node) error {
+	return decodeStrictMapping(node, "system_prompt", map[string]any{"commit_coauthor": newPermconfigNodePointer(&s.CommitCoauthor)})
 }
 
 // CommandRunnerSection is the strict operator policy for built-in command runners.

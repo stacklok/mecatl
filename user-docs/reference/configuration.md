@@ -260,6 +260,16 @@ Versioned automatic session cleanup policy. Operator-tier only; project values a
 | `retention.sweep_cadence` | `duration` | `1h` | SweepCadence is the repeat interval; 0 disables repeats while retaining the compatibility startup sweep. |
 | `retention.acknowledge_main_deletion` | `bool` | `false` | AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup. |
 
+## `system_prompt`
+
+Tier: **operator**
+
+Strict standard prompt policy. Operator-tier only; project values are ignored.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `system_prompt.commit_coauthor` | `bool` | `true` | CommitCoauthor controls the standard commit co-author guidance. Nil preserves the default enabled behavior; false opts out. |
+
 ## `command_runner`
 
 Tier: **operator**

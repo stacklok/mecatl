@@ -342,6 +342,13 @@
 #   # AcknowledgeMainDeletion explicitly consents to destructive main-session cleanup.
 #   acknowledge_main_deletion: false
 
+#| === system_prompt === (tier: operator)
+#| Strict standard prompt policy. Operator-tier only; project values are ignored.
+# system_prompt:
+#   # CommitCoauthor controls the standard commit co-author guidance. Nil preserves the
+#   # default enabled behavior; false opts out.
+#   commit_coauthor: false
+
 #| === command_runner === (tier: operator)
 #| Built-in command interpreter and main-runner environment policy. Operator-tier only;
 #| project values are ignored. Explicit --shell overrides shell, and --no-shell disables
