@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
@@ -23,6 +24,7 @@ type ownershipPlacementProvider struct {
 	detaches    atomic.Int32
 	rollbacks   atomic.Int32
 	rollbackErr error
+	afterBind   func(context.Context, PlacementBindRequest)
 }
 
 func (p *ownershipPlacementProvider) binding(reattach bool) PlacementBinding {
@@ -40,8 +42,12 @@ func (p *ownershipPlacementProvider) binding(reattach bool) PlacementBinding {
 	}
 }
 
-func (p *ownershipPlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
-	return p.binding(false), nil
+func (p *ownershipPlacementProvider) Bind(ctx context.Context, req PlacementBindRequest) (PlacementBinding, error) {
+	binding := p.binding(false)
+	if p.afterBind != nil {
+		p.afterBind(ctx, req)
+	}
+	return binding, nil
 }
 
 func (p *ownershipPlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
@@ -210,23 +216,106 @@ func TestCapacityFailurePrecedesPlacementProvisioning(t *testing.T) {
 }
 
 func TestCollisionAfterProvisioningRollsBackUnpublishedPlacement(t *testing.T) {
-	ref := session.EnvironmentRef{Kind: "microvm", ID: "logical.environment", Revision: "1"}
-	provider := &ownershipPlacementProvider{ref: ref}
-	store := memstore.New()
-	existing := session.New("collision", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
-	if err := store.Save(t.Context(), existing); err != nil {
-		t.Fatal(err)
+	for _, perSession := range []bool{false, true} {
+		name := "shared engine"
+		if perSession {
+			name = "per-session engine"
+		}
+		t.Run(name, func(t *testing.T) {
+			ref := session.EnvironmentRef{Kind: "microvm", ID: "candidate", Revision: "1"}
+			provider := &ownershipPlacementProvider{ref: ref}
+			winnerRef := ref
+			winnerRef.ID = "winner"
+			winnerProvider := &ownershipPlacementProvider{ref: winnerRef}
+			store := memstore.New()
+			cfg := Config{Engine: repairEngine(), Store: store, PlacementProvider: winnerProvider, PlacementScope: "test", SharedEngineRoot: "/owned", OwnershipEnforced: true}
+			sel := ProviderSelector{}
+			if perSession {
+				sel.ProviderID = "test"
+				cfg.SessionEngine = func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode) (SessionEngineResult, error) {
+					return SessionEngineResult{Engine: repairEngine()}, nil
+				}
+			}
+			winnerSvc, err := NewService(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(winnerSvc.Close)
+			cfg.PlacementProvider = provider
+			svc, err := NewService(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(svc.Close)
+			owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
+			ctx := session.WithPrincipal(t.Context(), owner)
+			var winner *session.Session
+			provider.afterBind = func(ctx context.Context, req PlacementBindRequest) {
+				if provider.binds.Load() != 1 || req.BindingID != "collision" || !req.Principal.SameIdentity(owner) {
+					t.Fatal("candidate was not provisioned for the exact binding and owner")
+				}
+				if _, err := store.Load(ctx, req.BindingID); !errors.Is(err, port.ErrSessionNotFound) {
+					t.Fatalf("winner published before candidate provisioning: %v", err)
+				}
+				// Publish the competing placement only after the candidate's absence
+				// probe and provisioning, but before its atomic Store.Create.
+				var err error
+				winner, err = winnerSvc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, sel, ProfileDefault, WithSessionID(req.BindingID))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			created, err := svc.CreateSessionWithProfile(ctx, session.ModeDefault, session.Limits{}, sel, ProfileDefault, WithSessionID("collision"))
+			if !errors.Is(err, ErrInvalidArgument) || created != nil {
+				t.Fatalf("colliding create = %v, %v; want exact-ref mismatch", created, err)
+			}
+			svc.Close()
+			if provider.binds.Load() != 1 || provider.rollbacks.Load() != 1 || provider.detaches.Load() != 0 {
+				t.Fatalf("candidate binds=%d rollbacks=%d closes=%d, want 1/1/0", provider.binds.Load(), provider.rollbacks.Load(), provider.detaches.Load())
+			}
+			stored, err := store.Load(ctx, "collision")
+			if err != nil || winner == nil || stored.Incarnation() != winner.Incarnation() || stored.EnvironmentRef != winnerRef || !stored.Owner.SameIdentity(owner) || stored.Mode != winner.Mode || stored.Limits != winner.Limits || stored.ProviderID != winner.ProviderID {
+				t.Fatalf("published winner changed: %v, %v", stored, err)
+			}
+			if winnerProvider.rollbacks.Load() != 0 || winnerProvider.detaches.Load() != 0 {
+				t.Fatal("loser cleanup touched the published winner's placement")
+			}
+			winnerSvc.CloseSession(winner.ID)
+			if winnerProvider.detaches.Load() != 1 || winnerProvider.rollbacks.Load() != 0 {
+				t.Fatal("winner did not retain its own close-only placement lifetime")
+			}
+		})
 	}
-	svc, err := NewService(Config{Engine: repairEngine(), Store: store, PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/owned"})
+}
+
+func TestKnownExplicitIDRetryDoesNotProvisionOrRollbackPlacement(t *testing.T) {
+	ref := session.EnvironmentRef{Kind: "microvm", ID: "winner", Revision: "1"}
+	winnerProvider := &ownershipPlacementProvider{ref: ref}
+	store := memstore.New()
+	winnerSvc := newOwnershipService(t, store, winnerProvider)
+	t.Cleanup(winnerSvc.Close)
+	owner := &session.Principal{Issuer: "issuer", Subject: "alice", GrantType: session.GrantTypeUser}
+	ctx := session.WithPrincipal(t.Context(), owner)
+	winner, err := winnerSvc.CreateSession(ctx, session.ModeDefault, session.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.CreateSessionWithProfile(t.Context(), session.ModeDefault, session.Limits{}, ProviderSelector{}, ProfileDefault, WithSessionID("collision"))
-	if err == nil {
-		t.Fatal("colliding create succeeded")
+	retryProvider := &ownershipPlacementProvider{ref: ref}
+	retrySvc, err := NewService(Config{Engine: repairEngine(), Store: store, PlacementProvider: retryProvider, PlacementScope: "test", SharedEngineRoot: "/owned", OwnershipEnforced: true})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := provider.rollbacks.Load(); got != 1 {
-		t.Fatalf("rollbacks = %d, want 1", got)
+	t.Cleanup(retrySvc.Close)
+	retried, err := retrySvc.CreateSessionWithProfile(ctx, winner.Mode, winner.Limits, ProviderSelector{}, ProfileDefault, WithSessionID(winner.ID))
+	if err != nil || retried == nil || retried.Incarnation() != winner.Incarnation() || retried.EnvironmentRef != ref {
+		t.Fatalf("known retry = %v, %v; want persisted winner", retried, err)
+	}
+	retrySvc.Close()
+	if retryProvider.binds.Load() != 0 || retryProvider.rollbacks.Load() != 0 || retryProvider.reattaches.Load() != 1 || retryProvider.detaches.Load() != 1 {
+		t.Fatalf("retry binds=%d rollbacks=%d reattaches=%d closes=%d, want 0/0/1/1", retryProvider.binds.Load(), retryProvider.rollbacks.Load(), retryProvider.reattaches.Load(), retryProvider.detaches.Load())
+	}
+	if winnerProvider.detaches.Load() != 0 || winnerProvider.rollbacks.Load() != 0 {
+		t.Fatal("retry released the original winner's placement ownership")
 	}
 }
 
