@@ -193,6 +193,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0035 — Surface the per-delegation model for ALL children, not just routed ones](./0035-per-delegation-model-surface.md)
 - [0042 — Taxonomy-gated subagent model router (enable by config, not a flag)](./0042-taxonomy-gated-model-router.md)
 - [0352 — Jev as an explicit delegated-model router backend](./0352-jev-delegated-model-router.md) *(proposed; narrowly supersedes ADR 0031's LLM-only classifier construction when selected)*
+- [0368 — Delegation selectors use provider/model pairs and router categories](./0368-delegation-provider-model-selectors.md) *(proposed; explicit selectors preserve omitted-selector routing and keep router categories out of root-session inventory)*
 - [0064 — Auto-detect the ToolHive LLM gateway proxy as a native provider](./0064-toolhive-llm-gateway-provider.md)
 - [0102 — ToolHive LLM gateway DIRECT mode (in-process OIDC token injection)](./0102-toolhive-direct-mode.md)
 - [0067 — OpenAI Chat Completions adapter (OpenCode Go provider)](./0067-openai-chat-completions-adapter.md)
