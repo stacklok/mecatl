@@ -202,6 +202,26 @@ checker model to enable them:
 mecated serve --guardrails-model gpt-5.6-luna
 ```
 
+The experimental native Jev backend in this draft branch can instead be selected
+from operator settings:
+
+```yaml
+guardrails:
+  backend: jev
+  jev:
+    model: jev-1.13.0
+```
+
+Supply `TYPESAFE_API_KEY` through the existing server credential source. The
+backend uses the ordinary action and inbound review gates, including headless
+blocking and result withholding; it does not need an LLM guardrail model or
+slot. It sends effective tool arguments, result text, task facts, and authorized
+review evidence to TypeSafe. Incomplete context, unsupported permission reviews,
+and requests beyond its input limit do not receive a clean verdict. This is an
+unvalidated PoC, not a production security recommendation: a Jev verdict is
+not proof that a tool action or result is safe. The model-router setting does
+not select this guardrail backend.
+
 The checker reviews exact effective actions before execution and already-produced
 results before delivery. A configured checker with no custom rule list uses the
 expanded default enforcing set for Shell, local mutation/read/search, web, MCP,

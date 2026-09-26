@@ -61,6 +61,8 @@ OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier g
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
+| `guardrails.backend` | `string` | `(empty)` | Backend is experimental; jev opts in to a native System One checker. |
+| `guardrails.jev` | `guardrailsjevsection` | `(absent)` |  |
 | `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES contextual guardrails. A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
 | `guardrails.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it). |
 | `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "fail" (default, fail-closed) or explicit "warn" (continue with an operational warning). Per-rule failClosed overrides: failClosed:true tightens under warn; explicit false loosens under fail. Empty = fail. |
