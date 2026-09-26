@@ -22,12 +22,13 @@ mecatui connect 127.0.0.1:8080 --resume-latest
 ```
 
 On servers that provide session activity inventory, `--resume-latest` considers
-only active main chats and verifies each candidate's authoritative transcript.
-It does not select drafts or unknown legacy rows automatically. Older servers
-use their mixed inventory but still reject an empty authoritative transcript. If
-no chat qualifies, `mecatui` starts a new one. Storage and listing failures
-still return an error. You can combine either resume option with `--prompt` to
-send a task after the transcript loads.
+only main chats marked active in that inventory and verifies each candidate's
+authoritative transcript. It excludes chats awaiting approval and does not select drafts or
+unknown legacy rows automatically. Older servers use their mixed inventory but
+still reject an empty authoritative transcript. If no chat qualifies, `mecatui`
+starts a new one. Storage and listing failures still return an error. You can
+combine either resume option with `--prompt` to send a task after an ordinary
+transcript load; pending-approval recovery keeps it as a draft.
 
 A resumed chat is the stored chat, not a copy. It keeps its model, exact
 server-owned placement, cumulative token totals, and latest saved context meter.
@@ -35,6 +36,39 @@ The meter includes an estimate marker when the server used display-only fallback
 accounting. A chat with no saved context measurement shows an unknown value until
 a completed turn establishes one. See [Session continuity](/features/session-continuity.md)
 for the storage and recovery behavior behind resume.
+
+### Recover a pending approval
+
+Use an exact session ID to reopen an owned main chat that stopped while waiting
+for an ordinary tool approval:
+
+```sh
+mecatui --resume <SESSION_ID>
+```
+
+When the server provides a complete durable event watch, `mecatui` displays the
+original tool, arguments, and reason. Choose **Allow once** or **Deny**. The
+client follows the same run and displays its later model messages and tool
+results. **Allow always** is unavailable during recovery.
+
+`--resume-latest` continues to exclude chats that are waiting for approval. A
+`--prompt` value remains in the composer as a draft. `mecatui` does not send it
+before your choice or automatically send it after the recovered run finishes.
+
+Press `esc` before choosing to leave the approval pending. After you choose,
+pressing `ctrl+c` twice can still exit while the acknowledgement is pending.
+The outcome may then be unknown: quitting cannot undo the decision, and
+`mecatui` does not resend the verdict automatically. Check the session before
+taking another action.
+
+If the event history has a gap, the ask changed, or the session is no longer
+waiting, first check that the session still has the expected pending approval and
+that durable storage and watches are healthy. Retry with the exact ID only after
+those checks. A server without durable watch support cannot recover the approval;
+the operator must enable supported durable storage and watch support, or you must
+use another supported client or control path. Repeating the unchanged command
+will not add watch support. Plan approvals and guardrail reviews use their existing
+dedicated flows and cannot be recovered this way.
 
 To get the active session ID, run `/session` and press `c` to copy it. On a
 normal exit, `mecatui` also writes a machine-readable handoff to standard error:

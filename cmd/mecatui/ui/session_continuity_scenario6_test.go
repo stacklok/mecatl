@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 )
@@ -97,7 +99,7 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 		{Role: "assistant", Text: "new tool", ToolCalls: []client.ConvToolCall{{ID: "call-1", Name: "Bash", Args: `{"command":"printf new"}`}}},
 		{Role: "tool", ToolResult: &client.ConvToolResult{CallID: "call-1", Content: "new result", IsError: true}},
 	}
-	m = m.failStartupRunEntry()
+	m = m.failStartupRunEntry(nil)
 
 	content := stripANSIstr(m.vp.GetContent())
 	if !strings.Contains(content, "new request") || !strings.Contains(content, "new result") || strings.Contains(content, "old result") {
@@ -117,6 +119,36 @@ func TestStartupRunEntryFailureRebuildsDocumentProjection(t *testing.T) {
 	}
 	if m.conversationView.mode != followTail || !m.vp.AtBottom() {
 		t.Fatalf("replacement did not follow tail: mode=%v atBottom=%v", m.conversationView.mode, m.vp.AtBottom())
+	}
+}
+
+func TestStartupRunEntryFailureClassifiesSafeStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		code       codes.Code
+		masked     bool
+	}{
+		{name: "temporary service failure", code: codes.Unavailable, want: "The service is temporarily unavailable. Retry this turn."},
+		{name: "run-entry conflict", code: codes.FailedPrecondition, want: "This chat is not ready for a new turn. Retry after its current operation finishes."},
+		{name: "masked absence", code: codes.NotFound, want: "This conversation could not be loaded. You cannot continue this session.", masked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conv := &fakeConv{recv: &fakeRecver{}, send: &fakeSender{}}
+			m := startupResumeUI(t, conv, "continue", "completed")
+			m = applyAll(m, startupResumeReadyMsg{})
+			m = applyAll(m, client.StreamErrMsg{Err: status.Error(tc.code, "private server detail / secret-path")})
+
+			view := stripANSIstr(m.View().Content)
+			if !strings.Contains(view, tc.want) {
+				t.Fatalf("startup failure view missing safe classification %q:\n%s", tc.want, view)
+			}
+			if strings.Contains(view, "private server detail") || strings.Contains(view, "secret-path") {
+				t.Fatalf("startup failure exposed server detail:\n%s", view)
+			}
+			if gotMasked := strings.Contains(view, "conversation unavailable"); gotMasked != tc.masked {
+				t.Fatalf("generic unavailable classification = %t, want %t:\n%s", gotMasked, tc.masked, view)
+			}
+		})
 	}
 }
 

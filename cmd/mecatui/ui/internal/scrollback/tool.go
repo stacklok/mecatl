@@ -61,6 +61,26 @@ func (t ToolCards) Add(call ToolCall) BlockID {
 	return id
 }
 
+// ReconcileUnresolved updates the pending card indexed by call.ID. It returns
+// false for an unknown, resolved, or non-tool card.
+func (t ToolCards) ReconcileUnresolved(call ToolCall) bool {
+	c := t.conversation
+	i, ok := c.call(call.ID)
+	if !ok {
+		return false
+	}
+	payload, ok := c.cards[i].payload.(ToolCardSnapshot)
+	if !ok || payload.Resolved {
+		return false
+	}
+	updated := cloneCall(call)
+	if reflect.DeepEqual(payload.Call, updated) {
+		return true
+	}
+	payload.Call = updated
+	return c.replace(i, payload)
+}
+
 // Resolve records result as the terminal result for the call indexed by callID.
 // It returns false for an unknown call or a conflicting replay. An identical
 // replay succeeds without changing the card or its revision.

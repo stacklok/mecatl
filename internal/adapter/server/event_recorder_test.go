@@ -6,10 +6,12 @@ import (
 	"iter"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/adapter/eventsource"
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
@@ -257,6 +259,224 @@ func TestRunEventRecorderDrainToDiscardStillObserves(t *testing.T) {
 	if len(log.recorded) != 2 || log.recorded[0].Text != "tail" || log.recorded[1].Type != session.EvResult {
 		t.Fatalf("drain records = %+v, want coalesced tail then terminal result", log.recorded)
 	}
+}
+
+type blockedAdmissionEventLog struct {
+	countingEventLog
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (l *blockedAdmissionEventLog) Append(ctx context.Context, id session.SessionID, ev session.Event) error {
+	close(l.entered)
+	<-l.release
+	return l.countingEventLog.Append(ctx, id, ev)
+}
+
+func TestRunEventRecorderBlockedAppendDoesNotBlockPersistOrDrain(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		event        session.Event
+		wantPreserve bool
+	}{
+		{name: "cancelled terminal", event: session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}}},
+		{name: "plan terminal", event: session.Event{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopPlanApproved}}},
+		{name: "matching retraction", event: session.Event{Type: session.EvPermissionRetract, Ask: &session.PendingAsk{AskID: "matching"}}},
+		{name: "unrelated retraction", event: session.Event{Type: session.EvPermissionRetract, Ask: &session.PendingAsk{AskID: "other"}}, wantPreserve: true},
+		{name: "other run terminal", event: session.Event{Type: session.EvResult, RunID: "other", Result: &session.ResultPayload{Stop: session.StopCancelled}}, wantPreserve: true},
+		{name: "unrelated event", event: session.Event{Type: session.EvHook}, wantPreserve: true},
+	} {
+		for _, postWriteError := range []bool{false, true} {
+			name := tc.name + "/success"
+			if postWriteError {
+				name = tc.name + "/ambiguous append failure"
+			}
+			t.Run(name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					id := session.SessionID("blocked-append")
+					sess, run, askID := liveAwaitingControlRun(t, id)
+					defer func() {
+						run.Cancel()
+						for range run.Events() {
+						}
+					}()
+					store := memstore.New()
+					if err := store.Save(t.Context(), sess); err != nil {
+						t.Fatal(err)
+					}
+					log := &blockedAdmissionEventLog{
+						countingEventLog: countingEventLog{postWriteFailCalls: map[int]bool{1: postWriteError}},
+						entered:          make(chan struct{}), release: make(chan struct{}),
+					}
+					diag := &countingDiagnostics{}
+					st := &runState{run: run, sess: sess, settled: make(chan struct{}), titleRevision: sess.TitleRevision}
+					svc := &Service{
+						cfg:  Config{Store: store, EventLog: log, Diagnostics: diag, MutationCapability: NewSessionMutationCapability(false)},
+						runs: map[session.SessionID]*runState{id: st},
+					}
+					svc.Persist(t.Context(), id)
+					if !st.awaiting.Load() || st.awaitingAskID != askID {
+						t.Fatal("fixture did not persist the exact awaiting handoff")
+					}
+					ev := tc.event
+					if ev.RunID == "" {
+						ev.RunID = run.RunID()
+					}
+					if ev.Ask != nil && ev.Ask.AskID == "matching" {
+						ev.Ask = &session.PendingAsk{AskID: askID}
+					}
+					ctx := session.WithPrincipal(t.Context(), &session.Principal{Subject: "caller", Issuer: "test"})
+					recorder := NewRunEventRecorder(ctx, svc, id)
+					appended := make(chan struct{})
+					go func() {
+						recorder.Observe(ev)
+						recorder.Close()
+						close(appended)
+					}()
+					defer func() {
+						close(log.release)
+						<-appended
+						if len(log.attempts) != 1 || len(log.recorded) != 1 {
+							t.Errorf("attempts/records = %d/%d, want 1/1 even on ambiguous failure", len(log.attempts), len(log.recorded))
+						} else if actor := log.recorded[0].Actor; actor == nil || actor.Subject != "caller" || actor.Issuer != "test" {
+							t.Errorf("actor = %+v, want verified caller", actor)
+						}
+						wantWarnings := 0
+						if postWriteError {
+							wantWarnings = 1
+						}
+						if diag.warnings != wantWarnings {
+							t.Errorf("warnings = %d, want %d; append failure must not be hidden by freeze", diag.warnings, wantWarnings)
+						}
+					}()
+					<-log.entered
+					synctest.Wait()
+					if st.cancelSignaled {
+						t.Fatal("event admission fabricated an owner cancellation")
+					}
+					persistedAndFrozen := make(chan struct{})
+					go func() {
+						svc.Persist(t.Context(), id)
+						svc.snapshotDrainState()
+						close(persistedAndFrozen)
+					}()
+					synctest.Wait()
+					select {
+					case <-persistedAndFrozen:
+					default:
+						t.Fatal("blocked EventLog.Append holds the Persist/drain lifecycle barrier")
+					}
+					if got := st.preserveDurable.Load(); got != tc.wantPreserve {
+						t.Fatalf("preserved handoff = %t, want %t after event admission", got, tc.wantPreserve)
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestRunEventRecorderShutdownProjectionIsLifecycleScoped(t *testing.T) {
+	t.Run("owner cancellation remains durable", func(t *testing.T) {
+		id := session.SessionID("owner-cancel")
+		sess, run, askID := liveAwaitingControlRun(t, id)
+		log := memstore.NewEventLog()
+		st := &runState{run: run, sess: sess, settled: make(chan struct{}), awaitingAskID: askID}
+		st.awaiting.Store(true)
+		svc := &Service{
+			cfg:  Config{EventLog: log, Diagnostics: port.NopDiagnostics{}},
+			runs: map[session.SessionID]*runState{id: st},
+		}
+		recorder := NewRunEventRecorder(context.Background(), svc, id)
+		recorder.Observe(session.Event{Type: session.EvPermissionAsk, RunID: run.RunID(), Ask: &session.PendingAsk{AskID: askID}})
+		if err := svc.cancelLiveRun(id, run, run.RunID()); err != nil {
+			t.Fatal(err)
+		}
+		svc.snapshotDrainState()
+		for ev := range run.Events() {
+			recorder.Observe(ev)
+		}
+		recorder.Close()
+
+		var cancelled bool
+		for ev, err := range log.Read(context.Background(), id) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+				cancelled = true
+			}
+		}
+		if !cancelled {
+			t.Fatal("owner cancellation was suppressed by later shutdown freeze")
+		}
+	})
+
+	t.Run("preserved shutdown omits only matching cancellation records", func(t *testing.T) {
+		id := session.SessionID("shutdown-preserved")
+		sess, run, askID := liveAwaitingControlRun(t, id)
+		defer func() {
+			run.Cancel()
+			for range run.Events() {
+			}
+		}()
+		log := memstore.NewEventLog()
+		st := &runState{run: run, sess: sess, settled: make(chan struct{}), awaitingAskID: askID}
+		st.awaiting.Store(true)
+		svc := &Service{
+			cfg:  Config{EventLog: log, Diagnostics: port.NopDiagnostics{}},
+			runs: map[session.SessionID]*runState{id: st},
+		}
+		svc.snapshotDrainState()
+		recorder := NewRunEventRecorder(context.Background(), svc, id)
+		recorder.Observe(session.Event{Type: session.EvHook, RunID: run.RunID(), Text: "unrelated"})
+		recorder.Observe(session.Event{Type: session.EvPermissionRetract, RunID: run.RunID(), Ask: &session.PendingAsk{AskID: "other-ask"}})
+		recorder.Observe(session.Event{Type: session.EvPermissionRetract, RunID: run.RunID(), Ask: &session.PendingAsk{AskID: askID}})
+		recorder.Observe(session.Event{Type: session.EvResult, RunID: run.RunID(), Result: &session.ResultPayload{Stop: session.StopCancelled}})
+		recorder.Close()
+
+		var kinds []session.EventType
+		for ev, err := range log.Read(context.Background(), id) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			kinds = append(kinds, ev.Type)
+			if ev.Type == session.EvPermissionRetract && (ev.Ask == nil || ev.Ask.AskID != "other-ask") {
+				t.Fatalf("recorded retraction = %+v, want only unrelated ask", ev.Ask)
+			}
+		}
+		if len(kinds) != 2 || kinds[0] != session.EvHook || kinds[1] != session.EvPermissionRetract {
+			t.Fatalf("durable kinds = %v, want unrelated hook and retraction", kinds)
+		}
+	})
+
+	t.Run("failed awaiting save does not suppress cancellation", func(t *testing.T) {
+		id := session.SessionID("awaiting-save-failed")
+		sess, run, _ := liveAwaitingControlRun(t, id)
+		defer func() {
+			run.Cancel()
+			for range run.Events() {
+			}
+		}()
+		log := memstore.NewEventLog()
+		svc := &Service{
+			cfg:  Config{EventLog: log, Diagnostics: port.NopDiagnostics{}},
+			runs: map[session.SessionID]*runState{id: {run: run, sess: sess, settled: make(chan struct{})}},
+		}
+		svc.snapshotDrainState()
+		recorder := NewRunEventRecorder(context.Background(), svc, id)
+		recorder.Observe(session.Event{Type: session.EvResult, RunID: run.RunID(), Result: &session.ResultPayload{Stop: session.StopCancelled}})
+		recorder.Close()
+
+		for ev, err := range log.Read(context.Background(), id) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+				return
+			}
+		}
+		t.Fatal("cancellation after failed awaiting save was suppressed")
+	})
 }
 
 func TestRunEventRecorderOversizedEscapedUTF8RoundTripsThroughJSONL(t *testing.T) {

@@ -160,6 +160,17 @@ podDisruptionBudget:
 # the volume yourself; the chart only passes the flag.
 workspace: ""
 
+# Optional client for the separately installed execution-provider service. The
+# provider chart is not a dependency of this chart.
+execution:
+  enabled: false
+  endpoint: ""
+  profile: ""
+  tlsSecret: ""
+  caKey: ca.crt
+  certKey: tls.crt
+  keyKey: tls.key
+
 redis:
   # A production release never creates Redis. Supply the managed endpoint and,
   # when the service needs a private CA or ACL credentials, a Secret holding

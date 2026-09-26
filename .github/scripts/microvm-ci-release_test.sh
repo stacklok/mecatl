@@ -133,15 +133,18 @@ import sys
 
 workflow = open(sys.argv[1], encoding="utf-8").read().splitlines()
 jobs = {}
+job_lines = {}
 current = None
 for line in workflow:
     match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
     if match:
         current = match.group(1)
         jobs[current] = []
+        job_lines[current] = []
         continue
     if current is None:
         continue
+    job_lines[current].append(line)
     match = re.fullmatch(r"    needs: (.+)", line)
     if not match:
         continue
@@ -160,10 +163,27 @@ def reaches_validation(job, seen=None):
     seen.add(job)
     return any(reaches_validation(dep, seen) for dep in jobs.get(job, []))
 
+for job, lines in job_lines.items():
+    for producer in re.findall(r"needs\.([A-Za-z0-9_-]+)\.outputs\.", "\n".join(lines)):
+        if producer not in jobs[job]:
+            raise SystemExit(f"job {job} reads outputs without directly needing {producer}")
+
+validation = "\n".join(job_lines["validate-release-ref"])
+assert '    needs: guard' in validation
+assert '          ref: ${{ github.sha }}' in validation
+assert '        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' in validation
+assert '''      - name: Assert guard and immutable run commits agree
+        env:
+          RELEASE_COMMIT: ${{ needs.guard.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"''' in validation
+
 for job in sorted(name for name in jobs if name == "publish" or name.startswith("publish-")):
     if not reaches_validation(job):
         raise SystemExit(f"publishing job {job} bypasses validate-release-ref")
 PY
+# Exercise the real guard and validator agreement step with divergent on-main
+# commits; counting checkout producers alone cannot establish revision authority.
+sh "$repo_root/.github/scripts/release-tag-guard_test.sh"
 # GoReleaser uploads to the release created above without replacing its notes.
 require 'mode: keep-existing' "$goreleaser"
 
@@ -197,13 +217,15 @@ test "$(printf '%s\n' "$assemble_bundle" | grep -Fc 'signing_ref="${{ needs.vali
 require 'release.yml@${signing_ref}' "$release"
 checkout_count=$(grep -c 'uses: actions/checkout@' "$release")
 bound_checkout_count=$(grep -c 'ref: ${{ github.sha }}' "$release")
-version_checkout_count=$(grep -c 'ref: ${{ env.VERSION }}' "$release")
+verified_commit_checkout_count=$(grep -c 'ref: .*needs.guard.outputs.commit' "$release")
+trusted_guard_checkout_count=$(grep -c 'ref: refs/heads/main' "$release")
 head_assertion_count=$(grep -c 'run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' "$release")
-# The guard checkout validates the requested release tag is on main, and the CLI
-# publisher checks out that same tag so GoReleaser can inspect tag history; every
-# other release checkout remains bound to the workflow SHA and immediately asserts it.
-test "$version_checkout_count" -eq 2
-test "$checkout_count" -eq "$((bound_checkout_count + version_checkout_count))"
+# The guard implementation is checked out once from protected main. Jobs that need
+# tag history use the guard's verified commit; all other publishing checkouts are
+# bound to the workflow SHA and immediately assert it.
+test "$trusted_guard_checkout_count" -eq 1
+test "$verified_commit_checkout_count" -eq 3
+test "$checkout_count" -eq "$((bound_checkout_count + verified_commit_checkout_count + trusted_guard_checkout_count))"
 test "$bound_checkout_count" -eq "$head_assertion_count"
 if "$validate_release_ref" v1.2.3 refs/heads/main >/dev/null 2>&1; then
   echo 'branch-dispatched release tag input was accepted' >&2

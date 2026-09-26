@@ -154,6 +154,488 @@ delegation cannot add filesystem access that the parent lacks.
 See [Execution environments](/features/execution-environments.md) for the
 shared placement, no-FS, child-environment, and reattachment model.
 
+### Kubernetes execution provider
+
+**DRAFT candidate, not released or approved for production.** These instructions
+apply to the optional native provider, not to the maturity of `mecak8s` itself.
+Use an operator-controlled cluster. This slice supports foreground commands,
+has no force-takeover recovery, and does not promise hostile multi-tenant
+isolation.
+
+The optional execution provider runs as a separate service and controller with its
+own `mecatl-execution` chart. `mecak8s` remains a client and receives no Pod,
+PVC, custom-resource, or controller management permissions.
+
+The provider supplies run-wide ownership, transactional references, controlled
+replacement and retirement, durable grant revocation, and reloadable TLS and
+signing material. Production isolation requires a CNI that enforces NetworkPolicy
+and a RuntimeClass that supplies the isolation promised by your platform. See
+[Native Kubernetes lifecycle and retention](/features/execution-environments.md#native-kubernetes-lifecycle-and-retention)
+for restart recovery, fencing, and placement-capacity behavior.
+
+Before installation, provide these values through your trusted image and Secret
+delivery system:
+
+- Digest-pinned provider and workload images. The workload image must contain
+  `/mecatl-executor`, `/bin/sh`, and the toolchain used by foreground commands.
+- A projected security Secret with the keys `grant-k1.pem`, `tls.crt`, `tls.key`,
+  and `clients.pem`. The Secret bytes remain externally managed. Mount rotation
+  uses the projected volume's `..data` link, without `subPath`.
+- A `mecak8s` client mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`.
+- Explicit provider-client pod and namespace selectors, API-server CIDRs, and DNS
+  resolver CIDRs.
+
+The provider validates every configured RuntimeClass and StorageClass with
+cluster-scoped `get` requests before it becomes ready. The chart grants those
+requests only for the names present in `profiles`; it grants no cluster-wide list
+or watch access.
+
+The following profile shows every required chart key. Save it as
+`execution-values.yaml` and replace each placeholder:
+
+```yaml
+fullnameOverride: mecatl-execution
+provider:
+  image: <PROVIDER_IMAGE>@sha256:<PROVIDER_DIGEST>
+  imagePullPolicy: IfNotPresent
+  replicas: 2
+  securitySecretName: <PROJECTED_SECURITY_SECRET>
+  securityManifest: |
+    {
+      "version": 1,
+      "generation": 42,
+      "issuer": "https://execution.example.com",
+      "audience": "mecatl-execution",
+      "activeKeyID": "k1",
+      "grantTTL": "1m",
+      "clockSkew": "5s",
+      "keys": [{
+        "id": "k1",
+        "version": 1,
+        "file": "grant-k1.pem",
+        "publicKeySHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "activateAt": "2027-01-01T00:00:00Z",
+        "verifyUntil": "2027-01-02T00:00:00Z",
+        "state": "active"
+      }],
+      "tls": {
+        "certificateFile": "tls.crt",
+        "privateKeyFile": "tls.key",
+        "clientCAFile": "clients.pem"
+      },
+      "clients": [{
+        "uri": "spiffe://cluster.example.com/ns/mecatl/sa/mecak8s",
+        "mayAttestOwner": true,
+        "administrator": false
+      }, {
+        "uri": "spiffe://cluster.example.com/ns/mecatl/sa/execution-admin",
+        "mayAttestOwner": false,
+        "administrator": true,
+        "administratorFor": ["spiffe://cluster.example.com/ns/mecatl/sa/mecak8s"]
+      }]
+    }
+  clientIngressSelectors:
+    - namespaceLabels: {kubernetes.io/metadata.name: <CLIENT_NAMESPACE>}
+      podLabels: {app.kubernetes.io/name: mecak8s}
+  apiServerCIDRs: [<API_SERVER_IP>/32]
+  dnsCIDRs: [<CLUSTER_DNS_IP>/32]
+
+service:
+  port: 8443
+
+profiles:
+  coding:
+    image: <WORKLOAD_IMAGE>@sha256:<WORKLOAD_DIGEST>
+    storageClass: <STORAGE_CLASS>
+    storageSize: 2Gi
+    cpuRequest: 100m
+    memoryRequest: 128Mi
+    cpuLimit: "1"
+    memoryLimit: 1Gi
+    ephemeralStorageRequest: 64Mi
+    ephemeralStorageLimit: 1Gi
+    tmpSizeLimit: 256Mi
+    runtimeClassName: <RUNTIME_CLASS>
+    maxFileBytes: 5242880
+    maxCommandBytes: 1048576
+    maxCommandDuration: 5m
+    maxEnvironments: 100
+
+networkPolicy:
+  enabled: true
+  dnsPorts: [53]
+  apiServerPorts: [443]
+  workloadProfiles: {} # default deny; add explicit coding egress only if required
+
+resourceGovernance:
+  enabled: true
+  pods: "200"
+  persistentVolumeClaims: "100"
+  executionEnvironments: "100"
+  requestsCPU: "20"
+  requestsMemory: 40Gi
+  requestsStorage: 500Gi
+  requestsEphemeralStorage: 40Gi
+  limitsCPU: "40"
+  limitsMemory: 80Gi
+  limitsEphemeralStorage: 80Gi
+```
+
+Replace the all-zero `publicKeySHA256` with the lowercase hexadecimal SHA-256
+hash of the **raw 32-byte Ed25519 public key** corresponding to `grant-k1.pem`,
+not the PEM text or DER encoding. Replace the sample activation
+and verification dates with a current, reviewed rotation window. Increase
+`generation` for every authority change, including a CA, client policy,
+issuer/audience, key state, key window, or TLS identity change.
+
+Install the provider chart separately from `mecak8s`, before allocating any
+execution environments. Helm 3.16 is the minimum supported version. Helm 4 uses
+server-side apply by default, so each chart lifecycle command selects client-side
+mode when needed.
+
+Use a namespace dedicated to this provider release:
+
+```sh
+HELM_APPLY_MODE=
+case "$(helm version --template '{{.Version}}')" in
+  v4.*) HELM_APPLY_MODE=--server-side=false ;;
+esac
+helm install mecatl-execution ./deploy/helm/mecatl-execution \
+  --namespace <NAMESPACE> \
+  --values execution-values.yaml \
+  $HELM_APPLY_MODE
+kubectl rollout status deployment/mecatl-execution --namespace <NAMESPACE>
+```
+
+Add the following block to the existing `mecak8s` values. The endpoint is a
+`host:port` gRPC target (no URL scheme) and must use the provider certificate's
+DNS identity. The private `mecatl.execution.v1.ExecutionProviderService` uses
+protocol `execution-grpc/1` with mandatory mTLS. Keep OIDC caller authentication enabled;
+the remote binding is scoped to the verified issuer and subject.
+
+```yaml
+execution:
+  enabled: true
+  endpoint: mecatl-execution.<NAMESPACE>.svc:8443
+  profile: coding
+  tlsSecret: <MECAK8S_EXECUTION_MTLS_SECRET>
+  caKey: ca.crt
+  certKey: tls.crt
+  keyKey: tls.key
+```
+
+An enabled client conflicts with `workspace`, `redis.filesystem.enabled`,
+Parallel, and Team. Remote sessions receive the filesystem tools and foreground
+Shell, but do not ingest project instructions, rules, skills, or source from the
+remote PVC. Schedules, SkillDraft, background Shell, and delegated filesystem
+execution are outside this draft.
+
+If allocation reports `Ready=false` with `PVCUnavailable` or
+`ExecutorUnavailable`, inspect the namespace's quota and Kubernetes admission
+failures. Restore the failed prerequisite and wait for `Ready=True`. The
+controller keeps retrying through its rate-limited queue while the allocation
+exists; no reference edit, restart, or manual reconciliation is needed. Missing
+authoritative PVCs or Pods and ownership mismatches remain fail-closed and are
+never repaired by creating a replacement.
+
+Run claims and signed grants renew before the issued grant expiry, including when
+an operator configures a short grant TTL. Renewal operation receipts retain the
+newest 32 identities. Retrying an exact retained identity preserves the claim and
+original expiry (the replacement signature may carry a new nonce); conflicting or
+expired receipt replay is denied and never extends or resurrects the claim.
+
+The provider retains one PVC per logical environment. Session deletion and chart
+uninstall do not delete committed workspace data. Retirement requires no live
+references and a terminal executor; even then, this candidate retains the PVC.
+A missing executor or lost terminal receipt moves the environment to
+`FenceUnknown` and requires external operator fencing. The built-in recovery RPC
+accepts only a still-observable Pod in `Succeeded` or `Failed` phase with every
+container terminated and the exact PVC still present. If that proof is missing,
+use your platform's external fencing runbook; there is no acknowledgement flag.
+
+The built-in recovery RPC requires the same exact identity and an independently
+stable operation ID. It does not read a Secret and has no force or
+acknowledgement field:
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedExecutionEpoch":"<EPOCH>","expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"recover-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RecoverEnvironment
+```
+
+#### Rotate execution-provider authority
+
+Give every changed material file a new, generation-specific basename. This applies
+to signing keys, server certificates, server private keys, and client-CA bundles.
+For example, a second bundle can use `grant-k2.pem`, `server-g2.crt`,
+`server-g2.key`, and `clients-g2.pem`. Keep each name's bytes immutable.
+
+1. Add the new files to the operator-managed security Secret, retaining the files
+   referenced by the current manifest. Stage the material before changing
+   `provider.securityManifest`.
+2. Publish a higher-generation manifest whose existing `file`, `certificateFile`,
+   `privateKeyFile`, and `clientCAFile` fields reference those names. For CA
+   rotation, first publish a separately named overlap bundle, move clients and
+   server trust, then publish another higher generation that removes old trust.
+3. Verify that the authority ConfigMap has reached the intended generation and
+   use a current claim to read known workspace content. Pod readiness alone can
+   still reflect the previous generation. A replica whose snapshot lags the
+   ledger rejects requests before dispatch with structured `not_ready` and
+   `retryable=true`. Bound any read-only verification poll and stop on wrong
+   content, a nonretryable error, or another error code.
+4. Retain overlap files until no live or in-flight manifest references them.
+   Retain verification keys through their grant windows before revoking them.
+   Never reuse a retired name for different bytes.
+
+Kubernetes projects Secret and ConfigMap updates independently. A manifest that
+arrives before its new files fails closed until they arrive; staged files leave
+an older manifest unchanged. Overwriting referenced TLS or CA files can instead
+publish a mixed bundle's digest permanently at the new generation. If that has
+happened, publish a complete, immutable bundle at a **higher** generation.
+Repeated requests or a restart cannot repair same-generation digest drift;
+preserve the authority ledger rather than resetting it. The provider confines
+file access to the mounted security directory, but immutable publication remains
+your secret-management procedure's responsibility.
+
+#### Upgrade, uninstall, and reinstall the execution provider
+
+The supported lifecycle keeps the **same Helm release name, namespace, resource
+names, profiles, network policy configuration, and security Secret name**. Keep
+`execution-values.yaml` and the current nonsecret authority manifest in your
+operator configuration store. Retain the operator-owned Secret and its key
+history independently; the chart neither owns nor reads Secret contents.
+
+Finish and verify any external authority rotation before starting a chart
+upgrade. Do not rotate the authority ConfigMap while Helm is writing chart
+resources. Each Helm lifecycle command below initializes `HELM_APPLY_MODE` for
+the current shell. Helm 4 selects client-side field ownership, while Helm 3.16
+leaves the value empty. Continue to use reviewed current values and the quiescence
+procedure below. Do not use `--force-conflicts` or `--take-ownership` as a blanket
+takeover.
+
+**Before quiescing:** verify that the retained profiles ConfigMap has a nonempty
+`data["lifetime.json"]` and that the authority/capacity ledgers and original
+release ownership are intact. Pre-retention installations without this history
+cannot be automatically adopted. Stop this procedure and recover trusted retained
+history; do not synthesize it from proposed values or reset authority. The chart
+reports missing history separately from an incompatible lifetime configuration.
+
+For a compatible provider upgrade:
+
+1. Stop new client traffic and finish or explicitly fence active work. Stop all
+   provider replicas before Helm reads the ledgers:
+
+   ```sh
+   kubectl --namespace <NAMESPACE> scale deployment/mecatl-execution --replicas=0
+   kubectl --namespace <NAMESPACE> wait --for=delete pod \
+     --selector app.kubernetes.io/name=mecatl-execution --timeout=2m
+   ```
+
+2. Apply the reviewed CRD schema **before** starting the upgraded provider. Helm
+   does not upgrade existing CRDs:
+
+   ```sh
+   kubectl apply -f deploy/helm/mecatl-execution/crds/executionenvironment.yaml
+   kubectl wait --for=condition=Established \
+     crd/executionenvironments.execution.mecatl.dev --timeout=60s
+   ```
+
+3. Upgrade with the preserved lifetime configuration and current authority
+   manifest. Helm reads the existing ConfigMaps and includes their actual ledger
+   data, rather than empty bootstrap data, in the new release:
+
+   ```sh
+   HELM_APPLY_MODE=
+   case "$(helm version --template '{{.Version}}')" in
+     v4.*) HELM_APPLY_MODE=--server-side=false ;;
+   esac
+   helm upgrade mecatl-execution ./deploy/helm/mecatl-execution \
+     --namespace <NAMESPACE> --values execution-values.yaml \
+     --wait --timeout=4m $HELM_APPLY_MODE
+   ```
+
+4. Complete any supported, explicit environment-schema migration while client
+   traffic remains quiesced. Verify readiness, exact environment/PVC UIDs, data,
+   and network confinement before resuming traffic. Unknown schema versions and
+   mixed-version provider operation are unsupported.
+
+Default uninstall removes the provider but keeps runtime CRs, PVCs, surviving
+executors, workload default-deny and profile NetworkPolicies, both authority and
+capacity ledgers, and the profile/security-manifest ConfigMaps. Uninstall is not
+executor termination proof or storage disposal:
+
+```sh
+helm uninstall mecatl-execution --namespace <NAMESPACE>
+```
+
+Reinstall with the same identity and preserved values:
+
+```sh
+HELM_APPLY_MODE=
+case "$(helm version --template '{{.Version}}')" in
+  v4.*) HELM_APPLY_MODE=--server-side=false ;;
+esac
+helm install mecatl-execution ./deploy/helm/mecatl-execution \
+  --namespace <NAMESPACE> --values execution-values.yaml \
+  --wait --timeout=4m $HELM_APPLY_MODE
+```
+
+Helm adopts retained resources only when their managed-by label and release-name
+and release-namespace annotations match. The chart rejects missing or empty
+ledgers while allocations or capacity reservations survive, and rejects changes
+to its retained lifetime configuration. Profile removal or egress edits are deliberately outside this
+upgrade path: retained allow policies are additive, so leaving an obsolete policy
+could widen access. The provider rejects an older authority manifest against the
+retained high-water generation and key history; never reset that ledger to make
+readiness pass.
+
+Use live Helm install/upgrade for this lifecycle. Offline `helm template` cannot
+perform ownership or history lookups and is not an adoption mechanism. Keep
+provider writers stopped for upgrades; lookup plus apply is not a cross-resource
+transaction. Rendering rejects a nonzero existing provider Deployment or any
+remaining provider Pod, including a terminating Pod. Changed release/namespace
+adoption, chart rollback, `--force-conflicts`, `--take-ownership`, CRD or
+namespace deletion with
+retained resources, and force-finalizer cleanup are unsupported.
+
+Final infrastructure decommission is not automated by this candidate. Supported
+`RetireEnvironment` and `DeleteRetiredEnvironment` operations can terminate and
+dispose of eligible individual environments; they do not remove the retained
+NetworkPolicies, configuration, ledgers, or CRD. There is no supported final
+infrastructure-cleanup procedure here. Manual destructive cleanup is outside the
+supported lifecycle. Keep retention defaults and authority history, and never
+reset ledgers or remove finalizers to bypass a failed safety check.
+
+#### Run an administrative lifecycle operation
+
+Administrative RPCs require `administrator: true`. For a distinct operations
+identity, set its `administratorFor` list to the canonical URI of each client
+that created the environments it may administer, as in the values example above.
+An absent or empty list permits only self-administration. Keep
+`mayAttestOwner: false` for an operations-only identity; administrative scope
+confers no filesystem, Shell, attach, run, or reference access. See the
+[scope constraints](../../features/execution-environments.md#production-security-material).
+
+Before first publishing `administratorFor`, quiesce client traffic and upgrade
+all provider replicas to a version that understands the field. Older strict
+manifest decoders reject it; mixed-version rolling operation is unsupported.
+Preserve the authority high-water ConfigMap throughout the upgrade. Publish the
+reviewed manifest with a higher `generation`, verify provider readiness, then
+resume client traffic.
+
+Every administrative request still requires the original exact owner and
+revision plus the operation's epoch, UID, schema, or generation preconditions.
+The scope names creators, not owners; it can include a creator whose login has
+been removed. After maintenance, remove its scope entry and increase
+`generation` again. Subsequent requests, including receipt retries on established
+connections, are denied; already admitted lifecycle operations may finish safe
+reconciliation.
+
+An administrative `not_found` response deliberately does not distinguish a
+missing environment from a wrong owner, revision, or creator scope. Check the
+exact environment ID/revision and original owner against your authorized
+operations record, then check that `administratorFor` names the original
+creator's exact canonical client URI. If the scope is wrong, publish a reviewed
+manifest at a higher `generation` and verify readiness before retrying. The RPC
+will not disclose another creator's data to diagnose a scope mismatch.
+
+First capture the private identity while the environment still has a reference:
+
+```sh
+kubectl --namespace <NAMESPACE> get executionenvironment <ENVIRONMENT_ID> \
+  -o jsonpath='{.spec.revision}{"\n"}{.spec.ownerIssuer}{"\n"}{.spec.ownerSubject}{"\n"}{.status.epoch}{"\n"}{.status.pod.uid}{"\n"}{.status.pvc.uid}{"\n"}{.status.grantGeneration}{"\n"}'
+```
+
+Record those seven lines as `<REVISION>`, `<OWNER_ISSUER>`, `<OWNER_SUBJECT>`,
+`<EPOCH>`, `<POD_UID>`, `<PVC_UID>`, and `<GRANT_GENERATION>`. The owner hash is
+not reversible, so retain the bounded `spec.ownerIssuer` and `spec.ownerSubject`
+attestation in your authorized operations record before removing the final
+reference.
+
+Set file references to trusted, mounted mTLS material. Keep private-key bytes out
+of shell arguments and manifests:
+
+```sh
+EXECUTION_ENDPOINT=mecatl-execution.<NAMESPACE>.svc:8443
+CA_FILE=/var/run/secrets/mecatl-admin/ca.crt
+CERT_FILE=/var/run/secrets/mecatl-admin/tls.crt
+KEY_FILE=/var/run/secrets/mecatl-admin/tls.key
+PROTO=contracts/proto/mecatl/execution/v1/execution.proto
+```
+
+Replace one executor by reusing the same operation ID for every retry:
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedExecutionEpoch":"<EPOCH>","expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"replace-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/ReplaceExecutor
+```
+
+To retire and then delete retained storage, call `RetireEnvironment` with the same
+identity fields and a new stable operation ID. Poll until
+`.status.conditions[?(@.type=="Retired")].status` is `True`, then call
+`DeleteRetiredEnvironment` with the retained PVC UID and another stable operation
+ID. The provider refuses either request while references, claims, identity proof,
+or UID checks are incomplete.
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedExecutionEpoch":"<EPOCH>","expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"retire-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RetireEnvironment
+kubectl --namespace <NAMESPACE> wait executionenvironment/<ENVIRONMENT_ID> \
+  --for='jsonpath={.status.conditions[?(@.type=="Retired")].status}=True' \
+  --timeout=10m
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedPvcUid":"<PVC_UID>","operationId":"delete-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/DeleteRetiredEnvironment
+```
+
+Revoke grants with the current generation and a stable operation ID. The response
+returns the new generation; retrying the identical request returns the same
+receipt. An old grant is denied after this CAS succeeds.
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedGrantGeneration":"<GRANT_GENERATION>","operationId":"revoke-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/RevokeEnvironment
+```
+
+Migration requires proto presence for `expectedSchemaVersion`. Supply exactly `0`
+or `1`, plus the exact observable Pod and PVC UIDs. Omission, an unknown version,
+or missing proof is refused without changing the resource.
+
+```sh
+grpcurl -cacert "$CA_FILE" -cert "$CERT_FILE" -key "$KEY_FILE" \
+  -import-path contracts/proto -proto "$PROTO" \
+  -d '{"environment":{"id":"<ENVIRONMENT_ID>","revision":"<REVISION>"},"owner":{"issuer":"<OWNER_ISSUER>","subject":"<OWNER_SUBJECT>"},"expectedSchemaVersion":1,"expectedPodUid":"<POD_UID>","expectedPvcUid":"<PVC_UID>","operationId":"migrate-<STABLE_UUID>"}' \
+  "$EXECUTION_ENDPOINT" mecatl.execution.v1.ExecutionProviderService/MigrateEnvironment
+```
+
+Foreground command cancellation is cooperative and bounded. The helper attempts
+to terminate the command process group and reports a terminal receipt. If it
+cannot prove termination, the environment is fenced instead of admitting more
+work. There is no detached command status or cancellation API in this draft.
+
+The focused qualification task is `task e2e:k8s:execution`. It requires Go,
+`ko`, Docker or rootless Podman, Kind, Helm, and `kubectl`. Optional toolbox use
+requires explicit `MECATL_EXECUTION_DEV_TOOLBOX` and
+`MECATL_EXECUTION_K8S_TOOLBOX` values. The task uses a synthetic OIDC issuer and
+the mock model provider, creates a unique state directory and Kind cluster, and
+retains both for inspection. CI invokes
+`task e2e:k8s:execution:production` and automatically removes only its uniquely
+owned cluster. The production target is the home for the enforcing-CNI network
+and lifecycle fixture; until that fixture passes, Kind qualification is not
+NetworkPolicy isolation evidence.
+
+When `execution.enabled` is `false`, the `mecak8s` chart mounts no execution mTLS
+Secret and passes no execution-provider flags. The separate provider chart and
+any environments it owns continue independently.
+
 The no-FS default is intentional. A standard mecak8s pod is storage-free and has
 no authoritative filesystem root, so the server binds omitted/default profile to
 its configured no-FS placement. Clients never send a workspace path; explicit

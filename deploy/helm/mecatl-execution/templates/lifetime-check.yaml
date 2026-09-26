@@ -1,0 +1,59 @@
+{{- $root := . -}}
+{{- $name := include "mecatl-execution.fullname" . -}}
+{{- $provider := lookup "apps/v1" "Deployment" .Release.Namespace $name -}}
+{{- if gt (int (dig "spec" "replicas" 0 $provider)) 0 -}}
+{{- fail "quiesce the execution provider (scale to zero and wait for its Pods to disappear) before upgrading" -}}
+{{- end -}}
+{{- $profiles := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-profiles" $name) -}}
+{{- if $profiles -}}
+{{- if not (dig "lifetime.json" "" ($profiles.data | default dict)) -}}
+{{- fail "retained execution profiles are missing lifetime.json history; automatic adoption is unsupported, recover trusted retained history before upgrading" -}}
+{{- end -}}
+{{- if ne (dig "lifetime.json" "" ($profiles.data | default dict)) (include "mecatl-execution.lifetimeConfig" .) -}}
+{{- fail "retained execution profiles/network configuration is incompatible; preserve the original lifetime configuration" -}}
+{{- end -}}
+{{- end -}}
+{{/* A reserved slot can precede CR publication; no CR is not bootstrap proof. */}}
+{{- $capacity := lookup "v1" "ConfigMap" .Release.Namespace "mecatl-execution-profile-allocations" -}}
+{{- $retained := not (empty $capacity.data) -}}
+{{- range (lookup "execution.mecatl.dev/v1alpha1" "ExecutionEnvironment" .Release.Namespace "").items -}}
+{{- $retained = true -}}
+{{- end -}}
+{{- range $kind := list "Pod" "PersistentVolumeClaim" -}}
+{{- range (lookup "v1" $kind $root.Release.Namespace "").items -}}
+{{- if and (eq $kind "Pod") (eq (dig "app.kubernetes.io/name" "" (.metadata.labels | default dict)) $name) -}}
+{{- fail "wait for all execution provider Pods to disappear before upgrading" -}}
+{{- end -}}
+{{- if hasKey (.metadata.labels | default dict) "execution.mecatl.dev/environment" -}}
+{{- $retained = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $retained -}}
+{{- range $cm := list (printf "%s-profiles" $name) (printf "%s-security-manifest" $name) (printf "%s-security-authority" $name) "mecatl-execution-profile-allocations" -}}
+{{- $live := lookup "v1" "ConfigMap" $root.Release.Namespace $cm -}}
+{{- if not ($live.data | default dict) -}}
+{{- fail (printf "retained execution allocations require nonempty %s; authority/capacity bootstrap is forbidden" $cm) -}}
+{{- end -}}
+{{- end -}}
+{{- $authority := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-security-authority" $name) -}}
+{{- if not (dig "state.json" "" ($authority.data | default dict)) -}}
+{{- fail "retained execution allocations require security authority state.json; bootstrap is forbidden" -}}
+{{- end -}}
+{{- $policies := list (printf "%s-workload-default-deny" $name) -}}
+{{- range $profile, $_ := .Values.networkPolicy.workloadProfiles -}}
+{{- $policies = append $policies (printf "%s-profile-%s" $name (sha256sum $profile | trunc 16)) -}}
+{{- end -}}
+{{- range $policy := $policies -}}
+{{- if not (lookup "networking.k8s.io/v1" "NetworkPolicy" $root.Release.Namespace $policy) -}}
+{{- fail "retained execution allocations require their existing workload NetworkPolicies" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range (lookup "networking.k8s.io/v1" "NetworkPolicy" .Release.Namespace "").items -}}
+{{- if or (hasKey (.spec.podSelector.matchLabels | default dict) "execution.mecatl.dev/profile") (hasSuffix "-workload-default-deny" .metadata.name) -}}
+{{- if not $profiles -}}
+{{- fail "retained workload policies require the original release profiles ConfigMap" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

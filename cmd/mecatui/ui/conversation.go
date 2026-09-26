@@ -348,6 +348,14 @@ func (c *conversation) addTool(id, name, args string) {
 	c.scrollback.Tools().Add(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
 }
 
+// reconcileUnresolvedTool updates the snapshot card for a replayed call. Recovery
+// scopes callers to unresolved calls from the adopted transcript, so reused IDs in
+// later turns still append normally.
+func (c *conversation) reconcileUnresolvedTool(id, name, args string) bool {
+	return c.scrollback.Tools().ReconcileUnresolved(scrollback.ToolCall{ID: id, Name: name, Arguments: args})
+}
+
+// resolveTool marks the tool block matching callID as resolved with its result.
 func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
 	return c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)})
 }

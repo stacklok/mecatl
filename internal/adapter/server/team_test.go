@@ -54,9 +54,9 @@ func (r *teamLivenessTracker) IsLive(id session.SessionID) bool {
 }
 
 // teamService builds a team-enabled Service whose per-member Engine uses the
-// supplied mockllm provider (shared by all members) and carries that member's
+// supplied provider (shared by all members) and carries that member's
 // coordination tools.
-func teamService(t *testing.T, llm *mockllm.Provider) *server.Service {
+func teamService(t *testing.T, llm port.LLMProvider) *server.Service {
 	t.Helper()
 	allow := permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil)
 	memberEngine := func(tm *team.Team, spec agent.MemberSpec, _ string) agent.MemberBuild {

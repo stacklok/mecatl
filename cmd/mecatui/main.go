@@ -169,6 +169,12 @@ type restartTransport struct {
 	TLSCAFile string
 }
 
+type pendingApprovalClient struct{ *client.Client }
+
+func (c pendingApprovalClient) WatchPendingApprovalRun(ctx context.Context, approval client.PendingApproval) (ui.PendingApprovalWatch, error) {
+	return c.Client.WatchPendingApprovalRun(ctx, approval)
+}
+
 type runOptions struct {
 	connectOpen            bool
 	connectError           string
@@ -282,15 +288,15 @@ func runWithOptions(argv []string, options runOptions) error {
 		return err
 	}
 
-	resumeCfg := cfg
+	var resume *client.ResumeSelection
+	uiWorkspace := cfg.workspace
 	if options.connectResumeSessionID != "" {
 		// This candidate originated from an interrupted auth stream, not an
-		// explicit --resume. GetSession/transcript remain the server's ownership
-		// proof; only a terminal turn boundary can be adopted automatically.
-		resumeCfg.resumeID = options.connectResumeSessionID
-		resumeCfg.resumeLatest = false
+		// explicit --resume. It never opens pending-approval recovery.
+		resume, err = loadExactStartupResume(ctx, cl, options.connectResumeSessionID, false)
+	} else {
+		resume, uiWorkspace, err = startupResumeConfig(ctx, cl, cfg)
 	}
-	resume, uiWorkspace, err := startupResumeConfig(ctx, cl, resumeCfg)
 	if options.connectResumeSessionID != "" {
 		// An auth-recovery candidate is opportunistic. Only a verified terminal
 		// boundary is adopted; every other state and every ambiguous verification
@@ -351,6 +357,7 @@ func runWithOptions(argv []string, options runOptions) error {
 		Transcript:              cl,
 		Replayer:                cl,
 		LiveStream:              cl,
+		PendingApprovals:        pendingApprovalClient{cl},
 		SelectionStore:          store,
 		Learning:                learningSettingsForConfig(cfg),
 		Connect:                 savedConnectController{},

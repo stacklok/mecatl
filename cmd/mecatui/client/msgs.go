@@ -156,6 +156,7 @@ type PermissionAskMsg struct {
 	Reason        string
 	ExpectedRunID string
 	Guardrail     *GuardrailApprovalScope
+	Recovery      bool
 }
 
 // GuardrailApprovalScope distinguishes an outbound action approval from release

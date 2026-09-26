@@ -10947,11 +10947,13 @@ export const HarnessService: GenService<{
     output: typeof ListAgentsResponseSchema;
   },
   /**
-   * ListCommands returns slash commands discovered for one owned session's exact
-   * server-bound placement. It authorizes and reattaches that session before
-   * discovery and accepts no workspace/root input. It powers the client's command
-   * palette; command expansion remains a run-path concern. A no-FS session or a
-   * server with no command expander returns an empty list.
+   * ListCommands returns slash commands from the configured, resolved sources
+   * for one authorized, owned session. It runs independently of execution and
+   * accepts no client workspace/root input. A source that needs execution files
+   * acquires only that session's exact backend. It powers the client's command
+   * palette; command expansion remains a run-path concern. A server with no
+   * configured command sources returns an empty list; a no-FS session can retain
+   * independently configured sources.
    *
    * @generated from rpc mecatl.v1.HarnessService.ListCommands
    */

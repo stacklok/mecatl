@@ -611,6 +611,31 @@ func containsBoundedCode(s, code string) bool {
 
 func isDigitByte(b byte) bool { return b >= '0' && b <= '9' }
 
+// SafeStartupRunEntryErrorTitle returns a non-empty closed title only when the
+// status can be presented without weakening masked session absence.
+func SafeStartupRunEntryErrorTitle(err error) string {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.FailedPrecondition, codes.Aborted, codes.AlreadyExists:
+		return "turn not started"
+	default:
+		return ""
+	}
+}
+
+// SafeStartupRunEntryError maps a pre-session.init Converse failure to closed,
+// user-actionable text. Absence and authorization failures deliberately share the
+// generic message so unknown and foreign session IDs remain indistinguishable.
+func SafeStartupRunEntryError(err error) string {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+		return "The service is temporarily unavailable. Retry this turn."
+	case codes.FailedPrecondition, codes.Aborted, codes.AlreadyExists:
+		return "This chat is not ready for a new turn. Retry after its current operation finishes."
+	default:
+		return "This conversation could not be loaded. You cannot continue this session."
+	}
+}
+
 // TransientStreamErr classifies a Converse stream Recv error for presentation and
 // compatibility only. A stream error has no semantic commit fact, so the TUI never
 // uses this signal to authorize automatic replay or queue draining. The gRPC status
@@ -681,11 +706,13 @@ func (c *Client) openConverse(ctx context.Context) (*Stream, error) {
 // ModeDefaultString is the canonical CLI/UI spelling for default permission mode.
 const ModeDefaultString = "default"
 
+const modePlanString = "plan"
+
 // ModeFromString maps a CLI mode string to the proto enum. Unknown/empty maps to
 // UNSPECIFIED (the server defaults that to DEFAULT).
 func ModeFromString(s string) mecatlv1.PermissionMode {
 	switch s {
-	case "plan":
+	case modePlanString:
 		return mecatlv1.PermissionMode_PERMISSION_MODE_PLAN
 	case "accept-edits", "acceptEdits", "accept_edits", "accept edits":
 		return mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS
@@ -701,7 +728,7 @@ func ModeFromString(s string) mecatlv1.PermissionMode {
 func ModeString(m mecatlv1.PermissionMode) string {
 	switch m {
 	case mecatlv1.PermissionMode_PERMISSION_MODE_PLAN:
-		return "plan"
+		return modePlanString
 	case mecatlv1.PermissionMode_PERMISSION_MODE_ACCEPT_EDITS:
 		return "accept-edits"
 	case mecatlv1.PermissionMode_PERMISSION_MODE_DEFAULT, mecatlv1.PermissionMode_PERMISSION_MODE_UNSPECIFIED:
@@ -715,8 +742,8 @@ func ModeString(m mecatlv1.PermissionMode) string {
 func NextMode(mode string) string {
 	switch ModeString(ModeFromString(mode)) {
 	case ModeDefaultString:
-		return "plan"
-	case "plan":
+		return modePlanString
+	case modePlanString:
 		return "accept-edits"
 	default:
 		return ModeDefaultString

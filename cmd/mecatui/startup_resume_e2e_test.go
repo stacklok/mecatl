@@ -5,7 +5,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +21,8 @@ import (
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui"
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/app"
 )
@@ -461,4 +466,227 @@ func seedStartupResumeSession(ctx context.Context, t *testing.T, target, _ strin
 			t.Fatalf("receive seed turn: %v", err)
 		}
 	}
+}
+
+func TestPendingApprovalStartupRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		verdict   client.Verdict
+		wantRun   bool
+		finalTurn mockllm.Turn
+		chained   bool
+	}{
+		{name: "allow-once", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.TextTurn("continuation complete")},
+		{name: "allow-recovery-history", verdict: client.VerdictAllowOnce, wantRun: true, chained: true},
+		{name: "allow-empty-model", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.EmptyTurn()},
+		{name: "allow-error-model", verdict: client.VerdictAllowOnce, wantRun: true, finalTurn: mockllm.ErrorTurn(errors.New("bounded provider failure"))},
+		{name: "deny", verdict: client.VerdictDeny, finalTurn: mockllm.TextTurn("must not be called")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			workspace, storeDir := t.TempDir(), t.TempDir()
+			settings := filepath.Join(t.TempDir(), "operator.yaml")
+			if err := os.WriteFile(settings, []byte("permissions:\n  ask: [Write]\n"), 0o600); err != nil {
+				t.Fatalf("write permissions: %v", err)
+			}
+			turns := []mockllm.Turn{mockllm.ToolCallTurn(session.NewToolCall("write-1", "Write", []byte(`{"path":"approved.txt","content":"executed"}`)))}
+			if tc.chained {
+				turns = append(turns,
+					mockllm.ToolCallTurn(session.NewToolCall("write-2", "Write", []byte(`{"path":"second.txt","content":"executed"}`))),
+					mockllm.TextTurn("continuation complete"),
+					mockllm.ToolCallTurn(session.NewToolCall("write-3", "Write", []byte(`{"path":"third.txt","content":"pending"}`))),
+				)
+			} else {
+				turns = append(turns, tc.finalTurn)
+			}
+			provider := mockllm.New(turns...)
+			cfg := app.Config{
+				Workspace: workspace, StoreDir: storeDir, Model: "mock-model", MockProvider: provider,
+				Shell: "/bin/sh", Compaction: "heuristic", Tokenizer: "heuristic", PermissionConfigs: []string{settings},
+			}
+
+			target, _, cleanupFirst := startPendingRecoveryServer(t, cfg)
+			conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatalf("dial first server: %v", err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			svc := mecatlv1.NewHarnessServiceClient(conn)
+			created, err := svc.CreateSession(ctx, &mecatlv1.CreateSessionRequest{})
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			stream, err := svc.Converse(ctx)
+			if err != nil {
+				t.Fatalf("open converse: %v", err)
+			}
+			if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: created.GetSessionId(), Text: "write the file"}}}); err != nil {
+				t.Fatalf("send prompt: %v", err)
+			}
+			var originalRun, originalAsk string
+			for originalAsk == "" {
+				response, recvErr := stream.Recv()
+				if recvErr != nil {
+					t.Fatalf("receive initial ask: %v", recvErr)
+				}
+				event := response.GetEvent()
+				if event.GetType() == "permission.ask" {
+					originalRun, originalAsk = event.GetRunId(), event.GetAsk().GetAskId()
+				}
+			}
+			probe, err := client.Dial(client.DialConfig{Server: target})
+			if err != nil {
+				t.Fatalf("dial persistence probe: %v", err)
+			}
+			t.Cleanup(func() { _ = probe.Close() })
+			persisted, err := probe.DiscoverPendingApproval(ctx, created.GetSessionId())
+			if err != nil || persisted.RunID != originalRun || persisted.AskID != originalAsk {
+				t.Fatalf("persist initial ask before restart: candidate=%+v err=%v", persisted, err)
+			}
+			persistenceWatch, err := probe.WatchPendingApprovalRun(ctx, persisted)
+			if err != nil {
+				t.Fatalf("open pre-restart persistence barrier: %v", err)
+			}
+			boundary, err := persistenceWatch.Recv()
+			persistenceWatch.Close()
+			if err != nil || boundary.Kind != client.PendingApprovalEventBoundary {
+				t.Fatalf("pre-restart persistence barrier: event=%+v err=%v", boundary, err)
+			}
+			_ = probe.Close()
+
+			cleanupFirst()
+			_ = conn.Close()
+
+			target, _, cleanupSecond := startPendingRecoveryServer(t, cfg)
+			defer cleanupSecond()
+			cl, err := client.Dial(client.DialConfig{Server: target})
+			if err != nil {
+				t.Fatalf("dial restarted server: %v", err)
+			}
+			defer func() { _ = cl.Close() }()
+
+			selection, err := resolveStartupResume(ctx, cl, created.GetSessionId(), false)
+			if err != nil {
+				t.Fatalf("exact pending resume: %v (cause: %v)", err, errors.Unwrap(err))
+			}
+			if selection.Pending == nil || selection.Pending.RunID != originalRun || selection.Pending.AskID != originalAsk {
+				t.Fatalf("recovered correlation = %+v, want run %q ask %q", selection.Pending, originalRun, originalAsk)
+			}
+			if _, err := os.Stat(filepath.Join(workspace, "approved.txt")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("tool ran before owner verdict: %v", err)
+			}
+
+			watch, err := cl.WatchPendingApprovalRun(ctx, *selection.Pending)
+			if err != nil {
+				t.Fatalf("open exact continuation watch: %v", err)
+			}
+			defer watch.Close()
+			boundary, err = watch.Recv()
+			if err != nil || boundary.Kind != client.PendingApprovalEventBoundary {
+				t.Fatalf("establish replay/live boundary: event=%+v err=%v", boundary, err)
+			}
+			if err := cl.ResolvePendingApproval(ctx, *selection.Pending, tc.verdict); err != nil {
+				t.Fatalf("resolve pending approval: %v", err)
+			}
+			var sawToolResult bool
+			for {
+				event, recvErr := watch.Recv()
+				if recvErr != nil {
+					t.Fatalf("watch exact continuation: %v", recvErr)
+				}
+				if _, ok := event.Message.(client.ToolResultMsg); ok {
+					sawToolResult = true
+				}
+				if tc.chained && event.Kind == client.PendingApprovalEventAsk {
+					later, discoverErr := cl.DiscoverPendingApproval(ctx, created.GetSessionId())
+					if discoverErr != nil {
+						t.Fatalf("rediscover later same-run ask: %v", discoverErr)
+					}
+					if later.RunID != originalRun || later.AskID == originalAsk {
+						t.Fatalf("later same-run correlation = %+v, original run=%q ask=%q", later, originalRun, originalAsk)
+					}
+					if resolveErr := cl.ResolvePendingApproval(ctx, later, client.VerdictAllowOnce); resolveErr != nil {
+						t.Fatalf("resolve later same-run ask: %v", resolveErr)
+					}
+				}
+				if event.Kind == client.PendingApprovalEventTerminal {
+					break
+				}
+			}
+			_, statErr := os.Stat(filepath.Join(workspace, "approved.txt"))
+			if tc.wantRun {
+				if statErr != nil || !sawToolResult {
+					t.Fatalf("allow-once did not continue original tool: stat=%v tool-result=%v", statErr, sawToolResult)
+				}
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("deny executed original tool: stat=%v", statErr)
+			}
+			if tc.chained {
+				followConn, dialErr := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+				if dialErr != nil {
+					t.Fatalf("dial later run: %v", dialErr)
+				}
+				defer func() { _ = followConn.Close() }()
+				follow, converseErr := mecatlv1.NewHarnessServiceClient(followConn).Converse(ctx)
+				if converseErr != nil {
+					t.Fatalf("open later run: %v", converseErr)
+				}
+				if sendErr := follow.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: created.GetSessionId(), Text: "write another file"}}}); sendErr != nil {
+					t.Fatalf("send later prompt: %v", sendErr)
+				}
+				var laterRun string
+				for laterRun == "" {
+					response, recvErr := follow.Recv()
+					if recvErr != nil {
+						t.Fatalf("receive later-run ask: %v", recvErr)
+					}
+					if event := response.GetEvent(); event.GetType() == "permission.ask" {
+						laterRun = event.GetRunId()
+					}
+				}
+				rediscovered, discoverErr := cl.DiscoverPendingApproval(ctx, created.GetSessionId())
+				if discoverErr != nil {
+					t.Fatalf("rediscover later-run ask: %v", discoverErr)
+				}
+				if rediscovered.RunID != laterRun || rediscovered.RunID == originalRun {
+					t.Fatalf("later-run correlation = %+v, live run=%q original=%q", rediscovered, laterRun, originalRun)
+				}
+			}
+		})
+	}
+}
+
+func startPendingRecoveryServer(t *testing.T, cfg app.Config) (string, *app.Built, func()) {
+	t.Helper()
+	built, err := buildIsolated(t, t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("build pending recovery server: %v", err)
+	}
+	var (
+		cleanupOnce sync.Once
+		lis         net.Listener
+		grpcServer  *grpc.Server
+	)
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			built.Close()
+			if grpcServer != nil {
+				grpcServer.Stop()
+			}
+			if lis != nil {
+				_ = lis.Close()
+			}
+		})
+	}
+	t.Cleanup(cleanup)
+	lis, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		cleanup()
+		t.Fatalf("listen pending recovery server: %v", err)
+	}
+	grpcServer = grpc.NewServer()
+	mecatlv1.RegisterHarnessServiceServer(grpcServer, server.NewHarnessServer(built.Service))
+	go func() { _ = grpcServer.Serve(lis) }()
+	return lis.Addr().String(), built, cleanup
 }

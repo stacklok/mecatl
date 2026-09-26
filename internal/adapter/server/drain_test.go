@@ -572,71 +572,110 @@ func TestADR_0294_DrainStopsAdmissionBeforeOwnershipChange(t *testing.T) {
 	}
 }
 
-func TestADR_0294_DrainPreservesAwaitingResumePointThroughGRPCRelay(t *testing.T) {
-	lease := &fakeLease{}
-	store := memstore.New()
-	capability := server.NewSessionMutationCapability(true)
-	cat := tool.NewCatalog()
-	cat.MustRegister(&writeAskTool{})
-	eng := agent.NewEngine(agent.Deps{
-		LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("relay-call", "Write", json.RawMessage(`{}`)))),
-		Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
-		Store: capability.GuardStore(store),
-	})
-	svc, err := server.NewService(server.Config{
-		Engine: eng, Store: store, SessionLease: lease, LeaseOwner: "relay-drain",
-		MutationCapability: capability,
-		LeaseTTL:           time.Hour, LeaseRenewInterval: time.Hour,
-		PlacementProvider: testPlacementProvider{root: "/ws"},
-		PlacementScope:    "test",
-		SharedEngineRoot:  "/ws",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer svc.Close()
-	client, cleanup := dialGRPC(t, svc)
-	defer cleanup()
-	created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := session.SessionID(created.GetSessionId())
-	stream, err := client.Converse(affinityContext(string(id)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(id), Text: "park"}}}); err != nil {
-		t.Fatal(err)
-	}
-	var askID string
-	for askID == "" {
-		resp, recvErr := stream.Recv()
-		if recvErr != nil {
-			t.Fatalf("receive ask: %v", recvErr)
-		}
-		if ask := resp.GetEvent().GetAsk(); ask != nil {
-			askID = ask.GetAskId()
-		}
-	}
+func TestADR_0294_ShutdownPreservesAwaitingDurableEventProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		shutdown func(*server.Service) error
+	}{
+		{name: "graceful drain", shutdown: func(svc *server.Service) error { return svc.GracefulDrain(context.Background()) }},
+		{name: "close", shutdown: func(svc *server.Service) error { svc.Close(); return nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lease := &fakeLease{}
+			store := memstore.New()
+			eventLog := memstore.NewEventLog()
+			capability := server.NewSessionMutationCapability(true)
+			cat := tool.NewCatalog()
+			cat.MustRegister(&writeAskTool{})
+			eng := agent.NewEngine(agent.Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("relay-call", "Write", json.RawMessage(`{}`)))),
+				Catalog: cat, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model",
+				Store: capability.GuardStore(store),
+			})
+			svc, err := server.NewService(server.Config{
+				Engine: eng, Store: store, EventLog: eventLog, SessionLease: lease, LeaseOwner: "relay-drain",
+				MutationCapability: capability,
+				LeaseTTL:           time.Hour, LeaseRenewInterval: time.Hour,
+				PlacementProvider: testPlacementProvider{root: "/ws"},
+				PlacementScope:    "test",
+				SharedEngineRoot:  "/ws",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer svc.Close()
+			client, cleanup := dialGRPC(t, svc)
+			defer cleanup()
+			created, err := client.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := session.SessionID(created.GetSessionId())
+			stream, err := client.Converse(affinityContext(string(id)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := stream.Send(&mecatlv1.ConverseRequest{Kind: &mecatlv1.ConverseRequest_Prompt{Prompt: &mecatlv1.Prompt{SessionId: string(id), Text: "park"}}}); err != nil {
+				t.Fatal(err)
+			}
+			var askID string
+			for askID == "" {
+				resp, recvErr := stream.Recv()
+				if recvErr != nil {
+					t.Fatalf("receive ask: %v", recvErr)
+				}
+				if ask := resp.GetEvent().GetAsk(); ask != nil {
+					askID = ask.GetAskId()
+				}
+			}
 
-	drained := make(chan error, 1)
-	go func() { drained <- svc.GracefulDrain(context.Background()) }()
-	for {
-		if _, recvErr := stream.Recv(); recvErr != nil {
-			break
-		}
-	}
-	if err := <-drained; err != nil {
-		t.Fatalf("GracefulDrain: %v", err)
-	}
-	got, err := store.Load(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pending, ok := got.PendingAsk()
-	if got.State != session.StateAwaiting || !ok || pending.AskID != askID {
-		t.Fatalf("relay-backed durable resume point changed: state=%q ask=%+v ok=%t", got.State, pending, ok)
+			shutdownDone := make(chan error, 1)
+			go func() { shutdownDone <- tc.shutdown(svc) }()
+			liveCancelled := false
+			for {
+				resp, recvErr := stream.Recv()
+				if recvErr != nil {
+					break
+				}
+				if result := resp.GetEvent().GetResult(); result != nil && result.GetStop() == string(session.StopCancelled) {
+					liveCancelled = true
+				}
+			}
+			if err := <-shutdownDone; err != nil {
+				t.Fatalf("shutdown: %v", err)
+			}
+			if !liveCancelled {
+				t.Fatal("live relay did not deliver shutdown cancellation")
+			}
+
+			got, err := store.Load(context.Background(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, ok := got.PendingAsk()
+			if got.State != session.StateAwaiting || !ok || pending.AskID != askID {
+				t.Fatalf("relay-backed durable resume point changed: state=%q ask=%+v ok=%t", got.State, pending, ok)
+			}
+
+			var durableAsk bool
+			for ev, readErr := range eventLog.Read(context.Background(), id) {
+				if readErr != nil {
+					t.Fatalf("read event log: %v", readErr)
+				}
+				if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.AskID == askID {
+					durableAsk = true
+				}
+				if ev.Type == session.EvPermissionRetract && ev.Ask != nil && ev.Ask.AskID == askID {
+					t.Fatalf("durable replay retracted preserved ask %q", askID)
+				}
+				if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+					t.Fatal("durable replay terminated the preserved awaiting run")
+				}
+			}
+			if !durableAsk {
+				t.Fatalf("durable replay omitted unresolved ask %q", askID)
+			}
+		})
 	}
 }
 

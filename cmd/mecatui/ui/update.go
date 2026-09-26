@@ -457,6 +457,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // overlays accrue (each helper returns handled=false for a non-matching msg, so
 // at most one consumes).
 func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mm, cmd, handled := m.updatePendingApproval(msg); handled {
+		return mm, cmd
+	}
 	// The open modal surface routes every non-key/wheel Msg through m.modal
 	// BEFORE the Model's generic reducer; handled=false falls through to the
 	// rest of the chain.
@@ -1019,7 +1022,7 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			return mm, cmd, true
 		}
 		if m.startupFirstPromptPending {
-			m = m.failStartupRunEntry()
+			m = m.failStartupRunEntry(msg.Err)
 			return m, nil, true
 		}
 		if m.failedStepRetryRun && !m.failedStepRetryAuthoritative {
@@ -2224,30 +2227,8 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.doubleEscapeReleased = false
 	}
 
-	// Global lifecycle controls retain precedence over every overlay.
-	if key.Matches(msg, m.keys.Quit) {
-		return m.onQuitKey()
-	}
-
-	// ctrl+d is the unix EOF-habit quit (issue #504), an INDEPENDENT second guard.
-	// It sits right after Quit and BEFORE the textarea/phase routing so the chord is
-	// intercepted everywhere — but only when the prompt textarea is EMPTY. On a
-	// populated prompt we deliberately do NOT consume it, so the chord falls through
-	// to the textarea's DeleteCharacterForward (its default bubble binding) — never a
-	// surprise quit mid-draft. Handled even when an overlay/modal owns the keyboard
-	// (the textarea is blurred and empty then, so the empty gate passes).
-	if key.Matches(msg, m.keys.QuitD) && strings.TrimSpace(m.prompt.Value()) == "" {
-		return m.onQuitDKey()
-	}
-
-	// ctrl+z suspends the whole TUI process to the shell (issue #504). Handled
-	// BEFORE the phase/overlay routing so it works in EVERY state — idle, mid-run,
-	// the permission modal (the ask stays pending and durable). onSuspend writes the
-	// leave-behind notice to stderr, then returns tea.Suspend. Suspending does NOT
-	// stop the embedded mecated or an in-flight run — they keep working and the UI
-	// re-syncs on resume.
-	if key.Matches(msg, m.keys.Suspend) {
-		return m.onSuspend()
+	if mm, cmd, handled := m.onGlobalLifecycleKey(msg); handled {
+		return mm, cmd
 	}
 
 	// Help owns the remaining keys while open: its documented navigation and close
@@ -2316,6 +2297,33 @@ func (m Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.dispatchPhaseKey(msg)
+}
+
+func (m Model) onGlobalLifecycleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	// Global lifecycle controls retain precedence over every overlay.
+	if key.Matches(msg, m.keys.Quit) {
+		mm, cmd := m.onQuitKey()
+		return mm, cmd, true
+	}
+	// A populated prompt sends ctrl+d through to DeleteCharacterForward rather
+	// than allowing the independent EOF-habit quit guard to consume it.
+	if key.Matches(msg, m.keys.QuitD) && strings.TrimSpace(m.prompt.Value()) == "" {
+		mm, cmd := m.onQuitDKey()
+		return mm, cmd, true
+	}
+	if key.Matches(msg, m.keys.Suspend) {
+		mm, cmd := m.onSuspend()
+		return mm, cmd, true
+	}
+	return m.onPendingApprovalRecoveryKey(msg)
+}
+
+func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
+	if m.pendingRecovery == nil || m.pendingRecovery.resolving || m.pendingRecovery.resolved || !key.Matches(msg, m.keys.Close) {
+		return m, nil, false
+	}
+	(&m).retirePendingApprovalRecovery()
+	return m, tea.Quit, true
 }
 
 // onHelpKey handles the help overlay's complete keyboard contract. It runs before
@@ -2459,7 +2467,7 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	// A clear command composed while running stays actionable if a permission ask
 	// opens before Enter is pressed. Route it ahead of the approval surface:
 	// ClearSession cancels the ask and must never become Allow/Deny/Learn.
-	if clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
+	if m.pendingRecovery == nil && clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
 		return m.dispatchBareBuiltin(m.prompt.Value())
 	}
 	cmd, handled, closed := m.modal.HandleKey(msg)
@@ -2673,6 +2681,7 @@ func (m Model) retryPendingModeCmd() tea.Cmd {
 // shows the hint, and schedules the timed disarm. See onKey's doc for the rationale.
 func (m Model) quitNow() (tea.Model, tea.Cmd) {
 	m.admissionSubmission = nil
+	(&m).retirePendingApprovalRecovery()
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
@@ -2682,15 +2691,21 @@ func (m Model) quitNow() (tea.Model, tea.Cmd) {
 // onQuitKey implements the guarded ctrl+c exit behavior. The immediate exit is
 // shared with /quit so both paths cancel an active run before Bubble Tea exits.
 func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
+	if m.pendingRecovery != nil && m.pendingRecovery.resolved && !m.pendingRecovery.cancelled {
+		cmd := (&m).cancelPendingApprovalCmd()
+		m.statusMsg = "cancelling recovered run…"
+		m.refreshView()
+		return m, cmd
+	}
 	// Already armed → a second ctrl+c within the window: quit now. The fatal
 	// (dead-connection) screen also exits on a single press — there is no input to
 	// clear and no run to protect, so the guard would only add friction.
 	if m.quitArmed || m.phase == phaseFatal {
 		return m.quitNow()
 	}
-	// First ctrl+c with staged input: clear the input (mirrors esc's clear-the-line)
-	// and do NOT arm — a single press to wipe a draft is expected.
-	if strings.TrimSpace(m.prompt.Value()) != "" {
+	// Ordinary staged input clears on the first press. An in-flight recovery
+	// choice instead keeps its draft and arms exit with the uncertainty warning.
+	if strings.TrimSpace(m.prompt.Value()) != "" && (m.pendingRecovery == nil || !m.pendingRecovery.resolving) {
 		m.prompt.Reset()
 		m.pendingPromptMedia = client.MediaResult{}
 		return m.afterInputEdit(nil)
@@ -2700,6 +2715,9 @@ func (m Model) onQuitKey() (tea.Model, tea.Cmd) {
 	m.quitArmed = true
 	m.quitArmGen++
 	m.statusMsg = quitHintFor(m.keys.Quit)
+	if m.pendingRecovery != nil && m.pendingRecovery.resolving {
+		m.statusMsg += " — choice submitted; exiting cannot undo it, outcome may be unknown"
+	}
 	m.refreshView()
 	return m, m.quitDisarmCmd(m.quitArmGen)
 }
@@ -3472,16 +3490,23 @@ func (m Model) afterInputEdit(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return mm, tea.Batch(cmd, fetch)
 }
 
-var errStartupRunEntry = &sessionTranscriptError{"the chat could not be attached for a new turn"}
+type startupRunEntryError struct{ title, text string }
 
-func (m Model) failStartupRunEntry() Model {
+func (e *startupRunEntryError) Error() string               { return e.text }
+func (e *startupRunEntryError) SafeTranscriptText() string  { return e.text }
+func (e *startupRunEntryError) SafeTranscriptTitle() string { return e.title }
+
+func (m Model) failStartupRunEntry(err error) Model {
 	m = m.endRun("")
 	m = m.resetDocumentProjection()
 	m.conv = conversationFromTranscript(m.deps.Resume.Transcript.Messages)
 	m.modal = &sessionsState{
-		selected:        m.deps.Resume.Row,
-		inspect:         true,
-		loadErr:         errStartupRunEntry,
+		selected: m.deps.Resume.Row,
+		inspect:  true,
+		loadErr: &startupRunEntryError{
+			title: client.SafeStartupRunEntryErrorTitle(err),
+			text:  client.SafeStartupRunEntryError(err),
+		},
 		view:            sessionsTranscript,
 		deps:            (&m).surfaceDeps(),
 		activeSessionID: m.sessionID,

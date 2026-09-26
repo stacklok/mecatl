@@ -14,7 +14,9 @@ package app
 // shell also reads cfg.TrustProject directly because both decisions intentionally
 // express the same operator vouch for the workspace and its .git.
 func projectIngestionAdmitted(cfg Config) bool {
-	return cfg.TrustProject
+	// Local project trust cannot authorize source ingestion for a remote
+	// deployment; its explicit no-FS attenuation has no project source either.
+	return cfg.TrustProject && !cfg.RemoteExecution
 }
 
 // projectIngestionAdmittedForRoot binds the single project-ingestion decision to
