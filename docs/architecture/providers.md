@@ -215,32 +215,6 @@ request rechecks that snapshot's expiry, and replacing an expired or rejected
 token requires restarting the process. The plaintext and same-UID threat boundary
 is documented in the [operator setup](../../user-docs/building/deployment/settings.md#configure-provider-credentials).
 
-### `anthropic` subscription sign-in
-
-`anthropic` is ordinarily driven by an API key. An operator holding a Claude
-Pro or Max subscription can instead authenticate with a renewable grant from a
-sign-in; the two paths are never mixed on one request, and an API key in
-`auth.yaml` or the environment takes precedence and shadows the sign-in.
-
-`internal/adapter/anthropicsub` owns that path. A sign-in mints a grant through
-Anthropic's OAuth flow against a pinned loopback callback, and
-`internal/adapter/subcred` persists it in the host's encrypted credential store
-rather than the plaintext operator-authored `auth.yaml`, because a refresh
-rotates both halves of the grant. `anthropicsub.Renewable` refreshes within its
-skew window and persists the rotated grant; an Anthropic grant's own lifetime is
-anchored at the sign-in and a refresh cannot extend it, so status reports the
-expiry and the remedy is a fresh sign-in.
-
-The request path is an `http.RoundTripper` layered on the shared
-`provider/anthropic` adapter, so request building, SSE translation, and the
-provider-neutral port stay single-sourced. That transport authenticates with a
-bearer grant (dropping any API-key header), and shapes the request to what a
-subscription endpoint accepts: the beta resource selection by request shape, a
-billing system block and its deterministic body attestation, a client-shaped
-stable per-install device identity, and a clamped `max_tokens`. An API-key body
-that carries none of those markers passes through byte-identical, so the same
-provider entry serves both credential classes.
-
 **OpenCode Go (`provider/openaichat`)** is the Chat Completions wire adapter —
 the sibling of the openai Responses adapter, built on the same `openai-go` SDK via
 `client.Chat.Completions`. It serves provider id `opencode` (base URL
@@ -280,6 +254,32 @@ for the transport rationale; `provider/ssefilter/ssefilter.go` owns frame filter
 before (the default path is byte-identical). A composition-only `providerConstructor`
 seam (mirroring `envDetector`) lets the offline e2e back two real provider ids with
 mocks; production leaves it nil.
+
+### `anthropic` subscription sign-in
+
+`anthropic` is ordinarily driven by an API key. An operator holding a Claude
+Pro or Max subscription can instead authenticate with a renewable grant from a
+sign-in; the two paths are never mixed on one request, and an API key in
+`auth.yaml` or the environment takes precedence and shadows the sign-in.
+
+`internal/adapter/anthropicsub` owns that path. A sign-in mints a grant through
+Anthropic's OAuth flow against a pinned loopback callback, and
+`internal/adapter/subcred` persists it in the host's encrypted credential store
+rather than the plaintext operator-authored `auth.yaml`, because a refresh
+rotates both halves of the grant. `anthropicsub.Renewable` refreshes within its
+skew window and persists the rotated grant; an Anthropic grant's own lifetime is
+anchored at the sign-in and a refresh cannot extend it, so status reports the
+expiry and the remedy is a fresh sign-in.
+
+The request path is an `http.RoundTripper` layered on the shared
+`provider/anthropic` adapter, so request building, SSE translation, and the
+provider-neutral port stay single-sourced. That transport authenticates with a
+bearer grant (dropping any API-key header), and shapes the request to what a
+subscription endpoint accepts: the beta resource selection by request shape, a
+billing system block and its deterministic body attestation, a client-shaped
+stable per-install device identity, and a clamped `max_tokens`. An API-key body
+that carries none of those markers passes through byte-identical, so the same
+provider entry serves both credential classes.
 
 ### Operator-defined providers
 
