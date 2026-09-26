@@ -49,6 +49,14 @@ service BrokerService {
   rpc ObserveWorkspaceEnrollment(ObserveWorkspaceEnrollmentRequest) returns (ObserveWorkspaceEnrollmentResponse);
   // CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
   rpc CancelWorkspaceEnrollment(CancelWorkspaceEnrollmentRequest) returns (CancelWorkspaceEnrollmentResponse);
+  // StageCredentialCustody stages an exact completed protected enrollment.
+  rpc StageCredentialCustody(StageCredentialCustodyRequest) returns (StageCredentialCustodyResponse);
+  // CommitCredentialCustody promotes one exact staged custody record.
+  rpc CommitCredentialCustody(CommitCredentialCustodyRequest) returns (CommitCredentialCustodyResponse);
+  // RecoverCredentialAttachment creates fresh provisional state from current custody.
+  rpc RecoverCredentialAttachment(RecoverCredentialAttachmentRequest) returns (RecoverCredentialAttachmentResponse);
+  // TombstoneCredentialCustody removes one exact custody record's authority.
+  rpc TombstoneCredentialCustody(TombstoneCredentialCustodyRequest) returns (TombstoneCredentialCustodyResponse);
 }
 
 // BrokerErrorReason is the closed structured reason vocabulary in BrokerErrorDetail.
@@ -69,6 +77,14 @@ enum BrokerErrorReason {
   BROKER_ERROR_REASON_CAPACITY_REACHED = 5;
   // Client's broker incarnation is stale; recover only before a new prompt, never replay.
   BROKER_ERROR_REASON_INCARNATION_LOST = 6;
+  // Authorized continuity data is unavailable without revealing why.
+  BROKER_ERROR_REASON_CONTINUITY_UNAVAILABLE = 7;
+  // Stored custody was bound to a broker profile that no longer matches the
+  // broker's configuration; the custody can never be used again.
+  BROKER_ERROR_REASON_CONTINUITY_PROFILE_CHANGED = 8;
+  // Stored custody was permanently tombstoned after the caller's guard matched;
+  // hosts must invalidate the local custody reference and must not retry it.
+  BROKER_ERROR_REASON_CONTINUITY_REVOKED = 9;
 }
 
 // BrokerErrorDetail provides stable error identity without status-text inference.
@@ -86,6 +102,8 @@ message AttachRequest {
   string session_id = 1;
   // Pinned process incarnation; empty only for initial attach, stale values are rejected.
   string broker_incarnation = 2;
+  // Opaque persisted external binding for exact reattach or structured instance-loss classification.
+  string expected_binding = 3;
 }
 // AttachResponse establishes an ephemeral attachment capability.
 message AttachResponse {
@@ -101,6 +119,9 @@ message AttachResponse {
   string broker_incarnation = 5;
   // Whether pre-prompt workspace enrollment is supported by this attachment.
   bool workspace_enrollment = 6;
+  // Whether this attachment offers credential continuity (encrypted custody is
+  // configured). When true the host must stage custody or fail enrollment closed.
+  bool credential_continuity = 7;
 }
 
 // CommitRequest targets current attachment lifecycle state.
@@ -370,3 +391,139 @@ message CancelWorkspaceEnrollmentResponse {
   // Descriptor snapshot if final state is connected.
   repeated ToolDescriptor tools = 3;
 }
+
+// ContinuityGuard is the non-sensitive, opaque identity tuple used to bind custody to
+// one durable session and its authenticated partitions. It is replayable for idempotent
+// comparisons, and session_incarnation scopes the guard to the broker incarnation that
+// established the session.
+message ContinuityGuard {
+  // Non-sensitive, opaque durable session identity; idempotent comparisons are exact and
+  // this identity is independent of broker incarnation.
+  string session_id = 1;
+  // Non-sensitive, opaque session incarnation; retries are idempotent and this value binds
+  // the guard to the broker incarnation that established the session.
+  string session_incarnation = 2;
+  // Sensitive, opaque owner partition digest; repeated guards compare idempotently and the
+  // digest is scoped to the authenticated session, not to a broker incarnation.
+  bytes owner_partition = 3;
+  // Sensitive, opaque workload partition digest; repeated guards compare idempotently and
+  // the digest is scoped to the authenticated session, not to a broker incarnation.
+  bytes workload_partition = 4;
+  // Sensitive, opaque profile digest; repeated guards compare idempotently and the digest
+  // is scoped to the authenticated session, not to a broker incarnation.
+  bytes profile_digest = 5;
+  // Non-sensitive, opaque provider identifiers; retries return them idempotently and they describe
+  // the guarded session rather than a broker incarnation.
+  repeated string providers = 6;
+}
+// CustodyAssertion is a sensitive, opaque proof reference for custody operations. Reusing
+// it is idempotent, and its guard preserves session scope while recovery permits a
+// replacement broker incarnation.
+message CustodyAssertion {
+  // Sensitive, opaque session guard; repeated assertions compare idempotently and the
+  // guard remains scoped to its session, not the recovering broker incarnation.
+  ContinuityGuard guard = 1;
+  // Sensitive, opaque custody reference; retries are idempotent and it is valid across a
+  // broker replacement and incarnation while remaining scoped to the guarded session.
+  string recovery_reference = 2;
+  // Non-sensitive, opaque deadline metadata; retries are idempotent and the deadline is evaluated
+  // independently of broker incarnation.
+  google.protobuf.Timestamp attempt_deadline = 3;
+}
+// StageCredentialCustodyRequest starts an idempotent, sensitive, opaque custody staging attempt.
+// Its broker_incarnation is the only incarnation-bound field; the completed enrollment and
+// guard identify the session whose custody is being staged.
+message StageCredentialCustodyRequest {
+  // Non-sensitive, opaque retry identity; reuse is idempotent and it is scoped to the
+  // staging attempt, not a broker incarnation.
+  string request_id = 1;
+  // Sensitive, opaque attachment capability; retries are idempotent and it is scoped to
+  // the broker incarnation that issued it.
+  string handle = 2;
+  // Non-sensitive, opaque broker identity; retries are idempotent and this field rejects
+  // staging against a different broker incarnation.
+  string broker_incarnation = 3;
+  // Sensitive, opaque session binding; retries are idempotent and the guard is scoped to
+  // the session rather than the replacement broker incarnation.
+  ContinuityGuard guard = 4;
+  // Non-sensitive, opaque enrollment reference; retries are idempotent and it is scoped to the
+  // session, not to a broker incarnation.
+  WorkspaceRef completed_enrollment = 5;
+  // Non-sensitive, opaque deadline metadata; retries are idempotent and evaluated by the serving
+  // process regardless of broker incarnation.
+  google.protobuf.Timestamp attempt_deadline = 6;
+}
+// StageCredentialCustodyResponse returns sensitive, opaque custody metadata without exposing the
+// credential. Repeating the request is idempotent; the response is scoped to the broker
+// incarnation that staged the custody.
+message StageCredentialCustodyResponse {
+  // Sensitive, opaque recovery reference; retries return it idempotently and it is scoped
+  // to the broker incarnation that staged custody.
+  string recovery_reference = 1;
+  // Non-sensitive, opaque expiry metadata; retries return it idempotently and expiry is scoped to
+  // the staged custody, independent of later broker incarnation.
+  google.protobuf.Timestamp custody_expires_at = 2;
+  // Sensitive, opaque profile digest; retries return it idempotently and it is scoped to
+  // the guarded session rather than a later broker incarnation.
+  bytes profile_digest = 3;
+  // Non-sensitive, opaque provider identifiers; retries return them idempotently and they describe
+  // the staged custody across broker incarnation replacement.
+  repeated string providers = 4;
+}
+// CommitCredentialCustodyRequest commits a sensitive, opaque custody assertion. The
+// operation is idempotent and intentionally works across broker incarnation replacement.
+message CommitCredentialCustodyRequest {
+  // Sensitive, opaque assertion; repeated commits are idempotent and recovery is not bound
+  // to the current broker incarnation.
+  CustodyAssertion assertion = 1;
+}
+// CommitCredentialCustodyResponse is an empty, non-sensitive, non-opaque idempotent acknowledgment.
+// It has no broker-incarnation scope because commit is valid during recovery.
+message CommitCredentialCustodyResponse {}
+// RecoverCredentialAttachmentRequest requests an idempotent, sensitive, opaque attachment recovery.
+// It is intentionally valid against a replacement broker incarnation.
+message RecoverCredentialAttachmentRequest {
+  // Sensitive, opaque custody assertion; retries are idempotent and recovery is not bound
+  // to the current broker incarnation.
+  CustodyAssertion assertion = 1;
+  // Non-sensitive, opaque retry identity; reuse is idempotent and it is not bound to a
+  // broker incarnation.
+  string request_id = 2;
+}
+// RecoverCredentialAttachmentResponse returns sensitive, opaque attachment capability metadata.
+// Repeating the request is idempotent; binding and handle are scoped to the serving broker
+// incarnation, while custody continuity metadata remains valid across replacement.
+message RecoverCredentialAttachmentResponse {
+  // Sensitive, opaque attachment binding; retries return it idempotently and it is scoped
+  // to the serving broker incarnation.
+  string binding = 1;
+  // Sensitive, opaque attachment capability; retries return it idempotently and it is
+  // scoped to the serving broker incarnation.
+  string handle = 2;
+  // Non-sensitive, opaque tool descriptors; retries return them idempotently and they describe the
+  // recovered attachment in the serving broker incarnation.
+  repeated ToolDescriptor tools = 3;
+  // Non-sensitive, opaque broker identity; retries return it idempotently and it identifies
+  // the incarnation serving this recovered attachment.
+  string broker_incarnation = 4;
+  // Non-sensitive, opaque enrollment metadata; retries return it idempotently and it is scoped to
+  // the recovered attachment, not used as custody authority across incarnations.
+  bool workspace_enrollment = 5;
+  // Non-sensitive, non-opaque capability metadata, not a custody reference or
+  // authority proof. True means this recovered attachment's serving process
+  // offers encrypted custody; the offer is scoped to broker_incarnation. Retries
+  // with the same request_id are idempotent and replay this value unchanged. False, including an
+  // omitted proto3 field from an older peer, means no offer. If true, the host
+  // must stage custody for later enrollment or fail closed.
+  bool credential_continuity = 6;
+}
+// TombstoneCredentialCustodyRequest irreversibly revokes sensitive, opaque custody. The
+// operation is idempotent and intentionally valid across broker incarnation replacement.
+message TombstoneCredentialCustodyRequest {
+  // Sensitive, opaque assertion; repeated tombstones are idempotent and are not bound to
+  // the current broker incarnation.
+  CustodyAssertion assertion = 1;
+}
+// TombstoneCredentialCustodyResponse is an empty, non-sensitive, non-opaque idempotent acknowledgment.
+// It has no broker-incarnation scope because tombstone is valid during recovery.
+message TombstoneCredentialCustodyResponse {}

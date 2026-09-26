@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -15,6 +17,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
@@ -34,6 +43,7 @@ type enrollmentAttachment struct {
 	brokercontract.Attachment
 	ref           brokercontract.WorkspaceEnrollmentRef
 	result        brokercontract.WorkspaceEnrollmentResult
+	observe       func(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error)
 	catalogue     brokercontract.WorkspaceCatalogue
 	cancelWait    bool
 	cancelErr     error
@@ -67,11 +77,15 @@ func (a *enrollmentAttachment) BeginWorkspaceEnrollment(context.Context) (broker
 	return brokercontract.WorkspaceEnrollmentPresentation{Ref: a.ref, URL: "https://broker.example/authorize?state=opaque"}, nil
 }
 
-func (a *enrollmentAttachment) ObserveWorkspaceEnrollment(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+func (a *enrollmentAttachment) ObserveWorkspaceEnrollment(ctx context.Context, ref brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.observeCalls++
-	return a.result, nil
+	observe, result := a.observe, a.result
+	a.mu.Unlock()
+	if observe != nil {
+		return observe(ctx, ref)
+	}
+	return result, nil
 }
 
 func (a *enrollmentAttachment) CancelWorkspaceEnrollment(ctx context.Context, ref brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
@@ -109,6 +123,28 @@ func (b *enrollmentBroker) AttachSession(ctx context.Context, id session.Session
 		return nil, "", b.attachErr
 	}
 	attachment, outcome, err := b.Service.AttachSession(ctx, id)
+	if err != nil {
+		return nil, outcome, err
+	}
+	if b.attachment == nil {
+		ref := brokercontract.WorkspaceEnrollmentRef{ID: "enrollment-1", RequiredServices: 1, ExpiresAt: time.Now().Add(time.Hour)}
+		b.attachment = &enrollmentAttachment{Attachment: attachment, ref: ref, result: brokercontract.WorkspaceEnrollmentResult{Ref: ref, Status: brokercontract.WorkspaceEnrollmentPending}}
+	}
+	return b.attachment, outcome, nil
+}
+
+// AttachSessionExpectedBinding forwards the real broker's binding
+// classification, as mcpbroker.Process does in production, so a binding from a
+// replaced broker instance surfaces as structured instance loss.
+func (b *enrollmentBroker) AttachSessionExpectedBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (brokercontract.Attachment, brokercontract.AttachOutcome, error) {
+	if b.attachErr != nil {
+		return nil, "", b.attachErr
+	}
+	attacher, ok := b.Service.(brokercontract.ExpectedBindingAttacher)
+	if !ok {
+		return nil, "", brokercontract.ErrContinuityUnavailable
+	}
+	attachment, outcome, err := attacher.AttachSessionExpectedBinding(ctx, id, binding)
 	if err != nil {
 		return nil, outcome, err
 	}
@@ -1072,6 +1108,160 @@ func TestADR_0298_ToolHiveEnrollmentControlsRedactUpstreamStateE2E(t *testing.T)
 			t.Fatalf("cancel response = %#v", cancelled)
 		}
 	})
+}
+
+func TestWorkspaceEnrollmentObserveTimeoutHasSanitizedTransportParity(t *testing.T) {
+	const secret = "credential-secret"
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "context deadline", err: fmt.Errorf("%s: %w", secret, context.DeadlineExceeded)},
+		{name: "gRPC deadline", err: grpcstatus.Error(codes.DeadlineExceeded, secret)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, transport := range []string{"grpc", "http"} {
+				t.Run(transport, func(t *testing.T) {
+					svc, broker, created := newWorkspaceEnrollmentHTTPService(t, false)
+					if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
+						t.Fatalf("begin enrollment: %v", err)
+					}
+					broker.attachment.observe = func(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+						return brokercontract.WorkspaceEnrollmentResult{}, tc.err
+					}
+
+					switch transport {
+					case "grpc":
+						client, closeClient := dialWorkspaceEnrollmentGRPC(t, svc)
+						defer closeClient()
+						_, err := client.ConnectWorkspaceServices(t.Context(), &mecatlv1.WorkspaceEnrollmentConnectRequest{SessionId: string(created.ID)})
+						if grpcstatus.Code(err) != codes.FailedPrecondition {
+							t.Fatalf("gRPC code = %v, want %v (err %v)", grpcstatus.Code(err), codes.FailedPrecondition, err)
+						}
+						if strings.Contains(err.Error(), secret) {
+							t.Fatalf("gRPC error leaked broker text: %v", err)
+						}
+						assertWorkspaceEnrollmentTimeoutErrorInfo(t, err)
+					case "http":
+						httpServer := httptest.NewServer(NewHTTPHandler(svc))
+						defer httpServer.Close()
+						resp, err := http.Post(httpServer.URL+"/v1/sessions/"+string(created.ID)+"/workspace-enrollment/connect", "application/json", nil)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer resp.Body.Close()
+						var problem struct {
+							Code   string `json:"code"`
+							Detail string `json:"detail"`
+						}
+						if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+							t.Fatal(err)
+						}
+						if resp.StatusCode != http.StatusPreconditionFailed || problem.Code != "workspace_enrollment_observe_timeout" {
+							t.Fatalf("HTTP response = status %d, code %q; want 412/workspace_enrollment_observe_timeout", resp.StatusCode, problem.Code)
+						}
+						if strings.Contains(problem.Detail, secret) {
+							t.Fatalf("HTTP problem leaked broker text: %+v", problem)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func dialWorkspaceEnrollmentGRPC(t *testing.T, svc *Service) (mecatlv1.HarnessServiceClient, func()) {
+	t.Helper()
+	listener := bufconn.Listen(1 << 20)
+	grpcServer := grpc.NewServer()
+	mecatlv1.RegisterHarnessServiceServer(grpcServer, NewHarnessServer(svc))
+	go func() { _ = grpcServer.Serve(listener) }()
+	conn, err := grpc.NewClient("passthrough:///workspace-enrollment", grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+		return listener.DialContext(ctx)
+	}), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		grpcServer.Stop()
+		_ = listener.Close()
+		t.Fatal(err)
+	}
+	return mecatlv1.NewHarnessServiceClient(conn), func() {
+		_ = conn.Close()
+		grpcServer.Stop()
+		_ = listener.Close()
+	}
+}
+
+func assertWorkspaceEnrollmentTimeoutErrorInfo(t *testing.T, err error) {
+	t.Helper()
+	status, ok := grpcstatus.FromError(err)
+	if !ok {
+		t.Fatalf("error is not a gRPC status: %v", err)
+	}
+	for _, detail := range status.Details() {
+		if info, ok := detail.(*errdetails.ErrorInfo); ok && info.Reason == "workspace_enrollment_observe_timeout" {
+			return
+		}
+	}
+	t.Fatalf("gRPC details = %#v, want ErrorInfo reason workspace_enrollment_observe_timeout", status.Details())
+}
+
+func TestWorkspaceEnrollmentObserveTimeoutDoesNotConflateOuterContextOrInvalidResult(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		observe func(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error)
+		ctx     func(context.Context) (context.Context, context.CancelFunc)
+	}{
+		{
+			name: "outer cancellation",
+			observe: func(ctx context.Context, _ brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+				<-ctx.Done()
+				return brokercontract.WorkspaceEnrollmentResult{}, ctx.Err()
+			},
+			ctx: func(parent context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(parent) },
+		},
+		{
+			name: "outer deadline",
+			observe: func(ctx context.Context, _ brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+				<-ctx.Done()
+				return brokercontract.WorkspaceEnrollmentResult{}, ctx.Err()
+			},
+			ctx: func(parent context.Context) (context.Context, context.CancelFunc) {
+				return context.WithTimeout(parent, time.Nanosecond)
+			},
+		},
+		{
+			name: "reference mismatch",
+			observe: func(_ context.Context, ref brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+				ref.ID = "other-enrollment"
+				return brokercontract.WorkspaceEnrollmentResult{Ref: ref, Status: brokercontract.WorkspaceEnrollmentPending}, nil
+			},
+			ctx: func(parent context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(parent) },
+		},
+		{
+			name: "malformed response",
+			observe: func(context.Context, brokercontract.WorkspaceEnrollmentRef) (brokercontract.WorkspaceEnrollmentResult, error) {
+				return brokercontract.WorkspaceEnrollmentResult{}, nil
+			},
+			ctx: func(parent context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(parent) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, broker, created := newWorkspaceEnrollmentHTTPService(t, false)
+			if _, err := svc.ConnectWorkspaceServices(t.Context(), created.ID); err != nil {
+				t.Fatalf("begin enrollment: %v", err)
+			}
+			broker.attachment.observe = tc.observe
+			ctx, cancel := tc.ctx(t.Context())
+			if tc.name == "outer cancellation" {
+				cancel()
+			}
+			defer cancel()
+			_, err := svc.ConnectWorkspaceServices(ctx, created.ID)
+			if !errors.Is(err, ErrFailedPrecondition) || errors.Is(err, ErrWorkspaceEnrollmentObserveTimeout) {
+				t.Fatalf("ConnectWorkspaceServices error = %v, want legacy ErrFailedPrecondition without timeout sentinel", err)
+			}
+		})
+	}
 }
 
 func TestWorkspaceEnrollmentGRPCProjectsOnlyAggregateDenial(t *testing.T) {

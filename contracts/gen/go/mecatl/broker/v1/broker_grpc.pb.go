@@ -19,20 +19,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BrokerService_Attach_FullMethodName                     = "/mecatl.broker.v1.BrokerService/Attach"
-	BrokerService_Commit_FullMethodName                     = "/mecatl.broker.v1.BrokerService/Commit"
-	BrokerService_Abort_FullMethodName                      = "/mecatl.broker.v1.BrokerService/Abort"
-	BrokerService_Close_FullMethodName                      = "/mecatl.broker.v1.BrokerService/Close"
-	BrokerService_Delete_FullMethodName                     = "/mecatl.broker.v1.BrokerService/Delete"
-	BrokerService_Execute_FullMethodName                    = "/mecatl.broker.v1.BrokerService/Execute"
-	BrokerService_RequestAuthorization_FullMethodName       = "/mecatl.broker.v1.BrokerService/RequestAuthorization"
-	BrokerService_AbortAuthorization_FullMethodName         = "/mecatl.broker.v1.BrokerService/AbortAuthorization"
-	BrokerService_PresentAuthorization_FullMethodName       = "/mecatl.broker.v1.BrokerService/PresentAuthorization"
-	BrokerService_AuthorizationStatus_FullMethodName        = "/mecatl.broker.v1.BrokerService/AuthorizationStatus"
-	BrokerService_CancelAuthorization_FullMethodName        = "/mecatl.broker.v1.BrokerService/CancelAuthorization"
-	BrokerService_BeginWorkspaceEnrollment_FullMethodName   = "/mecatl.broker.v1.BrokerService/BeginWorkspaceEnrollment"
-	BrokerService_ObserveWorkspaceEnrollment_FullMethodName = "/mecatl.broker.v1.BrokerService/ObserveWorkspaceEnrollment"
-	BrokerService_CancelWorkspaceEnrollment_FullMethodName  = "/mecatl.broker.v1.BrokerService/CancelWorkspaceEnrollment"
+	BrokerService_Attach_FullMethodName                      = "/mecatl.broker.v1.BrokerService/Attach"
+	BrokerService_Commit_FullMethodName                      = "/mecatl.broker.v1.BrokerService/Commit"
+	BrokerService_Abort_FullMethodName                       = "/mecatl.broker.v1.BrokerService/Abort"
+	BrokerService_Close_FullMethodName                       = "/mecatl.broker.v1.BrokerService/Close"
+	BrokerService_Delete_FullMethodName                      = "/mecatl.broker.v1.BrokerService/Delete"
+	BrokerService_Execute_FullMethodName                     = "/mecatl.broker.v1.BrokerService/Execute"
+	BrokerService_RequestAuthorization_FullMethodName        = "/mecatl.broker.v1.BrokerService/RequestAuthorization"
+	BrokerService_AbortAuthorization_FullMethodName          = "/mecatl.broker.v1.BrokerService/AbortAuthorization"
+	BrokerService_PresentAuthorization_FullMethodName        = "/mecatl.broker.v1.BrokerService/PresentAuthorization"
+	BrokerService_AuthorizationStatus_FullMethodName         = "/mecatl.broker.v1.BrokerService/AuthorizationStatus"
+	BrokerService_CancelAuthorization_FullMethodName         = "/mecatl.broker.v1.BrokerService/CancelAuthorization"
+	BrokerService_BeginWorkspaceEnrollment_FullMethodName    = "/mecatl.broker.v1.BrokerService/BeginWorkspaceEnrollment"
+	BrokerService_ObserveWorkspaceEnrollment_FullMethodName  = "/mecatl.broker.v1.BrokerService/ObserveWorkspaceEnrollment"
+	BrokerService_CancelWorkspaceEnrollment_FullMethodName   = "/mecatl.broker.v1.BrokerService/CancelWorkspaceEnrollment"
+	BrokerService_StageCredentialCustody_FullMethodName      = "/mecatl.broker.v1.BrokerService/StageCredentialCustody"
+	BrokerService_CommitCredentialCustody_FullMethodName     = "/mecatl.broker.v1.BrokerService/CommitCredentialCustody"
+	BrokerService_RecoverCredentialAttachment_FullMethodName = "/mecatl.broker.v1.BrokerService/RecoverCredentialAttachment"
+	BrokerService_TombstoneCredentialCustody_FullMethodName  = "/mecatl.broker.v1.BrokerService/TombstoneCredentialCustody"
 )
 
 // BrokerServiceClient is the client API for BrokerService service.
@@ -82,6 +86,14 @@ type BrokerServiceClient interface {
 	ObserveWorkspaceEnrollment(ctx context.Context, in *ObserveWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*ObserveWorkspaceEnrollmentResponse, error)
 	// CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
 	CancelWorkspaceEnrollment(ctx context.Context, in *CancelWorkspaceEnrollmentRequest, opts ...grpc.CallOption) (*CancelWorkspaceEnrollmentResponse, error)
+	// StageCredentialCustody stages an exact completed protected enrollment.
+	StageCredentialCustody(ctx context.Context, in *StageCredentialCustodyRequest, opts ...grpc.CallOption) (*StageCredentialCustodyResponse, error)
+	// CommitCredentialCustody promotes one exact staged custody record.
+	CommitCredentialCustody(ctx context.Context, in *CommitCredentialCustodyRequest, opts ...grpc.CallOption) (*CommitCredentialCustodyResponse, error)
+	// RecoverCredentialAttachment creates fresh provisional state from current custody.
+	RecoverCredentialAttachment(ctx context.Context, in *RecoverCredentialAttachmentRequest, opts ...grpc.CallOption) (*RecoverCredentialAttachmentResponse, error)
+	// TombstoneCredentialCustody removes one exact custody record's authority.
+	TombstoneCredentialCustody(ctx context.Context, in *TombstoneCredentialCustodyRequest, opts ...grpc.CallOption) (*TombstoneCredentialCustodyResponse, error)
 }
 
 type brokerServiceClient struct {
@@ -232,6 +244,46 @@ func (c *brokerServiceClient) CancelWorkspaceEnrollment(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *brokerServiceClient) StageCredentialCustody(ctx context.Context, in *StageCredentialCustodyRequest, opts ...grpc.CallOption) (*StageCredentialCustodyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StageCredentialCustodyResponse)
+	err := c.cc.Invoke(ctx, BrokerService_StageCredentialCustody_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) CommitCredentialCustody(ctx context.Context, in *CommitCredentialCustodyRequest, opts ...grpc.CallOption) (*CommitCredentialCustodyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommitCredentialCustodyResponse)
+	err := c.cc.Invoke(ctx, BrokerService_CommitCredentialCustody_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) RecoverCredentialAttachment(ctx context.Context, in *RecoverCredentialAttachmentRequest, opts ...grpc.CallOption) (*RecoverCredentialAttachmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecoverCredentialAttachmentResponse)
+	err := c.cc.Invoke(ctx, BrokerService_RecoverCredentialAttachment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *brokerServiceClient) TombstoneCredentialCustody(ctx context.Context, in *TombstoneCredentialCustodyRequest, opts ...grpc.CallOption) (*TombstoneCredentialCustodyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TombstoneCredentialCustodyResponse)
+	err := c.cc.Invoke(ctx, BrokerService_TombstoneCredentialCustody_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BrokerServiceServer is the server API for BrokerService service.
 // All implementations must embed UnimplementedBrokerServiceServer
 // for forward compatibility.
@@ -279,6 +331,14 @@ type BrokerServiceServer interface {
 	ObserveWorkspaceEnrollment(context.Context, *ObserveWorkspaceEnrollmentRequest) (*ObserveWorkspaceEnrollmentResponse, error)
 	// CancelWorkspaceEnrollment cancels an exact enrollment; loss does not prove no cancel.
 	CancelWorkspaceEnrollment(context.Context, *CancelWorkspaceEnrollmentRequest) (*CancelWorkspaceEnrollmentResponse, error)
+	// StageCredentialCustody stages an exact completed protected enrollment.
+	StageCredentialCustody(context.Context, *StageCredentialCustodyRequest) (*StageCredentialCustodyResponse, error)
+	// CommitCredentialCustody promotes one exact staged custody record.
+	CommitCredentialCustody(context.Context, *CommitCredentialCustodyRequest) (*CommitCredentialCustodyResponse, error)
+	// RecoverCredentialAttachment creates fresh provisional state from current custody.
+	RecoverCredentialAttachment(context.Context, *RecoverCredentialAttachmentRequest) (*RecoverCredentialAttachmentResponse, error)
+	// TombstoneCredentialCustody removes one exact custody record's authority.
+	TombstoneCredentialCustody(context.Context, *TombstoneCredentialCustodyRequest) (*TombstoneCredentialCustodyResponse, error)
 	mustEmbedUnimplementedBrokerServiceServer()
 }
 
@@ -330,6 +390,18 @@ func (UnimplementedBrokerServiceServer) ObserveWorkspaceEnrollment(context.Conte
 }
 func (UnimplementedBrokerServiceServer) CancelWorkspaceEnrollment(context.Context, *CancelWorkspaceEnrollmentRequest) (*CancelWorkspaceEnrollmentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelWorkspaceEnrollment not implemented")
+}
+func (UnimplementedBrokerServiceServer) StageCredentialCustody(context.Context, *StageCredentialCustodyRequest) (*StageCredentialCustodyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method StageCredentialCustody not implemented")
+}
+func (UnimplementedBrokerServiceServer) CommitCredentialCustody(context.Context, *CommitCredentialCustodyRequest) (*CommitCredentialCustodyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CommitCredentialCustody not implemented")
+}
+func (UnimplementedBrokerServiceServer) RecoverCredentialAttachment(context.Context, *RecoverCredentialAttachmentRequest) (*RecoverCredentialAttachmentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RecoverCredentialAttachment not implemented")
+}
+func (UnimplementedBrokerServiceServer) TombstoneCredentialCustody(context.Context, *TombstoneCredentialCustodyRequest) (*TombstoneCredentialCustodyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TombstoneCredentialCustody not implemented")
 }
 func (UnimplementedBrokerServiceServer) mustEmbedUnimplementedBrokerServiceServer() {}
 func (UnimplementedBrokerServiceServer) testEmbeddedByValue()                       {}
@@ -604,6 +676,78 @@ func _BrokerService_CancelWorkspaceEnrollment_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BrokerService_StageCredentialCustody_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StageCredentialCustodyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).StageCredentialCustody(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_StageCredentialCustody_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).StageCredentialCustody(ctx, req.(*StageCredentialCustodyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_CommitCredentialCustody_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CommitCredentialCustodyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).CommitCredentialCustody(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_CommitCredentialCustody_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).CommitCredentialCustody(ctx, req.(*CommitCredentialCustodyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_RecoverCredentialAttachment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecoverCredentialAttachmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).RecoverCredentialAttachment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_RecoverCredentialAttachment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).RecoverCredentialAttachment(ctx, req.(*RecoverCredentialAttachmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BrokerService_TombstoneCredentialCustody_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TombstoneCredentialCustodyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BrokerServiceServer).TombstoneCredentialCustody(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BrokerService_TombstoneCredentialCustody_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BrokerServiceServer).TombstoneCredentialCustody(ctx, req.(*TombstoneCredentialCustodyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BrokerService_ServiceDesc is the grpc.ServiceDesc for BrokerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -666,6 +810,22 @@ var BrokerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelWorkspaceEnrollment",
 			Handler:    _BrokerService_CancelWorkspaceEnrollment_Handler,
+		},
+		{
+			MethodName: "StageCredentialCustody",
+			Handler:    _BrokerService_StageCredentialCustody_Handler,
+		},
+		{
+			MethodName: "CommitCredentialCustody",
+			Handler:    _BrokerService_CommitCredentialCustody_Handler,
+		},
+		{
+			MethodName: "RecoverCredentialAttachment",
+			Handler:    _BrokerService_RecoverCredentialAttachment_Handler,
+		},
+		{
+			MethodName: "TombstoneCredentialCustody",
+			Handler:    _BrokerService_TombstoneCredentialCustody_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

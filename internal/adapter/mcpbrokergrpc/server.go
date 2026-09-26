@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	brokerv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/broker/v1"
+	"github.com/stacklok/mecatl/engine/adapter/wallclock"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/mcpbroker"
@@ -26,6 +27,7 @@ type Server struct {
 	// Immutable dependencies and configuration, set before the server accepts RPCs.
 	service     mcpbroker.Service // Owns the underlying logical broker sessions.
 	diagnostics port.Diagnostics  // Receives safe operational RPC observations.
+	clock       port.Clock        // Supplies continuity-deadline validation time.
 	cfg         Config            // Validated deadlines, retention periods, and capacity limits.
 	// instanceID is generated when the Server is constructed. Clients echo it so a
 	// replacement server rejects requests tied to the lost process-local state.
@@ -33,12 +35,16 @@ type Server struct {
 
 	// mu protects the retained registries, their session-handle and owner state, the
 	// closed flag, and the execution/control counters below.
-	mu              sync.Mutex
-	handles         map[string]*serverHandle            // Process-local handles retained until expiry or shutdown cleanup.
-	owners          map[session.SessionID]*sessionOwner // Logical-session ownership retained beyond individual handles.
-	closed          bool                                // Rejects new work once Shutdown begins.
-	activeExecutes  int                                 // Dispatched executions counted against cfg.MaxActiveExecutes.
-	pendingControls int                                 // Lifecycle controls awaiting settlement.
+	mu                     sync.Mutex
+	handles                map[string]*serverHandle                    // Process-local handles retained until expiry or shutdown cleanup.
+	owners                 map[session.SessionID]*sessionOwner         // Logical-session ownership retained beyond individual handles.
+	continuityReceipts     map[continuityReceiptKey]*continuityReceipt // Bounded Stage/Recover retry receipts, cleared on expiry or shutdown.
+	continuityReceiptBytes int                                         // Reserved continuity receipt bytes.
+	continuityReceiptSlots int                                         // Reserved continuity receipt count.
+	continuityReceiptUsage map[[32]byte]continuityReceiptUsage         // Per-workload receipt capacity, preventing cross-workload starvation.
+	closed                 bool                                        // Rejects new work once Shutdown begins.
+	activeExecutes         int                                         // Dispatched executions counted against cfg.MaxActiveExecutes.
+	pendingControls        int                                         // Lifecycle controls awaiting settlement.
 
 	// Shutdown and cancellation machinery.
 	// stop requests sweeper shutdown; done closes after the sweeper exits.
@@ -49,6 +55,8 @@ type Server struct {
 	executeStop context.CancelFunc
 	// executeWG joins dispatched executions before session-handle cleanup.
 	executeWG sync.WaitGroup
+	// continuityWG joins receipt leaders before session-handle cleanup.
+	continuityWG sync.WaitGroup
 }
 
 // NewServer constructs one authoritative broker-process instance.
@@ -83,7 +91,7 @@ func NewServer(service mcpbroker.Service, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("mcpbrokergrpc: mint broker instance ID: %w", err)
 	}
 	executeCtx, executeStop := context.WithCancel(context.Background())
-	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
+	s := &Server{service: service, diagnostics: port.NopDiagnostics{}, clock: wallclock.Clock{}, cfg: cfg, instanceID: instanceID, handles: make(map[string]*serverHandle), owners: make(map[session.SessionID]*sessionOwner), continuityReceipts: make(map[continuityReceiptKey]*continuityReceipt), continuityReceiptUsage: make(map[[32]byte]continuityReceiptUsage), done: make(chan struct{}), stop: make(chan struct{}), executeCtx: executeCtx, executeStop: executeStop}
 	go s.sweep()
 	return s, nil
 }
@@ -98,6 +106,14 @@ func (s *Server) WithDiagnostics(diagnostics port.Diagnostics) *Server {
 	return s
 }
 
+// WithClock overrides the Server's clock; a nil clock leaves the current one in place.
+func (s *Server) WithClock(clock port.Clock) *Server {
+	if clock != nil {
+		s.clock = clock
+	}
+	return s
+}
+
 // TraceRPC records an operational RPC outcome. Callers must supply only
 // diagnostic-safe fields; authentication has already validated the principal.
 func (s *Server) TraceRPC(ctx context.Context, operation, outcome string, fields ...any) {
@@ -105,7 +121,12 @@ func (s *Server) TraceRPC(ctx context.Context, operation, outcome string, fields
 	if outcome != "success" {
 		level = port.LevelWarn
 	}
-	s.diagnostics.Log(ctx, level, "broker RPC", append([]any{"operation", operation, "outcome", outcome, "inbound_credential_kind", "workload_jwt"}, fields...)...)
+	attributes := []any{"operation", operation, "outcome", outcome}
+	if principal := session.PrincipalFromContext(ctx); principal != nil {
+		attributes = append(attributes, "principal", diagnosticPrincipalSubject(principal.Subject))
+	}
+	attributes = append(attributes, fields...)
+	s.diagnostics.Log(ctx, level, "broker RPC", attributes...)
 }
 
 func (s *Server) traceUnknownTool(ctx context.Context, a *serverHandle, requested string) {
@@ -119,7 +140,7 @@ func (s *Server) traceUnknownTool(ctx context.Context, a *serverHandle, requeste
 	if truncated {
 		names = names[:previewLimit]
 	}
-	s.TraceRPC(ctx, "execute", "unknown_tool", "tool", diagnosticToolName(requested), "registered_tool_count", len(a.tools), "registered_tool_preview", strings.Join(names, ","), "registered_tool_preview_truncated", truncated)
+	s.TraceRPC(ctx, "execute", "unknown_tool", "session", string(a.logicalID), "tool", diagnosticToolName(requested), "registered_tool_count", len(a.tools), "registered_tool_preview", strings.Join(names, ","), "registered_tool_preview_truncated", truncated)
 }
 
 func diagnosticToolName(name string) string {
@@ -129,6 +150,31 @@ func diagnosticToolName(name string) string {
 		return "[redacted]"
 	}
 	return name
+}
+
+func diagnosticPrincipalSubject(subject string) string {
+	const limit = 256
+	if len(subject) > limit || !utf8.ValidString(subject) {
+		return "[redacted]"
+	}
+	for _, r := range subject {
+		if r < 0x20 || r == 0x7f {
+			return "[redacted]"
+		}
+	}
+	return subject
+}
+
+// LogicalSessionForHandle returns the session identity bound to an attachment handle
+// for diagnostics. It never exposes the handle or binding itself.
+func (s *Server) LogicalSessionForHandle(handle string) (session.SessionID, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.handles[handle]
+	if a == nil {
+		return "", false
+	}
+	return a.logicalID, true
 }
 
 // ExecuteDeadline returns the server-side upper bound used for Execute calls.
@@ -158,23 +204,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 	clear(s.owners)
-	s.mu.Unlock()
-	for _, handle := range toClose {
-		closeCtx, cancel := context.WithTimeout(ctx, s.cfg.CleanupTimeout)
-		_, err := handle.sessionHandle.Close(closeCtx)
-		cancel()
-		if err != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
+	for key, receipt := range s.continuityReceipts {
+		s.settleExpiredContinuityReceiptLocked(key, receipt)
 	}
+	clear(s.continuityReceipts)
+	clear(s.continuityReceiptUsage)
+	s.continuityReceiptBytes = 0
+	s.continuityReceiptSlots = 0
+	s.mu.Unlock()
 	s.executeStop()
-	executeDone := make(chan struct{})
+	operationsDone := make(chan struct{})
 	go func() {
 		s.executeWG.Wait()
-		close(executeDone)
+		s.continuityWG.Wait()
+		close(operationsDone)
 	}()
 	select {
-	case <-executeDone:
+	case <-operationsDone:
 		s.mu.Lock()
 		for _, handle := range handles {
 			releaseReceiptsLocked(handle)
@@ -182,6 +228,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.mu.Unlock()
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+	for _, handle := range toClose {
+		closeCtx, cancel := context.WithTimeout(ctx, s.cfg.CleanupTimeout)
+		_, err := handle.sessionHandle.Close(closeCtx)
+		cancel()
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 	}
 	select {
 	case <-s.done:

@@ -78,8 +78,11 @@ type ToolHiveOAuth struct {
 	TokenEndpoint         string
 	ClientID              string
 	ClientSecretEnv       string
-	Scopes                []string
-	RequestRefreshToken   bool
+	// ClientSecretFile names a local file holding the client secret; if both
+	// this and ClientSecretEnv are set, ToolHive prefers the file.
+	ClientSecretFile    string
+	Scopes              []string
+	RequestRefreshToken bool
 	// DCRDiscoveryURL enables RFC 7591 registration through RFC 8414 metadata.
 	DCRDiscoveryURL string
 }
@@ -173,7 +176,7 @@ func toolHiveProviderKey(name string) (string, error) {
 func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authserver.UpstreamRunConfig, error) {
 	oauth := profile.OAuth
 	if oauth.DCRDiscoveryURL != "" {
-		if oauth.ClientID != "" || oauth.ClientSecretEnv != "" {
+		if oauth.ClientID != "" || oauth.ClientSecretEnv != "" || oauth.ClientSecretFile != "" {
 			return authserver.UpstreamRunConfig{}, fmt.Errorf("%w: protected upstream %q combines DCR with a client identity", ErrInvalidCatalogue, profile.Name)
 		}
 		if oauth.AuthorizationEndpoint == "" || oauth.TokenEndpoint == "" {
@@ -192,7 +195,7 @@ func toolHiveUpstream(profile ToolHiveProfile, provider, issuer string) (authser
 	}
 	redirect := issuer + "/oauth/callback"
 	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOIDC, OIDCConfig: &authserver.OIDCUpstreamRunConfig{
-		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretEnvVar: oauth.ClientSecretEnv,
+		IssuerURL: oauth.Issuer, ClientID: oauth.ClientID, ClientSecretEnvVar: oauth.ClientSecretEnv, ClientSecretFile: oauth.ClientSecretFile,
 		RedirectURI: redirect, Scopes: append([]string(nil), oauth.Scopes...),
 		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth),
 	}}, nil
@@ -205,7 +208,7 @@ func toolHiveOAuth2Upstream(profile ToolHiveProfile, provider, issuer string, dc
 	}
 	return authserver.UpstreamRunConfig{Name: provider, Type: authserver.UpstreamProviderTypeOAuth2, OAuth2Config: &authserver.OAuth2UpstreamRunConfig{
 		AuthorizationEndpoint: oauth.AuthorizationEndpoint, TokenEndpoint: oauth.TokenEndpoint, ClientID: oauth.ClientID,
-		ClientSecretEnvVar: oauth.ClientSecretEnv, RedirectURI: issuer + "/oauth/callback", Scopes: append([]string(nil), oauth.Scopes...),
+		ClientSecretEnvVar: oauth.ClientSecretEnv, ClientSecretFile: oauth.ClientSecretFile, RedirectURI: issuer + "/oauth/callback", Scopes: append([]string(nil), oauth.Scopes...),
 		AdditionalAuthorizationParams: toolHiveAdditionalAuthorizationParams(oauth), DCRConfig: dcr,
 	}}, nil
 }

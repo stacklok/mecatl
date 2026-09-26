@@ -23,8 +23,13 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	if req.GetSessionId() == "" {
 		return nil, invalid("session_id is required")
 	}
-	if err := s.checkInstanceID(req.GetBrokerIncarnation(), true); err != nil {
-		return nil, err
+	if req.GetExpectedBinding() != "" && req.GetBrokerIncarnation() != "" {
+		return nil, invalid("expected_binding and broker_incarnation are mutually exclusive")
+	}
+	if req.GetExpectedBinding() == "" {
+		if err := s.checkInstanceID(req.GetBrokerIncarnation(), true); err != nil {
+			return nil, err
+		}
 	}
 	logicalID := session.SessionID(req.GetSessionId())
 	if !mcpbroker.ValidLogicalSessionID(logicalID) {
@@ -33,7 +38,11 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	var principal *session.Principal
 	var owner *sessionOwner
 	var err error
-	principal, owner, err = s.bindSession(ctx, logicalID)
+	if req.GetExpectedBinding() != "" {
+		principal, owner, err = s.bindExistingSession(ctx, logicalID)
+	} else {
+		principal, owner, err = s.bindSession(ctx, logicalID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -41,9 +50,25 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 	defer func() { s.finishSessionBind(logicalID, owner, attached) }()
 	var a mcpbroker.Attachment
 	var outcome mcpbroker.AttachOutcome
-	a, outcome, err = s.service.AttachSession(ctx, logicalID)
+	if expected := session.ExternalBinding(req.GetExpectedBinding()); expected != "" {
+		attacher, ok := s.service.(mcpbroker.ExpectedBindingAttacher)
+		if !ok {
+			return nil, continuityUnavailable()
+		}
+		a, outcome, err = attacher.AttachSessionExpectedBinding(ctx, logicalID, expected)
+	} else {
+		a, outcome, err = s.service.AttachSession(ctx, logicalID)
+	}
 	if err != nil {
 		return nil, brokerStatus(err)
+	}
+	if req.GetExpectedBinding() != "" && outcome != mcpbroker.AttachReattached && outcome != mcpbroker.AttachRecoveredProvisional {
+		s.discardUnpublishedHandle(a, outcome)
+		return nil, invalid("invalid expected-binding attach outcome")
+	}
+	if req.GetExpectedBinding() == "" && outcome == mcpbroker.AttachRecoveredProvisional {
+		s.discardUnpublishedHandle(a, outcome)
+		return nil, invalid("invalid attach outcome")
 	}
 	desc, tools, err := descriptors(a.Tools())
 	if err != nil {
@@ -69,20 +94,22 @@ func (s *Server) Attach(ctx context.Context, req *brokerv1.AttachRequest) (*brok
 		s.discardUnpublishedHandle(a, outcome)
 		return nil, reasonStatus(codes.Unavailable, "broker session is being retired", brokerv1.BrokerErrorReason_BROKER_ERROR_REASON_STATE_UNAVAILABLE, "")
 	}
-	if owner != nil {
+	if owner != nil && outcome != mcpbroker.AttachRecoveredProvisional {
 		owner.published = true
 	}
+	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentAttachment)
+	advertiser, advertises := a.(mcpbroker.CredentialContinuityAdvertiser)
+	continuity := advertises && advertiser.CredentialContinuity()
 	now := time.Now()
 	s.handles[h] = &serverHandle{sessionHandle: a, principal: principal, logicalID: logicalID, owner: owner, binding: string(a.Binding()), tools: tools, expiresAt: now.Add(s.cfg.HandleIdleTimeout), changed: make(chan struct{}), receipts: make(map[session.ToolCallID]*executeReceipt)}
 	attached = true
-	_, enrollment := a.(mcpbroker.WorkspaceEnrollmentAttachment)
-	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.instanceID, WorkspaceEnrollment: enrollment}, nil
+	return &brokerv1.AttachResponse{Binding: string(a.Binding()), Handle: h, Outcome: string(outcome), Tools: desc, BrokerIncarnation: s.instanceID, WorkspaceEnrollment: enrollment, CredentialContinuity: continuity}, nil
 }
 
 func (s *Server) discardUnpublishedHandle(handle mcpbroker.Attachment, outcome mcpbroker.AttachOutcome) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.CleanupTimeout)
 	defer cancel()
-	if outcome == mcpbroker.AttachCreated {
+	if outcome == mcpbroker.AttachCreated || outcome == mcpbroker.AttachRecoveredProvisional {
 		_ = handle.Abort(ctx)
 		return
 	}
