@@ -1290,6 +1290,9 @@ type Config struct {
 	// is a REAL nil interface and "nil resolver behaves like NewPolicy" holds).
 	// Unexported: an internal composition detail, not an operator knob.
 	permResolver permpolicy.RuleResolver
+	// commitCoauthor is the resolved operator-only standard-prompt setting. Nil
+	// retains prompt.Config's enabled-by-default behavior.
+	commitCoauthor *bool
 	// childPermResolver is permResolver PINNED to the SERVER workspace root
 	// (issue #32): child/member/branch engines run over forked workspaces, and
 	// project permission rules must resolve from the server root, never from
@@ -1625,6 +1628,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// the child deps builders (the workspace-PINNED child resolver) consume the
 	// SAME instance — one discovery pass, one cache, no per-consumer drift.
 	cfg.permResolver = buildPermResolver(cfg)
+	cfg = foldOperatorCommitCoauthor(cfg)
 	cfg.childPermResolver = buildChildPermResolver(cfg)
 	registerHarnessCompatibility(&cfg)
 	if section, err := validateHarnessPolicy(cfg); err != nil {
@@ -8937,6 +8941,7 @@ func lookupMemberDef(d port.Diagnostics, reg *agents.Registry, spec agent.Member
 // spawn never re-runs git on the hot path (FIX 2).
 func promptConfig(cfg Config, gitStatus string) prompt.Config {
 	pc := prompt.Config{
+		CommitCoauthor: cfg.commitCoauthor,
 		Env: prompt.Env{
 			Cwd:       cfg.Workspace,
 			OS:        runtime.GOOS,
@@ -8953,6 +8958,19 @@ func promptConfig(cfg Config, gitStatus string) prompt.Config {
 		pc.Role = prompt.DefaultRole() + "\n\n" + d
 	}
 	return pc
+}
+
+// foldOperatorCommitCoauthor carries the already-resolved OPERATOR-TIER
+// system_prompt.commit_coauthor setting into shared prompt composition. Nil retains
+// prompt.Config's enabled-by-default behavior; project-tier values never reach the
+// resolver accessor.
+func foldOperatorCommitCoauthor(cfg Config) Config {
+	res, ok := cfg.permResolver.(*permconfig.Resolver)
+	if !ok || res == nil {
+		return cfg
+	}
+	cfg.commitCoauthor = res.OperatorCommitCoauthor()
+	return cfg
 }
 
 // foldOperatorReasoningEffort merges the OPERATOR-TIER `reasoning-effort:` YAML
