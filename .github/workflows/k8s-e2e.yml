@@ -132,7 +132,7 @@ jobs:
       # or well-formed. Match the Helm version used to package releases.
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.18.4
+          version: v3.22.0
 
       - name: Install deploy manifest validators
         run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
@@ -210,7 +210,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.18.4
+          version: v3.22.0
       - name: Install pinned Kind and ko
         run: |
           go install sigs.k8s.io/kind@v0.33.0
