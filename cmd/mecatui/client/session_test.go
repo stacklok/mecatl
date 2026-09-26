@@ -1,7 +1,15 @@
 package client
 
 import (
+	"context"
+	"net"
 	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
 )
@@ -19,11 +27,76 @@ func TestSnapshotFromUsesSessionMediaCapabilities(t *testing.T) {
 	}
 }
 
+type sessionCapabilitiesServer struct {
+	mecatlv1.UnimplementedHarnessServiceServer
+	global       *mecatlv1.ServerCapabilities
+	globalErr    error
+	sessionMedia *mecatlv1.SessionCapabilities
+}
+
+func (s *sessionCapabilitiesServer) GetCompatibilityInfo(context.Context, *mecatlv1.GetCompatibilityInfoRequest) (*mecatlv1.GetCompatibilityInfoResponse, error) {
+	if s.globalErr != nil {
+		return nil, s.globalErr
+	}
+	return &mecatlv1.GetCompatibilityInfoResponse{ApiMajor: 1, Capabilities: s.global}, nil
+}
+
+func (s *sessionCapabilitiesServer) GetSession(context.Context, *mecatlv1.GetSessionRequest) (*mecatlv1.GetSessionResponse, error) {
+	return &mecatlv1.GetSessionResponse{Session: &mecatlv1.Session{SessionId: "resume-session", SessionCapabilities: s.sessionMedia}}, nil
+}
+
+func newSessionCapabilitiesClient(t *testing.T, server *sessionCapabilitiesServer) *Client {
+	t.Helper()
+	listener := bufconn.Listen(1 << 20)
+	grpcServer := grpc.NewServer()
+	mecatlv1.RegisterHarnessServiceServer(grpcServer, server)
+	go func() { _ = grpcServer.Serve(listener) }()
+	t.Cleanup(grpcServer.Stop)
+
+	conn, err := grpc.NewClient("passthrough:///session-capabilities", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+		return listener.Dial()
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return &Client{svc: mecatlv1.NewHarnessServiceClient(conn)}
+}
+
+func TestGetSessionCapabilitiesOverlaysSessionMediaOnGlobalAdvertisement(t *testing.T) {
+	cl := newSessionCapabilitiesClient(t, &sessionCapabilitiesServer{
+		global:       &mecatlv1.ServerCapabilities{Steer: true, Teams: true, Image: true, Audio: true},
+		sessionMedia: &mecatlv1.SessionCapabilities{Audio: true},
+	})
+
+	snapshot, err := cl.GetSession(t.Context(), "resume-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Capabilities.Steer || !snapshot.Capabilities.Teams || snapshot.Capabilities.Image || !snapshot.Capabilities.Audio || !snapshot.Capabilities.SessionMediaPresent {
+		t.Fatalf("resume capabilities = %+v", snapshot.Capabilities)
+	}
+}
+
+func TestGetSessionCapabilitiesFallsBackWhenCompatibilityInfoIsUnavailable(t *testing.T) {
+	cl := newSessionCapabilitiesClient(t, &sessionCapabilitiesServer{
+		globalErr:    status.Error(codes.Unimplemented, "older server"),
+		sessionMedia: &mecatlv1.SessionCapabilities{Image: true},
+	})
+
+	snapshot, err := cl.GetSession(t.Context(), "resume-session")
+	if err != nil {
+		t.Fatalf("GetSession returned compatibility error: %v", err)
+	}
+	if !snapshot.Capabilities.Image || snapshot.Capabilities.Audio || !snapshot.Capabilities.SessionMediaPresent || snapshot.Capabilities.Steer || snapshot.Capabilities.Teams {
+		t.Fatalf("older-server resume capabilities = %+v", snapshot.Capabilities)
+	}
+}
+
 // TestSnapshotFromReadsState asserts snapshotFrom projects the proto Session's
 // State field (issue #245 Phase 1) — the picker row needs it to render an
 // "open existing session" affordance. Covers the populated and nil cases.
 func TestSnapshotFromReadsState(t *testing.T) {
-	// Populated: a completed session carries its state through.
 	snap := snapshotFrom(&mecatlv1.Session{State: "completed"})
 	if snap.State != "completed" {
 		t.Fatalf("State = %q, want %q", snap.State, "completed")

@@ -214,11 +214,12 @@ reduces an oversized log to its most recent 10 MiB. An unsafe path disables
 logging without changing the existing file.
 
 Use `/diagnostics` to send a concise, sanitized bug-report snapshot through the
-normal prompt path. It includes build identities and available display
-information for the connection target and active provider. It excludes
-credentials, TLS and authentication settings, raw errors, and other
-configuration. A `mecatui connect` client does not write an equivalent local
-server log; inspect the remote server's operator logs instead.
+normal prompt path. It includes build identities, available display information
+for the connection target and active provider, a compact capability snapshot
+currently advertised to the client, and whether a Converse stream is currently
+attached. It excludes credentials, TLS and authentication settings, raw errors,
+and other configuration. A `mecatui connect` client does not write an equivalent
+local server log; inspect the remote server's operator logs instead.
 
 For exhaustive flags and failure behavior, see
 [`docs/tui.md`](https://github.com/stacklok/mecatl/blob/main/docs/tui.md).

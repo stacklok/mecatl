@@ -63,6 +63,10 @@ func TestDebugLaunchPrependsAutomaticRemoteDiagnosticsToFirstTurn(t *testing.T) 
 	}
 	m = m0.(Model)
 	msg := lookup().(diagnosticsMsg)
+	wantPrompt := debuggerInitialPrompt(
+		m.diagnosticsReport(info.info.BuildID, info.info.ServerImplementation, info.info.DisplayServerEndpoint, info.info.LLMProviderDisplayEndpoint, "ok"),
+		"Why did it fail?",
+	)
 	m0, submit := m.Update(msg)
 	m = m0.(Model)
 	runBatchLeaves(submit)
@@ -71,10 +75,6 @@ func TestDebugLaunchPrependsAutomaticRemoteDiagnosticsToFirstTurn(t *testing.T) 
 		t.Fatalf("lookup calls/first turns = %d/%d, want 1/1", info.calls, len(frames))
 	}
 	got := frames[0].GetPrompt().GetText()
-	wantPrompt := debuggerInitialPrompt(
-		m.diagnosticsReport(info.info.BuildID, info.info.ServerImplementation, info.info.DisplayServerEndpoint, info.info.LLMProviderDisplayEndpoint, "ok"),
-		"Why did it fail?",
-	)
 	if got != wantPrompt {
 		t.Fatalf("first debugger turn differs from objective-first contract:\n--- got ---\n%s\n--- want ---\n%s", got, wantPrompt)
 	}
@@ -168,9 +168,47 @@ func TestDiagnosticsCommandSendsSafeRemoteReport(t *testing.T) {
 			t.Errorf("report missing %q:\n%s", want, got)
 		}
 	}
-	const expectedLines = 12
+	const expectedLines = 14
 	if lines := strings.Split(got, "\n"); len(lines) != expectedLines {
 		t.Fatalf("report has %d lines, want the %d-line allowlist: %q", len(lines), expectedLines, got)
+	}
+}
+
+func TestDiagnosticsReportsCapabilitiesAndConverseStreamState(t *testing.T) {
+	caps := client.Capabilities{
+		MCPConnectorStatus: true, MCPRefresh: true, MCP: true, SlashCommands: true, Memory: true, Skills: true, Teams: true, Agents: true,
+		Shell: true, Soul: true, UserModel: true, ModelSelection: true, Image: true, Audio: true, Posture: "yolo", Worktrees: true,
+		Scheduling: true, Reflection: true, LearningProposals: true, LearnedSkills: true, StorageHealth: true, StorageCleanup: true,
+		ManualDream: &client.ManualDreamCapabilities{
+			ProjectMemory: client.DreamTargetCapability{Generate: true, Decide: true},
+			UserModel:     client.DreamTargetCapability{Generate: true},
+		},
+		Steer: true, ManualCompaction: true, SessionDebug: true, DebugMCP: true, WorkspaceEnrollment: true, SessionMediaPresent: true,
+	}
+	m, _ := builtinDispatchModel(t, caps, false)
+	m.stream = client.NewStream(nil, nil)
+
+	report := m.diagnosticsReport("", "", "", "", "embedded")
+	const wantCaps = "caps: +mcp_connector_status +mcp_refresh +mcp +slash_commands +memory +skills +teams +agents +shell +soul +user_model +model_selection +image +audio +worktrees +scheduling +reflection +learning_proposals +learned_skills +storage_health +storage_cleanup +manual_dream_advertised +manual_dream_project_memory_generate +manual_dream_project_memory_decide +manual_dream_user_model_generate -manual_dream_user_model_decide +steer +manual_compaction +session_debug +debug_mcp +workspace_enrollment +session_media_present posture=yolo"
+	for _, want := range []string{wantCaps, "Converse stream: connected"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report missing %q: %q", want, report)
+		}
+	}
+
+	m.caps = client.Capabilities{}
+	m.stream = nil
+	report = m.diagnosticsReport("", "", "", "", "embedded")
+	for _, want := range []string{
+		"caps: -mcp_connector_status -mcp_refresh -mcp",
+		"-manual_dream_advertised",
+		"-steer",
+		"-workspace_enrollment -session_media_present posture=unavailable",
+		"Converse stream: unavailable",
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("report missing %q: %q", want, report)
+		}
 	}
 }
 

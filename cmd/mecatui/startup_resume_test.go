@@ -50,6 +50,7 @@ func TestResumeLatestLoaderPreservesStatusSnapshot(t *testing.T) {
 		ResolvedModel:    client.ResolvedModel{ContextWindow: 200_000},
 		Usage:            client.Usage{InputTokens: 120_000, OutputTokens: 4_000, CacheReadTokens: 90_000},
 		ContextOccupancy: &client.ContextOccupancy{InputTokens: 40_000, Estimated: true},
+		Capabilities:     client.Capabilities{Steer: true},
 	}
 	source := &fakeStartupResumeSource{
 		rows: []client.SessionListItem{
@@ -68,7 +69,7 @@ func TestResumeLatestLoaderPreservesStatusSnapshot(t *testing.T) {
 	if selection == nil || selection.Row.ID != "status-chat" {
 		t.Fatalf("resume-latest selection = %+v, want status-chat", selection)
 	}
-	if selection.Snapshot.Usage != want.Usage || selection.Snapshot.ResolvedModel != want.ResolvedModel ||
+	if selection.Snapshot.Usage != want.Usage || selection.Snapshot.ResolvedModel != want.ResolvedModel || selection.Snapshot.Capabilities != want.Capabilities ||
 		selection.Snapshot.ContextOccupancy == nil || *selection.Snapshot.ContextOccupancy != *want.ContextOccupancy {
 		t.Fatalf("startup selection status = %+v, want %+v", selection.Snapshot, want)
 	}

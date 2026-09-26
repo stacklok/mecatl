@@ -87,11 +87,10 @@ type Capabilities struct {
 	SessionMediaPresent bool
 }
 
-// capabilitiesWithSessionMedia overlays the selected session's media support while
+// capabilitiesWithSessionMediaFrom overlays the selected session's media support while
 // retaining server-wide feature bits. A nil session capability is an older-server
 // response, so the global media values remain unchanged.
-func capabilitiesWithSessionMedia(global *mecatlv1.ServerCapabilities, sessionCaps *mecatlv1.SessionCapabilities) Capabilities {
-	caps := capabilitiesFrom(global)
+func capabilitiesWithSessionMediaFrom(caps Capabilities, sessionCaps *mecatlv1.SessionCapabilities) Capabilities {
 	if sessionCaps != nil {
 		caps.Image = sessionCaps.GetImage()
 		caps.Audio = sessionCaps.GetAudio()
