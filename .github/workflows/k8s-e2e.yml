@@ -104,6 +104,10 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.18.4
+
       # Validate the chart's default + oidc.enabled renders before the runtime
       # suite. The Dex fixture adds its test-only private-issuer relaxation
       # imperatively, so it cannot prove the operator-facing chart remains safe
