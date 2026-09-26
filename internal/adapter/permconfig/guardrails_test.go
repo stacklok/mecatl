@@ -13,6 +13,23 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
+func TestExperimentalJevGuardrailsSchema(t *testing.T) {
+	valid, err := parseYAML([]byte("guardrails:\n  backend: jev\n  jev:\n    model: jev-1.13.0\n"))
+	if err != nil || valid.Guardrails == nil || valid.Guardrails.Backend != "jev" || valid.Guardrails.Jev == nil || valid.Guardrails.Jev.Model != "jev-1.13.0" {
+		t.Fatalf("Jev config: %#v, %v", valid.Guardrails, err)
+	}
+	for _, body := range []string{
+		"guardrails:\n  backend: jev\n  jev:\n    moddel: typo\n",
+		"guardrails:\n  backend: llm\n  jev:\n    model: jev-1.13.0\n",
+		"guardrails:\n  backend: jev\n  jev:\n    model: future-model\n",
+		"guardrails:\n  backend: typo\n",
+	} {
+		if _, err := parseYAML([]byte(body)); err == nil {
+			t.Fatalf("accepted invalid guardrails: %s", body)
+		}
+	}
+}
+
 const operatorGuardrailsYAML = `
 guardrails:
   model: "gpt-5"

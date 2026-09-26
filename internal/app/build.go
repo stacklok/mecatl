@@ -64,6 +64,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/forker"
 	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
+	"github.com/stacklok/mecatl/internal/adapter/jevguardrail"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/k8slease"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
@@ -798,7 +799,13 @@ type Config struct {
 	// on the session's provider, same-provider only — the SubagentModel discipline).
 	// Empty disables guardrails. Build normalizes it once (normalizeGuardrailsModel)
 	// and FAILS FAST on a value that does not resolve to a usable model id.
-	GuardrailsModel string
+	// GuardrailsBackend selects the experimental native Jev checker or the default LLM checker.
+	GuardrailsBackend     string
+	GuardrailsJevModel    string
+	GuardrailsJevBaseURL  string // test-only endpoint override; empty uses the Typesafe endpoint.
+	guardrailsJevAuthored bool
+	guardrailJev          *jevguardrail.Driver
+	GuardrailsModel       string
 	// GuardrailsRules is the operator-tier rule list (matcher + phases + mode +
 	// per-rule prompt + fail-closed). Empty disables guardrails. Sourced only from
 	// the operator tier (user-global YAML + CLI), never the project file.
@@ -1992,6 +1999,25 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, err
 	}
 	cfg.GuardrailsModel = guardrailsModel
+	if cfg.GuardrailsBackend != "" && cfg.GuardrailsBackend != "llm" && cfg.GuardrailsBackend != guardrailBackendJev {
+		return nil, fmt.Errorf("guardrails.backend must be llm or jev")
+	}
+	if cfg.GuardrailsBackend != guardrailBackendJev && cfg.guardrailsJevAuthored {
+		return nil, fmt.Errorf("guardrails.jev requires backend: jev")
+	}
+	if cfg.GuardrailsBackend == guardrailBackendJev && !cfg.GuardrailsDisabled {
+		if cfg.GuardrailsModel != "" || cfg.GuardrailSlot != nil || strings.TrimSpace(cfg.ModelSlots[slotGuardrail]) != "" {
+			return nil, fmt.Errorf("guardrails.backend jev conflicts with LLM guardrail model/slot")
+		}
+		if cfg.GuardrailsJevModel != "" && cfg.GuardrailsJevModel != jevguardrail.Model {
+			return nil, fmt.Errorf("unsupported guardrails.jev.model")
+		}
+		client := withRootSessionCorrelation(&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }})
+		cfg.guardrailJev, err = jevguardrail.New(cfg.TypesafeAPIKey, cfg.GuardrailsJevModel, cfg.GuardrailsJevBaseURL, client)
+		if err != nil {
+			return nil, err
+		}
+	}
 	guardrailProviderID, guardrailModel, guardrailSrc, guardrailConfigured, err := resolveGuardrailBinding(cfg, reg)
 	if err != nil {
 		return nil, err
@@ -5343,6 +5369,9 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 		provenance = fmt.Sprintf("via slot `guardrail`, supersedes gate value %q", strings.TrimSpace(cfg.GuardrailsModel))
 	case srcGate:
 		provenance = "via --guardrails-model"
+		if cfg.GuardrailsBackend == guardrailBackendJev {
+			provenance = "via experimental guardrails.backend: jev"
+		}
 	}
 	// Mode is the highest-severity mode across the RESOLVED specs — for BOTH the
 	// default-set and explicit-rule branches. The default set is block (ADR 0060), so

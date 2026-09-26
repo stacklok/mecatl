@@ -61,6 +61,9 @@
 #| ENABLE: Configuring `model:` ENABLES guardrails; `disabled: true` is the kill-switch
 #| (the CLI --guardrails=off also sets it).
 # guardrails:
+#   # Backend is experimental; jev opts in to a native System One checker.
+#   backend: ""
+#   jev: ""
 #   # Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to
 #   # supply it; a value here is overridden by the CLI flag when both are set.
 #   # ENABLE: Setting a model here ENABLES contextual guardrails. A configured model with
