@@ -57,6 +57,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/anthropicsub"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
 	"github.com/stacklok/mecatl/internal/adapter/dream"
@@ -324,6 +325,25 @@ type Config struct {
 	// envDetector. Its effective compatible/proxy endpoint comes from
 	// ProviderOverrides.
 	AnthropicKey string
+
+	// AnthropicSubscription opts INTO authenticating the native Anthropic
+	// provider with a Claude Pro/Max sign-in instead of an API key. When set
+	// and no API key resolves, the provider is registered with the
+	// subscription transport, which carries the grant and reshapes the request
+	// accordingly.
+	//
+	// An explicitly configured API key takes precedence: an operator who
+	// supplied a key is asking for that billing identity, so a stored sign-in
+	// never silently redirects their spend. The ZERO VALUE is nil, which
+	// leaves every existing Config on the API-key path.
+	AnthropicSubscription anthropicsub.CredentialSource
+
+	// OpenAICodexSubscription opts INTO authenticating the Codex provider
+	// with a ChatGPT sign-in that renews itself, instead of the immutable
+	// manual token OpenAICodexCredential carries. When set it takes
+	// precedence over that snapshot, because a renewable grant cannot
+	// expire out from under the process. The ZERO VALUE is nil.
+	OpenAICodexSubscription openaicodex.CredentialSource
 
 	// ToolhiveLLM (issue #262) opts INTO auto-detecting a locally-running
 	// ToolHive LLM gateway proxy: reading ToolHive's own config file (via the

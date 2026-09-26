@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
@@ -63,7 +64,7 @@ func resolveProviderDefaultWithContext(ctx context.Context, provider, model stri
 	}
 	nativeLoader := &cliconfig.NativeEndpointLoader{}
 	defer func() { _ = nativeLoader.Close() }()
-	resolvedProvider, resolvedModel, err := app.ResolveDeploymentDefault(ctx, app.Config{
+	cfg := app.Config{
 		DefaultProvider:                provider,
 		DefaultModel:                   model,
 		ModelAliases:                   inspection.aliases,
@@ -76,7 +77,17 @@ func resolveProviderDefaultWithContext(ctx context.Context, provider, model stri
 		OpenAICodexCredential:          inspection.credentials.OpenAICodex,
 		NativeEndpointCredentialLoader: nativeLoader,
 		ToolhiveLLM:                    true,
-	})
+	}
+	// A stored subscription sign-in is a provider path here exactly as it is at
+	// startup. The registry registers openai-codex only from a sign-in or a
+	// manual token, so without this a signed-in operator is refused the Codex
+	// default with an API-key-only message. A store failure is reported and
+	// resolution continues: an API-key default must not become unroutable
+	// because the credential store is unreadable.
+	if err := cliconfig.AttachSubscriptionCredentials(ctx, &cfg); err != nil {
+		slog.Warn("subscription sign-in could not be loaded", "error", err)
+	}
+	resolvedProvider, resolvedModel, err := app.ResolveDeploymentDefault(ctx, cfg)
 	if err == nil && preservedModel != "" {
 		resolvedModel = preservedModel
 	}

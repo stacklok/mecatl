@@ -1151,3 +1151,83 @@ func assertSecurityHeaders(t *testing.T, header http.Header) {
 		}
 	}
 }
+
+func TestSubscriptionRedirectsAreAccepted(t *testing.T) {
+	for redirect, want := range map[string]fixedRedirectConfig{
+		CodexRedirectURL:     {address: "127.0.0.1:1455", host: "localhost:1455", path: "/auth/callback", companion: "[::1]:1455"},
+		AnthropicRedirectURL: {address: "127.0.0.1:54545", host: "localhost:54545", path: "/callback", companion: "[::1]:54545"},
+	} {
+		if _, err := New(Options{RedirectURL: redirect}); err != nil {
+			t.Fatalf("rejected redirect %q: %v", redirect, err)
+		}
+		got, ok := fixedRedirect(redirect)
+		if !ok || got != want {
+			t.Fatalf("fixedRedirect(%q) = %#v, %v; want %#v", redirect, got, ok, want)
+		}
+	}
+}
+
+// A name-hosted redirect must accept the callback on every loopback family the
+// browser can resolve it to. Before the companion listener existed the flow
+// bound IPv4 only, so a browser that resolved localhost to ::1 never reached
+// it and the login hung until cancellation.
+func TestNameHostedRedirectAcceptsIPv6Callback(t *testing.T) {
+	probe, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skip("no usable IPv6 loopback on this host")
+	}
+	_ = probe.Close()
+
+	fixed, _ := fixedRedirect(CodexRedirectURL)
+	if held, err := net.Listen("tcp4", fixed.address); err != nil {
+		t.Skipf("callback port %s is already in use", fixed.address)
+	} else {
+		_ = held.Close()
+	}
+
+	var response responseSnapshot
+	launcher := launcherFunc(func(_ context.Context, _ string) error {
+		// Deliberately dial the IPv6 literal while presenting the advertised
+		// name in Host, exactly as a browser resolving localhost to ::1 does.
+		req, reqErr := http.NewRequest(http.MethodGet, "http://"+fixed.companion+fixed.path+"?code=code-canary&state=state-canary", nil)
+		if reqErr != nil {
+			return reqErr
+		}
+		req.Host = fixed.host
+		response = request(t, req)
+		return nil
+	})
+
+	runtime, err := New(Options{Launcher: launcher, RedirectURL: CodexRedirectURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runtime.Authorize(t.Context(), testIssuer, func(ctx context.Context, gotRedirect string, present func(context.Context, string) (Result, error)) error {
+		if gotRedirect != CodexRedirectURL {
+			t.Fatalf("redirect = %q, want the pinned %q", gotRedirect, CodexRedirectURL)
+		}
+		result, presentErr := present(ctx, "https://auth.openai.com/oauth/authorize?state=state-canary")
+		if presentErr != nil {
+			return presentErr
+		}
+		if result.Code != "code-canary" || result.State != "state-canary" {
+			t.Fatalf("result = %#v", result)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.status != http.StatusOK {
+		t.Fatalf("IPv6 callback status = %d, want 200", response.status)
+	}
+
+	// Both listeners must be released, not just the primary.
+	for _, address := range [][2]string{{"tcp4", fixed.address}, {"tcp6", fixed.companion}} {
+		listener, listenErr := net.Listen(address[0], address[1])
+		if listenErr != nil {
+			t.Fatalf("%s %s was not released: %v", address[0], address[1], listenErr)
+		}
+		_ = listener.Close()
+	}
+}

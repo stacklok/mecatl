@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
@@ -25,6 +26,8 @@ const (
 	providerOpenRouterID  = "openrouter"
 	providerClassBuiltin  = "built-in"
 	openAICodexEndpointID = "openai-codex"
+	// providerNextReady is the next step for a provider that needs nothing more.
+	providerNextReady = "ready to use"
 )
 
 type providerStatus struct {
@@ -122,7 +125,7 @@ func (c providerCommands) statuses(ctx context.Context, inspection providerInspe
 	if keys.OpenRouter == "" && inspection.sources[providerOpenRouterID] == "OPENAI_API_KEY (environment fallback)" {
 		keys.OpenRouter = keys.OpenAI
 	}
-	statuses := builtinProviderStatuses(keys, inspection.shadowed)
+	statuses := builtinProviderStatuses(keys, inspection.shadowed, inspection.selectedProvider)
 	if !includeUnconfiguredBuiltin {
 		statuses = slices.DeleteFunc(statuses, func(status providerStatus) bool {
 			return status.Class == providerClassBuiltin && !status.Configured && status.Name != inspection.selectedProvider && (status.Name != openAICodexEndpointID || keys.AuthFileWarning == "")
@@ -142,7 +145,7 @@ func (c providerCommands) statuses(ctx context.Context, inspection providerInspe
 			status.Auth, status.Next = c.oidcStatus(ctx, definition)
 			status.Configured = status.Auth == "OIDC enrolled"
 		} else if status.Configured {
-			status.Next = "select a default with `mecatui providers set-default " + id + "`"
+			status.Next = providerNextReady
 		} else if definition.Auth.Method == providerAuthAPIKey {
 			status.Next = "run `mecatui providers login " + id + "`"
 		}
@@ -289,7 +292,7 @@ func (c providerCommands) oidcStatus(ctx context.Context, definition permconfig.
 	defer func() { _ = runtime.Close() }()
 	switch runtime.Status(ctx) {
 	case llmendpoint.StatusUsable:
-		return "OIDC enrolled", "ready to use"
+		return "OIDC enrolled", providerNextReady
 	case llmendpoint.StatusNotEnrolled:
 		return "OIDC not enrolled", "run `mecatui providers login " + definition.ID + "`"
 	case llmendpoint.StatusExpired:
@@ -299,12 +302,13 @@ func (c providerCommands) oidcStatus(ctx context.Context, definition permconfig.
 	}
 }
 
-func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[string]bool) []providerStatus {
+func builtinProviderStatuses(keys cliconfig.ResolvedCredentials, shadowed map[string]bool, selectedProvider string) []providerStatus {
 	statuses := make([]providerStatus, 0, len(stockAPIKeyProviders)+1)
 	for _, provider := range stockAPIKeyProviders {
 		statuses = append(statuses, builtinAPIKeyStatus(provider, shadowed[provider.id], keys))
 	}
-	return append(statuses, codexProviderStatus(keys))
+	statuses = append(statuses, codexProviderStatus(keys))
+	return applyStoredSubscriptions(keys, statuses, selectedProvider)
 }
 
 func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
@@ -314,8 +318,62 @@ func codexProviderStatus(keys cliconfig.ResolvedCredentials) providerStatus {
 	} else if keys.AuthFileWarning != "" {
 		auth = "manual subscription token invalid or expired"
 	}
-	return providerStatus{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: "manual", Configured: keys.HasOpenAICodex(), Auth: auth, DefaultModel: "explicit model selector required", Next: "see manual OpenAI Codex token guidance at https://mecatl.dev/docs/features/choose-models#reuse-a-manual-openai-codex-token; no login, refresh, import, or removal here"}
+	return providerStatus{Name: openAICodexEndpointID, Class: providerClassBuiltin, AuthMethod: providerAuthSubscription, Configured: keys.HasOpenAICodex(), Auth: auth, DefaultModel: "explicit model selector required", Next: nextForSubscription(openAICodexEndpointID, keys.HasOpenAICodex())}
 }
+
+// applyStoredSubscriptions reports a subscription sign-in as the credential in
+// effect. Without this a signed-in provider renders as "not configured", which
+// is both wrong and the exact state an operator checks status to confirm.
+//
+// An API key still takes precedence, so when both exist the key is named as
+// the credential in use and the sign-in is called out as shadowed.
+func applyStoredSubscriptions(keys cliconfig.ResolvedCredentials, statuses []providerStatus, selectedProvider string) []providerStatus {
+	stored := storedSubscriptionsFor(context.Background())
+	if len(stored) == 0 {
+		return statuses
+	}
+	for i := range statuses {
+		subscription, ok := stored[statuses[i].Name]
+		if !ok {
+			continue
+		}
+		if shadowedBy := cliconfig.SubscriptionShadowedBy(keys, statuses[i].Name); shadowedBy != "" {
+			statuses[i].Auth += "; subscription sign-in stored but shadowed by " + shadowedBy
+			continue
+		}
+		statuses[i].Configured = true
+		statuses[i].Auth = "signed in"
+		if subscription.Account != "" {
+			statuses[i].Auth += " (" + subscription.Account + ")"
+		}
+		statuses[i].Next = providerNextAfterSignIn(selectedProvider, statuses[i].Name)
+		if deadline := subscription.GrantExpiresAt; !deadline.IsZero() {
+			statuses[i].Auth += ", expires " + deadline.Format(time.DateOnly)
+			// Refresh cannot extend the grant family, so the only remedy is a
+			// fresh sign-in; say that while there is still time to act.
+			if time.Until(deadline) < 7*24*time.Hour {
+				statuses[i].Next = "sign in again before " + deadline.Format(time.DateOnly) +
+					"; refresh cannot extend this grant"
+			}
+		}
+	}
+	return statuses
+}
+
+// providerNextAfterSignIn is the next step for a signed-in provider. A sign-in
+// makes a provider usable without selecting it, so a deployment default that
+// already names another provider would otherwise leave an operator with a
+// provider reported "ready to use" that nothing routes to.
+func providerNextAfterSignIn(selectedProvider, provider string) string {
+	if selectedProvider == "" || selectedProvider == provider {
+		return providerNextReady
+	}
+	return "run `mecatui providers set-default " + provider + " [MODEL]` to use it"
+}
+
+// storedSubscriptionsFor is a seam so status rendering stays testable without
+// a provisioned credential store.
+var storedSubscriptionsFor = cliconfig.StoredSubscriptions
 
 func builtinAPIKeyStatus(provider stockAPIKeyProvider, shadowed bool, keys cliconfig.ResolvedCredentials) providerStatus {
 	available := provider.credential(keys) != ""
@@ -349,7 +407,18 @@ func configuredSource(ok, shadowed bool) string {
 
 func nextForAPIKey(configured bool) string {
 	if configured {
-		return "select a default with `mecatui providers set-default PROVIDER MODEL`"
+		return providerNextReady
 	}
 	return "configure an API key"
+}
+
+// nextForSubscription names the sign-in a subscription provider needs. A
+// provider with no API key at all must never be told to configure one: the
+// operator follows that advice, finds no key to paste, and concludes the
+// provider is unusable.
+func nextForSubscription(provider string, configured bool) string {
+	if configured {
+		return providerNextReady
+	}
+	return "run `mecatui providers login " + provider + "`"
 }

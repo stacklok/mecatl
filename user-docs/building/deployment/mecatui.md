@@ -44,19 +44,29 @@ The included manifest configures:
 Customize the manifest when you need to pin one provider or apply a narrower
 egress policy.
 
-### Experimental ChatGPT Codex subscription
+### ChatGPT Codex subscription
 
-Embedded `mecatui` can use the experimental `openai-codex` provider with a
-manual subscription token. The included brood-box manifest does not mount this
-credential or allow egress to `chatgpt.com`. To enable it:
+Embedded `mecatui` can bill inference to a ChatGPT Plus or Pro subscription
+through the `openai-codex` provider. Sign in inside the container:
 
-1. Mount an owner-only `auth.yaml` file.
-1. Pass `--api-key-file` and `--default-provider openai-codex`.
-1. Allow HTTPS egress to `chatgpt.com`.
+```sh
+mecatui providers login openai-codex --device
+mecatui providers set-default openai-codex <MODEL_ID>
+```
 
-This provider uses an undocumented private backend rather than public OpenAI
-API credit. It has no token refresh flow, so relaunch the container after
-replacing the token. Read the
+`--device` prints a verification URL and a code, and completes without a browser
+or a callback port on this host, so it works in a container. The grant is written
+to the credential store under `$XDG_CONFIG_HOME`; mount that path if the sign-in
+should outlive the container. `openai-codex` has no built-in default model, so
+name one the account is entitled to.
+
+The included brood-box manifest neither forwards a grant nor allows the
+provider's hosts. Allow HTTPS egress to `chatgpt.com` and `auth.openai.com`.
+
+Mounting an owner-only `auth.yaml` with a manual token and passing
+`--api-key-file` and `--default-provider openai-codex` is an alternative. That
+snapshot never refreshes, so relaunch the container after replacing the token.
+Read the
 [operator setup and same-UID plaintext boundary](./settings.md#configure-provider-credentials)
 before adding the mount.
 

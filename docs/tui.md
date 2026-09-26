@@ -145,23 +145,23 @@ the `openrouter` provider (set several, and you pick between their models in the
 When more than one is keyed, run `/models` to choose; the choice is persisted per
 workspace.
 
-Embedded mecatui also supports experimental ChatGPT Codex subscription inference
-through the distinct `openai-codex` provider. Put the manual OAuth snapshot in
-`auth.yaml`, then launch with the provider explicit:
+Embedded mecatui also supports ChatGPT Codex subscription inference through the
+distinct `openai-codex` provider. Sign in first, then launch with the provider
+explicit:
 
 ```sh
-bin/mecatui --workspace "$PWD" \
-  --api-key-file ~/.config/mecatl/auth.yaml \
-  --default-provider openai-codex
+bin/mecatui providers login openai-codex
+bin/mecatui --workspace "$PWD" --default-provider openai-codex
 ```
 
-The token is not public API credit and the private backend is not a supported
-third-party contract. mecatui reads one immutable snapshot before hosting its
-embedded server: after replacing an expired/rejected token, quit and relaunch.
-There is no login or refresh. See the [exact schema and plaintext same-UID Shell
-boundary](../user-docs/building/deployment/settings.md#configure-provider-credentials).
-`mecatui connect` never reads the local file; configure the external `mecated`
-instead.
+The sign-in stores a renewable grant in the local credential store, so a
+long-running embedded server renews it without an interactive re-login. A manual
+OAuth snapshot in `auth.yaml` passed with `--api-key-file` is still accepted and
+wins when both exist. The token is not public API credit and the private backend
+is not a supported third-party contract. `mecatui connect` reads no local
+credential; configure the external `mecated` instead. See
+[the provider chapter](architecture/providers.md#openai-codex-subscription-provider)
+and the [credential schema](https://mecatl.dev/docs/building/deployment/settings#configure-provider-credentials).
 
 To use a specific **external** server instead, use the `connect` subcommand:
 

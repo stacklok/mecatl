@@ -30,6 +30,22 @@ const (
 	// ToolHiveCompatibleRedirectURL is the fixed callback URI used by native
 	// LLM login so an existing ToolHive-compatible client registration works.
 	ToolHiveCompatibleRedirectURL = "http://localhost:8666/callback"
+
+	// CodexRedirectURL is the fixed callback URI accepted for OpenAI Codex
+	// subscription login. OpenAI validates the redirect against an exact
+	// registered string, so neither the host spelling, the port, nor the path
+	// may change: 127.0.0.1 is a different string to the provider and is
+	// rejected. Because the host is a name, the listener must cover every
+	// loopback address family the browser may resolve it to.
+	CodexRedirectURL = "http://localhost:1455/auth/callback"
+
+	// AnthropicRedirectURL is the fixed callback URI accepted for Anthropic
+	// subscription login. The host is the NAME "localhost", matching the
+	// first-party client exactly: redirect matching is an exact string
+	// comparison, and the IPv4 literal is a different string that the
+	// provider rejects with "Invalid request format". Because the host is a
+	// name, the listener must cover every loopback family it can resolve to.
+	AnthropicRedirectURL = "http://localhost:54545/callback" //nolint:gosec // G101 false-positive on a loopback callback URL; not a credential
 )
 
 var (
@@ -166,6 +182,7 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 	address := "127.0.0.1:0"
 	callbackHost := ""
 	redirectURL := ""
+	companion := ""
 	attemptPolicy := attemptMatchingRoute
 	if r.opts.RedirectURL == "" {
 		path = callbackPath
@@ -180,6 +197,7 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 		path = fixed.path
 		address = fixed.address
 		callbackHost = fixed.host
+		companion = fixed.companion
 		redirectURL = r.opts.RedirectURL
 		attemptPolicy = attemptFixedRoute
 	}
@@ -194,6 +212,28 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 		}
 		return &CallbackBindError{Reason: bindReason}
 	}
+	listeners := []net.Listener{ln}
+	if companion != "" {
+		companionLn, companionErr := r.listen(ctx, "tcp6", companion)
+		switch {
+		case companionErr == nil:
+			listeners = append(listeners, companionLn)
+		case ctx.Err() != nil:
+			_ = ln.Close()
+			return ctx.Err()
+		case errors.Is(companionErr, syscall.EADDRINUSE):
+			// Another process owns the companion address, so it is positioned
+			// to receive callbacks the advertised host can resolve to. Refuse
+			// rather than hand the authorization code to it.
+			_ = ln.Close()
+			return &CallbackBindError{Reason: CallbackBindAddressInUse}
+		default:
+			// No usable IPv6 loopback on this host: nothing can route to the
+			// companion, so the IPv4 listener alone is complete. A disabled
+			// IPv6 stack is reported as a generic bind failure, which is why
+			// this is not treated as a collision.
+		}
+	}
 
 	host := ln.Addr().String()
 	if callbackHost != "" {
@@ -203,7 +243,6 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 		redirectURL = "http://" + host + path
 	}
 	flow := newCallbackFlow(path, host, issuer, attemptPolicy)
-	limited := newLimitedListener(ln, maxConcurrentConnections)
 	server := &http.Server{
 		Handler:           flow,
 		ReadHeaderTimeout: 2 * time.Second,
@@ -211,17 +250,20 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 		IdleTimeout:       2 * time.Second,
 		MaxHeaderBytes:    8 << 10,
 	}
-	serveDone := make(chan error, 1)
-	go func() {
-		err := server.Serve(limited)
-		if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
-			err = nil
-		}
-		if err != nil {
-			flow.complete(callbackOutcome{err: errors.New("OAuth callback server failed")})
-		}
-		serveDone <- err
-	}()
+	serveDone := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		limited := newLimitedListener(listener, maxConcurrentConnections)
+		go func() {
+			err := server.Serve(limited)
+			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+				err = nil
+			}
+			if err != nil {
+				flow.complete(callbackOutcome{err: errors.New("OAuth callback server failed")})
+			}
+			serveDone <- err
+		}()
+	}
 
 	present := r.presenter(flow)
 
@@ -229,7 +271,7 @@ func (r *Runtime) authorize(ctx context.Context, expectedIssuer, callbackPath st
 	authorizeErr := authorize(opCtx, redirectURL, present)
 	cancel()
 	flow.complete(callbackOutcome{err: ErrAuthorizationFailed})
-	cleanupErr := stopServer(server, ln, serveDone)
+	cleanupErr := stopServer(server, listeners, serveDone)
 	if authorizeErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return flow.annotate(ctxErr)
@@ -314,6 +356,14 @@ type fixedRedirectConfig struct {
 	address string
 	host    string
 	path    string
+	// companion is an additional loopback address, in another address family,
+	// that must also accept the callback. It is set only when the advertised
+	// host is a name that can resolve to more than one loopback literal: a
+	// single-family listener would then let another process holding the other
+	// family's port receive the authorization code, and because a
+	// specific-address bind coexists with a wildcard bind the collision is not
+	// reported at bind time.
+	companion string
 }
 
 func fixedRedirect(raw string) (fixedRedirectConfig, bool) {
@@ -322,6 +372,10 @@ func fixedRedirect(raw string) (fixedRedirectConfig, bool) {
 		return fixedRedirectConfig{address: "127.0.0.1:18473", host: "127.0.0.1:18473", path: "/oauth/callback"}, true
 	case ToolHiveCompatibleRedirectURL:
 		return fixedRedirectConfig{address: "localhost:8666", host: "localhost:8666", path: "/callback"}, true
+	case CodexRedirectURL:
+		return fixedRedirectConfig{address: "127.0.0.1:1455", host: "localhost:1455", path: "/auth/callback", companion: "[::1]:1455"}, true
+	case AnthropicRedirectURL:
+		return fixedRedirectConfig{address: "127.0.0.1:54545", host: "localhost:54545", path: "/callback", companion: "[::1]:54545"}, true
 	default:
 		return fixedRedirectConfig{}, false
 	}
@@ -359,21 +413,32 @@ func validateAuthorizationURL(raw string) (string, error) {
 	return query.Get("state"), nil
 }
 
-func stopServer(server *http.Server, listener net.Listener, serveDone <-chan error) error {
+func stopServer(server *http.Server, listeners []net.Listener, serveDone <-chan error) error {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	shutdownErr := server.Shutdown(cleanupCtx)
-	_ = listener.Close()
+	for _, listener := range listeners {
+		_ = listener.Close()
+	}
 	if shutdownErr != nil {
 		_ = server.Close()
 	}
 
+	// Every serve goroutine must be accounted for; a listener left unreaped
+	// would keep the port held after this call returns.
 	var serveErr error
-	select {
-	case serveErr = <-serveDone:
-	case <-cleanupCtx.Done():
-		_ = server.Close()
-		serveErr = <-serveDone
+	for range listeners {
+		select {
+		case err := <-serveDone:
+			if err != nil {
+				serveErr = err
+			}
+		case <-cleanupCtx.Done():
+			_ = server.Close()
+			if err := <-serveDone; err != nil {
+				serveErr = err
+			}
+		}
 	}
 	if shutdownErr != nil && !errors.Is(shutdownErr, context.DeadlineExceeded) {
 		return errors.New("shutdown OAuth callback server: failed")

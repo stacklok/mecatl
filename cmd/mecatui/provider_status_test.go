@@ -11,6 +11,8 @@ import (
 
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
+	"github.com/stacklok/mecatl/internal/adapter/subcred"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 )
 
 func TestProvidersStatusIsPassiveAndDeterministic(t *testing.T) {
@@ -33,6 +35,55 @@ func TestProvidersStatusIsPassiveAndDeterministic(t *testing.T) {
 	}
 	if strings.Contains(first.String(), "credential") || strings.Contains(first.String(), "fingerprint") {
 		t.Fatalf("status exposed credential detail: %q", first.String())
+	}
+}
+
+func TestProviderStatusNamesTheCodexSignInInsteadOfAnAPIKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	commands := testProviderCommands()
+	commands.backend.inspect = providerInspectionLoader(providerInspection{})
+	res := resolveInvocation([]string{"mecatui", "providers", "status", "openai-codex"})
+	var output bytes.Buffer
+	if err := commands.runStatus(context.Background(), res, &output, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got := output.String()
+	if !strings.Contains(got, "Next step: run `mecatui providers login openai-codex`") {
+		t.Fatalf("codex status does not name the sign-in: %q", got)
+	}
+	if strings.Contains(got, "API key") {
+		t.Fatalf("codex status advises an API key it cannot accept: %q", got)
+	}
+}
+
+func TestProviderStatusNamesSelectionForASignedInProvider(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	stored := map[string]cliconfig.StoredSubscription{
+		subcred.ProviderOpenAICodex: {Account: "acct-codex"},
+		subcred.ProviderAnthropic:   {Account: "acct-claude"},
+	}
+	original := storedSubscriptionsFor
+	storedSubscriptionsFor = func(context.Context) map[string]cliconfig.StoredSubscription { return stored }
+	t.Cleanup(func() { storedSubscriptionsFor = original })
+
+	commands := testProviderCommands()
+	commands.backend.inspect = providerInspectionLoader(providerInspection{selectedProvider: subcred.ProviderAnthropic, selectedModel: "claude-sonnet-4-6"})
+	status := func(provider string) string {
+		t.Helper()
+		res := resolveInvocation([]string{"mecatui", "providers", "status", provider})
+		var output bytes.Buffer
+		if err := commands.runStatus(context.Background(), res, &output, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		return output.String()
+	}
+	// The signed-in provider that is not the deployment default is not the one
+	// inference will use, so status has to name the step that connects them.
+	if got := status(subcred.ProviderOpenAICodex); !strings.Contains(got, "Next step: run `mecatui providers set-default openai-codex [MODEL]` to use it") {
+		t.Fatalf("unselected sign-in status = %q", got)
+	}
+	if got := status(subcred.ProviderAnthropic); !strings.Contains(got, "Next step: ready to use") {
+		t.Fatalf("selected sign-in status = %q", got)
 	}
 }
 
