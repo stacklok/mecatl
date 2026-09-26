@@ -68,7 +68,8 @@ func TestConfigurableCommitCoauthorGuidance_Scenario2_ProjectConfigIgnored(t *te
 	var buf bytes.Buffer
 	diag := slogdiag.New(&buf, false, port.LevelDebug)
 	ws := &countingWS{Workspace: memfs.NewWorkspace("/repo")}
-	ws.seed(t, projectFileMecatl, "system_prompt:\n  commit_coauthor: false\n")
+	ws.seed(t, projectFileMecatl, "system_prompt:\n  commit_coauthor: true\n")
+	ws.seed(t, projectFileMecatlLocal, "system_prompt:\n  commit_coauthor: false\n")
 
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, Diagnostics: diag}, fakeEnv())
 	_ = r.Resolve(context.Background(), ws)
@@ -80,7 +81,10 @@ func TestConfigurableCommitCoauthorGuidance_Scenario2_ProjectConfigIgnored(t *te
 	if !strings.Contains(log, "system_prompt: IGNORING a project-tier system_prompt block") {
 		t.Fatalf("expected project-tier system_prompt warning; got:\n%s", log)
 	}
-	if strings.Contains(log, "commit_coauthor") || strings.Contains(log, "false") {
+	if !strings.Contains(log, "file=.mecatl/settings.local.yaml") {
+		t.Fatalf("expected local project-tier system_prompt warning; got:\n%s", log)
+	}
+	if strings.Contains(log, "commit_coauthor") || strings.Contains(log, "false") || strings.Contains(log, "true") {
 		t.Fatalf("project-tier system_prompt warning must be value-free; got:\n%s", log)
 	}
 }
