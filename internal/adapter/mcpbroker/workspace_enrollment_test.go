@@ -54,7 +54,7 @@ func newWorkspaceEnrollmentRuntime(t *testing.T, tokenServer *httptest.Server, q
 		construction:       toolHiveConstruction{protectedBackends: backends},
 		protectedTarget:    target,
 		queryAuthenticated: queries.query,
-		occupied:           []string{"Read"},
+		reservedToolNames:  []string{"Read"},
 		ctx:                context.Background(),
 		cancel:             func() {},
 	}
@@ -421,65 +421,101 @@ func TestWorkspaceEnrollmentTerminalObservationIsRetryable(t *testing.T) {
 	}
 }
 
-func TestWorkspaceEnrollmentDiscoveryCancellationIsRetryable(t *testing.T) {
-	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
-	}))
-	defer tokenServer.Close()
+func TestWorkspaceEnrollmentDiscoveryInterruptionIsRetryable(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		deadline bool
+		want     error
+	}{
+		{name: "explicit cancellation", want: context.Canceled},
+		{name: "caller deadline", deadline: true, want: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"broker-token","token_type":"Bearer","expires_in":3600}`))
+			}))
+			defer tokenServer.Close()
 
-	runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, &orderedCapabilityQueries{}, "github")
-	attached, _, err := runtime.AttachSession(t.Context(), "cancel-retry")
-	if err != nil {
-		t.Fatal(err)
-	}
-	attachment := attached.(*Attachment)
-	enroller := attached.(contract.WorkspaceEnrollmentAttachment)
-	presentation := beginAndGrantWorkspaceEnrollment(t, runtime, enroller)
+			runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, &orderedCapabilityQueries{}, "github")
+			attached, _, err := runtime.AttachSession(t.Context(), "interrupt-retry")
+			if err != nil {
+				t.Fatal(err)
+			}
+			attachment := attached.(*Attachment)
+			enroller := attached.(contract.WorkspaceEnrollmentAttachment)
+			presentation := beginAndGrantWorkspaceEnrollment(t, runtime, enroller)
 
-	entered := make(chan struct{})
-	var mu sync.Mutex
-	attempts := 0
-	runtime.process.queryAuthenticated = func(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
-		mu.Lock()
-		attempts++
-		attempt := attempts
-		mu.Unlock()
-		if attempt == 1 {
-			close(entered)
-			<-ctx.Done()
-			return AuthenticatedCapabilities{}, ctx.Err()
-		}
-		return AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: "mcp__github__list", Schema: json.RawMessage(`{"type":"object"}`)}}}, nil
-	}
+			entered := make(chan struct{})
+			var mu sync.Mutex
+			attempts := 0
+			runtime.process.queryAuthenticated = func(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+				mu.Lock()
+				attempts++
+				attempt := attempts
+				mu.Unlock()
+				if attempt == 1 {
+					close(entered)
+					<-ctx.Done()
+					return AuthenticatedCapabilities{}, ctx.Err()
+				}
+				return AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: "mcp__github__list", Schema: json.RawMessage(`{"type":"object"}`)}}}, nil
+			}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	observed := make(chan error, 1)
-	go func() {
-		_, err := enroller.ObserveWorkspaceEnrollment(ctx, presentation.Ref)
-		observed <- err
-	}()
-	<-entered
-	cancel()
-	if err := <-observed; !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled discovery error = %v, want context.Canceled", err)
-	}
+			observed := make(chan error, 1)
+			ctx, cancel := context.WithCancel(t.Context())
+			if test.deadline {
+				// Start the deadline in the observer, immediately before Observe,
+				// rather than during token-server and grant setup.
+				go func() {
+					deadlineCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+					defer stop()
+					_, err := enroller.ObserveWorkspaceEnrollment(deadlineCtx, presentation.Ref)
+					observed <- err
+				}()
+			} else {
+				go func() {
+					_, err := enroller.ObserveWorkspaceEnrollment(ctx, presentation.Ref)
+					observed <- err
+				}()
+			}
+			defer cancel()
+			select {
+			case <-entered:
+			case err := <-observed:
+				t.Fatalf("ObserveWorkspaceEnrollment finished before discovery started: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("discovery did not start")
+			}
+			if !test.deadline {
+				cancel()
+			}
+			select {
+			case err := <-observed:
+				if !errors.Is(err, test.want) {
+					t.Fatalf("interrupted discovery error = %v, want %v", err, test.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("interrupted discovery did not finish")
+			}
 
-	attachment.logical.mu.RLock()
-	transaction := lookupWorkspaceTransactionLocked(attachment.logical, presentation.Ref.ID)
-	credential := attachment.logical.brokerCredential
-	attachment.logical.mu.RUnlock()
-	if transaction == nil || transaction.status != session.AuthorizationGranted || credential == nil {
-		t.Fatalf("cancelled discovery consumed grant: transaction=%+v credential=%v", transaction, credential)
-	}
-	connected, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
-	if err != nil || connected.Status != contract.WorkspaceEnrollmentConnected {
-		t.Fatalf("retry discovery = (%+v, %v)", connected, err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if attempts != 2 {
-		t.Fatalf("discovery attempts = %d, want 2", attempts)
+			attachment.logical.mu.RLock()
+			transaction := lookupWorkspaceTransactionLocked(attachment.logical, presentation.Ref.ID)
+			credential := attachment.logical.brokerCredential
+			attachment.logical.mu.RUnlock()
+			if transaction == nil || transaction.status != session.AuthorizationGranted || credential == nil {
+				t.Fatalf("interrupted discovery consumed grant: transaction=%+v credential=%v", transaction, credential)
+			}
+			connected, err := enroller.ObserveWorkspaceEnrollment(t.Context(), presentation.Ref)
+			if err != nil || connected.Status != contract.WorkspaceEnrollmentConnected {
+				t.Fatalf("retry discovery = (%+v, %v)", connected, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if attempts != 2 {
+				t.Fatalf("discovery attempts = %d, want 2", attempts)
+			}
+		})
 	}
 }
 

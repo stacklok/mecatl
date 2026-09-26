@@ -30,7 +30,10 @@ const (
 type ToolHiveConfig struct {
 	CallbackURL string
 	Profiles    []ToolHiveProfile
-	Occupied    []string
+	// ReservedToolNames contains model-visible names supplied by the surrounding
+	// core/global catalogue. Broker discovery rejects collisions before it creates
+	// an attachment.
+	ReservedToolNames []string
 	// AuthStorage backs the embedded auth server's pending-authorization,
 	// token, grant, and DCR storage directly. Tests use this to inject a
 	// fake/spy storage.Storage; composition (which cannot import the
@@ -50,6 +53,8 @@ type ToolHiveConfig struct {
 	// lifecycle — EmbeddedAuthServer.Close calls storage.Close, which closes
 	// the client it was given, so no separate cleanup is needed beyond that.
 	AuthRedisClient redis.UniversalClient
+	// ProtectedStorage is the production encrypted storage seam for OAuth profiles.
+	ProtectedStorage *ProtectedStorageConfig
 	// Diagnostics receives per-backend authenticated-discovery outcomes during
 	// workspace-enrollment catalogue freeze (success + tool count, or failure +
 	// backend name) — see stageAuthenticatedRoutes. A nil value defaults to

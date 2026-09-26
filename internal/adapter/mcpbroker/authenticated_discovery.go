@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	toolhiveauth "github.com/stacklok/toolhive/pkg/auth"
+	"github.com/stacklok/toolhive/pkg/auth/upstreamtoken"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
 	"golang.org/x/oauth2"
@@ -24,6 +25,10 @@ var ErrAuthenticatedDiscovery = errors.New("mcpbroker: authenticated capability 
 type AuthenticatedCapabilities struct {
 	Backend string
 	Tools   []ToolDefinition
+	// verifiedTSID is adapter-private evidence captured only after ToolHive's
+	// incoming middleware has authenticated the request and loaded credentials.
+	// It never crosses the neutral broker boundary.
+	verifiedTSID string
 }
 
 // capabilityQuerier intentionally exposes no aggregate query operation. The
@@ -37,10 +42,30 @@ type backendLookup interface {
 	Get(context.Context, string) *vmcp.Backend
 }
 
+type verifiedTSIDCapture struct{ tsid string }
+type verifiedTSIDCaptureKey struct{}
+
+type capturingTokenReader struct{ next upstreamtoken.TokenReader }
+
+func (r *capturingTokenReader) GetAllUpstreamCredentials(ctx context.Context, tsid string) (map[string]upstreamtoken.UpstreamCredential, []string, error) {
+	creds, failed, err := r.next.GetAllUpstreamCredentials(ctx, tsid)
+	if err != nil {
+		return creds, failed, err
+	}
+	if tsid == "" || len(tsid) > maxCustodyTSID || !utf8.ValidString(tsid) {
+		return nil, nil, ErrAuthenticatedDiscovery
+	}
+	if capture, ok := ctx.Value(verifiedTSIDCaptureKey{}).(*verifiedTSIDCapture); ok && capture != nil {
+		capture.tsid = tsid
+	}
+	return creds, failed, nil
+}
+
 type authenticatedDiscovery struct {
 	capabilities capabilityQuerier
 	backends     backendLookup
 	incoming     func(http.Handler) http.Handler
+	captureTSID  bool
 }
 
 type privateResponseWriter struct {
@@ -89,10 +114,13 @@ func (p *Process) QueryAuthenticatedCapabilities(ctx context.Context, credential
 		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
 	}
 
-	return p.discovery.query(queryCtx, brokerToken.AccessToken, backend, configured)
+	result, _, err := p.discovery.queryVerified(queryCtx, brokerToken.AccessToken, backend, configured)
+	return result, err
 }
 
-func (d *authenticatedDiscovery) query(ctx context.Context, brokerToken, backend string, configured *vmcp.Backend) (AuthenticatedCapabilities, error) {
+func (d *authenticatedDiscovery) queryVerified(ctx context.Context, brokerToken, backend string, configured *vmcp.Backend) (AuthenticatedCapabilities, string, error) {
+	capture := new(verifiedTSIDCapture)
+	ctx = context.WithValue(ctx, verifiedTSIDCaptureKey{}, capture)
 	var result AuthenticatedCapabilities
 	var queryErr error
 	terminal := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
@@ -109,15 +137,19 @@ func (d *authenticatedDiscovery) query(ctx context.Context, brokerToken, backend
 	})
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://mecatl.invalid/private/toolhive-discovery", nil)
 	if err != nil {
-		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
+		return AuthenticatedCapabilities{}, "", ErrAuthenticatedDiscovery
 	}
 	request.Header.Set("Authorization", "Bearer "+brokerToken)
 	response := &privateResponseWriter{header: make(http.Header)}
 	d.incoming(terminal).ServeHTTP(response, request)
 	if queryErr != nil || response.status >= http.StatusBadRequest || result.Backend != backend {
-		return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
+		return AuthenticatedCapabilities{}, "", ErrAuthenticatedDiscovery
 	}
-	return result, nil
+	if d.captureTSID && capture.tsid == "" {
+		return AuthenticatedCapabilities{}, "", ErrAuthenticatedDiscovery
+	}
+	result.verifiedTSID = capture.tsid
+	return result, capture.tsid, nil
 }
 
 // discoveryContext admits a discovery request only while the process is live.

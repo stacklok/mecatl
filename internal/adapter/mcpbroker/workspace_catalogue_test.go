@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +17,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
 	"golang.org/x/oauth2"
 
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
@@ -32,8 +36,16 @@ func TestADR_0310_AuthenticatedCatalogueReplacesDeclaredMembership(t *testing.T)
 	if err != nil {
 		t.Fatalf("FreezeAuthenticatedCatalogue: %v", err)
 	}
-	if got, want := queries.order, []string{"first", "second"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("query order = %v, want %v", got, want)
+	queries.mu.Lock()
+	queried := append([]string(nil), queries.order...)
+	queries.mu.Unlock()
+	queriedFirst, queriedSecond := false, false
+	for _, backend := range queried {
+		queriedFirst = queriedFirst || backend == "first"
+		queriedSecond = queriedSecond || backend == "second"
+	}
+	if len(queried) != 2 || !queriedFirst || !queriedSecond {
+		t.Fatalf("queried backends = %v, want both configured backends", queried)
 	}
 	if got, want := toolNames(attachment.Tools()), []string{"mcp__anonymous__status", "mcp__first__one", "mcp__second__two"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachment tools = %v, want complete authenticated membership %v", got, want)
@@ -344,6 +356,283 @@ func TestFreezeAuthenticatedCatalogueConcurrentFreezeHasOneCatalogue(t *testing.
 	}
 }
 
+type boundedCapabilityQueries struct {
+	mu        sync.Mutex
+	responses map[string]AuthenticatedCapabilities
+	started   chan string
+	release   chan struct{}
+	fail      chan struct{}
+	failing   string
+	active    int
+	maximum   int
+	exited    int
+}
+
+func (q *boundedCapabilityQueries) query(ctx context.Context, _ oauth2.TokenSource, backend string) (AuthenticatedCapabilities, error) {
+	q.mu.Lock()
+	q.active++
+	q.maximum = max(q.maximum, q.active)
+	q.mu.Unlock()
+	defer func() {
+		q.mu.Lock()
+		q.active--
+		q.exited++
+		q.mu.Unlock()
+	}()
+
+	q.started <- backend
+	if backend == q.failing {
+		select {
+		case <-q.fail:
+			return AuthenticatedCapabilities{}, ErrAuthenticatedDiscovery
+		case <-ctx.Done():
+			return AuthenticatedCapabilities{}, ctx.Err()
+		}
+	}
+	select {
+	case <-q.release:
+	case <-ctx.Done():
+		return AuthenticatedCapabilities{}, ctx.Err()
+	}
+	q.mu.Lock()
+	response := q.responses[backend]
+	q.mu.Unlock()
+	return response, nil
+}
+
+func (q *boundedCapabilityQueries) snapshot() (maximum, exited int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.maximum, q.exited
+}
+
+func TestFreezeAuthenticatedCatalogueQueriesPastFanoutLimitAndPublishesWholeBundle(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	attachment := testAttachment(t, runtime)
+	backends := []string{"one", "two", "three", "four", "five"}
+	responses := make(map[string]AuthenticatedCapabilities, len(backends))
+	want := []string{"mcp__anonymous__status"}
+	for _, backend := range backends {
+		name := "mcp__" + backend + "__tool"
+		responses[backend] = AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: name, Schema: json.RawMessage(`{"type":"object"}`)}}}
+		want = append(want, name)
+	}
+	slices.Sort(want)
+	queries := &boundedCapabilityQueries{
+		responses: responses,
+		started:   make(chan string, len(backends)),
+		release:   make(chan struct{}),
+	}
+	process := &Process{Runtime: runtime, construction: toolHiveConstruction{protectedBackends: backends}, queryAuthenticated: queries.query, ctx: context.Background(), cancel: func() {}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	type freezeResult struct {
+		catalogue contract.WorkspaceCatalogue
+		err       error
+	}
+	finished := make(chan freezeResult, 1)
+	go func() {
+		frozen, err := attachment.FreezeAuthenticatedCatalogue(ctx, testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil)
+		finished <- freezeResult{frozen, err}
+	}()
+
+	started := make(map[string]bool)
+	for range authenticatedDiscoveryFanoutLimit {
+		select {
+		case backend := <-queries.started:
+			started[backend] = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("first wave did not start")
+		}
+	}
+	if len(started) != authenticatedDiscoveryFanoutLimit || started["five"] {
+		t.Fatalf("first wave = %v, want first four backends", started)
+	}
+	if maximum, _ := queries.snapshot(); maximum != authenticatedDiscoveryFanoutLimit {
+		t.Fatalf("simultaneous queries = %d, want %d", maximum, authenticatedDiscoveryFanoutLimit)
+	}
+	select {
+	case backend := <-queries.started:
+		t.Fatalf("backend %q started before first wave was released", backend)
+	default:
+	}
+	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
+		t.Fatalf("partial catalogue published before release: %v", got)
+	}
+	close(queries.release)
+	select {
+	case backend := <-queries.started:
+		if backend != "five" {
+			t.Fatalf("query after first wave = %q, want five", backend)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("fifth backend was not queried")
+	}
+	select {
+	case result := <-finished:
+		if result.err != nil {
+			t.Fatalf("FreezeAuthenticatedCatalogue: %v", result.err)
+		}
+		if got := toolNames(result.catalogue.Tools()); !reflect.DeepEqual(got, want) {
+			t.Fatalf("frozen tools = %v, want %v", got, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("freeze did not finish after fifth query")
+	}
+	if maximum, exited := queries.snapshot(); maximum > authenticatedDiscoveryFanoutLimit || exited != len(backends) {
+		t.Fatalf("queries maximum/exited = %d/%d, want at most %d and all %d queried", maximum, exited, authenticatedDiscoveryFanoutLimit, len(backends))
+	}
+	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("published tools = %v, want complete catalogue %v", got, want)
+	}
+}
+
+func TestFreezeAuthenticatedCatalogueLogsTriggeringBackendIndex(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	attachment := testAttachment(t, runtime)
+	backends := []string{"one", "two", "three", "four", "five"}
+	queries := &boundedCapabilityQueries{
+		started: make(chan string, len(backends)),
+		release: make(chan struct{}),
+		fail:    make(chan struct{}),
+		failing: "three",
+	}
+	process := &Process{Runtime: runtime, construction: toolHiveConstruction{protectedBackends: backends}, queryAuthenticated: queries.query, ctx: context.Background(), cancel: func() {}}
+	log := new(recordingBrokerDiagnostics)
+	process.diag = log
+
+	finished := make(chan error, 1)
+	go func() {
+		_, err := attachment.FreezeAuthenticatedCatalogue(context.Background(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil)
+		finished <- err
+	}()
+	started := make(map[string]bool)
+	for range authenticatedDiscoveryFanoutLimit {
+		select {
+		case backend := <-queries.started:
+			started[backend] = true
+		case <-time.After(5 * time.Second):
+			t.Fatal("queries did not overlap before failure")
+		}
+	}
+	if !started["one"] || !started["two"] || !started["three"] {
+		t.Fatalf("expected lower indices and failing backend to enter before release: %v", started)
+	}
+	close(queries.fail)
+	select {
+	case err := <-finished:
+		if !errors.Is(err, ErrAuthenticatedDiscovery) {
+			t.Fatalf("FreezeAuthenticatedCatalogue error = %v, want discovery failure", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("freeze did not join cancelled queries")
+	}
+	if got := log.String(); !strings.Contains(got, "reason"+diagnosticReasonDiscoveryFailed+"backend_index2") || strings.Contains(got, "reason"+diagnosticReasonDiscoveryFailed+"backend_index0") {
+		t.Fatalf("failure diagnostics = %q, want triggering backend index 2 only", got)
+	}
+	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
+		t.Fatalf("failed query published partial catalogue: %v", got)
+	}
+}
+
+func TestFreezeAuthenticatedCatalogueBoundsFanoutAndJoinsCancelledWorkers(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	attachment := testAttachment(t, runtime)
+	backends := []string{"one", "two", "three", "four", "five"}
+	responses := make(map[string]AuthenticatedCapabilities, len(backends))
+	for _, backend := range backends {
+		responses[backend] = AuthenticatedCapabilities{Backend: backend, Tools: []ToolDefinition{{Backend: backend, Name: "mcp__" + backend + "__tool", Schema: json.RawMessage(`{"type":"object"}`)}}}
+	}
+	queries := &boundedCapabilityQueries{
+		responses: responses,
+		started:   make(chan string, len(backends)),
+		release:   make(chan struct{}),
+		fail:      make(chan struct{}),
+		failing:   "one",
+	}
+	process := &Process{Runtime: runtime, construction: toolHiveConstruction{protectedBackends: backends}, queryAuthenticated: queries.query, ctx: context.Background(), cancel: func() {}}
+
+	finished := make(chan error, 1)
+	go func() {
+		_, err := attachment.FreezeAuthenticatedCatalogue(context.Background(), testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil)
+		finished <- err
+	}()
+	for range authenticatedDiscoveryFanoutLimit {
+		select {
+		case <-queries.started:
+		case <-time.After(time.Second):
+			t.Fatal("bounded fan-out did not start concurrent queries")
+		}
+	}
+	if maximum, _ := queries.snapshot(); maximum != authenticatedDiscoveryFanoutLimit {
+		t.Fatalf("concurrent queries = %d, want fixed limit %d", maximum, authenticatedDiscoveryFanoutLimit)
+	}
+	close(queries.fail)
+	select {
+	case err := <-finished:
+		if !errors.Is(err, ErrAuthenticatedDiscovery) {
+			t.Fatalf("FreezeAuthenticatedCatalogue error = %v, want discovery failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("freeze did not join cancelled queries")
+	}
+	if maximum, exited := queries.snapshot(); maximum > authenticatedDiscoveryFanoutLimit || exited != authenticatedDiscoveryFanoutLimit {
+		t.Fatalf("queries maximum/exited = %d/%d, want bounded maximum and all started workers joined", maximum, exited)
+	}
+	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
+		t.Fatalf("cancelled fan-out published partial catalogue: %v", got)
+	}
+}
+
+type cancelOnDiscoveryLog struct {
+	port.NopDiagnostics
+	cancel context.CancelFunc
+}
+
+func (d cancelOnDiscoveryLog) Log(_ context.Context, _ port.Level, _ string, args ...any) {
+	for index := 0; index+1 < len(args); index += 2 {
+		if args[index] == "reason" && args[index+1] == diagnosticReasonDiscovered {
+			d.cancel()
+		}
+	}
+}
+
+func TestFreezeAuthenticatedCatalogueDoesNotPublishAfterValidationCancellation(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	attachment := testAttachment(t, runtime)
+	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"first": {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__tool", Schema: json.RawMessage(`{"type":"object"}`)}}},
+	}}
+	process := testCatalogueProcess(runtime, queries, "first")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	process.diag = cancelOnDiscoveryLog{cancel: cancel}
+
+	if _, err := attachment.FreezeAuthenticatedCatalogue(ctx, testEnrollmentRef(), process, staticTokenSource("opaque-broker-token"), nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("FreezeAuthenticatedCatalogue after cancellation during validation = %v, want context.Canceled", err)
+	}
+	if got := toolNames(attachment.Tools()); !reflect.DeepEqual(got, []string{"mcp__anonymous__status"}) {
+		t.Fatalf("cancelled validation published catalogue: %v", got)
+	}
+}
+
+func TestStageAuthenticatedRoutesValidatesFanInInConfiguredOrder(t *testing.T) {
+	runtime := testAnonymousRuntime(t)
+	queries := &orderedCapabilityQueries{responses: map[string]AuthenticatedCapabilities{
+		"first":  {Backend: "first", Tools: []ToolDefinition{{Backend: "first", Name: "mcp__first__tool", Schema: json.RawMessage(`{"type":"object"}`)}}},
+		"second": {Backend: "second", Tools: []ToolDefinition{{Backend: "second", Name: "mcp__second__tool", Schema: json.RawMessage(`{"type":"object"}`)}}},
+	}}
+	process := testCatalogueProcess(runtime, queries, "first", "second")
+
+	staged, _, err := stageAuthenticatedRoutes(t.Context(), nil, process, staticTokenSource("opaque-broker-token"), []string{"first", "second"}, newAttachmentCatalogue(nil, nil, nil), nil)
+	if err != nil {
+		t.Fatalf("stageAuthenticatedRoutes: %v", err)
+	}
+	if got := []string{staged[0].spec.Name, staged[1].spec.Name}; !reflect.DeepEqual(got, []string{"mcp__first__tool", "mcp__second__tool"}) {
+		t.Fatalf("fan-in order = %v, want configured backend order", got)
+	}
+}
+
 type orderedCapabilityQueries struct {
 	mu          sync.Mutex
 	responses   map[string]AuthenticatedCapabilities
@@ -419,4 +708,61 @@ func toolNames(tools []tool.Tool) []string {
 		names[i] = candidate.Spec().Name
 	}
 	return names
+}
+
+// Authenticated discovery runs without the attachment lock: other operations on
+// the handle proceed while a provider is slow, and a catalogue that changed
+// during discovery is never overwritten by the stale result.
+func TestFreezeAuthenticatedCatalogueDoesNotHoldAttachmentLockAcrossDiscovery(t *testing.T) {
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"broker","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+	runtime := newWorkspaceEnrollmentRuntime(t, tokenServer, &orderedCapabilityQueries{}, "github")
+	entered, release := make(chan struct{}), make(chan struct{})
+	runtime.process.queryAuthenticated = func(context.Context, oauth2.TokenSource, string) (AuthenticatedCapabilities, error) {
+		close(entered)
+		<-release
+		return AuthenticatedCapabilities{Backend: "github", Tools: []ToolDefinition{
+			{Backend: "github", Name: "mcp__github__list", Description: "list", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true},
+		}}, nil
+	}
+	attached, _, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := attached.(*Attachment)
+	presentation := beginAndGrantWorkspaceEnrollment(t, runtime, handle)
+
+	observed := make(chan contract.WorkspaceEnrollmentStatus, 1)
+	go func() {
+		result, _ := handle.ObserveWorkspaceEnrollment(context.Background(), presentation.Ref)
+		observed <- result.Status
+	}()
+	<-entered
+
+	tools := make(chan int, 1)
+	go func() { tools <- len(handle.Tools()) }()
+	select {
+	case <-tools:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("handle operation blocked behind upstream discovery")
+	}
+
+	handle.mu.Lock()
+	replacement := *handle.catalogue
+	handle.catalogue = &replacement
+	handle.mu.Unlock()
+	close(release)
+	if status := <-observed; status == contract.WorkspaceEnrollmentConnected {
+		t.Fatal("freeze reported connected over a catalogue that changed during discovery")
+	}
+	handle.mu.RLock()
+	published := handle.catalogue.frozen
+	handle.mu.RUnlock()
+	if published != nil {
+		t.Fatal("stale discovery result replaced the changed catalogue")
+	}
 }

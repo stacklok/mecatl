@@ -81,7 +81,7 @@ func toolHiveBrokerConfig(routes []permconfig.MCPServerProfile, callbackURL stri
 		profiles[i] = profile
 	}
 	return mcpbroker.ToolHiveConfig{
-		Profiles: profiles, CallbackURL: callbackURL, Occupied: append([]string(nil), occupied...),
+		Profiles: profiles, CallbackURL: callbackURL, ReservedToolNames: append([]string(nil), occupied...),
 		AuthRedisClient: authRedisClient, Diagnostics: diag,
 	}
 }

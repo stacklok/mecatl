@@ -27,7 +27,7 @@ func TestToolHiveBrokerConfigCopiesParsedOperatorValues(t *testing.T) {
 	if profile.OAuth.Scopes[0] != "read" || string(profile.Static[0].Schema) != `{"type":"object"}` {
 		t.Fatalf("adapter construction values alias permconfig input: %#v", profile)
 	}
-	if config.CallbackURL != "https://broker.example/callback" || config.Occupied[0] != "Read" {
+	if config.CallbackURL != "https://broker.example/callback" || config.ReservedToolNames[0] != "Read" {
 		t.Fatalf("adapter construction boundary = %#v", config)
 	}
 }

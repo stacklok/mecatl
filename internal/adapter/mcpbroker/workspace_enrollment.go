@@ -135,9 +135,17 @@ func (a *Attachment) BeginWorkspaceEnrollment(ctx context.Context) (contract.Wor
 		return contract.WorkspaceEnrollmentPresentation{}, err
 	}
 	defer done()
-	backends, target, _ := a.bundleBackends()
+	backends, target, process := a.bundleBackends()
 	if len(backends) == 0 {
 		return contract.WorkspaceEnrollmentPresentation{}, ErrWorkspaceEnrollmentUnsupported
+	}
+	if process != nil && process.protectedStorage != nil {
+		healthCtx, cancel := context.WithTimeout(opCtx, process.protectedStorage.healthTimeout)
+		err := process.protectedStorage.Health(healthCtx)
+		cancel()
+		if err != nil {
+			return contract.WorkspaceEnrollmentPresentation{}, errors.New("mcpbroker: protected storage unavailable")
+		}
 	}
 	a.runtime.logWorkspaceEnrollment(ctx, port.LevelDebug, diagnosticEnrollmentOperationBegin, diagnosticEnrollmentReasonRequestStarted, "backend_count", len(backends))
 
@@ -302,7 +310,7 @@ func (a *Attachment) ObserveWorkspaceEnrollment(ctx context.Context, ref contrac
 	if process == nil {
 		return a.failWorkspaceTransaction(logical, transaction), nil
 	}
-	occupied := append([]string(nil), process.occupied...)
+	occupied := append([]string(nil), process.reservedToolNames...)
 	catalogue, candidate, err := a.freezeAuthenticatedCatalogue(opCtx, ref, process, &brokerTokenSource{runtime: a.runtime, logical: logical, ctx: opCtx}, occupied, false)
 	if err != nil {
 		if callerErr := ctx.Err(); callerErr != nil {
