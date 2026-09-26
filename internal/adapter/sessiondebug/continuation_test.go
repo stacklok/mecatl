@@ -3,6 +3,7 @@ package sessiondebug
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -227,8 +228,8 @@ func TestDebuggerScanContinuation_Scenario4_ConcurrentReads(t *testing.T) {
 	first := continuationResult(t, execute(t, New(target.ID, store, log), `{"view":"performance","limit":1}`))
 	_, _ = log.AppendEvent(context.Background(), target.ID, session.Event{Type: session.EvTurnEnd, Turn: 99, TurnEnd: &session.TurnEndPayload{}})
 	second := continuationResult(t, execute(t, New(target.ID, store, log), `{"view":"performance","limit":50,"cursor":"`+nextCursor(t, first)+`"}`))
-	if second["event_window"].(map[string]any)["id"] != first["event_window"].(map[string]any)["id"] || second["row_page"].(map[string]any)["returned"].(float64) != 2 {
-		t.Fatalf("append expanded sealed row interval: first=%#v second=%#v", first, second)
+	if !reflect.DeepEqual(second["event_window"], first["event_window"]) || second["row_page"].(map[string]any)["returned"].(float64) != 2 {
+		t.Fatalf("append changed sealed interval rows or termination metadata: first=%#v second=%#v", first, second)
 	}
 }
 

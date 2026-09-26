@@ -48,7 +48,7 @@ func seededTarget(t *testing.T, messages []session.Message) (*memstore.Store, *s
 func TestSchemaBindsTargetAndHasNoSessionID(t *testing.T) {
 	store, _ := seededTarget(t, nil)
 	tspec := New("target", store, nil).Spec()
-	if tspec.Name != ToolName || strings.Contains(strings.ToLower(string(tspec.Schema)), "session_id") {
+	if tspec.Name != ToolName || strings.Contains(strings.ToLower(string(tspec.Schema)), "session_id") || !strings.Contains(tspec.Description, "retry the same request") || !strings.Contains(tspec.Description, "same cursor if one was supplied") {
 		t.Fatalf("spec = %+v", tspec)
 	}
 }

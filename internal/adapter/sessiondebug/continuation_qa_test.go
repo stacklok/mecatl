@@ -6,6 +6,7 @@ import (
 	"errors"
 	"iter"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,7 +98,7 @@ func TestDebuggerScanContinuation_QARecordReadAccountingAndWindowIdentity(t *tes
 
 func traverseRows(t *testing.T, inspect enginetool.Tool, view, rowsKey string, firstLimit int) ([]any, []float64, []string) {
 	t.Helper()
-	args := `{"view":"` + view + `","limit":` + string(rune('0'+firstLimit)) + `}`
+	args := `{"view":"` + view + `","limit":` + strconv.Itoa(firstLimit) + `}`
 	out := continuationResult(t, execute(t, inspect, args))
 	var rows []any
 	var offsets []float64
@@ -114,7 +115,7 @@ func traverseRows(t *testing.T, inspect enginetool.Tool, view, rowsKey string, f
 		if page%2 == 1 {
 			limit = 1
 		}
-		out = continuationResult(t, execute(t, inspect, `{"view":"`+view+`","limit":`+string(rune('0'+limit))+`,"cursor":"`+cursor+`"}`))
+		out = continuationResult(t, execute(t, inspect, `{"view":"`+view+`","limit":`+strconv.Itoa(limit)+`,"cursor":"`+cursor+`"}`))
 	}
 	return rows, offsets, ids
 }
@@ -196,6 +197,21 @@ func TestDebuggerScanContinuation_QAScanIncompleteDelegationAndHistoryRows(t *te
 		appendEvents(t, log, root.ID, 9_999, func(int) session.Event { return session.Event{Type: session.EvTurnStart} })
 		_, _ = log.AppendEvent(context.Background(), root.ID, session.Event{Type: session.EvTurnStart})
 		first := continuationResult(t, execute(t, New(root.ID, store, log), `{"view":"delegation","limit":1}`))
+		mutated, err := store.Load(context.Background(), root.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutated.Conversation.Messages = append(mutated.Conversation.Messages, session.NewUserMessage("changed delegation projection basis"))
+		if err := store.Save(context.Background(), mutated); err != nil {
+			t.Fatal(err)
+		}
+		stale := execute(t, New(root.ID, store, log), `{"view":"delegation","limit":1,"cursor":"`+nextCursor(t, first)+`"}`)
+		if !stale.IsError || stale.Content != continuationInvalid || strings.Contains(stale.Content, `"rows"`) {
+			t.Fatalf("delegation row token survived projection-basis change: %s", stale.Content)
+		}
+		if err := store.Save(context.Background(), root); err != nil {
+			t.Fatal(err)
+		}
 		second := continuationResult(t, execute(t, New(root.ID, store, log), `{"view":"delegation","limit":1,"cursor":"`+nextCursor(t, first)+`"}`))
 		firstMember := first["rows"].([]any)[0].(map[string]any)["member"]
 		secondMember := second["rows"].([]any)[0].(map[string]any)["member"]
@@ -213,6 +229,21 @@ func TestDebuggerScanContinuation_QAScanIncompleteDelegationAndHistoryRows(t *te
 		appendEvents(t, log, target.ID, 9_998, func(int) session.Event { return session.Event{Type: session.EvTurnStart} })
 		_, _ = log.AppendEvent(context.Background(), target.ID, session.Event{Type: session.EvTurnStart})
 		first := continuationResult(t, execute(t, New(target.ID, store, log), `{"view":"history","limit":1}`))
+		mutated, err := store.Load(context.Background(), target.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutated.Conversation.Messages = append(mutated.Conversation.Messages, session.NewUserMessage("changed history projection basis"))
+		if err := store.Save(context.Background(), mutated); err != nil {
+			t.Fatal(err)
+		}
+		stale := execute(t, New(target.ID, store, log), `{"view":"history","limit":1,"cursor":"`+nextCursor(t, first)+`"}`)
+		if !stale.IsError || stale.Content != continuationInvalid || strings.Contains(stale.Content, `"sources"`) {
+			t.Fatalf("history row token survived projection-basis change: %s", stale.Content)
+		}
+		if err := store.Save(context.Background(), target); err != nil {
+			t.Fatal(err)
+		}
 		seen := map[string]bool{}
 		out := first
 		for i := 0; i < 4; i++ {
@@ -277,6 +308,91 @@ func TestDebuggerScanContinuation_QAAggregateReferenceAndGapPrivacy(t *testing.T
 	}
 }
 
+func TestDebuggerScanContinuation_QAAdjacentWindowsSumEveryAdditiveCounter(t *testing.T) {
+	store, target := seededTarget(t, nil)
+	log := memstore.NewEventLog()
+	windowEvents := func(multiplier int) []session.Event {
+		usage := session.Usage{InputTokens: multiplier, OutputTokens: 2 * multiplier, CacheReadTokens: 3 * multiplier, CacheWriteTokens: 4 * multiplier, ReasoningTokens: 5 * multiplier}
+		return []session.Event{
+			{Type: session.EvTurnEnd, RunID: "spans-windows", Turn: multiplier, TurnEnd: &session.TurnEndPayload{Usage: usage, DurationMs: int64(6 * multiplier)}},
+			{Type: session.EvModelRetry, RunID: "modern-" + strconv.Itoa(multiplier)},
+			{Type: session.EvToolCall, RunID: "spans-windows"},
+			{Type: session.EvToolResult, RunID: "spans-windows", ToolResult: ptr(session.NewToolError("failed", "x"))},
+			{Type: session.EvResult, RunID: "spans-windows", Result: &session.ResultPayload{Stop: session.StopEndTurn}},
+			{Type: session.EvTurnStart},
+			{Type: session.EvResult},
+			{Type: session.EvNetworkAttempt, NetworkAttempt: validAttempt(target.ID, int64(multiplier))},
+		}
+	}
+	firstEvents, secondEvents := windowEvents(1), windowEvents(2)
+	for _, ev := range firstEvents {
+		_, _ = log.AppendEvent(context.Background(), target.ID, ev)
+	}
+	appendEvents(t, log, target.ID, maxPerformanceScan-len(firstEvents), func(i int) session.Event {
+		return session.Event{Type: session.EvTurnStart, RunID: "interleaved-" + strconv.Itoa(i%3)}
+	})
+	for _, ev := range secondEvents {
+		_, _ = log.AppendEvent(context.Background(), target.ID, ev)
+	}
+
+	inspect := New(target.ID, store, log)
+	status1 := continuationResult(t, execute(t, inspect, `{"view":"status"}`))
+	status2 := continuationResult(t, execute(t, inspect, `{"view":"status","cursor":"`+nextCursor(t, status1)+`"}`))
+	life1 := status1["lifetime_event_log"].(map[string]any)
+	life2 := status2["lifetime_event_log"].(map[string]any)
+	for _, key := range []string{"turns", "tool_calls", "tool_results", "tool_failures"} {
+		if life1[key].(float64)+life2[key].(float64) != 2 {
+			t.Fatalf("adjacent lifetime %s did not sum to complete reference: first=%#v second=%#v", key, life1, life2)
+		}
+	}
+	for key, want := range map[string]float64{"InputTokens": 3, "OutputTokens": 6, "CacheReadTokens": 9, "CacheWriteTokens": 12, "ReasoningTokens": 15} {
+		got := life1["usage"].(map[string]any)[key].(float64) + life2["usage"].(map[string]any)[key].(float64)
+		if got != want {
+			t.Fatalf("adjacent lifetime usage %s=%v want %v", key, got, want)
+		}
+	}
+	if !reflect.DeepEqual(status1["latest_run_counters"], status2["latest_run_counters"]) || !reflect.DeepEqual(status1["snapshot_cumulative_usage"], status2["snapshot_cumulative_usage"]) {
+		t.Fatalf("snapshot counters changed across event windows: first=%#v second=%#v", status1, status2)
+	}
+	if life1["runs"] != float64(7) || life2["runs"] != float64(4) || life1["runs_additive"] != false || life2["runs_additive"] != false {
+		t.Fatalf("modern/legacy/interleaved run IDs were treated as additive: first=%#v second=%#v", life1, life2)
+	}
+
+	performance1 := continuationResult(t, execute(t, inspect, `{"view":"performance","limit":50}`))
+	repeated := continuationResult(t, execute(t, inspect, `{"view":"performance","limit":50,"cursor":"`+nextCursor(t, performance1)+`"}`))
+	if performance1["event_window"].(map[string]any)["id"] == repeated["event_window"].(map[string]any)["id"] {
+		t.Fatal("performance continuation did not advance to adjacent raw window")
+	}
+	totals1, totals2 := performance1["totals"].(map[string]any), repeated["totals"].(map[string]any)
+	for key, want := range map[string]float64{"duration_ms": 18, "retries": 2, "tool_failures": 2, "stops": 4} {
+		if totals1[key].(float64)+totals2[key].(float64) != want {
+			t.Fatalf("adjacent performance %s did not sum to reference: first=%#v second=%#v", key, totals1, totals2)
+		}
+	}
+	for key, want := range map[string]float64{"InputTokens": 3, "OutputTokens": 6, "CacheReadTokens": 9, "CacheWriteTokens": 12, "ReasoningTokens": 15} {
+		got := totals1["usage"].(map[string]any)[key].(float64) + totals2["usage"].(map[string]any)[key].(float64)
+		if got != want {
+			t.Fatalf("adjacent performance usage %s=%v want %v", key, got, want)
+		}
+	}
+	network1 := continuationResult(t, execute(t, inspect, `{"view":"network","limit":50}`))
+	network2 := continuationResult(t, execute(t, inspect, `{"view":"network","limit":50,"cursor":"`+nextCursor(t, network1)+`"}`))
+	if network1["matched_attempts"].(float64)+network2["matched_attempts"].(float64) != 2 || network1["counts_scope"] != "event_window" || network2["counts_scope"] != "event_window" {
+		t.Fatalf("adjacent validated network counts did not sum to reference: first=%#v second=%#v", network1, network2)
+	}
+
+	rowLog := memstore.NewEventLog()
+	for i := 0; i < 3; i++ {
+		_, _ = rowLog.AppendEvent(context.Background(), target.ID, session.Event{Type: session.EvTurnEnd, Turn: i, TurnEnd: &session.TurnEndPayload{Usage: session.Usage{InputTokens: i + 1}, DurationMs: int64(i + 1)}})
+	}
+	rowInspect := New(target.ID, store, rowLog)
+	row1 := continuationResult(t, execute(t, rowInspect, `{"view":"performance","limit":1}`))
+	row2 := continuationResult(t, execute(t, rowInspect, `{"view":"performance","limit":1,"cursor":"`+nextCursor(t, row1)+`"}`))
+	if !reflect.DeepEqual(row1["totals"], row2["totals"]) || !reflect.DeepEqual(row1["event_window"], row2["event_window"]) {
+		t.Fatalf("row retry changed aggregates or scan metadata: first=%#v second=%#v", row1, row2)
+	}
+}
+
 func mustString(v any) string { b, _ := json.Marshal(v); return string(b) }
 
 type arbitraryFailCursorLog struct{ port.EventLog }
@@ -330,6 +446,10 @@ func TestDebuggerScanContinuation_QAArchivesAndExactBoundaryReplay(t *testing.T)
 	afterHandle := findHistorySource(t, later, sourceArchive, true)["history_handle"].(string)
 	if beforeHandle == afterHandle {
 		t.Fatal("archives at positions before/after 10000 shared a selector")
+	}
+	selectedBefore := continuationResult(t, execute(t, New(target.ID, store, audit), `{"view":"history","history_handle":"`+beforeHandle+`"}`))
+	if !strings.Contains(mustString(selectedBefore), "BEFORE-ARCHIVE") || strings.Contains(mustString(selectedBefore), "AFTER-ARCHIVE") {
+		t.Fatalf("first archive logical identity selection=%#v", selectedBefore)
 	}
 	readsBefore := len(audit.calls)
 	selected := continuationResult(t, execute(t, New(target.ID, store, audit), `{"view":"history","history_handle":"`+afterHandle+`"}`))
@@ -390,6 +510,59 @@ func TestDebuggerScanContinuation_QATokenBindingAndGenerationReset(t *testing.T)
 	}
 }
 
+func TestDebuggerScanContinuation_QACrossDescendantCursorRejectedBeforeLogRead(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New()
+	owner := &session.Principal{Issuer: "qa", Subject: "owner", GrantType: session.GrantTypeUser}
+	root := session.New("scope-root", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/scope", Revision: "qa"}, session.Limits{}, time.Unix(1, 0))
+	root.Owner = owner.Clone()
+	children := make([]*session.Session, 2)
+	for i := range children {
+		child, err := session.NewSubagent(session.SessionID("scope-child-"+strconv.Itoa(i)), session.ModeDefault, root.EnvironmentRef, root.Limits, time.Unix(int64(i+2), 0), root.ID, root.Incarnation(), session.ToolCallID("call-"+strconv.Itoa(i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		child.Owner = owner.Clone()
+		children[i] = child
+	}
+	if err := store.Save(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	for _, child := range children {
+		if err := store.Save(ctx, child); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := memstore.NewEventLog()
+	for _, child := range children {
+		for turn := 0; turn < 2; turn++ {
+			_, _ = base.AppendEvent(ctx, child.ID, session.Event{Type: session.EvTurnEnd, Turn: turn, TurnEnd: &session.TurnEndPayload{}})
+		}
+	}
+	audit := &readAuditLog{base: base}
+	bound := NewBound(root.ID, session.DebugTargetFingerprint(root), owner, true, store, audit).(*inspectTool)
+	graph := bound.scanLineage(ctx, root)
+	if len(graph.Nodes) != 2 {
+		t.Fatalf("descendant graph=%+v", graph)
+	}
+	ownerCtx := session.WithPrincipal(ctx, owner)
+	first := continuationResult(t, executeAs(ownerCtx, t, bound, `{"view":"performance","limit":1,"scope_handle":"`+graph.Nodes[0].Handle+`"}`))
+	reads := len(audit.calls)
+	cross := executeAs(ownerCtx, t, bound, `{"view":"performance","limit":1,"scope_handle":"`+graph.Nodes[1].Handle+`","cursor":"`+nextCursor(t, first)+`"}`)
+	if !cross.IsError || cross.Content != continuationInvalid || len(audit.calls) != reads || strings.Contains(cross.Content, `"turns"`) {
+		t.Fatalf("cross-descendant cursor reached log/evidence: reads=%d->%d result=%s", reads, len(audit.calls), cross.Content)
+	}
+	children[0].Relationship.CallID = "changed-lineage-call"
+	if err := store.Save(ctx, children[0]); err != nil {
+		t.Fatal(err)
+	}
+	reads = len(audit.calls)
+	lineageChanged := executeAs(ownerCtx, t, bound, `{"view":"performance","limit":1,"scope_handle":"`+graph.Nodes[0].Handle+`","cursor":"`+nextCursor(t, first)+`"}`)
+	if !lineageChanged.IsError || len(audit.calls) != reads || strings.Contains(lineageChanged.Content, `"turns"`) {
+		t.Fatalf("issued token survived descendant lineage change: reads=%d->%d result=%s", reads, len(audit.calls), lineageChanged.Content)
+	}
+}
+
 func TestDebuggerScanContinuation_QAOwnerAndIncarnationRejectBeforeStorage(t *testing.T) {
 	store, target := seededTarget(t, nil)
 	owner := &session.Principal{Issuer: "qa", Subject: "owner", GrantType: session.GrantTypeUser}
@@ -412,6 +585,23 @@ func TestDebuggerScanContinuation_QAOwnerAndIncarnationRejectBeforeStorage(t *te
 	wrongOwner := executeAs(session.WithPrincipal(context.Background(), foreign), t, NewBound(target.ID, session.DebugTargetFingerprint(target), foreign, true, store, audit), `{"view":"performance","cursor":"`+cursor+`"}`)
 	if !wrongOwner.IsError || len(audit.calls) != reads || strings.Contains(wrongOwner.Content, `"turns"`) {
 		t.Fatalf("foreign owner reached storage/partial evidence: reads=%d->%d result=%s", reads, len(audit.calls), wrongOwner.Content)
+	}
+
+	changedOwner, err := store.Load(context.Background(), target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedOwner.Owner = foreign.Clone()
+	if err := store.Save(context.Background(), changedOwner); err != nil {
+		t.Fatal(err)
+	}
+	reads = len(audit.calls)
+	ownerChanged := executeAs(ownerCtx, t, bound, `{"view":"performance","cursor":"`+cursor+`"}`)
+	if !ownerChanged.IsError || len(audit.calls) != reads || strings.Contains(ownerChanged.Content, `"turns"`) {
+		t.Fatalf("issued token survived stored-owner change: reads=%d->%d result=%s", reads, len(audit.calls), ownerChanged.Content)
+	}
+	if err := store.Save(context.Background(), target); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := store.Delete(context.Background(), target.ID); err != nil {

@@ -374,6 +374,9 @@ func (t *inspectTool) selectHistory(ctx context.Context, s *session.Session, sco
 		endpointLog, endpointBefore, endpointEnd = log, claim.Start, claim.End
 		source = sourceArchive
 	case "legacy_archive", "legacy_replay":
+		if t.log == nil {
+			return nil, errors.New("invalid or stale history handle")
+		}
 		scan, scanErr := t.scanLegacy(ctx, s.ID)
 		if scanErr != nil || digestBytes(mustJSON(scan.Events)) != claim.Basis {
 			return nil, errors.New("invalid or stale history handle")

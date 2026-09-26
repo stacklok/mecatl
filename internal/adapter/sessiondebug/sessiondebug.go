@@ -131,7 +131,7 @@ func (t *inspectTool) revalidateScope(ctx context.Context, binding *lineageNode)
 func (*inspectTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name:        ToolName,
-		Description: "Inspect bounded read-only evidence rooted at the debug target. Start with status and related. Omit scope_handle for root/target views; only opaque scope handles returned by related evidence select retained authorized descendants. For affected retained-event views, pass the result-root next_cursor back as cursor with the same view and scope; only limit may change. Continue after an empty row page and stop only when next_cursor is absent. On 'event log read failed', retry the same cursor; if it fails again, fall back to snapshot status/transcript evidence without treating event-derived fields as available. Counts are scoped to one event window; repeated row pages are not new aggregate coverage. Never decode or fabricate handles.",
+		Description: "Inspect bounded read-only evidence rooted at the debug target. Start with status and related. Omit scope_handle for root/target views; only opaque scope handles returned by related evidence select retained authorized descendants. For affected retained-event views, pass the result-root next_cursor back as cursor with the same view and scope; only limit may change. Continue after an empty row page and stop only when next_cursor is absent. On 'event log read failed', retry the same request once, including the same cursor if one was supplied; if it fails again, fall back to snapshot status/transcript evidence without treating event-derived fields as available. Counts are scoped to one event window; repeated row pages are not new aggregate coverage. Never decode or fabricate handles.",
 		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance","network","related","delegation","history","manifest"]},"scope_handle":{"type":"string"},"history_handle":{"type":"string"},"cursor":{"type":"string","maxLength":16384},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
 	}
 }
@@ -186,13 +186,12 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		scan, scanErr := t.scanEvents(ctx, target.ID, args.View, scope, args.Cursor)
 		if scanErr != nil {
 			if (args.View == "status" || args.View == "history") && args.Cursor == "" && ctx.Err() == nil {
-				gaps := 0
-				scan = eventScan{GapCount: &gaps, StopReason: stopReadError, ContinuationSupported: func() bool { _, ok := t.log.(port.CursorEventLog); return ok }()}
+				scan = eventScan{GapCount: nil, StopReason: stopReadError, ContinuationSupported: func() bool { _, ok := t.log.(port.CursorEventLog); return ok }()}
 			} else {
 				if errors.Is(scanErr, context.Canceled) || errors.Is(scanErr, context.DeadlineExceeded) {
 					return session.NewToolError(call.ID, errLogReadFailed), nil
 				}
-				if scanErr.Error() == continuationInvalid {
+				if isCursorPositionError(scanErr) || scanErr.Error() == continuationInvalid {
 					return session.NewToolError(call.ID, continuationInvalid), nil
 				}
 				return session.NewToolError(call.ID, errLogReadFailed), nil
@@ -237,6 +236,15 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		if !fitsEvidence(projection.Value) {
 			return session.NewToolError(call.ID, "evidence exceeded the 64 KiB response bound"), nil
 		}
+		if scan.ContinuationSupported && scan.End != "" {
+			cursorLog := t.log.(port.CursorEventLog)
+			if endpointErr := validateEndpoint(ctx, cursorLog, target.ID, scan.BeforeEnd, scan.End); endpointErr != nil {
+				if ctx.Err() != nil || (!isCursorPositionError(endpointErr) && endpointErr.Error() != continuationInvalid) {
+					return session.NewToolError(call.ID, errLogReadFailed), nil
+				}
+				return session.NewToolError(call.ID, continuationInvalid), nil
+			}
+		}
 		if ctx.Err() != nil {
 			return session.NewToolError(call.ID, errLogReadFailed), nil
 		}
@@ -260,15 +268,6 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 		case viewHistory:
 			freshProjection, basisErr := t.historyFromScan(ctx, freshTarget, scope, args, scan)
 			if basisErr != nil || projection.Basis != freshProjection.Basis {
-				return session.NewToolError(call.ID, continuationInvalid), nil
-			}
-		}
-		if scan.ContinuationSupported && scan.ID != "" {
-			cursorLog := t.log.(port.CursorEventLog)
-			if endpointErr := validateEndpoint(ctx, cursorLog, target.ID, scan.BeforeEnd, scan.End); endpointErr != nil {
-				if ctx.Err() != nil {
-					return session.NewToolError(call.ID, errLogReadFailed), nil
-				}
 				return session.NewToolError(call.ID, continuationInvalid), nil
 			}
 		}

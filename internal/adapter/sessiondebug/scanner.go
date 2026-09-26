@@ -219,9 +219,19 @@ func (t *inspectTool) scanEvents(ctx context.Context, id session.SessionID, view
 		if token == "" && errors.Is(err, port.ErrCursorUnsupported) {
 			return t.scanLegacy(ctx, id)
 		}
+		if token != "" && isCursorPositionError(err) {
+			return eventScan{}, errors.New(continuationInvalid)
+		}
 		return eventScan{}, err
 	}
+	if token != "" && scan.Records == 0 {
+		scan.BeforeEnd, scan.End = claim.BeforeEnd, claim.End
+	}
 	return scan, nil
+}
+
+func isCursorPositionError(err error) bool {
+	return errors.Is(err, port.ErrCursorExpired) || errors.Is(err, port.ErrCursorMalformed) || errors.Is(err, port.ErrCursorUnsupported)
 }
 
 func (t *inspectTool) readCursorWindow(ctx context.Context, log port.CursorEventLog, id session.SessionID, start port.Cursor) (eventScan, error) {
@@ -271,7 +281,10 @@ func replaySealed(ctx context.Context, log port.CursorEventLog, id session.Sessi
 	count, events := 0, 0
 	for rec, err := range log.ReadAfter(ctx, id, claim.Start, port.ReadOptions{Limit: claim.Records, Follow: false}) {
 		if err != nil {
-			return eventScan{}, errors.New(continuationInvalid)
+			if isCursorPositionError(err) {
+				return eventScan{}, errors.New(continuationInvalid)
+			}
+			return eventScan{}, err
 		}
 		if ctx.Err() != nil {
 			return eventScan{}, ctx.Err()
@@ -302,7 +315,13 @@ func validateEndpoint(ctx context.Context, log port.CursorEventLog, id session.S
 	}
 	count := 0
 	for rec, err := range log.ReadAfter(ctx, id, before, port.ReadOptions{Limit: 1, Follow: false}) {
-		if err != nil || rec.Cursor != expected {
+		if err != nil {
+			if isCursorPositionError(err) {
+				return errors.New(continuationInvalid)
+			}
+			return err
+		}
+		if rec.Cursor != expected {
 			return errors.New(continuationInvalid)
 		}
 		count++
