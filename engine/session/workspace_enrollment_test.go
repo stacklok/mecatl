@@ -73,6 +73,26 @@ func TestWorkspaceEnrollmentLifecycleIsIndependent(t *testing.T) {
 	}
 }
 
+func TestCompleteWorkspaceEnrollmentWithBindingAdoptsFreshBrokerBinding(t *testing.T) {
+	s := newEnrollmentSession(t)
+	pending := testWorkspaceEnrollment()
+	if err := s.BeginWorkspaceEnrollment(pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteWorkspaceEnrollmentWithBinding(pending, ExternalBinding("b2-binding"), []string{"mcp__calendar__list"}); err != nil {
+		t.Fatalf("CompleteWorkspaceEnrollmentWithBinding: %v", err)
+	}
+	if s.ExternalBinding != ExternalBinding("b2-binding") {
+		t.Fatalf("ExternalBinding = %q", s.ExternalBinding)
+	}
+	if _, ok := s.PendingWorkspaceEnrollment(); ok {
+		t.Fatal("pending enrollment remains")
+	}
+	if len(s.Authority.CapabilitySet.Tools) != 1 || s.Authority.CapabilitySet.Tools[0] != "mcp__calendar__list" {
+		t.Fatalf("authority tools = %#v", s.Authority.CapabilitySet.Tools)
+	}
+}
+
 func TestPendingWorkspaceEnrollmentRejectsHistoryAndLifecycleMutation(t *testing.T) {
 	operations := []struct {
 		name string
