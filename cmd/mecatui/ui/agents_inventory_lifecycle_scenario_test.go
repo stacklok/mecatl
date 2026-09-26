@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 func TestMecatuiAgentInventoryBoundedViewport_Scenario2_CurrentOpenOwnsResult(t *testing.T) {
@@ -80,7 +81,7 @@ func TestMecatuiAgentInventoryBoundedViewport_Scenario3_OpenCloseLifecycle(t *te
 	}
 }
 
-func TestMecatuiAgentInventoryBoundedViewport_Scenario3_RemappablePhysicalLineNavigation(t *testing.T) {
+func TestMecatuiAgentInventoryBoundedViewport_Scenario3_RemappablePhysicalLineAndPagingNavigation(t *testing.T) {
 	m := newAgentsInvModel(t, scrollAgents(40), client.Capabilities{Agents: true})
 	m.keys = applyKeyOverrides(m.keys, map[string][]string{
 		"Up": {"u"}, "Down": {"d"}, "ScrollU": {"p"}, "ScrollD": {"n"}, "ScrollTop": {"t"}, "ScrollBottom": {"b"},
@@ -89,33 +90,104 @@ func TestMecatuiAgentInventoryBoundedViewport_Scenario3_RemappablePhysicalLineNa
 	m = feedCmd(t, opened.(Model), cmd)
 	m.configureAgentsInvViewport()
 	rows := agentsInvRowLines(m.deps.Theme, m.agentsInv.agents, newAgentsInvLayout(m.deps.Theme, m.helpKeyMarkings(), m.width, m.vp.Height()).bodyWidth)
+	height := m.agentsInv.viewport.Height()
 
-	for _, key := range []rune{'d', 'n'} {
-		updated, _, handled := m.onAgentsInvKey(tea.KeyPressMsg{Code: key})
-		if !handled {
-			t.Fatalf("remapped %q was not handled", key)
-		}
-		m = updated.(Model)
+	updated, _, handled := m.onAgentsInvKey(tea.KeyPressMsg{Code: 'd'})
+	if !handled {
+		t.Fatal("remapped Down was not handled")
 	}
-	if got := m.agentsInv.viewport.Offset(); got != 2 {
-		t.Fatalf("remapped Down/ScrollD offset = %d, want 2 physical lines", got)
-	}
-	for _, key := range []rune{'u', 'p'} {
-		updated, _, _ := m.onAgentsInvKey(tea.KeyPressMsg{Code: key})
-		m = updated.(Model)
-	}
-	if got := m.agentsInv.viewport.Offset(); got != 0 {
-		t.Fatalf("remapped Up/ScrollU offset = %d, want top", got)
-	}
-	updated, _, _ := m.onAgentsInvKey(tea.KeyPressMsg{Code: 'b'})
 	m = updated.(Model)
-	wantEnd := len(rows) - m.agentsInv.viewport.Height()
+	if got := m.agentsInv.viewport.Offset(); got != 1 {
+		t.Fatalf("remapped Down offset = %d, want one physical line", got)
+	}
+
+	updated, _, handled = m.onAgentsInvKey(tea.KeyPressMsg{Code: 'n'})
+	if !handled {
+		t.Fatal("remapped ScrollD was not handled")
+	}
+	m = updated.(Model)
+	if got, want := m.agentsInv.viewport.Offset(), 1+height; got != want {
+		t.Fatalf("remapped ScrollD offset = %d, want one physical page after Down (%d)", got, want)
+	}
+
+	updated, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: 'p'})
+	m = updated.(Model)
+	if got := m.agentsInv.viewport.Offset(); got != 1 {
+		t.Fatalf("remapped ScrollU offset = %d, want one physical page up", got)
+	}
+	updated, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: 'u'})
+	m = updated.(Model)
+	if got := m.agentsInv.viewport.Offset(); got != 0 {
+		t.Fatalf("remapped Up offset = %d, want top", got)
+	}
+
+	updated, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: 'b'})
+	m = updated.(Model)
+	wantEnd := len(rows) - height
 	if got := m.agentsInv.viewport.Offset(); got != wantEnd {
 		t.Fatalf("remapped ScrollBottom offset = %d, want %d", got, wantEnd)
 	}
 	updated, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: 't'})
 	if got := updated.(Model).agentsInv.viewport.Offset(); got != 0 {
 		t.Fatalf("remapped ScrollTop offset = %d, want 0", got)
+	}
+}
+
+func TestMecatuiAgentInventoryBoundedViewport_Scenario3_WheelOwnershipAndCompactIsolation(t *testing.T) {
+	m := newAgentsInvModel(t, scrollAgents(40), client.Capabilities{Agents: true})
+	m.vp.SetContent(strings.Repeat("conversation\n", 100))
+	opened, cmd := m.openAgentsInv()
+	m = feedCmd(t, opened.(Model), cmd)
+	m.configureAgentsInvViewport()
+	beforeConversation, beforeSelection := m.vp.YOffset(), m.sel
+
+	updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.agentsInv.viewport.Offset(); got != 0 {
+		t.Fatalf("wheel at top offset = %d, want consumed endpoint 0", got)
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("wheel at top leaked to conversation: got %d, want %d", got, beforeConversation)
+	}
+
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.agentsInv.viewport.Offset(); got != 1 {
+		t.Fatalf("wheel down offset = %d, want one physical line", got)
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("wheel moved hidden conversation from %d to %d", beforeConversation, got)
+	}
+	if !reflect.DeepEqual(m.sel, beforeSelection) {
+		t.Fatalf("wheel changed selection from %#v to %#v", beforeSelection, m.sel)
+	}
+
+	layout := newAgentsInvLayout(m.deps.Theme, m.helpKeyMarkings(), m.width, m.vp.Height())
+	rows := agentsInvRowLines(m.deps.Theme, m.agentsInv.agents, layout.bodyWidth)
+	m.agentsInv.viewport.Move(bounded.End, len(rows))
+	atEnd := m.agentsInv.viewport.Offset()
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if got := m.agentsInv.viewport.Offset(); got != atEnd {
+		t.Fatalf("wheel at end offset = %d, want consumed endpoint %d", got, atEnd)
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("wheel at endpoint leaked to conversation: got %d, want %d", got, beforeConversation)
+	}
+
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 10, Height: 3})
+	m = updated.(Model)
+	_ = m.View()
+	if m.agentsInv.viewport != nil {
+		t.Fatalf("compact fallback retained viewport: %#v", m.agentsInv.viewport)
+	}
+	updated, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	m = updated.(Model)
+	if m.agentsInv.viewport != nil {
+		t.Fatal("compact fallback wheel constructed a viewport")
+	}
+	if got := m.vp.YOffset(); got != beforeConversation {
+		t.Fatalf("compact wheel leaked to conversation: got %d, want %d", got, beforeConversation)
 	}
 }
 

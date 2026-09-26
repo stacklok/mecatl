@@ -4167,6 +4167,9 @@ func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 // belongs.
 func (m Model) onMouseMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.agentsInv.view != agentsInvNone {
+		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+			return m.onAgentsInvWheel(wheel)
+		}
 		return m, nil
 	}
 	switch msg := msg.(type) {

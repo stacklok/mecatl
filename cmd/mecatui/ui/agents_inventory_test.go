@@ -458,21 +458,21 @@ func TestAgentsInvScroll(t *testing.T) {
 		t.Errorf("top indicator should read %q, got:\n%s", topIndicator, top)
 	}
 
-	// One physical-line movement drops agent-00 and reveals the next tail row.
+	// A page movement advances by the current physical viewport height.
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm.(Model)
-	if agentsTestOffset(m.agentsInv.viewport) != 1 {
-		t.Errorf("scroll after pgdown = %d, want 1", agentsTestOffset(m.agentsInv.viewport))
+	if agentsTestOffset(m.agentsInv.viewport) != window {
+		t.Errorf("scroll after pgdown = %d, want one physical page (%d)", agentsTestOffset(m.agentsInv.viewport), window)
 	}
 	pd := stripANSIstr(m.View().Content)
 	if strings.Contains(pd, "agent-00") {
 		t.Errorf("after pgdown the window should no longer show agent-00, got:\n%s", pd)
 	}
-	wantTail := fmt.Sprintf("agent-%02d", window)
+	wantTail := fmt.Sprintf("agent-%02d", 2*window-1)
 	if !strings.Contains(pd, wantTail) {
 		t.Errorf("after pgdown the window should reveal %s, got:\n%s", wantTail, pd)
 	}
-	movedIndicator := fmt.Sprintf("lines 2–%d of 30", window+1)
+	movedIndicator := fmt.Sprintf("lines %d–%d of 30", window+1, 2*window)
 	if !strings.Contains(pd, movedIndicator) {
 		t.Errorf("after pgdown the indicator should read %q, got:\n%s", movedIndicator, pd)
 	}
@@ -500,11 +500,11 @@ func TestAgentsInvScroll(t *testing.T) {
 		t.Errorf("scroll clamps at %d, got %d", maxOffset, agentsTestOffset(m.agentsInv.viewport))
 	}
 
-	// Up moves back exactly one physical line.
+	// Page up moves back exactly one physical viewport height.
 	mm, _, _ = m.onAgentsInvKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	m = mm.(Model)
-	if agentsTestOffset(m.agentsInv.viewport) != maxOffset-1 {
-		t.Errorf("scroll after pgup = %d, want %d", agentsTestOffset(m.agentsInv.viewport), maxOffset-1)
+	if agentsTestOffset(m.agentsInv.viewport) != maxOffset-window {
+		t.Errorf("scroll after pgup = %d, want %d", agentsTestOffset(m.agentsInv.viewport), maxOffset-window)
 	}
 
 	// Home returns to the top.

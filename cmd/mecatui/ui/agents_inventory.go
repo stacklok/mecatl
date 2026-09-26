@@ -126,16 +126,40 @@ func (m Model) onAgentsInvKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	switch {
-	case key.Matches(msg, m.keys.ScrollD), key.Matches(msg, m.keys.Down):
+	case key.Matches(msg, m.keys.Down):
 		m.agentsInv.viewport.Move(bounded.LineDown, len(rows))
-	case key.Matches(msg, m.keys.ScrollU), key.Matches(msg, m.keys.Up):
+	case key.Matches(msg, m.keys.Up):
 		m.agentsInv.viewport.Move(bounded.LineUp, len(rows))
+	case key.Matches(msg, m.keys.ScrollD):
+		m.agentsInv.viewport.Move(bounded.PageDown, len(rows))
+	case key.Matches(msg, m.keys.ScrollU):
+		m.agentsInv.viewport.Move(bounded.PageUp, len(rows))
 	case key.Matches(msg, m.keys.ScrollBottom):
 		m.agentsInv.viewport.Move(bounded.End, len(rows))
 	case key.Matches(msg, m.keys.ScrollTop):
 		m.agentsInv.viewport.Move(bounded.Top, len(rows))
 	}
 	return m, nil, true
+}
+
+// onAgentsInvWheel keeps physical scrolling owned by the visible definition
+// inventory. Compact and non-inventory states have no viewport and still consume
+// the event through the root-owned overlay route.
+func (m Model) onAgentsInvWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.agentsInv.view == agentsInvNone {
+		return m, nil
+	}
+	rows := m.configureAgentsInvViewport()
+	if m.agentsInv.viewport == nil {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		m.agentsInv.viewport.Move(bounded.LineUp, len(rows))
+	case tea.MouseWheelDown:
+		m.agentsInv.viewport.Move(bounded.LineDown, len(rows))
+	}
+	return m, nil
 }
 
 // configureAgentsInvViewport applies the same measured geometry used by the
