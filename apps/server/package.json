@@ -16,7 +16,7 @@
   "dependencies": {
     "@hono/node-server": "2.1.1",
     "@hono/zod-openapi": "1.6.3",
-    "@stacklok-oss/mecatl-sdk": "^0.3.0",
+    "@stacklok-oss/mecatl-sdk": "^0.4.0",
     "hono": "4.13.8",
     "openid-client": "6.8.8",
     "zod": "4.6.5"
