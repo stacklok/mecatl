@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes the local, user-visible geometry and browsing contract of one existing mecatui inventory without changing a public API, persistence boundary, protocol, security boundary, or system architecture.
 **Decision record:** None — the pointer-owned viewport, centered-card geometry, and legacy-overlay ownership remain confined to `cmd/mecatui/ui`; their rationale belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-inventory adoption, agent-definition inventory slice
-**Status:** in-progress, 2026-09-25. Direct implementation-PR amendment authorized by the directing operator; the candidate will propose `landed` again only after the amended contract passes its gates.
+**Status:** landed in this implementation candidate, 2026-09-25. Authoritative when the implementation PR merges; this proposed transition follows the direct navigation/wheel amendment and successful aggregate gates.
 **Implementation-PR amendment (2026-09-25):** The directing operator authorized this implementation-PR amendment: configured Page Up/Page Down (`ScrollU`/`ScrollD`) page the physical viewport; arrow bindings retain one-physical-line movement; and `/agents` owns wheel events with the same physical one-line, no-selection movement used by existing bounded browsing surfaces. Smooth-wheel burst coalescing remains deferred to #1790.
 **Delivery:** Split. The user-visible geometry, compact fallback, and keyboard-ownership contract need plan/interface review before implementation.
 **Expected tasks:** 1
