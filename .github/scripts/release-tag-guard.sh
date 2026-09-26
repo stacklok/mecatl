@@ -21,27 +21,9 @@ if ! printf '%s\n' "$commit" | grep -Eq '^[0-9a-f]{40}$'; then
 fi
 
 case "${GITHUB_EVENT_NAME:-}" in
-  push)
+  push|workflow_dispatch)
     if [ "${GITHUB_REF:-}" != "$tag_ref" ]; then
-      echo "push ref does not match the release tag" >&2
-      exit 1
-    fi
-    if ! printf '%s\n' "${GITHUB_SHA:-}" | grep -Eq '^[0-9a-f]{40}$'; then
-      echo "push commit is not a full SHA" >&2
-      exit 1
-    fi
-    event_commit=$(git rev-parse --verify "${GITHUB_SHA}^{commit}" 2>/dev/null) || {
-      echo "push commit did not peel to a commit" >&2
-      exit 1
-    }
-    if [ "$event_commit" != "$commit" ]; then
-      echo "push commit does not match the release tag" >&2
-      exit 1
-    fi
-    ;;
-  workflow_dispatch)
-    if [ "${GITHUB_REF:-}" != "$tag_ref" ]; then
-      echo "dispatch ref does not match the release tag" >&2
+      echo "event ref does not match the release tag" >&2
       exit 1
     fi
     ;;
@@ -50,6 +32,22 @@ case "${GITHUB_EVENT_NAME:-}" in
     exit 1
     ;;
 esac
+case "${GITHUB_SHA:-}" in
+  ''|*[!0-9a-f]*) echo "event commit is not a full SHA" >&2; exit 1 ;;
+esac
+if [ "${#GITHUB_SHA}" -ne 40 ]; then
+  echo "event commit is not a full SHA" >&2
+  exit 1
+fi
+# Preserve annotated-tag peeling, but never resolve authority from a mutable ref.
+event_commit=$(git rev-parse --verify "${GITHUB_SHA}^{commit}" 2>/dev/null) || {
+  echo "event commit did not peel to a commit" >&2
+  exit 1
+}
+if [ "$event_commit" != "$commit" ]; then
+  echo "event commit does not match the release tag" >&2
+  exit 1
+fi
 if ! git merge-base --is-ancestor "$commit" origin/main; then
   echo "release tag commit is not on origin/main" >&2
   exit 1

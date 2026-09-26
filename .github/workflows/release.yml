@@ -110,6 +110,10 @@ jobs:
           ref: ${{ github.sha }}
       - name: Assert checkout is the immutable run commit
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - name: Assert guard and immutable run commits agree
+        env:
+          RELEASE_COMMIT: ${{ needs.guard.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"
 
   publish:
     name: Build, publish, sign, attest

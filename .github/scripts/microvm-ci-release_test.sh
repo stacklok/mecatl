@@ -133,15 +133,18 @@ import sys
 
 workflow = open(sys.argv[1], encoding="utf-8").read().splitlines()
 jobs = {}
+job_lines = {}
 current = None
 for line in workflow:
     match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
     if match:
         current = match.group(1)
         jobs[current] = []
+        job_lines[current] = []
         continue
     if current is None:
         continue
+    job_lines[current].append(line)
     match = re.fullmatch(r"    needs: (.+)", line)
     if not match:
         continue
@@ -160,10 +163,27 @@ def reaches_validation(job, seen=None):
     seen.add(job)
     return any(reaches_validation(dep, seen) for dep in jobs.get(job, []))
 
+for job, lines in job_lines.items():
+    for producer in re.findall(r"needs\.([A-Za-z0-9_-]+)\.outputs\.", "\n".join(lines)):
+        if producer not in jobs[job]:
+            raise SystemExit(f"job {job} reads outputs without directly needing {producer}")
+
+validation = "\n".join(job_lines["validate-release-ref"])
+assert '    needs: guard' in validation
+assert '          ref: ${{ github.sha }}' in validation
+assert '        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' in validation
+assert '''      - name: Assert guard and immutable run commits agree
+        env:
+          RELEASE_COMMIT: ${{ needs.guard.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "${RELEASE_COMMIT}"''' in validation
+
 for job in sorted(name for name in jobs if name == "publish" or name.startswith("publish-")):
     if not reaches_validation(job):
         raise SystemExit(f"publishing job {job} bypasses validate-release-ref")
 PY
+# Exercise the real guard and validator agreement step with divergent on-main
+# commits; counting checkout producers alone cannot establish revision authority.
+sh "$repo_root/.github/scripts/release-tag-guard_test.sh"
 # GoReleaser uploads to the release created above without replacing its notes.
 require 'mode: keep-existing' "$goreleaser"
 
