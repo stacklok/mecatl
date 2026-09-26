@@ -70,7 +70,7 @@ func TestRemoteCreateAttachPollingDiagnosticsAndCancellation(t *testing.T) {
 			engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Model: "offline"})
 			svc, err := server.NewService(server.Config{
 				Engine: engine, Store: store, PlacementProvider: provider, ExecutionAccess: provider,
-				PlacementScope: "fixture", SharedEngineRoot: "/workspace", NewID: func() session.SessionID { return "fixed" },
+				PlacementScope: "fixture", NewID: func() session.SessionID { return "fixed" },
 				Diagnostics: slogdiag.New(&logs, true, port.LevelDebug),
 			})
 			if err != nil {

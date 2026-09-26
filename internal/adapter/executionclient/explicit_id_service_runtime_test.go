@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -241,8 +242,8 @@ func TestServiceExplicitIDPrepublicationFailureCannotAbortPersistedWinner(t *tes
 		winnerDone <- result{sess: created, err: createErr}
 	}()
 	loser, loserErr := loserSvc.CreateSessionWithProfile(ctx, session.ModePlan, session.Limits{}, server.ProviderSelector{}, server.ProfileDefault, server.WithSessionID(id))
-	if !errors.Is(loserErr, factoryErr) {
-		t.Fatalf("prepublication loser error=%v, want original factory error", loserErr)
+	if !errors.Is(loserErr, server.ErrInvalidArgument) || !strings.Contains(loserErr.Error(), "different request") {
+		t.Fatalf("prepublication loser error=%v, want persisted-winner request mismatch", loserErr)
 	}
 	if loser != nil {
 		t.Fatalf("prepublication loser returned stale session %+v", loser)

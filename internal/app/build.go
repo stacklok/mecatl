@@ -2318,7 +2318,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if placementProvider == nil {
 		placementProvider = localProvider
 	} else if cfg.RemoteExecution {
-		placementProvider = &profilePlacementProvider{remote: placementProvider, local: localProvider}
+		profiledProvider := &profilePlacementProvider{remote: placementProvider, local: localProvider}
+		if err := profiledProvider.ValidatePlacement(ctx); err != nil {
+			return nil, fmt.Errorf("validate default placement: %w", err)
+		}
+		placementProvider = profiledProvider
 	}
 	attempts := startAttemptRecovery(ctx, cfg, reg, store, eventLog, assets.attemptRepository, assets.reflectionRepository, assets, placementProvider, placementScope)
 	if attempts != nil {

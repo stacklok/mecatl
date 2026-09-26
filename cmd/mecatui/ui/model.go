@@ -19,6 +19,7 @@ import (
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
@@ -1166,10 +1167,10 @@ func New(deps Deps) Model {
 			m.pendingRecoveryGeneration++
 			recoveryCtx, recoveryCancel := context.WithCancel(deps.Ctx)
 			snapshotCalls := make(map[string]struct{})
-			for i := range m.conv.blocks {
-				b := &m.conv.blocks[i]
-				if b.kind == blockTool && !b.resolved {
-					snapshotCalls[b.toolID] = struct{}{}
+			for i := 0; i < m.conv.scrollback.Len(); i++ {
+				toolCard, ok := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.ToolCardSnapshot)
+				if ok && !toolCard.Resolved {
+					snapshotCalls[toolCard.Call.ID] = struct{}{}
 				}
 			}
 			m.pendingRecovery = &pendingApprovalRecovery{

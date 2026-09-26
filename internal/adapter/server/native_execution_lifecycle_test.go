@@ -61,7 +61,7 @@ func (p *nativeRunProvider) AcquireRun(context.Context, server.ExecutionRunReque
 	return handle, nil
 }
 func (p *nativeRunProvider) binding() server.PlacementBinding {
-	return server.PlacementBinding{Ref: p.ref, Environment: tool.MustEnvironment(p.ref, memfs.NewWorkspace("/native"), memledger.New(), nil)}
+	return server.PlacementBinding{Ref: p.ref, Environment: tool.MustEnvironment(p.ref, memfs.NewWorkspace("/native"), memledger.New(), nil), GovernanceRoot: "/native"}
 }
 
 type nativeRunHandle struct {

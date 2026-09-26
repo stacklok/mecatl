@@ -128,7 +128,7 @@ func TestServiceUsesRealMTLSProviderStoreAndReleasesOnlyAfterDrain(t *testing.T)
 	)
 	engine := agent.NewEngine(agent.Deps{LLM: llm, Catalog: catalog, Policy: permpolicy.NewPolicy(permpolicy.AllowAllFloorRules(), nil), Model: "test"})
 	sessions := memstore.New()
-	svc, err := server.NewService(server.Config{Engine: engine, Store: sessions, PlacementProvider: provider, PlacementScope: "test", ExecutionAccess: provider, SharedEngineRoot: "/workspace", DefaultLimits: session.Limits{MaxTurns: 5}})
+	svc, err := server.NewService(server.Config{Engine: engine, Store: sessions, PlacementProvider: provider, PlacementScope: "test", ExecutionAccess: provider, DefaultLimits: session.Limits{MaxTurns: 5}})
 	if err != nil {
 		t.Fatal(err)
 	}

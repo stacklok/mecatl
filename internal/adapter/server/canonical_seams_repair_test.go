@@ -121,7 +121,7 @@ func TestInvariant_create_retry_reattaches_complete_environment_ref(t *testing.T
 	binds := provider.binds
 	reattachCalls := append([]PlacementReattachRequest(nil), provider.reattachCalls...)
 	provider.mu.Unlock()
-	if retry.EnvironmentRef != first.EnvironmentRef || binds != 2 {
+	if retry.EnvironmentRef != first.EnvironmentRef || binds != 1 {
 		t.Fatalf("retry ref=%+v binds=%d, want exact ref %+v without another bind", retry.EnvironmentRef, binds, first.EnvironmentRef)
 	}
 	if len(reattachCalls) != 1 {
@@ -222,7 +222,7 @@ func (*concurrentCreatePlacementProvider) binding(id session.SessionID) Placemen
 		revision = "rev-" + string(id)
 	}
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "/same-root", Revision: revision}
-	return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/same-root"), memledger.New(), nil)}
+	return PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/same-root"), memledger.New(), nil), GovernanceRoot: "/same-root"}
 }
 
 func (p *concurrentCreatePlacementProvider) Bind(ctx context.Context, req PlacementBindRequest) (PlacementBinding, error) {

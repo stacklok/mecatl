@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 func receivePendingTest[T any](t *testing.T, ch <-chan T) T {
@@ -264,13 +265,13 @@ func TestPendingApprovalRecoveryReconcilesSnapshotToolCalls(t *testing.T) {
 		Kind: client.PendingApprovalEventOther, Message: client.ToolCallMsg{ID: "call-1", Name: "Write", Args: `{"path":"actual"}`},
 	}})
 	m = next.(Model)
-	var tools []block
-	for _, b := range m.conv.blocks {
-		if b.kind == blockTool {
-			tools = append(tools, b)
+	var tools []scrollback.ToolCardSnapshot
+	for i := 0; i < m.conv.scrollback.Len(); i++ {
+		if toolCard, ok := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.ToolCardSnapshot); ok {
+			tools = append(tools, toolCard)
 		}
 	}
-	if len(tools) != 2 || tools[0].toolArgs != `{"path":"actual"}` || tools[1].toolID != "call-2" {
+	if len(tools) != 2 || tools[0].Call.Arguments != `{"path":"actual"}` || tools[1].Call.ID != "call-2" {
 		t.Fatalf("reconciled tools = %+v", tools)
 	}
 
@@ -280,12 +281,12 @@ func TestPendingApprovalRecoveryReconcilesSnapshotToolCalls(t *testing.T) {
 	}})
 	m = next.(Model)
 	tools = tools[:0]
-	for _, b := range m.conv.blocks {
-		if b.kind == blockTool {
-			tools = append(tools, b)
+	for i := 0; i < m.conv.scrollback.Len(); i++ {
+		if toolCard, ok := m.conv.scrollback.SnapshotAt(i).Payload.(scrollback.ToolCardSnapshot); ok {
+			tools = append(tools, toolCard)
 		}
 	}
-	if len(tools) != 3 || tools[2].toolName != "Read" {
+	if len(tools) != 3 || tools[2].Call.Name != "Read" {
 		t.Fatalf("later reused call identity was globally deduplicated: %+v", tools)
 	}
 }

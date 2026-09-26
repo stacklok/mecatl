@@ -191,8 +191,8 @@ func TestNativeBuildPreservesIndependentContext(t *testing.T) {
 			for range run.Events() {
 			}
 			built.Service.FinishRun(sess.ID, run)
-			if backend.ensureCalls != 1 || backend.attachCalls != 2 || backend.fileCalls != 0 {
-				t.Fatalf("run lazily touched native provider: ensure=%d attach=%d files=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
+			if backend.ensureCalls != 1 || backend.attachCalls != 1 || backend.fileCalls != 0 {
+				t.Fatalf("run changed native attachment ownership: ensure=%d attach=%d files=%d", backend.ensureCalls, backend.attachCalls, backend.fileCalls)
 			}
 			if len(requests) != 1 {
 				t.Fatalf("model requests=%d", len(requests))
@@ -207,8 +207,8 @@ func TestNativeBuildPreservesIndependentContext(t *testing.T) {
 			if !tc.compatibility && !strings.Contains(string(data), "INDEPENDENT_INSTRUCTIONS") {
 				t.Fatal("native factory dropped independent instructions")
 			}
-			if !strings.Contains(string(data), "SELECTED_REMOTE_MEMORY") {
-				t.Fatal("remote memory positive control missing")
+			if strings.Contains(string(data), "SELECTED_REMOTE_MEMORY") {
+				t.Fatal("guest execution root became a governance memory root")
 			}
 			if !strings.Contains(requests[0].System.StablePrefix, "persistent remote Kubernetes workspace") || !strings.Contains(requests[0].System.StablePrefix, "explicitly selected independent commands") {
 				t.Fatal("native factory lost system posture or independent command affordance")
