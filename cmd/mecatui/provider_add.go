@@ -19,10 +19,13 @@ import (
 )
 
 const (
-	providerAuthAPIKey  = "api_key"
-	providerAuthOIDC    = "oidc"
-	providerAuthNone    = "none"
-	providerRollbackMax = 5 * time.Second
+	providerAuthAPIKey = "api_key"
+	providerAuthOIDC   = "oidc"
+	providerAuthNone   = "none"
+	// providerAuthSubscription labels a provider whose credential is a plan
+	// entitlement obtained by signing in, so no credential is ever pasted.
+	providerAuthSubscription = "subscription"
+	providerRollbackMax      = 5 * time.Second
 )
 
 func defaultProviderSettingsPath() string {

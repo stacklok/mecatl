@@ -11,8 +11,13 @@ import (
 )
 
 func mutateDefaults(data []byte, update DefaultUpdate) ([]byte, bool, error) {
+	// An absent or empty settings document holds no unrelated settings to
+	// preserve, so the canonical document is written directly. Seeding the
+	// mutation with an empty "{}" flow mapping instead would keep its braces and
+	// render "{models: ...}", which the settings schema rejects, leaving
+	// `providers set-default` unable to run on a host with no settings file.
 	if len(bytes.TrimSpace(data)) == 0 {
-		out := []byte("models:\n  default_provider: " + defaultQuote(update.Provider) + "\n  default: " + defaultQuote(update.Model) + "\n")
+		out := []byte(defaultStaticText(update))
 		if err := ValidateYAML(out); err != nil {
 			return nil, false, errors.New("updated settings document is invalid")
 		}
@@ -30,7 +35,7 @@ func mutateDefaults(data []byte, update DefaultUpdate) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	if modelsNode == nil {
-		entry := defaultStaticEntry("models:\n  default_provider: " + defaultQuote(update.Provider) + "\n  default: " + defaultQuote(update.Model) + "\n")
+		entry := defaultStaticEntry(defaultStaticText(update))
 		doc.Mapping().Values = append(doc.Mapping().Values, entry)
 		if doc.Mapping().IsFlowStyle {
 			doc.Mapping().SetIsFlowStyle(true)
@@ -124,6 +129,12 @@ func defaultStaticEntry(text string) *ast.MappingValueNode {
 		panic("invalid static settings YAML")
 	}
 	return doc.Mapping().Values[0]
+}
+
+// defaultStaticText renders the canonical `models` defaults block for an
+// addition to a document that has none.
+func defaultStaticText(update DefaultUpdate) string {
+	return "models:\n  default_provider: " + defaultQuote(update.Provider) + "\n  default: " + defaultQuote(update.Model) + "\n"
 }
 
 func defaultQuote(value string) string {

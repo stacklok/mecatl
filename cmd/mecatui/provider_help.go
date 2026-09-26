@@ -27,7 +27,11 @@ Commands:
   set-default PROVIDER [MODEL]   set the embedded deployment default
   remove PROVIDER                remove a custom provider and its credentials
 
-API keys and OIDC credentials are stored locally and are never printed. Environment credentials may take precedence. Manage ToolHive providers with ` + "`thv llm`" + `.
+Classes, authentication, and custody:
+  Built-in providers use locally managed API keys. openai-codex signs in with a ChatGPT subscription and has no API key; anthropic also signs in with --subscription.
+  Custom providers declare api_key, oidc, or no authentication in operator settings.
+  ToolHive is external: its lifecycle and credentials remain with ` + "`thv llm`" + ` tooling.
+  API keys and OIDC enrollments stay in local operator-managed credential storage. Environment credentials can take precedence; status reports that fact without revealing a secret.
 
 Start with ` + "`mecatui providers status`" + ` or ` + "`mecatui providers setup`" + `.
 `

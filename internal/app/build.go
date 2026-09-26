@@ -57,7 +57,6 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/team"
 	"github.com/stacklok/mecatl/engine/tool"
-	"github.com/stacklok/mecatl/internal/adapter/agents"
 	"github.com/stacklok/mecatl/internal/adapter/anthropicsub"
 	"github.com/stacklok/mecatl/internal/adapter/attemptstore"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
