@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -138,7 +140,10 @@ type scheduleManager struct {
 	// placementForCreate atomically resolves or exactly reauthorizes durable
 	// schedule placement through the owning Service. The returned ref and scope
 	// are private store state; neither is accepted from public schedule mappings.
-	placementForCreate func(context.Context, session.EnvironmentRef, SessionProfile) (session.EnvironmentRef, string, SessionProfile, error)
+	placementForCreate func(context.Context, session.EnvironmentRef, SessionProfile) (schedulePlacement, error)
+	// deletePlacement removes only an exact schedule-owned placement. Borrowed,
+	// no-FS, host-local, and legacy-ambiguous records never call it.
+	deletePlacement func(context.Context, session.EnvironmentRef, string) (bool, error)
 }
 
 // scheduleStoreProvider is the accessor the jsonlstore + redisstore expose:
@@ -252,8 +257,12 @@ func (m *scheduleManager) setModelsPointer(p *atomic.Pointer[[]*mecatlv1.ModelIn
 
 // setPlacementForCreate attaches the Service-owned placement authority to the
 // manager after Service construction.
-func (m *scheduleManager) setPlacementForCreate(fn func(context.Context, session.EnvironmentRef, SessionProfile) (session.EnvironmentRef, string, SessionProfile, error)) {
+func (m *scheduleManager) setPlacementForCreate(fn func(context.Context, session.EnvironmentRef, SessionProfile) (schedulePlacement, error)) {
 	m.placementForCreate = fn
+}
+
+func (m *scheduleManager) setPlacementDeleter(fn func(context.Context, session.EnvironmentRef, string) (bool, error)) {
+	m.deletePlacement = fn
 }
 
 // scheduleStore returns the manager's ScheduleStore (the explicit override
@@ -381,7 +390,7 @@ func fireNotFoundErr(fireID string) error {
 // schedule.
 //
 //nolint:gocyclo // Creation intentionally keeps validation, placement resolution, ownership, and atomic publication in one transaction.
-func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (port.Schedule, error) {
+func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.ScheduleSpec) (_ port.Schedule, retErr error) {
 	if !m.requireCaller(ctx) {
 		return port.Schedule{}, fmt.Errorf("%w: unable to create schedule", ErrInvalidArgument)
 	}
@@ -389,6 +398,15 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	cronNextFire, originOwner, originRef, err := m.validateScheduleSpec(ctx, spec, now)
 	if err != nil {
 		return port.Schedule{}, err
+	}
+	literalName := spec.Name
+	physicalName := m.physicalScheduleName(ctx, literalName)
+	// Reject an existing name before provisioning a schedule-owned placement.
+	// The atomic Create below remains the race fence.
+	if _, loadErr := m.schedStore.Load(ctx, physicalName); loadErr == nil {
+		return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName)
+	} else if !errors.Is(loadErr, port.ErrScheduleNotFound) {
+		return port.Schedule{}, loadErr
 	}
 	if spec.OriginSessionID != "" && SessionProfile(spec.Profile) != ProfileNoFS {
 		if spec.EnvironmentRef.Valid() && spec.EnvironmentRef != originRef {
@@ -398,28 +416,50 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	} else if spec.OriginSessionID == "" && spec.EnvironmentRef.Valid() && m.placementForCreate != nil {
 		return port.Schedule{}, fmt.Errorf("%w: public schedule creation cannot supply an exact placement", ErrInvalidArgument)
 	}
+	var placement schedulePlacement
 	if m.placementForCreate != nil {
-		ref, scope, profile, rerr := m.placementForCreate(ctx, spec.EnvironmentRef, SessionProfile(spec.Profile))
-		if rerr != nil {
-			return port.Schedule{}, rerr
+		placement, err = m.placementForCreate(ctx, spec.EnvironmentRef, SessionProfile(spec.Profile))
+		if err != nil {
+			return port.Schedule{}, err
 		}
-		spec.EnvironmentRef, spec.PlacementScope, spec.Profile = ref, scope, string(profile)
+		spec.EnvironmentRef, spec.PlacementScope, spec.Profile = placement.ref, placement.scope, string(placement.profile)
+		spec.PlacementOwned = placement.owned && spec.OriginSessionID == "" && placement.profile != ProfileNoFS
+	}
+	released := false
+	releasePlacement := func() error {
+		if released || placement.release == nil {
+			released = true
+			return nil
+		}
+		released = true
+		if err := placement.release(); err != nil {
+			return fmt.Errorf("release schedule placement: %w", ErrPlacementUnavailable)
+		}
+		return nil
+	}
+	defer func() {
+		releaseErr := releasePlacement()
+		if releaseErr != nil && m.diag != nil {
+			m.diag.Log(context.WithoutCancel(ctx), port.LevelWarn, "schedule placement release incomplete", "schedule", literalName)
+		}
+		retErr = errors.Join(retErr, releaseErr)
+	}()
+	rollbackPlacement := func() error {
+		releaseErr := releasePlacement()
+		var rollbackErr error
+		if spec.PlacementOwned && placement.rollback != nil {
+			if err := placement.rollback(context.WithoutCancel(ctx)); err != nil {
+				rollbackErr = fmt.Errorf("rollback schedule placement: %w", ErrPlacementUnavailable)
+			}
+		}
+		if (releaseErr != nil || rollbackErr != nil) && m.diag != nil {
+			m.diag.Log(context.WithoutCancel(ctx), port.LevelWarn, "schedule placement rollback incomplete", "schedule", literalName)
+		}
+		return errors.Join(releaseErr, rollbackErr)
 	}
 	if !spec.EnvironmentRef.Valid() || spec.PlacementScope == "" {
 		return port.Schedule{}, fmt.Errorf("%w: schedule placement was not resolved", ErrFailedPrecondition)
 	}
-	// Collision guard: a Create whose name already exists must never SILENTLY
-	// CLOBBER the existing schedule's spec (the edit path is UpdateSchedule, a
-	// distinct method).
-	//
-	// The check (and the eventual write) run against the OWNER-NAMESPACED
-	// physical key (issue #368, ADR-0212 decision 1), not the bare literal
-	// name: a name already used by a DIFFERENT owner must be absence-style
-	// (indistinguishable from "name available"), never a distinguishing
-	// "already exists" — the collision guard is scoped to THIS caller's own
-	// namespace, so two different owners may share the identical literal name.
-	literalName := spec.Name
-	physicalName := m.physicalScheduleName(ctx, literalName)
 	applyScheduleDefaults(&spec)
 	// Capture the owner ONCE, here (ADR 0204 decision 6). A caller can never
 	// name it in the request body (protoToScheduleSpec drops any inbound owner,
@@ -464,25 +504,22 @@ func (m *scheduleManager) CreateSchedule(ctx context.Context, spec port.Schedule
 	// fallback.
 	if creator, ok := m.schedStore.(port.ScheduleCreator); ok {
 		if err := creator.Create(ctx, sched); err != nil {
+			cleanupErr := rollbackPlacement()
 			if errors.Is(err, port.ErrScheduleAlreadyExists) {
-				return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName)
+				return port.Schedule{}, errors.Join(fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName), cleanupErr)
 			}
-			return port.Schedule{}, err
+			return port.Schedule{}, errors.Join(err, cleanupErr)
 		}
 	} else {
 		// ScheduleCreator is optional for ownerless compatibility, but ownership
 		// enforcement may never fall back to check-then-upsert: a concurrent
 		// creator could otherwise overwrite another caller's schedule.
 		if m.ownershipEnforced {
-			return port.Schedule{}, fmt.Errorf("%w: ownership enforcement requires a schedule store with atomic create capability", ErrFailedPrecondition)
-		}
-		if _, lerr := m.schedStore.Load(ctx, physicalName); lerr == nil {
-			return port.Schedule{}, fmt.Errorf("%w: a schedule named %q already exists", ErrInvalidArgument, literalName)
-		} else if !errors.Is(lerr, port.ErrScheduleNotFound) {
-			return port.Schedule{}, lerr
+			cleanupErr := rollbackPlacement()
+			return port.Schedule{}, errors.Join(fmt.Errorf("%w: ownership enforcement requires a schedule store with atomic create capability", ErrFailedPrecondition), cleanupErr)
 		}
 		if err := m.schedStore.Save(ctx, sched); err != nil {
-			return port.Schedule{}, err
+			return port.Schedule{}, errors.Join(err, rollbackPlacement())
 		}
 	}
 	sched.Spec.Name = literalName
@@ -821,18 +858,22 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 		return port.Schedule{}, scheduleNotFoundErr(port.ErrScheduleNotFound, spec.Name)
 	}
 	now := m.now()
-	// The computed cron next-fire is not needed here (Update preserves the
-	// existing State, including NextFireAt); the call is still made for its
-	// validation side effect (the shared create-seam checks).
-	if _, _, _, err := m.validateScheduleSpec(ctx, spec, now); err != nil {
-		return port.Schedule{}, err
-	}
-	applyScheduleDefaults(&spec)
 	literalName := spec.Name
 	physicalName := m.physicalScheduleName(ctx, literalName)
 	existing, err := m.schedStore.Load(ctx, physicalName)
 	if err != nil {
 		return port.Schedule{}, scheduleNotFoundErr(err, literalName)
+	}
+	if existing.State.DeletionID != "" {
+		return port.Schedule{}, fmt.Errorf("%w: schedule deletion is pending", ErrFailedPrecondition)
+	}
+	if spec.EnvironmentRef.Valid() && spec.EnvironmentRef != existing.Spec.EnvironmentRef ||
+		spec.PlacementScope != "" && spec.PlacementScope != existing.Spec.PlacementScope ||
+		spec.OriginSessionID != "" && spec.OriginSessionID != existing.Spec.OriginSessionID ||
+		spec.Profile != "" && spec.Profile != existing.Spec.Profile ||
+		spec.PlacementOwned && !existing.Spec.PlacementOwned ||
+		spec.Owner != nil && (existing.Spec.Owner == nil || !spec.Owner.SameIdentity(existing.Spec.Owner)) {
+		return port.Schedule{}, fmt.Errorf("%w: schedule placement and ownership are immutable", ErrInvalidArgument)
 	}
 	// Preserve the existing State (firing progress) AND the creation timestamp —
 	// only the operator-authored Spec fields change on an Update. CreatedAt is a
@@ -844,8 +885,20 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	// captured owner forward verbatim, so editing a schedule can never re-own it
 	// to the updating caller.
 	spec.Owner = existing.Spec.Owner
+	spec.OriginSessionID = existing.Spec.OriginSessionID
 	spec.EnvironmentRef = existing.Spec.EnvironmentRef
 	spec.PlacementScope = existing.Spec.PlacementScope
+	spec.PlacementOwned = existing.Spec.PlacementOwned
+	spec.Profile = existing.Spec.Profile
+	// The computed cron next-fire is not needed here (Update preserves the
+	// existing State, including NextFireAt). Origin existence is a create-time
+	// check: retention may legitimately sweep the origin while its schedule lives.
+	validationSpec := spec
+	validationSpec.OriginSessionID = ""
+	if _, _, _, err := m.validateScheduleSpec(ctx, validationSpec, now); err != nil {
+		return port.Schedule{}, err
+	}
+	applyScheduleDefaults(&spec)
 	// See CreateSchedule: Spec.Name carries the physical key only across the
 	// Save call (the store keys strictly by Spec.Name); it is restored to the
 	// literal name on the returned value below.
@@ -858,16 +911,70 @@ func (m *scheduleManager) UpdateSchedule(ctx context.Context, spec port.Schedule
 	return updated, nil
 }
 
-// DeleteSchedule removes a schedule by name. It is idempotent (the store's
-// Delete discipline).
+// DeleteSchedule directly deletes non-owned records for compatibility. Owned
+// placements use a durable, atomic deleting marker: cleanup is retried against
+// the exact persisted binding and completion conditionally removes only that
+// marked incarnation.
 func (m *scheduleManager) DeleteSchedule(ctx context.Context, name string) error {
 	if !m.requireCaller(ctx) {
-		// Absence-shaped + idempotent: a caller-less delete under enforcement
-		// sees nothing to delete (Delete's own idempotent-on-unknown-name
-		// discipline), never a shared-bucket mutation.
 		return nil
 	}
-	return m.schedStore.Delete(ctx, m.physicalScheduleName(ctx, name))
+	physicalName := m.physicalScheduleName(ctx, name)
+	sched, err := m.schedStore.Load(ctx, physicalName)
+	if errors.Is(err, port.ErrScheduleNotFound) {
+		return nil
+	}
+	if err != nil {
+		return scheduleNotFoundErr(err, name)
+	}
+	// Preserve the historical idempotent direct-delete path for every borrowed,
+	// host-local, no-FS, and legacy-ambiguous record.
+	if !sched.Spec.PlacementOwned {
+		return m.schedStore.Delete(ctx, physicalName)
+	}
+	deletions, ok := m.schedStore.(port.ScheduleDeletionStore)
+	if !ok {
+		return fmt.Errorf("%w: schedule store lacks atomic owned-placement deletion", ErrFailedPrecondition)
+	}
+	deletionID, err := newScheduleDeletionID()
+	if err != nil {
+		return fmt.Errorf("begin schedule deletion: %w", err)
+	}
+	deleting, err := deletions.BeginDelete(ctx, physicalName, deletionID)
+	if errors.Is(err, port.ErrScheduleActiveFire) {
+		return fmt.Errorf("%w: schedule has an active fire; retry after recovery settles it", ErrFailedPrecondition)
+	}
+	if err != nil {
+		return scheduleNotFoundErr(err, name)
+	}
+	if deleting.State.DeletionID == "" {
+		return fmt.Errorf("%w: schedule store returned an unmarked deletion", ErrFailedPrecondition)
+	}
+	// FireCount is incremented atomically by Claim/ClaimNow before a fire can
+	// publish its session. Once any claim succeeded, the placement belongs to the
+	// historical (and potentially resumable) fire-session lineage and schedule
+	// deletion must preserve it. The BeginDelete return is the atomic handoff
+	// record; consulting the earlier Load would race a concurrent claim.
+	if deleting.State.FireCount == 0 {
+		if deleting.Spec.EnvironmentRef.Kind == session.EnvKindNoFS || deleting.Spec.EnvironmentRef.Kind == session.EnvKindLocal || m.deletePlacement == nil {
+			return fmt.Errorf("%w: owned schedule placement cleanup is unavailable", ErrFailedPrecondition)
+		}
+		if _, err := m.deletePlacement(ctx, deleting.Spec.EnvironmentRef, deleting.Spec.PlacementScope); err != nil {
+			return fmt.Errorf("schedule placement cleanup pending; retry delete: %w", err)
+		}
+	}
+	if err := deletions.CompleteDelete(ctx, physicalName, deleting.State.DeletionID); err != nil {
+		return fmt.Errorf("schedule placement was cleaned but deletion completion is pending; retry delete: %w", err)
+	}
+	return nil
+}
+
+func newScheduleDeletionID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value[:]), nil
 }
 
 // PauseSchedule disables a schedule (Enabled=false) without deleting it. It
@@ -877,7 +984,11 @@ func (m *scheduleManager) PauseSchedule(ctx context.Context, name string) error 
 	if !m.requireCaller(ctx) {
 		return scheduleNotFoundErr(port.ErrScheduleNotFound, name)
 	}
-	return scheduleNotFoundErr(m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), false), name)
+	err := m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), false)
+	if errors.Is(err, port.ErrScheduleDeleting) {
+		return fmt.Errorf("%w: schedule deletion is pending", ErrFailedPrecondition)
+	}
+	return scheduleNotFoundErr(err, name)
 }
 
 // ResumeSchedule re-enables a paused schedule (Enabled=true). It calls
@@ -886,7 +997,11 @@ func (m *scheduleManager) ResumeSchedule(ctx context.Context, name string) error
 	if !m.requireCaller(ctx) {
 		return scheduleNotFoundErr(port.ErrScheduleNotFound, name)
 	}
-	return scheduleNotFoundErr(m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), true), name)
+	err := m.schedStore.SetEnabled(ctx, m.physicalScheduleName(ctx, name), true)
+	if errors.Is(err, port.ErrScheduleDeleting) {
+		return fmt.Errorf("%w: schedule deletion is pending", ErrFailedPrecondition)
+	}
+	return scheduleNotFoundErr(err, name)
 }
 
 // GetFire loads a fire record by id. With ownership enforcement enabled, it

@@ -95,6 +95,74 @@ func TestScheduleSaveLoadOverWire(t *testing.T) {
 	}
 }
 
+func TestOwnedScheduleUsesVersionedEnvelopeAndRoundTripsOwnership(t *testing.T) {
+	st, _ := newWiredScheduleStore(t)
+	in := port.Schedule{Spec: port.ScheduleSpec{Name: "owned", PlacementOwned: true}}
+	if err := st.Save(t.Context(), in); err != nil {
+		t.Fatalf("Save owned schedule: %v", err)
+	}
+	got, err := st.Load(t.Context(), in.Spec.Name)
+	if err != nil {
+		t.Fatalf("Load owned schedule: %v", err)
+	}
+	if !got.Spec.PlacementOwned {
+		t.Fatal("owned placement bit was lost over the driver envelope")
+	}
+}
+
+func TestScheduleEnvelopeRejectsOwnershipFormatMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		format string
+		owned  bool
+	}{
+		{name: "v1 carrying owned placement", format: ScheduleFormat, owned: true},
+		{name: "owned format missing ownership", format: ownedScheduleFormat, owned: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := json.Marshal(port.Schedule{Spec: port.ScheduleSpec{Name: "mismatch", PlacementOwned: tc.owned}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := &driverv1.ScheduleRecord{Format: tc.format, Payload: payload}
+			if _, err := decodeScheduleEnvelope("mismatch", record); err == nil {
+				t.Fatal("client accepted mismatched ownership envelope")
+			}
+			if _, err := validateScheduleRecord("mismatch", record); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("server validation = %v, want InvalidArgument", err)
+			}
+		})
+	}
+}
+
+type v1OnlyScheduleServer struct {
+	driverv1.UnimplementedScheduleStoreServiceServer
+	stored int
+}
+
+func (s *v1OnlyScheduleServer) SaveSchedule(_ context.Context, req *driverv1.SaveScheduleRequest) (*driverv1.SaveScheduleResponse, error) {
+	if req.GetSchedule().GetFormat() != ScheduleFormat {
+		return nil, status.Errorf(codes.InvalidArgument, "unknown schedule format %q", req.GetSchedule().GetFormat())
+	}
+	s.stored++
+	return &driverv1.SaveScheduleResponse{}, nil
+}
+
+func TestV1OnlyServerRejectsOwnedScheduleBeforeStorage(t *testing.T) {
+	oldServer := &v1OnlyScheduleServer{}
+	conn := dialBufconn(t, func(gs *grpc.Server) {
+		driverv1.RegisterScheduleStoreServiceServer(gs, oldServer)
+	})
+	st := NewScheduleStore(conn)
+	err := st.Save(t.Context(), port.Schedule{Spec: port.ScheduleSpec{Name: "owned", PlacementOwned: true}})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("Save owned schedule through v1-only server = %v, want InvalidArgument", err)
+	}
+	if oldServer.stored != 0 {
+		t.Fatalf("v1-only server stored %d owned schedules, want 0", oldServer.stored)
+	}
+}
+
 // TestScheduleSaveLoadOneShotOverWire is the happy-path round trip for a
 // one-shot schedule (the OneShot trigger arm).
 func TestScheduleSaveLoadOneShotOverWire(t *testing.T) {

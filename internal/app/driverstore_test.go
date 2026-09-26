@@ -28,6 +28,18 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
+func TestCanonicalConfiguredDir_AllowsMissingDefaultParents(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".local", "share", "mecatui", "memory", "workspace")
+	got, err := canonicalConfiguredDir(path)
+	if err != nil {
+		t.Fatalf("canonicalConfiguredDir(first-run path): %v", err)
+	}
+	if got != path {
+		t.Fatalf("canonical path = %q, want %q", got, path)
+	}
+}
+
 // TestValidateDriverConfigExclusivity pins the mutual-exclusion rule: a local
 // dir and a remote driver URL for the SAME store is a fatal config error;
 // every other combination passes.

@@ -56,12 +56,16 @@ func (s *Service) ownedSessionBinding(ctx context.Context, id session.SessionID)
 // creation. The team supervisor adopts the environment capability; discovery
 // uses ownedSessionBinding directly so it can release request-scoped provider
 // resources after the read completes.
-func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.SessionID) (*session.Session, tool.Environment, error) {
+func (s *Service) ownedSessionEnvironment(ctx context.Context, id session.SessionID) (*session.Session, tool.Environment, func(), error) {
 	sess, binding, err := s.ownedSessionBinding(ctx, id)
 	if err != nil {
-		return nil, tool.Environment{}, err
+		return nil, tool.Environment{}, nil, err
 	}
-	return sess, binding.Environment, nil
+	release := func() {}
+	if binding.Close != nil {
+		release = func() { _ = binding.Close() }
+	}
+	return sess, binding.Environment, release, nil
 }
 
 // ListCommandsForSession owner-authorizes the session and borrows its independent

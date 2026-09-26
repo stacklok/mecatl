@@ -70,7 +70,7 @@ func saveLocalContextSession(t *testing.T, store *memstore.Store, id string, ref
 	}
 }
 
-func TestADR_0296_LocalContextClosesProvisionalBinding(t *testing.T) {
+func TestADR_0296_LocalContextRetainsServiceOwnedBinding(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "opaque", Revision: "v1"}
 	provider := &localContextPlacementProvider{defaultBinding: localContextBinding(ref, "/daemon")}
 	provider.reattach = func(req server.PlacementReattachRequest) (server.PlacementBinding, error) {
@@ -91,8 +91,12 @@ func TestADR_0296_LocalContextClosesProvisionalBinding(t *testing.T) {
 	if got.GetWorkspacePath() != "/private/root" {
 		t.Fatalf("workspace path = %q, want reattached root", got.GetWorkspacePath())
 	}
+	if provider.closed != 0 {
+		t.Fatalf("placement binding closed during context borrow: %d", provider.closed)
+	}
+	svc.CloseSession("owned")
 	if provider.closed != 1 {
-		t.Fatalf("provisional placement binding closes = %d, want 1", provider.closed)
+		t.Fatalf("placement binding closes = %d, want 1 after CloseSession", provider.closed)
 	}
 }
 
@@ -123,8 +127,12 @@ func TestADR_0296_LocalContextUsesExactReattachment(t *testing.T) {
 	if provider.reattachCalls != 1 {
 		t.Fatalf("Reattach calls = %d, want 1", provider.reattachCalls)
 	}
+	if provider.closed != 0 {
+		t.Fatalf("exact placement binding closed during context borrow: %d", provider.closed)
+	}
+	svc.CloseSession("owned")
 	if provider.closed != 1 {
-		t.Fatalf("provisional binding close calls = %d, want 1", provider.closed)
+		t.Fatalf("exact placement binding close calls = %d, want 1 after CloseSession", provider.closed)
 	}
 }
 

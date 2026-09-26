@@ -99,18 +99,19 @@ type teamDeclarationMessage struct {
 }
 
 type teamState struct {
-	team          *team.Team
-	sup           *agent.Supervisor
-	base          string
-	env           tool.Environment
-	name          string
-	goal          string
-	budget        int
-	specs         []agent.MemberSpec
-	messages      []teamDeclarationMessage
-	owner         *session.Principal
-	rootSessionID session.SessionID
-	phase         teamPhase
+	team             *team.Team
+	sup              *agent.Supervisor
+	base             string
+	env              tool.Environment
+	name             string
+	goal             string
+	budget           int
+	specs            []agent.MemberSpec
+	messages         []teamDeclarationMessage
+	owner            *session.Principal
+	rootSessionID    session.SessionID
+	releasePlacement func()
+	phase            teamPhase
 
 	// run serialises a SpawnTeammate (AddMember writes the supervisor's member maps)
 	// against a RunTeam start (sup.Run reads them). See the type doc above.
@@ -146,10 +147,15 @@ func (s *Service) CreateTeamOnDefaultPlacement(ctx context.Context, name, goal s
 	if err != nil {
 		return "", nil, err
 	}
+	var release func()
 	if binding.Close != nil {
-		defer func() { _ = binding.Close() }()
+		release = func() { _ = binding.Close() }
 	}
-	return s.createTeamInEnvironment(ctx, binding.Environment, "", name, goal, maxTeamTokens, members)
+	teamID, roster, err := s.createTeamInEnvironment(ctx, binding.Environment, release, "", name, goal, maxTeamTokens, members)
+	if err != nil {
+		rollbackUnpublishedPlacement(s, &binding)
+	}
+	return teamID, roster, err
 }
 
 // CreateTeamForSession creates a team in an owning session's exact authorized
@@ -158,17 +164,22 @@ func (s *Service) CreateTeamForSession(ctx context.Context, source session.Sessi
 	if source == "" {
 		return "", nil, fmt.Errorf("%w: session_id is required", ErrInvalidArgument)
 	}
-	loaded, env, err := s.ownedSessionEnvironment(ctx, source)
+	loaded, env, release, err := s.ownedSessionEnvironment(ctx, source)
 	if err != nil {
 		return "", nil, err
 	}
 	if env.Workspace() == nil || env.Ref().Kind == session.EnvKindNoFS {
+		release()
 		return "", nil, fmt.Errorf("%w: session has no filesystem placement", ErrFailedPrecondition)
 	}
-	return s.createTeamInEnvironment(ctx, env, loaded.ID, name, goal, maxTeamTokens, members)
+	teamID, roster, err := s.createTeamInEnvironment(ctx, env, release, loaded.ID, name, goal, maxTeamTokens, members)
+	if err != nil {
+		release()
+	}
+	return teamID, roster, err
 }
 
-func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environment, rootSessionID session.SessionID, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
+func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environment, releasePlacement func(), rootSessionID session.SessionID, name, goal string, maxTeamTokens int, members []agent.MemberSpec) (string, []team.Member, error) {
 	if s.cfg.MemberEngine == nil {
 		return "", nil, ErrTeamsDisabled
 	}
@@ -209,6 +220,7 @@ func (s *Service) createTeamInEnvironment(ctx context.Context, base tool.Environ
 		team: t, base: workspace, env: base, name: name, goal: goal,
 		budget: maxTeamTokens, specs: append([]agent.MemberSpec(nil), members...),
 		owner: session.PrincipalFromContext(ctx).Clone(), rootSessionID: rootSessionID,
+		releasePlacement: releasePlacement,
 	}
 	if err := s.declareInitialRoster(t, id, members); err != nil {
 		return "", nil, err
@@ -654,6 +666,9 @@ func (s *Service) CleanupTeam(ctx context.Context, teamID string) error {
 			memberID = agent.MemberSessionID(teamID, member.Name)
 		}
 		s.releaseLease(memberID)
+	}
+	if ts.releasePlacement != nil {
+		ts.releasePlacement()
 	}
 	return nil
 }

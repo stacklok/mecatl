@@ -29,6 +29,43 @@ import (
 // the dirty view at most once per frame. The visible cadence is unchanged.
 const renderInterval = 16 * time.Millisecond
 
+func safeMicroVMReadinessMessage(detail string) (string, bool) {
+	const prefix = "server: placement unavailable: microvm readiness failed; "
+	if len(detail) > 1024 {
+		return "", false
+	}
+	start := strings.Index(detail, prefix)
+	if start < 0 {
+		return "", false
+	}
+	parts := strings.Split(detail[start+len(prefix):], "; ")
+	if len(parts) != 4 || parts[3] != "remediation=run 'mecated microvm doctor' and inspect the mecatui/server diagnostics log, then retry" {
+		return "", false
+	}
+	stage := strings.TrimPrefix(parts[0], "stage=")
+	category := strings.TrimPrefix(parts[1], "category=")
+	cause := strings.TrimPrefix(parts[2], "cause=")
+	stages := map[string]bool{"prepare": true, "preflight": true, "download": true, "verify": true, "install": true, "daemon": true, "socket": true, "health": true, "ready": true}
+	causes := map[string]string{
+		"unsupported_platform":    "microvm-local requires Linux amd64 with KVM, use host-local on this host",
+		"host_prerequisite":       "a required host prerequisite is unavailable, run microvm doctor for host remediation",
+		"artifact_download":       "microVM artifacts could not be downloaded, check connectivity and retry",
+		"artifact_verification":   "microVM artifact verification failed, do not use the downloaded artifacts",
+		"artifact_install":        "verified microVM artifacts could not be installed",
+		"daemon_policy_identity":  "the microVM daemon, policy, or identity check failed, inspect doctor and diagnostics before retrying",
+		"readiness_configuration": "microVM readiness configuration is unavailable or invalid",
+	}
+	if !stages[stage] {
+		return "", false
+	}
+	if category == "host_prerequisite" && cause == "KVM is unavailable to the current user, run microvm doctor for host remediation" {
+		// KVM is the more specific cause in this category.
+	} else if causes[category] != cause {
+		return "", false
+	}
+	return "microvm-local preparation failed (placement_unavailable); stage=" + stage + "; category=" + category + "; cause=" + cause, true
+}
+
 // renderTickMsg is the one-shot frame-cadence flush signal. A streamed delta arms
 // it (via markDirty) when none is pending; the renderTickMsg handler flushes the
 // dirty view and disarms, re-arming only if more deltas arrived in the meantime.
@@ -768,6 +805,11 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 			m.submitStatusLine()
 		}
 		return m, nil, true
+	case startupProgressMsg:
+		if m.phase == phaseConnecting && msg != "" {
+			m.statusMsg = m.deps.Theme.Style("muted").Render(terminaltext.Sanitize(string(msg)))
+		}
+		return m, m.startupProgressCmd(), true
 	case client.SessionReadyMsg:
 		return m.applySessionReady(msg)
 	case workspaceEnrollmentMsg:
@@ -913,6 +955,15 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.phase = phaseFatal
 		m.fatalErr = msg.Err.Error()
+		if m.deps.StartupFailureHint != nil {
+			if hint := m.deps.StartupFailureHint(); hint != "" {
+				if readiness, ok := safeMicroVMReadinessMessage(msg.Err.Error()); ok {
+					m.fatalErr = readiness + "; " + hint
+				} else {
+					m.fatalErr = "microvm-local preparation failed (placement_unavailable); " + hint
+				}
+			}
+		}
 		return m, nil, true
 	case restartFailedMsg:
 		// A restart-now re-create failed. Unlike ConnectErrMsg this is NOT terminal:

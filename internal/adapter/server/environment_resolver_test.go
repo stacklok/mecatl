@@ -48,7 +48,11 @@ func (p resolverPlacementProvider) Reattach(ctx context.Context, req server.Plac
 	if err != nil {
 		return server.PlacementBinding{}, err
 	}
-	return server.PlacementBinding{Ref: req.Ref, Environment: env}, nil
+	binding := server.PlacementBinding{Ref: req.Ref, Environment: env}
+	if env.Workspace() != nil {
+		binding.GovernanceRoot = env.Workspace().Root()
+	}
+	return binding, nil
 }
 
 // newEnvTestService builds a minimal Service for exact placement-reattachment tests.

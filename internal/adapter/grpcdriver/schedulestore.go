@@ -16,23 +16,16 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 )
 
-// ScheduleFormat is the schedule/fire-record envelope format tag this client
-// writes on Save/RecordFire* and accepts on Load/LoadFire/List*: the payload is
-// exactly `encoding/json` of a `port.Schedule` / `port.ScheduleFire` (the same
-// encoding the in-process jsonlstore/redisstore persist). The driver
-// round-trips the tag verbatim; it changes ONLY if the encoding itself is
-// replaced (the Schedule/ScheduleFire structs' own schema evolution is
-// additive and needs no bump). Load/LoadFire reject any other tag with an
-// infrastructure error — never ErrScheduleNotFound.
-//
-// SIGNPOST — a future format bump MUST be read-set-accept / write-newest: the
-// readers (this client's Load/LoadFire, the server wrapper's Save/RecordFire*
-// decode) must keep ACCEPTING every previously-shipped format tag while
-// Save/RecordFire* WRITE only the newest. The driver round-trips envelopes
-// verbatim and cannot migrate them — a bump that switches the write tag and
-// rejects the old tag in the same step bricks every schedule/fire already
-// stored under the old format.
-const ScheduleFormat = "schedule-json/1"
+// ScheduleFormat is the deployed schedule/fire-record envelope format. Borrowed
+// schedules and every fire record remain on v1. Schedules that own placement
+// cleanup use a distinct v2 tag so an older driver server rejects them before
+// persistence instead of decoding and dropping PlacementOwned. Readers accept
+// both schedule tags and require each tag's ownership semantics to match the
+// JSON payload.
+const (
+	ScheduleFormat      = "schedule-json/1"
+	ownedScheduleFormat = "schedule-json/2-owned-placement"
+)
 
 // ScheduleStore is a port.ScheduleStore (and, unconditionally, a
 // port.ScheduleOneShotReArmer) over a remote ScheduleStoreService /
@@ -79,13 +72,13 @@ func NewScheduleStore(conn grpc.ClientConnInterface) *ScheduleStore {
 // Save encodes s via encoding/json and persists it under s.Spec.Name on the
 // driver, overwriting any prior record. The schedule is upserted by name.
 func (st *ScheduleStore) Save(ctx context.Context, s port.Schedule) error {
-	payload, err := json.Marshal(s)
+	record, err := encodeScheduleEnvelope(s)
 	if err != nil {
-		return fmt.Errorf("grpcdriver: marshal schedule: %w", err)
+		return err
 	}
 	if _, err := st.store.SaveSchedule(ctx, &driverv1.SaveScheduleRequest{
 		Name:     s.Spec.Name,
-		Schedule: &driverv1.ScheduleRecord{Format: ScheduleFormat, Payload: payload},
+		Schedule: record,
 	}); err != nil {
 		return scheduleStatusToErr(ctx, "save schedule", err)
 	}
@@ -208,6 +201,24 @@ func (st *ScheduleStore) ClaimNow(ctx context.Context, name string, now, nextFir
 func (st *ScheduleStore) SetEnabled(ctx context.Context, name string, enabled bool) error {
 	if _, err := st.store.SetScheduleEnabled(ctx, &driverv1.SetScheduleEnabledRequest{Name: name, Enabled: enabled}); err != nil {
 		return scheduleStatusToErr(ctx, "set-enabled schedule", err)
+	}
+	return nil
+}
+
+// BeginDelete starts or resumes the driver's atomic deletion transaction.
+func (st *ScheduleStore) BeginDelete(ctx context.Context, name, deletionID string) (port.Schedule, error) {
+	resp, err := st.store.BeginScheduleDelete(ctx, &driverv1.BeginScheduleDeleteRequest{Name: name, DeletionId: deletionID})
+	if err != nil {
+		return port.Schedule{}, scheduleStatusToErr(ctx, "begin schedule deletion", err)
+	}
+	return decodeScheduleEnvelope(name, resp.GetSchedule())
+}
+
+// CompleteDelete conditionally removes the exact deletion-marked incarnation.
+func (st *ScheduleStore) CompleteDelete(ctx context.Context, name, deletionID string) error {
+	_, err := st.store.CompleteScheduleDelete(ctx, &driverv1.CompleteScheduleDeleteRequest{Name: name, DeletionId: deletionID})
+	if err != nil {
+		return scheduleStatusToErr(ctx, "complete schedule deletion", err)
 	}
 	return nil
 }
@@ -336,6 +347,18 @@ func protoTimeOrZero(ts *timestamppb.Timestamp) time.Time {
 	return ts.AsTime()
 }
 
+func encodeScheduleEnvelope(s port.Schedule) (*driverv1.ScheduleRecord, error) {
+	payload, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("grpcdriver: marshal schedule: %w", err)
+	}
+	format := ScheduleFormat
+	if s.Spec.PlacementOwned {
+		format = ownedScheduleFormat
+	}
+	return &driverv1.ScheduleRecord{Format: format, Payload: payload}, nil
+}
+
 // decodeScheduleEnvelope decodes a ScheduleRecord envelope into a
 // port.Schedule. expectedName is the requested name ("" for List/Due, where
 // the caller accepts any name); when non-empty, a decoded schedule whose
@@ -347,12 +370,16 @@ func decodeScheduleEnvelope(expectedName string, rec *driverv1.ScheduleRecord) (
 	if rec == nil {
 		return port.Schedule{}, fmt.Errorf("grpcdriver: schedule envelope is nil")
 	}
-	if got := rec.GetFormat(); got != ScheduleFormat {
-		return port.Schedule{}, fmt.Errorf("grpcdriver: unknown schedule format %q (this client speaks %q)", got, ScheduleFormat)
+	format := rec.GetFormat()
+	if format != ScheduleFormat && format != ownedScheduleFormat {
+		return port.Schedule{}, fmt.Errorf("grpcdriver: unknown schedule format %q", format)
 	}
 	var s port.Schedule
 	if err := json.Unmarshal(rec.GetPayload(), &s); err != nil {
 		return port.Schedule{}, fmt.Errorf("grpcdriver: decode schedule: %w", err)
+	}
+	if (format == ownedScheduleFormat) != s.Spec.PlacementOwned {
+		return port.Schedule{}, fmt.Errorf("grpcdriver: schedule format %q does not match placement ownership", format)
 	}
 	if expectedName != "" && s.Spec.Name != expectedName {
 		return port.Schedule{}, fmt.Errorf("grpcdriver: load %q: driver returned the schedule of a DIFFERENT name %q (mis-keyed driver)", expectedName, s.Spec.Name)
@@ -396,6 +423,10 @@ func scheduleStatusToErr(ctx context.Context, op string, err error) error {
 		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleNotFound, err)
 	case codes.Unimplemented:
 		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleUnsupported, err)
+	case codes.Aborted:
+		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleDeleting, err)
+	case codes.FailedPrecondition:
+		return fmt.Errorf("grpcdriver: %s: %w (rpc: %v)", op, port.ErrScheduleActiveFire, err)
 	default:
 		return rpcErr(ctx, op, err)
 	}
@@ -450,13 +481,11 @@ func (s *scheduleStoreServer) LoadSchedule(ctx context.Context, req *driverv1.Lo
 	if err != nil {
 		return nil, scheduleStoreStatus(err)
 	}
-	payload, err := json.Marshal(sched)
+	record, err := encodeScheduleEnvelope(sched)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "encode schedule: %v", err)
 	}
-	return &driverv1.LoadScheduleResponse{
-		Schedule: &driverv1.ScheduleRecord{Format: ScheduleFormat, Payload: payload},
-	}, nil
+	return &driverv1.LoadScheduleResponse{Schedule: record}, nil
 }
 
 // DeleteSchedule removes the schedule from the wrapped store. It is
@@ -487,11 +516,11 @@ func (s *scheduleStoreServer) ListSchedules(ctx context.Context, _ *driverv1.Lis
 	}
 	out := make([]*driverv1.ScheduleRecord, 0, len(schedules))
 	for _, sched := range schedules {
-		payload, merr := json.Marshal(sched)
+		record, merr := encodeScheduleEnvelope(sched)
 		if merr != nil {
 			return nil, status.Errorf(codes.Internal, "encode schedule: %v", merr)
 		}
-		out = append(out, &driverv1.ScheduleRecord{Format: ScheduleFormat, Payload: payload})
+		out = append(out, record)
 	}
 	return &driverv1.ListSchedulesResponse{Schedules: out}, nil
 }
@@ -507,11 +536,11 @@ func (s *scheduleStoreServer) DueSchedules(ctx context.Context, req *driverv1.Du
 	}
 	out := make([]*driverv1.ScheduleRecord, 0, len(schedules))
 	for _, sched := range schedules {
-		payload, merr := json.Marshal(sched)
+		record, merr := encodeScheduleEnvelope(sched)
 		if merr != nil {
 			return nil, status.Errorf(codes.Internal, "encode schedule: %v", merr)
 		}
-		out = append(out, &driverv1.ScheduleRecord{Format: ScheduleFormat, Payload: payload})
+		out = append(out, record)
 	}
 	return &driverv1.DueSchedulesResponse{Schedules: out}, nil
 }
@@ -529,13 +558,11 @@ func (s *scheduleStoreServer) ClaimSchedule(ctx context.Context, req *driverv1.C
 	if err != nil {
 		return nil, scheduleStoreStatus(err)
 	}
-	payload, err := json.Marshal(sched)
+	record, err := encodeScheduleEnvelope(sched)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "encode schedule: %v", err)
 	}
-	return &driverv1.ClaimScheduleResponse{
-		Schedule: &driverv1.ScheduleRecord{Format: ScheduleFormat, Payload: payload},
-	}, nil
+	return &driverv1.ClaimScheduleResponse{Schedule: record}, nil
 }
 
 // ClaimScheduleNow performs the manual-trigger atomic advance in the wrapped
@@ -551,13 +578,11 @@ func (s *scheduleStoreServer) ClaimScheduleNow(ctx context.Context, req *driverv
 	if err != nil {
 		return nil, scheduleStoreStatus(err)
 	}
-	payload, err := json.Marshal(sched)
+	record, err := encodeScheduleEnvelope(sched)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "encode schedule: %v", err)
 	}
-	return &driverv1.ClaimScheduleNowResponse{
-		Schedule: &driverv1.ScheduleRecord{Format: ScheduleFormat, Payload: payload},
-	}, nil
+	return &driverv1.ClaimScheduleNowResponse{Schedule: record}, nil
 }
 
 // SetScheduleEnabled sets the Enabled flag in the wrapped store.
@@ -569,6 +594,39 @@ func (s *scheduleStoreServer) SetScheduleEnabled(ctx context.Context, req *drive
 		return nil, scheduleStoreStatus(err)
 	}
 	return &driverv1.SetScheduleEnabledResponse{}, nil
+}
+
+func (s *scheduleStoreServer) BeginScheduleDelete(ctx context.Context, req *driverv1.BeginScheduleDeleteRequest) (*driverv1.BeginScheduleDeleteResponse, error) {
+	if req.GetName() == "" || req.GetDeletionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "name and deletion_id are required")
+	}
+	store, ok := s.store.(port.ScheduleDeletionStore)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "atomic schedule deletion is not supported")
+	}
+	sched, err := store.BeginDelete(ctx, req.GetName(), req.GetDeletionId())
+	if err != nil {
+		return nil, scheduleStoreStatus(err)
+	}
+	record, err := encodeScheduleEnvelope(sched)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encode schedule: %v", err)
+	}
+	return &driverv1.BeginScheduleDeleteResponse{Schedule: record}, nil
+}
+
+func (s *scheduleStoreServer) CompleteScheduleDelete(ctx context.Context, req *driverv1.CompleteScheduleDeleteRequest) (*driverv1.CompleteScheduleDeleteResponse, error) {
+	if req.GetName() == "" || req.GetDeletionId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "name and deletion_id are required")
+	}
+	store, ok := s.store.(port.ScheduleDeletionStore)
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "atomic schedule deletion is not supported")
+	}
+	if err := store.CompleteDelete(ctx, req.GetName(), req.GetDeletionId()); err != nil {
+		return nil, scheduleStoreStatus(err)
+	}
+	return &driverv1.CompleteScheduleDeleteResponse{}, nil
 }
 
 // RecordFire records the terminal fire outcome in the wrapped store. It
@@ -686,8 +744,9 @@ func validateScheduleRecord(_ string, rec *driverv1.ScheduleRecord) (port.Schedu
 	if rec == nil {
 		return port.Schedule{}, status.Error(codes.InvalidArgument, "schedule is required")
 	}
-	if got := rec.GetFormat(); got != ScheduleFormat {
-		return port.Schedule{}, status.Errorf(codes.InvalidArgument, "unknown schedule format %q (this server speaks %q)", got, ScheduleFormat)
+	format := rec.GetFormat()
+	if format != ScheduleFormat && format != ownedScheduleFormat {
+		return port.Schedule{}, status.Errorf(codes.InvalidArgument, "unknown schedule format %q", format)
 	}
 	if len(rec.GetPayload()) == 0 {
 		return port.Schedule{}, status.Error(codes.InvalidArgument, "schedule payload is empty")
@@ -695,6 +754,9 @@ func validateScheduleRecord(_ string, rec *driverv1.ScheduleRecord) (port.Schedu
 	var sched port.Schedule
 	if err := json.Unmarshal(rec.GetPayload(), &sched); err != nil {
 		return port.Schedule{}, status.Errorf(codes.InvalidArgument, "decode schedule: %v", err)
+	}
+	if (format == ownedScheduleFormat) != sched.Spec.PlacementOwned {
+		return port.Schedule{}, status.Errorf(codes.InvalidArgument, "schedule format %q does not match placement ownership", format)
 	}
 	return sched, nil
 }
@@ -727,6 +789,10 @@ func scheduleStoreStatus(err error) error {
 	switch {
 	case isScheduleNotFound(err):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, port.ErrScheduleDeleting):
+		return status.Error(codes.Aborted, err.Error())
+	case errors.Is(err, port.ErrScheduleActiveFire):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case isScheduleUnsupported(err):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, context.Canceled):

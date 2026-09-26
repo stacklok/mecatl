@@ -15,7 +15,15 @@ sessions that need no local file access.
 ## Availability
 
 The default profile is available in `mecated`, `mecak8s`, `mecatui`'s embedded
-server, and engine embeddings. A session can instead select the `no-fs` profile
+server, and engine embeddings. A local deployment can set `microvm-local` as that
+default so filesystem and shell tools run in a repository-scoped VM. Linux amd64
+with KVM is the qualified path. An unmerged Darwin arm64 path exists for Apple
+Silicon macOS 15+ with Hypervisor.framework, but native and signed-release
+qualification remain pending, so it is experimental rather than released support.
+See [Local microVM environments](/building/deployment/microvm-environments.md) for
+platform requirements and the source qualification procedure.
+
+A session can instead select the `no-fs` profile
 for research, coordination, or remote deployments that must not expose a local
 filesystem.
 

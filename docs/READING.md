@@ -35,6 +35,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | [Context & compaction](architecture/context-and-compaction.md) | How does the token budget + compaction cascade keep a long run inside the context window? | [agent loop](architecture/agent-loop.md) |
 | [Memory](architecture/memory.md) | How does cross-session recall (Remember/Recall/SearchMemory) work? What is the user model? | [agent loop](architecture/agent-loop.md) |
 | [Observability](architecture/observability.md) | What telemetry, persistence, and reliability seams exist? How do the event log, session lease, and remote drivers work? | [ports](architecture/ports.md) |
+| [Local microVM environments](architecture/microvm-environments.md) | How does the opt-in local runtime preserve environment affinity, isolate paths and credentials, verify artifacts, govern guest egress, recover lifecycle state, and report readiness? | [ports](architecture/ports.md) |
 | [Parallelism](architecture/parallelism.md) | How does fork-join parallelism (the Parallel tool) work? How are team-member workspaces isolated? What is worktree binding? | [subagents & teams](architecture/subagents-and-teams.md) |
 | [Extensibility](architecture/extensibility.md) | What MCP, skills, progressive disclosure, and engine-as-library seams exist? | [ports](architecture/ports.md) |
 | [Deployment & hardening](architecture/deployment-and-hardening.md) | How is the server hardened (auth, rate limiting, health, graceful shutdown)? How do workspace trust, the posture ladder, and permission/bash governance work? | [API surface](architecture/api-surface.md) |
@@ -55,6 +56,7 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
 | 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
 | 4 | [Run `mecated` standalone](../user-docs/building/deployment/mecated.md) |
+| Optional | [Local microVM environments](../user-docs/building/deployment/microvm-environments.md) |
 | Then | Choose a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
 
 ---

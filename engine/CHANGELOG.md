@@ -117,6 +117,8 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 - **Authoritative synthetic user-prompt origin** — adds `session.UserPromptPayload.Synthetic` so durable user-prompt events distinguish harness-authored continuations from principal and legacy prompts without changing folded conversation messages. Added (minor).
 
+- **Schedule placement ownership lifecycle** — adds `port.ScheduleSpec.PlacementOwned` as trusted durable host metadata, `ScheduleState.DeletionID`, the optional atomic `port.ScheduleDeletionStore`, and deletion lifecycle sentinels so schedule managers can distinguish exclusively provisioned placements from borrowed/legacy placements and safely retry exact cleanup without deleting a later same-name incarnation. Added (minor).
+
 - **Session-load failure classification** — adds `port.SessionLoadFailureClass`,
   `SessionLoadFailureError`, `ErrSessionLoadFailure`, `NewSessionLoadFailure`, and
   `ClassifySessionLoadFailure`. Snapshot-backed stores can distinguish bounded

@@ -35,7 +35,11 @@ type repairPlacementProvider struct {
 
 func (p *repairPlacementProvider) Bind(context.Context, PlacementBindRequest) (PlacementBinding, error) {
 	p.binds++
-	return p.binding, p.err
+	binding := p.binding
+	if binding.GovernanceRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.GovernanceRoot = binding.Environment.Workspace().Root()
+	}
+	return binding, p.err
 }
 func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReattachRequest) (PlacementBinding, error) {
 	p.reattaches++
@@ -44,6 +48,9 @@ func (p *repairPlacementProvider) Reattach(_ context.Context, req PlacementReatt
 	}
 	binding := p.binding
 	binding.Ref = req.Ref
+	if binding.GovernanceRoot == "" && binding.Environment.Workspace() != nil && binding.Ref.Kind != session.EnvKindNoFS {
+		binding.GovernanceRoot = binding.Environment.Workspace().Root()
+	}
 	binding.Environment = tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/fresh"), memledger.New(), nil)
 	return binding, nil
 }
@@ -131,7 +138,7 @@ func TestInvariant_placement_binder_required_for_service_construction(t *testing
 	}
 }
 
-func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *testing.T) {
+func TestInvariant_nonowning_placement_binding_is_not_cached(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	provider := &repairPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/bound"), memledger.New(), nil)}}
 	svc, err := NewService(Config{Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider, PlacementScope: "test", SharedEngineRoot: "/bound", NewID: func() session.SessionID { return "created" }, Now: func() time.Time { return time.Unix(1, 0) }})
@@ -145,7 +152,29 @@ func TestInvariant_ordinary_placement_bindings_are_not_environment_overrides(t *
 	got := len(svc.sessionEnvironments)
 	svc.mu.Unlock()
 	if got != 0 {
-		t.Fatalf("ordinary environment overrides = %d, want 0", got)
+		t.Fatalf("non-owning environment bindings = %d, want 0", got)
+	}
+}
+
+func TestCreateSessionLogsSanitizedPlacementFailureCause(t *testing.T) {
+	private := "/srv/private/tenant/repository"
+	diag := &repairDiagnostics{}
+	provider := &repairPlacementProvider{err: errors.New("microVM development release descriptor identity does not match this source build at " + private)}
+	svc, err := NewService(Config{
+		Engine: repairEngine(), Store: memstore.New(), PlacementProvider: provider,
+		PlacementScope: "test", SharedEngineRoot: "/bound", Diagnostics: diag,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+
+	_, err = svc.CreateSession(context.Background(), session.ModeDefault, session.Limits{})
+	if !errors.Is(err, ErrPlacementUnavailable) || strings.Contains(err.Error(), private) {
+		t.Fatalf("public create error = %q, want content-free placement unavailable", err)
+	}
+	if !strings.Contains(diag.text, "descriptor identity does not match this source build") || !strings.Contains(diag.text, "[redacted]") || strings.Contains(diag.text, private) {
+		t.Fatalf("placement diagnostic was not actionable and sanitized: %q", diag.text)
 	}
 }
 
@@ -207,7 +236,7 @@ func (immediateLeaseLoss) Release(context.Context, port.Lease) error { return ni
 func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T) {
 	ref := session.EnvironmentRef{Kind: session.EnvKindMem, ID: "placement", Revision: "v1"}
 	closed := &atomic.Int32{}
-	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil)}, closed: closed}
+	provider := leaseLossPlacementProvider{binding: PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/source"), memledger.New(), nil), GovernanceRoot: "/provisional"}, closed: closed}
 	store := memstore.New()
 	source := session.New("source", session.ModeDefault, ref, session.Limits{}, time.Unix(1, 0))
 	if err := store.Save(context.Background(), source); err != nil {
@@ -220,8 +249,8 @@ func TestInvariant_successor_lease_loss_cleans_provisional_binding(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err = svc.ClearSessionSuccessor(ctx, source.ID, SuccessorPlacement{})
-	if !errors.Is(err, ErrSessionLeasedElsewhere) || closed.Load() != 1 {
-		t.Fatalf("lease-loss successor = %v, provisional closes = %d", err, closed.Load())
+	if !errors.Is(err, ErrSessionLeasedElsewhere) || closed.Load() != 0 {
+		t.Fatalf("lease-loss successor = %v, source attachment closes = %d", err, closed.Load())
 	}
 	if _, loadErr := store.Load(context.Background(), "successor"); !errors.Is(loadErr, port.ErrSessionNotFound) {
 		t.Fatalf("lease-loss successor persisted: %v", loadErr)

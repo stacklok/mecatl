@@ -632,7 +632,9 @@ func renderSchedulePanel(th theme.Theme, st scheduleState, _ client.Capabilities
 			marker = "▶ "
 		}
 		state := "enabled"
-		if !s.State.Enabled {
+		if s.State.DeletionPending {
+			state = "cleanup pending · d: retry delete"
+		} else if !s.State.Enabled {
 			state = "paused"
 		}
 		inFlight := ""
@@ -690,7 +692,11 @@ func renderScheduleInspect(th theme.Theme, st scheduleState, replayerWired bool,
 	renderScheduleSpecBlock(&b, muted, s.Spec)
 	b.WriteString("\n" + muted.Render("state") + "\n")
 	b.WriteString(muted.Render("enabled: ") + boolStr(s.State.Enabled) +
+		"  deletion_pending: " + boolStr(s.State.DeletionPending) +
 		"  runs: " + strconv.Itoa(int(s.State.FireCount)) + "\n")
+	if s.State.DeletionPending {
+		b.WriteString(th.Style("warning").Render("placement cleanup is pending — go back and press d to retry delete") + "\n")
+	}
 	b.WriteString(muted.Render("next run: ") + formatScheduleTime(s.State.NextFireAt) + "\n")
 	b.WriteString(muted.Render("last run: ") + formatScheduleTime(s.State.LastFireAt) + "\n")
 	if s.State.LastFireSessionID != "" {

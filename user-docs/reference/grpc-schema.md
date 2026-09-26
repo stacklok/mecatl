@@ -4319,6 +4319,7 @@ post-fire outcome).
 | `last_fire_started_at` | `google.protobuf.Timestamp` |  |  | last_fire_started_at is when the current fire&#39;s RUN actually began (RecordFireStart), distinct from last_fire_at (the Claim instant). The in-flight liveness marker: absent means the current fire has not started its run yet (the crash-after-Claim state). Set by RecordFireStart, cleared by RecordFire. Issue #386. |
 | `last_fire_progress_at` | `google.protobuf.Timestamp` |  |  | last_fire_progress_at is the last observed progress instant for the current fire (RecordFireProgress). Absent means &#34;no progress observed yet&#34;. Best- effort liveness: a stale value is a stuck-fire signal. Issue #386. |
 | `fire_deadline` | `google.protobuf.Timestamp` |  |  | fire_deadline is the current fire&#39;s wall-clock deadline (RecordFireStart): start + ScheduleSpec.fire_timeout (or absent when fire_timeout is zero / the deployment default applies). A watchdog reads it to decide whether to terminate the in-flight run with StopTimeout. Absent means &#34;no explicit deadline&#34;. Issue #386. |
+| `deletion_pending` | `bool` |  |  | deletion_pending is true while exact owned-placement cleanup is retryable. The private deletion token and placement binding are never projected. |
 
 
 

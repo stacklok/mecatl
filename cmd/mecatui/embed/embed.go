@@ -223,6 +223,12 @@ func Start(ctx context.Context, cfg app.Config, perf PerfConfig) (*Server, error
 		return nil, err
 	}
 
+	cfg, err = app.ConfigureExecution(cfg)
+	if err != nil {
+		ps.teardown(ctx)
+		cleanupRuntime()
+		return nil, err
+	}
 	built, err := app.Build(ctx, cfg)
 	if err != nil {
 		ps.teardown(ctx)

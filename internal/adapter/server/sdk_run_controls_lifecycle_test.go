@@ -10,6 +10,8 @@ import (
 	"time"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/adapter/memfs"
+	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
@@ -18,6 +20,8 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/memory"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -103,6 +107,100 @@ func makePersistedScopedControlSession(t *testing.T, id session.SessionID, kind 
 		t.Fatal(err)
 	}
 	return sess, ask
+}
+
+type persistedApprovalContext struct {
+	workspace string
+	root      session.SessionID
+}
+
+type persistedApprovalContextTool struct {
+	contexts chan<- persistedApprovalContext
+}
+
+func (*persistedApprovalContextTool) Spec() tool.ToolSpec { return tool.ToolSpec{Name: "Write"} }
+func (*persistedApprovalContextTool) ReadOnly() bool      { return false }
+func (t *persistedApprovalContextTool) Execute(ctx context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	root, _ := port.RootSessionIDFromContext(ctx)
+	t.contexts <- persistedApprovalContext{workspace: memory.WorkspaceFromContext(ctx), root: root}
+	return session.NewToolResult(call.ID, "wrote"), nil
+}
+
+type persistedApprovalPlacement struct{ governanceRoot string }
+
+func (p persistedApprovalPlacement) Bind(_ context.Context, _ server.PlacementBindRequest) (server.PlacementBinding, error) {
+	return p.binding(), nil
+}
+func (p persistedApprovalPlacement) Reattach(_ context.Context, req server.PlacementReattachRequest) (server.PlacementBinding, error) {
+	binding := p.binding()
+	binding.Ref = req.Ref
+	binding.Environment = tool.MustEnvironment(req.Ref, memfs.NewWorkspace("/guest/workspace"), memledger.New(), nil)
+	return binding, nil
+}
+func (p persistedApprovalPlacement) binding() server.PlacementBinding {
+	ref := session.EnvironmentRef{Kind: "microvm", ID: "opaque", Revision: "v1"}
+	return server.PlacementBinding{Ref: ref, Environment: tool.MustEnvironment(ref, memfs.NewWorkspace("/guest/workspace"), memledger.New(), nil), GovernanceRoot: p.governanceRoot}
+}
+
+func TestSDKRunControls_PersistedApprovalUsesGovernanceMemoryRoot(t *testing.T) {
+	contexts := make(chan persistedApprovalContext, 2)
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(&persistedApprovalContextTool{contexts: contexts})
+	store := memstore.New()
+	for _, tc := range []struct {
+		name   string
+		scoped bool
+		root   string
+	}{
+		{name: "ordinary repository a", root: "/host/repository-a"},
+		{name: "ordinary repository b", root: "/host/repository-b"},
+		{name: "scoped", scoped: true, root: "/host/repository-b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var parked *session.Session
+			var ask session.PendingAsk
+			if tc.scoped {
+				parked, ask = makePersistedScopedControlSession(t, session.SessionID(tc.name), session.GuardrailApprovalAction)
+			} else {
+				parked, ask = makePersistedControlSession(t, session.SessionID(tc.name))
+			}
+			parked.EnvironmentRef = session.EnvironmentRef{Kind: "microvm", ID: "opaque", Revision: "v1"}
+			if err := store.Save(t.Context(), parked); err != nil {
+				t.Fatal(err)
+			}
+			engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: catalog, Policy: permpolicy.NewPolicy(nil, permstore.New()), Model: "test-model"})
+			svc, err := newPlacementTestService(server.Config{
+				Engine: engine, Store: store, PlacementProvider: persistedApprovalPlacement{governanceRoot: tc.root}, PlacementScope: "test",
+				SessionEngine: func(context.Context, server.ProviderSelector, []mcp.ServerConfig, server.SessionProfile, string, session.PermissionMode) (server.SessionEngineResult, error) {
+					return server.SessionEngineResult{Engine: engine}, nil
+				},
+				Now: func() time.Time { return time.Unix(0, 0) },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(svc.Close)
+			if tc.scoped {
+				_, err = svc.ResolveScopedRunAsk(t.Context(), parked.ID, parked.RunID(), agent.ApprovalResolution{AskID: ask.AskID, ReviewID: ask.Guardrail.ReviewID, Kind: ask.Guardrail.Kind, Verdict: session.VerdictAllowOnce})
+			} else {
+				_, err = svc.ResolveRunAsk(t.Context(), parked.ID, parked.RunID(), ask.AskID, session.VerdictAllowOnce)
+			}
+			if err != nil {
+				t.Fatalf("resolve persisted approval: %v", err)
+			}
+			if tc.scoped {
+				return
+			}
+			select {
+			case got := <-contexts:
+				if got.workspace != tc.root || got.root != parked.ID {
+					t.Fatalf("tool context = workspace %q root %q, want workspace %q root %q", got.workspace, got.root, tc.root, parked.ID)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("resumed tool did not execute")
+			}
+		})
+	}
 }
 
 func TestSDKRunControls_DrainingStillConcealsUnknownAndForeignSessions(t *testing.T) {

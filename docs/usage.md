@@ -11,6 +11,7 @@ See [ADR 0321](./adr/0321-canonical-user-documentation-ownership.md) for the own
 | Installation | [Install Mecatl](../user-docs/install.md) |
 | Offline demo | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
 | `mecated` operation | [Run mecated standalone](../user-docs/building/deployment/mecated.md) |
+| Local microVM environments | [Local microVM environments](../user-docs/building/deployment/microvm-environments.md) |
 | Guardrails and permissions | [Permissions and posture](../user-docs/features/permissions-and-posture.md) |
 | Models and providers | [Choose models and providers](../user-docs/features/choose-models.md) |
 | Workspace trust | [Permissions and posture](../user-docs/features/permissions-and-posture.md#project-trust) |

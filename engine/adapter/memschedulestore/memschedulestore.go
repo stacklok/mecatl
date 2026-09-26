@@ -77,6 +77,7 @@ var _ port.ScheduleOneShotReArmer = (*Store)(nil)
 // implement it degrades to the manager's check-then-Save (byte-identical
 // pre-fix TOCTOU-accepted path).
 var _ port.ScheduleCreator = (*Store)(nil)
+var _ port.ScheduleDeletionStore = (*Store)(nil)
 
 // New constructs an in-memory ScheduleStore. Every port.ScheduleStore method
 // takes `now` as an explicit argument, so the store needs no injected clock of
@@ -103,6 +104,9 @@ func (s *Store) Save(_ context.Context, in port.Schedule) error {
 	cur, existed := s.scheds[in.Spec.Name]
 	rec := record{spec: cloneSpec(in.Spec)}
 	if existed {
+		if cur.state.DeletionID != "" {
+			return fmt.Errorf("memschedulestore: %w", port.ErrScheduleDeleting)
+		}
 		rec.state = cur.state // preserve firing progress on overwrite
 	} else {
 		// New schedule: honour an explicit State, but default a zero State to
@@ -154,10 +158,49 @@ func (s *Store) Load(_ context.Context, name string) (port.Schedule, error) {
 }
 
 // Delete removes the schedule stored under name. It is IDEMPOTENT: deleting an
-// unknown name is success (the PrunableStore.Delete discipline).
+// unknown name is success (the PrunableStore.Delete discipline). A pending
+// deletion tombstone may only be removed through CompleteDelete.
 func (s *Store) Delete(_ context.Context, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if rec, ok := s.scheds[name]; ok && rec.state.DeletionID != "" {
+		return fmt.Errorf("memschedulestore: %w", port.ErrScheduleDeleting)
+	}
+	delete(s.scheds, name)
+	return nil
+}
+
+// BeginDelete atomically marks this exact schedule incarnation for cleanup.
+func (s *Store) BeginDelete(_ context.Context, name, deletionID string) (port.Schedule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.scheds[name]
+	if !ok {
+		return port.Schedule{}, ErrNotFound
+	}
+	if rec.state.DeletionID != "" {
+		return port.Schedule{Spec: cloneSpec(rec.spec), State: rec.state}, nil
+	}
+	if rec.state.LastFireSessionID == port.PendingFireSessionID || !rec.state.LastFireStartedAt.IsZero() {
+		return port.Schedule{}, fmt.Errorf("memschedulestore: %w", port.ErrScheduleActiveFire)
+	}
+	if deletionID == "" {
+		return port.Schedule{}, fmt.Errorf("memschedulestore: empty deletion id")
+	}
+	rec.state.Enabled = false
+	rec.state.DeletionID = deletionID
+	s.scheds[name] = rec
+	return port.Schedule{Spec: cloneSpec(rec.spec), State: rec.state}, nil
+}
+
+// CompleteDelete removes only the matching deletion-marked incarnation.
+func (s *Store) CompleteDelete(_ context.Context, name, deletionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.scheds[name]
+	if !ok || rec.state.DeletionID == "" || rec.state.DeletionID != deletionID {
+		return fmt.Errorf("memschedulestore: %w", port.ErrScheduleDeleting)
+	}
 	delete(s.scheds, name)
 	return nil
 }
@@ -216,7 +259,7 @@ func (s *Store) Claim(_ context.Context, name string, now, nextFire time.Time) (
 	// Re-check the at-most-once fence: the slot must STILL be due at claim time.
 	// A peer's Claim between this caller's Due and Claim advanced NextFireAt
 	// past `now`; the slot is gone.
-	if !rec.state.Enabled {
+	if !rec.state.Enabled || rec.state.DeletionID != "" {
 		return port.Schedule{}, ErrNotFound
 	}
 	if rec.state.NextFireAt.IsZero() || rec.state.NextFireAt.After(now) {
@@ -260,7 +303,7 @@ func (s *Store) ClaimNow(_ context.Context, name string, now, nextFire time.Time
 	if !ok {
 		return port.Schedule{}, ErrNotFound
 	}
-	if !rec.state.Enabled {
+	if !rec.state.Enabled || rec.state.DeletionID != "" {
 		return port.Schedule{}, ErrNotFound
 	}
 	if rec.spec.MaxFires > 0 && rec.state.FireCount >= rec.spec.MaxFires {
@@ -299,6 +342,9 @@ func (s *Store) SetEnabled(_ context.Context, name string, enabled bool) error {
 	rec, ok := s.scheds[name]
 	if !ok {
 		return ErrNotFound
+	}
+	if rec.state.DeletionID != "" {
+		return fmt.Errorf("memschedulestore: %w", port.ErrScheduleDeleting)
 	}
 	rec.state.Enabled = enabled
 	s.scheds[name] = rec
@@ -462,6 +508,9 @@ func (s *Store) ReArmOneShot(_ context.Context, name string, nextFire time.Time)
 	rec, ok := s.scheds[name]
 	if !ok {
 		return ErrNotFound
+	}
+	if rec.state.DeletionID != "" {
+		return fmt.Errorf("memschedulestore: %w", port.ErrScheduleDeleting)
 	}
 	rec.state.Enabled = true
 	rec.state.NextFireAt = nextFire

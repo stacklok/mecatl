@@ -29,6 +29,39 @@ var (
 	ErrInvalidPlacementBinding = errors.New("server: invalid placement binding")
 )
 
+const readinessRemediation = "run 'mecated microvm doctor' and inspect the mecatui/server diagnostics log, then retry"
+
+type placementReadinessError struct {
+	stage, category, cause string
+}
+
+func (e *placementReadinessError) Error() string {
+	return fmt.Sprintf("server: placement unavailable: microvm readiness failed; stage=%s; category=%s; cause=%s; remediation=%s", e.stage, e.category, e.cause, readinessRemediation)
+}
+
+func (*placementReadinessError) Unwrap() error { return ErrPlacementUnavailable }
+
+// NewPlacementReadinessError constructs the bounded public projection of a
+// placement readiness failure. Unknown values fail closed to generic placement
+// unavailability rather than carrying provider text across the server boundary.
+func NewPlacementReadinessError(stage, category, cause string) error {
+	stages := map[string]bool{"prepare": true, "preflight": true, "download": true, "verify": true, "install": true, "daemon": true, "socket": true, "health": true, "ready": true}
+	causes := map[string]string{
+		"unsupported_platform":    "microvm-local requires Linux amd64 with KVM, use host-local on this host",
+		"host_prerequisite":       "a required host prerequisite is unavailable, run microvm doctor for host remediation",
+		"artifact_download":       "microVM artifacts could not be downloaded, check connectivity and retry",
+		"artifact_verification":   "microVM artifact verification failed, do not use the downloaded artifacts",
+		"artifact_install":        "verified microVM artifacts could not be installed",
+		"daemon_policy_identity":  "the microVM daemon, policy, or identity check failed, inspect doctor and diagnostics before retrying",
+		"readiness_configuration": "microVM readiness configuration is unavailable or invalid",
+	}
+	kvmCause := category == "host_prerequisite" && cause == "KVM is unavailable to the current user, run microvm doctor for host remediation"
+	if !stages[stage] || (causes[category] != cause && !kvmCause) {
+		return ErrPlacementUnavailable
+	}
+	return &placementReadinessError{stage: stage, category: category, cause: cause}
+}
+
 // PlacementScope is a trusted composition-owned authorization scope. It is not
 // derived from a placement ID or filesystem path.
 type PlacementScope string
@@ -120,9 +153,20 @@ type PlacementBinding struct {
 	Environment tool.Environment
 	Ref         session.EnvironmentRef
 	Metadata    PlacementMetadata
-	// Close releases provisional provider resources. It is called after creation
-	// because ordinary bindings are reattached fresh at run entry.
+	// GovernanceRoot is explicit trusted host context for project-scoped
+	// governance, including permission, learning, and continuation partitioning.
+	// It is independent of harness-context sources and of the execution namespace
+	// exposed by Environment.Workspace().Root(). Non-local bindings leave it empty
+	// when there is no host governance context; guest roots are never used as a
+	// fallback. No-FS bindings always leave it empty.
+	GovernanceRoot string
+	// Close detaches a published placement binding. Service ownership is
+	// transferred only after the session snapshot is durably created.
 	Close func() error
+	// Rollback permanently removes this exact unpublished placement. Providers
+	// that provision durable state during Bind must supply it; it is never used
+	// after publication or for ordinary EndSession teardown.
+	Rollback func() error
 }
 
 // sourceWorkspace exposes the content-reading Workspace surface while refusing
@@ -202,6 +246,25 @@ type PlacementReattacher interface {
 	Reattach(context.Context, PlacementReattachRequest) (PlacementBinding, error)
 }
 
+// PlacementDeleteRequest authorizes cleanup of one exact schedule-owned
+// placement. It contains no path and cannot select a current default.
+type PlacementDeleteRequest struct {
+	Ref       session.EnvironmentRef
+	Principal *session.Principal
+	Scope     PlacementScope
+}
+
+// PlacementDeleteResult reports whether cleanup retained dirty worktree state.
+type PlacementDeleteResult struct {
+	Retained bool
+}
+
+// PlacementDeleter is the optional exact-ref cleanup capability used only for
+// placements durably marked as owned by an independent schedule.
+type PlacementDeleter interface {
+	DeletePlacement(context.Context, PlacementDeleteRequest) (PlacementDeleteResult, error)
+}
+
 // PlacementReattachRequest carries the trusted authorization context and the
 // exact durable identity to reattach. Ref must include Kind, ID, and Revision.
 type PlacementReattachRequest struct {
@@ -230,13 +293,18 @@ func sanitizePlacementProviderError(err error) error {
 		return nil
 	}
 	public := ErrPlacementUnavailable
-	for _, candidate := range []error{
-		ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
-		ErrPlacementUnavailable, ErrPlacementChanged, ErrInvalidPlacementBinding,
-	} {
-		if errors.Is(err, candidate) {
-			public = candidate
-			break
+	var readinessErr *placementReadinessError
+	if errors.As(err, &readinessErr) {
+		public = readinessErr
+	} else {
+		for _, candidate := range []error{
+			ErrInvalidPlacementSelection, ErrPlacementNotFound, ErrPlacementStale,
+			ErrPlacementUnavailable, ErrPlacementChanged, ErrInvalidPlacementBinding,
+		} {
+			if errors.Is(err, candidate) {
+				public = candidate
+				break
+			}
 		}
 	}
 	return &placementProviderError{public: public, cause: err}
@@ -279,32 +347,14 @@ func NewPlacementBinder(provider PlacementProvider) (*PlacementBinder, error) {
 	return &PlacementBinder{provider: provider}, nil
 }
 
-func configuredPlacementBinder(ctx context.Context, cfg Config) (*PlacementBinder, error) {
+func configuredPlacementBinder(cfg Config) (*PlacementBinder, error) {
 	if cfg.PlacementProvider == nil {
 		return nil, fmt.Errorf("%w: PlacementProvider is required", ErrConfig)
 	}
 	if cfg.PlacementScope == "" {
 		return nil, fmt.Errorf("%w: PlacementScope is required with PlacementProvider", ErrConfig)
 	}
-	binder, err := NewPlacementBinder(cfg.PlacementProvider)
-	if err != nil {
-		return nil, err
-	}
-	// NewService runs before a listener can serve. Binding the configured
-	// default proves that its current record is authorized, available,
-	// revision-stable, and capable of constructing a complete environment. The
-	// result is deliberately not cached.
-	validation, err := binder.Bind(ctx, PlacementBindRequest{
-		Selector: DefaultPlacement(), Scope: cfg.PlacementScope,
-		Operation: PlacementOperationCreate,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("server: validate default placement: %w", err)
-	}
-	if validation.Close != nil {
-		_ = validation.Close()
-	}
-	return binder, nil
+	return NewPlacementBinder(cfg.PlacementProvider)
 }
 
 func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionProfile, owner *session.Principal) (string, *PlacementBinding, error) {
@@ -317,13 +367,20 @@ func (s *Service) bindPlacementForCreate(ctx context.Context, profile SessionPro
 		Operation: PlacementOperationCreate,
 	})
 	if err != nil {
+		s.logPlacementProviderError(ctx, "bind", err)
 		return "", nil, err
 	}
-	boundRoot := binding.Environment.Workspace().Root()
-	if profile == ProfileNoFS && boundRoot != "" {
+	executionRoot := binding.Environment.Workspace().Root()
+	if profile == ProfileNoFS && executionRoot != "" {
+		rollbackUnpublishedPlacement(s, &binding)
 		return "", nil, ErrInvalidPlacementBinding
 	}
-	return boundRoot, &binding, nil
+	governanceRoot, err := PlacementGovernanceRoot(binding)
+	if err != nil {
+		rollbackUnpublishedPlacement(s, &binding)
+		return "", nil, err
+	}
+	return governanceRoot, &binding, nil
 }
 
 func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session.Session, owner *session.Principal, request *createRequest, placement *PlacementBinding) (*session.Session, error) {
@@ -336,42 +393,235 @@ func (s *Service) persistPlacedCreatedSession(ctx context.Context, sess *session
 	return s.persistCreatedSession(ctx, sess, owner, request)
 }
 
-func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (session.EnvironmentRef, string, SessionProfile, error) {
+type schedulePlacement struct {
+	ref      session.EnvironmentRef
+	scope    string
+	profile  SessionProfile
+	owned    bool
+	release  func() error
+	rollback func(context.Context) error
+}
+
+func (s *Service) resolveSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, profile SessionProfile) (schedulePlacement, error) {
 	if profile == ProfileNoFS {
 		binding, err := s.BindPlacement(ctx, NoFSPlacement(), PlacementOperationCreate)
 		if err != nil {
-			return session.EnvironmentRef{}, "", profile, err
+			return schedulePlacement{}, err
 		}
-		return binding.Ref, string(s.cfg.PlacementScope), ProfileNoFS, nil
+		return schedulePlacement{ref: binding.Ref, scope: string(s.cfg.PlacementScope), profile: ProfileNoFS, release: binding.Close}, nil
 	}
 	if profile != ProfileDefault {
-		return session.EnvironmentRef{}, "", profile, fmt.Errorf("%w: unknown schedule profile %q", ErrInvalidArgument, profile)
+		return schedulePlacement{}, fmt.Errorf("%w: unknown schedule profile %q", ErrInvalidArgument, profile)
 	}
 	var binding PlacementBinding
 	var err error
+	newBinding := !ref.Valid()
 	if ref.Valid() {
 		binding, err = s.ReattachPlacement(ctx, ref)
 	} else {
 		binding, err = s.BindPlacement(ctx, DefaultPlacement(), PlacementOperationCreate)
 	}
 	if err != nil {
-		return session.EnvironmentRef{}, "", profile, err
+		return schedulePlacement{}, err
 	}
-	return binding.Ref, string(s.cfg.PlacementScope), ProfileDefault, nil
+	deleter, canDelete := s.cfg.PlacementProvider.(PlacementDeleter)
+	owned := newBinding && canDelete && binding.Ref.Kind != session.EnvKindLocal && binding.Ref.Kind != session.EnvKindNoFS
+	resolved := schedulePlacement{
+		ref: binding.Ref, scope: string(s.cfg.PlacementScope), profile: ProfileDefault,
+		owned: owned, release: binding.Close,
+	}
+	if owned {
+		owner := session.PrincipalFromContext(ctx)
+		resolved.rollback = func(cleanupCtx context.Context) error {
+			_, deleteErr := deleter.DeletePlacement(cleanupCtx, PlacementDeleteRequest{Ref: binding.Ref, Principal: owner, Scope: s.cfg.PlacementScope})
+			return deleteErr
+		}
+	}
+	return resolved, nil
 }
 
-func (s *Service) privateWorkspace(ctx context.Context, sess *session.Session) (string, error) {
+func (s *Service) deleteSchedulePlacement(ctx context.Context, ref session.EnvironmentRef, scope string) (bool, error) {
+	if scope != string(s.cfg.PlacementScope) || !ref.Valid() {
+		return false, ErrPlacementNotFound
+	}
+	deleter, ok := s.cfg.PlacementProvider.(PlacementDeleter)
+	if !ok {
+		return false, ErrPlacementUnavailable
+	}
+	result, err := deleter.DeletePlacement(ctx, PlacementDeleteRequest{
+		Ref: ref, Principal: session.PrincipalFromContext(ctx), Scope: s.cfg.PlacementScope,
+	})
+	return result.Retained, sanitizePlacementProviderError(err)
+}
+
+type servicePlacementAttachment struct {
+	binding PlacementBinding
+	refs    int
+}
+
+func (s *Service) releasePlacementAttachment(ref session.EnvironmentRef) error {
+	s.placementAttachMu.Lock()
+	attachment := s.attachedPlacements[ref]
+	if attachment == nil {
+		s.placementAttachMu.Unlock()
+		return nil
+	}
+	attachment.refs--
+	if attachment.refs > 0 {
+		s.placementAttachMu.Unlock()
+		return nil
+	}
+	delete(s.attachedPlacements, ref)
+	closeFn := attachment.binding.Close
+	s.placementAttachMu.Unlock()
+	if closeFn != nil {
+		return closeFn()
+	}
+	return nil
+}
+
+func (s *Service) installSessionPlacement(id session.SessionID, binding PlacementBinding, environmentOverride bool) {
+	if binding.Close == nil {
+		if binding.Ref.Kind == session.EnvKindNoFS || environmentOverride {
+			s.setSessionEnvironment(id, binding.Environment, nil)
+		}
+		return
+	}
+	var redundantClose func() error
+	s.placementAttachMu.Lock()
+	attachment := s.attachedPlacements[binding.Ref]
+	if attachment == nil {
+		owned := binding
+		owned.Rollback = nil
+		attachment = &servicePlacementAttachment{binding: owned}
+		s.attachedPlacements[binding.Ref] = attachment
+	} else {
+		redundantClose = binding.Close
+	}
+	attachment.refs++
+	s.placementAttachMu.Unlock()
+	if redundantClose != nil {
+		_ = redundantClose()
+	}
+
+	var once sync.Once
+	release := func() error {
+		var err error
+		once.Do(func() { err = s.releasePlacementAttachment(binding.Ref) })
+		return err
+	}
+	s.setSessionEnvironment(id, binding.Environment, release)
+}
+
+// sessionPlacement returns the Service-owned exact attachment for a persisted
+// session. Repeated and concurrent borrowers share it; only lifecycle teardown
+// owns the detach callback.
+func (s *Service) sessionPlacement(ctx context.Context, sess *session.Session) (PlacementBinding, error) {
+	s.placementAttachMu.Lock()
 	s.mu.Lock()
-	env, ok := s.sessionEnvironments[sess.ID]
+	env, registered := s.sessionEnvironments[sess.ID]
+	attachment := s.attachedPlacements[sess.EnvironmentRef]
 	s.mu.Unlock()
-	if ok && env.Ref() == sess.EnvironmentRef && env.Workspace() != nil {
-		return env.Workspace().Root(), nil
+	if attachment != nil && registered {
+		binding := attachment.binding
+		binding.Environment = env
+		binding.Close = nil
+		s.placementAttachMu.Unlock()
+		return binding, nil
+	}
+	if attachment != nil {
+		attachment.refs++
+		binding := attachment.binding
+		s.placementAttachMu.Unlock()
+		var once sync.Once
+		release := func() error {
+			var err error
+			once.Do(func() { err = s.releasePlacementAttachment(sess.EnvironmentRef) })
+			return err
+		}
+		s.setSessionEnvironment(sess.ID, binding.Environment, release)
+		binding.Close = nil
+		return binding, nil
 	}
 	binding, err := s.ReattachPlacement(ctx, sess.EnvironmentRef)
 	if err != nil {
+		s.placementAttachMu.Unlock()
+		return PlacementBinding{}, err
+	}
+	if binding.Close == nil {
+		s.placementAttachMu.Unlock()
+		return binding, nil
+	}
+	owned := binding
+	owned.Rollback = nil
+	s.attachedPlacements[binding.Ref] = &servicePlacementAttachment{binding: owned, refs: 1}
+	s.placementAttachMu.Unlock()
+	var once sync.Once
+	release := func() error {
+		var err error
+		once.Do(func() { err = s.releasePlacementAttachment(binding.Ref) })
+		return err
+	}
+	s.setSessionEnvironment(sess.ID, binding.Environment, release)
+	binding.Close = nil
+	return binding, nil
+}
+
+func (s *Service) borrowSessionPlacement(ctx context.Context, sess *session.Session) (PlacementBinding, func(), error) {
+	binding, err := s.sessionPlacement(ctx, sess)
+	if err != nil {
+		return PlacementBinding{}, nil, err
+	}
+	s.placementAttachMu.Lock()
+	attachment := s.attachedPlacements[binding.Ref]
+	if attachment == nil {
+		s.placementAttachMu.Unlock()
+		var once sync.Once
+		return binding, func() {
+			once.Do(func() {
+				if binding.Close != nil {
+					_ = binding.Close()
+				}
+			})
+		}, nil
+	}
+	attachment.refs++
+	s.placementAttachMu.Unlock()
+	var once sync.Once
+	return binding, func() { once.Do(func() { _ = s.releasePlacementAttachment(binding.Ref) }) }, nil
+}
+
+func (s *Service) privateGovernanceRoot(ctx context.Context, sess *session.Session) (string, error) {
+	binding, release, err := s.borrowSessionPlacement(ctx, sess)
+	if err != nil {
 		return "", err
 	}
-	return binding.Environment.Workspace().Root(), nil
+	defer release()
+	return PlacementGovernanceRoot(binding)
+}
+
+// PlacementGovernanceRoot returns explicit host-side governance context when
+// provided. A non-local empty root means no host governance context and never
+// falls back to the execution namespace; local bindings preserve their historical
+// governance fallback.
+func PlacementGovernanceRoot(binding PlacementBinding) (string, error) {
+	if binding.Ref.Kind == session.EnvKindNoFS {
+		if binding.GovernanceRoot != "" {
+			return "", ErrInvalidPlacementBinding
+		}
+		return "", nil
+	}
+	if binding.GovernanceRoot != "" {
+		return binding.GovernanceRoot, nil
+	}
+	// Local providers historically exposed one host namespace for both execution
+	// and governance. Preserve that internal compatibility without ever treating
+	// a non-local guest root (notably microVM /workspace) as a host path.
+	if binding.Ref.Kind == session.EnvKindLocal {
+		return binding.Environment.Workspace().Root(), nil
+	}
+	// Remote placements may intentionally have no host-side project context.
+	return "", nil
 }
 
 // Bind validates the request, delegates exactly one atomic operation to the
@@ -389,6 +639,11 @@ func (b *PlacementBinder) Bind(ctx context.Context, req PlacementBindRequest) (P
 		return PlacementBinding{}, sanitizePlacementProviderError(err)
 	}
 	if err := validatePlacementBinding(binding); err != nil {
+		if binding.Rollback != nil {
+			_ = binding.Rollback()
+		} else {
+			discardPlacementBinding(binding)
+		}
 		return PlacementBinding{}, err
 	}
 	return binding, nil
@@ -413,12 +668,35 @@ func (b *PlacementBinder) Reattach(ctx context.Context, req PlacementReattachReq
 		return PlacementBinding{}, sanitizePlacementProviderError(err)
 	}
 	if binding.Ref != req.Ref {
+		discardPlacementBinding(binding)
 		return PlacementBinding{}, ErrInvalidPlacementBinding
 	}
 	if err := validatePlacementBinding(binding); err != nil {
+		discardPlacementBinding(binding)
 		return PlacementBinding{}, err
 	}
 	return binding, nil
+}
+
+func rollbackUnpublishedPlacement(s *Service, binding *PlacementBinding) {
+	if binding == nil {
+		return
+	}
+	if binding.Rollback != nil {
+		if err := binding.Rollback(); err != nil && s.cfg.Diagnostics != nil {
+			s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "unpublished placement rollback failed; exact placement retained for recovery")
+		}
+		return
+	}
+	if binding.Close != nil {
+		_ = binding.Close()
+	}
+}
+
+func discardPlacementBinding(binding PlacementBinding) {
+	if binding.Close != nil {
+		_ = binding.Close()
+	}
 }
 
 func clonePlacementRequest(req PlacementBindRequest) PlacementBindRequest {
@@ -452,6 +730,9 @@ func validatePlacementBinding(binding PlacementBinding) error {
 		return ErrInvalidPlacementBinding
 	}
 	if binding.Environment.Ref() != binding.Ref {
+		return ErrInvalidPlacementBinding
+	}
+	if binding.Ref.Kind == session.EnvKindNoFS && binding.GovernanceRoot != "" {
 		return ErrInvalidPlacementBinding
 	}
 	if runner := binding.Environment.CommandRunner(); runner != nil {

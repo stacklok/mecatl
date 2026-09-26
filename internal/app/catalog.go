@@ -438,13 +438,13 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 	// parent base. The builder applies the SAME trust-UNGATED hardening
 	// buildForceCopyRunner does (force-copy forks do no fork-time git, so the
 	// trust gate does not apply — see the comment above).
-	fk := forker.New(newForkWorkspace(), forker.WithForceCopy(),
+	fk := routeChildForker(cfg, forker.New(newForkWorkspace(), forker.WithForceCopy(),
 		forker.WithRunner(func(childRoot string) tool.CommandRunner {
 			if !forceCopyShellAvailable(cfg) {
 				return nil
 			}
 			return newHardenedRunnerForRoot(cfg, childRoot)
-		}))
+		})))
 	// Parallel branches run Shell through the HARDENED, trust-UNGATED runner (issue
 	// #40) — the same construction as Mutating team members (buildForceCopyRunner).
 	// Ungated because a force-copy fork is created by a pure FS copy, with NO git

@@ -400,6 +400,12 @@ PR after verification. There is no cleanup or status-only PR.
 - [Canonical Shell command tool](canonical-shell-command-tool.md) — canonical `Shell`
   and `ShellStatus` model-facing names, safe legacy `Bash` input normalization, and
   parser-backed portable-POSIX feedback for model-facing shell commands. Status: proposed.
+- [MicroVM execution environments](microvm-execution-environments.md) — local
+  repository-scoped microVMs with distinct logical Git worktree attachments, guest
+  filesystem/Bash, explicit guest egress posture, verified runtime artifacts, durable
+  attachment inventory, Linux amd64 qualification, and an experimental Darwin arm64
+  implementation awaiting native and release qualification. Status: Linux landed;
+  Darwin qualification pending.
 
 - [Unified provider configuration and Mecatui provider commands](unified-provider-configuration-and-mecatui-provider-commands.md) — replace the `llm.endpoints` facade and `mecatui llm` surface with one provider model, bounded OIDC configuration, portable local setup, and comprehensive provider help. Status: proposed.
 
