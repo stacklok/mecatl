@@ -3,12 +3,10 @@ package sessiondebug
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
-	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
 
@@ -93,9 +91,15 @@ func TestDebuggerScanContinuation_Scenario1_RowPages(t *testing.T) {
 
 func TestDebuggerScanContinuation_Scenario1_Compatibility(t *testing.T) {
 	store, target := seededTarget(t, []session.Message{session.NewUserMessage("one"), session.NewAssistantMessage("two", "", nil)})
-	activity := execute(t, New(target.ID, store, generatedLog{count: 10_020}), `{"view":"activity","offset":10001,"limit":1}`)
-	if activity.IsError {
-		t.Fatalf("activity offset regressed: %s", activity.Content)
+	activity := continuationResult(t, execute(t, New(target.ID, store, generatedLog{count: 10_020}), `{"view":"activity","offset":10001,"limit":1}`))
+	activityRow := activity["rows"].([]any)[0].(map[string]any)
+	if activity["offset"] != float64(10_001) || activity["next_offset"] != float64(10_002) || activityRow["index"] != float64(10_001) || activityRow["turn"] != float64(10_001) {
+		t.Fatalf("activity offset changed row identity/pagination: %#v", activity)
+	}
+	transcript := continuationResult(t, execute(t, New(target.ID, store, generatedLog{count: 10_020}), `{"view":"transcript","offset":1,"limit":1}`))
+	message := transcript["messages"].([]any)[0].(map[string]any)
+	if transcript["offset"] != float64(1) || message["role"] != "assistant" || !strings.Contains(message["text"].(string), "two") {
+		t.Fatalf("transcript pagination changed: %#v", transcript)
 	}
 	for _, args := range []string{
 		`{"view":"network","cursor":"x","offset":1}`,
@@ -229,9 +233,6 @@ func TestDebuggerScanContinuation_Scenario4_ConcurrentReads(t *testing.T) {
 }
 
 func TestDebuggerScanContinuation_Scenario4_BackendCapability(t *testing.T) {
-	if !errors.Is(port.ErrCursorUnsupported, port.ErrCursorUnsupported) {
-		t.Fatal("cursor unsupported sentinel lost identity")
-	}
 	store, target := seededTarget(t, nil)
 	legacy := generatedLog{count: 1}
 	out := continuationResult(t, execute(t, New(target.ID, store, legacy), `{"view":"network"}`))

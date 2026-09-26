@@ -120,7 +120,7 @@ func cursorBackends(t *testing.T) []cursorBackend {
 
 // newDriverClient serves backend over an in-process bufconn and returns a driver
 // client for it — the full client → wire → server-wrapper path, offline.
-func newDriverClient(t *testing.T, backend port.CursorEventLog) port.CursorEventLog {
+func newDriverClient(t *testing.T, backend port.EventLog) port.CursorEventLog {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer()

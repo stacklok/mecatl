@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"iter"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +39,57 @@ func debuggerContinuationCursor(t *testing.T, target *session.Session, store *me
 	return cursor
 }
 
+type resultDrivenContinuationProvider struct {
+	calls    int
+	requests []port.LLMRequest
+	cursor   string
+}
+
+func (*resultDrivenContinuationProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func cursorFromActualToolResult(req port.LLMRequest) (string, error) {
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		result := req.Messages[i].ToolResult
+		if result == nil {
+			continue
+		}
+		start, end := strings.IndexByte(result.Content, '{'), strings.LastIndexByte(result.Content, '}')
+		if start < 0 || end < start {
+			continue
+		}
+		var out struct {
+			NextCursor string `json:"next_cursor"`
+		}
+		if json.Unmarshal([]byte(result.Content[start:end+1]), &out) == nil && out.NextCursor != "" {
+			return out.NextCursor, nil
+		}
+	}
+	return "", errors.New("previous actual tool result omitted next_cursor")
+}
+
+func (p *resultDrivenContinuationProvider) Stream(ctx context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	p.requests = append(p.requests, req)
+	p.calls++
+	var turn mockllm.Turn
+	switch p.calls {
+	case 1:
+		turn = mockllm.ToolCallTurn(session.NewToolCall("first", sessiondebug.ToolName, json.RawMessage(`{"view":"network"}`)))
+	case 2:
+		cursor, err := cursorFromActualToolResult(req)
+		if err != nil {
+			return nil, err
+		}
+		p.cursor = cursor
+		args, _ := json.Marshal(map[string]any{"view": "network", "cursor": cursor})
+		turn = mockllm.ToolCallTurn(session.NewToolCall("continued", sessiondebug.ToolName, args))
+	default:
+		turn = mockllm.TextTurn("found later evidence")
+	}
+	return mockllm.New(turn).Stream(ctx, req)
+}
+
 func debugContinuationFixture(t *testing.T) (*memstore.Store, *memstore.EventLog, *session.Session, string) {
 	t.Helper()
 	store := memstore.New()
@@ -58,13 +111,9 @@ func debugContinuationFixture(t *testing.T) (*memstore.Store, *memstore.EventLog
 }
 
 func TestDebuggerScanContinuation_Scenario5_ModelWorkflow(t *testing.T) {
-	store, log, target, cursor := debugContinuationFixture(t)
-	var requests []port.LLMRequest
-	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })},
-		mockllm.ToolCallTurn(session.NewToolCall("first", sessiondebug.ToolName, json.RawMessage(`{"view":"network"}`))),
-		mockllm.ToolCallTurn(session.NewToolCall("continued", sessiondebug.ToolName, json.RawMessage(`{"view":"network","cursor":"`+cursor+`"}`))),
-		mockllm.TextTurn("found later evidence"))
-	cfg := Config{Model: "mock-model"}
+	store, log, target, _ := debugContinuationFixture(t)
+	provider := &resultDrivenContinuationProvider{}
+	cfg := isolateConfig(t, Config{Model: "mock-model"})
 	factory := debugSessionEngineFactory(cfg, regForTest(provider, providerOpenAI, cfg.Model), provider, store, log, nil, nil, nil)
 	built, err := factory(context.Background(), server.ProviderSelector{}, server.ProfileNoFS, session.ModeDefault, target.ID, session.DebugTargetFingerprint(target), target.Owner, nil, nil)
 	if err != nil {
@@ -75,8 +124,28 @@ func TestDebuggerScanContinuation_Scenario5_ModelWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	drainRun(built.Engine.Run(context.Background(), debug, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "find later network evidence"}))
+	requests := provider.requests
+	if provider.cursor == "" {
+		t.Fatal("second tool call did not derive a cursor from the actual first result")
+	}
+	actualCursor, err := cursorFromActualToolResult(requests[1])
+	if err != nil || actualCursor != provider.cursor {
+		t.Fatalf("derived cursor %q does not equal actual tool-result cursor %q: %v", provider.cursor, actualCursor, err)
+	}
+	if _, err := cursorFromActualToolResult(port.LLMRequest{Messages: []session.Message{session.NewToolMessage(session.NewToolResult("missing", `{"view":"network"}`))}}); err == nil {
+		t.Fatal("provider negative control accepted a prior tool result without next_cursor")
+	}
 	if len(requests) == 0 || !strings.Contains(requests[0].System.StablePrefix, "result-root next_cursor") || !strings.Contains(requests[0].System.StablePrefix, "empty row page") || !strings.Contains(requests[0].System.StablePrefix, "event window") || !strings.Contains(requests[0].System.StablePrefix, "retry the same cursor") || !strings.Contains(requests[0].System.StablePrefix, "snapshot status/transcript") {
 		t.Fatalf("real debug factory omitted continuation workflow: %+v", requests)
+	}
+	var inspectSchema string
+	for _, spec := range requests[0].Tools {
+		if spec.Name == sessiondebug.ToolName {
+			inspectSchema = string(spec.Schema)
+		}
+	}
+	if !strings.Contains(inspectSchema, `"cursor"`) || !strings.Contains(inspectSchema, `"maxLength":16384`) {
+		t.Fatalf("actual provider request omitted continuation schema: %s", inspectSchema)
 	}
 	found := false
 	for _, message := range debug.Conversation.Messages {
