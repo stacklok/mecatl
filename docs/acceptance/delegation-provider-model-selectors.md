@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — introduces a durable delegation-selection grammar, reserves a virtual provider namespace, expands tool/protobuf/event contracts, and changes the model-visible routing policy across delegation families.
-**Decision record:** [ADR 0368](../adr/0368-delegation-provider-model-selectors.md)
+**Decision record:** [ADR 0369](../adr/0369-delegation-provider-model-selectors.md)
 **Phase:** explicit delegation selection
 **Status:** proposed, 2026-09-26. Directing-human decisions recorded in this conversation.
 **Delivery:** Split. The cross-provider child factory, model-facing schemas, discovery result, and durable event projections need interface review before implementation.
@@ -36,15 +36,15 @@ The owning current-behavior pages are [providers](../architecture/providers.md) 
 
 ### Scenario 1 — discover direct and router delegation choices
 
-`DiscoverModels` remains the agent-facing bounded projection of the resolved inventory under [ADR 0368](../adr/0368-delegation-provider-model-selectors.md) and the [provider architecture](../architecture/providers.md). Router categories are operator policy, not a root-session provider.
+`DiscoverModels` remains the agent-facing bounded projection of the resolved inventory under [ADR 0369](../adr/0369-delegation-provider-model-selectors.md) and the [provider architecture](../architecture/providers.md). Router categories are operator policy, not a root-session provider.
 
 **Acceptance:**
 - AC1.1: an enabled router taxonomy contributes bounded rows with `provider_id:"router"`, exact category names, and their configured descriptions to unfiltered `DiscoverModels`; an empty or disabled taxonomy contributes none, and provider registration/configuration rejects the reserved `router` ID.
-  - verify: `TestADR_0368_Scenario1_RouterDiscovery`
+  - verify: `TestADR_0369_Scenario1_RouterDiscovery`
 - AC1.2: literal search and exact filters cover router category names and descriptions; descriptions participate in canonical order, cursor digests, pagination, output bounds, and stale-cursor restart; direct provider rows retain their safe metadata and no discovery request probes, refreshes, selects, or switches a model.
-  - verify: `TestADR_0368_Scenario1_DiscoveryBounds`
+  - verify: `TestADR_0369_Scenario1_DiscoveryBounds`
 - AC1.3: `ListModels`, `/models`, and `CreateSession` do not publish or accept `router` as a provider.
-  - verify: `TestADR_0368_Scenario1_RootSelectionUnaffected`
+  - verify: `TestADR_0369_Scenario1_RootSelectionUnaffected`
 
 ### Scenario 2 — Subagent resolves explicit selectors safely
 
@@ -52,11 +52,11 @@ The existing precedence ladder from [ADR 0031](../adr/0031-subagent-model-router
 
 **Acceptance:**
 - AC2.1: a bare `model` retains same-parent-provider behavior; a concrete `{provider, model}` pair mints a fresh child engine with that provider/model's dependencies; omitting both leaves the selector unset and permits normal automatic routing.
-  - verify: `TestADR_0368_Scenario2_SubagentDirectSelectors`
+  - verify: `TestADR_0369_Scenario2_SubagentDirectSelectors`
 - AC2.2: `{provider:"router", model:{discovered-category}}` resolves the parent-provider category target with no classifier call; it sets only explicit-selector provenance plus the resolved concrete provider/model, never classifier-routing evidence, and runs the child on that target.
-  - verify: `TestADR_0368_Scenario2_SubagentRouterSelector`
+  - verify: `TestADR_0369_Scenario2_SubagentRouterSelector`
 - AC2.3: provider without model, a named Subagent call with provider, unknown/unavailable provider, absent/disabled/unknown/unresolvable router category, fork with a selector, and resume with a selector each return bounded tool errors and start no child.
-  - verify: `TestADR_0368_Scenario2_InvalidSelectors`
+  - verify: `TestADR_0369_Scenario2_InvalidSelectors`
 
 ### Scenario 3 — Parallel and Team use the same selector language
 
@@ -64,21 +64,21 @@ The existing precedence ladder from [ADR 0031](../adr/0031-subagent-model-router
 
 **Acceptance:**
 - AC3.1: one explicit Parallel selector applies to every branch; the judge remains on the parent model, and omitted fields retain per-branch automatic routing.
-  - verify: `TestADR_0368_Scenario3_ParallelSelector`
+  - verify: `TestADR_0369_Scenario3_ParallelSelector`
 - AC3.2: each Team member independently accepts an explicit selector; the member resolves once at `AddMember` and retains its engine across rounds, while omitted fields retain current routing/default behavior.
-  - verify: `TestADR_0368_Scenario3_TeamMemberSelector`
+  - verify: `TestADR_0369_Scenario3_TeamMemberSelector`
 - AC3.3: all three delegation families emit the actual concrete provider/model, retain classifier category/model evidence only for classifier-originated routing, and carry an explicit router category separately without exposing task content or configuration secrets; Mecatui renders the explicit form as `selected: router/{category} → {provider}/{model}`.
-  - verify: `TestADR_0368_Scenario3_DelegationEvidence`
+  - verify: `TestADR_0369_Scenario3_DelegationEvidence`
 
 ### Scenario 4 — the model is guided to preserve operator routing by default
 
-The existing discovery posture is appended to the factory-built system role when `DiscoverModels` is present (`internal/app/build.go`), as required by [ADR 0368](../adr/0368-delegation-provider-model-selectors.md). It must teach the workflow without embedding current inventory.
+The existing discovery posture is appended to the factory-built system role when `DiscoverModels` is present (`internal/app/build.go`), as required by [ADR 0369](../adr/0369-delegation-provider-model-selectors.md). It must teach the workflow without embedding current inventory.
 
 **Acceptance:**
 - AC4.1: the real factory-built prompt tells the model to omit delegation provider/model selectors by default, use `DiscoverModels` before a justified explicit choice, and explains that `router` rows are delegation categories rather than session-selection targets.
-  - verify: `TestADR_0368_Scenario4_ModelVisibleWorkflow`
+  - verify: `TestADR_0369_Scenario4_ModelVisibleWorkflow`
 - AC4.2: the `DiscoverModels` specification accurately describes router-category rows, descriptions, search, bounded results, and the no-probe/no-selection boundary; it does not embed configured categories in static prompt text.
-  - verify: `TestADR_0368_Scenario4_ToolSpecification`
+  - verify: `TestADR_0369_Scenario4_ToolSpecification`
 
 ## Out of scope
 

@@ -1,4 +1,4 @@
-# ADR 0368 — Delegation selectors use provider/model pairs and router categories
+# ADR 0369 — Delegation selectors use provider/model pairs and router categories
 
 - Status: Proposed
 - Date: 2026-09-26
