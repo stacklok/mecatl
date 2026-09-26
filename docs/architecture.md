@@ -314,14 +314,15 @@ independent; their direct-mode OIDC source is shared. See the
 [provider chapter](architecture/providers.md#multi-provider--registry-per-session-routing--model-inventory).
 
 OpenAI has two deliberately separate registry identities. `openai` uses a public
-API key and the supported public Responses API. Experimental `openai-codex`
-uses a manually supplied ChatGPT Codex access-token snapshot against OpenAI's
-undocumented private Codex backend. They are separate billing and entitlement
-boundaries; configuring either one never enables the other. Composition applies
-the Codex credential/header/model-inventory policy around the existing
+API key and the supported public Responses API. `openai-codex` bills to a ChatGPT
+subscription against OpenAI's undocumented private Codex backend, authenticating
+either from a stored subscription sign-in or a manually supplied access-token
+snapshot. They are separate billing and entitlement boundaries; configuring
+either one never enables the other. Composition applies the Codex
+credential/header/model-inventory policy around the existing
 `provider/openai.Provider`, so request building, stateless replay, successful SSE
 translation, resilience, tools, and the provider-neutral engine port remain
-single-sourced. See [the provider chapter](architecture/providers.md#experimental-openai-codex-subscription-provider)
+single-sourced. See [the provider chapter](architecture/providers.md#openai-codex-subscription-provider)
 and [ADR 0215](adr/0215-openai-subscription-manual-token.md).
 
 ### TypeScript SDK

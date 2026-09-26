@@ -59,13 +59,37 @@ different values.
 ### Distinguish provider and server login
 
 `mecatui providers setup` configures model access. The built-in Anthropic,
-OpenAI, OpenRouter, and OpenCode providers require API keys. ChatGPT Plus or Pro
-subscriptions cannot sign in to the built-in OpenAI provider.
+OpenAI, OpenRouter, and OpenCode providers take API keys. `mecatui providers
+login openai-codex` and `mecatui providers login anthropic --subscription` sign
+in with a ChatGPT Plus/Pro or Claude Pro/Max subscription instead; `openai-codex`
+accepts no API key, and a subscription sign-in is separate from the API-key path
+of the built-in `openai` provider.
 
 Custom-provider OIDC works only with an operator-configured gateway that exposes
 the required OIDC details. `mecatui login ADDRESS` instead authenticates the
 client to a remote Mecatl server; it does not configure that server's model
 provider.
+
+### A subscription sign-in does not take effect
+
+Confirm the credential in use:
+
+```sh
+mecatui providers status openai-codex
+```
+
+Authentication reads `signed in` when the stored grant is what Mecatl will use.
+When another provider is the deployment default, the row instead prints the
+`mecatui providers set-default` command that selects this one. An API key for the
+same vendor takes precedence, and status then names that key and reports the
+sign-in as shadowed. Unset the key or run the login again after removing it.
+
+A signed-in provider still needs to be selected: run `mecatui providers
+set-default openai-codex <MODEL_ID>` for the embedded server, or pass
+`--default-provider openai-codex` to `mecated`. `openai-codex` has no built-in
+default model, so the set-default command requires an explicit model ID from the
+account's entitlements. See
+[Sign in with a subscription](/features/choose-models.md#sign-in-with-a-subscription).
 
 ### A custom model is listed but requests fail
 

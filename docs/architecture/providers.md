@@ -169,15 +169,16 @@ are required for mutually untrusted or per-user upstream authorization until exp
 forwarded-token or RFC 8693 token-exchange contracts exist. This is distinct from the
 ToolHive LLM gateway's retained provider identity/modes and from ToolHive MCP discovery.
 
-### Experimental `openai-codex` subscription provider
+### `openai-codex` subscription provider
 
 `openai-codex` is a distinct, credential-driven registry entry for a ChatGPT
-Codex subscription. It is not public OpenAI API credit and does not reuse
-`OPENAI_API_KEY`: the operator supplies an immutable access-token/account
-snapshot through `auth.yaml`. The entry targets the undocumented private
-`https://chatgpt.com/backend-api/codex` compatibility surface and is explicitly
-experimental; OpenAI may change or withdraw that surface independently of the
-supported public API.
+subscription. It is not public OpenAI API credit and does not reuse
+`OPENAI_API_KEY`. It authenticates either from a renewable grant obtained by a
+ChatGPT sign-in or from a manually supplied access-token/account snapshot in
+`auth.yaml`; a stored sign-in is shadowed when an API-key or manual snapshot is
+also present. The entry targets the undocumented private
+`https://chatgpt.com/backend-api/codex` compatibility surface; OpenAI may change
+or withdraw that surface independently of the supported public API.
 
 The implementation is an adjunct, not a second Responses adapter.
 `internal/adapter/openaicodex` owns credential validation, request-time expiry,
@@ -205,11 +206,40 @@ startup discovery selects the first entitled slug or fails honestly.
 
 An explicit `(provider_id: openai-codex, model_id: ...)` selector is persisted
 and rehydrates through the same provider. An empty selector retains the existing
-floating semantics and follows the deployment default after restart. The manual
-credential is read once at startup; every request rechecks that snapshot's expiry,
-but there is no refresh, login, or auth-file writer. Replacing an expired/rejected
+floating semantics and follows the deployment default after restart. A stored
+sign-in grant is renewed in place: the request policy resolves the current
+credential per request, single-flights a refresh within its skew window, and
+persists the rotated grant so a restart never replays a retired token. A manual
+`auth.yaml` snapshot has no refresh path and is read once at startup; every
+request rechecks that snapshot's expiry, and replacing an expired or rejected
 token requires restarting the process. The plaintext and same-UID threat boundary
 is documented in the [operator setup](../../user-docs/building/deployment/settings.md#configure-provider-credentials).
+
+### `anthropic` subscription sign-in
+
+`anthropic` is ordinarily driven by an API key. An operator holding a Claude
+Pro or Max subscription can instead authenticate with a renewable grant from a
+sign-in; the two paths are never mixed on one request, and an API key in
+`auth.yaml` or the environment takes precedence and shadows the sign-in.
+
+`internal/adapter/anthropicsub` owns that path. A sign-in mints a grant through
+Anthropic's OAuth flow against a pinned loopback callback, and
+`internal/adapter/subcred` persists it in the host's encrypted credential store
+rather than the plaintext operator-authored `auth.yaml`, because a refresh
+rotates both halves of the grant. `anthropicsub.Renewable` refreshes within its
+skew window and persists the rotated grant; an Anthropic grant's own lifetime is
+anchored at the sign-in and a refresh cannot extend it, so status reports the
+expiry and the remedy is a fresh sign-in.
+
+The request path is an `http.RoundTripper` layered on the shared
+`provider/anthropic` adapter, so request building, SSE translation, and the
+provider-neutral port stay single-sourced. That transport authenticates with a
+bearer grant (dropping any API-key header), and shapes the request to what a
+subscription endpoint accepts: the beta resource selection by request shape, a
+billing system block and its deterministic body attestation, a client-shaped
+stable per-install device identity, and a clamped `max_tokens`. An API-key body
+that carries none of those markers passes through byte-identical, so the same
+provider entry serves both credential classes.
 
 **OpenCode Go (`provider/openaichat`)** is the Chat Completions wire adapter —
 the sibling of the openai Responses adapter, built on the same `openai-go` SDK via
