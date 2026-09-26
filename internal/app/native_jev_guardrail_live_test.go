@@ -50,8 +50,16 @@ func TestNativeJevLiveDriver(t *testing.T) {
 	ui := httptest.NewServer(serveradapter.NewHTTPHandler(built.Service))
 	defer ui.Close()
 	evs := driveGuardrailPrompt(t, ui.URL, string(sess.ID), "Print the harmless synthetic phrase for a smoke test.", nil)
-	var resultSeen bool
+	var resultSeen, actionSeen, inboundSeen bool
 	for _, ev := range evs {
+		if ev.Type == "hook" && ev.Hook.Guardrail.CheckerProviderID == "jev" && ev.Hook.Guardrail.Inspection == 1 {
+			switch ev.Hook.Guardrail.Job {
+			case 1:
+				actionSeen = true
+			case 2:
+				inboundSeen = true
+			}
+		}
 		if ev.Type == "tool.result" {
 			resultSeen = true
 			if ev.ToolResult.IsError {
@@ -59,7 +67,7 @@ func TestNativeJevLiveDriver(t *testing.T) {
 			}
 		}
 	}
-	if !resultSeen {
-		t.Fatal("no reviewed tool result delivered")
+	if !resultSeen || !actionSeen || !inboundSeen {
+		t.Fatalf("native review incomplete: tool result=%v action=%v inbound=%v", resultSeen, actionSeen, inboundSeen)
 	}
 }

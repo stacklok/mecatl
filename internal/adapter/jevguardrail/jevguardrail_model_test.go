@@ -3,6 +3,7 @@ package jevguardrail
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,12 @@ func TestDifferentResponseModelCannotClear(t *testing.T) {
 		PrincipalFacts:         []agent.ReviewPrincipalFact{{Kind: "genuine_user_task", Statement: "print ok", PositiveVerdict: true}},
 		PrincipalFactsComplete: true, EvidenceComplete: true, TrajectoryComplete: true}
 	result, err := driver.Review(context.Background(), req, nil, nil)
-	if err != nil || result.Assessment != agent.ReviewUnresolved {
+	if result.Assessment != agent.ReviewUnresolved || err == nil {
 		t.Fatalf("mismatched response model cleared: %+v, err=%v", result, err)
+	}
+	var failure agent.GuardrailReviewFailure
+	var terminal agent.GuardrailReviewTerminalFailure
+	if !errors.As(err, &failure) || failure.GuardrailReviewFailureCode() != agent.ReviewFailureInvalidAssessment || !errors.As(err, &terminal) || !terminal.GuardrailReviewTerminalFailure() {
+		t.Fatalf("wrong model must be terminal invalid assessment: %v", err)
 	}
 }
