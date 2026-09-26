@@ -217,7 +217,9 @@ backend uses the ordinary action and inbound review gates, including headless
 blocking and result withholding; it does not need an LLM guardrail model or
 slot. It sends effective tool arguments, result text, task facts, and authorized
 review evidence to TypeSafe. Incomplete context, unsupported permission reviews,
-and requests beyond its input limit do not receive a clean verdict. This is an
+and requests beyond its input limit do not receive a clean verdict. The driver
+also treats a Jev choice below its experimental fixed `0.8` confidence cutoff
+as unresolved; this cutoff has not been calibrated for security use. This is an
 unvalidated PoC, not a production security recommendation: a Jev verdict is
 not proof that a tool action or result is safe. The model-router setting does
 not select this guardrail backend.

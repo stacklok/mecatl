@@ -108,6 +108,7 @@ type sseGuardEvent struct {
 		Guardrail struct {
 			Job               int32  `json:"job"`
 			Inspection        int32  `json:"inspection"`
+			Assessment        int32  `json:"assessment"`
 			CheckerProviderID string `json:"checker_provider_id"`
 		} `json:"guardrail"`
 	} `json:"hook"`

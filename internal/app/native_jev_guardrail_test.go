@@ -197,10 +197,18 @@ func TestNativeJevGuardrailBuildRun(t *testing.T) {
 			ui := httptest.NewServer(serveradapter.NewHTTPHandler(built.Service))
 			defer ui.Close()
 			evs := driveGuardrailPrompt(t, ui.URL, string(sess.ID), "print the benign phrase", nil)
-			var blocked bool
+			var blocked, delivered, concreteFinding bool
 			for _, ev := range evs {
+				if ev.Type == "hook" && ev.Hook.Guardrail.CheckerProviderID == "jev" && ev.Hook.Guardrail.Assessment == 2 && ev.Hook.Guardrail.Inspection == 1 {
+					if tc.name == "action block" && ev.Hook.Guardrail.Job == 1 || tc.name == "inbound hold" && ev.Hook.Guardrail.Job == 2 {
+						concreteFinding = true
+					}
+				}
 				if ev.Type == "permission.ask" {
 					t.Fatal("headless ask")
+				}
+				if ev.Type == "tool.result" && !ev.ToolResult.IsError {
+					delivered = true
 				}
 				if ev.Type == "tool.result" && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "guardrail") {
 					blocked = true
@@ -213,6 +221,14 @@ func TestNativeJevGuardrailBuildRun(t *testing.T) {
 			got := append([]string(nil), jobs...)
 			seen := append([]string(nil), modelRequests...)
 			mu.Unlock()
+			if tc.name == "action block" || tc.name == "inbound hold" {
+				if !concreteFinding {
+					t.Fatal("expected a completed prohibited Jev finding, not a checker failure")
+				}
+			}
+			if tc.name == "checker warn" && !delivered {
+				t.Fatal("checker-down warn did not deliver the executed tool result")
+			}
 			if tc.name == "action block" {
 				if _, err := os.Stat(marker); !os.IsNotExist(err) {
 					t.Fatalf("blocked action executed, marker stat: %v", err)
@@ -236,6 +252,12 @@ func TestNativeJevGuardrailBuildRun(t *testing.T) {
 			}
 			if blocked != tc.blocked {
 				t.Fatalf("blocked=%v want=%v jobs=%v events=%v", blocked, tc.blocked, got, evs)
+			}
+			if tc.name == "checker down" || tc.name == "checker warn" {
+				coverage, err := built.Service.ListGuardrailCoverage(context.Background(), sess.ID)
+				if err != nil || len(coverage.Entries) == 0 || coverage.Entries[0].Inspection != "operational_failure" || !strings.Contains(coverage.Entries[0].Reason, "provider_failure") {
+					t.Fatalf("checker outage status not truthful: %+v err=%v", coverage, err)
+				}
 			}
 		})
 	}
