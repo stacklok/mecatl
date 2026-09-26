@@ -84,7 +84,7 @@ type teamFindingEvidence struct {
 func (t *inspectTool) delegationView(ctx context.Context, s *session.Session, graph lineageGraph, offset, requested int) delegationEvidence {
 	limit := boundedLimit(requested, maxDelegationRows)
 	out := delegationEvidence{
-		View: "delegation", Authoritative: true, Source: "typed root events joined to direct lineage records",
+		View: viewDelegation, Authoritative: true, Source: "typed root events joined to direct lineage records",
 		ProjectionComplete: true, ScanComplete: t.log != nil && graph.ScanComplete,
 		RetentionComplete: graph.Supported && graph.ScanComplete && !graph.Truncated,
 		Offset:            offset, Limit: limit, Rows: []delegationRow{}, Error: graph.Error,
@@ -364,47 +364,6 @@ type manifestRow struct {
 	Components                []session.RequestPromptComponent `json:"components"`
 }
 
-func (t *inspectTool) manifestView(ctx context.Context, id session.SessionID, offset, requested int) manifestEvidence {
-	limit := boundedLimit(requested, maxManifestRows)
-	out := manifestEvidence{View: "manifest", Available: t.log != nil, Authoritative: t.log != nil, Source: "request.manifest events", ProjectionComplete: true, ScanComplete: t.log != nil, RetentionComplete: false, Offset: offset, Limit: limit, Rows: []manifestRow{}}
-	if t.log == nil {
-		out.Error = errLogNotConfigured
-		return out
-	}
-	matched := 0
-	pageEnd := offset
-	scanned := 0
-	for ev, err := range t.log.Read(ctx, id) {
-		if err != nil {
-			out.Error = errLogReadFailed
-			out.ScanComplete = false
-			break
-		}
-		if scanned == maxPerformanceScan {
-			out.Error = "event scan bound reached"
-			out.ScanComplete = false
-			break
-		}
-		scanned++
-		if ev.Type != session.EvRequestManifest || ev.RequestManifest == nil {
-			continue
-		}
-		p := ev.RequestManifest
-		if matched >= offset && len(out.Rows) < limit {
-			pageEnd = matched + 1
-			out.Rows = append(out.Rows, projectManifest(*p))
-			if !fitsEvidence(out) {
-				out.Rows = out.Rows[:len(out.Rows)-1]
-				out.ProjectionComplete = false
-			}
-		}
-		matched++
-	}
-	if pageEnd < matched {
-		out.NextOffset = &pageEnd
-	}
-	return out
-}
 func projectManifest(p session.RequestManifestPayload) manifestRow {
 	r := manifestRow{
 		Provider: safeLine(p.Provider), Model: safeLine(p.Model), ReasoningEffort: safeLine(p.ReasoningEffort),

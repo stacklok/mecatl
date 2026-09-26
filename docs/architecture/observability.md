@@ -357,8 +357,14 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   counters without widening ordinary client streams. Lineage comes from a bounded
   `SessionLineageReader` plus typed-event fallback; retained descendants receive opaque
   incarnation-bound, revalidated handles, while pruned snapshots remain content-free
-  tombstones keyed separately from a later same-ID incarnation. Event-log
-  retention and scan limits are reported rather than inferred. See
+  tombstones keyed separately from a later same-ID incarnation. Cursor-capable logs
+  let affected projections continue in sealed 10,000-record windows while row pages
+  reuse the same interval and one encrypted, incarnation-bound continuation. Aggregates
+  are window-local, distinct run counts are non-additive, and later archives remain
+  selectable without treating a suffix as complete replay. Plain event logs retain a
+  bounded initial projection but explicitly cannot continue. Event-log retention and
+  scan limits are reported rather than inferred. See the
+  [session diagnosis guide](../../user-docs/mecatui/sessions.md#diagnose-a-stored-session) and
   [ADR 0256](../adr/0256-session-debugger-evidence-and-reporting.md).
 
   > **Two `Load` implementations, one port.** mecatl's own adapters (memstore,

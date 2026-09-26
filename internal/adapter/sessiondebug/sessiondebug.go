@@ -36,12 +36,22 @@ const (
 	maxDelegationRows    = 100
 	errLogNotConfigured  = "event log is not configured"
 	errLogReadFailed     = "event log read failed"
+	viewStatus           = "status"
+	viewPerformance      = "performance"
+	viewNetwork          = "network"
+	viewDelegation       = "delegation"
+	viewManifest         = "manifest"
+	viewHistory          = "history"
+	stopNotConfigured    = "not_configured"
+	sourceArchive        = "compaction_archive"
+	sourceRetainedReplay = "retained_event_history"
 )
 
 type inspectArgs struct {
 	View          string `json:"view"`
 	ScopeHandle   string `json:"scope_handle,omitempty"`
 	HistoryHandle string `json:"history_handle,omitempty"`
+	Cursor        string `json:"cursor,omitempty"`
 	Offset        int    `json:"offset,omitempty"`
 	Limit         int    `json:"limit,omitempty"`
 }
@@ -107,8 +117,8 @@ func (t *inspectTool) revalidateScope(ctx context.Context, binding *lineageNode)
 func (*inspectTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{
 		Name:        ToolName,
-		Description: "Inspect bounded read-only evidence rooted at the debug target. Start with status and related. Omit scope_handle for root/target views; only opaque scope handles returned by related evidence select retained authorized descendants. Use returned history handles to inspect archived history. Raw session IDs are never accepted.",
-		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance","network","related","delegation","history","manifest"]},"scope_handle":{"type":"string"},"history_handle":{"type":"string"},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
+		Description: "Inspect bounded read-only evidence rooted at the debug target. Start with status and related. Omit scope_handle for root/target views; only opaque scope handles returned by related evidence select retained authorized descendants. For affected retained-event views, pass the result-root next_cursor back as cursor with the same view and scope; only limit may change. Continue after an empty row page and stop only when next_cursor is absent. Counts are scoped to one event window; repeated row pages are not new aggregate coverage. Never decode or fabricate handles.",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"view":{"type":"string","enum":["status","transcript","activity","performance","network","related","delegation","history","manifest"]},"scope_handle":{"type":"string"},"history_handle":{"type":"string"},"cursor":{"type":"string","maxLength":16384},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1}},"required":["view"],"additionalProperties":false}`),
 	}
 }
 
@@ -122,6 +132,16 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	}
 	if args.Offset < 0 || args.Limit < 0 {
 		return session.NewToolError(call.ID, "offset must be non-negative and limit must be positive when set"), nil
+	}
+	affected := args.View == viewStatus || args.View == viewPerformance || args.View == viewNetwork || args.View == viewDelegation || args.View == viewHistory || args.View == viewManifest
+	if len(args.Cursor) > maxContinuationLen {
+		return session.NewToolError(call.ID, continuationInvalid), nil
+	}
+	if args.Cursor != "" && (!affected || args.Offset != 0 || args.HistoryHandle != "") {
+		return session.NewToolError(call.ID, "cursor requires an affected event view, zero offset, and no history_handle"), nil
+	}
+	if args.HistoryHandle != "" && args.View != "history" {
+		return session.NewToolError(call.ID, "history_handle is accepted only by the history view"), nil
 	}
 	if args.ScopeHandle == rootScope {
 		args.ScopeHandle = ""
@@ -148,27 +168,67 @@ func (t *inspectTool) Execute(ctx context.Context, call session.ToolCall, _ tool
 	}
 
 	var value any
-	switch args.View {
-	case "status":
-		value = t.statusView(ctx, target, scope)
-	case "transcript":
-		value = transcriptView(target, args.Offset, args.Limit)
-	case "activity":
-		value = t.activityView(ctx, target.ID, args.Offset, args.Limit)
-	case "performance":
-		value = t.performanceView(ctx, target.ID)
-	case "network":
-		value = t.networkView(ctx, target.ID, args.Offset, args.Limit)
-	case "related":
-		value = t.relatedView(graph, scope, args.Offset, args.Limit)
-	case "delegation":
-		value = t.delegationView(ctx, target, graph, args.Offset, args.Limit)
-	case "history":
-		value, err = t.historyView(ctx, target, scope, args.HistoryHandle, args.Offset, args.Limit)
-	case "manifest":
-		value = t.manifestView(ctx, target.ID, args.Offset, args.Limit)
-	default:
-		return session.NewToolError(call.ID, "view must be one of status, transcript, activity, performance, network, related, delegation, history, manifest"), nil
+	if affected && (args.View != viewHistory || args.HistoryHandle == "") {
+		scan, scanErr := t.scanEvents(ctx, target.ID, args.View, scope, args.Cursor)
+		if scanErr != nil {
+			if (args.View == "status" || args.View == "history") && args.Cursor == "" && ctx.Err() == nil {
+				gaps := 0
+				scan = eventScan{GapCount: &gaps, StopReason: "read_error", ContinuationSupported: func() bool { _, ok := t.log.(port.CursorEventLog); return ok }()}
+			} else {
+				if errors.Is(scanErr, context.Canceled) || errors.Is(scanErr, context.DeadlineExceeded) {
+					return session.NewToolError(call.ID, errLogReadFailed), nil
+				}
+				if scanErr.Error() == continuationInvalid {
+					return session.NewToolError(call.ID, continuationInvalid), nil
+				}
+				return session.NewToolError(call.ID, errLogReadFailed), nil
+			}
+		}
+		if scan.ID != "" && scan.RowOffset == 0 {
+			scan.ID = scanID(t, target.ID, args.View, scope, scan.Start, scan.End, scan.Records)
+		}
+		projection, projectErr := t.projectContinuation(ctx, args, target, scope, graph, scan)
+		if projectErr != nil {
+			return session.NewToolError(call.ID, safeLine(projectErr.Error())), nil
+		}
+		if scan.Basis != "" && projection.Basis != scan.Basis {
+			return session.NewToolError(call.ID, continuationInvalid), nil
+		}
+		boundContinuationProjection(&projection, args.View, func() int {
+			if args.Cursor != "" {
+				return scan.RowOffset
+			}
+			return args.Offset
+		}())
+		if args.Cursor == "" && projection.HasMoreRows {
+			projection.Value["next_offset"] = projection.NextRow
+		}
+		if scan.ContinuationSupported && scan.ID != "" && (projection.HasMoreRows || scan.HasMore) {
+			purpose, row := "window", 0
+			if projection.HasMoreRows {
+				purpose, row = "row", projection.NextRow
+			}
+			scan.Basis = projection.Basis
+			token, tokenErr := t.sealContinuation(t.claimFor(scan, args.View, scope, purpose, row))
+			if tokenErr != nil {
+				return session.NewToolError(call.ID, continuationUnrepresentable), nil
+			}
+			projection.Value["next_cursor"] = token
+		}
+		value = projection.Value
+	} else {
+		switch args.View {
+		case "transcript":
+			value = transcriptView(target, args.Offset, args.Limit)
+		case "activity":
+			value = t.activityView(ctx, target.ID, args.Offset, args.Limit)
+		case "related":
+			value = t.relatedView(graph, scope, args.Offset, args.Limit)
+		case "history":
+			value, err = t.selectHistory(ctx, target, scope, args.HistoryHandle, args.Offset, args.Limit)
+		default:
+			return session.NewToolError(call.ID, "view must be one of status, transcript, activity, performance, network, related, delegation, history, manifest"), nil
+		}
 	}
 	if err != nil {
 		return session.NewToolError(call.ID, safeLine(err.Error())), nil
@@ -720,55 +780,6 @@ type networkAttemptEvidence struct {
 	InBandStatus      int    `json:"in_band_status,omitempty"`
 	CorrelationKind   string `json:"correlation_kind,omitempty"`
 	CorrelationDigest string `json:"correlation_digest,omitempty"`
-}
-
-func (t *inspectTool) networkView(ctx context.Context, target session.SessionID, offset, requested int) networkEvidence {
-	limit := boundedLimit(requested, maxNetworkRows)
-	out := networkEvidence{
-		View: "network", Available: t.log != nil, Authoritative: false,
-		Coverage:                "failed and policy-interesting attempts observed by the shared resilience wrapper; no request bodies, headers, URLs, raw errors, per-phase DNS/TCP/TLS timing, or successful-attempt timing",
-		SuccessfulAttemptsTimed: false, Offset: offset, Limit: limit,
-		Attempts: []networkAttemptEvidence{},
-	}
-	if t.log == nil {
-		out.Error = errLogNotConfigured
-		return out
-	}
-	out.ScanComplete = true
-	matched := 0
-	for ev, err := range t.log.Read(ctx, target) {
-		if err != nil {
-			out.Error = errLogReadFailed
-			out.ScanComplete = false
-			break
-		}
-		if out.ScannedEvents == maxNetworkScan {
-			out.Truncated = true
-			out.ScanComplete = false
-			break
-		}
-		out.ScannedEvents++
-		if ev.Type != session.EvNetworkAttempt || ev.NetworkAttempt == nil {
-			continue
-		}
-		row := *ev.NetworkAttempt
-		if !validNetworkAttempt(row, target) {
-			out.InvalidOmitted++
-			continue
-		}
-		if matched >= offset && len(out.Attempts) < limit {
-			out.Attempts = append(out.Attempts, projectNetworkAttempt(row))
-		}
-		matched++
-	}
-	out.TotalMatched = matched
-	if out.ScanComplete && offset+len(out.Attempts) < matched {
-		next := offset + len(out.Attempts)
-		out.NextOffset = &next
-		out.Truncated = true
-	}
-	out.Complete = out.ScanComplete && out.NextOffset == nil && out.InvalidOmitted == 0
-	return out
 }
 
 func projectNetworkAttempt(row session.NetworkAttemptPayload) networkAttemptEvidence {

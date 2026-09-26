@@ -174,7 +174,23 @@ servers, stdio servers, and resource or query meta-tools are not accepted.
 Unknown, disconnected, and tool-empty server names fail. Mutating MCP tools
 always require one-call approval, including in yolo mode.
 
-Debug views report when retained evidence is incomplete. Network views expose
+Debug views report when retained evidence is incomplete. `status`, `performance`,
+`network`, `delegation`, `manifest`, and the history catalog inspect at most 10,000
+event-log records per window. Row limits are separate: performance and network return
+up to 50 rows, delegation up to 100, manifest up to 50, and history catalogs up to 20.
+When more rows or records remain, the model passes the result's single opaque
+`next_cursor` back as `cursor` with the same view and scope. An empty page is not the
+end; absence of `next_cursor` is. Counts and aggregates cover only the named event
+window, and repeated row pages do not add new coverage.
+
+A long log can expose later compaction archives without making its suffix a complete
+conversation replay. Full retained-event replay is unavailable when the first window
+has more records, contains a known gap, or cannot be folded. A backend without cursor
+support still supplies its bounded initial evidence, but cannot continue it and cannot
+observe gap records. In every case, `retention_complete:false` means lifetime retention
+is not certified; it does not prove that an event or session was deleted.
+
+Network views expose
 sanitized failure categories, plus a bounded structural summary of the outer
 provider attempt (whether the provider's protocol terminal was actually
 observed, and a closed outcome such as complete, incomplete, stream error, or

@@ -347,8 +347,8 @@ func TestNetworkEvidenceIsolationPaginationAndAvailability(t *testing.T) {
 	}
 
 	failed := execute(t, New(target.ID, store, errorLog{}), `{"view":"network"}`)
-	if strings.Contains(failed.Content, "secret") || !strings.Contains(failed.Content, `"error":"event log read failed"`) {
-		t.Fatalf("network log failure leaked detail or hid availability: %s", failed.Content)
+	if !failed.IsError || strings.Contains(failed.Content, "secret") || failed.Content != errLogReadFailed {
+		t.Fatalf("network log failure leaked detail or returned partial evidence: %s", failed.Content)
 	}
 }
 

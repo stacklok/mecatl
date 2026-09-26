@@ -73,6 +73,11 @@ func (l *observedLog) Read(ctx context.Context, id session.SessionID) iter.Seq2[
 	return l.EventLog.Read(ctx, id)
 }
 
+func (l *observedLog) ReadAfter(ctx context.Context, id session.SessionID, after port.Cursor, opts port.ReadOptions) iter.Seq2[port.LogRecord, error] {
+	l.reads = append(l.reads, id)
+	return l.EventLog.ReadAfter(ctx, id, after, opts)
+}
+
 func publicFixture(t *testing.T) (*observedStore, *session.Session, *session.Session, *session.Session) {
 	t.Helper()
 	base := memstore.New()
@@ -186,8 +191,8 @@ func TestInspectSessionLineageIsolation_Scenario1_RootReadsArePureAndPartitioned
 	store.loads, store.queries = nil, nil
 	log.reads = nil
 	delegation := inspect(t, inspector, `{"view":"delegation"}`)
-	if !strings.Contains(delegation.Content, handle) || len(store.queries) != 2 || len(log.reads) != 1 || log.reads[0] != root.ID {
-		t.Fatalf("root delegation query path: queries=%+v event_reads=%v evidence=%s", store.queries, log.reads, delegation.Content)
+	if !strings.Contains(delegation.Content, handle) || len(store.queries) != 2 || len(log.reads) != 2 || log.reads[0] != root.ID || log.reads[1] != root.ID {
+		t.Fatalf("root delegation query path (window plus endpoint validation): queries=%+v event_reads=%v evidence=%s", store.queries, log.reads, delegation.Content)
 	}
 }
 
@@ -466,8 +471,8 @@ func TestADR_0352_Scenario6_WireAndDebugger(t *testing.T) {
 		t.Fatalf("failed append was inferred or fabricated: %s", failedEvidence.Content)
 	}
 	readFailure := inspect(t, sessiondebug.New(root.ID, store, readFailedEventLog{}), `{"view":"delegation"}`)
-	if strings.Contains(readFailure.Content, "routing_decision") || !strings.Contains(readFailure.Content, `"rows":[]`) || !strings.Contains(readFailure.Content, "event log read failed") {
-		t.Fatalf("failed log history was inferred or fabricated: %s", readFailure.Content)
+	if !readFailure.IsError || strings.Contains(readFailure.Content, "routing_decision") || readFailure.Content != "event log read failed" {
+		t.Fatalf("failed log history returned partial or unsafe evidence: %s", readFailure.Content)
 	}
 
 	// A second retained incarnation with the same team/member labels cannot capture

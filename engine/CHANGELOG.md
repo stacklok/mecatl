@@ -13,6 +13,10 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Event-log cursor capability sentinel** — adds `port.ErrCursorUnsupported`
+  for configured backends that cannot perform resumable event-log reads. Added
+  (minor).
+
 - **Display-only latest context occupancy** — adds `session.ContextOccupancy` and
   `Session.LatestContextOccupancy` / `Session.RecordLatestContextOccupancy` for
   the optional non-zero context-meter numerator from a completed agent-loop turn.
