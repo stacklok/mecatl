@@ -274,7 +274,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.1'
+          bun-version: '1.4.2'
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -286,7 +286,7 @@ jobs:
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
-          version: '1.72.0'
+          version: '1.73.0'
           github_token: ${{ github.token }}
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
@@ -1108,7 +1108,7 @@ jobs:
       # GORELEASER_VERSION.
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
-          version: "v2.16.0"
+          version: "v2.18.2"
           install-only: true
       - name: Validate the GoReleaser config
         # `goreleaser check` exits 2 for "valid, but uses DEPRECATED properties".
@@ -1561,7 +1561,7 @@ jobs:
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
-          version: '1.72.0'
+          version: '1.73.0'
           github_token: ${{ github.token }}
 
       # Documentation-only changes still run the repository's Go-backed structural
