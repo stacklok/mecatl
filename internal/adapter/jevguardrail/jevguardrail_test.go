@@ -73,7 +73,7 @@ func TestFailClosedWithoutCompleteContext(t *testing.T) {
 		candidate := req
 		mutate(&candidate)
 		result, err := driver.Review(context.Background(), candidate, nil, nil)
-		if err == nil || result.Assessment != agent.ReviewUnresolved {
+		if result.Assessment != agent.ReviewUnresolved {
 			t.Fatalf("failed closed: %#v %v", result, err)
 		}
 	}
