@@ -279369,6 +279369,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790369736388,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e7e51c90be4acfd62343a2cd4cb70ca74a4e3f99",
+          "message": "refactor(mecatui): use typed scrollback cards (#1836)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T17:59:44-07:00",
+          "tree_id": "5e64e2897b716f3385414b045e59002428ecafc8",
+          "url": "https://github.com/stacklok/mecatl/commit/e7e51c90be4acfd62343a2cd4cb70ca74a4e3f99"
+        },
+        "date": 1790385067963,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3320.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -366161,6 +366200,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790385064929,
+  "lastUpdate": 1790385069531,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
