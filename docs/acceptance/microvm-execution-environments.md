@@ -2,15 +2,15 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural — this amendment adds connection-owned, daemon-local MicroVM acquisitions across local harness processes while preserving the independently approved Environment and HarnessContext contracts.
-**Decision record:** [ADR 0367](../adr/0367-microvm-execution-environments.md)
+**Decision record:** [ADR 0368](../adr/0368-microvm-execution-environments.md)
 
 **Phase:** Repository-scoped local microVM execution, including the experimental Darwin arm64 path
 **Status:** in-progress
 **Qualification:** Linux amd64 source-build validation includes the real KVM private-v4 journey and a live GPT-5.6 Sol multi-instance coding workflow through HTTP/SSE. This is not released-artifact qualification. Darwin arm64 remains experimental and awaits physical HVF and release qualification.
 **Evidence:** On 2026-09-25, `task e2e:microvm` passed at `3d55a8cfa600546fd7c03a177dd2293a1b54aa50`, using a real Linux KVM guest and the deterministic mock provider. A separate OpenRouter `openai/gpt-5.6-sol` journey completed ten outer runs and one isolated Subagent execution: coding with Read/Edit/Write/Shell, guest UID 65532/Wolfi and boundary checks, distinct placements sharing a repository VM, cross-instance read-only scheduling, peer shutdown, harness resume, and linked-worktree isolation. Its final saved-session cold resume passed with host `9a1c2cd05abca6f101a2b29e467baeda3babdb80` and the unchanged compatible runtime bundle from `3d55a8cfa600546fd7c03a177dd2293a1b54aa50`. Exact placement and guest changes survived. The final cold driver returned nonzero only because an extra greater-than-15-second timing assertion was not met: HTTP 200 arrived after 12.986 seconds and the model completed `end_turn`. Long-acquisition regression coverage is deterministic, not a claim that this successful live acquisition exceeded 15 seconds. One scheduled PresentPlan attempt was denied in headless mode; the read-only fire subsequently completed. No credentials, private refs, sockets, or host paths are retained here. These source-build runs use locally verified development artifacts, not a published signed release; no physical Apple Silicon/HVF journey was performed.
 **Issue:** [stacklok/mecatl#526](https://github.com/stacklok/mecatl/issues/526)
-**Delivery:** Split. PR 580 is the sole delivery. The operator explicitly authorized direct same-PR amendment of this plan and unmerged ADR 0367 for connection-owned acquisitions, overriding the separate amendment-PR/superseding-ADR route. The amendment is committed separately before implementation; tests, security review, and human merge authority remain required.
-**ADR:** [ADR 0367](../adr/0367-microvm-execution-environments.md), with the proposed Darwin decision in [ADR 0365](../adr/0365-microvm-darwin-xattr-ownership.md)
+**Delivery:** Split. PR 580 is the sole delivery. The operator explicitly authorized direct same-PR amendment of this plan and unmerged ADR 0368 for connection-owned acquisitions, overriding the separate amendment-PR/superseding-ADR route. The amendment is committed separately before implementation; tests, security review, and human merge authority remain required.
+**ADR:** [ADR 0368](../adr/0368-microvm-execution-environments.md), with the proposed Darwin decision in [ADR 0365](../adr/0365-microvm-darwin-xattr-ownership.md)
 **Accumulator branch:** `acc/microvm-execution-environments`
 
 The MVP uses one mutable microVM and one rootfs for one local operator and one canonical
@@ -38,7 +38,7 @@ all earlier superseded redesign tasks.
 - [x] Local multi-instance baseline. — Decision: Multiple mecatui/embedded-mecated instances on one repository are normal coding use; no one-harness-per-daemon restriction is acceptable.
 - [x] Connection-owned acquisitions. — Decision: The directing human approved the reviewed connection-owned, daemon-local acquisition proposal on 2026-09-25. One retained authenticated Unix socket per independently acquired binding provides process-death cleanup without heartbeat, TTL, database, or new configuration. The exact private v4 exchange below governs release, operation pins, rollback and restart.
 - [x] Cleanup and compatibility. — Decision: Ambiguous outcomes retain durable worktrees, live ownership/pins block destructive deletion, and private v4 rejects v3 rather than allowing ref-global detach. A compatibility mismatch does not automatically replace a daemon serving other local harnesses.
-- [x] Direct same-PR amendment. — Decision: The directing human authorized this plan's AC5.2 replacement and AC5.7–AC5.10 additions, the narrow in-place attachment-lifetime amendment to unmerged ADR 0367, and ADR 0027's maintained inventories. This explicitly overrides the separate amendment-PR/superseding-ADR route; all other criteria and the shared HarnessContext contract remain intact. Verbatim approval and source are recorded in the existing run's `run.md`.
+- [x] Direct same-PR amendment. — Decision: The directing human authorized this plan's AC5.2 replacement and AC5.7–AC5.10 additions, the narrow in-place attachment-lifetime amendment to unmerged ADR 0368, and ADR 0027's maintained inventories. This explicitly overrides the separate amendment-PR/superseding-ADR route; all other criteria and the shared HarnessContext contract remain intact. Verbatim approval and source are recorded in the existing run's `run.md`.
 
 ## Interface contract
 
@@ -68,7 +68,7 @@ The added `acquisition_id` is 32 lowercase hexadecimal characters from 16 crypto
 Successful `create`/`resolve`/`fork` publish their acquisition in the daemon before replying. The client returns a binding only after validating the response and atomically transferring the socket from attempt-context cancellation to the returned owner's lifetime. Cancellation winning that transfer runs the safely attributable cleanup below; later completion/cancellation of the creation request cannot close a transferred binding. A resolve retry opens a fresh socket and gets a fresh owner; no request-ID deduplication store is required. Create/fork are not blindly retried after an unknown outcome.
 
 **Response validation is separate from rollback authority:**
-- A fully validated new create/fork result failing before session publication retains exact rollback authority: close attempt-owned source borrows, then perform bounded ownership-consuming deletion. Do not reduce ADR 0367's known unpublished-failure cleanup to detach-only.
+- A fully validated new create/fork result failing before session publication retains exact rollback authority: close attempt-owned source borrows, then perform bounded ownership-consuming deletion. Do not reduce ADR 0368's known unpublished-failure cleanup to detach-only.
 - Malformed non-authority metadata (for example Created profile/root/egress fields) does not erase safe attribution. For create, preserve the existing check at `internal/adapter/microvm/client.go:244-255`: expected owner, the unpredictable fresh request placement/session ID, and a complete canonical logical ref/generation. A matching well-formed AcquisitionID additionally permits terminal deletion on its originating socket; the daemon verifies that ID and tuple are precisely the new result created by that connection. If create's existing exact attribution is safe but its ID is absent/invalid, close the socket and attempt the existing bounded exact-ref rollback under the new zero-owner/zero-pin deletion gate. Cleanup refusal/error is reported as retained or uncertain, never as successful deletion.
 - Fork labels are reusable: parent/owner/label similarity alone never authorizes deleting a returned sibling. Fork rollback requires a complete validated child tuple, distinct from the parent, and a well-formed AcquisitionID whose originating connection the daemon verifies created that exact child. A malformed result lacking that proof is not destructively cleaned up.
 - Unknown, untrustworthy, truncated, or ambiguous transport outcomes without the above safe attribution close the connection and retain durable state. Resolve failure only releases its borrow; it never deletes the pre-existing placement. A syntactically valid ID alone grants no deletion authority. Preserve existing actionable retained/unknown-cleanup diagnostics and clean-delete/dirty-retention results; no extra cleanup service is introduced.
@@ -108,7 +108,7 @@ registry or new manager orchestration.
 ### Scenario 1 — ordinary deployment-default selection converges on a ready local backend
 
 This completed scenario follows
-[ADR 0367 — readiness](../adr/0367-microvm-execution-environments.md#5-make-readiness-part-of-ordinary-use).
+[ADR 0368 — readiness](../adr/0368-microvm-execution-environments.md#5-make-readiness-part-of-ordinary-use).
 
 **Acceptance:**
 
@@ -125,7 +125,7 @@ This completed scenario follows
 
 ### Scenario 2 — canonical repository identity owns one durable VM generation
 
-This follows [ADR 0367 — singleton lifecycle](../adr/0367-microvm-execution-environments.md#2-use-one-durable-vmrootfs-record-per-operator-and-canonical-git-repository).
+This follows [ADR 0368 — singleton lifecycle](../adr/0368-microvm-execution-environments.md#2-use-one-durable-vmrootfs-record-per-operator-and-canonical-git-repository).
 
 The daemon uses `(operator, canonical Git common directory)` as the only repository VM
 key. This scenario establishes lifecycle identity and the rootfs singleton; it does not add
@@ -160,7 +160,7 @@ repository guest. Filesystem and exec remain bound to one `EnvironmentRef` and o
 
 ### Scenario 4 — immutable Brood bytes and one explicit repository rootfs
 
-This follows [ADR 0367 — direct Brood consumption](../adr/0367-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
+This follows [ADR 0368 — direct Brood consumption](../adr/0368-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest).
 
 The artifact and static guest-contract work in tasks 60–61 remains complete. The remaining
 MVP step attaches that primitive to the repository generation.
@@ -227,7 +227,7 @@ and [shared source-lifetime criteria](harness-context.md) remain unchanged.
 
 ### Scenario 6 — platform ownership and useful networking are honest
 
-This follows [ADR 0367's Linux guest decision](../adr/0367-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest) and the proposed [Darwin xattr decision](../adr/0365-microvm-darwin-xattr-ownership.md#prepare-fixed-guest-ownership-with-virtiofs-xattrs).
+This follows [ADR 0368's Linux guest decision](../adr/0368-microvm-execution-environments.md#4-consume-brood-directly-and-provide-an-explicit-linux-guest) and the proposed [Darwin xattr decision](../adr/0365-microvm-darwin-xattr-ownership.md#prepare-fixed-guest-ownership-with-virtiofs-xattrs).
 
 Linux amd64 keeps its qualified namespace mechanism. Darwin arm64 keeps the same fixed guest identity through strict VirtioFS ownership preparation, but remains experimental until Scenario 8. The default network is useful rather than presented as containment; tightening remains optional and fail-closed when selected.
 
