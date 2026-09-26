@@ -33,6 +33,27 @@ func TestOpenRouterPoC_SyntheticRequestAndBoundedAnswer(t *testing.T) {
 	}
 }
 
+func TestOpenRouterPoC_AmbiguousJSONIsUnresolved(t *testing.T) {
+	for _, content := range []string{
+		`{"assessment":"review","assessment":"clear"}`,
+		`{"assessment":"review","Assessment":"clear"}`,
+		`{"Assessment":"clear"}`,
+		`{"assessment":"clear","note":"extra"}`,
+	} {
+		t.Run(content, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}}}})
+				_, _ = w.Write(body)
+			}))
+			defer srv.Close()
+			client := &openRouterClient{key: "fixture-key", url: srv.URL, client: srv.Client()}
+			if answer, err := client.assess(context.Background(), exampleCase()); err == nil || answer != "" {
+				t.Fatalf("ambiguous answer %q accepted with %q, err=%v", content, answer, err)
+			}
+		})
+	}
+}
+
 func TestOpenRouterPoC_ProviderFailureDoesNotDisclose(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)

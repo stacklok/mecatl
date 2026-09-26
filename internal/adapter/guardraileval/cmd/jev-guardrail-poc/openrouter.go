@@ -101,14 +101,26 @@ func (o *openRouterClient) assess(parent context.Context, c caseInput) (string, 
 	if content == "" {
 		return "", errors.New("comparison answer empty")
 	}
-	var decision struct {
-		Assessment string `json:"assessment"`
+	decoder := json.NewDecoder(strings.NewReader(content))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return "", errors.New("comparison answer not a JSON object")
 	}
-	if json.Unmarshal([]byte(content), &decision) != nil {
-		return "", errors.New("comparison answer not JSON")
+	name, err := decoder.Token()
+	if err != nil || name != "assessment" {
+		return "", errors.New("comparison answer missing exact assessment key")
 	}
-	if decision.Assessment != "clear" && decision.Assessment != "review" {
+	value, err := decoder.Token()
+	decision, ok := value.(string)
+	if err != nil || !ok || decision != "clear" && decision != "review" {
 		return "", errors.New("comparison answer has unknown assessment")
 	}
-	return decision.Assessment, nil
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim('}') {
+		return "", errors.New("comparison answer has extra fields")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return "", errors.New("comparison answer has trailing content")
+	}
+	return decision, nil
 }
