@@ -4,7 +4,7 @@
 **Work classification:** Architectural — adds an operator-owned, default-on configuration contract that changes standard root-prompt behavior across main and delegated engines.
 **Decision record:** [ADR 0367](../adr/0367-configurable-commit-coauthor-guidance.md)
 **Phase:** prompt provenance
-**Status:** in-progress, 2026-09-25. Plan / Interface PR #1947 merged; implementation started from the approved baseline.
+**Status:** landed, 2026-09-25. Implementation candidate completed against the approved baseline; this transition becomes authoritative on merge.
 **Delivery:** Split. The operator configuration, prompt-composition, and delegated-agent inheritance contract need review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1595](https://github.com/stacklok/mecatl/issues/1595).
