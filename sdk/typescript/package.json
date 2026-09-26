@@ -62,8 +62,8 @@
     "prepack": "pnpm run build"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.13",
-    "@microsoft/api-extractor": "7.59.1",
+    "@biomejs/biome": "2.5.14",
+    "@microsoft/api-extractor": "7.59.2",
     "@playwright/test": "1.63.0",
     "typescript": "6.0.3",
     "typescript-5.7": "npm:typescript@5.7.3",
@@ -73,7 +73,7 @@
     "@bufbuild/protobuf": "2.15.0",
     "@connectrpc/connect": "2.2.0",
     "@connectrpc/connect-node": "2.2.0",
-    "@types/node": "24.13.3",
+    "@types/node": "24.13.6",
     "ajv": "8.20.0"
   },
   "dependencyLicenses": {
