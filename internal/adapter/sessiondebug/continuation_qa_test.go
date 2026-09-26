@@ -162,6 +162,81 @@ func TestDebuggerScanContinuation_QAScanIncompleteRowViews(t *testing.T) {
 	}
 }
 
+func TestDebuggerScanContinuation_QAScanIncompleteDelegationAndHistoryRows(t *testing.T) {
+	t.Run("multi-row-team-event", func(t *testing.T) {
+		store, root := seededTarget(t, nil)
+		call := session.NewToolCall("team-call", "Team", []byte(`{}`))
+		if err := root.SeedHistory([]session.Message{
+			session.NewAssistantMessage("", "", []session.ToolCall{call}),
+			session.NewToolMessage(session.NewToolResult(call.ID, "done")),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		members := make([]*session.Session, 2)
+		roster := make([]session.TeamMemberSpec, 2)
+		for i, name := range []string{"alpha", "beta"} {
+			member, err := session.NewTeamMember(session.SessionID("member-"+name), session.ModeDefault, root.EnvironmentRef, root.Limits, root.CreatedAt, "team-qa", name, root.ID, root.Incarnation())
+			if err != nil {
+				t.Fatal(err)
+			}
+			member.Relationship.CallID = call.ID
+			members[i] = member
+			roster[i] = session.TeamMemberSpec{Name: name, MemberSessionID: member.ID, MemberIncarnation: member.Incarnation()}
+		}
+		if err := store.Save(context.Background(), root); err != nil {
+			t.Fatal(err)
+		}
+		for _, member := range members {
+			if err := store.Save(context.Background(), member); err != nil {
+				t.Fatal(err)
+			}
+		}
+		log := memstore.NewEventLog()
+		_, _ = log.AppendEvent(context.Background(), root.ID, session.Event{Type: session.EvTeamStart, Team: &session.TeamPayload{ParentCallID: string(call.ID), TeamID: "team-qa", Roster: roster}})
+		appendEvents(t, log, root.ID, 9_999, func(int) session.Event { return session.Event{Type: session.EvTurnStart} })
+		_, _ = log.AppendEvent(context.Background(), root.ID, session.Event{Type: session.EvTurnStart})
+		first := continuationResult(t, execute(t, New(root.ID, store, log), `{"view":"delegation","limit":1}`))
+		second := continuationResult(t, execute(t, New(root.ID, store, log), `{"view":"delegation","limit":1,"cursor":"`+nextCursor(t, first)+`"}`))
+		firstMember := first["rows"].([]any)[0].(map[string]any)["member"]
+		secondMember := second["rows"].([]any)[0].(map[string]any)["member"]
+		if firstMember == secondMember || first["event_window"].(map[string]any)["id"] != second["event_window"].(map[string]any)["id"] || second["next_cursor"] == nil {
+			t.Fatalf("multi-row event skipped/duplicated or hid next window: first=%#v second=%#v", first, second)
+		}
+	})
+
+	t.Run("history-catalog", func(t *testing.T) {
+		store, target := seededTarget(t, nil)
+		log := memstore.NewEventLog()
+		for _, marker := range []string{"archive-a", "archive-b"} {
+			_, _ = log.AppendEvent(context.Background(), target.ID, session.Event{Type: session.EvCompactionArchive, CompactionArchive: &session.CompactionArchivePayload{Replaced: []session.Message{session.NewUserMessage(marker)}}})
+		}
+		appendEvents(t, log, target.ID, 9_998, func(int) session.Event { return session.Event{Type: session.EvTurnStart} })
+		_, _ = log.AppendEvent(context.Background(), target.ID, session.Event{Type: session.EvTurnStart})
+		first := continuationResult(t, execute(t, New(target.ID, store, log), `{"view":"history","limit":1}`))
+		seen := map[string]bool{}
+		out := first
+		for i := 0; i < 4; i++ {
+			for _, raw := range out["sources"].([]any) {
+				row := raw.(map[string]any)
+				if handle, _ := row["history_handle"].(string); handle != "" {
+					if seen[handle] {
+						t.Fatalf("duplicate history row: %#v", row)
+					}
+					seen[handle] = true
+				}
+			}
+			cursor, _ := out["next_cursor"].(string)
+			if cursor == "" {
+				break
+			}
+			out = continuationResult(t, execute(t, New(target.ID, store, log), `{"view":"history","limit":2,"cursor":"`+cursor+`"}`))
+		}
+		if len(seen) < 3 || first["event_window"].(map[string]any)["stop_reason"] != "scan_limit" {
+			t.Fatalf("history catalog did not traverse snapshot+archives under incomplete scan: seen=%d first=%#v", len(seen), first)
+		}
+	})
+}
+
 func TestDebuggerScanContinuation_QAAggregateReferenceAndGapPrivacy(t *testing.T) {
 	events := []session.Event{
 		{Type: session.EvTurnEnd, RunID: "modern", TurnEnd: &session.TurnEndPayload{Usage: session.Usage{InputTokens: 2, OutputTokens: 3}, DurationMs: 7}},
