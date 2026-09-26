@@ -252102,6 +252102,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790369731577,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e7e51c90be4acfd62343a2cd4cb70ca74a4e3f99",
+          "message": "refactor(mecatui): use typed scrollback cards (#1836)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-25T17:59:44-07:00",
+          "tree_id": "5e64e2897b716f3385414b045e59002428ecafc8",
+          "url": "https://github.com/stacklok/mecatl/commit/e7e51c90be4acfd62343a2cd4cb70ca74a4e3f99"
+        },
+        "date": 1790385063427,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -366127,6 +366161,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790385060290,
+  "lastUpdate": 1790385064929,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
