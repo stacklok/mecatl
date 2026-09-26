@@ -428,7 +428,7 @@ func TestStaticProtectedRoutesRejectInvalidDeclarationsAndCollisions(t *testing.
 // route for Runtime-only tests. NewToolHiveProcess itself publishes broker routes.
 func admitStaticForGenericAuthorizationTest(t *testing.T, process *Process) {
 	t.Helper()
-	routes, err := compileStaticProtectedRoutes(process.construction, process.protectedTarget, nil, process.occupied)
+	routes, err := compileStaticProtectedRoutes(process.construction, process.protectedTarget, nil, process.reservedToolNames)
 	if err != nil {
 		t.Fatalf("compile generic static routes: %v", err)
 	}
@@ -1122,7 +1122,7 @@ func TestToolHiveProtectedCallerRejectsCrossBackendCapabilityDrift(t *testing.T)
 	if err != nil || wanted != "github_enterprise.create_issue" {
 		t.Fatalf("protected advertised name = %q, %v", wanted, err)
 	}
-	caller := toolHiveProtectedCaller(httpServer.URL, nil, port.NopDiagnostics{})
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, port.NopDiagnostics{}, nil)
 	_, err = caller(t.Context(), SessionRef{}, "github_enterprise",
 		session.NewToolCall("call-1", "mcp__github_enterprise__create_issue", json.RawMessage(`{}`)),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
@@ -1152,7 +1152,7 @@ func TestToolHiveProtectedCallerInjectsSessionBearer(t *testing.T) {
 	t.Cleanup(httpServer.Close)
 
 	diag := &recordingBrokerDiagnostics{}
-	caller := toolHiveProtectedCaller(httpServer.URL, nil, diag)
+	caller := toolHiveProtectedCaller(httpServer.URL, nil, diag, nil)
 	result, err := caller(t.Context(), SessionRef{id: "session-1"}, "private", session.NewToolCall("call-1", "mcp__private__echo", json.RawMessage(`{"text":"hello"}`)), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "session-bearer", TokenType: "Bearer"}))
 	if err != nil {
 		t.Fatalf("protected caller: %v", err)
@@ -1362,6 +1362,74 @@ func TestMcpBrokerDCRClient_Scenario2_ReusesCachedRegistration(t *testing.T) {
 	}
 }
 
+func TestDCRUpstreamRecoveryFailsClosedOnRotatedClientRegistration(t *testing.T) {
+	fixture := newToolHiveDCRFixture(t, false)
+	mini := miniredis.RunT(t)
+	config := fixture.config()
+	config.AuthStorage = nil
+	config.ProtectedStorage = func() *ProtectedStorageConfig {
+		protected := protectedStorageTestConfig(t, func(ProtectedRedisClientConfig) (redis.UniversalClient, error) {
+			return redis.NewClient(&redis.Options{Addr: mini.Addr()}), nil
+		})
+		return &protected
+	}()
+
+	first, err := newToolHiveProcess(t.Context(), config, fixture.options())
+	if err != nil {
+		t.Fatalf("first process: %v", err)
+	}
+	fixture.handlers.Store(first.Handlers)
+	tsID := fixture.enrollAndCall(t, first, "dcr-recovery")
+	if tsID == "" {
+		t.Fatal("enrollment did not capture ToolHive verified TSID")
+	}
+	provider := first.providers[0]
+	now := time.Now().UTC()
+	row, err := first.authStorage.GetUpstreamTokens(t.Context(), tsID, provider)
+	if err != nil || row == nil || row.RefreshToken == "" {
+		t.Fatalf("enrolled upstream row = %#v, %v; want refresh-capable DCR grant", row, err)
+	}
+	guard := contract.ContinuityGuard{SessionID: "dcr-recovery", SessionIncarnation: session.NewIncarnationID(), Providers: append([]string(nil), first.providers...), ProfileDigest: first.profileDigest}
+	guard.OwnerPartition[0], guard.WorkloadPartition[0] = 1, 2
+	deadline := now.Add(time.Minute)
+	staged, err := first.custody.Stage(t.Context(), custodyRequest{Guard: custodyGuardFromContract(guard), AttemptDeadline: deadline}, tsID)
+	if err != nil {
+		t.Fatalf("Stage: %v", err)
+	}
+	assertion := contract.CustodyAssertion{Guard: guard, RecoveryReference: string(staged.Recovery), AttemptDeadline: deadline}
+	if err := first.CommitCredentialCustody(t.Context(), assertion); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	row.ExpiresAt = now.Add(-time.Minute)
+	row.SessionExpiresAt = now.Add(time.Hour)
+	if err := first.authStorage.StoreUpstreamTokens(t.Context(), tsID, provider, row); err != nil {
+		t.Fatalf("expire staged access token: %v", err)
+	}
+	beforeUpstream := fixture.protectedRequests.Load()
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first process: %v", err)
+	}
+
+	second, err := newToolHiveProcess(t.Context(), config, fixture.options())
+	if err != nil {
+		t.Fatalf("replacement process: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	fixture.handlers.Store(second.Handlers)
+	fixture.rotatedCredentials.Store(true)
+
+	recovered, err := second.RecoverCredentialAttachment(t.Context(), assertion, "dcr-rotated")
+	if !errors.Is(err, contract.ErrContinuityUnavailable) {
+		t.Fatalf("rotated DCR recovery = (%#v, %v), want continuity unavailable", recovered, err)
+	}
+	if recovered.Attachment != nil {
+		t.Fatal("rotated DCR recovery returned an attachment")
+	}
+	if got := fixture.protectedRequests.Load(); got != beforeUpstream {
+		t.Fatalf("rotated DCR recovery reached authenticated upstream %d times, want no additional calls", got-beforeUpstream)
+	}
+}
 func TestADR_0314_RegistrationFailureNeverFallsBackUnauthenticated(t *testing.T) {
 	fixture := newToolHiveDCRFixture(t, true)
 	process, err := newToolHiveProcess(t.Context(), fixture.config(), fixture.options())
@@ -1392,6 +1460,8 @@ type toolHiveDCRFixture struct {
 	metadataRequests     atomic.Int32
 	registrationRequests atomic.Int32
 	protectedCalls       atomic.Int32
+	protectedRequests    atomic.Int32
+	rotatedCredentials   atomic.Bool
 	handlers             atomic.Value
 	registration         struct {
 		sync.Mutex
@@ -1448,11 +1518,15 @@ func newToolHiveDCRFixture(t *testing.T, rejectRegistration bool) *toolHiveDCRFi
 		case "/token":
 			w.Header().Set("Content-Type", "application/json")
 			clientID, secret, ok := request.BasicAuth()
-			if !ok || clientID != "dcr-client" || secret != "dcr-secret" {
+			expectedID, expectedSecret := "dcr-client", "dcr-secret"
+			if fixture.rotatedCredentials.Load() {
+				expectedID, expectedSecret = "dcr-client-rotated", "dcr-secret-rotated"
+			}
+			if !ok || clientID != expectedID || secret != expectedSecret {
 				http.Error(w, "invalid DCR client authentication", http.StatusUnauthorized)
 				return
 			}
-			_, _ = w.Write([]byte(`{"access_token":"dcr-upstream-token","token_type":"Bearer","expires_in":3600}`))
+			_, _ = w.Write([]byte(`{"access_token":"dcr-upstream-token","refresh_token":"dcr-refresh-token","token_type":"Bearer","expires_in":3600}`))
 		default:
 			http.NotFound(w, request)
 		}
@@ -1468,6 +1542,7 @@ func newToolHiveDCRFixture(t *testing.T, rejectRegistration bool) *toolHiveDCRFi
 	})
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return upstream }, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	fixture.protected = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		fixture.protectedRequests.Add(1)
 		if request.Header.Get("Authorization") != "Bearer dcr-upstream-token" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -1534,7 +1609,7 @@ func (f *toolHiveDCRFixture) assertRegistration(t *testing.T) {
 	}
 }
 
-func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id session.SessionID) {
+func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id session.SessionID) string {
 	t.Helper()
 	attached, _, err := process.Runtime.AttachSession(t.Context(), id)
 	if err != nil {
@@ -1568,6 +1643,10 @@ func (f *toolHiveDCRFixture) enrollAndCall(t *testing.T, process *Process, id se
 	if err != nil || result.IsError || !strings.HasPrefix(result.Content, "created:one") {
 		t.Fatalf("protected result = (%+v, %v)", result, err)
 	}
+	handle := attached.(*Attachment)
+	handle.mu.RLock()
+	defer handle.mu.RUnlock()
+	return handle.verifiedTSID
 }
 
 type nonClosingMemoryStorage struct{ *storage.MemoryStorage }

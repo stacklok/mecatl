@@ -25,6 +25,20 @@ var (
 	// always returned together with ErrStateUnavailable; generic transport loss
 	// must never satisfy this marker.
 	ErrBrokerIncarnationLost = errors.New("mcp broker incarnation lost")
+	// ErrContinuityProtocol means the remote endpoint does not implement the
+	// continuity protocol required by this client. It is fail-closed and is
+	// deliberately distinct from a temporarily unavailable continuity service.
+	ErrContinuityProtocol = errors.New("mcp broker continuity protocol unsupported")
+	// ErrContinuityUnavailable means a continuity operation could not safely
+	// proceed. It intentionally reveals no custody or provisional-state detail.
+	ErrContinuityUnavailable = errors.New("mcp broker continuity unavailable")
+	// ErrContinuityProfileChanged marks a custody guard whose protected provider,
+	// destination, or profile no longer matches the broker configuration. It is
+	// also ErrContinuityUnavailable so existing callers remain fail-closed.
+	ErrContinuityProfileChanged = errors.New("mcp broker continuity profile changed")
+	// ErrContinuityRevoked means matching custody was permanently tombstoned.
+	// Hosts must invalidate their local reference rather than retry it.
+	ErrContinuityRevoked = errors.New("mcp broker continuity revoked")
 	// ErrCapacity means admission was refused without evicting existing authority.
 	ErrCapacity = errors.New("mcp broker capacity reached")
 	// ErrAttachmentClosed means an operation used a locally closed attachment.
@@ -86,8 +100,11 @@ type AttachOutcome string
 const (
 	// AttachCreated means the logical broker session was created.
 	AttachCreated AttachOutcome = "created"
-	// AttachReattached means an attachment was opened to existing logical state.
+	// AttachReattached means a session handle was opened to existing logical state.
 	AttachReattached AttachOutcome = "reattached"
+	// AttachRecoveredProvisional means a fresh handle was opened to an exact
+	// recovered provisional attempt. It remains unpublished until Commit.
+	AttachRecoveredProvisional AttachOutcome = "recovered_provisional"
 )
 
 // CloseOutcome is the closed, idempotent result vocabulary for Attachment.Close.
