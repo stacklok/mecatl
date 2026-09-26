@@ -59,7 +59,7 @@ type CommandExpander interface{Expand(ctx context.Context, input string) (string
 type CommandLister interface{List(ctx context.Context) ([]Command, error)}
 type CommandPostExpansionSource interface{CommandBodyWithPost(ctx context.Context, name string) (body string, post string, found bool, err error)}
 type CommandSource interface{CommandBody(ctx context.Context, name string) (body string, found bool, err error); ListCommands(ctx context.Context) ([]Command, error)}
-type Config struct{Role string; Tone string; Safety string; Tools []tool.ToolSpec; Env Env; OperatorProfile OperatorProfileConfig}
+type Config struct{Role string; Tone string; Safety string; CommitCoauthor *bool; Tools []tool.ToolSpec; Env Env; OperatorProfile OperatorProfileConfig}
 type DirCommandExpander struct{}
 type Env struct{Cwd string; OS string; Model string; Date string; Mode string; Shell string; GitStatus string}
 type InstructionAssembler interface{Assemble(ctx context.Context) ([]session.Message, error)}

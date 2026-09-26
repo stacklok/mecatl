@@ -430,6 +430,46 @@ func TestPromptBuilderEmptyLayeredIsHonoredNotBackfilled(t *testing.T) {
 	}
 }
 
+// TestConfigurableCommitCoauthorGuidance_Scenario3_CustomPromptBuilder proves
+// the real Engine replacement boundary passes the typed setting to a host
+// builder without modifying the host-owned prompt.
+func TestConfigurableCommitCoauthorGuidance_Scenario3_CustomPromptBuilder(t *testing.T) {
+	const (
+		hostPrefix = "host-owned prompt"
+		guidance   = "Co-authored-by: Mecatl <noreply@mecatl.dev>"
+	)
+	enabled := true
+	var received *bool
+	llm, firstReq := captureFirstRequest(t, mockllm.TextTurn("ok"))
+
+	e := newEngine(agent.Deps{
+		LLM:          llm,
+		Catalog:      catalogWith(t),
+		PromptConfig: prompt.Config{CommitCoauthor: &enabled},
+		PromptBuilder: func(cfg prompt.Config) prompt.Layered {
+			received = cfg.CommitCoauthor
+			return prompt.Layered{StablePrefix: hostPrefix}
+		},
+	})
+
+	sess := session.New("s1", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/ws", Revision: "in-tree-v1"}, session.Limits{}, time.Unix(0, 0))
+	drain(e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hi"}))
+
+	if received == nil || !*received {
+		t.Fatalf("host PromptBuilder received CommitCoauthor = %v, want true", received)
+	}
+	got, ok := firstReq()
+	if !ok {
+		t.Fatal("provider never received a request")
+	}
+	if got.System.StablePrefix != hostPrefix {
+		t.Errorf("host builder StablePrefix modified:\n got=%q\nwant=%q", got.System.StablePrefix, hostPrefix)
+	}
+	if strings.Contains(got.System.Render(), guidance) {
+		t.Errorf("host-owned prompt was modified with commit guidance:\n%s", got.System.Render())
+	}
+}
+
 // cascadeCompactorWrapper delegates to an inner Compactor so the test can wire
 // a real CascadeCompactor (with an LLM) while satisfying the agent.Compactor
 // interface through a local pointer type (CascadeCompactor's Compact is on the
