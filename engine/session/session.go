@@ -473,6 +473,10 @@ type Session struct {
 	// pendingWorkspaceEnrollment is safe pre-prompt correlation state. It is
 	// independent of the agent-loop lifecycle and other pending continuations.
 	pendingWorkspaceEnrollment *PendingWorkspaceEnrollment
+	// brokerCredentialCustody is immutable durable evidence for exact retained
+	// provider credentials. It is independent from ExternalBinding, which remains
+	// the sole opaque comparator for broker process-local authority.
+	brokerCredentialCustody *BrokerCredentialCustody
 	// stop holds the terminal stop reason once the session has stopped.
 	stop StopReason
 	// failureMetadata retains the typed terminal facts needed to decide failed-step
