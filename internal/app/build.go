@@ -2003,7 +2003,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, fmt.Errorf("guardrails.jev requires backend: jev")
 	}
 	if cfg.GuardrailsBackend == guardrailBackendJev && !cfg.GuardrailsDisabled {
-		if cfg.GuardrailsModel != "" || cfg.GuardrailSlot != nil || selectorForSlot(cfg, slotGuardrail) != "" {
+		if cfg.GuardrailsModel != "" || cfg.GuardrailSlot != nil || strings.TrimSpace(cfg.ModelSlots[slotGuardrail]) != "" {
 			return nil, fmt.Errorf("guardrails.backend jev conflicts with LLM guardrail model/slot")
 		}
 		if cfg.GuardrailsJevModel != "" && cfg.GuardrailsJevModel != jevguardrail.Model {
@@ -5303,9 +5303,6 @@ func logGuardrailsPosture(cfg Config) {
 	}
 	specs, usedDefaults := effectiveGuardrailSpecs(cfg)
 	line := guardrailsPostureLine(cfg, model, src, specs, usedDefaults)
-	if cfg.GuardrailsBackend == guardrailBackendJev {
-		line = strings.Replace(line, "via --guardrails-model", "via experimental guardrails.backend: jev", 1)
-	}
 	cfg.diag().Log(ctx, port.LevelInfo, line)
 }
 
@@ -5328,6 +5325,9 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 		provenance = fmt.Sprintf("via slot `guardrail`, supersedes gate value %q", strings.TrimSpace(cfg.GuardrailsModel))
 	case srcGate:
 		provenance = "via --guardrails-model"
+		if cfg.GuardrailsBackend == guardrailBackendJev {
+			provenance = "via experimental guardrails.backend: jev"
+		}
 	}
 	// Mode is the highest-severity mode across the RESOLVED specs — for BOTH the
 	// default-set and explicit-rule branches. The default set is block (ADR 0060), so

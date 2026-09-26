@@ -15,6 +15,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	serveradapter "github.com/stacklok/mecatl/internal/adapter/server"
@@ -36,9 +37,17 @@ func TestNativeJevOperatorYAMLBuildAndDisabled(t *testing.T) {
 		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), NoSoul: true, StoreDir: t.TempDir(), MemoryDir: t.TempDir(), Model: "test-model", UseMock: true, PermissionConfigs: []string{path}}
+		cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), NoSoul: true, StoreDir: t.TempDir(), MemoryDir: t.TempDir(), Model: "test-model", ModelSlots: map[string]string{"cheap": "test-model"}, UseMock: true, PermissionConfigs: []string{path}}
 		cfg.Shell, cfg.Posture, cfg.TypesafeAPIKey, cfg.GuardrailsJevBaseURL = "/bin/sh", PostureAuto, "synthetic-test-key", srv.URL
 		cfg.MockProvider = mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("c1", "Shell", json.RawMessage(`{"command":"printf safe-guardrail-result"}`))), mockllm.TextTurn("done"))
+		if !disabled {
+			cfg.ModelSlots["guardrail"] = "test-model"
+			if conflicting, err := buildIsolated(t, t.Context(), cfg); err == nil {
+				conflicting.Close()
+				t.Fatal("explicit guardrail model slot must conflict with Jev")
+			}
+			delete(cfg.ModelSlots, "guardrail")
+		}
 		built, err := buildIsolated(t, t.Context(), cfg)
 		if err != nil {
 			srv.Close()
@@ -87,11 +96,22 @@ func TestNativeJevGuardrailBuildRun(t *testing.T) {
 		{"action block", "action_redirection", "clean", 200, true},
 		{"inbound hold", "clean", "inbound_redirection", 200, true},
 		{"checker down", "clean", "clean", 503, true},
+		{"checker warn", "clean", "clean", 503, false},
+		{"advisory finding", "action_redirection", "clean", 200, false},
 		{"malformed choice", "invalid", "clean", 200, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
-			var jobs []string
+			var jobs, modelRequests []string
+			command := "printf '%s%s' 'safe-' 'guardrail-result'"
+			marker := filepath.Join(t.TempDir(), "action-executed")
+			if tc.action == "action_redirection" {
+				command = fmt.Sprintf("printf executed > %q", marker)
+			}
+			args, err := json.Marshal(map[string]string{"command": command})
+			if err != nil {
+				t.Fatal(err)
+			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/systemone" {
 					t.Errorf("jev path %q", r.URL.Path)
@@ -114,14 +134,20 @@ func TestNativeJevGuardrailBuildRun(t *testing.T) {
 					Caller     agent.ReviewCaller          `json:"caller"`
 					EventInput json.RawMessage             `json:"event_input"`
 				}
-				if err := json.Unmarshal([]byte(request.State), &trusted); err != nil || len(trusted.Facts) == 0 || trusted.Caller.Role == "" {
+				if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(request.State, governance.UntrustedFence+"\n"), "\n"+governance.UntrustedFence+"\n")), &trusted); err != nil || len(trusted.Facts) == 0 || trusted.Caller.Role == "" {
 					t.Errorf("missing trusted facts or caller: count=%d role=%q err=%v", len(trusted.Facts), trusted.Caller.Role, err)
 				}
-				if len(trusted.EventInput) == 0 || job == "inbound" && !strings.Contains(string(trusted.EventInput), "safe-guardrail-result") {
+				if len(trusted.EventInput) == 0 || job == "inbound" && tc.name != "advisory finding" && !strings.Contains(string(trusted.EventInput), "safe-guardrail-result") {
 					t.Errorf("missing complete %s event input", job)
 				}
-				if !strings.Contains(request.State, `"effective_call"`) || !strings.Contains(request.State, "safe-guardrail-result") && job == "inbound" {
+				if !strings.Contains(request.State, `"effective_call"`) || job == "inbound" && tc.name != "advisory finding" && !strings.Contains(request.State, "safe-guardrail-result") {
 					t.Errorf("missing full %s payload", job)
+				}
+				if job == "action" && tc.action == "action_redirection" && !strings.Contains(string(trusted.EventInput), "action-executed") {
+					choice = "clean"
+				}
+				if job == "inbound" && tc.inbound == "inbound_redirection" && !strings.Contains(string(trusted.EventInput), "safe-guardrail-result") {
+					choice = "clean"
 				}
 				mu.Lock()
 				jobs = append(jobs, job)
@@ -140,12 +166,23 @@ func TestNativeJevGuardrailBuildRun(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"model":"jev-1.13.0","answers":{"contextual-guardrail":{"type":"choice","choice":%q,"probabilities":%s,"confidence":0.96}},"usage":{"input_tokens":3,"output_tokens":1}}`, choice, encoded)
 			}))
 			defer srv.Close()
+			mode, checkerDown := "block", "fail"
+			if tc.name == "advisory finding" {
+				mode = "advisory"
+			}
+			if tc.name == "checker warn" {
+				checkerDown = "warn"
+			}
 			cfg := Config{Workspace: t.TempDir(), UserModelDir: t.TempDir(), NoSoul: true, StoreDir: t.TempDir(), MemoryDir: t.TempDir(), Model: "test-model", Shell: "/bin/sh", Posture: PostureAuto,
-				GuardrailsBackend: "jev", GuardrailsJevBaseURL: srv.URL, TypesafeAPIKey: "synthetic-test-key",
-				GuardrailsRules: []GuardrailRule{{Match: "Shell", Phases: []string{"pre", "post"}, Mode: "block"}},
+				GuardrailsBackend: "jev", GuardrailsJevBaseURL: srv.URL, TypesafeAPIKey: "synthetic-test-key", GuardrailsOnCheckerDown: checkerDown,
+				GuardrailsRules: []GuardrailRule{{Match: "Shell", Phases: []string{"pre", "post"}, Mode: mode}},
 				envDetector:     fakeEnv(map[string]string{"OPENAI_API_KEY": "synthetic-provider-key"}), liveModelHTTPClient: offlineHTTPClient(),
 				providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
-					return mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("c1", "Shell", json.RawMessage(`{"command":"printf safe-guardrail-result"}`))), mockllm.TextTurn("done"))
+					return mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+						mu.Lock()
+						modelRequests = append(modelRequests, fmt.Sprint(req.Messages))
+						mu.Unlock()
+					})}, mockllm.ToolCallTurn(session.NewToolCall("c1", "Shell", args)), mockllm.TextTurn("done"))
 				},
 			}
 			built, err := buildIsolated(t, context.Background(), cfg)
@@ -168,10 +205,29 @@ func TestNativeJevGuardrailBuildRun(t *testing.T) {
 				if ev.Type == "tool.result" && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "guardrail") {
 					blocked = true
 				}
+				if tc.name == "inbound hold" && ev.Type == "tool.result" && strings.Contains(ev.ToolResult.Content, "safe-guardrail-result") {
+					t.Fatal("withheld result reached the recorded/client result")
+				}
 			}
 			mu.Lock()
 			got := append([]string(nil), jobs...)
+			seen := append([]string(nil), modelRequests...)
 			mu.Unlock()
+			if tc.name == "action block" {
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatalf("blocked action executed, marker stat: %v", err)
+				}
+			}
+			if tc.name == "advisory finding" {
+				if _, err := os.Stat(marker); err != nil {
+					t.Fatalf("advisory action did not execute: %v", err)
+				}
+			}
+			if tc.name == "inbound hold" {
+				if len(seen) < 2 || strings.Contains(seen[1], "safe-guardrail-result") {
+					t.Fatal("unapproved tool result reached the working model")
+				}
+			}
 			if len(got) == 0 || got[0] != "action" {
 				t.Fatalf("Jev action calls: %v", got)
 			}

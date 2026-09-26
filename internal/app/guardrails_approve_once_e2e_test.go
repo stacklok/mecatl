@@ -104,6 +104,13 @@ type sseGuardEvent struct {
 			Kind     int32  `json:"kind"`
 		} `json:"guardrail"`
 	} `json:"ask"`
+	Hook struct {
+		Guardrail struct {
+			Job               int32  `json:"job"`
+			Inspection        int32  `json:"inspection"`
+			CheckerProviderID string `json:"checker_provider_id"`
+		} `json:"guardrail"`
+	} `json:"hook"`
 	ToolResult struct {
 		IsError bool   `json:"is_error"`
 		Content string `json:"content"`
