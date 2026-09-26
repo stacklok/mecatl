@@ -35,6 +35,11 @@ var ErrCursorMalformed = errors.New("port: malformed event-log cursor")
 // beginning or reloads the transcript.
 var ErrCursorExpired = errors.New("port: event-log cursor expired")
 
+// ErrCursorUnsupported reports that a configured event-log backend does not
+// implement cursor reads. Callers may retain bounded legacy evidence, but must
+// not silently treat a continuation request as a fresh prefix read.
+var ErrCursorUnsupported = errors.New("port: event-log cursors are not supported by this backend")
+
 // ErrEventFollowCapacity is yielded by a CursorEventLog follow read when the
 // backend cannot immediately admit another follower. Callers may retry from
 // their last processed cursor; the rejected read performs no storage work.

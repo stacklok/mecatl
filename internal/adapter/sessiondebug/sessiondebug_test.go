@@ -48,7 +48,7 @@ func seededTarget(t *testing.T, messages []session.Message) (*memstore.Store, *s
 func TestSchemaBindsTargetAndHasNoSessionID(t *testing.T) {
 	store, _ := seededTarget(t, nil)
 	tspec := New("target", store, nil).Spec()
-	if tspec.Name != ToolName || strings.Contains(strings.ToLower(string(tspec.Schema)), "session_id") {
+	if tspec.Name != ToolName || strings.Contains(strings.ToLower(string(tspec.Schema)), "session_id") || !strings.Contains(tspec.Description, "retry the same request") || !strings.Contains(tspec.Description, "same cursor if one was supplied") {
 		t.Fatalf("spec = %+v", tspec)
 	}
 }
@@ -347,8 +347,8 @@ func TestNetworkEvidenceIsolationPaginationAndAvailability(t *testing.T) {
 	}
 
 	failed := execute(t, New(target.ID, store, errorLog{}), `{"view":"network"}`)
-	if strings.Contains(failed.Content, "secret") || !strings.Contains(failed.Content, `"error":"event log read failed"`) {
-		t.Fatalf("network log failure leaked detail or hid availability: %s", failed.Content)
+	if !failed.IsError || strings.Contains(failed.Content, "secret") || failed.Content != errLogReadFailed {
+		t.Fatalf("network log failure leaked detail or returned partial evidence: %s", failed.Content)
 	}
 }
 
@@ -435,9 +435,9 @@ func TestPerformanceReduction(t *testing.T) {
 
 func TestPerformanceBounds(t *testing.T) {
 	store, target := seededTarget(t, nil)
-	view := New(target.ID, store, generatedLog{count: maxPerformanceScan + 1}).(*inspectTool).performanceView(context.Background(), target.ID)
-	if view.Scanned != maxPerformanceScan || len(view.Turns) != maxPerformanceRows || !view.Truncated || view.Complete {
-		t.Fatalf("performance bounds = scanned %d turns %d truncated %v complete %v", view.Scanned, len(view.Turns), view.Truncated, view.Complete)
+	out := continuationResult(t, execute(t, New(target.ID, store, generatedLog{count: maxPerformanceScan + 1}), `{"view":"performance"}`))
+	if out["scanned_events"] != float64(maxPerformanceScan) || len(out["turns"].([]any)) != maxPerformanceRows || out["truncated"] != true || out["complete"] != false {
+		t.Fatalf("performance bounds = %#v", out)
 	}
 }
 

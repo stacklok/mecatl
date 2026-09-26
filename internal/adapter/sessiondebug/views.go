@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stacklok/mecatl/engine/adapter/eventsource"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -389,60 +388,6 @@ type lifetimeEvidence struct {
 	Error             string        `json:"error,omitempty"`
 }
 
-func (t *inspectTool) lifetimeView(ctx context.Context, id session.SessionID) lifetimeEvidence {
-	out := lifetimeEvidence{Available: t.log != nil}
-	if t.log == nil {
-		out.Error = errLogNotConfigured
-		return out
-	}
-	out.Authoritative = true
-	out.ScanComplete = true
-	runs := map[string]bool{}
-	legacyOpen := false
-	for ev, err := range t.log.Read(ctx, id) {
-		if err != nil {
-			out.Error = errLogReadFailed
-			out.ScanComplete = false
-			break
-		}
-		if out.ScannedEvents == maxPerformanceScan {
-			out.ScanComplete = false
-			break
-		}
-		out.ScannedEvents++
-		if ev.RunID != "" {
-			runs[ev.RunID] = true
-		} else if ev.Schedule == nil {
-			legacyOpen = true
-		}
-		switch ev.Type {
-		case session.EvTurnEnd:
-			if ev.TurnEnd != nil {
-				out.Turns++
-				out.Usage = out.Usage.Add(ev.TurnEnd.Usage)
-			}
-		case session.EvToolCall:
-			out.ToolCalls++
-		case session.EvToolResult:
-			out.ToolResults++
-			if ev.ToolResult != nil && ev.ToolResult.IsError {
-				out.ToolFailures++
-			}
-		case session.EvResult:
-			if ev.RunID == "" && legacyOpen {
-				out.Runs++
-				legacyOpen = false
-			}
-		}
-	}
-	if legacyOpen {
-		out.Runs++
-	}
-	out.Runs += len(runs)
-	out.RetentionComplete = false
-	return out
-}
-
 type historyCatalog struct {
 	View               string          `json:"view"`
 	Scope              string          `json:"scope"`
@@ -461,100 +406,12 @@ type historySource struct {
 	ProjectionComplete bool   `json:"projection_complete"`
 }
 
-func (t *inspectTool) historyView(ctx context.Context, s *session.Session, scope, selected string, offset, limit int) (any, error) {
-	sources := []struct {
-		name          string
-		messages      []session.Message
-		authoritative bool
-		projection    bool
-	}{{"current_snapshot", s.Conversation.Messages, true, true}}
-	complete := true
-	errText := ""
-	if t.log != nil {
-		events, err := readEvents(ctx, t.log, s.ID, maxPerformanceScan)
-		if err != nil {
-			complete = false
-			errText = errLogReadFailed
-		} else {
-			for _, ev := range events {
-				if ev.Type == session.EvCompactionArchive && ev.CompactionArchive != nil {
-					sources = append(sources, struct {
-						name          string
-						messages      []session.Message
-						authoritative bool
-						projection    bool
-					}{"compaction_archive", ev.CompactionArchive.Replaced, true, true})
-				}
-			}
-			folded, foldErr := eventsource.Fold(eventsource.SessionMeta{ID: s.ID, Mode: s.Mode, EnvironmentRef: s.EnvironmentRef, Limits: s.Limits, CreatedAt: s.CreatedAt, Kind: s.Kind, Relationship: s.Relationship}, seqEvents(events))
-			if foldErr == nil {
-				sources = append(sources, struct {
-					name          string
-					messages      []session.Message
-					authoritative bool
-					projection    bool
-				}{"retained_event_history", folded.Conversation.Messages, true, true})
-			} else {
-				sources = append(sources, struct {
-					name          string
-					messages      []session.Message
-					authoritative bool
-					projection    bool
-				}{"retained_event_history", nil, true, false})
-				complete = false
-				if errText == "" {
-					errText = "retained events do not form a complete replay"
-				}
-			}
-		}
-	} else {
-		complete = false
-		errText = errLogNotConfigured
-	}
-	catalog := historyCatalog{View: "history", Scope: scope, Authoritative: true, ScanComplete: complete, RetentionComplete: false, ProjectionComplete: true, Error: errText, Sources: []historySource{}}
-	for i, src := range sources {
-		h := historyHandle(t.target, s.ID, t.expectedFingerprint, session.DebugTargetFingerprint(s), src.name, i)
-		catalog.Sources = append(catalog.Sources, historySource{h, src.name, len(src.messages), src.authoritative, src.projection})
-		if selected != "" && handleEqual(selected, h) {
-			page := transcriptFromMessages(src.messages, offset, limit)
-			return struct {
-				View               string             `json:"view"`
-				Scope              string             `json:"scope"`
-				HistoryHandle      string             `json:"history_handle"`
-				Source             string             `json:"source"`
-				Authoritative      bool               `json:"authoritative"`
-				ScanComplete       bool               `json:"scan_complete"`
-				RetentionComplete  bool               `json:"retention_complete"`
-				ProjectionComplete bool               `json:"projection_complete"`
-				Transcript         transcriptEvidence `json:"transcript"`
-			}{"history", scope, h, src.name, src.authoritative, complete, false, src.projection && page.Complete, page}, nil
-		}
-	}
-	if selected != "" {
-		return nil, errors.New("invalid or stale history handle")
-	}
-	return catalog, nil
-}
-
 func transcriptFromMessages(messages []session.Message, offset, limit int) transcriptEvidence {
 	s := session.New("history", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindLocal, ID: "/workspace", Revision: "in-tree-v1"}, session.Limits{}, time.Time{})
 	_ = s.SeedHistory(messages)
 	return transcriptView(s, offset, limit)
 }
 
-func readEvents(ctx context.Context, log port.EventLog, id session.SessionID, scanLimit int) ([]session.Event, error) {
-	out := []session.Event{}
-	for ev, err := range log.Read(ctx, id) {
-		if err != nil {
-			return out, err
-		}
-		if len(out) == scanLimit {
-			return out, errors.New("event scan bound reached")
-		}
-		out = append(out, ev)
-	}
-	return out, nil
-}
 func seqEvents(events []session.Event) iter.Seq2[session.Event, error] {
 	return func(yield func(session.Event, error) bool) {
 		for _, ev := range events {

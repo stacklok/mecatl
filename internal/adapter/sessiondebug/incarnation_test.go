@@ -58,21 +58,28 @@ func TestLegacyDelegationEventCannotAttachRecreatedChild(t *testing.T) {
 
 	bound := NewBound(root.ID, session.DebugTargetFingerprint(root), owner, true, base, log).(*inspectTool)
 	currentGraph := bound.scanLineage(ctx, root)
-	evidence := bound.delegationView(ctx, root, currentGraph, 0, 10)
-	if len(evidence.Rows) != 0 {
-		t.Fatalf("stale child event attached to recreated lifetime: %+v", evidence.Rows)
+	rows := func() []any {
+		scan, scanErr := bound.scanEvents(ctx, root.ID, viewDelegation, rootScope, "")
+		if scanErr != nil {
+			t.Fatal(scanErr)
+		}
+		return delegationFromScan(scan, root, currentGraph, 0, 10).Value["rows"].([]any)
+	}
+	if got := rows(); len(got) != 0 {
+		t.Fatalf("stale child event attached to recreated lifetime: %+v", got)
 	}
 	if err := log.Append(ctx, root.ID, session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "wrong-call", ChildID: string(replacement.ID), ChildIncarnation: replacement.Incarnation()}}); err != nil {
 		t.Fatal(err)
 	}
-	if rows := bound.delegationView(ctx, root, currentGraph, 0, 10).Rows; len(rows) != 0 {
-		t.Fatalf("event with mismatched relationship projected a handle: %+v", rows)
+	if got := rows(); len(got) != 0 {
+		t.Fatalf("event with mismatched relationship projected a handle: %+v", got)
 	}
 	if err := log.Append(ctx, root.ID, session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{ParentCallID: "call", ChildID: string(replacement.ID), ChildIncarnation: replacement.Incarnation()}}); err != nil {
 		t.Fatal(err)
 	}
-	if rows := bound.delegationView(ctx, root, currentGraph, 0, 10).Rows; len(rows) != 1 || rows[0].ScopeHandle == "" {
-		t.Fatalf("matching current event did not project exactly one handle: %+v", rows)
+	got := rows()
+	if len(got) != 1 || got[0].(map[string]any)["scope_handle"] == "" {
+		t.Fatalf("matching current event did not project exactly one handle: %+v", got)
 	}
 
 	graph := NewBound(root.ID, session.DebugTargetFingerprint(root), owner, true, store, log).(*inspectTool).scanLineage(ctx, root)

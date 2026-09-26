@@ -222,6 +222,7 @@ type TriggerKind int
 type TriggerSpec struct{Cron string; OneShot time.Time}
 var ErrCursorExpired error
 var ErrCursorMalformed error
+var ErrCursorUnsupported error
 var ErrEventFollowCapacity error
 var ErrFireNowOverlap error
 var ErrInvalidSessionLineageQuery error

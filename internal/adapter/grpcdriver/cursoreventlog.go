@@ -47,13 +47,9 @@ const (
 // ErrDriverCursorUnsupported reports that the remote driver does not implement
 // the cursor RPCs — an older driver process speaking only port.EventLog.
 //
-// It exists because a type assertion cannot answer this question across a wire:
-// this client satisfies port.CursorEventLog by construction, so composition
-// would otherwise believe every driver supports cursors and discover otherwise
-// only when a watch failed. ADR 0250 requires that a backend without cursor
-// support be reported as UNSUPPORTED rather than silently degraded, and this is
-// the value that makes that reportable.
-var ErrDriverCursorUnsupported = errors.New("grpcdriver: remote driver does not support event-log cursors")
+// Deprecated: use port.ErrCursorUnsupported. The alias retains errors.Is and
+// direct identity checks for existing callers.
+var ErrDriverCursorUnsupported = port.ErrCursorUnsupported
 
 // compile-time assertion that EventLog satisfies the cursor port too.
 var _ port.CursorEventLog = (*EventLog)(nil)
