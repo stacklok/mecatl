@@ -89,6 +89,7 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0366 — Resolve plan asks by exact run and ask](./0366-exact-plan-ask-control.md) *(proposed; strict control for live and restored plan asks, extending ADR 0347)*
 - [0342 - Gate runs on unresolved live context windows](./0342-context-window-admission.md) *(supersedes ADR 0016 only for pre-swap run admission)*
 - [0356 — Durable context occupancy in session snapshots](./0356-durable-context-occupancy.md) *(proposed; extends ADR 0307 without changing lifetime-ledger or budget semantics)*
+- [0367 — Operator-configurable standard commit co-author guidance](./0367-configurable-commit-coauthor-guidance.md) *(proposed; strict operator-only opt-out for default standard-prompt commit attribution)*
 - [0346 - Prompt-cache breakpoints are protocol-native, never vendor-keyed](./0346-unified-prompt-cache-dialect.md) *(supersedes ADR 0100's prompt_cache_breakpoint deferral, its root cache_control dialect arm, and its OpenRouter TTL deferral; extends ADR 0334 to OpenRouter)*
 - [0364 — Optional native Kubernetes execution provider](./0364-native-kubernetes-execution.md) *(draft; separate service, preserves ADR 0048)*
 - [0036 — `engine/` is its own Go module (monorepo via `go.work`)](./0036-engine-module.md)

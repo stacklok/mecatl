@@ -128,6 +128,7 @@ PR after verification. There is no cleanup or status-only PR.
 
 ## Plans
 
+- [Configurable Mecatl commit co-author guidance](configurable-commit-coauthor-guidance.md) — default-on, operator-only standard-prompt commit attribution for main and delegated engines, with a typed opt-out and no repository authority to disable it. Status: proposed.
 - [Resumable session status metrics](resumable-session-status-metrics.md) — preserves latest known context occupancy for every persisted session kind and restores the authoritative resolved context window plus durable main-session token totals before mecatui submits a resumed chat’s next prompt. Status: proposed.
 - [Provider-scoped model discovery](provider-model-discovery.md) — one composition-owned provider lifecycle for shared discovery, ordered publication, context-safe admission, and truthful retry recovery. Status: draft.
 
