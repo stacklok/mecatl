@@ -197,13 +197,15 @@ test "$(printf '%s\n' "$assemble_bundle" | grep -Fc 'signing_ref="${{ needs.vali
 require 'release.yml@${signing_ref}' "$release"
 checkout_count=$(grep -c 'uses: actions/checkout@' "$release")
 bound_checkout_count=$(grep -c 'ref: ${{ github.sha }}' "$release")
-version_checkout_count=$(grep -c 'ref: ${{ env.VERSION }}' "$release")
+verified_commit_checkout_count=$(grep -c 'ref: .*needs.guard.outputs.commit' "$release")
+trusted_guard_checkout_count=$(grep -c 'ref: refs/heads/main' "$release")
 head_assertion_count=$(grep -c 'run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' "$release")
-# The guard checkout validates the requested release tag is on main, and the CLI
-# publisher checks out that same tag so GoReleaser can inspect tag history; every
-# other release checkout remains bound to the workflow SHA and immediately asserts it.
-test "$version_checkout_count" -eq 2
-test "$checkout_count" -eq "$((bound_checkout_count + version_checkout_count))"
+# The guard implementation is checked out once from protected main. Jobs that need
+# tag history use the guard's verified commit; all other publishing checkouts are
+# bound to the workflow SHA and immediately assert it.
+test "$trusted_guard_checkout_count" -eq 1
+test "$verified_commit_checkout_count" -eq 3
+test "$checkout_count" -eq "$((bound_checkout_count + verified_commit_checkout_count + trusted_guard_checkout_count))"
 test "$bound_checkout_count" -eq "$head_assertion_count"
 if "$validate_release_ref" v1.2.3 refs/heads/main >/dev/null 2>&1; then
   echo 'branch-dispatched release tag input was accepted' >&2

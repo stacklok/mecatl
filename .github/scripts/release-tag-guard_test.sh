@@ -42,10 +42,12 @@ run_fail() {
   fi
 }
 
-# Dispatch starts at main HEAD, but must publish the selected older tag commit.
-run_ok v1.2.3 workflow_dispatch refs/heads/main "$main" "$release_commit"
-run_fail main workflow_dispatch refs/heads/main "$main"
-run_fail refs/heads/main workflow_dispatch refs/heads/main "$main"
+# Dispatch must select the same immutable tag ref as its input.
+run_ok v1.2.3 workflow_dispatch refs/tags/v1.2.3 "$release_commit" "$release_commit"
+run_fail v1.2.3 workflow_dispatch refs/heads/main "$main"
+run_fail v1.2.3 workflow_dispatch refs/tags/v1.2.4 "$release_commit"
+run_fail main workflow_dispatch refs/tags/main "$main"
+run_fail refs/heads/main workflow_dispatch refs/tags/refs/heads/main "$main"
 marker="$work/pwned"
 run_fail "v1.2.3; touch $marker" workflow_dispatch refs/heads/main "$main"
 [ ! -e "$marker" ]
@@ -65,14 +67,14 @@ printf 'branch\n' >>"$repo/file"
 git -C "$repo" commit -qam branch
 off_main=$(git -C "$repo" rev-parse HEAD)
 git -C "$repo" tag v2.0.0
-run_fail v2.0.0 workflow_dispatch refs/heads/main "$main"
+run_fail v2.0.0 workflow_dispatch refs/tags/v2.0.0 "$main"
 run_fail v2.0.0 push refs/tags/v2.0.0 "$off_main"
-run_fail v1.2.3 schedule refs/heads/main "$main"
+run_fail v1.2.3 schedule refs/tags/v1.2.3 "$release_commit"
 
 workflow="$script_dir/../workflows/release.yml"
 # The privileged graph consumes only the commit emitted by a guard implementation
-# checked out from protected main; event-selected refs remain untrusted data.
-grep -F "if: github.event_name == 'push' || github.ref == 'refs/heads/main'" "$workflow" >/dev/null
+# checked out from protected main; dispatch must select the requested tag ref.
+grep -F "if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == format('refs/tags/{0}', inputs.tag))" "$workflow" >/dev/null
 grep -F 'ref: refs/heads/main' "$workflow" >/dev/null
 if grep -F 'org.opencontainers.image.revision=${{ github.sha }}' "$workflow" >/dev/null; then
   echo "release image revision still uses the event workflow SHA" >&2

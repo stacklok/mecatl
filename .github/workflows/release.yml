@@ -49,7 +49,7 @@ jobs:
   # KEEPS its own inline copy as well (like the pin gate it repeats): it is the one job that
   # writes outside this repository, so it re-verifies rather than inheriting.
   guard:
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == format('refs/tags/{0}', inputs.tag))
     name: Verify immutable release tag
     runs-on: ubuntu-24.04
     # 10, not 5: the v0.0.35 release was LOST because an unfiltered depth-0 clone
@@ -113,7 +113,7 @@ jobs:
 
   publish:
     name: Build, publish, sign, attest
-    needs: validate-release-ref
+    needs: [guard, validate-release-ref]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -653,7 +653,7 @@ jobs:
   # support and identifies it with the org.stacklok.broodbox.agent OCI label.
   publish-mecatui:
     name: Build, publish, sign, attest mecatui
-    needs: publish-microvm
+    needs: [guard, publish-microvm]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -830,7 +830,7 @@ jobs:
 
   publish-mecak8s:
     name: Build, publish, sign, attest mecak8s
-    needs: validate-release-ref
+    needs: [guard, validate-release-ref]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -990,7 +990,7 @@ jobs:
           create-storage-record: false
 
   publish-execution-images:
-    needs: guard
+    needs: [guard, validate-release-ref]
     name: Build, publish, sign, attest execution ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -1060,7 +1060,7 @@ jobs:
           create-storage-record: false
 
   publish-execution-chart:
-    needs: [guard, publish-execution-images]
+    needs: [guard, validate-release-ref, publish-execution-images]
     name: Package, publish, sign, attest execution Helm chart
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -1118,7 +1118,7 @@ jobs:
   # ../sdk/typescript/examples/slack-bot/README.md); only this container
   # image is released, from the same v* tag as mecated/mecatui/mecak8s.
   publish-slack-bot:
-    needs: validate-release-ref
+    needs: [guard, validate-release-ref]
     name: Build, publish, sign, attest Slack bot example image
     runs-on: ubuntu-24.04
     timeout-minutes: 20

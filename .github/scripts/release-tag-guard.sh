@@ -40,7 +40,10 @@ case "${GITHUB_EVENT_NAME:-}" in
     fi
     ;;
   workflow_dispatch)
-    # A dispatch runs from the selected workflow branch, not from the tag.
+    if [ "${GITHUB_REF:-}" != "$tag_ref" ]; then
+      echo "dispatch ref does not match the release tag" >&2
+      exit 1
+    fi
     ;;
   *)
     echo "unsupported release event: ${GITHUB_EVENT_NAME:-unset}" >&2
