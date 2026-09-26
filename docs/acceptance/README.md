@@ -132,6 +132,7 @@ PR after verification. There is no cleanup or status-only PR.
 - [Purpose-attributed auxiliary token usage](auxiliary-token-usage.md) — records every reachable session-associated auxiliary LLM call in the canonical ledger under a purpose-specific provider/model-attributed kind, without changing main-run accounting or budgets. Status: proposed.
 - [Acceptance-proof resolution efficiency](acceptance-proof-resolution-efficiency.md) — keeps plan-proof resolution fail closed while avoiding duplicate task execution within the existing Doc validation runner; Vitest batching is deferred. Status: proposed.
 - [Workspace enrollment preserves session authority](workspace-enrollment-authority.md) — preserves all still-authorized composed tools while atomically replacing the authenticated broker bundle; already-corrupted snapshots remain narrowed by explicit compatibility decision. Status: proposed.
+- [Broker credential custody continuity](broker-credential-continuity.md) — specifies recovery custody, replay-safe continuity RPCs, and per-seal HKDF encryption under the singleton broker design. Status: draft.
 - [Development-spine work classification](adr-scope-classification.md) — routes Spike,
   Routine, Bounded, and Architectural work; keeps acceptance planning for substantive work
   while reserving ADRs for genuinely durable architecture decisions. Status: landed in this

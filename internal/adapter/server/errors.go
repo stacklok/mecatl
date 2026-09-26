@@ -66,6 +66,10 @@ var (
 	// provider (ReadMcpResource / GetMcpPrompt) was called but no MCP provider
 	// is configured. Adapters map it to FailedPrecondition / HTTP 412.
 	ErrNoMCPProvider = errors.New("server: no MCP provider configured")
+	// ErrWorkspaceEnrollmentObserveTimeout reports a broker-side observe deadline
+	// while the caller context remains active. It is deliberately a fixed,
+	// sanitized sentinel: broker error text may contain credential material.
+	ErrWorkspaceEnrollmentObserveTimeout = errors.New("server: workspace enrollment observation timed out")
 	// ErrFailedStepRetryIneligible is the stable precondition sentinel returned when a
 	// session cannot retry its failed model step from persisted conversation state.
 	// Eligibility is based only on typed persisted state.

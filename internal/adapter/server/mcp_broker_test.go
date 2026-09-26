@@ -40,6 +40,7 @@ func testBrokerRuntime(t *testing.T) *adapterbroker.Runtime {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = runtime.Close() })
 	return runtime
 }
 
@@ -184,6 +185,50 @@ func (brokerSaveFailure) Save(context.Context, *session.Session) error {
 	return errors.New("save failed")
 }
 
+func TestMCPBrokerStaleBoundCleanupCannotDeleteRecreatedSession(t *testing.T) {
+	runtime := testBrokerRuntime(t)
+	defer runtime.Close()
+	id := session.SessionID("recreated-session")
+	old, _, err := runtime.AttachSession(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	oldBinding := old.Binding()
+	if _, err := runtime.DeleteSessionIfBinding(t.Context(), id, oldBinding); err != nil {
+		t.Fatal(err)
+	}
+	fresh, outcome, err := runtime.AttachSession(t.Context(), id)
+	if err != nil || outcome != brokercontract.AttachCreated {
+		t.Fatalf("recreate attachment = %q, %v", outcome, err)
+	}
+	if err := fresh.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Binding() == oldBinding {
+		t.Fatal("recreated session retained stale binding")
+	}
+
+	service, err := NewService(Config{Engine: brokerEngineResult().Engine, Store: memstore.New(), PlacementProvider: brokerPlacementProvider{}, PlacementScope: "test", MCPBroker: runtime, SessionEngineWithTools: func(context.Context, ProviderSelector, []mcp.ServerConfig, SessionProfile, string, session.PermissionMode, []tool.Tool) (SessionEngineResult, error) {
+		return brokerEngineResult(), nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	if err := service.deleteBrokerSessionLocked(t.Context(), id, oldBinding); err != nil {
+		t.Fatalf("stale broker cleanup: %v", err)
+	}
+	current, outcome, err := runtime.AttachSession(t.Context(), id)
+	if err != nil || outcome != brokercontract.AttachReattached || current.Binding() != fresh.Binding() {
+		t.Fatalf("stale cleanup deleted recreated session: outcome %q binding %q, err %v", outcome, current.Binding(), err)
+	}
+	_, _ = current.Close(t.Context())
+	_, _ = fresh.Close(t.Context())
+}
+
 func TestMCPBrokerPermanentDeleteRemovesLogicalState(t *testing.T) {
 	runtime := testBrokerRuntime(t)
 	defer runtime.Close()
@@ -234,6 +279,22 @@ func (b *flakyDeleteBroker) DeleteSession(ctx context.Context, id session.Sessio
 	}
 	b.mu.Unlock()
 	return b.Service.DeleteSession(ctx, id)
+}
+
+func (b *flakyDeleteBroker) DeleteSessionIfBinding(ctx context.Context, id session.SessionID, binding session.ExternalBinding) (brokercontract.DeleteOutcome, error) {
+	b.mu.Lock()
+	*b.operation = append(*b.operation, "broker")
+	if b.failNext {
+		b.failNext = false
+		b.mu.Unlock()
+		return "", errors.New("broker unavailable")
+	}
+	b.mu.Unlock()
+	deleter, ok := b.Service.(brokercontract.BindingSessionDeleter)
+	if !ok {
+		return "", errors.New("binding deletion unsupported")
+	}
+	return deleter.DeleteSessionIfBinding(ctx, id, binding)
 }
 
 type orderedDeleteStore struct {

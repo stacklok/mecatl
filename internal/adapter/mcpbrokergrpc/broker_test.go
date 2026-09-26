@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -88,143 +91,6 @@ func TestRemoteDeleteRejectsEmptyBinding(t *testing.T) {
 	if _, err := remote.DeleteSession(t.Context(), "session-1"); err == nil || !strings.Contains(err.Error(), "requires a binding") {
 		t.Fatalf("DeleteSession without binding = %v, want binding rejection", err)
 	}
-}
-
-func TestInvariant_initial_broker_protocol_is_neutral_and_secret_free(t *testing.T) {
-	wire := strings.ToLower(protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_broker_proto).String())
-	for _, token := range []string{"toolcall", "oauth", "verifier", "access_token", "refresh_token", "client_secret", "toolhive", "redis", "fence"} {
-		if strings.Contains(wire, token) {
-			t.Fatalf("broker descriptor contains forbidden %q", token)
-		}
-	}
-}
-
-func TestInvariant_initial_broker_preserves_engine_layering(t *testing.T) {
-	output := goListDeps(t, "github.com/stacklok/mecatl/engine/...")
-	for _, forbidden := range []string{"google.golang.org/grpc", "google.golang.org/protobuf", "toolhive", "mcpbrokergrpc"} {
-		if strings.Contains(output, forbidden) {
-			t.Fatalf("engine dependency graph contains %q", forbidden)
-		}
-	}
-}
-
-func TestInvariant_initial_broker_excludes_distributed_donor_contract(t *testing.T) {
-	output := goListDeps(t, "github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc")
-	for _, forbidden := range []string{"/internal/broker", "redis", "toolhive"} {
-		if strings.Contains(output, forbidden) {
-			t.Fatalf("remote broker dependency graph contains forbidden %q", forbidden)
-		}
-	}
-}
-
-func goListDeps(t *testing.T, pkg string) string {
-	t.Helper()
-	output, err := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", pkg).CombinedOutput()
-	if err != nil {
-		t.Fatalf("go list %s: %v\n%s", pkg, err, output)
-	}
-	return string(output)
-}
-
-type broker struct{ exists bool }
-
-func newBroker() *broker { return &broker{} }
-func (b *broker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
-	if !b.exists {
-		b.exists = true
-		return &attachment{}, mcpbroker.AttachCreated, nil
-	}
-	return &attachment{}, mcpbroker.AttachReattached, nil
-}
-func (b *broker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
-	if !b.exists {
-		return mcpbroker.DeleteNotFound, nil
-	}
-	b.exists = false
-	return mcpbroker.DeleteDeleted, nil
-}
-
-func (b *broker) DeleteSessionIfBinding(ctx context.Context, _ session.SessionID, binding session.ExternalBinding) (mcpbroker.DeleteOutcome, error) {
-	if binding != "binding-1" {
-		return mcpbroker.DeleteNotFound, nil
-	}
-	return b.DeleteSession(ctx, "")
-}
-
-type attachment struct{ closed bool }
-
-func (*attachment) Binding() session.ExternalBinding { return "binding-1" }
-func (a *attachment) Commit(context.Context) error {
-	if a.closed {
-		return mcpbroker.ErrAttachmentClosed
-	}
-	return nil
-}
-func (a *attachment) Abort(context.Context) error { a.closed = true; return nil }
-func (a *attachment) Close(context.Context) (mcpbroker.CloseOutcome, error) {
-	if a.closed {
-		return mcpbroker.CloseAlreadyClosed, nil
-	}
-	a.closed = true
-	return mcpbroker.CloseClosed, nil
-}
-func (*attachment) Tools() []tool.Tool { return []tool.Tool{serialTool{}, protectedTool{}} }
-func (a *attachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
-	return a.Tools(), nil
-}
-func (*attachment) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
-	return "", errors.New("unused")
-}
-func (*attachment) AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error) {
-	return "", errors.New("unused")
-}
-func (*attachment) CancelAuthorization(context.Context, session.ExternalAuthorization) (mcpbroker.CancelOutcome, error) {
-	return "", errors.New("unused")
-}
-
-type serialTool struct{}
-
-func (serialTool) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "read", Description: "read", Schema: []byte(`{"type":"object"}`)}
-}
-func (serialTool) ReadOnly() bool      { return true }
-func (serialTool) DispatchSerialTool() {}
-func (serialTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
-	if !jsonValid(call.Args) {
-		return session.ToolResult{}, errors.New("invalid arguments")
-	}
-	return session.NewToolResultWithParts(call.ID, "summary", []session.Content{session.NewTextBlock("text"), {BlockKind: session.BlockEmbeddedResource, MIMEType: "application/octet-stream", Data: []byte{0, 255}}}), nil
-}
-
-type protectedTool struct{ serialTool }
-
-func (protectedTool) Spec() tool.ToolSpec {
-	return tool.ToolSpec{Name: "protected", Description: "protected", Schema: []byte(`{"type":"object"}`)}
-}
-func (protectedTool) RequestAuthorization(context.Context, session.ToolCall) (session.ExternalAuthorization, bool, error) {
-	return session.ExternalAuthorization{}, false, nil
-}
-func (protectedTool) AbortAuthorization(context.Context, session.ExternalAuthorization) error {
-	return nil
-}
-func jsonValid(b []byte) bool { return len(b) > 0 && b[0] == '{' && b[len(b)-1] == '}' }
-func newRemote(t *testing.T, local mcpbroker.Service) mcpbroker.Service {
-	t.Helper()
-	listener := bufconn.Listen(1 << 20)
-	server := grpc.NewServer()
-	brokerServer, err := mcpbrokergrpc.NewServer(local, mcpbrokergrpc.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	mcpbrokergrpc.RegisterServer(server, brokerServer)
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = brokerServer.Shutdown(context.Background()); server.Stop(); _ = listener.Close() })
-	conn, err := grpc.NewClient("passthrough:///broker", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	return mcpbrokergrpc.NewClient(conn)
 }
 
 func TestSingletonBrokerRemediation_Scenario1_HostilePeerBoundary(t *testing.T) {
@@ -367,6 +233,116 @@ func TestInitialProductionMCPBroker_RejectsNonObjectToolSchema(t *testing.T) {
 	})
 }
 
+func TestInvariant_broker_continuity_contract_documented(t *testing.T) {
+	file := protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_broker_proto)
+	wanted := map[string][]string{
+		"ContinuityGuard":                     {"session_id", "session_incarnation", "owner_partition", "workload_partition", "profile_digest", "providers"},
+		"CustodyAssertion":                    {"guard", "recovery_reference", "attempt_deadline"},
+		"StageCredentialCustodyRequest":       {"request_id", "handle", "broker_incarnation", "guard", "completed_enrollment", "attempt_deadline"},
+		"StageCredentialCustodyResponse":      {"recovery_reference", "custody_expires_at", "profile_digest", "providers"},
+		"CommitCredentialCustodyRequest":      {"assertion"},
+		"CommitCredentialCustodyResponse":     nil,
+		"RecoverCredentialAttachmentRequest":  {"assertion", "request_id"},
+		"RecoverCredentialAttachmentResponse": {"binding", "handle", "tools", "broker_incarnation", "workspace_enrollment", "credential_continuity"},
+		"TombstoneCredentialCustodyRequest":   {"assertion"},
+		"TombstoneCredentialCustodyResponse":  nil,
+	}
+	_, testFile, _, _ := runtime.Caller(0)
+	sourceBytes, err := os.ReadFile(filepath.Join(filepath.Dir(testFile), "../../../contracts/proto/mecatl/broker/v1/broker.proto"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.Split(string(sourceBytes), "\n")
+	seenMessages := make(map[string]bool, len(wanted))
+	for _, message := range file.GetMessageType() {
+		fields, ok := wanted[message.GetName()]
+		if !ok {
+			continue
+		}
+		seenMessages[message.GetName()] = true
+		messageComment, messageLine := sourceCommentBefore(source, "message "+message.GetName(), 0)
+		assertContinuityContractComment(t, "message "+message.GetName(), messageComment)
+		seenFields := make(map[string]bool, len(message.GetField()))
+		for _, field := range message.GetField() {
+			seenFields[field.GetName()] = true
+			fieldComment, _ := sourceCommentBefore(source, " "+field.GetName()+" =", messageLine)
+			assertContinuityContractComment(t, "field "+message.GetName()+"."+field.GetName(), fieldComment)
+		}
+		for _, field := range fields {
+			if !seenFields[field] {
+				t.Errorf("message %s is missing expected field %q", message.GetName(), field)
+			}
+		}
+	}
+	for message := range wanted {
+		if !seenMessages[message] {
+			t.Errorf("credential-custody message %s is missing from the generated contract", message)
+		}
+	}
+}
+
+func sourceCommentBefore(lines []string, declaration string, start int) (string, int) {
+	for lineIndex := start; lineIndex < len(lines); lineIndex++ {
+		if !strings.Contains(lines[lineIndex], declaration) {
+			continue
+		}
+		comments := make([]string, 0, 4)
+		for commentIndex := lineIndex - 1; commentIndex >= 0 && strings.HasPrefix(strings.TrimSpace(lines[commentIndex]), "//"); commentIndex-- {
+			comments = append(comments, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[commentIndex]), "//")))
+		}
+		for left, right := 0, len(comments)-1; left < right; left, right = left+1, right-1 {
+			comments[left], comments[right] = comments[right], comments[left]
+		}
+		return strings.Join(comments, " "), lineIndex
+	}
+	return "", -1
+}
+
+func assertContinuityContractComment(t *testing.T, subject, comment string) {
+	t.Helper()
+	lower := strings.ToLower(comment)
+	for _, term := range []string{"sensitive", "opaque", "idempot", "incarnation"} {
+		if !strings.Contains(lower, term) {
+			t.Errorf("%s comment missing %q: %q", subject, term, comment)
+		}
+	}
+}
+func TestInvariant_initial_broker_protocol_is_neutral_and_secret_free(t *testing.T) {
+	wire := strings.ToLower(protodesc.ToFileDescriptorProto(brokerv1.File_mecatl_broker_v1_broker_proto).String())
+	for _, token := range []string{"toolcall", "oauth", "verifier", "access_token", "refresh_token", "client_secret", "toolhive", "redis", "fence"} {
+		if strings.Contains(wire, token) {
+			t.Fatalf("broker descriptor contains forbidden %q", token)
+		}
+	}
+}
+
+func TestInvariant_initial_broker_preserves_engine_layering(t *testing.T) {
+	output := goListDeps(t, "github.com/stacklok/mecatl/engine/...")
+	for _, forbidden := range []string{"google.golang.org/grpc", "google.golang.org/protobuf", "toolhive", "mcpbrokergrpc"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("engine dependency graph contains %q", forbidden)
+		}
+	}
+}
+
+func TestInvariant_initial_broker_excludes_distributed_donor_contract(t *testing.T) {
+	output := goListDeps(t, "github.com/stacklok/mecatl/internal/adapter/mcpbrokergrpc")
+	for _, forbidden := range []string{"/internal/broker", "redis", "toolhive"} {
+		if strings.Contains(output, forbidden) {
+			t.Fatalf("remote broker dependency graph contains forbidden %q", forbidden)
+		}
+	}
+}
+
+func goListDeps(t *testing.T, pkg string) string {
+	t.Helper()
+	output, err := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", pkg).CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list %s: %v\n%s", pkg, err, output)
+	}
+	return string(output)
+}
+
 type malformedAttachConn struct{ aborts *int }
 
 func (c malformedAttachConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
@@ -421,11 +397,103 @@ func (invalidSchemaTool) Spec() tool.ToolSpec {
 	return tool.ToolSpec{Name: "invalid", Description: "invalid", Schema: []byte(`true`)}
 }
 
-func hasBrokerReason(err error, want brokerv1.BrokerErrorReason) bool {
-	for _, detail := range status.Convert(err).Details() {
-		if typed, ok := detail.(*brokerv1.BrokerErrorDetail); ok && typed.GetReason() == want {
-			return true
-		}
+type broker struct{ exists bool }
+
+func newBroker() *broker { return &broker{} }
+func (b *broker) AttachSession(context.Context, session.SessionID) (mcpbroker.Attachment, mcpbroker.AttachOutcome, error) {
+	if !b.exists {
+		b.exists = true
+		return &attachment{}, mcpbroker.AttachCreated, nil
 	}
-	return false
+	return &attachment{}, mcpbroker.AttachReattached, nil
+}
+func (b *broker) DeleteSession(context.Context, session.SessionID) (mcpbroker.DeleteOutcome, error) {
+	if !b.exists {
+		return mcpbroker.DeleteNotFound, nil
+	}
+	b.exists = false
+	return mcpbroker.DeleteDeleted, nil
+}
+
+func (b *broker) DeleteSessionIfBinding(ctx context.Context, _ session.SessionID, binding session.ExternalBinding) (mcpbroker.DeleteOutcome, error) {
+	if binding != "binding-1" {
+		return mcpbroker.DeleteNotFound, nil
+	}
+	return b.DeleteSession(ctx, "")
+}
+
+type attachment struct{ closed bool }
+
+func (*attachment) Binding() session.ExternalBinding { return "binding-1" }
+func (a *attachment) Commit(context.Context) error {
+	if a.closed {
+		return mcpbroker.ErrAttachmentClosed
+	}
+	return nil
+}
+func (a *attachment) Abort(context.Context) error { a.closed = true; return nil }
+func (a *attachment) Close(context.Context) (mcpbroker.CloseOutcome, error) {
+	if a.closed {
+		return mcpbroker.CloseAlreadyClosed, nil
+	}
+	a.closed = true
+	return mcpbroker.CloseClosed, nil
+}
+func (*attachment) Tools() []tool.Tool { return []tool.Tool{serialTool{}, protectedTool{}} }
+func (a *attachment) RefreshGrantedAuthorizationCatalogue(context.Context, session.ExternalAuthorization) ([]tool.Tool, error) {
+	return a.Tools(), nil
+}
+func (*attachment) PresentAuthorization(context.Context, session.ExternalAuthorization) (string, error) {
+	return "", errors.New("unused")
+}
+func (*attachment) AuthorizationStatus(context.Context, session.ExternalAuthorization) (session.AuthorizationStatus, error) {
+	return "", errors.New("unused")
+}
+func (*attachment) CancelAuthorization(context.Context, session.ExternalAuthorization) (mcpbroker.CancelOutcome, error) {
+	return "", errors.New("unused")
+}
+
+type serialTool struct{}
+
+func (serialTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "read", Description: "read", Schema: []byte(`{"type":"object"}`)}
+}
+func (serialTool) ReadOnly() bool      { return true }
+func (serialTool) DispatchSerialTool() {}
+func (serialTool) Execute(_ context.Context, call session.ToolCall, _ tool.Environment) (session.ToolResult, error) {
+	if !jsonValid(call.Args) {
+		return session.ToolResult{}, errors.New("invalid arguments")
+	}
+	return session.NewToolResultWithParts(call.ID, "summary", []session.Content{session.NewTextBlock("text"), {BlockKind: session.BlockEmbeddedResource, MIMEType: "application/octet-stream", Data: []byte{0, 255}}}), nil
+}
+
+type protectedTool struct{ serialTool }
+
+func (protectedTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "protected", Description: "protected", Schema: []byte(`{"type":"object"}`)}
+}
+func (protectedTool) RequestAuthorization(context.Context, session.ToolCall) (session.ExternalAuthorization, bool, error) {
+	return session.ExternalAuthorization{}, false, nil
+}
+func (protectedTool) AbortAuthorization(context.Context, session.ExternalAuthorization) error {
+	return nil
+}
+func jsonValid(b []byte) bool { return len(b) > 0 && b[0] == '{' && b[len(b)-1] == '}' }
+func newRemote(t *testing.T, local mcpbroker.Service) mcpbroker.Service {
+	t.Helper()
+	listener := bufconn.Listen(1 << 20)
+	server := grpc.NewServer()
+	brokerServer, err := mcpbrokergrpc.NewServer(local, mcpbrokergrpc.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcpbrokergrpc.RegisterServer(server, brokerServer)
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = brokerServer.Shutdown(context.Background()); server.Stop(); _ = listener.Close() })
+	conn, err := grpc.NewClient("passthrough:///broker", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return listener.Dial() }), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return mcpbrokergrpc.NewClient(conn)
 }

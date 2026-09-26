@@ -1043,11 +1043,12 @@ func (r *Runtime) logSessionAttach(ctx context.Context, id session.SessionID, ou
 	r.diag.Log(ctx, port.LevelInfo, "mcp broker session attach", "event", diagnosticEventSessionAttach, "reason", reason, "session", string(id))
 }
 
-func (r *Runtime) logWorkspaceEnrollment(ctx context.Context, level port.Level, operation, reason string, args ...any) {
+func (r *Runtime) logWorkspaceEnrollment(ctx context.Context, sessionID session.SessionID, level port.Level, operation, reason string, args ...any) {
 	fields := []any{
 		"event", diagnosticEventWorkspaceEnrollment,
 		"operation", operation,
 		"reason", reason,
+		"session", string(sessionID),
 	}
 	fields = append(fields, args...)
 	r.diag.Log(ctx, level, "mcp broker workspace enrollment", fields...)

@@ -211,7 +211,7 @@ func (s *Service) createPlacedSuccessorLocked(ctx context.Context, req ForkSucce
 	// successor before its first durable publication; broker commit happens only
 	// after that publication succeeds.
 	if s.cfg.MCPBroker != nil {
-		broker, err = s.openBrokerAttachment(mutationCtx, created.ID, "", false)
+		broker, err = s.openFreshBrokerAttachment(mutationCtx, created.ID)
 		if err != nil {
 			return "", err
 		}
