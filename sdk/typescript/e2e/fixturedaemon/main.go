@@ -124,6 +124,15 @@ func run() error {
 		_, _ = io.WriteString(w, `{"access_token":"fixture-access-token","token_type":"Bearer","expires_in":3600}`)
 	})
 
+	clientSecretDir, err := os.MkdirTemp("", "fixturedaemon-oauth-secret")
+	if err != nil {
+		return fmt.Errorf("create client secret dir: %w", err)
+	}
+	clientSecretFile := filepath.Join(clientSecretDir, "client-secret")
+	if err := os.WriteFile(clientSecretFile, []byte("fixture-secret"), 0o600); err != nil {
+		return fmt.Errorf("write client secret file: %w", err)
+	}
+
 	oauthProfile := func() permconfig.MCPAuthProfile {
 		return permconfig.MCPAuthProfile{Mode: "oauth", OAuth: &permconfig.MCPOAuthProfile{
 			Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{
@@ -131,7 +140,7 @@ func run() error {
 				TokenEndpoint:         oauthServer.URL + "/token",
 			}},
 			Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{
-				ID: "fixture-client", SecretEnv: "MECATL_FIXTURE_CLIENT_SECRET", // #nosec G101 -- trusted environment-variable name, not a credential.
+				ID: "fixture-client", SecretFile: clientSecretFile,
 			}},
 			Scopes: []string{"read"},
 		}}
@@ -163,7 +172,6 @@ func run() error {
 		MCPBrokerOptions: []mcpbroker.Option{
 			mcpbroker.WithOAuthLoopbackForTest(helperMarker{}, roots),
 			mcpbroker.WithOAuthLimits(2*time.Minute, 3*time.Second),
-			mcpbroker.WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "fixture-secret", nil }),
 		},
 		MockProvider:         provider,
 		NoSoul:               true,

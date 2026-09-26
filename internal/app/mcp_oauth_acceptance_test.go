@@ -578,7 +578,12 @@ func (r *acceptanceLoopbackProfileResolver) Load(operator *permconfig.MCPSection
 func writeAcceptanceOAuthSettings(t *testing.T, fixture *loginFixture, root string) (string, func(string) (string, bool), string) {
 	t.Helper()
 	keyCanary := base64.StdEncoding.EncodeToString([]byte("524-acceptance-encryption-key-32"))
-	settings := filepath.Join(t.TempDir(), "settings.yaml")
+	settingsDir := t.TempDir()
+	clientSecretFile := filepath.Join(settingsDir, "client-secret")
+	if err := os.WriteFile(clientSecretFile, []byte(loginClientSecret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(settingsDir, "settings.yaml")
 	body := fmt.Sprintf(`mcp:
   servers:
     - name: protected
@@ -591,7 +596,7 @@ func writeAcceptanceOAuthSettings(t *testing.T, fixture *loginFixture, root stri
           issuer: %q
           client:
             mode: preregistered
-            preregistered: {id: %q, secret_env: MECATL_ACCEPTANCE_CLIENT_SECRET}
+            preregistered: {id: %q, secret_file: %q}
           scopes: [read]
           request_refresh_token: true
           credentials:
@@ -601,12 +606,11 @@ func writeAcceptanceOAuthSettings(t *testing.T, fixture *loginFixture, root stri
             additional_origins: []
             private_origins: [%q]
             max_redirects: 2
-`, fixture.resource(), fixture.issuer(), loginClientID, root, fixture.origin())
+`, fixture.resource(), fixture.issuer(), loginClientID, clientSecretFile, root, fixture.origin())
 	if err := os.WriteFile(settings, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	values := map[string]string{
-		"MECATL_ACCEPTANCE_CLIENT_SECRET":  loginClientSecret,
 		"MECATL_ACCEPTANCE_CREDENTIAL_KEY": keyCanary,
 	}
 	return settings, func(name string) (string, bool) { value, ok := values[name]; return value, ok }, keyCanary

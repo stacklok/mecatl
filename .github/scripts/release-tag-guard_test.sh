@@ -119,6 +119,6 @@ if grep -F 'org.opencontainers.image.revision=${{ github.sha }}' "$workflow" >/d
   echo "release image revision still uses the event workflow SHA" >&2
   exit 1
 fi
-[ "$(grep -Fc 'org.opencontainers.image.revision=${{ needs.guard.outputs.commit }}' "$workflow")" -eq 5 ]
+[ "$(grep -Fc 'org.opencontainers.image.revision=${{ needs.guard.outputs.commit }}' "$workflow")" -eq 6 ]
 
 printf 'release tag guard tests passed\n'

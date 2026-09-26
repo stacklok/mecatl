@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -64,6 +65,10 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 		mockllm.ToolCallTurn(session.NewToolCall(call3, toolName, json.RawMessage(`{"request":"retry"}`))),
 		mockllm.TextTurn("second continuation complete"),
 	)
+	secretFile := t.TempDir() + "/vertical-secret"
+	if err := os.WriteFile(secretFile, []byte("vertical-secret"), 0o600); err != nil {
+		t.Fatalf("write client secret file: %v", err)
+	}
 	declaration := mcpauthority.NewBroker(mcpauthority.BrokerConfig{
 		CallbackURL: callbackServer.URL + "/oauth/callback",
 		Routes: []permconfig.MCPServerProfile{{
@@ -75,7 +80,7 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 					TokenEndpoint:         fixture.oauth.URL + "/token",
 				}},
 				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{
-					ID: "vertical-client", SecretEnv: "MECATL_VERTICAL_CLIENT_SECRET",
+					ID: "vertical-client", SecretFile: secretFile,
 				}},
 				Scopes: []string{"read"}, RequestRefreshToken: true,
 			}},
@@ -101,7 +106,6 @@ func TestSessionMCPAuthorization_GrantRegressionParksAndResumes(t *testing.T) {
 		MCPBrokerOptions: []mcpbroker.Option{
 			mcpbroker.WithOAuthLoopbackForTest(t, roots),
 			mcpbroker.WithOAuthLimits(2*time.Minute, 3*time.Second),
-			mcpbroker.WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "vertical-secret", nil }),
 		},
 	})
 	if err != nil {
