@@ -4,12 +4,12 @@
 **Work classification:** Architectural — adds an operator-owned, default-on configuration contract that changes standard root-prompt behavior across main and delegated engines.
 **Decision record:** [ADR 0367](../adr/0367-configurable-commit-coauthor-guidance.md)
 **Phase:** prompt provenance
-**Status:** proposed, 2026-09-25. Derived from [stacklok/mecatl#1595](https://github.com/stacklok/mecatl/issues/1595).
+**Status:** in-progress, 2026-09-25. Plan / Interface PR #1947 merged; implementation started from the approved baseline.
 **Delivery:** Split. The operator configuration, prompt-composition, and delegated-agent inheritance contract need review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1595](https://github.com/stacklok/mecatl/issues/1595).
 **Plan PR:** [#1947](https://github.com/stacklok/mecatl/pull/1947)
-**Approved baseline:** absent until approved
+**Approved baseline:** `3bf09f2145f55329f88138fdfff6cfc1c4f46ad3`
 
 Mecatl's standard system prompt will direct an agent that creates a commit to append the canonical Mecatl trailer. The direction is enabled unless the operator globally opts out. The implementation must deliver the same standard guidance to root and delegated engines through their shared prompt composition path.
 
