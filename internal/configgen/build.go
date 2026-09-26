@@ -16,6 +16,7 @@ const (
 	configDurationType = "duration"
 	configAbsent       = "(absent)"
 	configRequired     = "(required)"
+	configFalse        = "false"
 )
 
 // BuildModel constructs the settings.yaml Model by REFLECTING over the permconfig
@@ -82,7 +83,7 @@ func zeroDefault(t reflect.Type) string {
 	case reflect.String:
 		return "(empty)"
 	case reflect.Bool:
-		return "false"
+		return configFalse
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return "0"
 	default:
@@ -277,7 +278,7 @@ func retentionSubtree(docs Docs) *Subtree {
 
 func systemPromptSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("SystemPromptSection", permconfig.SystemPromptSection{}, docs)
-	fields[0].Default, fields[0].ExampleValue = "true", "false"
+	fields[0].Default, fields[0].ExampleValue = "true", configFalse
 	return &Subtree{
 		Key:          "system_prompt",
 		Tier:         TierOperator,
