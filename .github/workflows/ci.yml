@@ -596,7 +596,7 @@ jobs:
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
 
-      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       # Build-only proof of apps/Dockerfile (the multi-stage image the release job
       # publishes). amd64 only here — the release job builds both platforms.
