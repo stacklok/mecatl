@@ -75,7 +75,7 @@ func TestDebuggerScanContinuation_Scenario5_ModelWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	drainRun(built.Engine.Run(context.Background(), debug, testEnvironment(nofs.New(), nil), agent.RunRequest{Text: "find later network evidence"}))
-	if len(requests) == 0 || !strings.Contains(requests[0].System.StablePrefix, "result-root next_cursor") || !strings.Contains(requests[0].System.StablePrefix, "empty row page") || !strings.Contains(requests[0].System.StablePrefix, "event window") {
+	if len(requests) == 0 || !strings.Contains(requests[0].System.StablePrefix, "result-root next_cursor") || !strings.Contains(requests[0].System.StablePrefix, "empty row page") || !strings.Contains(requests[0].System.StablePrefix, "event window") || !strings.Contains(requests[0].System.StablePrefix, "retry the same cursor") || !strings.Contains(requests[0].System.StablePrefix, "snapshot status/transcript") {
 		t.Fatalf("real debug factory omitted continuation workflow: %+v", requests)
 	}
 	found := false

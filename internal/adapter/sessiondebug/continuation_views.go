@@ -31,7 +31,7 @@ func rowsPage[T any](rows []T, offset, limit int) ([]T, int, bool) {
 	if offset > len(rows) {
 		offset = len(rows)
 	}
-	end := minInt(offset+limit, len(rows))
+	end := min(offset+limit, len(rows))
 	return rows[offset:end], end, end < len(rows)
 }
 
@@ -42,7 +42,7 @@ func (t *inspectTool) projectContinuation(ctx context.Context, args inspectArgs,
 	}
 	switch args.View {
 	case "status":
-		out := mapValue(t.statusView(ctx, target, scope))
+		out := mapValue(statusSnapshot(target, scope))
 		out["lifetime_event_log"] = lifetimeFromScan(scan)
 		return continuationProjection{Value: out, ProjectionComplete: true}, nil
 	case viewPerformance:
@@ -68,7 +68,8 @@ func windowFields(out map[string]any, scan eventScan) {
 }
 
 func lifetimeFromScan(scan eventScan) map[string]any {
-	out := lifetimeEvidence{Available: scan.StopReason != stopNotConfigured, Authoritative: scan.StopReason != stopNotConfigured, ScanComplete: scan.Complete, RetentionComplete: false, ScannedEvents: scan.EventCount}
+	available := scan.StopReason != stopNotConfigured && scan.StopReason != stopReadError
+	out := lifetimeEvidence{Available: available, Authoritative: available, ScanComplete: scan.Complete, RetentionComplete: false, ScannedEvents: scan.EventCount}
 	runs := map[string]bool{}
 	legacyOpen := false
 	for _, ev := range scan.Events {
@@ -104,7 +105,7 @@ func lifetimeFromScan(scan eventScan) map[string]any {
 	if scan.StopReason == stopNotConfigured {
 		out.Error = errLogNotConfigured
 	}
-	if scan.StopReason == "read_error" {
+	if scan.StopReason == stopReadError {
 		out.Error = errLogReadFailed
 	}
 	m := mapValue(out)
@@ -188,7 +189,12 @@ func networkFromScan(scan eventScan, target session.SessionID, offset, limit int
 func delegationFromScan(scan eventScan, root *session.Session, graph lineageGraph, offset, limit int) continuationProjection {
 	byLifetime := map[string]lineageNode{}
 	for _, n := range graph.Nodes {
-		byLifetime[lineageLifetimeKey(string(n.ID), session.IncarnationID(n.Incarnation))] = n
+		key := lineageLifetimeKey(string(n.ID), session.IncarnationID(n.Incarnation))
+		if _, duplicate := byLifetime[key]; duplicate {
+			byLifetime[key] = lineageNode{}
+			continue
+		}
+		byLifetime[key] = n
 	}
 	results := parentResults(root)
 	rows := []delegationRow{}
@@ -282,7 +288,7 @@ func (t *inspectTool) historyFromScan(_ context.Context, s *session.Session, sco
 	}
 	if scan.Start != "" {
 		// Later windows catalogue only archives from their own interval.
-	} else if scan.StopReason == "read_error" {
+	} else if scan.StopReason == stopReadError {
 		// Snapshot evidence remains selectable; no partial event-derived source is published.
 	} else if scan.StopReason == stopNotConfigured {
 		// A configured log is required for retained-event and archive sources.
@@ -318,7 +324,7 @@ func (t *inspectTool) historyFromScan(_ context.Context, s *session.Session, sco
 	if scan.StopReason == stopNotConfigured {
 		out["error"] = errLogNotConfigured
 	}
-	if scan.StopReason == "read_error" {
+	if scan.StopReason == stopReadError {
 		out["error"] = errLogReadFailed
 	}
 	windowFields(out, scan)
@@ -341,6 +347,8 @@ func (t *inspectTool) selectHistory(ctx context.Context, s *session.Session, sco
 	}
 	var source string
 	var messages []session.Message
+	var endpointLog port.CursorEventLog
+	var endpointBefore, endpointEnd port.Cursor
 	switch claim.Purpose {
 	case "snapshot":
 		if claim.Basis != session.DebugTargetFingerprint(s) {
@@ -360,9 +368,10 @@ func (t *inspectTool) selectHistory(ctx context.Context, s *session.Session, sco
 			count++
 			messages = rec.Event.CompactionArchive.Replaced
 		}
-		if count != 1 {
+		if count != 1 || ctx.Err() != nil {
 			return nil, errors.New("invalid or stale history handle")
 		}
+		endpointLog, endpointBefore, endpointEnd = log, claim.Start, claim.End
 		source = sourceArchive
 	case "legacy_archive", "legacy_replay":
 		scan, scanErr := t.scanLegacy(ctx, s.ID)
@@ -395,54 +404,71 @@ func (t *inspectTool) selectHistory(ctx context.Context, s *session.Session, sco
 			return nil, errors.New("invalid or stale history handle")
 		}
 		source, messages = sourceRetainedReplay, folded.Conversation.Messages
+		endpointLog, endpointBefore, endpointEnd = log, claim.BeforeEnd, claim.End
 	default:
 		return nil, errors.New("invalid or stale history handle")
 	}
 	page := transcriptFromMessages(messages, offset, limit)
+	if ctx.Err() != nil {
+		return nil, errors.New("invalid or stale history handle")
+	}
+	if endpointLog != nil {
+		if endpointErr := validateEndpoint(ctx, endpointLog, s.ID, endpointBefore, endpointEnd); endpointErr != nil {
+			return nil, errors.New("invalid or stale history handle")
+		}
+	}
 	return map[string]any{"view": viewHistory, "scope": scope, "history_handle": handle, "source": source, "authoritative": true, "scan_complete": true, "retention_complete": false, "projection_complete": page.Complete, "transcript": page}, nil
 }
 
-func boundContinuationProjection(projection *continuationProjection, view string, offset int) {
+func syncProjectionMetadata(projection *continuationProjection, rows int) {
+	page, _ := projection.Value["row_page"].(map[string]any)
+	if page == nil {
+		page = mapValue(projection.Value["row_page"])
+	}
+	page["returned"] = rows
+	page["projection_complete"] = projection.ProjectionComplete
+	page["has_more_rows"] = projection.HasMoreRows
+	projection.Value["row_page"] = page
+	projection.Value["projection_complete"] = projection.ProjectionComplete
+	if !projection.ProjectionComplete {
+		if _, ok := projection.Value["truncated"]; ok {
+			projection.Value["truncated"] = true
+		}
+		if _, ok := projection.Value["complete"]; ok {
+			projection.Value["complete"] = false
+		}
+	}
+}
+
+func boundContinuationProjection(projection *continuationProjection, view string, offset int) bool {
 	key := map[string]string{viewPerformance: "turns", viewNetwork: "attempts", viewDelegation: "rows", viewManifest: "rows", viewHistory: "sources"}[view]
-	if key == "" {
-		return
+	if key == "" || fitsEvidence(projection.Value) {
+		return false
 	}
 	rows, ok := projection.Value[key].([]any)
 	if !ok {
 		body, _ := json.Marshal(projection.Value[key])
 		_ = json.Unmarshal(body, &rows)
 	}
-	for len(rows) > 0 && !fitsEvidence(projection.Value) {
-		if len(rows) > 1 {
-			rows = rows[:len(rows)-1]
-			projection.NextRow--
-			projection.HasMoreRows = true
-		} else {
-			rows = rows[:0]
-			projection.Value["omitted_rows"] = []map[string]any{{"index": offset, "reason": "response_bound"}}
-			projection.ProjectionComplete = false
-			projection.HasMoreRows = true
-		}
-		projection.Value[key] = rows
-		if page, ok := projection.Value["row_page"].(rowPageEvidence); ok {
-			page.Returned = len(rows)
-			page.ProjectionComplete = projection.ProjectionComplete
-			page.HasMoreRows = projection.HasMoreRows
-			projection.Value["row_page"] = page
-		}
+	if len(rows) == 0 {
+		return false
 	}
+	if len(rows) > 1 {
+		rows = rows[:len(rows)-1]
+		projection.NextRow--
+		projection.HasMoreRows = true
+	} else {
+		rows = rows[:0]
+		projection.Value["omitted_rows"] = []map[string]any{{"index": offset, "reason": "response_bound"}}
+		projection.ProjectionComplete = false
+	}
+	projection.Value[key] = rows
+	syncProjectionMetadata(projection, len(rows))
+	return true
 }
 
-func digestBytes(body []byte) string { sum := sha256Sum(body); return sum }
-func sha256Sum(body []byte) string {
-	h := sha256.New()
-	_, _ = h.Write(body)
-	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)[:18])
+func digestBytes(body []byte) string {
+	sum := sha256.Sum256(body)
+	return base64.RawURLEncoding.EncodeToString(sum[:18])
 }
 func mustJSON(v any) []byte { body, _ := json.Marshal(v); return body }
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

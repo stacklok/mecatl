@@ -180,7 +180,10 @@ event-log records per window. Row limits are separate: performance and network r
 up to 50 rows, delegation up to 100, manifest up to 50, and history catalogs up to 20.
 When more rows or records remain, the model passes the result's single opaque
 `next_cursor` back as `cursor` with the same view and scope. An empty page is not the
-end; absence of `next_cursor` is. Counts and aggregates cover only the named event
+end; absence of `next_cursor` is. If a read returns `event log read failed`, retry
+with the same cursor. If that retry also fails, use snapshot-backed status and
+transcript evidence instead and treat retained-event evidence as unavailable.
+Counts and aggregates cover only the named event
 window, and repeated row pages do not add new coverage.
 
 A long log can expose later compaction archives without making its suffix a complete

@@ -388,60 +388,6 @@ type lifetimeEvidence struct {
 	Error             string        `json:"error,omitempty"`
 }
 
-func (t *inspectTool) lifetimeView(ctx context.Context, id session.SessionID) lifetimeEvidence {
-	out := lifetimeEvidence{Available: t.log != nil}
-	if t.log == nil {
-		out.Error = errLogNotConfigured
-		return out
-	}
-	out.Authoritative = true
-	out.ScanComplete = true
-	runs := map[string]bool{}
-	legacyOpen := false
-	for ev, err := range t.log.Read(ctx, id) {
-		if err != nil {
-			out.Error = errLogReadFailed
-			out.ScanComplete = false
-			break
-		}
-		if out.ScannedEvents == maxPerformanceScan {
-			out.ScanComplete = false
-			break
-		}
-		out.ScannedEvents++
-		if ev.RunID != "" {
-			runs[ev.RunID] = true
-		} else if ev.Schedule == nil {
-			legacyOpen = true
-		}
-		switch ev.Type {
-		case session.EvTurnEnd:
-			if ev.TurnEnd != nil {
-				out.Turns++
-				out.Usage = out.Usage.Add(ev.TurnEnd.Usage)
-			}
-		case session.EvToolCall:
-			out.ToolCalls++
-		case session.EvToolResult:
-			out.ToolResults++
-			if ev.ToolResult != nil && ev.ToolResult.IsError {
-				out.ToolFailures++
-			}
-		case session.EvResult:
-			if ev.RunID == "" && legacyOpen {
-				out.Runs++
-				legacyOpen = false
-			}
-		}
-	}
-	if legacyOpen {
-		out.Runs++
-	}
-	out.Runs += len(runs)
-	out.RetentionComplete = false
-	return out
-}
-
 type historyCatalog struct {
 	View               string          `json:"view"`
 	Scope              string          `json:"scope"`

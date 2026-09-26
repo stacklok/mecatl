@@ -1,7 +1,6 @@
 package sessiondebug
 
 import (
-	"context"
 	"math"
 	"strings"
 	"unicode"
@@ -79,63 +78,6 @@ type teamTaskEvidence struct {
 type teamFindingEvidence struct {
 	Member string `json:"member"`
 	Body   string `json:"body"`
-}
-
-func (t *inspectTool) delegationView(ctx context.Context, s *session.Session, graph lineageGraph, offset, requested int) delegationEvidence {
-	limit := boundedLimit(requested, maxDelegationRows)
-	out := delegationEvidence{
-		View: viewDelegation, Authoritative: true, Source: "typed root events joined to direct lineage records",
-		ProjectionComplete: true, ScanComplete: t.log != nil && graph.ScanComplete,
-		RetentionComplete: graph.Supported && graph.ScanComplete && !graph.Truncated,
-		Offset:            offset, Limit: limit, Rows: []delegationRow{}, Error: graph.Error,
-	}
-	if t.log == nil {
-		out.Error = errLogNotConfigured
-		out.Authoritative = false
-		return out
-	}
-	byLifetime := map[string]lineageNode{}
-	for _, n := range graph.Nodes {
-		key := lineageLifetimeKey(string(n.ID), session.IncarnationID(n.Incarnation))
-		if _, duplicate := byLifetime[key]; duplicate {
-			byLifetime[key] = lineageNode{}
-			continue
-		}
-		byLifetime[key] = n
-	}
-	results := parentResults(s)
-	matched := 0
-	pageEnd := offset
-	scanned := 0
-	for ev, err := range t.log.Read(ctx, s.ID) {
-		if err != nil {
-			out.Error = errLogReadFailed
-			out.ScanComplete = false
-			break
-		}
-		if scanned == maxPerformanceScan {
-			out.Error = "event scan bound reached"
-			out.ScanComplete = false
-			break
-		}
-		scanned++
-		rows := projectDelegationEvent(ev, byLifetime, results, s)
-		for _, row := range rows {
-			if matched >= offset && len(out.Rows) < limit {
-				pageEnd = matched + 1
-				out.Rows = append(out.Rows, row)
-				if !fitsEvidence(out) {
-					out.Rows = out.Rows[:len(out.Rows)-1]
-					out.ProjectionComplete = false
-				}
-			}
-			matched++
-		}
-	}
-	if pageEnd < matched {
-		out.NextOffset = &pageEnd
-	}
-	return out
 }
 
 func parentResults(s *session.Session) map[string]bool {

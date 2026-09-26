@@ -435,9 +435,9 @@ func TestPerformanceReduction(t *testing.T) {
 
 func TestPerformanceBounds(t *testing.T) {
 	store, target := seededTarget(t, nil)
-	view := New(target.ID, store, generatedLog{count: maxPerformanceScan + 1}).(*inspectTool).performanceView(context.Background(), target.ID)
-	if view.Scanned != maxPerformanceScan || len(view.Turns) != maxPerformanceRows || !view.Truncated || view.Complete {
-		t.Fatalf("performance bounds = scanned %d turns %d truncated %v complete %v", view.Scanned, len(view.Turns), view.Truncated, view.Complete)
+	out := continuationResult(t, execute(t, New(target.ID, store, generatedLog{count: maxPerformanceScan + 1}), `{"view":"performance"}`))
+	if out["scanned_events"] != float64(maxPerformanceScan) || len(out["turns"].([]any)) != maxPerformanceRows || out["truncated"] != true || out["complete"] != false {
+		t.Fatalf("performance bounds = %#v", out)
 	}
 }
 

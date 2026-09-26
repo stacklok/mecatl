@@ -260,9 +260,6 @@ func (t *inspectTool) readCursorWindow(ctx context.Context, log port.CursorEvent
 		return scan, nil
 	}
 	scan.ID = scanID(t, id, "", "", scan.Start, scan.End, scan.Records)
-	if err := validateEndpoint(ctx, log, id, scan.BeforeEnd, scan.End); err != nil {
-		return eventScan{}, err
-	}
 	return scan, nil
 }
 
@@ -293,10 +290,7 @@ func replaySealed(ctx context.Context, log port.CursorEventLog, id session.Sessi
 		}
 		previous = rec.Cursor
 	}
-	if count != claim.Records || last != claim.End || events != claim.Events || gapCount != claim.Gaps {
-		return eventScan{}, errors.New(continuationInvalid)
-	}
-	if err := validateEndpoint(ctx, log, id, claim.BeforeEnd, claim.End); err != nil {
+	if count != claim.Records || last != claim.End || events != claim.Events || gapCount != claim.Gaps || ctx.Err() != nil {
 		return eventScan{}, errors.New(continuationInvalid)
 	}
 	return scan, nil
@@ -335,6 +329,9 @@ func (t *inspectTool) scanLegacy(ctx context.Context, id session.SessionID) (eve
 		scan.Events = append(scan.Events, ev)
 		scan.Records++
 		scan.EventCount++
+	}
+	if ctx.Err() != nil {
+		return eventScan{}, ctx.Err()
 	}
 	return scan, nil
 }
