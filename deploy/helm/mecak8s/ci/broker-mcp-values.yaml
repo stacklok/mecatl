@@ -1,0 +1,50 @@
+mockProvider: true
+redis:
+  local:
+    enabled: true
+oidc:
+  enabled: true
+  issuer: https://identity.example.invalid
+  audience: mecak8s
+broker:
+  image:
+    digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  tls:
+    secretName: mecabroker-tls
+  clientCA:
+    secretName: mecabroker-ca
+    key: ca.pem
+    serverName: production-mecak8s-broker
+  credentialStore:
+    redis:
+      address: broker-redis.example.invalid:6379
+      credentialsSecret: broker-redis-credentials
+      usernameKey: username
+      caSecret: broker-redis-ca
+    encryption:
+      secretName: broker-credential-keks
+      activeID: current
+      keys:
+        - {id: current, secretKey: kek-current}
+mcp:
+  broker:
+    callbackURL: https://broker.example.invalid/oauth/complete
+  servers:
+    - name: github
+      url: https://github.example/mcp
+      auth:
+        mode: oauth
+        oauth:
+          upstream:
+            mode: oauth2
+            oauth2:
+              authorizationEndpoint: https://github.example/login/oauth/authorize
+              tokenEndpoint: https://github.example/login/oauth/access_token
+          client:
+            mode: preregistered
+            preregistered:
+              id: broker-client
+              secretKeyRef: {name: github-oauth, key: client-secret}
+          scopes: [repo]
+          requestRefreshToken: true
+          network: {additionalOrigins: [], privateOrigins: [], maxRedirects: 0}

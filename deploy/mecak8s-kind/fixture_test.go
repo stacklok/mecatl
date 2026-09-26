@@ -57,6 +57,31 @@ func TestMecak8sKindFixture_Scenario1_DedicatedKubeconfig(t *testing.T) {
 	}
 }
 
+// TestMecak8sKindFixture_Scenario1_DocumentationBoundaries pins that the
+// local operator fixture is neither the production chart nor e2e/k8s, and
+// makes no production isolation claim.
+func TestMecak8sKindFixture_Scenario1_DocumentationBoundaries(t *testing.T) {
+	body, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	baseDocs, _, _ := strings.Cut(text, "\n## Optional Keycloak login journey")
+	for _, want := range []string{
+		"operator-run", "deploy/helm/mecak8s/", "e2e/k8s/", "default-deny ingress NetworkPolicy",
+		"127.0.0.1", "NodePort", "extraPortMappings",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("fixture documentation missing boundary %q", want)
+		}
+	}
+	for _, forbidden := range []string{"production network isolation", "ToolHive", "vMCP"} {
+		if strings.Contains(baseDocs, forbidden) {
+			t.Fatalf("ToolHive-free fixture documentation contains %q", forbidden)
+		}
+	}
+}
+
 // TestMecak8sKindFixture_Scenario2_MockDefault pins the cost-free fixture
 // default: without an operator credential setup selects the canned provider and
 // never contacts a provider.
@@ -404,13 +429,19 @@ func TestMecak8sKindFixture_Scenario3_LoopbackReachability(t *testing.T) {
 }
 
 // TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn pins the identity layer's
-// independent lifecycle: the base cannot transitively install identity assets,
-// while the opt-in setup applies them only after the base is ready.
+// independent lifecycle: the base provisions broker TLS but cannot transitively
+// install optional caller-identity assets; opt-in setup applies those afterward.
 func TestMecak8sKindFixture_Scenario3_KeycloakIsOptIn(t *testing.T) {
 	base := fixtureTaskClosure(t, "kind-setup")
-	for _, forbidden := range []string{"cert-manager", "certificate-apply", "keycloak", "oidc", "tls", "values-kind-keycloak.yaml"} {
+	for _, forbidden := range []string{"cert-manager", "certificate-apply", "keycloak", "oidc", "fixture-tls.yaml", "create secret tls mecak8s-tls", "tls.enabled=true", "values-kind-keycloak.yaml"} {
 		if strings.Contains(strings.ToLower(base), forbidden) {
 			t.Fatalf("base setup transitively depends on optional identity asset %q", forbidden)
+		}
+	}
+
+	for _, want := range []string{"task: broker-tls-apply", "broker-tls-apply:", "create secret tls mecabroker-tls", "create secret generic mecabroker-ca"} {
+		if !strings.Contains(base, want) {
+			t.Fatalf("base setup missing mandatory broker TLS provisioning %q", want)
 		}
 	}
 

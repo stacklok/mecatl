@@ -280,9 +280,6 @@ func (r *Resolver) OperatorCredentialEnvironmentNames() []string {
 			if auth.OAuth == nil {
 				continue
 			}
-			if p := auth.OAuth.Client.Preregistered; p != nil {
-				names = append(names, p.SecretEnv)
-			}
 			if p := auth.OAuth.Credentials.Local; p != nil {
 				names = append(names, p.KeyEnv)
 			}

@@ -203,7 +203,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"mode: broker", "mode: none", "mode: oauth", "mode: oauth2",
 		"authorization_endpoint: https://github.com/login/oauth/authorize",
 		"token_endpoint: https://github.com/login/oauth/access_token",
-		"secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET", "token_env: MECATL_MCP_STATIC_TOKEN",
+		"secret_file: /var/run/secrets/mecatl/github-mcp-client-secret", "token_env: MECATL_MCP_STATIC_TOKEN",
 		"key_env: MECATL_MCP_CREDENTIAL_KEY",
 		"- name: get_issue", "input_schema:", "read_only: true",
 	} {
@@ -218,7 +218,7 @@ func TestMCPArtifactsShowStrictUnionWithoutSecretValues(t *testing.T) {
 		"`mcp.servers[].auth.oauth.upstream.mode`",
 		"`mcp.servers[].auth.oauth.upstream.oauth2.authorization_endpoint`",
 		"`mcp.servers[].auth.oauth.upstream.oauth2.token_endpoint`",
-		"`mcp.servers[].auth.oauth.client.preregistered.secret_env`",
+		"`mcp.servers[].auth.oauth.client.preregistered.secret_file`",
 		"`mcp.servers[].auth.oauth.client.cimd.document_url`",
 		"`mcp.servers[].auth.oauth.credentials.environment.credential_env`",
 		"`mcp.servers[].auth.oauth.network.private_origins`",

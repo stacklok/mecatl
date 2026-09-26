@@ -10,7 +10,7 @@ vars:
   STATE: .scratch/kind/mecatl-dev
   KUBECONFIG: deploy/mecak8s-kind/kconfig.yaml
   SETUP_LOCK: .scratch/kind/mecatl-dev.setup-lock
-  IMAGE: ko.local/mecak8s:dev
+  BROKER_IMAGE: ko.local/mecabroker:dev
   PROVIDER_SECRET: mecak8s-openrouter
 
 tasks:
@@ -21,6 +21,7 @@ tasks:
       - task: cluster-create
       - task: namespace-apply
       - task: image-build-load
+      - task: broker-tls-apply
       - task: chart-apply
 
   kind-keycloak-apply:
@@ -269,8 +270,9 @@ tasks:
           [ "${KIND_EXPERIMENTAL_PROVIDER:-}" != podman ] || runtime=podman
           command -v "$runtime" >/dev/null 2>&1 || { echo "$runtime is required"; exit 1; }
           KO_DOCKER_REPO=ko.local/mecak8s ko build --local --bare --tags=dev ./cmd/mecak8s >/dev/null
+          KO_DOCKER_REPO=ko.local/mecabroker ko build --local --bare --tags=dev ./cmd/mecabroker >/dev/null
           archive={{.STATE}}/mecak8s.tar
-          "$runtime" save {{.IMAGE}} -o "$archive"
+          "$runtime" save {{.IMAGE}} {{.BROKER_IMAGE}} -o "$archive"
           kind load image-archive "$archive" --name={{.CLUSTER}}
           rm -f "$archive"
 
@@ -300,6 +302,25 @@ tasks:
           rm -f "$archive"
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout restart deployment/{{.RELEASE}}-mecak8s
       - kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} rollout status deployment/{{.RELEASE}}-mecak8s --timeout=240s
+
+  broker-tls-apply:
+    internal: true
+    preconditions:
+      - sh: command -v openssl >/dev/null 2>&1
+        msg: openssl is required to create disposable Kind broker credentials
+    cmds:
+      - task: cluster-ready
+      - cmd: |
+          set -eu
+          dir={{.STATE}}/broker-tls
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout "$dir/tls.key" -out "$dir/tls.crt" \
+            -subj '/CN={{.RELEASE}}-mecak8s-broker.{{.NAMESPACE}}.svc' \
+            -addext 'subjectAltName=DNS:{{.RELEASE}}-mecak8s-broker.{{.NAMESPACE}}.svc' >/dev/null 2>&1
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create secret tls mecabroker-tls --cert="$dir/tls.crt" --key="$dir/tls.key" --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
+          kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} --namespace={{.NAMESPACE}} create secret generic mecabroker-ca --from-file=ca.pem="$dir/tls.crt" --dry-run=client -o yaml | kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} apply -f -
 
   cert-manager-install:
     internal: true
@@ -366,6 +387,6 @@ tasks:
             kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} delete secret {{.PROVIDER_SECRET}} --namespace={{.NAMESPACE}} --ignore-not-found
             provider_values=deploy/mecak8s-kind/kind-provider-mock.yaml
           fi
-          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values="$provider_values" --wait --timeout=4m
+          helm upgrade --install {{.RELEASE}} deploy/helm/mecak8s --namespace={{.NAMESPACE}} --kubeconfig={{.KUBECONFIG}} --kube-context={{.CONTEXT}} --values=deploy/helm/mecak8s/values-kind.yaml --values=deploy/mecak8s-kind/kind-nodeports.yaml --values="$provider_values" --set broker.image.repository=ko.local/mecabroker,broker.image.tag=dev,broker.clientCA.serverName={{.RELEASE}}-mecak8s-broker.{{.NAMESPACE}}.svc --wait --timeout=4m
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status statefulset/redis -n {{.NAMESPACE}} --timeout=240s
           kubectl --kubeconfig={{.KUBECONFIG}} --context={{.CONTEXT}} rollout status deployment/{{.RELEASE}}-mecak8s -n {{.NAMESPACE}} --timeout=240s

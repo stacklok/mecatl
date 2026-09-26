@@ -364,7 +364,7 @@ func TestBrokerMCPStatus_Scenario2_Lifecycle(t *testing.T) {
 }
 
 func TestConnectorInventoryBundledConstruction(t *testing.T) {
-	t.Setenv("MECATL_TEST_CLIENT_SECRET", "construction-only-secret")
+	t.Setenv("testdata/client-secret", "construction-only-secret")
 	declared := protectedToolHiveProfile("declared")
 	declared.Static = []StaticTool{{Name: "standin", Schema: json.RawMessage(`{"type":"object"}`)}}
 	p, err := NewToolHiveProcess(t.Context(), ToolHiveConfig{CallbackURL: "https://broker.example/callback", Profiles: []ToolHiveProfile{protectedToolHiveProfile("hidden"), declared}})

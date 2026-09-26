@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mecak8s.brokerFullname" . }}-config
+  labels: {{- include "mecak8s.brokerLabels" . | nindent 4 }}
+data:
+  broker.json: |
+{{ include "mecak8s.brokerConfig" . | indent 4 }}

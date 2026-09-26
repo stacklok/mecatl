@@ -362,10 +362,18 @@ Mecatl callback path. Route both paths to the same listener. See the
 [Kubernetes deployment guide](/building/deployment/mecak8s.md) for Helm
 configuration.
 
-Pending broker enrollment is process-local. After a Mecatl restart, start a new
-enrollment even if ToolHive retained its upstream tokens in Redis. Broker mode
-requires a single replica. The chart enforces `replicaCount: 1` and the
-`Recreate` strategy, so broker mode does not provide high availability.
+Broker session attachments and outer callback correlation remain process-local.
+The current standalone `mecabroker` singleton does not wire Redis storage for
+inner ToolHive upstream authorization/pending/token records: both inner and
+outer broker state are in memory. Pending broker enrollment is therefore
+process-local too — after a `mecabroker` restart, start a new enrollment even
+if a longer-lived deployment eventually preserves ToolHive's inner tokens; a
+broker replacement is a reauthorization boundary, not recovery of a prior
+enrollment. Agent sessions and their event log remain Redis-backed
+independently of broker state. Broker mode requires a single replica: the
+chart enforces `replicaCount: 1` and the `Recreate` strategy on the
+`mecabroker` workload, so broker mode does not provide high availability, and
+the chart's agent replicas share that one singleton broker.
 
 The legacy bearer path is simpler for a server that does not need OAuth:
 

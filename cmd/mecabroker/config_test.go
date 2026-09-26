@@ -1,11 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/yaml"
 )
 
 func TestReadConfigRejectsCaseInsensitiveDuplicateMembers(t *testing.T) {
@@ -15,6 +20,58 @@ func TestReadConfigRejectsCaseInsensitiveDuplicateMembers(t *testing.T) {
 	}
 	if _, err := readConfig(path); err == nil {
 		t.Fatal("case-insensitive duplicate JSON members accepted")
+	}
+}
+
+func TestManagedMCPRenderedBrokerConfigAdmitsStrictParser(t *testing.T) {
+	cmd := exec.Command("helm", "template", "production", "../../deploy/helm/mecak8s", "-f", "../../deploy/helm/mecak8s/ci/broker-mcp-values.yaml")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, output)
+	}
+	var configMap corev1.ConfigMap
+	for _, document := range strings.Split(string(output), "\n---") {
+		var candidate corev1.ConfigMap
+		if yaml.Unmarshal([]byte(document), &candidate) == nil && candidate.Kind == "ConfigMap" && candidate.Data["broker.json"] != "" {
+			configMap = candidate
+			break
+		}
+	}
+	if configMap.Data == nil {
+		t.Fatal("rendered chart has no broker.json ConfigMap entry")
+	}
+	var rendered map[string]any
+	if err := json.Unmarshal([]byte(configMap.Data["broker.json"]), &rendered); err != nil {
+		t.Fatalf("rendered broker.json: %v", err)
+	}
+	profiles := rendered["profiles"].([]any)
+	oauth := profiles[0].(map[string]any)["oauth"].(map[string]any)
+	if oauth["client_mode"] != "preregistered" {
+		t.Fatalf("rendered managed MCP client_mode = %v", oauth["client_mode"])
+	}
+	secret := filepath.Join(t.TempDir(), "client-secret")
+	if err := os.WriteFile(secret, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configMap.Data["broker.json"] = strings.Replace(configMap.Data["broker.json"], oauth["client_secret_file"].(string), secret, 1)
+	configPath := filepath.Join(t.TempDir(), "broker.json")
+	if err := os.WriteFile(configPath, []byte(configMap.Data["broker.json"]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := readConfig(configPath)
+	if err != nil {
+		t.Fatalf("rendered broker.json rejected by strict parser: %v", err)
+	}
+	toolHive := cfg.toolHive()
+	if len(toolHive.Profiles) != 1 || toolHive.Profiles[0].OAuth == nil || toolHive.Profiles[0].OAuth.ClientID != "broker-client" || toolHive.Profiles[0].OAuth.ClientSecretFile != secret {
+		t.Fatalf("rendered config to ToolHive mapping = %#v", toolHive.Profiles)
+	}
+	storage := toolHive.ProtectedStorage
+	if storage == nil || storage.Redis.ClientConfig.Addr != "broker-redis.example.invalid:6379" || !storage.Redis.ClientConfig.TLS ||
+		storage.Redis.ClientConfig.PasswordFile != "/var/run/mecabroker/credential-store/redis/password" ||
+		storage.Encryption.ActiveID != "current" || len(storage.Encryption.Keys) != 1 ||
+		storage.Encryption.Keys[0].File != "/var/run/mecabroker/credential-store/encryption/current" {
+		t.Fatalf("rendered protected storage mapping = %#v", storage)
 	}
 }
 

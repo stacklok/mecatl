@@ -455,8 +455,9 @@
 #| mutually exclusive global or session-broker authority; broker mode carries its
 #| callback configuration and neutral route declarations. Authentication is a closed
 #| none/static_bearer/oauth union. Broker OAuth may use trusted explicit OAuth2
-#| endpoints; all secret-shaped values are MECATL_* environment references, never values
-#| in YAML. Project mcp blocks are ignored with a value-free warning.
+#| endpoints; client secrets are file references, never values in YAML. Other
+#| secret-shaped values remain MECATL_* environment references. Project mcp blocks are
+#| ignored with a value-free warning.
 # mcp:
 #   # Mode selects global or broker authority. Empty uses the command-root default.
 #   mode: ""
@@ -493,7 +494,7 @@
 #|               mode: preregistered
 #|               preregistered:
 #|                 id: mecatl-github-mcp
-#|                 secret_env: MECATL_GITHUB_MCP_CLIENT_SECRET
+#|                 secret_file: /var/run/secrets/mecatl/github-mcp-client-secret
 #|             scopes: [repo]
 #|             request_refresh_token: true
 #|             network: {}

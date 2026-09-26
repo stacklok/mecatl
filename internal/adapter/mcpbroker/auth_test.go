@@ -12,9 +12,12 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 
 	"github.com/stacklok/mecatl/engine/session"
@@ -23,6 +26,152 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	contract "github.com/stacklok/mecatl/internal/mcpbroker"
 )
+
+func TestExpiredCallbackStatesReleaseCapacityBeforeLogicalRetention(t *testing.T) {
+	catalogue, err := Compile(protectedConfig("https://tokens.example/token"), []ToolDefinition{{Backend: "github", Name: "mcp__github__create"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := New(catalogue,
+		func(_ context.Context, _ SessionRef, _ string, call session.ToolCall) (session.ToolResult, error) {
+			return session.NewToolResult(call.ID, "ok"), nil
+		},
+		WithAuthorizedCaller(func(_ context.Context, _ SessionRef, _ string, call session.ToolCall, _ oauth2.TokenSource) (session.ToolResult, error) {
+			return session.NewToolResult(call.ID, "ok"), nil
+		}),
+		WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "secret", nil }),
+		WithOAuthLimits(15*time.Millisecond, time.Second),
+		WithLimits(Limits{MaxPendingStates: 1, SweepInterval: time.Millisecond, LogicalRetention: time.Hour}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	attachment, _, err := runtime.AttachSession(t.Context(), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	localSessionHandle, ok := attachment.(*Attachment)
+	if !ok {
+		t.Fatal("runtime returned unexpected attachment type")
+	}
+	requester := toolByName(t, localSessionHandle, "mcp__github__create").(tool.AuthorizationRequester)
+	first, required, err := requester.RequestAuthorization(t.Context(), session.ToolCall{ID: "first", Name: "mcp__github__create", Args: []byte(`{}`)})
+	if err != nil || !required {
+		t.Fatalf("first authorization = (%+v, %v, %v)", first, required, err)
+	}
+	runtime.stateMu.Lock()
+	state := runtime.states
+	var transaction *authorizationTransaction
+	for _, indexed := range state {
+		transaction = indexed.transaction
+	}
+	runtime.stateMu.Unlock()
+	if transaction == nil {
+		t.Fatal("missing pending callback transaction")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runtime.stateMu.Lock()
+		remaining := len(runtime.states)
+		runtime.stateMu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	localSessionHandle.logical.mu.Lock()
+	retainedSecret := transaction.clientSecret != "" || transaction.verifier != "" || transaction.state != ""
+	localSessionHandle.logical.mu.Unlock()
+	if retainedSecret {
+		t.Fatal("expired transaction retained secret callback material")
+	}
+	second, required, err := requester.RequestAuthorization(t.Context(), session.ToolCall{ID: "second", Name: "mcp__github__create", Args: []byte(`{}`)})
+	if err != nil || !required || second.ID == "" {
+		t.Fatalf("expired callback capacity was not recovered: (%+v, %v, %v)", second, required, err)
+	}
+}
+
+func TestCompileRejectsPlaintextProtectedEndpoints(t *testing.T) {
+	for _, endpoint := range []string{"authorization", "token", "callback"} {
+		t.Run(endpoint, func(t *testing.T) {
+			config := protectedConfig("https://tokens.example/token")
+			route := &config.Routes[0]
+			switch endpoint {
+			case "authorization":
+				route.Auth.OAuth.Upstream.OAuth2.AuthorizationEndpoint = "http://accounts.example/authorize"
+			case "token":
+				route.Auth.OAuth.Upstream.OAuth2.TokenEndpoint = "http://tokens.example/token"
+			case "callback":
+				config.CallbackURL = "http://client.example/oauth/callback"
+			}
+			if _, err := Compile(config, []ToolDefinition{{Backend: "github", Name: "mcp__github__create"}}, nil); err == nil {
+				t.Fatal("Compile accepted a plaintext protected endpoint")
+			}
+		})
+	}
+}
+
+func TestInvariant_singleton_broker_loopback_relaxation_is_test_only(t *testing.T) {
+	var requests atomic.Int32
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenServer.Close()
+
+	catalogue, err := Compile(protectedConfig(tokenServer.URL), []ToolDefinition{{Backend: "github", Name: "mcp__github__create", Schema: json.RawMessage(`{"type":"object"}`)}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller := AuthorizedCaller(func(_ context.Context, _ SessionRef, _ string, call session.ToolCall, _ oauth2.TokenSource) (session.ToolResult, error) {
+		return session.NewToolResult(call.ID, "ok"), nil
+	})
+	anonymous := Caller(func(_ context.Context, _ SessionRef, _ string, call session.ToolCall) (session.ToolResult, error) {
+		return session.NewToolResult(call.ID, "ok"), nil
+	})
+	production, err := New(catalogue, anonymous, WithAuthorizedCaller(caller))
+	if err != nil {
+		t.Fatalf("production runtime: %v", err)
+	}
+	defer production.Close()
+	request, err := http.NewRequest(http.MethodPost, tokenServer.URL, strings.NewReader("grant_type=authorization_code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.SetBasicAuth("client", "secret")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if response, requestErr := production.oauth.httpClient.Do(request); requestErr == nil {
+		_ = response.Body.Close()
+		t.Fatal("production OAuth client reached a loopback token endpoint")
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("production OAuth client dispatched %d loopback requests", requests.Load())
+	}
+
+	roots := x509.NewCertPool()
+	roots.AddCert(tokenServer.Certificate())
+	testRuntime, err := New(catalogue, anonymous, WithAuthorizedCaller(caller), WithOAuthLoopbackForTest(t, roots))
+	if err != nil {
+		t.Fatalf("test runtime: %v", err)
+	}
+	defer testRuntime.Close()
+	request, err = http.NewRequest(http.MethodPost, tokenServer.URL, strings.NewReader("grant_type=authorization_code"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.SetBasicAuth("client", "secret")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := testRuntime.oauth.httpClient.Do(request)
+	if err != nil {
+		t.Fatalf("test-only loopback request: %v", err)
+	}
+	_ = response.Body.Close()
+	if requests.Load() != 1 {
+		t.Fatalf("test-only OAuth client dispatched %d requests, want 1", requests.Load())
+	}
+}
 
 func protectedConfig(tokenURL string) mcpauthority.BrokerConfig {
 	return mcpauthority.BrokerConfig{
@@ -33,7 +182,7 @@ func protectedConfig(tokenURL string) mcpauthority.BrokerConfig {
 				Upstream: &permconfig.MCPOAuthUpstreamProfile{Mode: "oauth2", OAuth2: &permconfig.MCPOAuth2UpstreamProfile{
 					AuthorizationEndpoint: "https://accounts.example/authorize", TokenEndpoint: tokenURL,
 				}},
-				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretEnv: "MECATL_TEST_CLIENT_SECRET"}},
+				Client: permconfig.MCPOAuthClientProfile{Mode: "preregistered", Preregistered: &permconfig.MCPPreregisteredClientProfile{ID: "client-id", SecretFile: "testdata/client-secret"}},
 				Scopes: []string{"issues:write"}, RequestRefreshToken: true,
 			}},
 		}},
@@ -74,7 +223,7 @@ func newProtectedHarness(t *testing.T, tokenServer *httptest.Server) *protectedH
 		},
 		WithAuthorizedCaller(authorized),
 		WithOAuthLoopbackForTest(t, roots),
-		WithOAuthSecretResolver(func(context.Context, string) (string, error) { return "client-secret", nil }),
+		WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "client-secret", nil }),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -437,19 +586,82 @@ func TestADR_0326_LazyGrantRefreshRetryReusesPublishedSnapshot(t *testing.T) {
 	}
 }
 
-func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {
+func TestSingletonBrokerRemediation_Scenario5_CallbackCorrelationReplayAndNonDisclosure(t *testing.T) {
+	var exchanges atomic.Int32
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		exchanges.Add(1)
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"access","token_type":"Bearer"}`))
+	}))
+	defer tokenServer.Close()
+
+	harness := newProtectedHarness(t, tokenServer)
+	defer harness.runtime.Close()
+	first, _ := attach(t, harness.runtime, "first-enrollment")
+	second, _ := attach(t, harness.runtime, "second-enrollment")
+	firstAuth, firstState := requestProtected(t, first, session.NewToolCall("first", "mcp__github__create", json.RawMessage(`{"title":"one"}`)))
+	_, secondState := requestProtected(t, second, session.NewToolCall("second", "mcp__github__create", json.RawMessage(`{"title":"two"}`)))
+	if len(firstState) < 43 || firstState == secondState {
+		t.Fatalf("callback state is not a unique 256-bit opaque value: %q / %q", firstState, secondState)
+	}
+
+	genericReject := func(raw string) {
+		t.Helper()
+		response := httptest.NewRecorder()
+		harness.runtime.CallbackHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, raw, nil))
+		body := response.Body.String()
+		if response.Code != http.StatusBadRequest || body != "invalid OAuth callback\n" {
+			t.Fatalf("callback %q = (%d, %q), want one generic rejection", raw, response.Code, body)
+		}
+		for _, secret := range []string{firstState, secondState, "first-enrollment", "second-enrollment", "authorization-code"} {
+			if strings.Contains(body, secret) {
+				t.Fatalf("callback rejection disclosed %q in %q", secret, body)
+			}
+		}
+	}
+	genericReject("/callback")
+	genericReject("/callback?code=x&state=not-a-state")
+	genericReject("/callback?code=x&state=" + url.QueryEscape(firstState) + "&session=second-enrollment")
+	if exchanges.Load() != 0 {
+		t.Fatalf("hostile callbacks reached token exchange %d times", exchanges.Load())
+	}
+	if status, err := first.AuthorizationStatus(t.Context(), firstAuth); err != nil || status != session.AuthorizationPending {
+		t.Fatalf("hostile callback changed first enrollment: %q, %v", status, err)
+	}
+
+	if got := callback(t, harness.runtime, "authorization-code", firstState); got.Code != http.StatusOK {
+		t.Fatalf("valid final callback status = %d", got.Code)
+	}
+	if exchanges.Load() != 1 {
+		t.Fatalf("valid callback exchanges = %d, want 1", exchanges.Load())
+	}
+	genericReject("/callback?code=authorization-code&state=" + url.QueryEscape(firstState))
+	if exchanges.Load() != 1 {
+		t.Fatalf("replayed callback exchanged code %d times", exchanges.Load())
+	}
+
+	clock := time.Now().Add(2 * time.Hour)
+	harness.runtime.oauth.now = func() time.Time { return clock }
+	genericReject("/callback?code=authorization-code&state=" + url.QueryEscape(secondState))
+	if exchanges.Load() != 1 {
+		t.Fatalf("expired callback exchanged code %d times", exchanges.Load())
+	}
+}
+
+func TestADR_0312_SingletonBrokerConfidentialClientCustody(t *testing.T) {
+	assertToolHiveProtectedClientIsConfidential(t)
+
 	var exchanges, refreshes int
 	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if err := request.ParseForm(); err != nil {
 			t.Error(err)
 			return
 		}
-		user, password, ok := request.BasicAuth()
-		if !ok || user != "client-id" || password != "client-secret" {
-			t.Errorf("BasicAuth = (%q, %q, %v)", user, password, ok)
-		}
-		if secret := request.Form.Get("client_secret"); secret != "" {
-			t.Errorf("client_secret form value = %q", secret)
+		if !validConfidentialTokenRequest(request, "client-id", "client-secret") {
+			t.Errorf("token request violates confidential-client custody")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch request.Form.Get("grant_type") {
@@ -505,6 +717,131 @@ func TestProtectedCallCallbackSingleUseAndRefreshCustody(t *testing.T) {
 	}
 	if _, err := toolByName(t, attachment, call.Name).Execute(t.Context(), call, tool.Environment{}); err == nil || !strings.Contains(err.Error(), "replay refused") {
 		t.Fatalf("ambiguous replay error = %v", err)
+	}
+	assertToolHiveRedisPreservesOnlyInnerPendingState(t)
+}
+
+func validConfidentialTokenRequest(request *http.Request, clientID, secret string) bool {
+	user, password, ok := request.BasicAuth()
+	return ok && user == clientID && password == secret && request.Form.Get("client_secret") == ""
+}
+
+func TestConfidentialTokenCustodyOracleRejectsPlantedViolations(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "https://issuer.example/token", strings.NewReader("client_secret=planted"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth("client-id", "client-secret")
+	if err := request.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if validConfidentialTokenRequest(request, "client-id", "client-secret") {
+		t.Fatal("custody oracle accepted a planted form secret")
+	}
+	request = httptest.NewRequest(http.MethodPost, "https://issuer.example/token", nil)
+	request.SetBasicAuth("client-id", "wrong-secret")
+	if validConfidentialTokenRequest(request, "client-id", "client-secret") {
+		t.Fatal("custody oracle accepted a planted Basic password")
+	}
+}
+
+func assertToolHiveRedisPreservesOnlyInnerPendingState(t *testing.T) {
+	t.Helper()
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+
+	var tokenRequests atomic.Int32
+	tokenServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		tokenRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"inner-access","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(tokenServer.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(tokenServer.Certificate())
+	t.Setenv("testdata/client-secret", "upstream-secret")
+	config := ToolHiveConfig{
+		CallbackURL: "https://broker.example/oauth/callback", AuthRedisClient: redisClient,
+		Profiles: []ToolHiveProfile{{Name: "github", URL: "https://mcp.example/mcp", Auth: "oauth", OAuth: &ToolHiveOAuth{
+			AuthorizationEndpoint: "https://identity.example/authorize", TokenEndpoint: tokenServer.URL + "/token",
+			ClientID: "redis-custody", ClientSecretFile: "testdata/client-secret", Scopes: []string{"read"},
+		}, Static: []StaticTool{{Name: "create", Schema: json.RawMessage(`{"type":"object"}`), ReadOnly: true}}}},
+	}
+	options := []Option{WithOAuthLoopbackForTest(t, roots), WithOAuthSecretFileReader(func(context.Context, string) (string, error) { return "upstream-secret", nil })}
+	first, err := NewToolHiveProcess(t.Context(), config, options...)
+	if err != nil {
+		t.Fatalf("construct Redis-backed ToolHive process: %v", err)
+	}
+	attachment, _, err := first.Runtime.AttachSession(t.Context(), "redis-custody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := attachment.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	requester := attachment.Tools()[0].(tool.AuthorizationRequester)
+	authorization, required, err := requester.RequestAuthorization(t.Context(), session.NewToolCall("redis-call", "mcp__github__create", json.RawMessage(`{}`)))
+	if err != nil || !required {
+		t.Fatalf("outer authorization = (%+v, %v, %v)", authorization, required, err)
+	}
+	presentation, err := attachment.PresentAuthorization(t.Context(), authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outerURL, err := url.Parse(presentation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outerState := outerURL.Query().Get("state")
+	mux := http.NewServeMux()
+	if err := first.Handlers.Mount(mux, "/oauth/callback"); err != nil {
+		t.Fatal(err)
+	}
+	start := httptest.NewRecorder()
+	mux.ServeHTTP(start, httptest.NewRequest(http.MethodGet, outerURL.RequestURI(), nil))
+	if start.Code != http.StatusFound {
+		t.Fatalf("embedded authorize status = %d body=%q", start.Code, start.Body.String())
+	}
+	upstream, err := url.Parse(start.Header().Get("Location"))
+	if err != nil || upstream.Query().Get("state") == "" {
+		t.Fatalf("upstream redirect = %q, %v", start.Header().Get("Location"), err)
+	}
+	innerState := upstream.Query().Get("state")
+	pendingKey := toolHiveAuthStoragePrefix + "pending:" + strings.ToUpper(innerState)
+	if !redisServer.Exists(pendingKey) {
+		t.Fatalf("ToolHive pending state was not stored in Redis: %q", pendingKey)
+	}
+	if dump := redisServer.Dump(); strings.Contains(dump, "upstream-secret") || strings.Contains(dump, outerState) {
+		t.Fatalf("Redis crossed the custody boundary with an outer credential or callback state: %s", dump)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	config.AuthRedisClient = redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	replacement, err := NewToolHiveProcess(t.Context(), config, options...)
+	if err != nil {
+		t.Fatalf("replace Redis-backed ToolHive process: %v", err)
+	}
+	defer replacement.Close()
+	replacementMux := http.NewServeMux()
+	if err := replacement.Handlers.Mount(replacementMux, "/oauth/callback"); err != nil {
+		t.Fatal(err)
+	}
+	outer := httptest.NewRecorder()
+	replacementMux.ServeHTTP(outer, httptest.NewRequest(http.MethodGet, "/oauth/callback?"+url.Values{"code": {"old-code"}, "state": {outerState}}.Encode(), nil))
+	if outer.Code != http.StatusBadRequest || outer.Body.String() != "invalid OAuth callback\n" {
+		t.Fatalf("restarted outer callback = (%d, %q)", outer.Code, outer.Body.String())
+	}
+	if tokenRequests.Load() != 0 {
+		t.Fatal("lost outer state reached an upstream token endpoint")
+	}
+
+	inner := httptest.NewRecorder()
+	replacementMux.ServeHTTP(inner, httptest.NewRequest(http.MethodGet, "/v1/mcp/broker/oauth/callback?"+url.Values{"code": {"invalid-code"}, "state": {innerState}}.Encode(), nil))
+	if inner.Code == http.StatusBadRequest && strings.Contains(inner.Body.String(), "not found or expired") {
+		t.Fatalf("Redis-backed inner state was lost across restart: %q", inner.Body.String())
+	}
+	if redisServer.Exists(pendingKey) {
+		t.Fatal("ToolHive replay state remained after restarted callback consumption")
 	}
 }
 
@@ -822,11 +1159,11 @@ func TestTokenExtraMetadataSurvivesScopedTokenSource(t *testing.T) {
 	}
 }
 
-// TestAttachmentCloseWaitsForRequestAuthorization pins P2-8: Close must not
+// TestSessionHandleCloseWaitsForRequestAuthorization pins P2-8: Close must not
 // return while a RequestAuthorization call is still mid-flight (blocked
 // resolving its secret), or a caller that tears down owned resources right
 // after Close returns can race a transaction this call is about to create.
-func TestAttachmentCloseWaitsForRequestAuthorization(t *testing.T) {
+func TestSessionHandleCloseWaitsForRequestAuthorization(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{})
 	catalogue, err := Compile(protectedConfig("https://token.example/token"),
@@ -841,7 +1178,7 @@ func TestAttachmentCloseWaitsForRequestAuthorization(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(ctx context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(ctx context.Context, _ string) (string, error) {
 			close(entered)
 			select {
 			case <-release:
@@ -916,7 +1253,7 @@ func TestRuntimeCloseAndDrainWaitsForActiveOperations(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-release
 			return "client-secret", nil
@@ -983,7 +1320,7 @@ func TestRuntimeCloseAndDrainIsBoundedWhenOperationHangs(t *testing.T) {
 		WithAuthorizedCaller(func(context.Context, SessionRef, string, session.ToolCall, oauth2.TokenSource) (session.ToolResult, error) {
 			return session.ToolResult{}, nil
 		}),
-		WithOAuthSecretResolver(func(_ context.Context, _ string) (string, error) {
+		WithOAuthSecretFileReader(func(_ context.Context, _ string) (string, error) {
 			close(entered)
 			<-hang // ignores ctx cancellation on purpose: a genuinely wedged op
 			return "client-secret", nil
