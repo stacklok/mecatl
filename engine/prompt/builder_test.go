@@ -188,6 +188,39 @@ func TestToolDisciplineHints(t *testing.T) {
 	}
 }
 
+// TestConfigurableCommitCoauthorGuidance_Scenario1_DefaultGuidance proves the
+// standard builder owns the default-on commit guidance in its stable prefix.
+func TestConfigurableCommitCoauthorGuidance_Scenario1_DefaultGuidance(t *testing.T) {
+	const (
+		guidance = "When creating a commit, append this exact trailer:\nCo-authored-by: Mecatl <noreply@mecatl.dev>"
+		trailer  = "Co-authored-by: Mecatl <noreply@mecatl.dev>"
+	)
+
+	enabled := true
+	for _, tt := range []struct {
+		name  string
+		cfg   prompt.Config
+		count int
+	}{
+		{name: "nil defaults enabled", cfg: prompt.Config{}, count: 1},
+		{name: "true enabled", cfg: prompt.Config{CommitCoauthor: &enabled}, count: 1},
+		{name: "false disabled", cfg: prompt.Config{CommitCoauthor: new(bool)}, count: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := prompt.Build(tt.cfg)
+			if count := strings.Count(got.StablePrefix, guidance); count != tt.count {
+				t.Errorf("StablePrefix directive count = %d, want %d:\n%s", count, tt.count, got.StablePrefix)
+			}
+			if count := strings.Count(got.StablePrefix, trailer); count != tt.count {
+				t.Errorf("StablePrefix trailer count = %d, want %d:\n%s", count, tt.count, got.StablePrefix)
+			}
+			if strings.Contains(got.VolatileSuffix, trailer) {
+				t.Errorf("VolatileSuffix must not contain commit guidance:\n%s", got.VolatileSuffix)
+			}
+		})
+	}
+}
+
 func TestToolDisciplineHintsDoNotAdvertiseAbsentDelegationTools(t *testing.T) {
 	t.Parallel()
 

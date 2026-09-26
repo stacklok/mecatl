@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Configurable standard commit co-author guidance** — adds
+  `prompt.Config.CommitCoauthor`. `nil` and `true` include the canonical Mecatl
+  commit-trailer guidance in the standard stable prompt prefix; `false` omits it.
+  Added (minor).
+
 - **Display-only latest context occupancy** — adds `session.ContextOccupancy` and
   `Session.LatestContextOccupancy` / `Session.RecordLatestContextOccupancy` for
   the optional non-zero context-meter numerator from a completed agent-loop turn.

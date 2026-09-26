@@ -16,6 +16,7 @@ const (
 	configDurationType = "duration"
 	configAbsent       = "(absent)"
 	configRequired     = "(required)"
+	configFalse        = "false"
 )
 
 // BuildModel constructs the settings.yaml Model by REFLECTING over the permconfig
@@ -37,6 +38,7 @@ func BuildModel(docs Docs) *Model {
 		harnessContextSubtree(docs),
 		learningSubtree(docs),
 		retentionSubtree(docs),
+		systemPromptSubtree(docs),
 		commandRunnerSubtree(docs),
 		temporaryStorageSubtree(docs),
 		storageManagementSubtree(docs),
@@ -82,7 +84,7 @@ func zeroDefault(t reflect.Type) string {
 	case reflect.String:
 		return "(empty)"
 	case reflect.Bool:
-		return "false"
+		return configFalse
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return "0"
 	default:
@@ -273,6 +275,18 @@ func retentionSubtree(docs Docs) *Subtree {
 	}
 	return &Subtree{Key: "retention", Tier: TierOperator, CommentedOut: true,
 		Doc: "Versioned automatic session cleanup policy. Operator-tier only; project values are ignored. Zero disables each limit. Explicit compatibility flags outrank these values.", Fields: fields}
+}
+
+func systemPromptSubtree(docs Docs) *Subtree {
+	fields := fieldsOf("SystemPromptSection", permconfig.SystemPromptSection{}, docs)
+	fields[0].Default, fields[0].ExampleValue = "true", configFalse
+	return &Subtree{
+		Key:          "system_prompt",
+		Tier:         TierOperator,
+		CommentedOut: true,
+		Doc:          "Strict standard prompt policy. Operator-tier only; project values are ignored.",
+		Fields:       fields,
+	}
 }
 
 func commandRunnerSubtree(docs Docs) *Subtree {

@@ -68,6 +68,7 @@ func authoritativeKeys() []string {
 	collect("retention.main", permconfig.RetentionLimitSection{})
 	collect("retention.child", permconfig.RetentionLimitSection{})
 	collect("retention.scheduled", permconfig.RetentionLimitSection{})
+	collect("system_prompt", permconfig.SystemPromptSection{})
 	collect("command_runner", permconfig.CommandRunnerSection{})
 	collect("command_runner.environment", permconfig.CommandRunnerEnvironment{})
 	collect("temporary_storage", permconfig.TemporaryStorageSection{})
@@ -373,6 +374,7 @@ func TestSubtreeTiersAreAsPinned(t *testing.T) {
 		"harness_context":        configgen.TierOperator, // operator-only: project content cannot register or reorder its own sources
 		"learning":               configgen.TierProject,  // project may tighten but never raise the operator ceiling
 		"retention":              configgen.TierOperator, // operator-only: project cannot enable destructive cleanup
+		"system_prompt":          configgen.TierOperator, // operator-only: project cannot weaken standard prompt guidance
 		"command_runner":         configgen.TierOperator, // operator-only: project cannot select a shell or restore ambient credentials
 		"temporary_storage":      configgen.TierOperator, // operator-only: project cannot redirect command storage or cleanup
 		"storage_management":     configgen.TierOperator, // operator-only: project cannot grant process-wide management
