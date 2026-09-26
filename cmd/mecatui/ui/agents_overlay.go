@@ -74,12 +74,17 @@ func (m Model) teamBlockForOverlay() *teamOverlaySnapshot {
 		return m.conv.latestTeamBlock()
 	}
 	for i := 0; i < m.conv.scrollback.Len(); i++ {
+		if m.conv.scrollback.MetadataAt(i).Kind != scrollback.KindTeam {
+			continue
+		}
 		snapshot := m.conv.scrollback.SnapshotAt(i)
-		if payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot); ok {
-			b := teamOverlaySnapshotFromSnapshot(snapshot.ID, payload)
-			if teamBlockIdentity(b) == m.team.aggregate {
-				return b
-			}
+		payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot)
+		if !ok {
+			continue
+		}
+		b := teamOverlaySnapshotFromSnapshot(snapshot.ID, payload)
+		if teamBlockIdentity(b) == m.team.aggregate {
+			return b
 		}
 	}
 	return nil

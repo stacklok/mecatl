@@ -703,21 +703,25 @@ func (c *conversation) liveParallel() bool {
 	return false
 }
 
-// latestTeamBlock returns the most-recent tool block that carries team lanes (a
-// Team card with at least one member lane), or nil if no team has been seen this
-// session. It scans from the end so a fresh team supersedes an earlier one — the
-// f6 overlay always reflects the latest team. The block is returned by
-// pointer so the overlay reads the live, accumulating lane state (it never
-// mutates it). A team card with no lanes yet (team.start not seen, or empty
-// roster) is skipped so the overlay never opens onto an empty roster.
+// latestTeamBlock returns the most-recent Team card with member lanes, or nil if
+// no team has been seen this session. It scans from the end so a fresh team
+// supersedes an earlier one — the f6 overlay always reflects the latest team. The
+// returned snapshot is detached; the overlay reads a fresh projection on each
+// update. A team card with no lanes yet (team.start not seen, or empty roster) is
+// skipped so the overlay never opens onto an empty roster.
 func (c *conversation) latestTeamBlock() *teamOverlaySnapshot {
 	for i := c.scrollback.Len() - 1; i >= 0; i-- {
+		if c.scrollback.MetadataAt(i).Kind != scrollback.KindTeam {
+			continue
+		}
 		snapshot := c.scrollback.SnapshotAt(i)
-		if payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot); ok {
-			b := teamOverlaySnapshotFromSnapshot(snapshot.ID, payload)
-			if len(b.teamLanes) > 0 {
-				return b
-			}
+		payload, ok := snapshot.Payload.(scrollback.TeamCardSnapshot)
+		if !ok {
+			continue
+		}
+		b := teamOverlaySnapshotFromSnapshot(snapshot.ID, payload)
+		if len(b.teamLanes) > 0 {
+			return b
 		}
 	}
 	return nil
