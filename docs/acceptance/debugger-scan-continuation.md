@@ -4,12 +4,12 @@
 **Work classification:** Bounded — extend the existing target-bound debugger with the existing cursor port; preserve storage ownership, event formats, and authorization decisions.
 **Decision record:** None — this proposal composes the established cursor and debugger-handle contracts without adding a backend capability, durable key, retained registry, or new authority source.
 **Phase:** Stored-session diagnosis
-**Status:** proposed, 2026-09-25. Delivery scope accepted by the operator; awaiting the Split Plan / Interface approval checkpoint.
+**Status:** in-progress, 2026-09-25. Implementation is stacked on the operator-accepted plan; aggregate verification and final review are pending.
 **Delivery:** Split. The operator explicitly authorized a stacked implementation PR before plan merge on 2026-09-25; retain separate plan/interface and implementation reviews and human merge authority.
-**Expected tasks:** deferred to orchestration
+**Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1914](https://github.com/stacklok/mecatl/issues/1914).
-**Plan PR:** Not opened; local drafting only.
-**Approved baseline:** Not approved.
+**Plan PR:** [#1963](https://github.com/stacklok/mecatl/pull/1963).
+**Approved baseline:** `ed191cbe513552a9c6e40658c12f7f27dd9935d8`, accepted for stacked implementation by explicit operator authorization; not claimed merged into main.
 
 A debugger inspecting a long retained log can continue beyond the first 10,000
 records while retaining the 10,000-record projection budget. It can page rows
