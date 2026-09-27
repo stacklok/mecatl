@@ -49,8 +49,8 @@ daemon's capability answers ([ADR 0351](../adr/0351-mecatl-studio-in-repo-web-ui
 [architecture](../architecture.md), "Mecatl Studio").
 
 **Acceptance:**
-- AC1.1: `GET /api/v1/sessions` pages through `client.sessions.list` until the cursor is exhausted, skips rows without an id and rows whose `publicChat` reason is `inspect_only_kind` unless they are debug sessions, and reports `complete: false` when a cursor repeats or the page cap is hit.
-  - verify: vitest:apps/server/src/mecatl/chat.test.ts#ZmlsdGVycyBpbnNwZWN0LW9ubHkgc2Vzc2lvbnMgYW5kIHJlcG9ydHMgYW4gaW5jb21wbGV0ZSBpbnZlbnRvcnkgb24gYSBjdXJzb3IgbG9vcA — `apps/server/src/mecatl/chat.test.ts :: "filters inspect-only sessions and reports an incomplete inventory on a cursor loop"`
+- AC1.1: `GET /api/v1/sessions` pages through `client.sessions.list` until the cursor is exhausted, skips rows without an id, includes rows whose `publicChat` reason is `inspect_only_kind`, and reports `complete: false` when a cursor repeats or the page cap is hit.
+  - verify: vitest:apps/server/src/mecatl/chat.test.ts#aW5jbHVkZXMgaW5zcGVjdC1vbmx5IHNlc3Npb25zIGFuZCByZXBvcnRzIGFuIGluY29tcGxldGUgaW52ZW50b3J5IG9uIGEgY3Vyc29yIGxvb3A — `apps/server/src/mecatl/chat.test.ts :: "includes inspect-only sessions and reports an incomplete inventory on a cursor loop"`
 - AC1.2: each row carries the daemon's delete/rename capability booleans and reasons, ISO timestamps derived from the daemon's unix seconds (empty when zero), the title fallback chain (metadata title → title → `Untitled chat`), and the bound debug target id or empty string.
   - verify: vitest:apps/server/src/mecatl/chat.test.ts#ZXhwb3NlcyBhIGRlYnVnIHNlc3Npb24ncyBib3VuZCB0YXJnZXQgb24gdGhlIGxpc3Qgcm93LCBlbXB0eSBmb3IgYW4gb3JkaW5hcnkgY2hhdA — `apps/server/src/mecatl/chat.test.ts :: "exposes a debug session's bound target on the list row, empty for an ordinary chat"`
 - AC1.3: `POST /api/v1/sessions` maps `mode`, `model`, `reasoningEffort`, and `toolAccess` to the SDK's create options; `toolAccess: noFilesystem` and any `debugTargetSessionId` force the `no-fs` profile and forward the target id.
