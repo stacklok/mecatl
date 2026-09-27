@@ -77,20 +77,24 @@ require 'go_relevant=true' 'go_relevant must start fail-closed to RUN'
 require 'sdk_relevant=true' 'sdk_relevant must start fail-closed to RUN'
 require 'site_relevant=true' 'site_relevant must start fail-closed to RUN'
 require 'studio_relevant=true' 'studio_relevant must start fail-closed to RUN'
+require 'microvm_relevant=true' 'microvm_relevant must start fail-closed to RUN'
 require 'go_relevant: ${{ steps.classify.outputs.go_relevant }}' 'go_relevant must be a changes-job output'
 require 'sdk_relevant: ${{ steps.classify.outputs.sdk_relevant }}' 'sdk_relevant must be a changes-job output'
 require 'site_relevant: ${{ steps.classify.outputs.site_relevant }}' 'site_relevant must be a changes-job output'
 require 'studio_relevant: ${{ steps.classify.outputs.studio_relevant }}' 'studio_relevant must be a changes-job output'
+require 'microvm_relevant: ${{ steps.classify.outputs.microvm_relevant }}' 'microvm_relevant must be a changes-job output'
 require 'relevant_classifier="$RUNNER_TEMP/relevant-changes.sh"' 'trusted classifier must be extracted outside the candidate checkout'
 require 'if git show "$base:.github/scripts/relevant-changes.sh" > "$relevant_classifier"; then' 'classifier extraction must read the trusted base ref and stay fail-closed'
 require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" go)" || go_relevant=true' 'go relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
 require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true' 'sdk relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
 require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true' 'site relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
 require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" studio)" || studio_relevant=true' 'studio relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
+require 'git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" microvm)" || microvm_relevant=true' 'microvm relevance must use merge-base-to-head no-renames NUL paths and fail closed to RUN'
 require 'echo "go_relevant=$go_relevant"' 'go_relevant must be written to GITHUB_OUTPUT'
 require 'echo "sdk_relevant=$sdk_relevant"' 'sdk_relevant must be written to GITHUB_OUTPUT'
 require 'echo "site_relevant=$site_relevant"' 'site_relevant must be written to GITHUB_OUTPUT'
 require 'echo "studio_relevant=$studio_relevant"' 'studio_relevant must be written to GITHUB_OUTPUT'
+require 'echo "microvm_relevant=$microvm_relevant"' 'microvm_relevant must be written to GITHUB_OUTPUT'
 
 # The candidate checkout's classifier must never run (a PR could tamper with it).
 if grep -Fq 'bash .github/scripts/relevant-changes.sh' "$workflow" \
@@ -136,6 +140,15 @@ assert_if user-docs hasnot "docs_only"
 assert_if studio has "needs.changes.outputs.studio_relevant == 'true' || needs.changes.outputs.go_relevant == 'true'"
 assert_if studio has "needs.changes.outputs.docs_only != 'true'"
 assert_if studio hasnot "sdk_relevant"
+
+# The opt-in MicroVM runtime gets a dedicated relevance output. Its standalone job
+# and the four nested-module steps must not run for unrelated Go changes.
+assert_if microvm-standalone has "needs.changes.outputs.microvm_relevant == 'true'"
+for job in build test-race-root-a test-non-race-draft analysis; do
+  if ! grep -Fq "if: needs.changes.outputs.microvm_relevant == 'true'" <<<"$(job_block "$job")"; then
+    fail "job '$job' must gate its MicroVM-specific step on microvm_relevant"
+  fi
+done
 
 # Drift guard: pin the number of job-level `if:` gates carrying go_relevant so
 # adding or removing a Go-gated job forces a conscious update to the job lists

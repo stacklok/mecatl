@@ -4,7 +4,7 @@
 # that family's runners. It answers ONE question per category: could any changed
 # path affect this category of job?
 #
-# Usage:  ... | bash relevant-changes.sh <go|sdk|site|studio>
+# Usage:  ... | bash relevant-changes.sh <go|sdk|site|studio|microvm>
 #
 #   go   — the Go build/test matrix (build, test-race-*, analysis/lint, vuln,
 #          fuzz-smoke, engine-standalone, provider-standalone, api-compat).
@@ -39,16 +39,21 @@
 #          relevant ONLY to apps/ and to the CI-control files that define the job
 #          and its task recipes (.github/, Taskfile.yml). Everything else is
 #          irrelevant.
+#   microvm — the opt-in nested runtime's build, test, lint, standalone, and live
+#          hypervisor jobs. It runs for that runtime's direct root integration
+#          closure and the exact workflow/scripts that execute those jobs. Other
+#          known component trees skip; unknown paths run fail-closed.
 #
 # The classification is fail-closed. Any malformed, empty, or unterminated input
 # prints "true" (RUN the family) regardless of category, and an unknown category
 # treats nothing as provably irrelevant. For the `go` category, any path outside
 # the small irrelevant allowlist also prints "true" (RUN) — the expensive/critical
 # path defaults to running. The `sdk`, `site`, and `studio` categories use small
-# positive allowlists covering both their content directories AND the CI-control files
-# (.github/, Taskfile.yml) that define the job and its task recipes, so a
-# well-formed path outside the allowlist cannot affect them; the
-# category-independent malformed-input backstop below still fails to RUN.
+# positive allowlists covering both their content directories AND the CI-control
+# files (.github/, Taskfile.yml) that define the job and its task recipes, so a
+# well-formed path outside the allowlist cannot affect them. `microvm` uses known
+# unrelated component trees to skip while unknown paths remain fail-closed. The
+# category-independent malformed-input backstop always runs.
 # The script prints "false" (SKIP) only when the input is well-formed, non-empty,
 # and EVERY path is irrelevant. It never evaluates a path as shell code.
 #
@@ -101,6 +106,17 @@ irrelevant() {
         apps/*|.github/*|Taskfile.yml) return 1 ;;
       esac
       return 0
+      ;;
+    microvm)
+      # The runtime's nested module and direct root integration closure must run.
+      # Known separate components cannot alter it; unknown paths remain fail-closed.
+      case "$1" in
+        environment/microvm/*|engine/*|internal/adapter/microvm/*|internal/adapter/microvmmanager/*|internal/app/*|cmd/mecated/*|cmd/mecatui/*|go.mod|go.sum|go.work|Taskfile.yml|.golangci.yml|.github/workflows/ci.yml|.github/workflows/microvm-e2e.yml|.github/scripts/relevant-changes.sh|.github/scripts/relevant-changes_test.sh|.github/scripts/relevant-changes-workflow_test.sh|.github/scripts/race-test.sh|.github/scripts/root-race-packages.sh|.github/scripts/microvm-ci-release_test.sh|.github/scripts/install-microvm-release.sh)
+          return 1 ;;
+        README.md|docs/*|user-docs/*|website/*|sdk/*|apps/*|authn/*|provider/*|contracts/*|deploy/*|examples/*|perf/*|cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|internal/adapter/*|internal/apicheck/*|internal/buildinfo/*|internal/codex/*|internal/fixture/*|internal/test/*)
+          return 0 ;;
+      esac
+      return 1
       ;;
     *)
       # Unknown category: nothing is provably irrelevant, so fail closed to RUN.

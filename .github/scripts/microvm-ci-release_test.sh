@@ -47,10 +47,28 @@ require 'onerror=traversal_error' "$prepare_dev"
 # Ordinary PR CI must cross the nested-module boundary at every relevant gate.
 require 'environment/microvm/go.sum' "$ci"
 require 'cd environment/microvm && go build ./...' "$ci"
-require '(cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...)' "$ci"
+require 'run: cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...' "$ci"
 require 'cd environment/microvm && golangci-lint run --config ../../.golangci.yml' "$ci"
 require 'name: MicroVM module (standalone, GOWORK=off)' "$ci"
+require "if: needs.changes.outputs.microvm_relevant == 'true'" "$ci"
 require 'GOWORK: off' "$ci"
+
+# The dedicated real-hypervisor workflow is expensive, so it triggers only for
+# the runtime's direct closure and the exact CI controls that execute it.
+for path in \
+  'environment/microvm/**' 'engine/**' 'internal/adapter/microvm/**' \
+  'internal/adapter/microvmmanager/**' 'internal/app/**' 'cmd/mecated/**' \
+  'cmd/mecatui/**' 'go.mod' 'go.sum' 'go.work' 'Taskfile.yml' '.golangci.yml' \
+  '.github/workflows/ci.yml' '.github/workflows/microvm-e2e.yml' \
+  '.github/scripts/relevant-changes.sh' '.github/scripts/relevant-changes_test.sh' \
+  '.github/scripts/relevant-changes-workflow_test.sh' '.github/scripts/race-test.sh' \
+  '.github/scripts/root-race-packages.sh' '.github/scripts/microvm-ci-release_test.sh' \
+  '.github/scripts/install-microvm-release.sh'; do
+  test "$(grep -Fc "      - $path" "$e2e")" -eq 2 || {
+    echo "MicroVM E2E path filter must contain $path for push and pull_request" >&2
+    exit 1
+  }
+done
 
 # Hosted KVM repair makes the daemon runner's primary group the device-owning
 # kvm group. The libkrun user namespace maps only the daemon's real UID/GID and

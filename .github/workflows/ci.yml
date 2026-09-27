@@ -71,11 +71,13 @@ jobs:
       # change provably cannot affect that family. go_relevant gates the Go
       # build/test matrix; sdk_relevant gates the pure-TypeScript SDK unit job;
       # site_relevant gates the Docusaurus site build; studio_relevant gates the
-      # Mecatl Studio (apps/) job.
+      # Mecatl Studio (apps/) job; microvm_relevant gates the opt-in runtime's
+      # nested-module checks.
       go_relevant: ${{ steps.classify.outputs.go_relevant }}
       sdk_relevant: ${{ steps.classify.outputs.sdk_relevant }}
       site_relevant: ${{ steps.classify.outputs.site_relevant }}
       studio_relevant: ${{ steps.classify.outputs.studio_relevant }}
+      microvm_relevant: ${{ steps.classify.outputs.microvm_relevant }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,6 +107,7 @@ jobs:
           sdk_relevant=true
           site_relevant=true
           studio_relevant=true
+          microvm_relevant=true
           case "$EVENT_NAME" in
             pull_request)
               base="$PR_BASE_SHA"
@@ -159,6 +162,7 @@ jobs:
                 sdk_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" sdk)" || sdk_relevant=true
                 site_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" site)" || site_relevant=true
                 studio_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" studio)" || studio_relevant=true
+                microvm_relevant="$(git diff --name-only --no-renames -z "$compare_base" "$head" | bash "$relevant_classifier" microvm)" || microvm_relevant=true
               fi
             fi
           fi
@@ -171,6 +175,7 @@ jobs:
             echo "sdk_relevant=$sdk_relevant"
             echo "site_relevant=$site_relevant"
             echo "studio_relevant=$studio_relevant"
+            echo "microvm_relevant=$microvm_relevant"
           } >> "$GITHUB_OUTPUT"
 
       # Validate the path classifiers HERE, in the always-run changes job — never
@@ -674,6 +679,7 @@ jobs:
         run: cd authn/oidc && go build ./...
 
       - name: go build (microVM module)
+        if: needs.changes.outputs.microvm_relevant == 'true'
         run: cd environment/microvm && go build ./...
 
       # provider/ holds the opt-in LLM-provider Go submodules (ADR 0093), each
@@ -827,11 +833,15 @@ jobs:
           bash .github/scripts/race-test.sh root-a -count=1 "${packages[@]}"
           (cd engine && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...)
           (cd authn/oidc && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...)
-          (cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...)
           (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
           (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
           (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
           (cd provider/openaichat && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openaichat ./...)
+      - name: go test -race (microVM module)
+        if: needs.changes.outputs.microvm_relevant == 'true'
+        env:
+          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
+        run: cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...
       - name: Upload root-a race timing records
         if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -950,11 +960,13 @@ jobs:
           go test -count=1 ./cmd/mecatui/ui
           (cd engine && go test ./...)
           (cd authn/oidc && go test ./...)
-          (cd environment/microvm && go test ./...)
           (cd provider/ssefilter && go test ./...)
           (cd provider/anthropic && go test ./...)
           (cd provider/openai && go test ./...)
           (cd provider/openaichat && go test ./...)
+      - name: go test (microVM module)
+        if: needs.changes.outputs.microvm_relevant == 'true'
+        run: cd environment/microvm && go test ./...
 
   # The stable required context is emitted only by full-race push/non-draft PR
   # runs. Draft coverage and docs-only runs use distinct contexts.
@@ -1056,6 +1068,7 @@ jobs:
         run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       - name: golangci-lint (microVM module)
+        if: needs.changes.outputs.microvm_relevant == 'true'
         run: cd environment/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
@@ -1273,6 +1286,8 @@ jobs:
 
   microvm-standalone:
     name: MicroVM module (standalone, GOWORK=off)
+    needs: changes
+    if: needs.changes.outputs.microvm_relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

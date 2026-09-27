@@ -3,7 +3,51 @@ name: MicroVM E2E
 on:
   push:
     branches: [main]
+    paths:
+      - environment/microvm/**
+      - engine/**
+      - internal/adapter/microvm/**
+      - internal/adapter/microvmmanager/**
+      - internal/app/**
+      - cmd/mecated/**
+      - cmd/mecatui/**
+      - go.mod
+      - go.sum
+      - go.work
+      - Taskfile.yml
+      - .golangci.yml
+      - .github/workflows/ci.yml
+      - .github/workflows/microvm-e2e.yml
+      - .github/scripts/relevant-changes.sh
+      - .github/scripts/relevant-changes_test.sh
+      - .github/scripts/relevant-changes-workflow_test.sh
+      - .github/scripts/race-test.sh
+      - .github/scripts/root-race-packages.sh
+      - .github/scripts/microvm-ci-release_test.sh
+      - .github/scripts/install-microvm-release.sh
   pull_request:
+    paths:
+      - environment/microvm/**
+      - engine/**
+      - internal/adapter/microvm/**
+      - internal/adapter/microvmmanager/**
+      - internal/app/**
+      - cmd/mecated/**
+      - cmd/mecatui/**
+      - go.mod
+      - go.sum
+      - go.work
+      - Taskfile.yml
+      - .golangci.yml
+      - .github/workflows/ci.yml
+      - .github/workflows/microvm-e2e.yml
+      - .github/scripts/relevant-changes.sh
+      - .github/scripts/relevant-changes_test.sh
+      - .github/scripts/relevant-changes-workflow_test.sh
+      - .github/scripts/race-test.sh
+      - .github/scripts/root-race-packages.sh
+      - .github/scripts/microvm-ci-release_test.sh
+      - .github/scripts/install-microvm-release.sh
   workflow_dispatch:
 
 permissions:
