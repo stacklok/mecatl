@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -26,10 +27,11 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
 )
 
-const mcpLifecycleUsage = "mecated mcp {add NAME URL [--file PATH] [--credential-store auto|keyring|file] | list [--file PATH] | remove NAME [--file PATH]}"
+const mcpLifecycleUsage = "mecated mcp {add NAME URL [--file PATH] [--credential-store auto|keyring|file] | list [--file PATH] | reset-custody NAME [--file PATH] | remove NAME [--file PATH]}"
 
 var discoverMCPDirectIssuer = mcp.DiscoverDirectIssuer
 var removeMCPOAuthDCR = mcp.RemoveOAuthDCR
+var mcpResetIsTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 type mcpLifecycleArgs struct {
 	name, url, file, custody string
@@ -111,6 +113,10 @@ func parseMCPPositional(command, arg string, result *mcpLifecycleArgs) bool {
 		result.name = arg
 		return true
 	}
+	if command == "reset-custody" && result.name == "" {
+		result.name = arg
+		return true
+	}
 	return false
 }
 
@@ -119,6 +125,9 @@ func validMCPLifecycleArgs(command string, result mcpLifecycleArgs) bool {
 		return false
 	}
 	if command == "remove" && result.name == "" {
+		return false
+	}
+	if command == "reset-custody" && result.name == "" {
 		return false
 	}
 	if command == "list" && result.name != "" {
@@ -395,17 +404,17 @@ func mcpSettingsSources(target string, extra []string) ([]mcpSettingsSource, err
 	return sources, nil
 }
 
-func mcpMutationTarget(target string) (mcpSettingsSnapshot, error) {
+func mcpMutationTarget(target string) (mcpSettingsSnapshot, permconfig.Config, error) {
 	sources, err := mcpSettingsSources(target, nil)
 	if err != nil {
-		return mcpSettingsSnapshot{}, err
+		return mcpSettingsSnapshot{}, permconfig.Config{}, err
 	}
 	for i, source := range sources {
 		if i > 0 && source.config.MCP != nil {
-			return mcpSettingsSnapshot{}, fmt.Errorf("MCP settings %q supplies mcp: and would shadow writable target %q", source.path, target)
+			return mcpSettingsSnapshot{}, permconfig.Config{}, fmt.Errorf("MCP settings %q supplies mcp: and would shadow writable target %q", source.path, target)
 		}
 	}
-	return sources[0].snapshot, nil
+	return sources[0].snapshot, sources[0].config, nil
 }
 
 // secureMCPSettingsDir prevents a selected settings path from inheriting a symlinked parent.
@@ -465,14 +474,10 @@ func runMCPAddContext(ctx context.Context, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return err
 	}
-	before, err := mcpMutationTarget(path)
+	_, settings, err := mcpMutationTarget(path)
 	unlock()
 	if err != nil {
 		return err
-	}
-	var settings permconfig.Config
-	if err := yaml.Unmarshal(before.data, &settings); err != nil {
-		return fmt.Errorf("MCP settings %q is invalid: %w", path, err)
 	}
 	if settings.MCP != nil && settings.MCP.Mode == "broker" {
 		// Direct onboarding must reject the mutually exclusive broker authority
@@ -497,7 +502,7 @@ func runMCPAddContext(ctx context.Context, args []string, stdout, stderr io.Writ
 			unlock()
 		}
 	}()
-	before, err = mcpMutationTarget(path)
+	before, _, err := mcpMutationTarget(path)
 	if err != nil {
 		return err
 	}
@@ -643,6 +648,98 @@ func mcpCredentialStatus(server permconfig.MCPServerProfile) string {
 	}
 }
 
+type mcpResetTarget struct {
+	root, backend, filePath string
+	shared                  []string
+}
+
+func findMCPResetTarget(cfg permconfig.Config, name string) (mcpResetTarget, error) {
+	if cfg.MCP == nil {
+		return mcpResetTarget{}, errors.New("MCP custody reset profile was not found")
+	}
+	i := slices.IndexFunc(cfg.MCP.Servers, func(s permconfig.MCPServerProfile) bool {
+		return isNativeMCPProfile(s) && s.Name == name
+	})
+	if i < 0 {
+		return mcpResetTarget{}, errors.New("MCP custody reset requires a configured native local-key profile")
+	}
+	selected := &cfg.MCP.Servers[i]
+	root := selected.Auth.OAuth.Credentials.Local.Root
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return mcpResetTarget{}, errors.New("MCP custody reset root is unavailable")
+	}
+	target := mcpResetTarget{root: root, backend: selected.Auth.OAuth.Credentials.Local.Key.Mode}
+	if selected.Auth.OAuth.Credentials.Local.Key.File != nil {
+		target.filePath = selected.Auth.OAuth.Credentials.Local.Key.File.Path
+	}
+	for _, server := range cfg.MCP.Servers {
+		if server.Auth.OAuth == nil || server.Auth.OAuth.Credentials.Mode != "local" || server.Auth.OAuth.Credentials.Local == nil {
+			continue
+		}
+		otherRoot, evalErr := filepath.EvalSymlinks(server.Auth.OAuth.Credentials.Local.Root)
+		if evalErr != nil || otherRoot != canonicalRoot {
+			continue
+		}
+		if server.Auth.OAuth.Credentials.Local.KeyEnv != "" {
+			// A key_env profile sharing this root is never touched by reset:
+			// it uses the legacy namespace with its own independently
+			// supplied key, which reset leaves alone in every case.
+			continue
+		}
+		if server.Auth.OAuth.Credentials.Local.Key != nil {
+			target.shared = append(target.shared, server.Name)
+		}
+	}
+	return target, nil
+}
+
+func isNativeMCPProfile(server permconfig.MCPServerProfile) bool {
+	return server.Auth.OAuth != nil && server.Auth.OAuth.Credentials.Mode == "local" && server.Auth.OAuth.Credentials.Local != nil && server.Auth.OAuth.Credentials.Local.Key != nil
+}
+
+func runMCPResetCustody(args []string, input io.Reader, stdout, _ io.Writer) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if !mcpResetIsTerminal() {
+		return errors.New("MCP custody reset requires an attended terminal")
+	}
+	parsed, err := parseMCPLifecycleArgs("reset-custody", args)
+	if err != nil {
+		return err
+	}
+	path, err := mcpSettingsFile(parsed.file)
+	if err != nil {
+		return err
+	}
+	unlock, err := lockMCPSettingsContext(ctx, path)
+	if err != nil {
+		return err
+	}
+	_, cfg, err := mcpMutationTarget(path)
+	unlock()
+	if err != nil {
+		return err
+	}
+	target, err := findMCPResetTarget(cfg, parsed.name)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "MCP custody reset will discard native credentials for: %s\nType %q to confirm; every affected profile must be logged in again. Legacy key_env custody and upstream registrations are unchanged.\nConfirm: ", strings.Join(target.shared, ", "), parsed.name)
+	answer, err := readMCPConfirmation(ctx, input)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(answer) != parsed.name {
+		return errors.New("MCP custody reset cancelled")
+	}
+	if err := mcpcredential.Reset(ctx, target.root, target.backend, target.filePath, nil); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(stdout, "MCP custody reset complete; log in again for each affected profile.")
+	return nil
+}
+
 func runMCPRemove(args []string, stdout io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -667,7 +764,7 @@ func runMCPRemoveContext(ctx context.Context, args []string, stdout io.Writer) e
 		return err
 	}
 	defer unlock()
-	before, err := mcpMutationTarget(path)
+	before, _, err := mcpMutationTarget(path)
 	if err != nil {
 		return err
 	}

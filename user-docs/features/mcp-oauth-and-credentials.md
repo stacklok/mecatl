@@ -123,6 +123,32 @@ Removal deletes the current local grant and records a durable removal state
 before removing the settings profile. It does not revoke an upstream OAuth
 client or remove a shared wrapping key.
 
+## Recover incompatible native custody
+
+If `mcp add` or `mcp login` reports an incompatible native custody marker or a
+pending marker whose key artifact does not match, reset the selected custody
+root instead of moving the credential directory or editing Keychain entries:
+
+```sh
+mecated mcp reset-custody connector
+mecated mcp login connector
+```
+
+The command requires an attended terminal and an exact confirmation. It discards
+every native credential under the selected root, including credentials used by
+other native profiles sharing that root. Those profiles remain configured but
+must be logged in again. Legacy `key_env` profiles sharing the same root,
+provider credentials, upstream registrations, and unrelated roots are not
+changed — reset never removes or deletes anything under a different profile's
+custody. Stop affected daemons before resetting; a daemon that is already
+running may retain the old namespace until it exits.
+
+Reset only removes custody; it does not create a replacement, which is why the
+next step is always `mecated mcp login`. If the command is interrupted (for
+example, by Ctrl-C or a crash), re-run `mecated mcp reset-custody` with the same
+name: it resumes from wherever it stopped and finishes cleanly, however many
+times the root has been reset before.
+
 ## Configure a profile manually
 
 Hand-authored profiles use the sequence-based `mcp.servers` schema, with OAuth
