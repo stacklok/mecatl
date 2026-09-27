@@ -1,4 +1,4 @@
-# ADR 0369 - Require evidence before Jev can clear guardrail reviews
+# ADR 0370 - Require evidence before Jev can clear guardrail reviews
 
 - Status: Proposed
 - Date: 2026-09-26
