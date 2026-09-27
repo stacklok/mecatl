@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/semconv/v1.41.0/genaiconv"
 
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
@@ -73,6 +74,11 @@ var latencyInstruments = []string{
 	interTokenMaxInstrument,
 	toolQueueInstrument,
 	scheduleFireDurationInstrument,
+	// genaiconv.ClientOperationDuration{}.Name() is the semconv-fixed
+	// "gen_ai.client.operation.duration" — reused here rather than
+	// re-declared as a local string constant so the view registration can
+	// never drift from the instrument genaiconv itself creates.
+	genaiconv.ClientOperationDuration{}.Name(),
 }
 
 // latencyBucketBoundaries is the explicit upper-bound ladder (seconds) every
@@ -226,6 +232,22 @@ type Metrics struct {
 	// sessionLoadFailures counts ownership-concealed load failures by the closed
 	// store/snapshot/unknown class only.
 	sessionLoadFailures metric.Int64Counter
+	// genAITokenUsage is the OTel GenAI semantic-convention token-usage
+	// histogram (gen_ai.client.token.usage, unit "{token}"), recorded once per
+	// gen_ai.token.type (input/output) from the same per-turn Usage recordTurnEnd
+	// already reads for mecatl.tokens — additive alongside it, not a
+	// replacement. Only input/output map to the semconv token.type axis;
+	// mecatl's richer cache_read/cache_write/reasoning breakdown stays
+	// exclusive to mecatl.tokens{kind}.
+	genAITokenUsage genaiconv.ClientTokenUsage
+	// genAIOperationDuration is the OTel GenAI semantic-convention
+	// operation-duration histogram (gen_ai.client.operation.duration, unit
+	// "s"), recorded from recordTurnEnd using the SAME measured interval as
+	// turnDuration (mecatl.turn.duration) — no new imprecision, just a second,
+	// semconv-named view onto the identical number. Shares the
+	// latencyBucketBoundaries explicit-bucket ladder via
+	// genAIOperationDurationInstrument in latencyInstruments.
+	genAIOperationDuration genaiconv.ClientOperationDuration
 }
 
 // Compile-time interface checks.
@@ -241,6 +263,8 @@ var (
 //
 // It returns an error if any instrument fails to construct — the OTel meter API
 // is fallible, unlike client_golang's panic-on-misuse registration.
+//
+//nolint:gocyclo // one flat sequence of independent instrument constructions, each with its own err check; no real branching complexity
 func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 	meter := mp.Meter(meterName)
 	m := &Metrics{}
@@ -368,6 +392,13 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 		metric.WithDescription("Ownership-concealed session load failures, by bounded class."),
 	); err != nil {
 		return nil, fmt.Errorf("telemetry: session load failures counter: %w", err)
+	}
+
+	if m.genAITokenUsage, err = genaiconv.NewClientTokenUsage(meter); err != nil {
+		return nil, fmt.Errorf("telemetry: gen_ai.client.token.usage histogram: %w", err)
+	}
+	if m.genAIOperationDuration, err = genaiconv.NewClientOperationDuration(meter); err != nil {
+		return nil, fmt.Errorf("telemetry: gen_ai.client.operation.duration histogram: %w", err)
 	}
 
 	return m, nil
@@ -519,6 +550,70 @@ func (m *Metrics) recordTurnEnd(ctx context.Context, p *session.TurnEndPayload, 
 	if p.InterTokenMaxMs > 0 {
 		m.interTokenMax.Record(ctx, msToSeconds(p.InterTokenMaxMs), withAttrs(prefix))
 	}
+	m.recordGenAI(ctx, p, prefix)
+}
+
+// genAIProviderOther is the closed-vocabulary fallback for any provider
+// identifier genAIProviderFamily does not recognise.
+const genAIProviderOther genaiconv.ProviderNameAttr = "other"
+
+// genAIProviderFamily projects a provider identifier onto a closed set for
+// the GenAI metric instruments' required gen_ai.provider.name label. ADR 0098
+// bounds every metric label to a closed vocabulary, and mecatl's provider
+// catalog is NOT fully closed: an operator-defined custom OpenAI-compatible
+// provider takes an arbitrary operator-chosen id
+// (internal/app/registry.go's newCustomProviderEntry, keyed by
+// definition.ID) alongside the five built-in providers this engine ships.
+// Only those five map to their own name; everything else (every custom
+// entry) collapses to "other" — the same allowlist-with-other-fallback shape
+// internal/adapter/productmetrics already uses for exactly this reason
+// (toolCategory, ProviderFamily). Exact model identifiers stay OFF the
+// metric entirely (see recordGenAI) — genaiconv.AttrRequestModel/
+// AttrResponseModel are optional attrs, so they are simply not attached
+// here; the mecatl.llm_call span (tracing.go) is the one place exact
+// model/provider attribution belongs, since span attributes are not
+// aggregated per-series the way metric labels are.
+func genAIProviderFamily(provider string) genaiconv.ProviderNameAttr {
+	switch provider {
+	case "openai":
+		return genaiconv.ProviderNameOpenAI
+	case "openai-codex":
+		return "openai-codex"
+	case "anthropic":
+		return genaiconv.ProviderNameAnthropic
+	case "openrouter":
+		return "openrouter"
+	case "opencode":
+		return "opencode"
+	default:
+		return genAIProviderOther
+	}
+}
+
+// recordGenAI records the OTel GenAI semantic-convention instruments
+// (gen_ai.client.token.usage, gen_ai.client.operation.duration) from the same
+// per-turn payload recordTurnEnd already reads — additive alongside the
+// mecatl.* instruments above, never a replacement. prefix carries the same
+// bounded role-family attribute (ADR 0018) every other instrument in this
+// file is labelled with — a child-engine turn's GenAI usage must stay
+// distinguishable from main's. Skipped entirely when Model or Provider is
+// empty (unresolved identity — nothing meaningful to attribute the
+// measurement to). Token-usage is additionally skipped when p.Estimated is
+// true: session.TurnEndPayload.Estimated marks a DISPLAY-ONLY context-meter
+// approximation (see its own doc comment) that must never be recorded as
+// real provider-reported usage; operation.duration is real wall-clock time
+// regardless of whether the token count was estimated, so it still records.
+func (m *Metrics) recordGenAI(ctx context.Context, p *session.TurnEndPayload, prefix []attribute.KeyValue) {
+	if p.Model == "" || p.Provider == "" {
+		return
+	}
+	operation := genaiconv.OperationNameChat
+	provider := genAIProviderFamily(p.Provider)
+	if !p.Estimated {
+		m.genAITokenUsage.Record(ctx, int64(p.Usage.InputTokens), operation, provider, genaiconv.TokenTypeInput, prefix...)
+		m.genAITokenUsage.Record(ctx, int64(p.Usage.OutputTokens), operation, provider, genaiconv.TokenTypeOutput, prefix...)
+	}
+	m.genAIOperationDuration.Record(ctx, msToSeconds(p.DurationMs), operation, provider, prefix...)
 }
 
 // msToSeconds converts a millisecond count to seconds for the "s"-unit latency

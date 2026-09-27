@@ -228,3 +228,62 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 		t.Fatalf("manifest leaked request content: %s", encoded)
 	}
 }
+
+// TestTurnEndCarriesModelAndProviderUnconditionally proves that
+// session.TurnEndPayload.Model/.Provider populate from req.Model/
+// sess.ProviderID even when EnableDurableEvidence is left unset (false) —
+// unlike RequestManifestPayload above, which is entirely gated behind that
+// flag. Telemetry consumers (internal/adapter/telemetry) must get this
+// attribution regardless of whether an operator has opted into durable
+// evidence.
+func TestTurnEndCarriesModelAndProviderUnconditionally(t *testing.T) {
+	llm := mockllm.New(mockllm.TextTurn("done"))
+	eng := newEngine(agent.Deps{
+		LLM: llm, Catalog: catalogWith(t),
+		Model: "safe-model",
+		// EnableDurableEvidence deliberately left unset (false).
+	})
+	sess := newSession(t, session.Limits{})
+	sess.ProviderID = "safe-provider"
+
+	run := eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	evs := drain(run)
+
+	for _, ev := range evs {
+		if ev.Type == session.EvRequestManifest {
+			t.Fatal("EvRequestManifest emitted despite EnableDurableEvidence being unset — precondition of this test is broken")
+		}
+	}
+
+	te := turnEndOf(t, evs)
+	if te.Model != "safe-model" {
+		t.Errorf("TurnEndPayload.Model = %q, want %q", te.Model, "safe-model")
+	}
+	if te.Provider != "safe-provider" {
+		t.Errorf("TurnEndPayload.Provider = %q, want %q", te.Provider, "safe-provider")
+	}
+}
+
+// TestTurnEndModelAndProviderAreSanitized proves Model/Provider go through
+// the same manifestIdentifier sanitization RequestManifestPayload's fields
+// use (a 256-byte cap, empty on anything containing "://") — not a
+// separately-reimplemented, potentially-diverging check.
+func TestTurnEndModelAndProviderAreSanitized(t *testing.T) {
+	llm := mockllm.New(mockllm.TextTurn("done"))
+	eng := newEngine(agent.Deps{
+		LLM: llm, Catalog: catalogWith(t),
+		Model: "https://looks-like-a-url.example/model",
+	})
+	sess := newSession(t, session.Limits{})
+	sess.ProviderID = "safe-provider"
+
+	run := eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+	te := turnEndOf(t, drain(run))
+
+	if te.Model != "" {
+		t.Errorf("TurnEndPayload.Model = %q, want empty (manifestIdentifier rejects anything containing \"://\")", te.Model)
+	}
+	if te.Provider != "safe-provider" {
+		t.Errorf("TurnEndPayload.Provider = %q, want %q (unaffected by Model's rejection)", te.Provider, "safe-provider")
+	}
+}

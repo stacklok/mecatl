@@ -518,6 +518,24 @@ func classicHist(t *testing.T, data map[string]metricdata.Aggregation, name stri
 	return h.DataPoints[0]
 }
 
+// int64HistPointByAttr returns the metricdata.Histogram[int64] data point of
+// the named instrument whose attribute key equals value, failing if the
+// instrument is absent, not an int64 histogram, or has no matching point.
+func int64HistPointByAttr(t *testing.T, data map[string]metricdata.Aggregation, name, key, value string) metricdata.HistogramDataPoint[int64] {
+	t.Helper()
+	h, ok := data[name].(metricdata.Histogram[int64])
+	if !ok {
+		t.Fatalf("%s is %T, want Histogram[int64]", name, data[name])
+	}
+	for _, dp := range h.DataPoints {
+		if v, present := dp.Attributes.Value(attribute.Key(key)); present && v.AsString() == value {
+			return dp
+		}
+	}
+	t.Fatalf("%s: no data point with %s=%q (points: %d)", name, key, value, len(h.DataPoints))
+	return metricdata.HistogramDataPoint[int64]{}
+}
+
 // TestMetricsLatencyInstruments asserts the five latency instruments — turn
 // duration, TTFT, inter-token (mean), inter-token (max), and tool queue — all
 // collect as classic explicit-bucket histograms (ADR 0045) with sane unit-converted
@@ -896,4 +914,212 @@ type countingSink struct {
 func (c *countingSink) Emit(ctx context.Context, _ session.Event) {
 	c.n++
 	c.lastCtx = ctx
+}
+
+// TestMetricsGenAI_TokenUsageAndOperationDuration covers the two OTel GenAI
+// semantic-convention instruments recordTurnEnd additionally records
+// (alongside, never instead of, mecatl.tokens/mecatl.turn.duration):
+// gen_ai.client.token.usage (one point per gen_ai.token.type) and
+// gen_ai.client.operation.duration, sourced from TurnEndPayload's Model/
+// Provider/Usage/DurationMs. Exact model identifiers are deliberately NOT
+// attached to either metric (ADR 0098 bounds every metric label to a closed
+// vocabulary; only the mecatl.llm_call span, tested separately, carries
+// exact model attribution) — asserting their ABSENCE here pins that.
+func TestMetricsGenAI_TokenUsageAndOperationDuration(t *testing.T) {
+	m, reader := newTestMetrics(t)
+
+	m.Emit(context.Background(), session.Event{Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{
+		Model: "claude-sonnet-5", Provider: "anthropic", DurationMs: 250,
+		Usage: session.Usage{InputTokens: 100, OutputTokens: 50},
+	}})
+
+	data := collect(t, reader)
+
+	inputPt := int64HistPointByAttr(t, data, "gen_ai.client.token.usage", "gen_ai.token.type", "input")
+	if inputPt.Count != 1 || inputPt.Sum != 100 {
+		t.Errorf("token.usage{type=input} count=%d sum=%d, want 1,100", inputPt.Count, inputPt.Sum)
+	}
+	outputPt := int64HistPointByAttr(t, data, "gen_ai.client.token.usage", "gen_ai.token.type", "output")
+	if outputPt.Count != 1 || outputPt.Sum != 50 {
+		t.Errorf("token.usage{type=output} count=%d sum=%d, want 1,50", outputPt.Count, outputPt.Sum)
+	}
+	for _, dp := range []metricdata.HistogramDataPoint[int64]{inputPt, outputPt} {
+		for key, want := range map[string]string{
+			"gen_ai.operation.name": "chat",
+			"gen_ai.provider.name":  "anthropic",
+			"role":                  "main",
+		} {
+			if got, present := dp.Attributes.Value(attribute.Key(key)); !present || got.AsString() != want {
+				t.Errorf("token.usage attribute %s = %q (present=%v), want %q", key, got.AsString(), present, want)
+			}
+		}
+		for _, absentKey := range []string{"gen_ai.request.model", "gen_ai.response.model"} {
+			if _, present := dp.Attributes.Value(attribute.Key(absentKey)); present {
+				t.Errorf("token.usage carries %s — exact model identifiers must stay off the metric (ADR 0098)", absentKey)
+			}
+		}
+	}
+
+	dur := classicHist(t, data, "gen_ai.client.operation.duration")
+	if dur.Count != 1 {
+		t.Errorf("operation.duration count = %d, want 1", dur.Count)
+	}
+	if got := dur.Sum; got < 0.249 || got > 0.251 { // 250ms
+		t.Errorf("operation.duration sum = %v, want ≈0.25", got)
+	}
+	for key, want := range map[string]string{
+		"gen_ai.operation.name": "chat",
+		"gen_ai.provider.name":  "anthropic",
+		"role":                  "main",
+	} {
+		if got, present := dur.Attributes.Value(attribute.Key(key)); !present || got.AsString() != want {
+			t.Errorf("operation.duration attribute %s = %q (present=%v), want %q", key, got.AsString(), present, want)
+		}
+	}
+	if _, present := dur.Attributes.Value(attribute.Key("gen_ai.request.model")); present {
+		t.Errorf("operation.duration carries gen_ai.request.model — exact model identifiers must stay off the metric (ADR 0098)")
+	}
+
+	// mecatl.turn.duration must ALSO record from the same call — additive, not
+	// a replacement.
+	turn := classicHist(t, data, turnDurationInstrument)
+	if turn.Count != 1 {
+		t.Errorf("turn.duration count = %d, want 1 (gen_ai instruments must be additive)", turn.Count)
+	}
+}
+
+// TestMetricsGenAI_ProviderFamilyClosedVocabulary pins genAIProviderFamily's
+// allowlist-with-fallback contract (ADR 0098): the five providers this
+// engine ships map to their own name, and anything else — including an
+// operator-defined custom OpenAI-compatible provider id
+// (internal/app/registry.go's newCustomProviderEntry, keyed by an arbitrary
+// definition.ID) — collapses to the single bounded value "other" rather than
+// leaking the raw identifier onto the metric.
+func TestMetricsGenAI_ProviderFamilyClosedVocabulary(t *testing.T) {
+	tests := []struct {
+		provider string
+		want     string
+	}{
+		{"openai", "openai"},
+		{"openai-codex", "openai-codex"},
+		{"anthropic", "anthropic"},
+		{"openrouter", "openrouter"},
+		{"opencode", "opencode"},
+		{"my-custom-ollama-endpoint", "other"},
+		{"a-different-operator-defined-id", "other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			m, reader := newTestMetrics(t)
+			m.Emit(context.Background(), session.Event{Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{
+				Model: "some-model", Provider: tt.provider, DurationMs: 10,
+				Usage: session.Usage{InputTokens: 1, OutputTokens: 1},
+			}})
+			data := collect(t, reader)
+			dur := classicHist(t, data, "gen_ai.client.operation.duration")
+			got, present := dur.Attributes.Value(attribute.Key("gen_ai.provider.name"))
+			if !present || got.AsString() != tt.want {
+				t.Errorf("gen_ai.provider.name for input %q = %q (present=%v), want %q", tt.provider, got.AsString(), present, tt.want)
+			}
+		})
+	}
+}
+
+// TestMetricsGenAI_RoleAttribution pins that the two GenAI instruments carry
+// the same closed role-family label (ADR 0018) every other instrument in
+// this file does, so a child-engine turn's usage stays distinguishable from
+// main's — the dropped-label defect recordGenAI previously had.
+func TestMetricsGenAI_RoleAttribution(t *testing.T) {
+	m, reader := newTestMetrics(t)
+
+	m.WithRole(RoleSubagent).Emit(context.Background(), session.Event{Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{
+		Model: "claude-sonnet-5", Provider: "anthropic", DurationMs: 10,
+		Usage: session.Usage{InputTokens: 1, OutputTokens: 1},
+	}})
+
+	data := collect(t, reader)
+	dur := classicHist(t, data, "gen_ai.client.operation.duration")
+	if got, present := dur.Attributes.Value(attribute.Key("role")); !present || got.AsString() != RoleSubagent {
+		t.Errorf("operation.duration role = %q (present=%v), want %q", got.AsString(), present, RoleSubagent)
+	}
+	inputPt := int64HistPointByAttr(t, data, "gen_ai.client.token.usage", "gen_ai.token.type", "input")
+	if got, present := inputPt.Attributes.Value(attribute.Key("role")); !present || got.AsString() != RoleSubagent {
+		t.Errorf("token.usage role = %q (present=%v), want %q", got.AsString(), present, RoleSubagent)
+	}
+}
+
+// TestMetricsGenAI_EstimatedUsageNotRecorded proves that an ESTIMATED token
+// count (session.TurnEndPayload.Estimated) never reaches
+// gen_ai.client.token.usage — that field is documented as DISPLAY-ONLY (the
+// issue-#82 zero-usage fallback), never real provider-reported usage, so
+// exporting it as GenAI usage would misrepresent it. Duration is real
+// wall-clock time regardless of whether the token count was estimated, so
+// gen_ai.client.operation.duration must still record.
+func TestMetricsGenAI_EstimatedUsageNotRecorded(t *testing.T) {
+	m, reader := newTestMetrics(t)
+
+	m.Emit(context.Background(), session.Event{Type: session.EvTurnEnd, TurnEnd: &session.TurnEndPayload{
+		Model: "claude-sonnet-5", Provider: "anthropic", DurationMs: 250, Estimated: true,
+		Usage: session.Usage{InputTokens: 100, OutputTokens: 50},
+	}})
+
+	data := collect(t, reader)
+	if _, ok := data["gen_ai.client.token.usage"]; ok {
+		t.Errorf("gen_ai.client.token.usage recorded an Estimated usage sample")
+	}
+	dur := classicHist(t, data, "gen_ai.client.operation.duration")
+	if dur.Count != 1 {
+		t.Errorf("operation.duration count = %d, want 1 (duration is real regardless of Estimated)", dur.Count)
+	}
+}
+
+// TestMetricsGenAI_SkippedWhenIdentityEmpty proves the two gen_ai instruments
+// are skipped (not recorded with an empty-string attribute) when Model or
+// Provider is unresolved — the same shape TestMetricsLatencyInstruments'
+// EvTurnEnd payloads already use, which must keep working unaffected. Both
+// one-sided cases are covered independently, since recordGenAI's skip
+// condition is an OR: either field being empty alone must suppress
+// recording, not just both together.
+func TestMetricsGenAI_SkippedWhenIdentityEmpty(t *testing.T) {
+	tests := []struct {
+		name    string
+		turnEnd *session.TurnEndPayload
+	}{
+		{
+			name:    "both_model_and_provider_empty",
+			turnEnd: &session.TurnEndPayload{DurationMs: 195, Usage: session.Usage{InputTokens: 10, OutputTokens: 5}},
+		},
+		{
+			name: "model_set_provider_empty",
+			turnEnd: &session.TurnEndPayload{
+				Model: "claude-sonnet-5", DurationMs: 195, Usage: session.Usage{InputTokens: 10, OutputTokens: 5},
+			},
+		},
+		{
+			name: "provider_set_model_empty",
+			turnEnd: &session.TurnEndPayload{
+				Provider: "anthropic", DurationMs: 195, Usage: session.Usage{InputTokens: 10, OutputTokens: 5},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, reader := newTestMetrics(t)
+			m.Emit(context.Background(), session.Event{Type: session.EvTurnEnd, TurnEnd: tt.turnEnd})
+
+			data := collect(t, reader)
+			if _, ok := data["gen_ai.client.token.usage"]; ok {
+				t.Errorf("gen_ai.client.token.usage recorded with unresolved Model/Provider identity")
+			}
+			if _, ok := data["gen_ai.client.operation.duration"]; ok {
+				t.Errorf("gen_ai.client.operation.duration recorded with unresolved Model/Provider identity")
+			}
+			// mecatl.turn.duration must still record — the skip is scoped to
+			// the gen_ai instruments only.
+			turn := classicHist(t, data, turnDurationInstrument)
+			if turn.Count != 1 {
+				t.Errorf("turn.duration count = %d, want 1", turn.Count)
+			}
+		})
+	}
 }
