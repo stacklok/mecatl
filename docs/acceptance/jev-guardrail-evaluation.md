@@ -2,7 +2,7 @@
 
 **Contract:** human-reviewed/v2
 **Work classification:** Architectural - a decision service evaluating tool actions and results changes security and external-data boundaries even before it gains enforcement authority.
-**Decision record:** [ADR 0368](../adr/0368-evidence-before-jev-guardrail-authority.md)
+**Decision record:** [ADR 0369](../adr/0369-evidence-before-jev-guardrail-authority.md)
 **Phase:** evidence for an optional Jev guardrail stage; no runtime checker changes
 **Status:** draft, 2026-09-26. The operator authorized a local plan draft and a non-shipping PoC. Live calls on synthetic cases were separately authorized for that PoC; this plan grants no ongoing production-data disclosure or checker authority.
 **Delivery:** Split. Security authority and external disclosure require a separately reviewed contract before runtime integration.
@@ -53,7 +53,7 @@ The [Jev router](../../internal/adapter/jevrouter/jevrouter.go) demonstrates bou
 
 **Acceptance:**
 - AC2.1: offline protocol mode makes no external request; a live experiment requires explicit route, synthetic-data, and spend consent, and never reads ambient API credentials or operator project state as corpus input.
-  - verify: `TestADR_0368_Scenario2_ExplicitLiveAdmission`
+  - verify: `TestADR_0369_Scenario2_ExplicitLiveAdmission`
 - AC2.2: Jev's rendered input, concurrent requests, queue wait, response, and deadline are bounded; missing answers, nonfinite values, over-limit input, cancellation, and transport failure return a measured miss, never a candidate clearance or an executable permission decision.
   - verify: `TestJevGuardrailEvaluation_Scenario2_BoundedMisses`
 - AC2.3: key values, tool arguments, provider response bodies, and corpus text are absent from durable diagnostics and aggregate reports; a credential-file option is used only at execution and is never stored in a test fixture.
