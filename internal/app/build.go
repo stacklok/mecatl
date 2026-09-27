@@ -800,12 +800,10 @@ type Config struct {
 	// Empty disables guardrails. Build normalizes it once (normalizeGuardrailsModel)
 	// and FAILS FAST on a value that does not resolve to a usable model id.
 	// GuardrailsBackend selects the experimental native Jev checker or the default LLM checker.
-	GuardrailsBackend     string
-	GuardrailsJevModel    string
-	GuardrailsJevBaseURL  string // test-only endpoint override; empty uses the Typesafe endpoint.
-	guardrailsJevAuthored bool
-	guardrailJev          *jevguardrail.Driver
-	GuardrailsModel       string
+	GuardrailsBackend    string
+	GuardrailsJevBaseURL string // test-only endpoint override; empty uses the Typesafe endpoint.
+	guardrailJev         *jevguardrail.Driver
+	GuardrailsModel      string
 	// GuardrailsRules is the operator-tier rule list (matcher + phases + mode +
 	// per-rule prompt + fail-closed). Empty disables guardrails. Sourced only from
 	// the operator tier (user-global YAML + CLI), never the project file.
@@ -2006,18 +2004,12 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if cfg.GuardrailsBackend != "" && cfg.GuardrailsBackend != "llm" && cfg.GuardrailsBackend != guardrailBackendJev {
 		return nil, fmt.Errorf("guardrails.backend must be llm or jev")
 	}
-	if cfg.GuardrailsBackend != guardrailBackendJev && cfg.guardrailsJevAuthored {
-		return nil, fmt.Errorf("guardrails.jev requires backend: jev")
-	}
 	if cfg.GuardrailsBackend == guardrailBackendJev && !cfg.GuardrailsDisabled {
 		if cfg.GuardrailsModel != "" || cfg.GuardrailSlot != nil || strings.TrimSpace(cfg.ModelSlots[slotGuardrail]) != "" {
 			return nil, fmt.Errorf("guardrails.backend jev conflicts with LLM guardrail model/slot")
 		}
-		if cfg.GuardrailsJevModel != "" && cfg.GuardrailsJevModel != jevguardrail.Model {
-			return nil, fmt.Errorf("unsupported guardrails.jev.model")
-		}
 		client := withRootSessionCorrelation(&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }})
-		cfg.guardrailJev, err = jevguardrail.New(cfg.TypesafeAPIKey, cfg.GuardrailsJevModel, cfg.GuardrailsJevBaseURL, client)
+		cfg.guardrailJev, err = jevguardrail.New(cfg.TypesafeAPIKey, cfg.GuardrailsJevBaseURL, client)
 		if err != nil {
 			return nil, err
 		}

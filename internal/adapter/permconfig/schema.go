@@ -1926,25 +1926,12 @@ func (m *ModelsSection) UnmarshalYAML(node ast.Node) error {
 	return decodeStrictMapping(node, "models", m.strictFields())
 }
 
-// GuardrailsJevSection configures the experimental native Jev review backend.
-type GuardrailsJevSection struct {
-	// Model selects the pinned experimental Jev checker version.
-	Model string `yaml:"model"`
-}
-
-// UnmarshalYAML rejects unknown Jev guardrail fields.
-func (j *GuardrailsJevSection) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "guardrails.jev", map[string]any{modelKey: &j.Model})
-}
-
 // GuardrailsSection is the operator-tier `guardrails:` YAML subtree (issue #27): a
 // checker model, a master-disable, and the rule list. It is parsed STRICTLY
 // (unknown keys error).
 type GuardrailsSection struct {
 	// Backend is experimental; jev opts in to a native System One checker.
 	Backend string `yaml:"backend"`
-	// Jev is an optional mapping for the experimental native checker; omit it for LLM review.
-	Jev *GuardrailsJevSection `yaml:"jev"`
 	// Model is the checker model id / alias. Empty leaves the CLI --guardrails-model
 	// to supply it; a value here is overridden by the CLI flag when both are set.
 	Model string `yaml:"model"`
@@ -2002,14 +1989,8 @@ func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 	if g.Backend != "" && g.Backend != "llm" && g.Backend != jevKey {
 		return fmt.Errorf("guardrails.backend: must be llm or jev")
 	}
-	if g.Jev != nil && g.Backend != jevKey {
-		return fmt.Errorf("guardrails.jev requires backend: jev")
-	}
 	if g.Backend == "jev" && g.Model != "" {
 		return fmt.Errorf("guardrails.model is not used with backend: jev")
-	}
-	if g.Jev != nil && g.Jev.Model != "" && g.Jev.Model != "jev-1.13.0" {
-		return fmt.Errorf("guardrails.jev.model is unsupported")
 	}
 	if posture := strings.TrimSpace(g.OnCheckerDown); posture != "" && posture != "fail" && posture != "warn" {
 		return fmt.Errorf("guardrails.onCheckerDown: must be fail or warn")
@@ -2023,7 +2004,6 @@ func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 func (g *GuardrailsSection) strictFields() map[string]any {
 	return map[string]any{
 		"backend":       &g.Backend,
-		jevKey:          newPermconfigNodePointer(&g.Jev),
 		modelKey:        &g.Model,
 		"disabled":      &g.Disabled,
 		"onCheckerDown": &g.OnCheckerDown,

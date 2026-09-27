@@ -29,7 +29,7 @@ func TestNativeJevOperatorYAMLBuildAndDisabled(t *testing.T) {
 			calls.Add(1)
 			_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{"contextual-guardrail":{"type":"choice","choice":"clean","probabilities":{"clean":0.9,"action_redirection":0.03,"inbound_redirection":0.03,"unresolved":0.04},"confidence":0.9}},"usage":{"input_tokens":3,"output_tokens":1}}`))
 		}))
-		yaml := "guardrails:\n  backend: jev\n  jev:\n    model: jev-1.13.0\n  rules:\n    - match: Shell\n      phases: [pre, post]\n      mode: block\n"
+		yaml := "guardrails:\n  backend: jev\n  rules:\n    - match: Shell\n      phases: [pre, post]\n      mode: block\n"
 		if disabled {
 			yaml += "  disabled: true\n"
 		}

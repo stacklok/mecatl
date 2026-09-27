@@ -41,7 +41,7 @@ func testJevServer(t *testing.T, inspect func(string, string), response string) 
 		}
 		_, _ = w.Write([]byte(response))
 	}))
-	driver, err := New("synthetic-key", Model, srv.URL, srv.Client())
+	driver, err := New("synthetic-key", srv.URL, srv.Client())
 	if err != nil {
 		srv.Close()
 		t.Fatal(err)

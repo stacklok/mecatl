@@ -55,15 +55,13 @@ Allow/ask/deny rule-spec lists. Each entry is "Tool(pattern)" or a bare "Tool". 
 
 Tier: **operator**
 
-OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier guardrails: block is IGNORED with a WARN (a project cannot weaken a security checker).
+OPERATOR-TIER content-checker (issue #27). Parsed strictly. A project-tier guardrails: block is IGNORED with a WARN (a project cannot weaken a security checker).
 
-> **Enable:** Configuring `model:` ENABLES guardrails; `disabled: true` is the kill-switch (the CLI --guardrails=off also sets it).
+> **Enable:** Configuring `model:` or `backend: jev` ENABLES guardrails; `disabled: true` is the kill-switch (the CLI --guardrails=off also sets it).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `guardrails.backend` | `string` | `(empty)` | Backend is experimental; jev opts in to a native System One checker. |
-| `guardrails.jev` | `guardrailsjevsection` | `(absent)` | Jev is an optional mapping for the experimental native checker; omit it for LLM review. |
-| `guardrails.jev.model` | `string` | `(empty)` | Model selects the pinned experimental Jev checker version. |
 | `guardrails.model` | `string` | `(empty)` | Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to supply it; a value here is overridden by the CLI flag when both are set. **Enable:** Setting a model here ENABLES contextual guardrails. A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. Leave empty (and pass no --guardrails-model) to keep guardrails OFF. |
 | `guardrails.disabled` | `bool` | `false` | Disabled is the YAML-level kill switch (the CLI --guardrails=off also sets it). |
 | `guardrails.onCheckerDown` | `string` | `(empty)` | OnCheckerDown sets the global posture when the checker model is unavailable (error/timeout): "fail" (default, fail-closed) or explicit "warn" (continue with an operational warning). Per-rule failClosed overrides: failClosed:true tightens under warn; explicit false loosens under fail. Empty = fail. |

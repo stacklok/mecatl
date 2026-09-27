@@ -208,9 +208,10 @@ from operator settings:
 ```yaml
 guardrails:
   backend: jev
-  jev:
-    model: jev-1.13.0
 ```
+
+If you used the earlier draft's `guardrails.jev` block, delete it; the
+experimental checker pins `jev-1.13.0`. Leave `models.router.jev` alone.
 
 Supply `TYPESAFE_API_KEY` through the existing server credential source. The
 backend uses the ordinary action and inbound review gates, including headless
@@ -222,7 +223,8 @@ also treats a Jev choice below its experimental fixed `0.8` confidence cutoff
 as unresolved; this cutoff has not been calibrated for security use. This is an
 unvalidated PoC, not a production security recommendation: a Jev verdict is
 not proof that a tool action or result is safe. The model-router setting does
-not select this guardrail backend.
+not select this guardrail backend, and its routing confidence threshold does
+not apply to guardrail reviews.
 
 The checker reviews exact effective actions before execution and already-produced
 results before delivery. A configured checker with no custom rule list uses the

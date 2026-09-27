@@ -184,11 +184,6 @@ func guardrailsSubtree(docs Docs) *Subtree {
 	fields := fieldsOf("GuardrailsSection", permconfig.GuardrailsSection{}, docs)
 	for _, f := range fields {
 		switch f.Key {
-		case "jev":
-			// Keep the LLM example parseable; Jev is an alternative in the worked example.
-			f.Nested = fieldsOf("GuardrailsJevSection", permconfig.GuardrailsJevSection{}, docs)
-			f.SkeletonCollapse = true
-			f.ExampleValue = "null"
 		case "model":
 			f.EnableNote = "Setting a model here ENABLES contextual guardrails. " +
 				"A configured model with no rules runs the default BLOCK set across Shell, local file mutations and results, web, MCP, and delegation, with the same applicable rules on workers; downgrade via defaultMode: advisory. " +
@@ -203,17 +198,15 @@ func guardrailsSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "guardrails",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier " +
+		Doc: "OPERATOR-TIER content-checker (issue #27). Parsed strictly. A project-tier " +
 			"guardrails: block is IGNORED with a WARN (a project cannot weaken a security checker).",
-		EnableNote: "Configuring `model:` ENABLES guardrails; `disabled: true` is the kill-switch " +
+		EnableNote: "Configuring `model:` or `backend: jev` ENABLES guardrails; `disabled: true` is the kill-switch " +
 			"(the CLI --guardrails=off also sets it).",
 		CommentedOut: true,
 		Fields:       fields,
 		Example: []string{
 			"guardrails:",
 			"  backend: jev",
-			"  jev:",
-			"    model: jev-1.13.0",
 		},
 	}
 }

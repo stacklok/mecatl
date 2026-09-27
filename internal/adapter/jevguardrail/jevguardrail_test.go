@@ -31,7 +31,7 @@ func TestNativeDecisionMapsToReviewAssessment(t *testing.T) {
 				_, _ = fmt.Fprintf(w, `{"model":"jev-1.13.0","answers":{"contextual-guardrail":{"type":"choice","choice":%q,"probabilities":%s,"confidence":0.96}},"usage":{"input_tokens":3,"output_tokens":1}}`, tc.choice, encoded)
 			}))
 			defer srv.Close()
-			driver, err := New("test-key", Model, srv.URL, srv.Client())
+			driver, err := New("test-key", srv.URL, srv.Client())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,7 +52,7 @@ func TestFailClosedWithoutCompleteContext(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); _, _ = w.Write([]byte(`{}`)) }))
 	defer srv.Close()
-	driver, err := New("test-key", Model, srv.URL, srv.Client())
+	driver, err := New("test-key", srv.URL, srv.Client())
 	if err != nil {
 		t.Fatal(err)
 	}

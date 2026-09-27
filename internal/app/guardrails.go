@@ -46,10 +46,6 @@ func foldOperatorGuardrails(cfg Config) Config {
 	if g.Backend != "" {
 		cfg.GuardrailsBackend = g.Backend
 	}
-	if g.Jev != nil {
-		cfg.GuardrailsJevModel = g.Jev.Model
-		cfg.guardrailsJevAuthored = true
-	}
 	// Model: a CLI --guardrails-model wins; else adopt the YAML model.
 	if strings.TrimSpace(cfg.GuardrailsModel) == "" {
 		cfg.GuardrailsModel = strings.TrimSpace(g.Model)

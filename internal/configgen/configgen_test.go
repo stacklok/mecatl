@@ -14,11 +14,11 @@ import (
 func TestJevGuardrailConfigArtifactsShowAlternative(t *testing.T) {
 	model := configgen.BuildModel(nil)
 	skeleton := configgen.RenderSkeleton(model)
-	if !strings.Contains(skeleton, "#   jev: null") || !strings.Contains(skeleton, "#|       model: jev-1.13.0") {
-		t.Fatal("generated skeleton must keep the default LLM example parseable and show the Jev mapping separately")
+	if strings.Contains(skeleton, "#   jev:") || !strings.Contains(skeleton, "#|     backend: jev") {
+		t.Fatal("generated skeleton must show Jev as a backend alternative without a second model setting")
 	}
-	if !strings.Contains(configgen.RenderReference(model), "`guardrails.jev.model`") {
-		t.Fatal("generated reference must describe the nested Jev model")
+	if strings.Contains(configgen.RenderReference(model), "`guardrails.jev") {
+		t.Fatal("generated reference must not expose a second Jev configuration surface")
 	}
 }
 

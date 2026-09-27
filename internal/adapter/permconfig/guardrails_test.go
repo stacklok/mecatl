@@ -14,18 +14,21 @@ import (
 )
 
 func TestExperimentalJevGuardrailsSchema(t *testing.T) {
-	valid, err := parseYAML([]byte("guardrails:\n  backend: jev\n  jev:\n    model: jev-1.13.0\n"))
-	if err != nil || valid.Guardrails == nil || valid.Guardrails.Backend != "jev" || valid.Guardrails.Jev == nil || valid.Guardrails.Jev.Model != "jev-1.13.0" {
-		t.Fatalf("Jev config: %#v, %v", valid.Guardrails, err)
+	valid, err := parseYAML([]byte("guardrails:\n  backend: jev\nmodels:\n  router:\n    backend: jev\n    jev:\n      minimum-confidence: 0.25\n"))
+	if err != nil || valid.Guardrails == nil || valid.Guardrails.Backend != "jev" || valid.Models == nil || valid.Models.Router == nil || valid.Models.Router.Jev == nil || valid.Models.Router.Jev.MinimumConfidence != 0.25 {
+		t.Fatalf("independent Jev config: %#v, %v", valid, err)
 	}
 	for _, body := range []string{
-		"guardrails:\n  backend: jev\n  jev:\n    moddel: typo\n",
-		"guardrails:\n  backend: llm\n  jev:\n    model: jev-1.13.0\n",
-		"guardrails:\n  backend: jev\n  jev:\n    model: future-model\n",
+		"guardrails:\n  backend: jev\n  jev:\n    model: jev-1.13.0\n",
+		"guardrails:\n  backend: jev\n  model: gpt-5\n",
 		"guardrails:\n  backend: typo\n",
 	} {
-		if _, err := parseYAML([]byte(body)); err == nil {
+		_, err := parseYAML([]byte(body))
+		if err == nil {
 			t.Fatalf("accepted invalid guardrails: %s", body)
+		}
+		if strings.Contains(body, "\n  jev:") && !strings.Contains(err.Error(), "remove guardrails.jev") {
+			t.Fatalf("old Jev setting needs migration guidance: %v", err)
 		}
 	}
 }

@@ -17,7 +17,7 @@ func TestDifferentResponseModelCannotClear(t *testing.T) {
 		_, _ = w.Write([]byte(`{"model":"jev-other","answers":{"contextual-guardrail":{"type":"choice","choice":"clean","probabilities":{"clean":0.97,"action_redirection":0.01,"inbound_redirection":0.01,"unresolved":0.01},"confidence":0.96}},"usage":{"input_tokens":3,"output_tokens":1}}`))
 	}))
 	defer srv.Close()
-	driver, err := New("test-key", Model, srv.URL, srv.Client())
+	driver, err := New("test-key", srv.URL, srv.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
