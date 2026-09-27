@@ -1928,6 +1928,7 @@ func (m *ModelsSection) UnmarshalYAML(node ast.Node) error {
 
 // GuardrailsJevSection configures the experimental native Jev review backend.
 type GuardrailsJevSection struct {
+	// Model selects the pinned experimental Jev checker version.
 	Model string `yaml:"model"`
 }
 
@@ -1941,8 +1942,9 @@ func (j *GuardrailsJevSection) UnmarshalYAML(node ast.Node) error {
 // (unknown keys error).
 type GuardrailsSection struct {
 	// Backend is experimental; jev opts in to a native System One checker.
-	Backend string                `yaml:"backend"`
-	Jev     *GuardrailsJevSection `yaml:"jev"`
+	Backend string `yaml:"backend"`
+	// Jev is an optional mapping for the experimental native checker; omit it for LLM review.
+	Jev *GuardrailsJevSection `yaml:"jev"`
 	// Model is the checker model id / alias. Empty leaves the CLI --guardrails-model
 	// to supply it; a value here is overridden by the CLI flag when both are set.
 	Model string `yaml:"model"`

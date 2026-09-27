@@ -11,6 +11,17 @@ import (
 	"github.com/stacklok/mecatl/internal/configgen"
 )
 
+func TestJevGuardrailConfigArtifactsShowAlternative(t *testing.T) {
+	model := configgen.BuildModel(nil)
+	skeleton := configgen.RenderSkeleton(model)
+	if !strings.Contains(skeleton, "#   jev: null") || !strings.Contains(skeleton, "#|       model: jev-1.13.0") {
+		t.Fatal("generated skeleton must keep the default LLM example parseable and show the Jev mapping separately")
+	}
+	if !strings.Contains(configgen.RenderReference(model), "`guardrails.jev.model`") {
+		t.Fatal("generated reference must describe the nested Jev model")
+	}
+}
+
 func TestHarnessContextGeneratedScaffoldingParsesWhenUncommented(t *testing.T) {
 	var lines []string
 	capturing := false

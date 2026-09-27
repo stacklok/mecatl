@@ -63,9 +63,9 @@
 # guardrails:
 #   # Backend is experimental; jev opts in to a native System One checker.
 #   backend: ""
-#   # For native Jev, set backend: jev, remove model:, and add:
-#   # jev:
-#   #   model: jev-1.13.0
+#   # Jev is an optional mapping for the experimental native checker; omit it for LLM
+#   # review.
+#   jev: null
 #   # Model is the checker model id / alias. Empty leaves the CLI --guardrails-model to
 #   # supply it; a value here is overridden by the CLI flag when both are set.
 #   # ENABLE: Setting a model here ENABLES contextual guardrails. A configured model with
@@ -100,6 +100,12 @@
 #       mode: ""
 #       prompt: ""
 #       failClosed: false
+#|
+#| Example:
+#|   guardrails:
+#|     backend: jev
+#|     jev:
+#|       model: jev-1.13.0
 
 #| === posture === (tier: operator)
 #| OPERATOR-TIER posture-ladder scalar: strict < trusted < auto < yolo (the graduated
