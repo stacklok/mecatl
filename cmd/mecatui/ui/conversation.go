@@ -265,6 +265,11 @@ type conversation struct {
 
 func (c *conversation) latestPendingToolName() string {
 	for i := c.scrollback.Len() - 1; i >= 0; i-- {
+		switch c.scrollback.MetadataAt(i).Kind {
+		case scrollback.KindTool, scrollback.KindSubagent, scrollback.KindTeam:
+		default:
+			continue
+		}
 		switch p := c.scrollback.SnapshotAt(i).Payload.(type) {
 		case scrollback.ToolCardSnapshot:
 			if !p.Resolved && !p.Finished {
