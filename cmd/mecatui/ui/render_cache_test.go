@@ -106,6 +106,7 @@ var oracleSteps = []struct {
 	{"addTurnStat", func(c *conversation) { c.addTurnStat("turn 1 · ↑1.2k ↓300 · 2.1s") }},
 	{"addTool", func(c *conversation) { c.addTool("call-1", "Read", `{"path":"main.go"}`) }},
 	{"addNotice", func(c *conversation) { c.addNotice("context compacted") }},
+	{"addBenignGuardrailNotice", func(c *conversation) { c.addBenignGuardrailNotice("benign guardrail detail") }},
 	{"retractLatestNotice", func(c *conversation) {
 		c.addNotice("provisional approval")
 		c.retractLatestNotice("provisional approval")
@@ -221,6 +222,9 @@ var oracleSteps = []struct {
 	}},
 	{"parallelEnd", func(c *conversation) { c.parallelEnd("call-par", "first", 2, 0, "end_turn") }},
 	{"addHook", func(c *conversation) { c.addHook("blocked by PreToolUse hook", "PreToolUse", "Shell", "blocked") }},
+	{"addGuardrailHook", func(c *conversation) {
+		c.addGuardrailHook("acceptable guardrail review", "PostToolUse", "Read", "info", true)
+	}},
 	{"addError", func(c *conversation) { c.addError("stream failed: boom") }},
 	{"addPermanentError", func(c *conversation) { c.addPermanentError("permanent provider error: auth failed") }},
 	{"addRecoverNotice", func(c *conversation) { c.addRecoverNotice("permanent failure recovered; start a new session") }},

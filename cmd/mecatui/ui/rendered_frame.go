@@ -221,10 +221,6 @@ func (*renderer) appendFrameSegment(frame *renderedFrame, passes []renderPass, i
 	}
 }
 
-func blockBlankLinesAfterPasses(passes []renderPass, i int) int {
-	return blockBlankLinesBetween(passes[i-1].kind, passes[i].kind)
-}
-
 func (r *renderer) assistantProvenanceRows(blockID uint64, p scrollback.AssistantCardSnapshot, rendered string, expand bool) []renderedRow {
 	return r.snapshotProvenanceRows(blockID, scrollback.KindAssistant, p, rendered, expand)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 func benignReview(id, disposition string) *client.GuardrailReview {
@@ -102,7 +103,18 @@ func quietTestModel(t *testing.T, guardrails client.GuardrailClient, show bool) 
 }
 
 func frameText(m *Model) string {
-	return stripANSIstr(strings.Join(m.rend.renderConversationLines(&m.conv, m.expandTools), "\n"))
+	return stripANSIstr(strings.Join(m.rend.renderConversationLines(&m.conv.scrollback, m.expandTools), "\n"))
+}
+
+func benignGuardrailAt(c *conversation, index int) bool {
+	switch p := c.scrollback.SnapshotAt(index).Payload.(type) {
+	case scrollback.HookCardSnapshot:
+		return p.BenignGuardrail
+	case scrollback.NoticeCardSnapshot:
+		return p.BenignGuardrail
+	default:
+		return false
+	}
 }
 
 type quietGuardrailClient struct {
@@ -166,8 +178,8 @@ func TestQuietBenignGuardrailNotices_Scenario2_DefaultLiveVisibility(t *testing.
 		client.HookMsg{Text: "attention hook prose", Tool: "Read", Guardrail: &client.GuardrailReview{ReviewID: "attention", Job: "inbound", Inspection: "complete", Assessment: "unresolved", Disposition: "pass_advisory"}},
 		client.ResultMsg{Stop: stopError, Error: "visible run error"},
 	)
-	if len(m.conv.blocks) != 4 || !m.conv.blocks[0].benignGuardrail || !m.conv.blocks[1].benignGuardrail {
-		t.Fatalf("retained blocks = %+v", m.conv.blocks)
+	if m.conv.scrollback.Len() != 4 || !benignGuardrailAt(&m.conv, 0) || !benignGuardrailAt(&m.conv, 1) {
+		t.Fatalf("retained cards = %+v", m.conv.testBlocks())
 	}
 	got := frameText(&m)
 	for _, hidden := range []string{"completed acceptable", "benign detail"} {
@@ -201,7 +213,7 @@ func TestQuietBenignGuardrailNotices_Scenario2_ExpandLiveAndReplay(t *testing.T)
 	if strings.Contains(frameText(&m), "acceptable") || strings.Contains(frameText(&m), "live correlated detail") {
 		t.Fatal("collapsed live benign evidence is visible")
 	}
-	beforeBlocks := len(m.conv.blocks)
+	beforeBlocks := m.conv.scrollback.Len()
 	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	for _, want := range []string{"acceptable", "live correlated detail"} {
 		if !strings.Contains(frameText(&m), want) {
@@ -209,7 +221,7 @@ func TestQuietBenignGuardrailNotices_Scenario2_ExpandLiveAndReplay(t *testing.T)
 		}
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if strings.Contains(frameText(&m), "acceptable") || len(m.conv.blocks) != beforeBlocks || guardrails.calls != 1 {
+	if strings.Contains(frameText(&m), "acceptable") || m.conv.scrollback.Len() != beforeBlocks || guardrails.calls != 1 {
 		t.Fatal("live recollapse fetched, mutated, or duplicated retained evidence")
 	}
 
@@ -222,12 +234,12 @@ func TestQuietBenignGuardrailNotices_Scenario2_ExpandLiveAndReplay(t *testing.T)
 	}
 	_, handled, _ := s.HandleKey(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	s.Render(80, 20)
-	if !handled || !strings.Contains(stripANSIstr(s.transcriptVP.View()), "acceptable") || len(s.transcript.blocks) != 1 {
+	if !handled || !strings.Contains(stripANSIstr(s.transcriptVP.View()), "acceptable") || s.transcript.scrollback.Len() != 1 {
 		t.Fatal("expand did not reveal exactly one retained replay hook")
 	}
 	_, _, _ = s.HandleKey(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	s.Render(80, 20)
-	if strings.Contains(stripANSIstr(s.transcriptVP.View()), "acceptable") || len(s.transcript.blocks) != 1 || guardrails.calls != 1 {
+	if strings.Contains(stripANSIstr(s.transcriptVP.View()), "acceptable") || s.transcript.scrollback.Len() != 1 || guardrails.calls != 1 {
 		t.Fatal("replay recollapse fetched, mutated, or duplicated evidence")
 	}
 }
@@ -252,16 +264,16 @@ func TestQuietBenignGuardrailNotices_Scenario2_RenderingAndCache(t *testing.T) {
 	}
 	m.conv.addNotice("after marker")
 
-	collapsedRaw := strings.Join(m.rend.renderConversationLines(&m.conv, false), "\n")
+	collapsedRaw := strings.Join(m.rend.renderConversationLines(&m.conv.scrollback, false), "\n")
 	baseline := conversation{}
 	baseline.addNotice("before marker")
 	baseline.addNotice("after marker")
-	baselineRaw := strings.Join(newRenderer(m.deps.Theme, keyMarkings(defaultKeys())).renderConversationLines(&baseline, false), "\n")
+	baselineRaw := strings.Join(newRenderer(m.deps.Theme, keyMarkings(defaultKeys())).renderConversationLines(&baseline.scrollback, false), "\n")
 	if collapsedRaw != baselineRaw {
 		t.Fatalf("hidden blocks left blank residue\ngot:  %q\nwant: %q", stripANSIstr(collapsedRaw), stripANSIstr(baselineRaw))
 	}
 
-	expandedRaw := strings.Join(m.rend.renderConversationLines(&m.conv, true), "\n")
+	expandedRaw := strings.Join(m.rend.renderConversationLines(&m.conv.scrollback, true), "\n")
 	for _, unsafe := range []string{"\x1b[2J", "\x1b]0;bad", "\x07"} {
 		if strings.Contains(expandedRaw, unsafe) {
 			t.Fatalf("raw rendered output retained unsafe sequence %q: %q", unsafe, expandedRaw)
@@ -283,10 +295,10 @@ func TestQuietBenignGuardrailNotices_Scenario2_RenderingAndCache(t *testing.T) {
 			t.Fatalf("expanded line %d width = %d, want <= %d: %q", i, got, width, stripANSIstr(line))
 		}
 	}
-	cachedRaw := strings.Join(m.rend.renderConversationLines(&m.conv, true), "\n")
+	cachedRaw := strings.Join(m.rend.renderConversationLines(&m.conv.scrollback, true), "\n")
 	freshRenderer := newRenderer(m.deps.Theme, keyMarkings(defaultKeys()))
 	freshRenderer.setWidth(width)
-	freshRaw := strings.Join(freshRenderer.renderConversationLines(&m.conv, true), "\n")
+	freshRaw := strings.Join(freshRenderer.renderConversationLines(&m.conv.scrollback, true), "\n")
 	if cachedRaw != freshRaw {
 		t.Fatalf("cache mismatch\ncached: %q\nfresh:  %q", cachedRaw, freshRaw)
 	}
@@ -304,11 +316,11 @@ func TestQuietBenignGuardrailNotices_Scenario2_ApprovalDetailAlwaysVisible(t *te
 
 	model, approvalCmd := m.applyPermissionAsk(client.PermissionAskMsg{AskID: "ask", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "approval", Kind: "action"}})
 	m = model.(Model)
-	before := len(m.conv.blocks)
+	before := m.conv.scrollback.Len()
 	m = applyAll(m, unrelated)
 	s := openApprovalSurface(&m)
-	if s.ask.reviewDetail.Concern != "" || len(m.conv.blocks) != before+1 || !m.conv.blocks[len(m.conv.blocks)-1].benignGuardrail {
-		t.Fatalf("unrelated response was not ignored by approval and retained by generic reducer: ask=%+v blocks=%+v", s.ask.reviewDetail, m.conv.blocks)
+	if s.ask.reviewDetail.Concern != "" || m.conv.scrollback.Len() != before+1 || !benignGuardrailAt(&m.conv, m.conv.scrollback.Len()-1) {
+		t.Fatalf("unrelated response was not ignored by approval and retained by generic reducer: ask=%+v cards=%+v", s.ask.reviewDetail, m.conv.testBlocks())
 	}
 	if strings.Contains(frameText(&m), "unrelated benign detail") {
 		t.Fatal("unrelated benign conversation detail became visible")
@@ -341,13 +353,13 @@ func TestQuietBenignGuardrailNotices_Scenario2_DetailResponseIdentity(t *testing
 		t.Fatalf("mismatched response did not fail visibly: %q", got)
 	}
 
-	before := len(m.conv.blocks)
+	before := m.conv.scrollback.Len()
 	m.sessionID = "session-b"
 	m = applyAll(m, client.GuardrailReviewDetailMsg{
 		SessionID: "session", ReviewID: "stale", Conversation: true,
 		Detail: client.GuardrailReviewDetail{ReviewID: "stale", Concern: "session A detail"},
 	})
-	if len(m.conv.blocks) != before || strings.Contains(frameText(&m), "session A detail") {
+	if m.conv.scrollback.Len() != before || strings.Contains(frameText(&m), "session A detail") {
 		t.Fatal("session A conversation detail entered session B")
 	}
 }
