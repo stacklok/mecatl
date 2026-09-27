@@ -8,8 +8,9 @@
 **Delivery:** Split. The panel's geometry, filter, learned-skill lifecycle controls, and input-ownership contract require plan/interface review before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1898](https://github.com/stacklok/mecatl/issues/1898).
+**Plan PR:** [#1973](https://github.com/stacklok/mecatl/pull/1973)
 
-`/skills` will replace its fixed fourteen-line external-inventory window and numeric scroll accounting with the established pointer-owned `bounded.Viewport`. At normal geometry, its existing centered card will use the available conversation height after all rendered chrome, cap its outer width at 128 display cells, and give the same measured physical body budget to rendering and navigation. At short positive geometry where fixed chrome and one body row cannot fit, it will show only a width-clipped close action; nonpositive geometry renders nothing.
+`/skills` will replace its fixed fourteen-line external-inventory window and numeric scroll accounting with the established pointer-owned `bounded.Viewport`. At normal geometry, its existing centered card will use the available conversation height after all rendered chrome, cap its outer width at 128 display cells, and give the same measured physical body budgets to rendering and navigation. At short positive geometry where fixed chrome and the required one- or two-region body rows cannot fit, it will show only a width-clipped close action; nonpositive geometry renders nothing.
 
 This remains the existing modal-owned skills panel, not the root-owned `/agents` overlay. It retains one-shot external `ListSkills` discovery, focused type-to-filter behavior, learned-skill listing/detail/lifecycle actions, request-epoch and generation fencing, and the model-only Skill activation boundary described in [Extensibility](../architecture/extensibility.md). The new viewport owns only the physical rows and offset of the filtered external inventory. It neither selects nor activates external skills; learned-skill selection and actions retain their present owner and contracts.
 
