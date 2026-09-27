@@ -145,7 +145,11 @@ import {
 } from "./chat-state";
 import { ChatStatus, type ChatStatusFacts, deriveChatStatus } from "./chat-status";
 import { ChatTranscript, isNearTranscriptBottom } from "./chat-transcript";
-import { type ContentPreview, ContentPreviewPanel } from "./content-preview-panel";
+import {
+  type ContentPreview,
+  ContentPreviewPanel,
+  restoreActivityOpenerFocus,
+} from "./content-preview-panel";
 import { ContinueLatestChip } from "./continue-latest-chip";
 import { DEBUG_OPENING_PROMPT, DEBUG_SESSION_CONSENT } from "./debug-session";
 import { DelegationCardRow, type DelegationFocus } from "./delegation-card";
@@ -2439,8 +2443,16 @@ export function ChatWorkspace({ sessionId }: { sessionId?: string }) {
     onClosePanel: () => {
       if (contentPreview) {
         setContentPreview(undefined);
-        const opener = panelOpener.current;
-        if (opener?.isConnected) opener.focus();
+        if (contentPreview.kind === "activity") {
+          restoreActivityOpenerFocus({
+            fallbackOpener: sessionActivityControl.current,
+            opener: activityOpener.current,
+            openerFocus: activityOpenerFocus.current,
+          });
+        } else {
+          const opener = panelOpener.current;
+          if (opener?.isConnected) opener.focus();
+        }
       } else setSidebarOpen(false);
     },
     onDenyAsk: () => {

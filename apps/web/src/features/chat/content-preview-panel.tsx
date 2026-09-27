@@ -56,6 +56,21 @@ interface ActivityPreviewState {
   openerFocus?: DelegationFocus;
 }
 
+export function restoreActivityOpenerFocus(
+  activity: Pick<ActivityPreviewState, "fallbackOpener" | "opener" | "openerFocus">,
+): void {
+  const replacement = activity.openerFocus
+    ? [...document.querySelectorAll<HTMLButtonElement>("button[data-delegation-focus]")].find(
+        (button) => button.dataset.delegationFocus === JSON.stringify(activity.openerFocus),
+      )
+    : undefined;
+  const target =
+    (activity.opener?.isConnected ? activity.opener : undefined) ??
+    replacement ??
+    activity.fallbackOpener;
+  target?.focus();
+}
+
 export function ContentPreviewPanel({
   activity,
   authorizationDisabled = false,
@@ -162,16 +177,7 @@ function GenericPreviewPanel({
   function close() {
     onClose();
     if (preview.kind !== "activity") return;
-    const replacement = activity?.openerFocus
-      ? [...document.querySelectorAll<HTMLButtonElement>("button[data-delegation-focus]")].find(
-          (button) => button.dataset.delegationFocus === JSON.stringify(activity.openerFocus),
-        )
-      : undefined;
-    const target =
-      (activity?.opener?.isConnected ? activity.opener : undefined) ??
-      replacement ??
-      activity?.fallbackOpener;
-    target?.focus();
+    if (activity) restoreActivityOpenerFocus(activity);
   }
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
