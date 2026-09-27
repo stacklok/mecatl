@@ -1,5 +1,5 @@
  ╭───────────────────────────────────────────────────────────────────────────────────────────────╮
- │ … Subagent                                                                                    │
+ │ ✓ Subagent                                                                                    │
  │ ↳ inspect routing                                                                             │
  │ backend: jev · classifier: jev-1.13.0 · outcome: fallback                                     │
  │ candidate: medium → gpt-5.6-terra · confidence: 0.42 · threshold: 0.50                        │

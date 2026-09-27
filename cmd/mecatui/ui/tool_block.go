@@ -17,6 +17,8 @@ type toolCardPresentation struct {
 	name      string
 	arguments string
 	resolved  bool
+	finished  bool
+	failed    bool
 	result    string
 	isError   bool
 	artifacts []client.ContentBlock
@@ -25,6 +27,7 @@ type toolCardPresentation struct {
 func toolCardPresentationFromSnapshot(p scrollback.ToolCardSnapshot) toolCardPresentation {
 	return toolCardPresentation{
 		name: p.Call.Name, arguments: p.Call.Arguments, resolved: p.Resolved,
+		finished: p.Finished, failed: p.Failed,
 		result: p.Result.Body, isError: p.Result.IsError,
 		artifacts: contentBlocks(p.Result.Artifacts),
 	}
@@ -56,9 +59,9 @@ func (r *renderer) prepareTypedToolCard(p toolCardPresentation, expand bool) pre
 
 	var glyph, glyphText string
 	switch {
-	case !p.resolved:
+	case !p.resolved && !p.finished:
 		glyphText, glyph = "…", r.th.Style("toolName").Render("…")
-	case p.isError:
+	case (p.resolved && p.isError) || (!p.resolved && p.failed):
 		glyphText, glyph = "✗", r.th.Style("toolErr").Render("✗")
 	default:
 		glyphText, glyph = "✓", r.th.Style("toolOk").Render("✓")
@@ -187,22 +190,22 @@ func (r *renderer) renderTeamSnapshot(idx int, s scrollback.BlockSnapshot, p scr
 
 func (r *renderer) prepareSubagentCard(p subagentCardPresentation, expand bool) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand)
+	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderSubagentPresentation(p, expand, bodyWidth), expand)
 }
 
 func (r *renderer) prepareTeamCard(p teamCardPresentation, expand bool) preparedToolCard {
 	_, _, bodyWidth := r.toolCardLayout()
-	return r.prepareDelegationCard(p.name, p.resolved, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand)
+	return r.prepareDelegationCard(p.name, p.resolved, p.done, p.stop, p.result, p.isError, p.artifacts, r.renderTeamPresentation(p, expand, bodyWidth), expand)
 }
 
-func (r *renderer) prepareDelegationCard(name string, resolved bool, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool) preparedToolCard {
+func (r *renderer) prepareDelegationCard(name string, resolved, done bool, stop, result string, isError bool, artifacts []client.ContentBlock, args string, expand bool) preparedToolCard {
 	r.toolCardPrepares++
 	_, _, bodyWidth := r.toolCardLayout()
 	var glyph, glyphText string
 	switch {
-	case !resolved:
+	case !resolved && !done:
 		glyphText, glyph = "…", r.th.Style("toolName").Render("…")
-	case isError:
+	case (resolved && isError) || (!resolved && done && subagentStopErrored(stop)):
 		glyphText, glyph = "✗", r.th.Style("toolErr").Render("✗")
 	default:
 		glyphText, glyph = "✓", r.th.Style("toolOk").Render("✓")

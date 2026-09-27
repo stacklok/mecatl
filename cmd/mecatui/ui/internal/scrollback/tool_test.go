@@ -27,6 +27,25 @@ func TestToolLifecycle(t *testing.T) {
 	}
 }
 
+func TestToolFinishedProjectionAllowsOnlyAuthoritativeResult(t *testing.T) {
+	var c Conversation
+	call := ToolCall{ID: "parallel", Name: "Parallel", Arguments: `{}`}
+	c.Tools().Add(call)
+	if !c.Tools().Finish(call.ID, true) {
+		t.Fatal("finish tool projection")
+	}
+	if c.Tools().ReconcileUnresolved(ToolCall{ID: call.ID, Name: call.Name, Arguments: `{"changed":true}`}) {
+		t.Fatal("finished card accepted a reconciled call")
+	}
+	if !c.Tools().Resolve(call.ID, ToolResult{Body: "authoritative"}) {
+		t.Fatal("finished card rejected its authoritative result")
+	}
+	got := c.SnapshotAt(0).Payload.(ToolCardSnapshot)
+	if !got.Finished || !got.Failed || !got.Resolved || got.Result.Body != "authoritative" {
+		t.Fatalf("tool snapshot = %#v", got)
+	}
+}
+
 func TestMecatuiTypedScrollbackModel_Scenario1_TerminalTransitionsAreNoOps(t *testing.T) {
 	var c Conversation
 	c.Tools().Add(ToolCall{ID: "sub", Name: "Subagent"})

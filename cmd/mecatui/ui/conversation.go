@@ -263,6 +263,26 @@ type conversation struct {
 	parallelIndex  map[string]int
 }
 
+func (c *conversation) latestPendingToolName() string {
+	for i := c.scrollback.Len() - 1; i >= 0; i-- {
+		switch p := c.scrollback.SnapshotAt(i).Payload.(type) {
+		case scrollback.ToolCardSnapshot:
+			if !p.Resolved && !p.Finished {
+				return p.Call.Name
+			}
+		case scrollback.SubagentCardSnapshot:
+			if !p.Resolved && !p.Update.Done {
+				return p.Call.Name
+			}
+		case scrollback.TeamCardSnapshot:
+			if !p.Resolved && !p.Update.Done {
+				return p.Call.Name
+			}
+		}
+	}
+	return ""
+}
+
 func rendererRevision(revision uint64) int {
 	if revision > uint64(^uint(0)>>1) {
 		panic("scrollback revision exceeds renderer capacity")

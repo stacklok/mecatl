@@ -29,11 +29,13 @@ type ToolResult struct {
 }
 
 // ToolCardSnapshot is the detached payload for a tool call. Resolved distinguishes
-// a pending call from one with its terminal Result.
+// a call with its terminal Result; Finished records an earlier terminal lifecycle
+// projection when the result has not arrived yet. Failed classifies that projection.
 type ToolCardSnapshot struct {
-	Call     ToolCall
-	Resolved bool
-	Result   ToolResult
+	Call               ToolCall
+	Resolved, Finished bool
+	Failed             bool
+	Result             ToolResult
 }
 
 // Kind returns KindTool.
@@ -62,7 +64,7 @@ func (t ToolCards) Add(call ToolCall) BlockID {
 }
 
 // ReconcileUnresolved updates the pending card indexed by call.ID. It returns
-// false for an unknown, resolved, or non-tool card.
+// false for an unknown, resolved, finished, or non-tool card.
 func (t ToolCards) ReconcileUnresolved(call ToolCall) bool {
 	c := t.conversation
 	i, ok := c.call(call.ID)
@@ -70,7 +72,7 @@ func (t ToolCards) ReconcileUnresolved(call ToolCall) bool {
 		return false
 	}
 	payload, ok := c.cards[i].payload.(ToolCardSnapshot)
-	if !ok || payload.Resolved {
+	if !ok || payload.Resolved || payload.Finished {
 		return false
 	}
 	updated := cloneCall(call)
@@ -78,6 +80,26 @@ func (t ToolCards) ReconcileUnresolved(call ToolCall) bool {
 		return true
 	}
 	payload.Call = updated
+	return c.replace(i, payload)
+}
+
+// Finish records a terminal lifecycle projection before the tool result arrives.
+// It returns false for an unknown, resolved, specialized, or conflicting card.
+func (t ToolCards) Finish(callID string, failed bool) bool {
+	c := t.conversation
+	i, ok := c.call(callID)
+	if !ok {
+		return false
+	}
+	payload, ok := c.cards[i].payload.(ToolCardSnapshot)
+	if !ok || payload.Resolved {
+		return false
+	}
+	if payload.Finished {
+		return payload.Failed == failed
+	}
+	payload.Finished = true
+	payload.Failed = failed
 	return c.replace(i, payload)
 }
 

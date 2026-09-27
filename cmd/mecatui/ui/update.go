@@ -1348,7 +1348,7 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
 			m.conv.addNotice("orphan tool result for " + msg.CallID)
 		}
-		m.activeTool = ""
+		m.activeTool = m.conv.latestPendingToolName()
 		m.toolProgress = ""
 		return m.afterEvent()
 	case client.ToolProgressMsg:
@@ -1442,12 +1442,21 @@ func (m Model) updateStreamSecondary(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterEvent()
 	case client.SubagentMsg:
 		m.applySubagent(msg)
+		if msg.Kind == client.SubagentEnd {
+			m.activeTool = m.conv.latestPendingToolName()
+		}
 		return m.afterEvent()
 	case client.TeamMsg:
 		m.applyTeam(msg)
+		if msg.Kind == client.TeamEnd {
+			m.activeTool = m.conv.latestPendingToolName()
+		}
 		return m.afterEvent()
 	case client.ParallelMsg:
 		m.applyParallel(msg)
+		if msg.Kind == client.ParallelEnd {
+			m.activeTool = m.conv.latestPendingToolName()
+		}
 		return m.afterEvent()
 	case client.ModelRetryMsg:
 		m.failedStepRetryRun = true
@@ -1959,6 +1968,7 @@ func applyParallelTo(c *conversation, msg client.ParallelMsg) {
 		c.parallelBranchEnd(msg.ParentCallID, msg.BranchIndex, msg.ChildID, msg.Usage, msg.ToolCount, msg.Stop, msg.Failed, msg.DurationMs)
 	case client.ParallelEnd:
 		c.parallelEnd(msg.ParentCallID, msg.Join, msg.BranchCount, msg.Winner, msg.Stop)
+		c.scrollback.Tools().Finish(msg.ParentCallID, subagentStopErrored(msg.Stop))
 	}
 }
 
