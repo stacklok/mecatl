@@ -11,6 +11,17 @@ import (
 	"github.com/stacklok/mecatl/internal/configgen"
 )
 
+func TestJevGuardrailConfigArtifactsShowAlternative(t *testing.T) {
+	model := configgen.BuildModel(nil)
+	skeleton := configgen.RenderSkeleton(model)
+	if strings.Contains(skeleton, "#   jev:") || !strings.Contains(skeleton, "#|     backend: jev") {
+		t.Fatal("generated skeleton must show Jev as a backend alternative without a second model setting")
+	}
+	if strings.Contains(configgen.RenderReference(model), "`guardrails.jev") {
+		t.Fatal("generated reference must not expose a second Jev configuration surface")
+	}
+}
+
 func TestHarnessContextGeneratedScaffoldingParsesWhenUncommented(t *testing.T) {
 	var lines []string
 	capturing := false

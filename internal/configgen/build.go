@@ -198,12 +198,16 @@ func guardrailsSubtree(docs Docs) *Subtree {
 	return &Subtree{
 		Key:  "guardrails",
 		Tier: TierOperator,
-		Doc: "OPERATOR-TIER LLM content-checker (issue #27). Parsed strictly. A project-tier " +
+		Doc: "OPERATOR-TIER content-checker (issue #27). Parsed strictly. A project-tier " +
 			"guardrails: block is IGNORED with a WARN (a project cannot weaken a security checker).",
-		EnableNote: "Configuring `model:` ENABLES guardrails; `disabled: true` is the kill-switch " +
+		EnableNote: "Configuring `model:` or `backend: jev` ENABLES guardrails; `disabled: true` is the kill-switch " +
 			"(the CLI --guardrails=off also sets it).",
 		CommentedOut: true,
 		Fields:       fields,
+		Example: []string{
+			"guardrails:",
+			"  backend: jev",
+		},
 	}
 }
 

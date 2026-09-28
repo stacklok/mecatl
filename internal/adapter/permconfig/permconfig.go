@@ -72,8 +72,8 @@ func parseYAMLForTier(data []byte, project bool) (Config, error) {
 	if !ok {
 		return Config{}, fmt.Errorf("permission config must be a mapping")
 	}
-	if hasTopLevelMappingKey(root, "output-economy") {
-		return Config{}, fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
+	if err := rejectRemovedSettings(root, project); err != nil {
+		return Config{}, err
 	}
 
 	if project {
@@ -149,6 +149,25 @@ func rejectRemovedTopLevelKeys(data []byte) error {
 	root, ok := permconfigMapping(file.Docs[0].Body)
 	if ok && hasTopLevelMappingKey(root, "output-economy") {
 		return fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
+	}
+	return nil
+}
+
+func rejectRemovedSettings(root *ast.MappingNode, project bool) error {
+	if hasTopLevelMappingKey(root, "output-economy") {
+		return fmt.Errorf("output-economy: unknown key (the output-economy setting was removed; delete it from your settings.yaml)")
+	}
+	if project {
+		return nil
+	}
+	for _, entry := range root.Values {
+		key, ok := permconfigMappingKey(entry.Key)
+		if !ok || key != "guardrails" {
+			continue
+		}
+		if guardrails, mapping := permconfigMapping(entry.Value); mapping && hasTopLevelMappingKey(guardrails, jevKey) {
+			return fmt.Errorf("remove guardrails.jev; guardrails.backend: jev uses the pinned Jev model")
+		}
 	}
 	return nil
 }

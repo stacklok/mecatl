@@ -13,16 +13,19 @@ import (
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
+	"github.com/stacklok/mecatl/internal/adapter/jevguardrail"
 	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
 const (
-	editToolName    = "Edit"
-	listDirToolName = "ListDir"
-	readToolName    = "Read"
-	writeToolName   = "Write"
+	editToolName        = "Edit"
+	listDirToolName     = "ListDir"
+	readToolName        = "Read"
+	writeToolName       = "Write"
+	guardrailBackendJev = "jev"
+	guardrailFinalLLM   = "llm"
 )
 
 // foldOperatorGuardrails merges the OPERATOR-TIER `guardrails:` YAML subtree (read by
@@ -40,6 +43,12 @@ func foldOperatorGuardrails(cfg Config) Config {
 	g := res.OperatorGuardrails()
 	if g == nil {
 		return cfg
+	}
+	if g.Backend != "" {
+		cfg.GuardrailsBackend = g.Backend
+	}
+	if g.FinalDecision != "" {
+		cfg.GuardrailsFinalDecision = g.FinalDecision
 	}
 	// Model: a CLI --guardrails-model wins; else adopt the YAML model.
 	if strings.TrimSpace(cfg.GuardrailsModel) == "" {
@@ -495,6 +504,9 @@ func guardrailsConfigured(cfg Config) bool {
 	if cfg.GuardrailsDisabled {
 		return false
 	}
+	if cfg.GuardrailsBackend == guardrailBackendJev {
+		return true
+	}
 	return cfg.GuardrailSlot != nil || cfg.GuardrailsModel != "" || selectorForSlot(cfg, slotGuardrail) != ""
 }
 
@@ -537,16 +549,27 @@ const (
 //
 // configured = src != srcNone. A slot that is bound but unresolvable falls through to the
 // gate value (today's fail-soft — a broken slot never wedges the checker).
+//
+//nolint:gocyclo // Resolve the explicit Jev-triaged route and the legacy LLM route in one binding path.
 func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, model string, src guardrailSource, configured bool, err error) {
 	if cfg.GuardrailsDisabled {
 		return "", "", srcNone, false, nil
+	}
+	if cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision != guardrailFinalLLM {
+		return guardrailBackendJev, jevguardrail.Model, srcGate, true, nil
+	}
+	if cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision == guardrailFinalLLM && cfg.GuardrailSlot == nil && strings.TrimSpace(cfg.ModelSlots[slotGuardrail]) == "" && strings.TrimSpace(cfg.GuardrailsModel) == "" {
+		return "", "", srcNone, false, fmt.Errorf("guardrails.finalDecision llm requires an explicit guardrail model")
 	}
 	var selector string
 	if cfg.GuardrailSlot != nil {
 		providerID = strings.TrimSpace(cfg.GuardrailSlot.ProviderID)
 		selector = strings.TrimSpace(cfg.GuardrailSlot.Model)
 		src = srcSlot
-	} else if selector = selectorForSlot(cfg, slotGuardrail); selector != "" {
+	} else if selector = selectorForSlot(cfg, slotGuardrail); selector != "" && (cfg.GuardrailsBackend != guardrailBackendJev || cfg.GuardrailsFinalDecision != guardrailFinalLLM) {
+		providerID = reg.Default()
+		src = srcSlot
+	} else if selector = strings.TrimSpace(cfg.ModelSlots[slotGuardrail]); selector != "" && cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision == guardrailFinalLLM {
 		providerID = reg.Default()
 		src = srcSlot
 	} else if selector = strings.TrimSpace(cfg.GuardrailsModel); selector != "" {
@@ -556,6 +579,9 @@ func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, mod
 		return "", "", srcNone, false, nil
 	}
 	model, known := lookupModelAlias(cfg, selector)
+	if cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision == guardrailFinalLLM && known && model == "" {
+		return "", "", srcNone, false, fmt.Errorf("guardrail model selector %q resolves to inherit", selector)
+	}
 	if (!known || model == "") && cfg.UseMock {
 		model = selector
 	}
@@ -612,10 +638,71 @@ func resolveGuardrailsCheckerModel(cfg Config) (model string, src guardrailSourc
 	return resolved, srcGate, true
 }
 
+type nativeJevReviewer struct{ driver *jevguardrail.Driver }
+
+func (r *nativeJevReviewer) GuardrailCheckerRoute() (string, string) {
+	return guardrailBackendJev, r.driver.Model()
+}
+func (r *nativeJevReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+	var binding func() error
+	if len(req.Evidence) > 0 {
+		if bound, ok := source.(boundReviewEvidenceSource); ok {
+			binding = func() error { return bound.ValidateReviewBinding(req, guardrailBackendJev, r.driver.Model()) }
+		}
+	}
+	if err := validateReviewRequest(req); err != nil {
+		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, newReviewFailure(agent.ReviewFailureEvidenceFailure, true)
+	}
+	return r.driver.Review(ctx, req, source, binding)
+}
+
+type jevTriageReviewer struct {
+	jev         *nativeJevReviewer
+	final       agent.ToolReviewer
+	providerID  string
+	modelID     string
+	diagnostics port.Diagnostics
+}
+
+func (r *jevTriageReviewer) GuardrailCheckerRoute() (string, string) {
+	return r.providerID, r.modelID
+}
+
+func (r *jevTriageReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, reviewTotalDeadline)
+	defer cancel()
+	// Evidence handles are bound to the LLM route and must never reach Jev.
+	// This triage observes only the exact effective call/result already in the
+	// request; its candidate cannot authorize execution or result delivery.
+	status := "skipped_incomplete"
+	if req.Job == agent.ReviewJobAction || req.Job == agent.ReviewJobInbound {
+		if req.EvidenceComplete && req.PrincipalFactsComplete && req.TrajectoryComplete {
+			probeReq := req
+			probeReq.Evidence = nil
+			probe, err := r.jev.Review(ctx, probeReq, nil)
+			status = "degraded"
+			if err == nil {
+				status = "candidate_" + string(probe.Assessment)
+			}
+		}
+		r.diagnostics.Log(ctx, port.LevelDebug, "guardrails: experimental Jev triage (non-authoritative)", "job", string(req.Job), "status", status)
+	}
+	return r.final.Review(ctx, req, source)
+}
+
 // buildGuardrailsReviewer constructs the one contextual investigative reviewer
 // bound to the Build-captured checker route. Its catalog is empty; only the two
 // run-scoped evidence protocol tools are visible during Review.
 func buildGuardrailsReviewer(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID string) agent.ToolReviewer {
+	if cfg.GuardrailsDisabled {
+		return nil
+	}
+	if cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision != guardrailFinalLLM {
+		if cfg.guardrailJev == nil {
+			return nil
+		}
+		return &nativeJevReviewer{driver: cfg.guardrailJev}
+	}
 	var providerID, resolved string
 	var configured bool
 	var err error
@@ -647,7 +734,11 @@ func buildGuardrailsReviewer(cfg Config, provReg *providerRegistry, provider por
 		tool.NewCatalog(), pc, nil)
 	deps.MaxNoProgressNudges = -1
 	deps.ToolReviewer = nil
-	return newContextualToolReviewer(agent.NewEngine(deps), providerID, resolved, cfg.diag())
+	final := newContextualToolReviewer(agent.NewEngine(deps), providerID, resolved, cfg.diag())
+	if cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision == guardrailFinalLLM {
+		return &jevTriageReviewer{jev: &nativeJevReviewer{driver: cfg.guardrailJev}, final: final, providerID: providerID, modelID: resolved, diagnostics: cfg.diag()}
+	}
+	return final
 }
 
 // buildGuardrailsChecker is the compatibility shape consumed by the narrow

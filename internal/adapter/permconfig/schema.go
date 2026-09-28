@@ -802,6 +802,9 @@ var (
 
 const (
 	modeKey           = "mode"
+	modelKey          = "model"
+	jevKey            = "jev"
+	llmKey            = "llm"
 	mcpOAuth2Mode     = "oauth2"
 	mcpCredentialFile = "file"
 )
@@ -1586,7 +1589,7 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 			seen := map[string]bool{}
 			for _, field := range fields.Values {
 				key, isString := permconfigMappingKey(field.Key)
-				if !isString || (key != "provider" && key != "model") {
+				if !isString || (key != "provider" && key != modelKey) {
 					return fmt.Errorf("models.slots.guardrail: unknown key %q", key)
 				}
 				if seen[key] {
@@ -1833,7 +1836,7 @@ func (j *JevRouterSection) UnmarshalYAML(node ast.Node) error {
 		}
 	}
 	if err := decodeStrictMapping(node, "models.router.jev", map[string]any{
-		"model": &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
+		modelKey: &j.Model, "base-url": &j.BaseURL, "minimum-confidence": &j.MinimumConfidence,
 		"maximum-input-bytes": &j.MaximumInputBytes,
 	}); err != nil {
 		return err
@@ -1859,7 +1862,7 @@ func (r *RouterSection) DefaultCategoryAuthored() bool { return r.defaultCategor
 func (r *RouterSection) strictFields() map[string]any {
 	return map[string]any{
 		"backend":          &r.Backend,
-		"jev":              newPermconfigNodePointer(&r.Jev),
+		jevKey:             newPermconfigNodePointer(&r.Jev),
 		"classifier-slot":  &r.ClassifierSlot,
 		"categories":       &r.Categories,
 		"default-category": &r.DefaultCategory,
@@ -1870,12 +1873,12 @@ func (r *RouterSection) strictFields() map[string]any {
 // UnmarshalYAML decodes the models.router: mapping STRICTLY (ADR 0031): an unknown key
 // inside the router subtree is a parse error (same rationale as ModelsSection).
 func (r *RouterSection) UnmarshalYAML(node ast.Node) error {
-	r.Backend = "llm"
+	r.Backend = llmKey
 	if err := decodeStrictMapping(node, "models.router", r.strictFields()); err != nil {
 		return err
 	}
 	r.Backend = strings.TrimSpace(r.Backend)
-	if r.Backend != "llm" && r.Backend != "jev" {
+	if r.Backend != llmKey && r.Backend != jevKey {
 		return fmt.Errorf("models.router.backend: must be llm or jev")
 	}
 	r.classifierSlotSet = mappingHasKey(node, "classifier-slot")
@@ -1887,7 +1890,7 @@ func (c *RouterCategory) strictFields() map[string]any {
 	return map[string]any{
 		"name":        &c.Name,
 		"description": &c.Description,
-		"model":       &c.Model,
+		modelKey:      &c.Model,
 	}
 }
 
@@ -1928,6 +1931,11 @@ func (m *ModelsSection) UnmarshalYAML(node ast.Node) error {
 // checker model, a master-disable, and the rule list. It is parsed STRICTLY
 // (unknown keys error).
 type GuardrailsSection struct {
+	// Backend is experimental; jev opts in to a native System One checker.
+	Backend string `yaml:"backend"`
+	// FinalDecision selects the experimental Jev-only or Jev-triaged LLM final decision.
+	// Empty defaults to jev for this spike.
+	FinalDecision string `yaml:"finalDecision"`
 	// Model is the checker model id / alias. Empty leaves the CLI --guardrails-model
 	// to supply it; a value here is overridden by the CLI flag when both are set.
 	Model string `yaml:"model"`
@@ -1982,6 +1990,18 @@ func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 	if err := decodeStrictMapping(node, "guardrails", g.strictFields()); err != nil {
 		return err
 	}
+	if g.Backend != "" && g.Backend != llmKey && g.Backend != jevKey {
+		return fmt.Errorf("guardrails.backend: must be llm or jev")
+	}
+	if g.FinalDecision != "" && g.FinalDecision != "jev" && g.FinalDecision != llmKey {
+		return fmt.Errorf("guardrails.finalDecision: must be jev or llm")
+	}
+	if g.FinalDecision != "" && g.Backend != "jev" {
+		return fmt.Errorf("guardrails.finalDecision requires backend: jev")
+	}
+	if g.Backend == "jev" && g.FinalDecision != llmKey && g.Model != "" {
+		return fmt.Errorf("guardrails.model is not used with backend: jev")
+	}
 	if posture := strings.TrimSpace(g.OnCheckerDown); posture != "" && posture != "fail" && posture != "warn" {
 		return fmt.Errorf("guardrails.onCheckerDown: must be fail or warn")
 	}
@@ -1993,7 +2013,9 @@ func (g *GuardrailsSection) UnmarshalYAML(node ast.Node) error {
 
 func (g *GuardrailsSection) strictFields() map[string]any {
 	return map[string]any{
-		"model":         &g.Model,
+		"backend":       &g.Backend,
+		"finalDecision": &g.FinalDecision,
+		modelKey:        &g.Model,
 		"disabled":      &g.Disabled,
 		"onCheckerDown": &g.OnCheckerDown,
 		"defaultMode":   &g.DefaultMode,
