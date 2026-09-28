@@ -31,7 +31,7 @@ does not name.
 - [x] Is failing closed (refusing to resume) an acceptable v1 cost for restart/MCP-resume on an agent-bound session, or does the motivating mecak8s Slack-bot deployment need session continuity across a pod restart badly enough to pull the larger persist-authority-and-rebuild-through-it fix (issue #1796) into this plan? — Decision: fail closed now for simplicity, matching ADR 0353's own stated v1 scope; keep #1796 as a separate follow-up.
 - [x] `memory: project` for an agent-bound session: should `resolveAgentMemoryHead` be extended to thread the session's own resolved placement (`EnvironmentRef`) into its "project" root, or should it keep reading the single process-wide `cfg.Workspace` unmodified? — Decision: implement the placement-aware version. This is real new work (today's code, including the exploratory Slice A branch, does not do this — `resolveAgentMemoryHead` is called unchanged), but it closes a real cross-placement leak risk and is what ADR 0353's own text already claims is true.
 - [x] `CreateSessionRequest.Limits` fields are plain `int32`. The `.proto` doc comment ("a zero value in any field disables that particular limit") is itself stale against the server's actual behavior: `createSession` (`internal/adapter/server/service.go`, ~2265-2266) already states "a zero field means 'unset', not 'explicitly unlimited'" and fills it via `limits.WithDefaults(s.cfg.DefaultLimits)`. For an agent-bound session, does zero mean "not supplied, inherit the def's cap," or "explicitly unlimited"? — Decision: for an agent-bound session, a request `Limits` zero value means "not supplied, inherit the def's cap" — a caller cannot use this field to request unlimited on an agent-bound session. This is now recognized as consistent with, not a carve-out from, the server's real existing zero-means-unset behavior — the stale "0 = unlimited" wire *documentation* is a separate, pre-existing inaccuracy this plan does not fix.
-- [x] AC1.7/AC1.8 require fixing `internal/adapter/modelhook.Runner.check` to inspect `innerOut.Mutated` when present, instead of the pre-mutation `HookEvent` it reads today — a real, code-verified gap affecting BOTH governance phases (a `PreToolUse` hook's mutated args and a `PostToolUse` hook's mutated result). Should this fix be in THIS plan's scope, or should AC1.7/AC1.8 be narrowed and the bypass filed separately? — Decision: fix it here, for both phases. A plan that asserts a false security guarantee is worse than a slightly wider diff, and the fix is narrowly scoped to one function's input.
+- [x] AC1.7/AC1.8 originally required fixing `internal/adapter/modelhook.Runner.check` to inspect `innerOut.Mutated` when present, instead of the pre-mutation `HookEvent` it read at draft time — a real, code-verified gap affecting BOTH governance phases. `modelhook.Runner` no longer exists on `main` (ADR 0363 replaced hook-decorator guardrails with dispatch-level contextual review, `reviewAction`/`prepareInboundAssessment` in `engine/agent/dispatch.go`), re-verified to already inspect the effective/post-mutation payload for both phases — is a fix still needed, and if not, what should AC1.7/AC1.8 become? — Decision: retired. No fix needed; AC1.7/AC1.8 are now pinning regression tests against the real current mechanism instead of a fix against removed code.
 - [x] ADR 0353's Decision text says a def author who wants more than the bounded base set "lists them explicitly" (WebSearch, memory tools, …) — but naming one today silently drops it as an "unknown tool," it does not grant it. Should `base` be widened for the root-shaped path so naming works as the ADR describes, or should the ADR text be corrected instead? — Decision: correct the ADR text for v1 (simpler, and consistent with reusing the same bounded base set a Subagent child gets); open a follow-up issue if a concrete use case ever needs a wider explicit-opt-in set. Tracked alongside the other ADR 0353 documentation-pass items in "Deferred decisions and known risks" below.
 
 ## Interface contract
@@ -177,21 +177,26 @@ authoritative rules this scenario proves.
   SAME as any other main session — never the child-shaped headless auto-deny or optional
   ask-reviewer.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_OrdinaryMainSessionBehavior`
-- AC1.7: The def's own `hooks:` compose as the `inner` `HookRunner` under the existing
-  operator-guardrails decorator (`modelhook.Runner`); the checker inspects the EFFECTIVE
-  payload for BOTH governance phases — a `PreToolUse` hook's mutated tool-call args AND a
-  `PostToolUse` hook's mutated result (`{content, is_error}`, per `merge.go`'s own
-  documented `Mutated` semantics for that phase) — never the stale pre-mutation
-  `HookEvent` `modelhook.Runner.check` reads today for either phase. This closes a real,
-  code-verified gap: `Runner.Run` calls `r.check` against the same original `ev` regardless
-  of phase, never `innerOut.Mutated`, so a hook that rewrites a benign call into a
-  dangerous one (Pre) or a safe result into an unsafe one (Post) runs with zero guardrail
-  inspection.
-  - verify: `TestSessionScopedAgentIdentity_Scenario1_GuardrailInspectsHookMutatedPayload`
-- AC1.8: A def hook that mutates either phase's payload is not exempt from guardrail
-  inspection — fixture defs whose Pre hook rewrites a benign call, and whose Post hook
-  rewrites a benign result, into ones a configured guardrail rule would block are, in
-  fact, blocked (negative tests for AC1.7; today's code would let both through).
+- AC1.7: An agent-bound session's contextual guardrail review (`reviewAction` for
+  `PreToolUse`, `prepareInboundAssessment`/`assessInbound` for `PostToolUse` —
+  `engine/agent/dispatch.go`, ADR 0363) inspects the EFFECTIVE payload for both phases —
+  `pre.effective` (post-hook-mutation args) and the post-`postHook` result — exactly as
+  any other main session's review does. This is a pinning regression test, not a fix: the
+  mutation-inspection gap this AC originally targeted (a def hook's mutated payload
+  skipping guardrail inspection) was a real, code-verified defect against
+  `internal/adapter/modelhook.Runner`, but that type no longer exists on `main` — ADR 0363
+  replaced hook-decorator guardrails with this dispatch-level review, which already
+  operates on the effective/post-mutation payload for both phases. Because an
+  agent-bound session's engine bottoms out in ordinary main-session `Deps` (AC1.6,
+  including `Deps.ToolReviewer` and friends), it inherits this review unchanged — no new
+  mechanism, just confirmed inheritance, guarded so a future change can't quietly exclude
+  agent-bound sessions from it.
+  - verify: `TestSessionScopedAgentIdentity_Scenario1_ContextualGuardrailInspectsEffectivePayload`
+- AC1.8: A def hook that mutates either phase's payload is not exempt from that review —
+  fixture defs whose `PreToolUse` hook rewrites a benign call, and whose `PostToolUse`
+  hook rewrites a benign result, into ones a configured guardrail rule would flag are, in
+  fact, flagged (the same negative-test intent as before, now proven against the real
+  current mechanism instead of the removed one).
   - verify: `TestSessionScopedAgentIdentity_Scenario1_HookMutationCannotBypassGuardrail`
 - AC1.9: The session's minted `session.Authority` is derived from the def's own resolved
   catalog and resource-capability list, not the deployment's build-time default catalog —
@@ -208,7 +213,9 @@ authoritative rules this scenario proves.
   AVAILABLE set before the def's allowlist is ever consulted.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_MutationFollowsDefTools`
 - AC1.12: Request `Limits.max_turns`/`max_tool_calls` may only lower the def's configured
-  values, never raise them.
+  values, never raise them; an unset (zero-valued) request field means "not supplied,
+  inherit the def's cap," never "explicitly unlimited," per the corresponding Human
+  decision.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_LimitsTightenOnly`
 - AC1.13: A request `mode` looser than the def's configured `permissionMode` is silently
   clamped to the def's value (`plan` < `default` < `acceptEdits`) — never rejected, never
