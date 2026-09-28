@@ -30,6 +30,10 @@
 {{- end -}}
 {{- end -}}
 {{- if $retained -}}
+{{- $executorAccount := lookup "v1" "ServiceAccount" .Release.Namespace (include "mecatl-execution.executorServiceAccount" .) -}}
+{{- if or (not $executorAccount) (ne (dig "automountServiceAccountToken" true $executorAccount) false) (not (empty ($executorAccount.imagePullSecrets | default list))) -}}
+{{- fail (printf "retained execution allocations require ServiceAccount %s with token automount disabled and no inherited pull secrets; restore the original release-owned account before retrying" (include "mecatl-execution.executorServiceAccount" .)) -}}
+{{- end -}}
 {{- range $cm := list (printf "%s-profiles" $name) (printf "%s-security-manifest" $name) (printf "%s-security-authority" $name) "mecatl-execution-profile-allocations" -}}
 {{- $live := lookup "v1" "ConfigMap" $root.Release.Namespace $cm -}}
 {{- if not ($live.data | default dict) -}}

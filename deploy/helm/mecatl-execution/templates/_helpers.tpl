@@ -2,6 +2,15 @@
 {{- default (printf "%s-mecatl-execution" .Release.Name) .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "mecatl-execution.executorServiceAccount" -}}
+{{- $fullname := include "mecatl-execution.fullname" . -}}
+{{- if le (len $fullname) 54 -}}
+{{- printf "%s-executor" $fullname -}}
+{{- else -}}
+{{- printf "%s-%s-executor" ($fullname | trunc 45 | trimSuffix "-") ($fullname | sha256sum | trunc 8) -}}
+{{- end -}}
+{{- end -}}
+
 {{/* Retained resources are adoptable only by their original Helm identity. */}}
 {{- define "mecatl-execution.retainedMetadata" -}}
 {{- $live := lookup .apiVersion .kind .root.Release.Namespace .name -}}

@@ -2,6 +2,8 @@ package executioncontroller
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +88,144 @@ func TestReconcileCreatesTokenlessNonRootPodAndRetainedPVC(t *testing.T) {
 		t.Fatal("tmp volume is not profile-bounded")
 	}
 }
+
+func TestExecutorRequiresDedicatedServiceAccount(t *testing.T) {
+	for _, name := range []string{"", "default"} {
+		t.Run(name, func(t *testing.T) {
+			env := testEnvironment()
+			k := kubefake.NewSimpleClientset()
+			r := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env), k, "ns", testProfiles().WithExecutorServiceAccount(name))
+			if err := r.Reconcile(t.Context(), env.GetName()); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Reconcile(t.Context(), env.GetName()); err == nil {
+				t.Fatal("missing or default account accepted")
+			}
+			pods, err := k.CoreV1().Pods("ns").List(t.Context(), metav1.ListOptions{})
+			if err != nil || len(pods.Items) != 0 {
+				t.Fatalf("pod created without dedicated account: %v: %v", pods, err)
+			}
+		})
+	}
+}
+
+func TestExecutorPullIdentity(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	profiles := testProfiles().WithExecutorServiceAccount("release-mecatl-execution-executor")
+	profile, _ := profiles.get("go")
+	profile.Spec.ImagePullSecrets = []string{"registry-one", "registry.two"}
+	profiles.byName["go"] = profile
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset()
+	r := NewReconciler(d, k, "ns", profiles)
+	for range 2 {
+		if err := r.Reconcile(ctx, env.GetName()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pod, err := k.CoreV1().Pods("ns").Get(ctx, "executor-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Spec.ServiceAccountName != profiles.executorServiceAccount || pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken || len(pod.Spec.ImagePullSecrets) != 2 || pod.Spec.ImagePullSecrets[0].Name != "registry-one" || pod.Spec.ImagePullSecrets[1].Name != "registry.two" {
+		t.Fatalf("executor pull identity: %+v", pod.Spec)
+	}
+	for name, mutate := range map[string]func(*corev1.Pod){
+		"default account":  func(p *corev1.Pod) { p.Spec.ServiceAccountName = "default" },
+		"provider account": func(p *corev1.Pod) { p.Spec.ServiceAccountName = "release-mecatl-execution" },
+		"token enabled":    func(p *corev1.Pod) { yes := true; p.Spec.AutomountServiceAccountToken = &yes },
+		"injected secret": func(p *corev1.Pod) {
+			p.Spec.ImagePullSecrets = append(p.Spec.ImagePullSecrets, corev1.LocalObjectReference{Name: "injected"})
+		},
+		"missing secret": func(p *corev1.Pod) { p.Spec.ImagePullSecrets = p.Spec.ImagePullSecrets[:1] },
+		"reordered": func(p *corev1.Pod) {
+			p.Spec.ImagePullSecrets[0], p.Spec.ImagePullSecrets[1] = p.Spec.ImagePullSecrets[1], p.Spec.ImagePullSecrets[0]
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := pod.DeepCopy()
+			mutate(changed)
+			if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, changed); err == nil {
+				t.Fatal("anomalous Pod adopted")
+			}
+		})
+	}
+	profile.Spec.ImagePullSecrets = nil
+	if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, pod); err == nil {
+		t.Fatal("omitted pull list accepted injected secrets")
+	}
+	pod.Spec.ServiceAccountName = "default"
+	if _, err := k.CoreV1().Pods("ns").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(ctx, env.GetName()); err == nil {
+		t.Fatal("reconciliation adopted default account")
+	}
+}
+
+func TestExecutorPullProfileDigestMismatchDoesNotAllocate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.yaml")
+	load := func(content string) *Profiles {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		profiles, err := LoadProfiles(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return profiles.WithExecutorServiceAccount("release-executor")
+	}
+	original := load(validProfileYAML())
+	old, _ := original.get("go")
+	changed := load(validProfileYAML() + "    imagePullSecrets: [registry]\n")
+	env := testEnvironment()
+	if err := unstructured.SetNestedField(env.Object, old.Digest, "spec", "profileDigest"); err != nil {
+		t.Fatal(err)
+	}
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset()
+	if err := NewReconciler(d, k, "ns", changed).Reconcile(t.Context(), env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), env.GetName(), metav1.GetOptions{})
+	if err != nil || conditionTrue(got, "Ready") || textNested(got.Object, "status", "pod", "uid") != "" || textNested(got.Object, "spec", "profileDigest") != old.Digest {
+		t.Fatalf("old profile was adopted or changed: %v: %v", got, err)
+	}
+	pods, err := k.CoreV1().Pods("ns").List(t.Context(), metav1.ListOptions{})
+	if err != nil || len(pods.Items) != 0 {
+		t.Fatalf("Pod created for stale profile: %v: %v", pods, err)
+	}
+	pvcs, err := k.CoreV1().PersistentVolumeClaims("ns").List(t.Context(), metav1.ListOptions{})
+	if err != nil || len(pvcs.Items) != 0 {
+		t.Fatalf("PVC created for stale profile: %v: %v", pvcs, err)
+	}
+}
+
+func TestAdmissionInjectedPullSecretFailsClosed(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+	k := kubefake.NewSimpleClientset()
+	k.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		pod := action.(k8stesting.CreateAction).GetObject().(*corev1.Pod).DeepCopy()
+		pod.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "injected"}}
+		return true, pod, nil
+	})
+	r := NewReconciler(d, k, "ns", testProfiles())
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(ctx, env.GetName()); err == nil {
+		t.Fatal("admission-injected Secret adopted")
+	}
+	got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(ctx, env.GetName(), metav1.GetOptions{})
+	if err != nil || conditionTrue(got, "Ready") || textNested(got.Object, "status", "pod", "uid") != "" {
+		t.Fatalf("injected Pod became authoritative: %v: %v", got, err)
+	}
+}
+
 func TestTerminatingPodIsUnavailableDuringReconcile(t *testing.T) {
 	ctx := t.Context()
 	env := testEnvironment()
@@ -405,7 +545,7 @@ func testProfiles() *Profiles {
 	}
 	profile.Spec = spec
 	profile.Digest = "sha256:profile"
-	return &Profiles{byName: map[string]resolvedProfile{"go": profile}}
+	return &Profiles{byName: map[string]resolvedProfile{"go": profile}, executorServiceAccount: "test-mecatl-execution-executor"}
 }
 func testEnvironment() *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns", "uid": string(types.UID("uid"))}, "spec": map[string]any{"schemaVersion": int64(2), "profile": "go", "profileDigest": "sha256:profile", "revision": "rev", "desired": "Active"}, "status": map[string]any{"schemaVersion": int64(2), "epoch": int64(1), "references": []any{}, "fenceState": "Healthy"}}}

@@ -79,6 +79,51 @@ func TestLoadProfilesAcceptsQuantityUnitVariants(t *testing.T) {
 	}
 }
 
+func TestProfilePullSecretDigestAndValidation(t *testing.T) {
+	load := func(extra string) (resolvedProfile, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "profiles.yaml")
+		if err := os.WriteFile(path, []byte(validProfileYAML()+extra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		profiles, err := LoadProfiles(path)
+		if err != nil {
+			return resolvedProfile{}, err
+		}
+		profile, _ := profiles.get("go")
+		return profile, nil
+	}
+	legacy, err := load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := load("    imagePullSecrets: []\n")
+	if err != nil || legacy.Digest != empty.Digest || legacy.Digest != "sha256:7f64bdddd86008c73dd9601fad9dfdbbfa696c91e75dd3c7005e98934679a994" {
+		t.Fatalf("legacy digest changed: %s, empty: %s, err: %v", legacy.Digest, empty.Digest, err)
+	}
+	configured, err := load("    imagePullSecrets: [registry-one, registry.two]\n")
+	if err != nil || configured.Digest == legacy.Digest {
+		t.Fatalf("configured pull identity: %+v: %v", configured, err)
+	}
+	if _, err := load("    imagePullSecrets: [a,b,c,d,e,f,g,h]\n"); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{
+		"empty": `[""]`, "duplicate": `[registry, registry]`, "uppercase": `[Registry]`,
+		"slash": `[ns/registry]`, "empty label": `[a..b]`, "long label": "[" + strings.Repeat("a", 64) + "]",
+		"oversize": `[a,b,c,d,e,f,g,h,i]`, "scalar": `"registry"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := load("    imagePullSecrets: " + value + "\n"); err == nil {
+				t.Fatal("invalid pull Secret list accepted")
+			}
+		})
+	}
+	if _, err := load("    imagePullSecret: [registry]\n"); err == nil {
+		t.Fatal("unknown field accepted")
+	}
+}
+
 func validProfileYAML() string {
 	return `profiles:
   go:

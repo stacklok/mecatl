@@ -1,3 +1,12 @@
+{{- if eq (include "mecatl-execution.fullname" .) (include "mecatl-execution.executorServiceAccount" .) -}}
+{{- fail "provider ServiceAccount must differ from executor ServiceAccount" -}}
+{{- end -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  {{- include "mecatl-execution.retainedMetadata" (dict "root" . "apiVersion" "v1" "kind" "ServiceAccount" "name" (include "mecatl-execution.executorServiceAccount" .)) | nindent 2 }}
+automountServiceAccountToken: false
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:

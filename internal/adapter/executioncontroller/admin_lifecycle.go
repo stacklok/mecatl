@@ -450,7 +450,7 @@ func (s *Store) verifyRuntimeUIDs(ctx context.Context, o *unstructured.Unstructu
 	if err := validatePVC(o, profile, pvc); err != nil {
 		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype workspace shape is incompatible"}
 	}
-	if err := validatePod(o, profile, pvc.Name, pod); err != nil {
+	if err := validatePod(o, profile, pvc.Name, s.profiles.executorServiceAccount, pod); err != nil {
 		return &executionenv.Error{Code: executionenv.CodeConflict, Message: "prototype executor shape is insecure or incompatible"}
 	}
 	return nil

@@ -2,6 +2,7 @@ fullnameOverride: ""
 provider:
   image: ""
   imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
   replicas: 2
   securitySecretName: ""
   securityManifest: ""

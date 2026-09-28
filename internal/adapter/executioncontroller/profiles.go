@@ -12,6 +12,7 @@ import (
 
 	"github.com/goccy/go-yaml"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // ProfilesFile is the strict operator profile-file schema.
@@ -32,6 +33,7 @@ type ProfileSpec struct {
 	EphemeralStorageLimit   string        `yaml:"ephemeralStorageLimit"`
 	TmpSizeLimit            string        `yaml:"tmpSizeLimit"`
 	RuntimeClassName        string        `yaml:"runtimeClassName"`
+	ImagePullSecrets        []string      `yaml:"imagePullSecrets,omitempty"`
 	MaxFileBytes            int64         `yaml:"maxFileBytes"`
 	MaxCommandBytes         int64         `yaml:"maxCommandBytes"`
 	MaxCommandDuration      time.Duration `yaml:"maxCommandDuration"`
@@ -39,7 +41,17 @@ type ProfileSpec struct {
 }
 
 // Profiles is a validated immutable profile registry.
-type Profiles struct{ byName map[string]resolvedProfile }
+type Profiles struct {
+	byName                 map[string]resolvedProfile
+	executorServiceAccount string
+}
+
+// WithExecutorServiceAccount sets the chart-owned identity for Pod construction and validation.
+func (p *Profiles) WithExecutorServiceAccount(name string) *Profiles {
+	p.executorServiceAccount = name
+	return p
+}
+
 type resolvedProfile struct {
 	Spec                    ProfileSpec
 	Digest                  string
@@ -103,7 +115,29 @@ func validateProfile(name string, s ProfileSpec) (resolvedProfile, error) {
 	if !validExecutionBounds(s) {
 		return resolvedProfile{}, fmt.Errorf("profile %q has invalid execution bounds", name)
 	}
+	if err := validateImagePullSecrets(name, s.ImagePullSecrets); err != nil {
+		return resolvedProfile{}, err
+	}
 	return quantities, nil
+}
+
+func validateImagePullSecrets(name string, secrets []string) error {
+	if len(secrets) > 8 {
+		return fmt.Errorf("profile %q has too many imagePullSecrets", name)
+	}
+	seen := make(map[string]bool, len(secrets))
+	for _, secret := range secrets {
+		if len(validation.IsDNS1123Subdomain(secret)) != 0 || seen[secret] {
+			return fmt.Errorf("profile %q has invalid or duplicate imagePullSecret %q", name, secret)
+		}
+		for _, label := range strings.Split(secret, ".") {
+			if len(validation.IsDNS1123Label(label)) != 0 {
+				return fmt.Errorf("profile %q has invalid imagePullSecret %q", name, secret)
+			}
+		}
+		seen[secret] = true
+	}
+	return nil
 }
 
 func resolveProfileQuantities(name string, s ProfileSpec) (resolvedProfile, error) {

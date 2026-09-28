@@ -34,8 +34,8 @@ func TestChartRetainedLifetime(t *testing.T) {
 			retained[u.GetKind()+"/"+u.GetName()] = obj
 		}
 	}
-	if len(retained) != 6 {
-		t.Fatalf("retained resources=%d, want four ConfigMaps and two workload policies", len(retained))
+	if len(retained) != 7 {
+		t.Fatalf("retained resources=%d, want four ConfigMaps, two workload policies, and executor ServiceAccount", len(retained))
 	}
 	authority := "ConfigMap/test-mecatl-execution-security-authority"
 	capacity := "ConfigMap/mecatl-execution-profile-allocations"
@@ -99,6 +99,15 @@ func TestChartRetainedLifetime(t *testing.T) {
 		{name: "empty authority", mutate: func(m map[string]map[string]any) { m[authority]["data"] = map[string]any{} }, want: "bootstrap is forbidden"},
 		{name: "missing state", mutate: func(m map[string]map[string]any) { m[authority]["data"] = map[string]any{"other": "value"} }, want: "state.json"},
 		{name: "missing capacity", mutate: func(m map[string]map[string]any) { delete(m, capacity) }, want: "bootstrap is forbidden"},
+		{name: "missing executor ServiceAccount", mutate: func(m map[string]map[string]any) {
+			delete(m, "ServiceAccount/test-mecatl-execution-executor")
+		}, want: "ServiceAccount test-mecatl-execution-executor with token automount disabled"},
+		{name: "executor ServiceAccount token enabled", mutate: func(m map[string]map[string]any) {
+			m["ServiceAccount/test-mecatl-execution-executor"]["automountServiceAccountToken"] = true
+		}, want: "ServiceAccount test-mecatl-execution-executor with token automount disabled"},
+		{name: "executor ServiceAccount inherited pulls", mutate: func(m map[string]map[string]any) {
+			m["ServiceAccount/test-mecatl-execution-executor"]["imagePullSecrets"] = []any{map[string]any{"name": "injected"}}
+		}, want: "ServiceAccount test-mecatl-execution-executor with token automount disabled"},
 		{name: "missing deny", mutate: func(m map[string]map[string]any) {
 			delete(m, "NetworkPolicy/test-mecatl-execution-workload-default-deny")
 		}, want: "existing workload NetworkPolicies"},
@@ -121,7 +130,8 @@ func TestChartRetainedLifetime(t *testing.T) {
 		{name: "removed profile policy", args: []string{"--set-json", "networkPolicy.workloadProfiles={}"}, want: "configuration is incompatible"},
 		{name: "changed egress", args: []string{"--set", "networkPolicy.workloadProfiles.go.egress[0].cidr=10.3.0.0/16"}, want: "configuration is incompatible"},
 		{name: "changed profile", args: []string{"--set", "profiles.go.maxEnvironments=30"}, want: "configuration is incompatible"},
-		{name: "changed fullname", args: []string{"--set", "fullnameOverride=other"}, want: "bootstrap is forbidden"},
+		{name: "changed profile pulls", args: []string{"--set-json", `profiles.go.imagePullSecrets=["registry"]`}, want: "configuration is incompatible"},
+		{name: "changed fullname", args: []string{"--set", "fullnameOverride=other"}, want: "ServiceAccount other-executor with token automount disabled"},
 		{name: "missing profiles with orphan policies", mutate: func(m map[string]map[string]any) {
 			delete(m, "ExecutionEnvironment/exec-test")
 			delete(m, "ConfigMap/test-mecatl-execution-profiles")
@@ -142,6 +152,113 @@ func TestChartRetainedLifetime(t *testing.T) {
 				t.Fatalf("render error=%v, want %q", err, tt.want)
 			}
 		})
+	}
+	if _, err := renderLifetime(t, retained, "--set-json", `provider.imagePullSecrets=["registry"]`); err != nil {
+		t.Fatalf("provider-only pull Secret rotation must not change retained workload identity: %v", err)
+	}
+}
+
+func TestChartPullIdentity(t *testing.T) {
+	for _, tc := range []struct{ name, provider, profile string }{
+		{name: "omitted"},
+		{name: "configured", provider: `["registry-one","registry.two"]`, profile: `["workload-one","workload.two"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var args []string
+			if tc.provider != "" {
+				args = []string{"--set-json", "provider.imagePullSecrets=" + tc.provider, "--set-json", "profiles.go.imagePullSecrets=" + tc.profile}
+			}
+			objects, err := renderLifetime(t, nil, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			account := objects["ServiceAccount/test-mecatl-execution-executor"]
+			if account == nil || account["automountServiceAccountToken"] != false || account["imagePullSecrets"] != nil {
+				t.Fatalf("executor account must be tokenless without pull Secrets: %v", account)
+			}
+			for _, object := range objects {
+				if object["kind"] != "RoleBinding" && object["kind"] != "ClusterRoleBinding" {
+					continue
+				}
+				binding := &unstructured.Unstructured{Object: object}
+				subjects, _, _ := unstructured.NestedSlice(binding.Object, "subjects")
+				for _, subject := range subjects {
+					if subject.(map[string]any)["name"] == "test-mecatl-execution-executor" {
+						t.Fatalf("executor got RBAC: %v", binding.Object)
+					}
+				}
+			}
+			deployment := &unstructured.Unstructured{Object: objects["Deployment/test-mecatl-execution"]}
+			providerAccount, _, _ := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "serviceAccountName")
+			if providerAccount != "test-mecatl-execution" {
+				t.Fatalf("provider account: %s", providerAccount)
+			}
+			providerPull, _, _ := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "imagePullSecrets")
+			want := 0
+			if tc.provider != "" {
+				want = 2
+			}
+			if len(providerPull) != want {
+				t.Fatalf("provider pull: %v", providerPull)
+			}
+			if want == 2 && (providerPull[0].(map[string]any)["name"] != "registry-one" || providerPull[1].(map[string]any)["name"] != "registry.two") {
+				t.Fatalf("provider pull order: %v", providerPull)
+			}
+			profileCM := &unstructured.Unstructured{Object: objects["ConfigMap/test-mecatl-execution-profiles"]}
+			content, _, _ := unstructured.NestedString(profileCM.Object, "data", "profiles.yaml")
+			var decoded map[string]any
+			if err := yaml.NewYAMLOrJSONDecoder(strings.NewReader(content), 4096).Decode(&decoded); err != nil {
+				t.Fatal(err)
+			}
+			profile := decoded["profiles"].(map[string]any)["go"].(map[string]any)
+			if want == 0 && profile["imagePullSecrets"] != nil || want == 2 && !reflect.DeepEqual(profile["imagePullSecrets"], []any{"workload-one", "workload.two"}) {
+				t.Fatalf("profile pull: %v", profile)
+			}
+		})
+	}
+	for _, release := range []string{"other", "test"} {
+		objects, err := renderLifetime(t, nil, "--set", "fullnameOverride="+release+"-provider")
+		if err != nil {
+			t.Fatal(err)
+		}
+		deployment := &unstructured.Unstructured{Object: objects["Deployment/"+release+"-provider"]}
+		containers, _, _ := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+		args := containers[0].(map[string]any)["args"].([]any)
+		if objects["ServiceAccount/"+release+"-provider-executor"] == nil || !strings.Contains(fmt.Sprint(args), "--executor-service-account="+release+"-provider-executor") {
+			t.Fatalf("release account not wired: %v", args)
+		}
+	}
+	longPrefix := strings.Repeat("a", 53)
+	first, err := renderLifetime(t, nil, "--set", "fullnameOverride="+longPrefix+"-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := renderLifetime(t, nil, "--set", "fullnameOverride="+longPrefix+"-second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range first {
+		if strings.HasPrefix(name, "ServiceAccount/") && strings.HasSuffix(name, "-executor") && second[name] != nil {
+			t.Fatalf("long release names share executor account %s", name)
+		}
+	}
+}
+
+func TestChartRejectsInvalidPullSecrets(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"provider.imagePullSecrets", `[""]`}, {"provider.imagePullSecrets", `["reg","reg"]`},
+		{"provider.imagePullSecrets", `["REG"]`}, {"provider.imagePullSecrets", `["` + strings.Repeat("a", 64) + `"]`},
+		{"provider.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
+		{"profiles.go.imagePullSecrets", `["ns/reg"]`}, {"profiles.go.imagePullSecrets", `["a","a"]`},
+		{"profiles.go.imagePullSecrets", `["a","b","c","d","e","f","g","h","i"]`},
+		{"profiles.go.imagePullSecret", `["reg"]`},
+	} {
+		if _, err := renderLifetime(t, nil, "--set-json", tc.key+"="+tc.value); err == nil {
+			t.Fatalf("invalid chart value accepted: %s=%s", tc.key, tc.value)
+		}
+	}
+	if _, err := renderLifetime(t, nil, "--set-json", `provider.imagePullSecrets=["a","b","c","d","e","f","g","h"]`, "--set-json", `profiles.go.imagePullSecrets=["a","b","c","d","e","f","g","h"]`); err != nil {
+		t.Fatal(err)
 	}
 }
 

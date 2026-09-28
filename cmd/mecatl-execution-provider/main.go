@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -35,11 +36,12 @@ func main() {
 	}
 }
 func run() error { //nolint:gocyclo // Startup validation and owned-resource shutdown stay in one composition root.
-	var addr, healthAddr, namespace, profilesPath, manifestPath, keyDirectory, authorityConfigMap string
+	var addr, healthAddr, namespace, profilesPath, manifestPath, keyDirectory, authorityConfigMap, executorServiceAccount string
 	var reloadInterval time.Duration
 	var maxConcurrentStreams, maxConcurrentRPCs, maxConcurrentRPCsPerClient int
 	flag.StringVar(&addr, "listen", ":8443", "gRPC listen address")
 	flag.StringVar(&namespace, "namespace", "", "managed Kubernetes namespace")
+	flag.StringVar(&executorServiceAccount, "executor-service-account", "", "chart-owned RBAC-free executor ServiceAccount name")
 	flag.StringVar(&profilesPath, "profiles", "/etc/mecatl-execution/profiles.yaml", "strict operator profile file")
 	flag.StringVar(&healthAddr, "health-listen", ":8081", "operational HTTP health listen address; empty disables")
 	flag.StringVar(&manifestPath, "grant-keyring-manifest", "/etc/mecatl-execution/security/manifest.json", "versioned security manifest")
@@ -50,6 +52,9 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	flag.IntVar(&maxConcurrentRPCs, "max-concurrent-rpcs", 128, "maximum active provider RPCs")
 	flag.IntVar(&maxConcurrentRPCsPerClient, "max-concurrent-rpcs-per-client", 32, "maximum active provider RPCs per authorized client")
 	flag.Parse()
+	if len(validation.IsDNS1123Label(executorServiceAccount)) != 0 || executorServiceAccount == "default" {
+		return errors.New("--executor-service-account must name the chart-created dedicated executor ServiceAccount, not default")
+	}
 	if namespace == "" || authorityConfigMap == "" || reloadInterval <= 0 || reloadInterval > time.Minute || maxConcurrentStreams < 1 || maxConcurrentStreams > 1024 || maxConcurrentRPCs < 1 || maxConcurrentRPCs > 4096 || maxConcurrentRPCsPerClient < 1 || maxConcurrentRPCsPerClient > maxConcurrentRPCs {
 		return errors.New("required identity, security reload interval, or RPC concurrency bounds are invalid")
 	}
@@ -57,6 +62,7 @@ func run() error { //nolint:gocyclo // Startup validation and owned-resource shu
 	if err != nil {
 		return err
 	}
+	profiles.WithExecutorServiceAccount(executorServiceAccount)
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return fmt.Errorf("build in-cluster Kubernetes config: %w", err)

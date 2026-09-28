@@ -41,6 +41,12 @@ spec:
     spec:
       serviceAccountName: {{ include "mecatl-execution.fullname" . }}
       automountServiceAccountToken: true
+      {{- with .Values.provider.imagePullSecrets }}
+      imagePullSecrets:
+      {{- range . }}
+      - name: {{ . | quote }}
+      {{- end }}
+      {{- end }}
       topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
@@ -58,6 +64,7 @@ spec:
         imagePullPolicy: {{ .Values.provider.imagePullPolicy }}
         args:
         - --namespace={{ .Release.Namespace }}
+        - --executor-service-account={{ include "mecatl-execution.executorServiceAccount" . }}
         - --profiles=/etc/mecatl-execution/profiles.yaml
         - --grant-keyring-manifest=/etc/mecatl-execution/security/manifest.json
         - --grant-key-directory=/etc/mecatl-execution/security

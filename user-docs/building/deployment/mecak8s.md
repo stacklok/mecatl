@@ -166,6 +166,29 @@ The optional execution provider runs as a separate service and controller with i
 own `mecatl-execution` chart. `mecak8s` remains a client and receives no Pod,
 PVC, custom-resource, or controller management permissions.
 
+For private registry pulls, create pull Secrets in the execution namespace before
+installing the draft chart. Import a locally prepared Docker config without
+putting credential contents in Helm values or command arguments:
+
+```sh
+kubectl --namespace <NAMESPACE> create secret generic provider-registry \
+  --type=kubernetes.io/dockerconfigjson \
+  --from-file=.dockerconfigjson=<LOCAL_DOCKER_CONFIG_JSON>
+```
+
+Set `provider.imagePullSecrets: [provider-registry]`
+for the provider image and `profiles.<name>.imagePullSecrets: [workload-registry]`
+for each workload image that needs one. Each optional list accepts up to eight
+unique Kubernetes Secret names. The chart creates a release-derived executor
+ServiceAccount with no RBAC and token automount disabled, retained while executor
+Pods may survive provider removal; executor Pods also disable token automount
+and use only their profile's pull Secret names. Keep
+registry credentials out of workload environment variables and the security
+material Secret. Changing a profile's pull Secret names changes its immutable
+identity and is incompatible with retained allocations; quiesce and retire them
+before changing that profile. Provider-only pull Secret names are not workload
+identity and may change in a compatible quiesced upgrade.
+
 The provider supplies run-wide ownership, transactional references, controlled
 replacement and retirement, durable grant revocation, and reloadable TLS and
 signing material. Production isolation requires a CNI that enforces NetworkPolicy
@@ -331,8 +354,12 @@ remote PVC. Schedules, SkillDraft, background Shell, and delegated filesystem
 execution are outside this draft.
 
 If allocation reports `Ready=false` with `PVCUnavailable` or
-`ExecutorUnavailable`, inspect the namespace's quota and Kubernetes admission
-failures. Restore the failed prerequisite and wait for `Ready=True`. The
+`ExecutorUnavailable`, inspect namespace quota, admission failures, and the
+executor Pod's events. For a private-image pull failure, use
+`kubectl --namespace <NAMESPACE> get pods` and
+`kubectl --namespace <NAMESPACE> describe pod <POD_NAME>` for the provider or
+executor Pod; check the named pull Secret and image digest. Correct the
+failed prerequisite and wait for `Ready=True`. The
 controller keeps retrying through its rate-limited queue while the allocation
 exists; no reference edit, restart, or manual reconciliation is needed. Missing
 authoritative PVCs or Pods and ownership mismatches remain fail-closed and are
@@ -414,12 +441,11 @@ leaves the value empty. Continue to use reviewed current values and the quiescen
 procedure below. Do not use `--force-conflicts` or `--take-ownership` as a blanket
 takeover.
 
-**Before quiescing:** verify that the retained profiles ConfigMap has a nonempty
-`data["lifetime.json"]` and that the authority/capacity ledgers and original
-release ownership are intact. Pre-retention installations without this history
-cannot be automatically adopted. Stop this procedure and recover trusted retained
-history; do not synthesize it from proposed values or reset authority. The chart
-reports missing history separately from an incompatible lifetime configuration.
+Before upgrading, verify that the retained profiles ConfigMap contains a nonempty
+`data["lifetime.json"]`, the authority and capacity ledgers are intact, and the
+release still owns its retained executor ServiceAccount. That account must have
+token automount disabled and no inherited pull Secrets. Stop if any of these
+checks fails; do not synthesize missing history or reset authority.
 
 For a compatible provider upgrade:
 
