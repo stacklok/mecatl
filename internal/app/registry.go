@@ -18,6 +18,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/internal/adapter/anthropicsub"
 	"github.com/stacklok/mecatl/internal/adapter/llmendpoint"
 	"github.com/stacklok/mecatl/internal/adapter/llmresilience"
 	"github.com/stacklok/mecatl/internal/adapter/openaibearer"
@@ -598,6 +599,22 @@ func buildProviderRegistryContext(ctx context.Context, cfg Config, detect envDet
 	// provider switch, and the capability intersection treat it as data (no change).
 	if key := providerKey(cfg.AnthropicKey, providerAnthropic, detect); key != "" {
 		entries[providerAnthropic] = newAnthropicEntryFor(cfg, providerAnthropic, key, builtinBaseURL(cfg, providerAnthropic), meta, true)
+	} else if cfg.AnthropicSubscription != nil {
+		// A subscription grant is not an API key: it travels as a bearer token
+		// and the provider only honors it on a request carrying the
+		// first-party client's shape. The transport owns both, so the adapter
+		// is constructed with no API key and its HTTP client replaced.
+		//
+		// Live listing is deliberately OFF here. The lister authenticates with
+		// the API key it is handed and uses the plain live-model client, so on
+		// this path it would send an empty x-api-key and 401; and routing the
+		// model endpoint through the subscription transport is not something
+		// this change can verify, since that transport is shaped for the
+		// Messages resource. The catalogued ceilings therefore apply, which is
+		// the same floor an uncatalogued model already falls back to.
+		subscriptionClient := &http.Client{Transport: &anthropicsub.Transport{Source: cfg.AnthropicSubscription}}
+		entries[providerAnthropic] = newAnthropicEntryFor(cfg, providerAnthropic, "", builtinBaseURL(cfg, providerAnthropic), meta, false,
+			anthropic.WithRequestOption(anthropicoption.WithHTTPClient(subscriptionClient)))
 	}
 
 	unavailableNative, err := addCustomProviderEntries(ctx, entries, cfg, meta)
@@ -857,7 +874,39 @@ func customProviderListingHTTPClient(client *http.Client) *http.Client {
 //
 // Deliberately do not route this through providerKey/providerEnvVars: a ChatGPT
 // subscription and an OpenAI API key are separate billing identities.
+// newRenewingOpenAICodexEntry builds the Codex entry over a renewable
+// subscription grant. The policy resolves the credential per request, so both
+// inference and live listing follow a rotation without a restart; the lister
+// shares the same policy for exactly that reason.
+func newRenewingOpenAICodexEntry(cfg Config) (providerEntry, error) {
+	now := cfg.openAICodexNow
+	if now == nil {
+		now = time.Now
+	}
+	policy, err := openaicodex.NewRenewingRequestPolicy(
+		cfg.OpenAICodexSubscription,
+		now,
+		cfg.openAICodexTransport,
+	)
+	if err != nil {
+		return providerEntry{}, err
+	}
+	entry := newOpenAICompatEntry(
+		cfg,
+		providerOpenAICodex,
+		"policy-owned",
+		openaicodex.BaseURL,
+		openai.WithHTTPClient(policy.HTTPClient()),
+		openai.WithMaxRetries(0),
+	)
+	entry.lister = openAICodexLister{inner: openaicodex.NewLister(policy)}
+	return entry, nil
+}
+
 func newOpenAICodexEntry(cfg Config) (providerEntry, error) {
+	if cfg.OpenAICodexSubscription != nil {
+		return newRenewingOpenAICodexEntry(cfg)
+	}
 	if !cfg.OpenAICodexCredential.Configured() {
 		return providerEntry{}, nil
 	}

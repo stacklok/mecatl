@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -801,6 +802,12 @@ func conventionalAuthFileWarning(c config, keys cliconfig.ResolvedKeys) string {
 	if !c.mayEmbed() || c.listThemes || c.mock || keys.Any() {
 		return ""
 	}
+	// A stored sign-in is a usable startup path, so an absent conventional
+	// auth file is not noteworthy: warning about a file the operator does not
+	// need reads as a failure of the sign-in they just completed.
+	if len(cliconfig.StoredSubscriptions(context.Background())) > 0 {
+		return ""
+	}
 	var probe app.Config
 	c.toolhiveLLMFlags.Apply(&probe)
 	if app.ToolhiveAvailable(probe) {
@@ -941,6 +948,13 @@ func (c config) validate() error {
 // takes over the terminal. It mirrors app.Build's provider availability rules.
 func validateEmbeddedProvider(c config) error {
 	if c.providerKeys.Any() || c.openAIKey != "" || c.openRouterKey != "" || c.anthropicKey != "" || c.openCodeKey != "" || c.mock {
+		return nil
+	}
+	// A stored subscription sign-in is a provider path. This gate runs before
+	// the TUI takes the terminal and before composition resolves credentials,
+	// so it must consult the sign-in store directly or a signed-in operator is
+	// told to configure an API key they do not need.
+	if len(cliconfig.StoredSubscriptions(context.Background())) > 0 {
 		return nil
 	}
 	hasCustom, err := cliconfig.HasOperatorProviderDefinitions(true, true, nil)

@@ -127,9 +127,10 @@ command arguments, settings, prompts, and logs. See [Choose models and
 providers](/features/choose-models.md#set-up-a-local-provider) and [Run mecated
 standalone](/building/deployment/mecated.md#configure-providers).
 
-ToolHive has a separate external lifecycle and owns its LLM credentials. Use
-`thv llm` tooling for ToolHive setup; ToolHive MCP discovery and manual OpenAI
-Codex authentication are separate workflows.
+ToolHive has a separate external lifecycle: it owns its LLM credentials and
+setup. Use `thv llm` tooling for ToolHive rather than local provider credential
+commands. ToolHive MCP discovery and subscription sign-ins are separate
+workflows, and a connected client never reads the local credential store.
 
 ## Next steps
 

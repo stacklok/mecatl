@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"golang.org/x/sys/unix"
 
 	"github.com/stacklok/mecatl/internal/adapter/authfile"
@@ -43,6 +44,37 @@ func TestUpdateProviderMap_CreatesMissingSettingsDocument(t *testing.T) {
 	}
 	if err := ValidateYAML(data); err != nil {
 		t.Fatalf("created settings are invalid: %v\n%s", err, data)
+	}
+}
+
+func TestUpdateDefaults_CreatesMissingSettingsDocument(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "settings.yaml")
+	update := DefaultUpdate{Provider: "openai-codex", Model: "gpt-5.3-codex"}
+	if state, err := UpdateDefaults(context.Background(), path, update); err != nil || state != authfile.CommitDurable {
+		t.Fatalf("create settings = (%v, %v), want durable success", state, err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateYAML(data); err != nil {
+		t.Fatalf("created settings are invalid: %v\n%s", err, data)
+	}
+	var parsed struct {
+		Models struct {
+			DefaultProvider string `yaml:"default_provider"`
+			Default         string `yaml:"default"`
+		} `yaml:"models"`
+	}
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Models.DefaultProvider != update.Provider || parsed.Models.Default != update.Model {
+		t.Fatalf("created settings read back as %+v, want %+v", parsed.Models, update)
 	}
 }
 

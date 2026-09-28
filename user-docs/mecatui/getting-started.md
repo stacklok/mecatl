@@ -18,11 +18,20 @@ start a separate service.
 You need:
 
 - macOS or Linux with [Homebrew](https://brew.sh/);
-- an API key for Anthropic, OpenAI, or OpenRouter; and
+- a credential for one provider: an API key from Anthropic, OpenAI, OpenRouter,
+  or OpenCode, or a ChatGPT Plus/Pro or Claude Pro/Max subscription sign-in; and
 - a local project directory that you trust.
 
 The project is your **workspace**. Mecatl limits its file tools and commands to
 this directory.
+
+This guided path uses a provider API key. To bill inference to a subscription
+instead, sign in first with `mecatui providers login PROVIDER` and select the
+provider with `mecatui providers set-default`. Mecatl's OIDC options authenticate
+to an operator-configured gateway or remote Mecatl server, not to a consumer
+provider account. See
+[Sign in with a subscription](/features/choose-models.md#sign-in-with-a-subscription)
+for the sign-in and selection steps.
 
 ## Install Mecatl
 

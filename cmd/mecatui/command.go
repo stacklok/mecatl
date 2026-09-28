@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -130,7 +131,11 @@ type invocationResolution struct {
 	remaining      []string
 	providerAction string
 	providerName   string
-	err            error
+	// typedCommand marks a resolution produced from argv rather than
+	// synthesized by a guided wizard. Only a typed command needs flag
+	// discoverability hints; a wizard has already stated the choice it made.
+	typedCommand bool
+	err          error
 }
 
 // resolveInvocation classifies argv (the FULL arg vector, argv[0] included as
@@ -258,7 +263,7 @@ func resolveRemoteLogoutCommand(args []string) invocationResolution {
 }
 
 func resolveProvidersCommand(args []string) invocationResolution {
-	const usage = "providers: usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser] | logout PROVIDER | set-default PROVIDER [MODEL] | remove PROVIDER]"
+	const usage = "providers: usage: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser|--subscription|--device] | logout PROVIDER [--subscription] | set-default PROVIDER [MODEL] | remove PROVIDER]"
 	if len(args) == 1 && isHelpMetaFlag(args[0]) {
 		return invocationResolution{mode: modeProviderStatus, remaining: args}
 	}
@@ -348,15 +353,48 @@ func resolveProviderCredentialCommand(args []string) (invocationResolution, bool
 	}
 	switch args[0] {
 	case providerActionLogin:
-		if len(args) == 2 || (len(args) == 3 && args[2] == "--no-browser") {
-			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:]}, true
+		// --no-browser stays accepted for the OIDC path; the subscription
+		// modifiers are additionally accepted here and rejected later for a
+		// provider that has no subscription login, so the error names the
+		// provider rather than the argv shape.
+		if len(args) == 2 || providerLoginFlags(args[2:]) {
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:], typedCommand: true}, true
 		}
 	case providerActionLogout:
-		if len(args) == 2 {
-			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1]}, true
+		if len(args) == 2 || providerLogoutFlags(args[2:]) {
+			return invocationResolution{mode: modeProviderCredential, providerAction: args[0], providerName: args[1], remaining: args[2:], typedCommand: true}, true
 		}
 	}
 	return invocationResolution{}, false
+}
+
+// providerLoginFlags reports whether every argument is a recognized provider
+// login modifier, with no repeats.
+func providerLoginFlags(args []string) bool {
+	return knownProviderFlags(args, "--no-browser", "--subscription", "--device")
+}
+
+// providerLogoutFlags reports whether every argument is a recognized provider
+// logout modifier.
+func providerLogoutFlags(args []string) bool {
+	return knownProviderFlags(args, "--subscription")
+}
+
+func knownProviderFlags(args []string, allowed ...string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(args))
+	for _, arg := range args {
+		if _, repeat := seen[arg]; repeat {
+			return false
+		}
+		if !slices.Contains(allowed, arg) {
+			return false
+		}
+		seen[arg] = struct{}{}
+	}
+	return true
 }
 
 // resolveConnectCommand preserves connect's special grammar: ADDRESS must
@@ -454,11 +492,12 @@ func writeTopLevelHelp(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Run mecatui with no command to start an embedded server and open the TUI.")
 	_, _ = fmt.Fprintln(out)
 	writeCommandSummary(out)
-	_, _ = fmt.Fprintln(out, "\nHelp:")
-	_, _ = fmt.Fprintln(out, "  mecatui help COMMAND    show help for a command")
-	_, _ = fmt.Fprintln(out, "  mecatui --help-flags    show common embedded-server flags")
-	_, _ = fmt.Fprintln(out, "  mecatui --help-all      show all embedded-server flags")
-	_, _ = fmt.Fprintln(out, "  mecatui --version       print the version")
+	_, _ = fmt.Fprintln(out, "Provider configuration and lifecycle: mecatui providers [status [PROVIDER] | setup [PROVIDER] | add PROVIDER [--no-login] | login PROVIDER [--no-browser|--subscription|--device] | logout PROVIDER [--subscription] | set-default PROVIDER [MODEL] | remove PROVIDER]")
+	_, _ = fmt.Fprintln(out, "Remote mecatui uses `mecatui login ADDRESS`; ToolHive MCP discovery and subscription sign-ins are separate.")
+	_, _ = fmt.Fprintln(out, "\nHelp: mecatui --help, mecatui -h, or mecatui help")
+	_, _ = fmt.Fprintln(out, "      mecatui help <command> aliases mecatui <command> --help")
+	_, _ = fmt.Fprintln(out, "      mecatui --version prints the build version and exits")
+	_, _ = fmt.Fprintln(out, "\nRun 'mecatui --help-flags' for common embedded-mode flags or '--help-all' for the exhaustive bare reference.")
 }
 
 // writeDebugHelp renders the debug command contract without falling through to

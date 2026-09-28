@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -495,6 +497,14 @@ func appConfig(f flags, diag port.Diagnostics, obs observability) app.Config {
 	}
 	keys := f.providerCredentials
 	f.providerFlags.ApplyResolved(&out, keys)
+	// Bind a stored subscription sign-in when no API key resolved. A missing
+	// grant is the normal unsigned-in state. A storage failure is reported
+	// and startup continues: the provider is then simply unauthenticated,
+	// which fails at first use with its own message rather than preventing
+	// every unrelated provider from starting.
+	if err := cliconfig.AttachSubscriptionCredentials(context.Background(), &out); err != nil {
+		slog.Warn("subscription sign-in could not be loaded", "error", err)
+	}
 	if keys.OpenAI != "" {
 		out.UseOpenAI = true
 	}

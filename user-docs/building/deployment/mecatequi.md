@@ -255,13 +255,17 @@ available, or the run fails with `no LLM provider available`.
 OpenRouter, Anthropic, or OpenCode Go, set the corresponding key and select the
 provider explicitly.
 
-The experimental `openai-codex` provider has no environment key. Put a manual
-ChatGPT Codex OAuth snapshot in owner-only `auth.yaml`, pass
-`--api-key-file PATH --default-provider openai-codex`, and replace the token
-and restart the job when it expires or is rejected. It uses an undocumented
-private backend and a separate billing identity from public OpenAI API credit.
-There is no login or refresh flow. See
-[Configure provider credentials](./settings.md#configure-provider-credentials).
+The `openai-codex` provider has no environment key. It reads a manual ChatGPT
+Codex OAuth snapshot from owner-only `auth.yaml` when you pass `--api-key-file
+PATH`, and it also attaches a subscription grant signed in with `mecatui
+providers login openai-codex` on the same `$XDG_CONFIG_HOME`. Select it with
+`--default-provider openai-codex`. The file snapshot uses a private Codex
+backend, a separate billing identity from public OpenAI API credit, and never
+refreshes: replace the token and restart the job when it expires. `mecatequi`
+does not perform the sign-in itself. See
+[Configure provider credentials](./settings.md#configure-provider-credentials)
+and
+[Sign in with a subscription](/features/choose-models.md#sign-in-with-a-subscription).
 
 ### Telemetry
 

@@ -179,7 +179,8 @@ complete schema.
 ## Configure provider credentials
 
 Keep provider credentials in the process environment or in an owner-readable
-`auth.yaml` file:
+`auth.yaml` file. A subscription sign-in is stored separately, in the local
+credential store selected by the login command:
 
 ```yaml
 providers:
@@ -209,12 +210,16 @@ an error. A missing explicit `--api-key-file` path produces a warning. On Unix,
 Mecatl also warns when group or other users can read the file. Use mode `0600`
 on a shared host and restart the process after replacing a credential.
 
-The experimental `openai-codex` provider reads one token snapshot at startup
-and has no login or refresh flow. When both the token and file include an
-account or expiry claim, the values must agree, and the earlier expiry applies.
-Mode `0600` blocks other users, but another process running as the same user can
-still read the plaintext file. Use a dedicated operating-system account or a
-stronger sandbox when you need isolation from same-user processes.
+The `openai-codex` provider accepts this file snapshot or a subscription sign-in
+created by `mecatui providers login openai-codex`, which stores a renewable grant
+in the local credential store instead. The file snapshot wins when both are
+present, and `mecatui providers status openai-codex` reports it as shadowing the
+sign-in. The file snapshot itself never refreshes: replace the token and restart
+the process when it expires. When both the token and file include an account or
+expiry claim, the values must agree, and the earlier expiry applies. Mode `0600`
+blocks other users, but another process running as the same user can still read
+the plaintext file. Use a dedicated operating-system account or a stronger
+sandbox when you need isolation from same-user processes.
 
 ## Embedded and connected mecatui
 

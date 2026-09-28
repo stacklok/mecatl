@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/internal/adapter/oidcclient"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/cliconfig"
 	"github.com/stacklok/mecatl/mcp/oauthlogin"
 )
 
@@ -58,6 +59,28 @@ func (c providerCommands) runCredential(ctx context.Context, res invocationResol
 	if err != nil {
 		return fmt.Errorf("providers %s: load configured providers: %w", res.providerAction, err)
 	}
+	// A subscription provider's credential is a plan entitlement obtained by
+	// signing in. Codex has no API key at all, so it always takes this path;
+	// Anthropic keeps its API-key path and opts in with --subscription.
+	if isSubscriptionProvider(res.providerName) {
+		opts, subscription, err := parseSubscriptionFlags(res)
+		if err != nil {
+			return err
+		}
+		if subscription {
+			if res.providerAction == providerActionLogout {
+				return runSubscriptionLogout(ctx, res.providerName, stdout)
+			}
+			// A sign-in that an existing credential will shadow is inert.
+			// Resolve that now so the operator is told at login rather than
+			// discovering their requests still bill the other identity.
+			shadowedBy := ""
+			if inspection, inspectErr := c.backend.inspect(); inspectErr == nil {
+				shadowedBy = cliconfig.SubscriptionShadowedBy(inspection.credentials, res.providerName)
+			}
+			return runSubscriptionLogin(ctx, res.providerName, opts, shadowedBy, stdout, stderr)
+		}
+	}
 	if isBuiltinAPIKeyProvider(res.providerName) {
 		if len(res.remaining) != 0 {
 			return errors.New("providers login: --no-browser is available only for auth.method oidc")
@@ -89,6 +112,14 @@ func isBuiltinAPIKeyProvider(provider string) bool {
 func (c providerCommands) runAPIKey(ctx context.Context, res invocationResolution, authPath string, stdout, stderr io.Writer) error {
 	var key *string
 	if res.providerAction == providerActionLogin {
+		// A provider with a subscription counterpart must name it before the
+		// prompt blocks on input: an operator who wants the subscription
+		// otherwise sees only an API-key prompt with no way to discover the
+		// command from here. Only a typed command gets this; a wizard has
+		// already presented the choice it made.
+		if res.typedCommand {
+			writeSubscriptionHint(res.providerName, stderr)
+		}
 		if err := writeProviderKeyGuidance(stderr, res.providerName); err != nil {
 			return err
 		}

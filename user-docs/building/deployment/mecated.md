@@ -288,13 +288,14 @@ Provider credentials are read from `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
 use an owner-only `auth.yaml` file. See
 [Configure provider credentials](./settings.md#configure-provider-credentials).
 
-An active `models.router.backend: jev` reads `TYPESAFE_API_KEY` from the process
-environment. This router credential has no `auth.yaml` or command-line form. It
-is inert unless an operator taxonomy selects the Jev backend.
-
-The experimental `openai-codex` provider uses a manually supplied ChatGPT Codex
-token and has no login or refresh flow. See the same credential guide for its
-schema and lifecycle.
+The `openai-codex` provider takes no API key. It reads a manual ChatGPT Codex
+token from `auth.yaml`, and it also attaches a subscription grant signed in with
+`mecatui providers login openai-codex` on the same `$XDG_CONFIG_HOME`. `mecated`
+does not perform the sign-in itself. Select the provider with
+`--default-provider openai-codex` or `models.default_provider`. See
+[Configure provider credentials](./settings.md#configure-provider-credentials)
+and
+[Sign in with a subscription](/features/choose-models.md#sign-in-with-a-subscription).
 
 #### Context discovery recovery
 

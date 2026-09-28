@@ -82,6 +82,10 @@ func (c providerCommands) chooseForSetup(ctx context.Context, out io.Writer) (st
 
 func providerSetupCandidates(statuses []providerStatus) []providerStatus {
 	candidates := slices.DeleteFunc(slices.Clone(statuses), func(status providerStatus) bool {
+		// openai-codex is deliberately absent: setup collects a credential, and
+		// Codex has none to collect. Naming it is how it is configured, so
+		// `providers setup openai-codex` routes to the sign-in instead (see
+		// runNamedSetup) and `providers status` prints that command.
 		if status.Name == openAICodexEndpointID {
 			return !status.Configured
 		}
@@ -96,7 +100,7 @@ func providerSetupCapability(status providerStatus) string {
 	case toolHiveEndpointID:
 		return "external lifecycle"
 	case openAICodexEndpointID:
-		return "manual credential"
+		return "ChatGPT subscription sign-in"
 	}
 	if status.Class == "custom" {
 		if status.AuthMethod == providerAuthOIDC {
@@ -116,14 +120,11 @@ func (c providerCommands) runNamedSetup(ctx context.Context, provider string, st
 		if status.Name != provider {
 			continue
 		}
+		// Codex is configured by signing in, not by pasting a credential, so
+		// setup for it IS the subscription login. Refusing here would send an
+		// operator who asked for it to a status screen instead of the sign-in.
 		if provider == openAICodexEndpointID {
-			if !status.Configured {
-				return writeProviderStatus(stdout, status)
-			}
-			if _, err := fmt.Fprintln(stdout, "Reusing the locally usable manual OpenAI Codex subscription token; no credential writes or entitlement checks."); err != nil {
-				return err
-			}
-			return c.offerSetupDefault(ctx, provider, "", stdout, stderr)
+			return c.runCredential(ctx, invocationResolution{mode: modeProviderCredential, providerAction: providerActionLogin, providerName: provider}, stdout, stderr)
 		}
 		if status.AuthMethod == providerAuthNone {
 			return c.offerSetupDefault(ctx, provider, "", stdout, stderr)

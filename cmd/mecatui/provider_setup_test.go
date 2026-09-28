@@ -44,6 +44,9 @@ func TestProviderSetupMenuUsesFullInventoryNotBareStatus(t *testing.T) {
 	if err != nil || provider != "anthropic" {
 		t.Fatalf("selection = %q, %v", provider, err)
 	}
+	// Setup collects a credential. Codex has none to collect (it signs in) and a
+	// custom provider with no auth has none worth collecting, so neither is a
+	// menu choice; a named `providers setup openai-codex` routes to the sign-in.
 	if strings.Contains(output.String(), "openai-codex") || strings.Contains(output.String(), "local (") {
 		t.Fatalf("unsupported setup choice: %s", output.String())
 	}

@@ -19,6 +19,75 @@ Choose the path that matches how you use Mecatl:
 
 For the rest of the terminal workflow, see [Use mecatui](/mecatui/index.md).
 
+## Authenticate to a model provider
+
+Model-provider authentication is separate from signing in to a remote Mecatl
+server. The supported paths depend on the provider type:
+
+|Provider type|Authentication path|
+|-|-|
+|Anthropic, OpenAI, OpenRouter, or OpenCode|Provider API key|
+|Claude Pro or Max|Subscription sign-in: `mecatui providers login anthropic --subscription`|
+|ChatGPT Plus or Pro|Subscription sign-in: `mecatui providers login openai-codex`|
+|Custom HTTPS gateway|API key, OIDC, or no authentication, as configured by the gateway operator|
+|ToolHive-managed LLM gateway|ToolHive's external `thv llm` lifecycle|
+
+`mecatui login ADDRESS` is a separate flow. It authenticates the terminal client
+to a remote `mecated` server and does not grant that server access to a model
+provider.
+
+## Sign in with a subscription
+
+A ChatGPT Plus or Pro subscription bills through `openai-codex`, a provider
+separate from `openai` that accepts no API key. A Claude Pro or Max subscription
+bills through the `anthropic` provider's `--subscription` path.
+
+```sh
+mecatui providers login openai-codex
+mecatui providers login anthropic --subscription
+```
+
+The command opens a browser and returns the authorization to a loopback
+callback on the same host. Add `--no-browser` to print the authorization URL
+instead, or `--device` to use the device-code flow, which binds no local port and
+needs a browser only to enter the printed code. Use `--device` when the sign-in
+runs where the callback cannot be reached, such as a container or a remote shell.
+
+The grant is written to the host credential store and refreshed automatically;
+`mecatui providers logout PROVIDER --subscription` removes it. An Anthropic grant
+expires about a month after the sign-in and refresh cannot extend it, so repeat
+the sign-in when status reports the expiry.
+
+An API key for the same vendor takes precedence over a stored grant. `mecatui
+providers status` names the credential in effect and reports a sign-in that
+another credential shadows, so a login is never silently inert.
+
+Only `mecatui` performs a subscription sign-in. `mecated`, `mecatequi`, and the
+server embedded by bare `mecatui` attach a stored grant at startup when no API
+key is configured, reading the same `$XDG_CONFIG_HOME`. `mecak8s` does not
+support the Codex subscription credential.
+
+Select the provider for the deployment after signing in:
+
+```sh
+mecatui providers set-default openai-codex <MODEL_ID>
+```
+
+`openai-codex` has no built-in default model, so name one the account is
+entitled to, such as `gpt-6-astra`. Entitlements are per account: the model
+picker lists the models this account can use, and a model that is catalogued but
+not entitled passes configuration and is then rejected by the provider on the
+first request. To let startup select an entitled model instead, leave
+`models.default` unset and select only the provider, as `--default-provider
+openai-codex` does on `mecated`. Without a stored default, bare `mecatui` offers
+the account's models in the model picker.
+
+The `openai-codex` provider uses ChatGPT's Codex backend, a separate billing
+identity from public OpenAI API credit. An immutable token snapshot in
+`auth.yaml` is an alternative to a sign-in. See
+[Configure provider credentials](/building/deployment/settings.md#configure-provider-credentials)
+for that file and its same-user plaintext boundary.
+
 ## Mecatui journey
 
 When the connected server advertises model selection, type `/models` in
