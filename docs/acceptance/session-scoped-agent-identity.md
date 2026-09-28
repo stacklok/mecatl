@@ -19,14 +19,15 @@ Make a `CreateSessionRequest.agent_definition_name` binding demonstrable end-to-
 session whose root engine is built exclusively from a named `AgentDef`'s own tools,
 provider/model, limits, permission mode, hooks, and memory — with ordinary main-session
 guardrails and ask-flow, a strictly non-widenable tool ceiling that survives fork/clear and
-every engine-rebuild path, and no silent widening through either of the two extra grant
-channels ([`Config.RootAuthority`](../../internal/app/root_authority.go) and
-[`Config.MCPBroker`](../../internal/adapter/server/service.go)) that ADR 0353's own text
-does not name.
+every engine-rebuild path, and no silent widening through any of the extra grant channels
+that ADR 0353's own text does not name: [`Config.RootAuthority`](../../internal/app/root_authority.go),
+[`Config.MCPBroker`](../../internal/adapter/server/service.go),
+[`GrantToolAuthority`](../../engine/session/principal.go), and
+[`CompleteWorkspaceEnrollment`](../../engine/session/workspace_enrollment.go).
 
 ## Human decisions
 
-- [x] Should the `PermissionMode` tighten-only clamp (`plan < default < acceptEdits`) use a small local ordinal table now, or block on PR #1730's still-unmerged (and, since it collided with an unrelated Studio ADR, still-unnumbered) permission-mode vocabulary landing first? — Decision: define a small local ordinal table now; reconcile later if #1730 lands a different shape.
+- [x] Should the `PermissionMode` tighten-only clamp (`plan < default < acceptEdits`) use a small local ordinal table now, or block on PR #1730's still-unmerged permission-mode vocabulary (now `docs/adr/0365-one-permission-mode-vocabulary.md`, having renumbered itself once already since it collided with an unrelated Studio ADR) landing first? — Decision: define a small local ordinal table now; reconcile later if #1730 lands a different shape.
 - [x] Should `AgentDefSessionEngineFactory` (the new per-session engine factory this plan introduces) ever accept a tool-widening input parameter, for symmetry with the existing `SessionEngineWithToolsFactory`? — Decision: no, never — the security property "the catalog is built exclusively from the def's tools" must be structurally impossible to violate, not merely a documented convention.
 - [x] Is failing closed (refusing to resume) an acceptable v1 cost for restart/MCP-resume on an agent-bound session, or does the motivating mecak8s Slack-bot deployment need session continuity across a pod restart badly enough to pull the larger persist-authority-and-rebuild-through-it fix (issue #1796) into this plan? — Decision: fail closed now for simplicity, matching ADR 0353's own stated v1 scope; keep #1796 as a separate follow-up.
 - [x] `memory: project` for an agent-bound session: should `resolveAgentMemoryHead` be extended to thread the session's own resolved placement (`EnvironmentRef`) into its "project" root, or should it keep reading the single process-wide `cfg.Workspace` unmodified? — Decision: implement the placement-aware version. This is real new work (today's code, including the exploratory Slice A branch, does not do this — `resolveAgentMemoryHead` is called unchanged), but it closes a real cross-placement leak risk and is what ADR 0353's own text already claims is true.
@@ -48,9 +49,10 @@ does not name.
   for an ordinary session, additive). `engine/session.Session.GrantToolAuthority` and
   `engine/session.Session.CompleteWorkspaceEnrollment` both gain a Ceiling check (Changed,
   not Added — see below; `CompleteWorkspaceEnrollment`'s own internals are also under
-  separate, active redesign in #1741/#1809 — this plan's requirement is a contract-level
-  property of that method, not a specific internal mechanism, so it composes with either
-  ordering).
+  separate, active redesign in the now-approved PR #1741/ADR 0358, implementation still
+  open in #1809 — this plan's requirement is a contract-level property of that method,
+  not a specific internal mechanism, so it composes with #1809 landing before, after, or
+  concurrently with this plan).
   `engine/adapter/sessnap.Snapshot.AgentDefinitionName string` — new, `json:"agent_definition_name,omitempty"`
   (additive). `internal/adapter/server.AgentDefSessionEngineFactory` — new factory type on
   `server.Config`, mirroring the existing `DebugSessionEngineFactory`. `internal/app` gains
@@ -87,8 +89,9 @@ does not name.
   Ceiling. This is deliberately a `Session`-aggregate invariant, not an adapter-layer
   special case: enumerating adapter call sites is fragile (plan review already found two
   real widening paths — `rebuildGrantedAuthorizationEngine`'s lazy broker-OAuth grant and
-  `ConnectWorkspaceServices`'s workspace enrollment — beyond the four originally named),
-  and any future call site this plan doesn't enumerate is still bound by the same
+  `ConnectWorkspaceServices`'s workspace enrollment — beyond the six originally named:
+  `SetMode`, `LoadSessionWithMCP`, `StartRunContent`, `RetryFailedRun`, `CompactSession`,
+  and `resumeFromAwaiting`), and any future call site this plan doesn't enumerate is still bound by the same
   aggregate check. The session's minted `session.Authority` (`mintRootAuthority`) is
   derived from the def's own resolved catalog and resource-capability list at bind time —
   not the deployment's build-time default catalog the ordinary `Config.RootAuthority`
@@ -149,8 +152,10 @@ does not name.
 An operator or SDK caller (the motivating case: a Slack bot, issue #1053) creates a session
 naming an `AgentDef`. The resulting session behaves as an ordinary main session in every
 respect except its tool catalog, which is exactly the def's own resolved scope — never wider
-through any of the three channels this exploration found (the request's own `mcp_servers`,
-the deployment's default catalog via `Config.RootAuthority`, or `Config.MCPBroker`). See
+through the request's own `mcp_servers`, the deployment's default catalog via
+`Config.RootAuthority`, or `Config.MCPBroker` (this scenario's own ACs; Scenario 3 covers
+the remaining widening channels — `GrantToolAuthority`, `CompleteWorkspaceEnrollment`, the
+lazy broker-OAuth grant flow, and workspace enrollment). See
 [ADR 0353](../adr/0353-session-scoped-agent-identity.md)'s Decision section for the
 authoritative rules this scenario proves.
 
@@ -300,8 +305,9 @@ lifetime" decision.
 ### Scenario 3 — The tool ceiling is a session-aggregate invariant, not an enumerated adapter-layer guard list
 
 Enumerating adapter-layer rebuild call sites (the original framing of this scenario) is
-fragile: plan/interface review already found two more real widening paths beyond the four
-originally named — `rebuildGrantedAuthorizationEngine`
+fragile: plan/interface review already found two more real widening paths beyond the six
+originally named (`SetMode`, `LoadSessionWithMCP`, `StartRunContent`, `RetryFailedRun`,
+`CompactSession`, and `resumeFromAwaiting`) — `rebuildGrantedAuthorizationEngine`
 (`internal/adapter/server/mcp_authorization.go`, the lazy per-tool broker-OAuth grant
 flow) and `ConnectWorkspaceServices`/`connectWorkspaceServicesLocked`
 (`internal/adapter/server/workspace_enrollment.go`, the client-callable workspace/bundle
@@ -326,14 +332,17 @@ not knowing about it — which is exactly how the two adapter sites above got mi
 
 Coordination note: `CompleteWorkspaceEnrollment`'s internals are themselves under active,
 separate redesign — [PR #1741](https://github.com/stacklok/mecatl/pull/1741) / ADR 0358
-("workspace enrollment preserves session authority," proposed, not yet approved;
-implementation stacked in #1809) changes its `exactTools` semantics from a full-catalog
-replacement to a broker-registration-key delta against a persisted ledger, keeping the
-same method signature. This plan's Ceiling requirement is written as a property of
-`CompleteWorkspaceEnrollment`'s CONTRACT — whatever tool set it computes, for an
-agent-bound session it must never exceed the Ceiling — not a specific internal
-implementation, so it composes with #1741/#1809 landing before, after, or concurrently
-with this plan. Do not re-design the ledger/delta mechanics here; that is #1741's scope.
+("workspace enrollment preserves session authority") merged as the approved Plan/Interface
+contract; its implementation (#1809) is still open. That approved contract changes
+`exactTools`'s semantics from a full-catalog replacement to a broker-registration-key
+delta against a persisted ledger, keeping the same method signature — CONFIRMED still
+unimplemented as of this writing (`CompleteWorkspaceEnrollment`'s body on `main` is still
+the naive full-replace this plan's AC3.2 describes). This plan's Ceiling requirement is
+written as a property of `CompleteWorkspaceEnrollment`'s CONTRACT — whatever tool set it
+computes, for an agent-bound session it must never exceed the Ceiling — not a specific
+internal implementation, so it composes with #1809 landing before, after, or concurrently
+with this plan. Do not re-design the ledger/delta mechanics here; that is #1741/#1809's
+scope.
 
 The originally-scoped adapter-layer guards (`SetMode`; the
 `needsRehydration()`/`engineAndEnvironmentFor` choke point covering `StartRunContent`,
@@ -401,7 +410,7 @@ does, that is a sign the transitive closure broke and AC3.3/AC3.4 should catch i
 | Per-caller authorization on which `agent_definition_name` values a caller may request — including the def's own `hooks:` local-command-execution surface this grants, not just its tool selection | deployment-level access control (separate mecak8s deployments) | ADR 0353 named non-goal |
 | Persisting the def's authority so restart/MCP-resume can rebuild the SAME restricted catalog instead of failing closed | [issue #1796](https://github.com/stacklok/mecatl/issues/1796) | ADR 0353 Consequences |
 | Session-configurable operator posture (strict/trusted/auto/yolo) | [issue #1784](https://github.com/stacklok/mecatl/issues/1784) | ADR 0353 named non-goal |
-| PR #1730's own permission-mode vocabulary and its pending renumbering | PR #1730 (independent, non-conflicting work) | not this plan's concern |
+| PR #1730's own permission-mode vocabulary (ADR 0365) | PR #1730 (independent, non-conflicting work) | not this plan's concern |
 
 ## Definition of done
 
@@ -415,8 +424,10 @@ does, that is a sign the transitive closure broke and AC3.3/AC3.4 should catch i
 
 ## Deferred decisions and known risks
 
-- AC1.9/AC1.10 and AC2.4 (the `RootAuthority`-minting and `MCPBroker`-skip fixes) and the
-  `hooks:`-execution-surface and discovery-tier-blindness
+- AC1.9/AC1.10 and AC2.4 (the `RootAuthority`-minting and `MCPBroker`-skip fixes), the
+  `Authority.Ceiling` mechanism and its enforcement in `GrantToolAuthority`/
+  `CompleteWorkspaceEnrollment` (AC3.1/AC3.2 — discovered in the latest review round,
+  the biggest of these), and the `hooks:`-execution-surface and discovery-tier-blindness
   reconciliations in the Security/authority section above are all consistent
   implementations or clarifications of ADR 0353's stated ceiling guarantee, not deviations
   from it — but ADR 0353's own Decision text does not currently name any of them. Once this
