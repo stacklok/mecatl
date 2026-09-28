@@ -145,7 +145,7 @@ func seedOneLegacyEnvironment(ctx context.Context, d dynamic.Interface, kube kub
 	if err != nil {
 		return seededLegacyEnvironment{}, fmt.Errorf("create legacy environment %s: %w", name, err)
 	}
-	r := NewReconciler(d, kube, namespace, &Profiles{byName: map[string]resolvedProfile{"go": profile}})
+	r := NewReconciler(d, kube, namespace, (&Profiles{byName: map[string]resolvedProfile{"go": profile}}).WithExecutorServiceAccount("mecatl-execution-executor"))
 	pvcName, podName := resourceName("workspace", name), resourceName("executor", name)
 	pvc, err := r.ensurePVC(ctx, created, profile, pvcName)
 	if err != nil {

@@ -23,6 +23,24 @@ import (
 	"github.com/stacklok/mecatl/internal/executionenv"
 )
 
+func TestLegacyFixtureUsesDedicatedExecutorServiceAccount(t *testing.T) {
+	quota := &corev1.ResourceQuota{ObjectMeta: metav1.ObjectMeta{Name: "mecatl-execution", Namespace: "test"}, Spec: corev1.ResourceQuotaSpec{Hard: corev1.ResourceList{corev1.ResourcePods: resource.MustParse("10")}}, Status: corev1.ResourceQuotaStatus{Hard: corev1.ResourceList{corev1.ResourcePods: resource.MustParse("10")}, Used: corev1.ResourceList{corev1.ResourcePods: resource.MustParse("0")}}}
+	kube := kubefake.NewSimpleClientset(quota)
+	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
+	profile, _ := testProfiles().get("go")
+	_, err := seedOneLegacyEnvironment(t.Context(), d, kube, "test", profile, executionenv.Owner{Issuer: "https://issuer.example.com", Subject: "user"}, "spiffe://example.com/client", "legacy", "binding", []any{"binding"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod, err := kube.CoreV1().Pods("test").Get(t.Context(), "executor-legacy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Spec.ServiceAccountName != "mecatl-execution-executor" || pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
+		t.Fatalf("legacy fixture used an unsafe executor identity: %+v", pod.Spec)
+	}
+}
+
 func TestLegacyQuotaWaitCoversDefaultControllerResync(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
