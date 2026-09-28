@@ -117,7 +117,7 @@ func TestRunSkillsOpensPanel(t *testing.T) {
 func TestSkillsPanelWrapsLongDescriptions(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	const width = 100
-	budget := cardTextWidth(width)
+	budget := newSkillsLayout(th, defaultHelpKeys(), width, 30, false).bodyWidth
 	if budget <= 0 {
 		t.Fatalf("precondition: width %d should yield a positive wrap budget", width)
 	}
@@ -299,6 +299,7 @@ func TestSkillsKeySwallowsNonEsc(t *testing.T) {
 	m := newSkillsModel(t, sampleSkills(), client.Capabilities{Skills: true})
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
+	_ = m.View()
 
 	st := skillsStateOf(t, m)
 	_, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
@@ -331,6 +332,7 @@ func TestSkillsKeySwallowsNonEsc(t *testing.T) {
 // each key is handled. It mirrors typeFilter in models_test.go.
 func typeSkillsFilter(t *testing.T, m Model, s string) Model {
 	t.Helper()
+	_ = m.View() // normal measured geometry owns filter focus
 	st := skillsStateOf(t, m)
 	for _, r := range s {
 		_, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -509,6 +511,7 @@ func TestSkillsScrollViaUpdate(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 	st := skillsStateOf(t, m)
+	_ = m.View()
 	if st.scroll != 0 {
 		t.Fatalf("precondition: initial scroll = %d, want 0", st.scroll)
 	}
@@ -516,8 +519,8 @@ func TestSkillsScrollViaUpdate(t *testing.T) {
 	mm2, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	m = mm2.(Model)
 	st = skillsStateOf(t, m) // panics/fails if the panel closed
-	if st.scroll != 1 {
-		t.Errorf("scroll after pgdown via m.Update = %d, want 1", st.scroll)
+	if st.scroll != st.viewport.Height() {
+		t.Errorf("scroll after pgdown via m.Update = %d, want one measured page %d", st.scroll, st.viewport.Height())
 	}
 }
 
@@ -528,7 +531,7 @@ func TestSkillsScrollViaUpdate(t *testing.T) {
 // TestSoulWheelConsumedWhileOpen, driving tea.MouseWheelMsg through the REAL
 // m.Update path (onMouseMsg → onMouseWheel → m.modal.HandleWheel). The
 // description-less scrollSkills fixture yields one rendered row per skill, so
-// 30 skills overflow the fixed skillsBodyLines window and the wheel can move.
+// 30 skills overflow the measured viewport and the wheel can move.
 func TestSkillsWheelScrollsPanel(t *testing.T) {
 	m := newSkillsModel(t, scrollSkills(30), client.Capabilities{Skills: true})
 	// Long transcript so the viewport WOULD be scrollable if the wheel fell
@@ -546,6 +549,7 @@ func TestSkillsWheelScrollsPanel(t *testing.T) {
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 	st := skillsStateOf(t, m)
+	_ = m.View() // establish the current measured viewport before input
 	if st.scroll != 0 {
 		t.Fatalf("precondition: initial scroll = %d, want 0", st.scroll)
 	}
@@ -662,9 +666,10 @@ func TestSkillsScrollClampedInRender(t *testing.T) {
 	}
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
 	narrowTotal := st.rowTotal(st.deps.theme, contentWidth)
-	if st.scroll != narrowTotal-skillsBodyLines {
-		t.Fatalf("precondition: scroll after End at width 40 = %d, want %d (rowTotal %d − %d)",
-			st.scroll, narrowTotal-skillsBodyLines, narrowTotal, skillsBodyLines)
+	narrowHeight := st.viewport.Height()
+	if st.scroll != narrowTotal-narrowHeight {
+		t.Fatalf("precondition: scroll after End at width 40 = %d, want %d (rowTotal %d − viewport %d)",
+			st.scroll, narrowTotal-narrowHeight, narrowTotal, narrowHeight)
 	}
 
 	// Widen the terminal via the production resize path, then render a frame. The
@@ -681,9 +686,10 @@ func TestSkillsScrollClampedInRender(t *testing.T) {
 	if st.width != wideWidth {
 		t.Errorf("Render should refresh the view-cache width to %d, got %d", wideWidth, st.width)
 	}
-	if st.scroll != wideTotal-skillsBodyLines {
-		t.Errorf("after widening, Render should re-clamp scroll to %d (rowTotal %d − %d), got %d",
-			wideTotal-skillsBodyLines, wideTotal, skillsBodyLines, st.scroll)
+	wideHeight := st.viewport.Height()
+	if st.scroll != wideTotal-wideHeight {
+		t.Errorf("after widening, Render should re-clamp scroll to %d (rowTotal %d − viewport %d), got %d",
+			wideTotal-wideHeight, wideTotal, wideHeight, st.scroll)
 	}
 }
 
@@ -711,79 +717,51 @@ func TestSkillsMsgViaUpdate(t *testing.T) {
 // actually shift (mirrors TestSoulScroll). It also locks the scroll reset on a
 // fresh inventory result and that esc still closes the scrolled panel.
 func TestSkillsScroll(t *testing.T) {
-	// 30 one-row skills exceed skillsBodyLines (14), each window distinguishable.
 	m := newSkillsModel(t, scrollSkills(30), client.Capabilities{Skills: true})
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 	st := skillsStateOf(t, m)
-
-	if st.scroll != 0 {
-		t.Fatalf("initial scroll = %d, want 0", st.scroll)
-	}
-	// At the top: window is rows 1–14 (skill-00..skill-13); the tail is NOT visible.
 	top := stripANSIstr(m.View().Content)
-	if !strings.Contains(top, "skill-00") || strings.Contains(top, "skill-29") {
-		t.Errorf("top window should show skill-00 and NOT skill-29, got:\n%s", top)
-	}
-	if !strings.Contains(top, "lines 1–14 of 30") {
-		t.Errorf("top indicator should read 'lines 1–14 of 30', got:\n%s", top)
+	if st.viewport == nil || st.viewport.Height() <= 0 || !strings.Contains(top, "skill-00") || strings.Contains(top, "skill-29") {
+		t.Fatalf("measured top window invalid: viewport=%v\n%s", st.viewport, top)
 	}
 
-	// Page down once: skill-00 leaves the top, skill-14 enters.
+	page := st.viewport.Height()
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if st.scroll != 1 {
-		t.Errorf("scroll after pgdown = %d, want 1", st.scroll)
+	if st.scroll != page {
+		t.Fatalf("page down offset=%d, want measured page %d", st.scroll, page)
 	}
 	pd := stripANSIstr(m.View().Content)
 	if strings.Contains(pd, "skill-00") {
-		t.Errorf("after pgdown the window should no longer show skill-00, got:\n%s", pd)
-	}
-	if !strings.Contains(pd, "skill-14") {
-		t.Errorf("after pgdown the window should reveal skill-14, got:\n%s", pd)
-	}
-	if !strings.Contains(pd, "lines 2–15 of 30") {
-		t.Errorf("after pgdown the indicator should read 'lines 2–15 of 30', got:\n%s", pd)
+		t.Fatalf("page down did not move physical window:\n%s", pd)
 	}
 
-	// Jump to bottom; max scroll = 30 - 14 = 16: the tail becomes visible.
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if st.scroll != 16 {
-		t.Errorf("scroll after End = %d, want 16 (30-14)", st.scroll)
+	wantEnd := max(0, len(st.externalPhysicalRows())-st.viewport.Height())
+	if st.scroll != wantEnd {
+		t.Fatalf("end offset=%d, want %d", st.scroll, wantEnd)
 	}
 	bot := stripANSIstr(m.View().Content)
 	if !strings.Contains(bot, "skill-29") || strings.Contains(bot, "skill-00") {
-		t.Errorf("bottom window should show skill-29 and NOT skill-00, got:\n%s", bot)
+		t.Fatalf("bottom window invalid:\n%s", bot)
 	}
-	if !strings.Contains(bot, "lines 17–30 of 30") {
-		t.Errorf("bottom indicator should read 'lines 17–30 of 30', got:\n%s", bot)
-	}
-
-	// Pgdown past the end clamps.
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if st.scroll != 16 {
-		t.Errorf("scroll clamps at 16, got %d", st.scroll)
+	if st.scroll != wantEnd {
+		t.Fatalf("page down past end escaped clamp: %d", st.scroll)
 	}
-
-	// Page up moves back (pins the ScrollU arm — removing it must fail here).
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if st.scroll != 15 {
-		t.Errorf("scroll after pgup = %d, want 15", st.scroll)
+	if st.scroll != max(0, wantEnd-page) {
+		t.Fatalf("page up offset=%d, want %d", st.scroll, max(0, wantEnd-page))
 	}
-
-	// Home returns to the top.
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyHome})
 	if st.scroll != 0 {
-		t.Errorf("scroll after Home = %d, want 0", st.scroll)
+		t.Fatalf("home offset=%d", st.scroll)
 	}
-
-	// A fresh inventory result resets a stale offset (never opens mid-list).
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnd})
 	_, _, _ = st.HandleMsg(client.SkillsMsg{Skills: scrollSkills(30).skills})
-	if st.scroll != 0 {
-		t.Errorf("a fresh SkillsMsg should reset scroll to 0, got %d", st.scroll)
+	if st.scroll != 0 || st.viewport.Offset() != 0 {
+		t.Fatalf("fresh inventory did not reset browsing: scroll=%d offset=%d", st.scroll, st.viewport.Offset())
 	}
-
-	// esc still closes the scrolled panel.
 	_, _, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if !closed {
 		t.Error("esc should still close the scrolled panel")
@@ -810,10 +788,7 @@ func TestSkillsErrorClearedOnSuccess(t *testing.T) {
 	}
 }
 
-// TestSkillsPanelScrollGolden locks the scrolled, overflowing inventory panel:
-// an inventory exceeding skillsBodyLines, paged down once, so the golden carries
-// the windowed rows + the "lines X–Y of N" indicator + the scroll footer hint
-// (the TestSoulPanelGolden pattern; the fixed window keeps it deterministic).
+// TestSkillsPanelScrollGolden locks a measured, scrolled overflowing inventory.
 func TestSkillsPanelScrollGolden(t *testing.T) {
 	m := newSkillsModel(t, scrollSkills(30), client.Capabilities{Skills: true})
 	mm, cmd := m.runSkills()
@@ -822,6 +797,7 @@ func TestSkillsPanelScrollGolden(t *testing.T) {
 	if st.view != skillsPanel {
 		t.Fatalf("view = %v, want skillsPanel", st.view)
 	}
+	_ = m.View()
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyPgDown})
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "skills_scroll.golden", got)

@@ -88,8 +88,9 @@ func TestLearnedSkillDetailSanitizesAndShowsLifecycleActions(t *testing.T) {
 	skill := client.LearnedSkill{ID: "id", Name: "review\x1b[31m", OwnerAgent: "agent", State: "staged", Version: "v2", Revision: "r2", Supersedes: "v1", Body: "body\nforged", EvidenceCount: 2, Evaluations: []client.SkillEvaluation{{Verdict: "pass", FixtureIDs: []string{"f1"}}}, Receipts: []client.SkillChange{{Operation: "stage", FromState: "evaluated", ToState: "staged"}}}
 	body, _ := (&skillsState{view: skillsDetail, detail: &skill, deps: surfaceDeps{theme: th, caps: client.Capabilities{LearnedSkills: true}, marks: defaultHelpKeys()}}).Render(100, 40)
 	out := stripANSIstr(body)
-	for _, want := range []string{"created by: agent", "latest evaluation: pass", "change history: 1", "a activate", "r restore previous version"} {
-		if !strings.Contains(out, want) {
+	compact := strings.Join(strings.Fields(out), " ")
+	for _, want := range []string{"created by: agent", "latest evaluation: pass", "change history: 1", "a activate", "r restore previous", "version"} {
+		if !strings.Contains(compact, want) {
 			t.Fatalf("detail omitted %q:\n%s", want, out)
 		}
 	}
@@ -217,6 +218,7 @@ func TestSkillsEnterGetLearnedSkill(t *testing.T) {
 		nextEpoch:        func() uint64 { m.skillsEpoch++; return m.skillsEpoch },
 	}
 	st := m.modal.(*skillsState)
+	st.focus = skillsFocusLearned
 
 	cmd, handled, closed := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !handled || closed {

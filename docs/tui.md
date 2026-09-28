@@ -699,21 +699,22 @@ found (opt-in by presence), so with none, `caps.Skills` is false and the `?`
 overlay reflects that. `/skills` opens the combined inventory panel: external skills show
 name/description from the live `ListSkills` generation, while learned skills also show owner and
 lifecycle state. Active learned entries are labelled `agent-owned` with owner and active version;
-external skills remain unlabelled and retain precedence. `up`/`down` selects a learned skill and
-`enter` opens bounded body, evidence/evaluation, receipt history, and a `v` version diff; `a` activates, `x` rejects,
-`d` archives, and `r` rolls back through server-side expected-revision CAS. A stale action stays in
-the detail with a refresh hint. Procedure linkage is also shown in `/reflections`; changes surface
-non-modally and never force-open either overlay. The panel opens with a **type-to-filter** input focused: type to
-narrow the external live list by a case-insensitive substring match over each skill's **name**
-and **description**. `esc`
-is two-stage: a non-empty filter is cleared first (panel stays open); a second
-`esc` closes the panel. A long inventory is **scrollable** the same way `/soul` is:
-`pgup`/`pgdn` (and `up`/`down`, `home`/`end`) move a fixed line-window over the
-rows, with a "lines X–Y of N" indicator when the inventory overflows; the
-`/agents` definition inventory scrolls identically. (Note: `j`/`k` type into
-the filter — they are not intercepted as navigation, unlike the read-only
-overlays; see `/models`.) Activation stays the model's
-call (the `Skill` tool reads the body on demand); the panel is discovery only. Pass `--no-skills` to disable discovery entirely, or
+external skills remain unlabelled and retain precedence. The responsive card uses the available
+conversation region, caps its outer width at 128 cells, and independently bounds the external and
+learned inventories. `tab` transfers focus between them. The configured arrow bindings move one
+physical external line or one learned row, page bindings move by the focused region's measured
+height, and each wheel event moves one row in that same region without scrolling the conversation.
+Typing filters only while the external region is focused; the match remains a case-insensitive
+substring over each skill's **name** and **description**, and typed `j`/`k` remain filter text rather
+than navigation. Under learned focus, `enter` opens bounded body, evidence/evaluation, receipt
+history, and a `v` version diff; `a` activates, `x` rejects, `d` archives, and `r` rolls back through
+server-side expected-revision CAS. On geometry too small for the card's fixed chrome and required
+inventory rows, `/skills` degrades to a clipped close-only hint with no filtering, selection,
+detail, or lifecycle action. `esc` in normal geometry is two-stage: a non-empty filter is cleared
+first (the panel stays open); a second `esc` closes the panel. A stale action stays in the detail
+with a refresh hint. Procedure linkage is also shown in `/reflections`; changes surface non-modally
+and never force-open either overlay. External activation stays the model's call (the `Skill` tool
+reads the body on demand); the panel is discovery and learned-skill review only. Pass `--no-skills` to disable discovery entirely, or
 `--skills-dir` to scope it to a single vetted directory. Note the trust boundary:
 a skill auto-activates from its always-in-context metadata, so a `SKILL.md` in a
 workspace you didn't author (e.g. a cloned repo's `.claude/skills`) can steer the

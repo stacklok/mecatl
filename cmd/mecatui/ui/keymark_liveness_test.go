@@ -868,18 +868,15 @@ func TestWorktreesOverlayHintsReflectKeyOverride(t *testing.T) {
 }
 
 // TestSkillsOverlayHintsReflectKeyOverride proves the skills panel footer reads the
-// LIVE scroll + Close markings, while the literal ↑/↓ stays (bare up/down, not
-// keyMap-bound) (issue #457).
+// live scroll and Close markings for the focused-region controls.
 func TestSkillsOverlayHintsReflectKeyOverride(t *testing.T) {
 	hk := liveHK()
 	th := theme.New("aztec", theme.AztecPalette())
 	st := &skillsState{view: skillsPanel, skills: []client.Skill{{Name: "s1"}}, filtered: []client.Skill{{Name: "s1"}}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Skills: true}, marks: hk}}
 	body, _ := st.Render(100, 30)
 	got := stripANSIstr(body)
-	// ↑/↓ stays literal; pgup/pgdn scroll + close are live (scrollMarking returns
-	// the live "<scrollU>/<scrollD>" pair once either half is remapped).
-	if !strings.Contains(got, "↑/↓/ctrl+f14/ctrl+f15 scroll · ctrl+f16 clear filter / close") {
-		t.Errorf("skills hint should carry live scroll+close with literal ↑/↓: %q", got)
+	if !strings.Contains(got, "tab changes region · ctrl+f14/ctrl+f15 scroll · ctrl+f16") || !strings.Contains(got, "clear filter / close") {
+		t.Errorf("skills hint should carry live focused-region scroll+close: %q", got)
 	}
 	if strings.Contains(got, "esc clear filter / close") {
 		t.Errorf("skills hint still shows default close: %q", got)
