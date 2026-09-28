@@ -26,7 +26,7 @@ func TestContextReportInventory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	scan, err := contextCLI(t, "scan", "--project", project, "--user-root", user, "--format", "json")
+	scan, err := contextCLI(t, "scan", project, "--user-root", user, "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestContextInventoryRejections(t *testing.T) {
 	if err := os.WriteFile(input, []byte(`{"message_count":0,"prompt":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	scan, err := contextCLI(t, "scan", "--project", project, "--user-root", user, "--format", "json")
+	scan, err := contextCLI(t, "scan", project, "--user-root", user, "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestContextInventoryRejections(t *testing.T) {
 	if _, err := contextCLI(t, "report", "--input", badPath); err == nil {
 		t.Fatal("hostile candidate reimported")
 	}
-	projectOnly, err := contextCLI(t, "scan", "--project", project, "--format", "json")
+	projectOnly, err := contextCLI(t, "scan", project, "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestContextInventoryRejections(t *testing.T) {
 func TestContextInventoryOutputErrors(t *testing.T) {
 	project := t.TempDir()
 	inventory := filepath.Join(t.TempDir(), "scan.json")
-	scan, err := contextCLI(t, "scan", "--project", project, "--format", "json")
+	scan, err := contextCLI(t, "scan", project, "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}

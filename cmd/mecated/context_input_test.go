@@ -165,7 +165,7 @@ func TestContextProcess(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("guidance"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := contextProcess(t, "context", "scan", "--project", dir, "--format", "json")
+	cmd := contextProcess(t, "context", "scan", dir, "--format", "json")
 	data, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("scan process: %v %s", err, data)

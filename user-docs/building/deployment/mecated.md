@@ -172,8 +172,8 @@ JSON file passed with `--mcp-snapshot`. These are inventories, not evidence
 that a running agent loaded every listed item.
 
 ```sh
-mecated context scan --project . --user-root "$HOME" --format json > .scratch/context-candidates.json
-mecated context scan --project . --format text
+mecated context scan --user-root "$HOME" --format json . > .scratch/context-candidates.json
+mecated context scan . --format text
 ```
 
 To inspect a request that ran with durable event evidence, save the authorized

@@ -38,7 +38,7 @@ func TestContextScan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	text, err := contextCLI(t, "scan", "--project", dir, "--format", "json")
+	text, err := contextCLI(t, "scan", dir, "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestContextScan(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, ".mecatl/rules/evil.md")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := contextCLI(t, "scan", "--project", dir); err == nil || strings.Contains(err.Error(), "secret") {
+	if _, err := contextCLI(t, "scan", dir); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("symlink accepted or leaked: %v", err)
 	}
 }
@@ -89,7 +89,7 @@ func TestContextUserRootAndMCPSnapshot(t *testing.T) {
 	if err := os.WriteFile(snapshot, []byte(`{"tools":[{"name":"mcp__unsafe/name","description":"reads files","inputSchema":{"type":"object"}}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	output, err := contextCLI(t, "scan", "--project", project, "--user-root", user, "--mcp-snapshot", snapshot, "--format", "json")
+	output, err := contextCLI(t, "scan", project, "--user-root", user, "--mcp-snapshot", snapshot, "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestContextUserRootAndMCPSnapshot(t *testing.T) {
 	if err := os.WriteFile(snapshot, []byte(`{"tools":[{"name":"password_lookup","description":"","inputSchema":{"type":"object","properties":{"token":{"type":"string"}}}}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := contextCLI(t, "scan", "--project", project, "--mcp-snapshot", snapshot); err != nil {
+	if _, err := contextCLI(t, "scan", project, "--mcp-snapshot", snapshot); err != nil {
 		t.Fatalf("schema parameter named token is not a credential: %v", err)
 	}
 	for _, bad := range []string{
@@ -119,7 +119,7 @@ func TestContextUserRootAndMCPSnapshot(t *testing.T) {
 		if err := os.WriteFile(snapshot, []byte(bad), 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := contextCLI(t, "scan", "--project", project, "--mcp-snapshot", snapshot); err == nil {
+		if _, err := contextCLI(t, "scan", project, "--mcp-snapshot", snapshot); err == nil {
 			t.Fatalf("accepted unsafe snapshot %s", bad)
 		}
 	}
@@ -136,7 +136,7 @@ func TestContextRuleRenderedCaps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	output, err := contextCLI(t, "scan", "--project", dir, "--format", "json")
+	output, err := contextCLI(t, "scan", dir, "--format", "json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestContextInstructionFallback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("fallback"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	text, err := contextCLI(t, "scan", "--project", dir, "--format", "json")
+	text, err := contextCLI(t, "scan", dir, "--format", "json")
 	if err != nil || strings.Contains(text, `"name":"AGENTS.md"`) || !strings.Contains(text, `"name":"CLAUDE.md"`) {
 		t.Fatalf("fallback: %v %s", err, text)
 	}
@@ -352,7 +352,7 @@ func TestContextInstructionSymlinkFallbackNotRead(t *testing.T) {
 	if err := os.Symlink("AGENTS.md", filepath.Join(dir, "CLAUDE.md")); err != nil {
 		t.Fatal(err)
 	}
-	text, err := contextCLI(t, "scan", "--project", dir, "--format", "json")
+	text, err := contextCLI(t, "scan", dir, "--format", "json")
 	if err != nil || !strings.Contains(text, `"name":"AGENTS.md"`) {
 		t.Fatalf("winning instructions should be scannable with an unused symlink fallback: %v %s", err, text)
 	}
@@ -363,7 +363,7 @@ func TestContextScanDiffAndStdin(t *testing.T) {
 	before := filepath.Join(t.TempDir(), "before.json")
 	after := filepath.Join(t.TempDir(), "after.json")
 	for _, p := range []string{before, after} {
-		text, err := contextCLI(t, "scan", "--project", dir, "--format", "json")
+		text, err := contextCLI(t, "scan", dir, "--format", "json")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -391,8 +391,45 @@ func TestContextScanDiffAndStdin(t *testing.T) {
 	}
 }
 
+func TestContextScanArguments(t *testing.T) {
+	project := t.TempDir()
+	for _, args := range [][]string{
+		{"--format", "json", project},
+		{project, "--format", "json"},
+		{project, "--format=json"},
+	} {
+		output, err := contextCLI(t, append([]string{"scan"}, args...)...)
+		if err != nil || !strings.Contains(output, `"kind":"scan"`) {
+			t.Fatalf("scan %q: %v %s", args, err, output)
+		}
+	}
+
+	snapshot := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(snapshot, []byte(`{"tools":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contextCLI(t, "scan", project, "--user-root="+t.TempDir(), "--mcp-snapshot="+snapshot); err != nil {
+		t.Fatalf("equals flags: %v", err)
+	}
+
+	parent := t.TempDir()
+	dashProject := filepath.Join(parent, "-project")
+	if err := os.Mkdir(dashProject, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(parent)
+	if _, err := contextCLI(t, "scan", "--format", "json", "--", "-project"); err != nil {
+		t.Fatalf("dash-leading project: %v", err)
+	}
+}
+
 func TestContextErrors(t *testing.T) {
-	for _, argv := range [][]string{{"scan"}, {"report"}, {"diff"}, {"scan", "--project", "/missing", "--format", "xml"}, {"scan", "--unknown"}} {
+	for _, argv := range [][]string{{"scan"}, {"scan", ".", "."}} {
+		if _, err := contextCLI(t, argv...); err == nil || !strings.Contains(err.Error(), "mecated context scan .") {
+			t.Fatalf("missing scan example for %q: %v", argv, err)
+		}
+	}
+	for _, argv := range [][]string{{"report"}, {"diff"}, {"scan", "/missing", "--format", "xml"}, {"scan", "--unknown"}, {"scan", "--project", "/missing"}} {
 		if _, err := contextCLI(t, argv...); err == nil {
 			t.Fatalf("accepted %q", argv)
 		}

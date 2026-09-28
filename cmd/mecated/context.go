@@ -23,6 +23,8 @@ import (
 
 const contextVersion = "mecatl.context/v0alpha1"
 
+const contextHelpFlag = "--help"
+
 const (
 	contextKindReport        = "report"
 	contextKindScan          = "scan"
@@ -97,7 +99,7 @@ func resolveContextCommand(args []string) commandResolution {
 	if len(args) == 0 {
 		return commandResolution{err: errors.New("context: expected scan, report, or diff (try 'mecated context --help')")}
 	}
-	if args[0] == "--help" || args[0] == "-h" {
+	if args[0] == contextHelpFlag || args[0] == "-h" {
 		return commandResolution{handled: true, run: func(_ io.Reader, out, _ io.Writer) error { return contextHelp(out) }}
 	}
 	switch args[0] {
@@ -108,7 +110,7 @@ func resolveContextCommand(args []string) commandResolution {
 	}
 }
 func contextHelp(out io.Writer) error {
-	_, err := fmt.Fprintln(out, "Usage: mecated context scan --project PATH [--user-root PATH] [--mcp-snapshot FILE] [--format json|text]\n       mecated context report --input FILE|- [--row N] [--inventory FILE] [--format json|text]\n       mecated context diff --before FILE [--before-row N] --after FILE [--after-row N] [--format json|text]\n\nInputs: bare request-manifest JSON, a single {\"Type\":\"request.manifest\",\"RequestManifest\":{...}} event, a manifest InspectSession {\"view\":\"manifest\",\"rows\":[...]} projection, or a versioned mecatl.context/v0alpha1 report (scan is accepted by diff only). Projection requires an explicit zero-based row index. Imported projection flags are unverified and never imply a complete session. Example: mecated context report --input evidence.json --row 0 --inventory prior-scan.json --format json. --inventory accepts only a prior bounded regular-file v0alpha1 scan (not stdin); its user/project/MCP candidates remain separate from observed request occurrences. No candidate is thereby proven loaded or admitted, and candidate estimates must not be added to request totals. Scan only reads explicit roots and an optional offline MCP tools/list snapshot; it never inspects HOME, environment, network, providers, hooks, or executes tools. Explicit regular non-symlink files or bounded stdin only. Scan estimates candidate project instructions and per-rule eager blocks (shared header/footer/framing excluded), plus frontmatter-only skill/agent metadata; bodies are not eager. User-root candidates and MCP snapshot tools are not loaded: trust, runtime admission, and activation remain unknown. Outputs contain potentially sensitive metadata and names (unsafe names become opaque IDs). Token estimates are local, not provider usage; components overlap and must not be added. Reported per-rule blocks are observed parts of the rules fragment, not extra request tokens; omitted rules have unknown cost, and older manifests lacking rules metadata do not imply zero rules. Filtered tool decisions are candidates of unknown cost. Measured disclosure-hidden specs may still be advertised lightweight tools. MCP names are inferred from the mcp__ prefix (including when the request decision labels one mcp); this is not verified server-registration provenance. Ordinal labels for unsafe or duplicate names are per-request, not cross-request identities.\n\nJSON example: {\"version\":\"mecatl.context/v0alpha1\",\"kind\":\"report\",\"method\":\"unknown\",\"coverage\":\"request manifest\",\"occurrences\":[{\"source\":\"total\",\"name\":\"request\",\"status\":\"observed request\"}]}. Optional token and byte metrics are omitted when unknown; scan occurrences use file_bytes separately from rendered bytes.")
+	_, err := fmt.Fprintln(out, "Usage: mecated context scan [--user-root PATH] [--mcp-snapshot FILE] [--format json|text] PROJECT\n       mecated context report --input FILE|- [--row N] [--inventory FILE] [--format json|text]\n       mecated context diff --before FILE [--before-row N] --after FILE [--after-row N] [--format json|text]\n\nInputs: bare request-manifest JSON, a single {\"Type\":\"request.manifest\",\"RequestManifest\":{...}} event, a manifest InspectSession {\"view\":\"manifest\",\"rows\":[...]} projection, or a versioned mecatl.context/v0alpha1 report (scan is accepted by diff only). Projection requires an explicit zero-based row index. Imported projection flags are unverified and never imply a complete session. Example: mecated context report --input evidence.json --row 0 --inventory prior-scan.json --format json. --inventory accepts only a prior bounded regular-file v0alpha1 scan (not stdin); its user/project/MCP candidates remain separate from observed request occurrences. No candidate is thereby proven loaded or admitted, and candidate estimates must not be added to request totals. Scan only reads explicit roots and an optional offline MCP tools/list snapshot; it never inspects HOME, environment, network, providers, hooks, or executes tools. Explicit regular non-symlink files or bounded stdin only. Scan estimates candidate project instructions and per-rule eager blocks (shared header/footer/framing excluded), plus frontmatter-only skill/agent metadata; bodies are not eager. User-root candidates and MCP snapshot tools are not loaded: trust, runtime admission, and activation remain unknown. Outputs contain potentially sensitive metadata and names (unsafe names become opaque IDs). Token estimates are local, not provider usage; components overlap and must not be added. Reported per-rule blocks are observed parts of the rules fragment, not extra request tokens; omitted rules have unknown cost, and older manifests lacking rules metadata do not imply zero rules. Filtered tool decisions are candidates of unknown cost. Measured disclosure-hidden specs may still be advertised lightweight tools. MCP names are inferred from the mcp__ prefix (including when the request decision labels one mcp); this is not verified server-registration provenance. Ordinal labels for unsafe or duplicate names are per-request, not cross-request identities.\n\nJSON example: {\"version\":\"mecatl.context/v0alpha1\",\"kind\":\"report\",\"method\":\"unknown\",\"coverage\":\"request manifest\",\"occurrences\":[{\"source\":\"total\",\"name\":\"request\",\"status\":\"observed request\"}]}. Optional token and byte metrics are omitted when unknown; scan occurrences use file_bytes separately from rendered bytes.")
 	return err
 }
 
@@ -135,16 +137,22 @@ func runContext(cmd string, args []string, in io.Reader, out io.Writer) error {
 }
 
 func parseContextFlags(cmd string, args []string) (contextFlags, error) {
+	if cmd == contextKindScan {
+		var err error
+		args, err = normalizeContextScanArgs(args)
+		if err != nil {
+			return contextFlags{}, err
+		}
+	}
 	fs := flag.NewFlagSet("context "+cmd, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	format := fs.String("format", "text", "json or text")
 	row := fs.Int("row", -1, "explicit zero-based projection row (report only)")
 	beforeRow := fs.Int("before-row", -1, "zero-based before projection row (diff only)")
 	afterRow := fs.Int("after-row", -1, "zero-based after projection row (diff only)")
-	var project, userRoot, snapshot, input, before, after, inventory *string
+	var userRoot, snapshot, input, before, after, inventory *string
 	switch cmd {
 	case contextKindScan:
-		project = fs.String("project", "", "explicit project root")
 		userRoot = fs.String("user-root", "", "explicit user home directory")
 		snapshot = fs.String("mcp-snapshot", "", "offline MCP tools/list JSON snapshot")
 	case contextKindReport:
@@ -158,8 +166,8 @@ func parseContextFlags(cmd string, args []string) (contextFlags, error) {
 		return contextFlags{}, err
 	}
 	flags := contextFlags{format: *format, row: *row, beforeRow: *beforeRow, afterRow: *afterRow}
-	if project != nil {
-		flags.project, flags.userRoot, flags.snapshot = *project, *userRoot, *snapshot
+	if cmd == contextKindScan {
+		flags.project, flags.userRoot, flags.snapshot = fs.Arg(0), *userRoot, *snapshot
 	}
 	if input != nil {
 		flags.input = *input
@@ -168,10 +176,50 @@ func parseContextFlags(cmd string, args []string) (contextFlags, error) {
 	if before != nil {
 		flags.before, flags.after = *before, *after
 	}
-	if fs.NArg() != 0 || !validContextFlags(cmd, flags) {
+	if (fs.NArg() != 0 && cmd != contextKindScan) || !validContextFlags(cmd, flags) {
 		return contextFlags{}, errors.New("context: unexpected arguments, format, or row selection")
 	}
 	return flags, nil
+}
+
+func normalizeContextScanArgs(args []string) ([]string, error) {
+	var flags, operands []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "-h" || arg == contextHelpFlag {
+			return []string{arg}, nil
+		}
+		if arg == "--" {
+			operands = append(operands, args[i+1:]...)
+			break
+		}
+		if scanFlagTakesValue(arg) {
+			flags = append(flags, arg)
+			if !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+			continue
+		}
+		operands = append(operands, arg)
+	}
+	if len(operands) != 1 {
+		return nil, errors.New("context scan: expected exactly one project path (try 'mecated context scan .')")
+	}
+	return append(append(flags, "--"), operands...), nil
+}
+
+func scanFlagTakesValue(arg string) bool {
+	for _, name := range []string{"format", "user-root", "mcp-snapshot"} {
+		if arg == "--"+name || arg == "-"+name || strings.HasPrefix(arg, "--"+name+"=") || strings.HasPrefix(arg, "-"+name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func validContextFlags(cmd string, flags contextFlags) bool {
@@ -194,7 +242,7 @@ func contextResult(cmd string, flags contextFlags, in io.Reader) (any, error) {
 	switch cmd {
 	case contextKindScan:
 		if flags.project == "" {
-			return nil, errors.New("context scan: --project is required")
+			return nil, errors.New("context scan: expected exactly one project path (try 'mecated context scan .')")
 		}
 		return scanContextInputs(flags.project, flags.userRoot, flags.snapshot)
 	case contextKindReport:
