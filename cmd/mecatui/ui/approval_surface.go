@@ -135,10 +135,20 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 		return nil, true, false
 	}
 	if detail, ok := msg.(client.GuardrailReviewDetailMsg); ok {
-		if detail.Err == nil && s.ask.guardrail != nil && detail.Detail.ReviewID == s.ask.guardrail.ReviewID {
+		reviewID := detail.ReviewID
+		if reviewID == "" {
+			reviewID = detail.Detail.ReviewID
+		}
+		if reviewID == "" && !detail.Conversation && detail.Err != nil && s.ask.guardrail != nil {
+			reviewID = s.ask.guardrail.ReviewID
+		}
+		if detail.Conversation || s.ask.guardrail == nil || reviewID != s.ask.guardrail.ReviewID {
+			return nil, false, false
+		}
+		if detail.Err == nil && detail.Detail.ReviewID == reviewID {
 			s.ask.reviewDetail = detail.Detail
 			s.ask.reviewDetailUnavailable = false
-		} else if detail.Err != nil && s.ask.guardrail != nil {
+		} else {
 			s.ask.reviewDetailUnavailable = true
 		}
 		return nil, true, false

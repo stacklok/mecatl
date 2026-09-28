@@ -1137,10 +1137,20 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.GuardrailReviewDetailMsg:
-		if msg.Err == nil {
-			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
-			m.refreshView()
+		if !msg.Conversation || msg.SessionID != m.sessionID {
+			return m, nil, true
 		}
+		if msg.Err != nil {
+			return m, nil, true
+		}
+		if msg.ReviewID == "" || msg.Detail.ReviewID != msg.ReviewID {
+			m.conv.addNotice("Guardrail detail unavailable: response identity mismatch.")
+		} else if msg.Benign {
+			m.conv.addBenignGuardrailNotice(guardrailDetailNotice(msg.Detail))
+		} else {
+			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
+		}
+		m.refreshView()
 		return m, nil, true
 	case client.ResolvedModelMsg:
 		return m.onResolvedModelMsg(msg)
@@ -1377,12 +1387,13 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
-	m.conv.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+	benign := benignGuardrailReview(msg.Guardrail)
+	m.conv.addGuardrailHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision), benign)
 	model, cmd := m.afterEvent()
-	if msg.Guardrail == nil || m.deps.Guardrails == nil {
+	if msg.Guardrail == nil || m.deps.Guardrails == nil || msg.Guardrail.ReviewID == "" {
 		return model, cmd
 	}
-	detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID)
+	detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID, true, benign)
 	return model, tea.Batch(cmd, detailCmd)
 }
 
@@ -2085,6 +2096,7 @@ func (m Model) onBackgroundColor(msg tea.BackgroundColorMsg) Model {
 func (m Model) switchTheme(th theme.Theme) Model {
 	m.deps.Theme = th
 	m.rend = newRenderer(th, m.rend.marks)
+	m.rend.showBenignGuardrails = m.deps.ShowBenignHookNotices
 	m.rend.setWidth(m.width)
 	m.sp.Style = th.Style("spinner")
 	m.refreshView()

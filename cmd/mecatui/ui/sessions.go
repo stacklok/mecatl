@@ -76,6 +76,7 @@ func (m *Model) newSessionsSurface(startup bool) *sessionsState {
 		forker:                        m.deps.Session,
 		manager:                       m.deps.SessionManagement,
 		clipboard:                     m.deps.Clipboard,
+		showBenignHookNotices:         m.deps.ShowBenignHookNotices,
 		actionRequestToken:            m.sessionsActionRequestToken,
 	}
 	m.modal = state

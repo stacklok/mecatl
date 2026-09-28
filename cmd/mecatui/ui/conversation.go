@@ -777,6 +777,10 @@ func (c *conversation) addNotice(text string) {
 	c.scrollback.Notices().AddNotice(text)
 }
 
+func (c *conversation) addBenignGuardrailNotice(text string) {
+	c.scrollback.Notices().AddBenignGuardrailNotice(text)
+}
+
 // retractLatestNotice removes a provisional notice after its transport reply is
 // refused. It leaves unrelated notices untouched.
 func (c *conversation) retractLatestNotice(text string) {
@@ -803,6 +807,10 @@ func (c *conversation) addDelivery(scheduleName, fireID, text string) {
 // coloured (blocked stands out from a benign info/modified notice).
 func (c *conversation) addHook(text, phase, tool, decision string) {
 	c.scrollback.Notices().AddHookText(text, phase, tool, decision)
+}
+
+func (c *conversation) addGuardrailHook(text, phase, tool, decision string, benign bool) {
+	c.scrollback.Notices().AddGuardrailHook(text, phase, tool, decision, benign)
 }
 
 // addError appends an error block.
