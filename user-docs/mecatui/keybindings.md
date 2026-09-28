@@ -30,7 +30,7 @@ Use **Up/Down** to move one line, **Page Up/Page Down** to move one page, and
 | `ctrl+g` | Select all prompt text. |
 | `ctrl+a` / `ctrl+e` | Move to the start / end of the current prompt line. |
 | `ctrl+p` | Move to the previous prompt line. |
-| `ctrl+y` | Copy the active prompt or conversation selection; no selection is a no-op. |
+| `ctrl+y` | Run `CopySelection` (remappable): copy the active prompt, conversation, or visible panel/overlay selection. With no selection, a visible overlay can retain its own action, such as MCP authorization **Copy Link**. |
 | `f6` / `f7` / `f8` | Open Agents / Effort / MCP Prompts. |
 | Agents overlay controls | At terminal heights of 24 rows or more, remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`, and `JumpEnd` move selection in Subagent and Team rosters and focused Parallel groups, or scroll Subagent/Team activity, tasks, and findings. The mouse wheel scrolls the visible Agents roster or detail by one line without moving its cursor. `enter` focuses a roster item; `esc` goes back or closes. If the conversation area cannot fit the minimal card, an unframed `vp short` line preserves the active context and `esc` action. Below 24 terminal rows, a compact line identifies the active roster tab or focused child/group/member (or Tasks/Findings); only `esc` is active, and wheel input is consumed without changing the hidden conversation. |
 | Models picker controls | The mouse wheel scrolls the visible model list without moving its cursor. A primary click on a visible model row moves the cursor without switching models; press `enter` to activate the cursor row. |
@@ -184,14 +184,23 @@ The prompt editor provides fixed editing keys. Only `SelectAll`,
 |`ctrl+w`|Delete the previous word.|
 |`ctrl+k`|Delete to the end of the line.|
 
-Use `shift+arrow` for keyboard selection. On the alternate screen, drag over
-prompt text for mouse selection. Starting a prompt selection clears a
-conversation selection and vice versa. Releasing the mouse does not copy the
-prompt; use `ctrl+y` or right-click to copy the active selection. Copying writes
-the text to the system clipboard and, on X11 and Wayland, the primary selection.
+Use `shift+arrow` for keyboard selection. With the alternate screen and mouse
+capture enabled, drag over prompt, conversation, panel, or overlay text for
+in-app selection. Starting a prompt selection clears a conversation selection
+and vice versa. Releasing the mouse does not copy the prompt; use the configured
+`CopySelection` action (`ctrl+y` by default) or right-click to copy it.
+Conversation, panel, and overlay text use copy-on-release and remain highlighted
+for `CopySelection` or right-click to copy again. With a panel or overlay
+selection, `esc` clears the selection before closing or acting on its owner.
+Overlay buttons retain priority over text selection, and hidden prompt or
+conversation selections are not copied or changed while an overlay is visible.
+In-app middle-click paste is also suppressed until the overlay closes. Copying writes the text to
+the system clipboard and, on X11 and Wayland, the primary selection.
 Install `wl-clipboard` or `xclip` when your terminal does not support the
-primary-selection mirror through OSC 52. With `--no-mouse`, the terminal retains
-native mouse selection and keyboard selection remains available.
+primary-selection mirror through OSC 52. In inline mode or with `--no-mouse`,
+mecatui does not create in-app mouse selections; the terminal retains native
+mouse selection and native middle-click behavior. Keyboard prompt selection
+remains available.
 
 Client-owned actions take precedence over textarea chords. For example, `ctrl+t`
 expands details and `ctrl+v` handles paste. `ctrl+g` selects all only in the

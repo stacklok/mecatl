@@ -100,6 +100,17 @@ offered, or deny it. Long arguments can be scrolled; `ctrl+t` opens a
 full-screen view when needed. Mouse buttons activate the same choices as their
 displayed keys.
 
+With the alternate screen and mouse capture enabled, drag over text in any
+visible panel or overlay to copy it. The text copies when you release the button
+and remains highlighted; use the configured `CopySelection` action (`ctrl+y` by
+default) or right-click to copy it again. This includes approvals, full-screen
+argument and plan views, help, session and agent panels, stored transcripts,
+pickers, authorization, and fatal errors. Overlay buttons retain click priority.
+While text remains selected, `esc` clears it before closing or acting on the
+panel. In-app middle-click paste stays disabled until the panel closes. In
+inline mode or with `--no-mouse`, mecatui leaves selection to the terminal
+instead of creating an in-app highlight.
+
 ## Get editor notifications
 
 Run `mecatui` in a terminal provided by a supported editor and the editor can

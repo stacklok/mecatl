@@ -65,13 +65,7 @@ func (m Model) View() tea.View {
 	}
 
 	if m.phase == phaseFatal {
-		if m.deps.DebugTarget != "" {
-			header := m.renderHeader()
-			bodyHeight := max(0, m.height-lipgloss.Height(header))
-			v.Content = header + "\n" + m.renderFatalAtHeight(bodyHeight)
-		} else {
-			v.Content = m.renderFatal()
-		}
+		v.Content = m.renderSelectableFatal()
 		return v
 	}
 
@@ -86,6 +80,21 @@ func (m Model) View() tea.View {
 	return v
 }
 
+func (m Model) renderSelectableFatal() string {
+	owner := currentBodyOwner(m)
+	style := m.deps.Theme.Style("selection")
+	if m.deps.DebugTarget != "" {
+		header := m.renderHeader()
+		top := lipgloss.Height(header)
+		height := max(0, m.height-top)
+		body := m.renderFatalAtHeight(height)
+		body = m.bodyFrame.capture(owner, body, cellPoint{x: 0, y: top}, cellRect{x0: 0, x1: m.width, y0: top, y1: top + height}, mouseCaptureEnabled(m), style)
+		return header + "\n" + body
+	}
+	body := m.renderFatal()
+	return m.bodyFrame.capture(owner, body, cellPoint{}, cellRect{x0: 0, x1: m.width, y0: 0, y1: m.height}, mouseCaptureEnabled(m), style)
+}
+
 // renderBody picks the viewport body: a help/picker/panel overlay, an open modal
 // surface centered by the PARENT via centerCard, or the conversation. "Parents
 // place, surfaces size": a modal returns its UNSCENTERED body sized from the
@@ -93,39 +102,47 @@ func (m Model) View() tea.View {
 func (m Model) renderBody() string {
 	m.hits.clear()
 	m.metrics.clear()
-	if m.phase == phaseAuthorizing {
-		return m.renderMCPAuthorization()
-	}
-	switch {
-	case m.sessionDetailsOpen:
-		return renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.showHelp:
-		return renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpScroll, m.helpKeyMarkings())
-	case m.team.view != teamNone:
-		return renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.teamBlockForOverlay(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
-	case m.agentsInv.view != agentsInvNone:
-		return renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.modal != nil:
-		return (&m).renderModalSurface()
-	case m.userModel.view != userModelNone:
-		return renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.reflections.view != reflectionsNone:
-		return renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.dream.view != dreamClosed:
-		return renderDreamOverlay(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.effort.view != effortNone:
-		return renderEffortOverlay(m.deps.Theme, m.effort, m.resolvedSessionModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.worktrees.view != worktreesNone:
-		return renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.schedule.view != scheduleNone:
-		return renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Transcript != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
-	case m.connect.open:
-		return m.renderConnectOverlay(m.deps.Theme)
-	case m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun:
-		return m.renderZeroState()
+	owner := currentBodyOwner(m)
+	var body string
+	switch owner.kind {
+	case bodyOwnerAuthorization:
+		body = m.renderMCPAuthorization()
+	case bodyOwnerSessionDetails:
+		body = renderSessionDetails(m.deps.Theme, m.sessionDetails(), m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerHelp:
+		body = renderHelpOverlay(m.deps.Theme, m.caps, m.width, m.vp.Height(), m.helpScroll, m.helpKeyMarkings())
+	case bodyOwnerAgents:
+		body = renderAgentsOverlay(m.deps.Theme, m.agentsTab, m.subagents, m.parallel, m.team, m.teamBlockForOverlay(), m.conv.subagentFleet, m.conv.parallelGroups, m.helpKeyMarkings(), m.width, m.vp.Height(), m.height)
+	case bodyOwnerAgentsInventory:
+		body = renderAgentsInvOverlay(m.deps.Theme, m.agentsInv, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerModal:
+		return (&m).renderModalSurface(owner)
+	case bodyOwnerUserModel:
+		body = renderUserModelOverlay(m.deps.Theme, m.userModel, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerReflections:
+		body = renderReflectionsOverlay(m.deps.Theme, m.reflections, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerDream:
+		body = renderDreamOverlay(m.deps.Theme, m.dream, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerEffort:
+		body = renderEffortOverlay(m.deps.Theme, m.effort, m.resolvedSessionModel.ReasoningEffort, m.currentModelNoReasoning(), m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerWorktrees:
+		body = renderWorktreesOverlay(m.deps.Theme, m.worktrees, m.caps, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerSchedule:
+		body = renderScheduleOverlay(m.deps.Theme, m.schedule, m.caps, m.deps.Transcript != nil, m.helpKeyMarkings(), m.width, m.vp.Height())
+	case bodyOwnerConnect:
+		body = m.renderConnectOverlay(m.deps.Theme)
+	case bodyOwnerReplay:
+		body = m.rend.vpView(m.vp)
 	default:
+		m.bodyFrame.reset()
+		if m.phase == phaseIdle && m.conv.isEmpty() && !m.restartedThisRun {
+			return m.renderZeroState()
+		}
 		return m.rend.vpView(m.vp)
 	}
+	top := convTopRow(m)
+	bounds := cellRect{x0: 0, x1: m.width, y0: top, y1: top + m.vp.Height()}
+	return m.bodyFrame.capture(owner, body, cellPoint{x: 0, y: top}, bounds, mouseCaptureEnabled(m), m.deps.Theme.Style("selection"))
 }
 
 // renderHeader is the top bar: session id · model · mode · server.
