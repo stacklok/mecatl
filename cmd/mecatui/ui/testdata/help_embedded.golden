@@ -12,11 +12,11 @@
 ┃    @                     attach a file; supported images and audio are sent as media, other files as text                                    ┃
 ┃    ctrl+v                paste a clipboard image, or paste text when image attachments are unavailable                                       ┃
 ┃    ctrl+u                clear the current draft                                                                                             ┃
+┃    ↑/↓               browse submitted prompts at the first/last prompt row                                                                   ┃
 ┃    esc, release, esc     clear the current idle draft within 500ms; the first press makes no visible change                                  ┃
 ┃                          also clears attachments, large pasted text, and pending media; requires a terminal with enhanced key-event support  ┃
 ┃                          fixed shortcut; repeats do not count, and other views handle esc first                                              ┃
-┃                          use the remappable Clear prompt action (ctrl+u) on any terminal                                                     ┃
-┃  lines 1–14 of 68 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                                                             ┃
+┃  lines 1–14 of 69 · esc or ? close · ↑/↓ scroll · pgup/pgdn page · home/end jump                                                             ┃
 ┃                                                                                                                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 

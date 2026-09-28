@@ -68,9 +68,9 @@ func TestEditBackNonEmptyInputIsNoOp(t *testing.T) {
 	}
 }
 
-// TestEditBackEmptyQueueIsNoOp: ↑ on an empty input with an EMPTY queue is not an
-// edit-back (it falls through to the textarea default) — nothing to pull back.
-func TestEditBackEmptyQueueIsNoOp(t *testing.T) {
+// TestEditBackEmptyQueueBrowsesHistory: with no editable queue, EditBack retains
+// its Up binding and recalls the previous submitted prompt.
+func TestEditBackEmptyQueueBrowsesHistory(t *testing.T) {
 	m, _ := newQueueModel(t)
 	m = startRunning(t, m, "first")
 
@@ -79,8 +79,8 @@ func TestEditBackEmptyQueueIsNoOp(t *testing.T) {
 	if len(m.queued) != 0 {
 		t.Fatalf("no queue: ↑ must not fabricate one, got %v", m.queued)
 	}
-	if strings.TrimSpace(m.prompt.Value()) != "" {
-		t.Errorf("no queue: ↑ must leave the empty input empty, got %q", m.prompt.Value())
+	if got := strings.TrimSpace(m.prompt.Value()); got != "first" {
+		t.Errorf("no queue: ↑ must recall submitted history, got %q", got)
 	}
 }
 

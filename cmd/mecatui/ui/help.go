@@ -103,6 +103,7 @@ func helpBody(th theme.Theme, caps client.Capabilities, hk helpKeys) string {
 		{key: "@", action: "attach a file; supported images and audio are sent as media, other files as text"},
 		{key: hk.paste, action: "paste a clipboard image, or paste text when image attachments are unavailable"},
 		{key: hk.clearPrompt, action: "clear the current draft"},
+		{key: hk.editBack + "/" + hk.historyNext, action: "browse submitted prompts at the first/last prompt row"},
 		{key: "esc, release, esc", action: "clear the current idle draft within 500ms; the first press makes no visible change"},
 		{key: "", action: "also clears attachments, large pasted text, and pending media; requires a terminal with enhanced key-event support"},
 		{key: "", action: "fixed shortcut; repeats do not count, and other views handle esc first"},
@@ -252,7 +253,8 @@ type helpKeys struct {
 	copySelection string // CopySelection — copy the active prompt or conversation selection
 	clearPrompt   string // ClearPrompt — clear the unsent prompt
 	cancel        string // Cancel — cancel the running turn
-	editBack      string // EditBack — pull the queued follow-up back into the textarea
+	editBack      string // EditBack — previous submitted prompt / queued edit-back
+	historyNext   string // HistoryNext — next submitted prompt
 	quit          string // Quit
 	quitD         string // QuitD — the EOF-habit quit (double-press, empty prompt only)
 	suspend       string // Suspend — suspend the TUI to the shell (fg resumes)
@@ -369,6 +371,7 @@ func keyMarkingsWithScroll(km keyMap, defaultScrollMarking string) helpKeys {
 		clearPrompt:   firstKey(km.ClearPrompt, "ctrl+u"),
 		cancel:        firstKey(km.Cancel, "esc"),
 		editBack:      navGlyph(firstKey(km.EditBack, "up")),
+		historyNext:   navGlyph(firstKey(km.HistoryNext, "down")),
 		quit:          firstKey(km.Quit, "ctrl+c"),
 		quitD:         firstKey(km.QuitD, "ctrl+d"),
 		suspend:       firstKey(km.Suspend, "ctrl+z"),

@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this adds a substantive client-local prompt-editor interaction contract and one configurable key action without changing server persistence, protocols, exported APIs, or architecture boundaries.
 **Decision record:** None — prompt history remains ephemeral package-private `cmd/mecatui/ui` state, so its traversal and editor-ownership choices belong in this plan rather than an ADR.
 **Phase:** submitted-prompt history
-**Status:** proposed, 2026-09-24. Drafted from direct operator exploration and repository-grounded key-routing and submission-path review; the directing operator explicitly authorized stacked implementation before plan merge.
+**Status:** in-progress, 2026-09-24. The directing operator explicitly waived the plan-merge checkpoint and authorized stacked implementation on the local plan commit.
 **Delivery:** Split. Arrow ownership, queued edit-back compatibility, eligible-submission semantics, and draft restoration need human interface review before implementation changes the prompt editor and public keymap contract.
 **Expected tasks:** 2
 **Issue:** None — requested directly by the operator.
