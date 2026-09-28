@@ -32,7 +32,9 @@ func TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth(t *testing.T) {
 	}
 
 	t.Run("skills and learned details", func(t *testing.T) {
-		assertFits(t, "skills", renderSkillsPanel(th, skillsState{skills: []client.Skill{{Name: long, Description: long}}, filtered: []client.Skill{{Name: long, Description: long}}, learned: []client.LearnedSkill{{Name: long, State: long, OwnerAgent: long}}}, client.Capabilities{Skills: true}, hk, width))
+		sk := &skillsState{view: skillsPanel, skills: []client.Skill{{Name: long, Description: long}}, filtered: []client.Skill{{Name: long, Description: long}}, learned: []client.LearnedSkill{{Name: long, State: long, OwnerAgent: long}}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Skills: true}, marks: hk}}
+		skillsOut, _ := sk.Render(width, 100)
+		assertFits(t, "skills", skillsOut)
 		assertFits(t, "learned skill", centerCard(th, renderLearnedSkillDetail(th, client.LearnedSkill{Name: long, OwnerAgent: long, State: long, Version: long, Revision: long, Description: long, Body: long, Evaluations: []client.SkillEvaluation{{Verdict: long, FixtureIDs: []string{long}}}, Receipts: []client.SkillChange{{Operation: long, FromState: long, ToState: long}}}, long, width), width, 40))
 	})
 	t.Run("agent definitions", func(t *testing.T) {

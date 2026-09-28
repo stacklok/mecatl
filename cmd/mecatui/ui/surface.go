@@ -16,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -87,6 +88,18 @@ type modalPlacementSource interface {
 	modalPlacement() modalPlacement
 }
 
+// modalMaxOuterWidthSource caps a parent-framed card without moving framing or
+// centering responsibility into the surface.
+type modalMaxOuterWidthSource interface {
+	modalMaxOuterWidth() int
+}
+
+// modalFrameSource lets a surface select an unframed compact rendering after it
+// has measured the current offer. The parent still owns placement.
+type modalFrameSource interface {
+	modalFrame() bool
+}
+
 // surfaceIntent is a sealed, one-shot request from a surface to the Model.
 // A surface clears its intent while taking it. After a handled surface event,
 // the Model applies the intent immediately and before generic close handling;
@@ -134,6 +147,8 @@ func (m *Model) surfaceDeps() surfaceDeps {
 func (m *Model) closeModal() {
 	if m.modal != nil {
 		switch s := m.modal.(type) {
+		case *skillsState:
+			m.skillsEpoch = max(m.skillsEpoch, s.learnedRequestID, s.externalRequestID)
 		case *sessionsState:
 			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, s.transcriptSurfaceRequestToken)
 			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, s.pageRequestToken)
@@ -185,10 +200,44 @@ func (m *Model) renderModalSurface() string {
 	}
 
 	style := m.deps.Theme.Style("askCard")
-	contentW := max(0, bodyW-style.GetBorderLeftSize()-style.GetBorderRightSize()-style.GetPaddingLeft()-style.GetPaddingRight())
-	contentH := max(0, bodyH-style.GetBorderTopSize()-style.GetBorderBottomSize()-style.GetPaddingTop()-style.GetPaddingBottom())
-	body, regions := m.modal.Render(contentW, contentH)
+	outerW := bodyW
+	if source, ok := m.modal.(modalMaxOuterWidthSource); ok && source.modalMaxOuterWidth() > 0 {
+		outerW = min(outerW, source.modalMaxOuterWidth())
+	}
+	contentW := max(0, outerW-style.GetHorizontalFrameSize())
+	contentH := max(0, bodyH-style.GetVerticalFrameSize())
+	offerW, offerH := contentW, contentH
+	if _, responsive := m.modal.(modalFrameSource); responsive {
+		if bodyW > 0 {
+			offerW = max(1, offerW)
+		}
+		if bodyH > 0 {
+			offerH = max(1, offerH)
+		}
+	}
+	body, regions := m.modal.Render(offerW, offerH)
+	framed := true
+	if source, ok := m.modal.(modalFrameSource); ok {
+		framed = source.modalFrame()
+	}
+	if !framed {
+		body = ansi.Cut(body, 0, max(0, bodyW)) + "\x1b[0m"
+		placed := body
+		if bodyW > 0 && bodyH > 0 {
+			placed = lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, body)
+		}
+		if top >= 0 {
+			x, y := centeredCardOrigin(lipgloss.Width(body), lipgloss.Height(body), bodyW, bodyH)
+			bounds := cellRect{x0: x, x1: x + lipgloss.Width(body), y0: top + y, y1: top + y + lipgloss.Height(body)}
+			m.hits.replace(regions)
+			*m.metrics = renderedSurfaceMetrics{outerBounds: bounds, contentBounds: bounds, contentOrigin: cellPoint{x: x, y: top + y}}
+		}
+		return placed
+	}
 	card := style.Render(body)
+	if _, capped := m.modal.(modalMaxOuterWidthSource); capped {
+		card = style.Render(lipgloss.NewStyle().Width(contentW).Render(body))
+	}
 	if bodyW <= 0 || bodyH <= 0 {
 		return card
 	}

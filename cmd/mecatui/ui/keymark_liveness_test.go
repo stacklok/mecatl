@@ -874,7 +874,7 @@ func TestSkillsOverlayHintsReflectKeyOverride(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	st := &skillsState{view: skillsPanel, skills: []client.Skill{{Name: "s1"}}, filtered: []client.Skill{{Name: "s1"}}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Skills: true}, marks: hk}}
 	body, _ := st.Render(100, 30)
-	got := stripANSIstr(body)
+	got := strings.Join(strings.Fields(stripANSIstr(body)), " ")
 	if !strings.Contains(got, "tab changes region · ctrl+f14/ctrl+f15 scroll · ctrl+f16") || !strings.Contains(got, "clear filter / close") {
 		t.Errorf("skills hint should carry live focused-region scroll+close: %q", got)
 	}

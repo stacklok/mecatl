@@ -47,7 +47,7 @@ func TestLearnedSkillRollbackAcceptsTargetVersionExactlyOnce(t *testing.T) {
 	lifecycle := &rollbackLifecycleClient{response: target}
 	m := Model{deps: Deps{Skills: lifecycle, Theme: theme.New("aztec", theme.AztecPalette())}, modal: &skillsState{
 		view: skillsDetail, detail: &active, learned: []client.LearnedSkill{active}, project: "/project",
-		generations: map[string]uint64{"/project": 7}, requestID: 41,
+		generations: map[string]uint64{"/project": 7}, learnedRequestID: 41,
 	}}
 	st := m.modal.(*skillsState)
 
@@ -120,7 +120,7 @@ func TestLearnedSkillChangeReceiptSetsNonModalStatus(t *testing.T) {
 }
 
 func TestLearnedSkillResponsesUsePartitionEpochAndRowVersion(t *testing.T) {
-	m := Model{modal: &skillsState{view: skillsPanel, project: "/project", requestID: 9}}
+	m := Model{modal: &skillsState{view: skillsPanel, project: "/project", learnedRequestID: 9}}
 	global := client.LearnedSkill{ID: "global", Version: "v1", Revision: "r1", Project: "", Generation: 4}
 	project := client.LearnedSkill{ID: "project", Version: "v2", Revision: "r2", Project: "/project", Generation: 5}
 	st := m.modal.(*skillsState)
@@ -134,7 +134,7 @@ func TestLearnedSkillResponsesUsePartitionEpochAndRowVersion(t *testing.T) {
 
 	// Opening the global row at generation 4 remains valid even though the project
 	// partition is already at 5. A single max epoch incorrectly dropped this.
-	st.requestID = 10
+	st.learnedRequestID = 10
 	_, handled, _ = st.HandleMsg(client.LearnedSkillMsg{Skill: &global, Project: "", Generation: 4, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 10})
 	if !handled || st.detail == nil || st.detail.ID != "global" {
 		t.Fatalf("valid lower-generation global row did not open: %#v", st.detail)
@@ -142,7 +142,7 @@ func TestLearnedSkillResponsesUsePartitionEpochAndRowVersion(t *testing.T) {
 
 	mutated := global
 	mutated.Revision, mutated.Generation = "r3", 5
-	st.requestID = 11
+	st.learnedRequestID = 11
 	_, _, _ = st.HandleMsg(client.LearnedSkillMsg{Skill: &mutated, Project: "", Generation: 5, SelectedSkillID: "global", SelectedVersion: "v1", RequestID: 11})
 	if st.detail.Revision != "r3" || st.generations[""] != 5 || st.generations["/project"] != 5 {
 		t.Fatalf("partition mutation not accepted independently: detail=%#v generations=%v", st.detail, st.generations)
@@ -202,7 +202,7 @@ func (*getLifecycleClient) ListSkills(context.Context) ([]client.Skill, error) {
 
 // TestSkillsEnterGetLearnedSkill drives the panel's enter arm (skills.go
 // HandleKey): with a non-empty learned list and a wired lifecycle client, enter
-// returns the GetLearnedSkillCmd over the cursor row and bumps requestID via
+// returns the GetLearnedSkillCmd over the cursor row and bumps learnedRequestID via
 // nextEpoch. This is the one selection path into the detail view; a regression
 // that degrades it to a nil-lifecycle no-op (cmd nil) is caught here.
 func TestSkillsEnterGetLearnedSkill(t *testing.T) {
@@ -213,7 +213,7 @@ func TestSkillsEnterGetLearnedSkill(t *testing.T) {
 		view:             skillsPanel,
 		learned:          learned,
 		generations:      map[string]uint64{},
-		requestID:        7,
+		learnedRequestID: 7,
 		learnedLifecycle: lifecycle,
 		nextEpoch:        func() uint64 { m.skillsEpoch++; return m.skillsEpoch },
 	}
@@ -227,8 +227,8 @@ func TestSkillsEnterGetLearnedSkill(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter must return the GetLearnedSkillCmd, not nil (the nil-lifecycle no-op arm)")
 	}
-	if st.requestID != m.skillsEpoch {
-		t.Fatalf("requestID %d must equal the Model epoch after nextEpoch, epoch=%d (the bump flowed through the whole Model closure)", st.requestID, m.skillsEpoch)
+	if st.learnedRequestID != m.skillsEpoch {
+		t.Fatalf("learnedRequestID %d must equal the Model epoch after nextEpoch, epoch=%d (the bump flowed through the whole Model closure)", st.learnedRequestID, m.skillsEpoch)
 	}
 	msg := cmd()
 	if _, ok := msg.(client.LearnedSkillMsg); !ok {
@@ -271,7 +271,7 @@ func (*mutateLifecycleClient) ListSkills(context.Context) ([]client.Skill, error
 // production Open shape), drives HandleKey 'a' over the surface's own lifecycle
 // collaborator (the ONE assert site lives in runSkills), and asserts the
 // MutateLearnedSkillCmd is returned (non-nil), the RPC fires when driven, and
-// the requestID was bumped via the nextEpoch closure — so the action arm can't
+// the learnedRequestID was bumped via the nextEpoch closure — so the action arm can't
 // silently degrade to a nil-lifecycle no-op.
 func TestSkillsDetailActionsFireRPC(t *testing.T) {
 	lifecycle := &mutateLifecycleClient{}
@@ -281,7 +281,7 @@ func TestSkillsDetailActionsFireRPC(t *testing.T) {
 		view:             skillsDetail,
 		detail:           &skill,
 		generations:      map[string]uint64{},
-		requestID:        41,
+		learnedRequestID: 41,
 		learnedLifecycle: lifecycle,
 		nextEpoch:        func() uint64 { m.skillsEpoch++; return m.skillsEpoch },
 	}
@@ -294,8 +294,8 @@ func TestSkillsDetailActionsFireRPC(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("'a' (activate) must return the MutateLearnedSkillCmd, not nil — a nil cmd is the nil-lifecycle no-op arm")
 	}
-	if st.requestID != m.skillsEpoch {
-		t.Fatalf("requestID %d must equal the Model epoch after nextEpoch, epoch=%d (the bump flowed through the whole Model closure)", st.requestID, m.skillsEpoch)
+	if st.learnedRequestID != m.skillsEpoch {
+		t.Fatalf("learnedRequestID %d must equal the Model epoch after nextEpoch, epoch=%d (the bump flowed through the whole Model closure)", st.learnedRequestID, m.skillsEpoch)
 	}
 	msg := cmd()
 	if _, ok := msg.(client.LearnedSkillMsg); !ok {

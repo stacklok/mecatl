@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -49,30 +52,69 @@ func skillsRenderedCardWidth(rendered string) int {
 	for _, line := range strings.Split(rendered, "\n") {
 		plain := ansi.Strip(line)
 		if strings.TrimSpace(plain) != "" {
-			return ansi.StringWidth(strings.TrimLeft(plain, " "))
+			return ansi.StringWidth(strings.TrimSpace(plain))
 		}
 	}
 	return 0
 }
 
+func setThemeStyleForTest(t *testing.T, th *theme.Theme, name string, style lipgloss.Style) {
+	t.Helper()
+	value := reflect.ValueOf(th).Elem().FieldByName("styles")
+	writable := reflect.NewAt(value.Type(), unsafe.Pointer(value.UnsafeAddr())).Elem()
+	writable.SetMapIndex(reflect.ValueOf(name), reflect.ValueOf(style))
+}
+
+type recordingSkillsLifecycle struct {
+	actions      []string
+	diffs, rolls int
+}
+
+func (*recordingSkillsLifecycle) ListSkills(context.Context) ([]client.Skill, error) { return nil, nil }
+func (*recordingSkillsLifecycle) ListLearnedSkills(context.Context, string) ([]client.LearnedSkill, error) {
+	return nil, nil
+}
+func (*recordingSkillsLifecycle) GetLearnedSkill(context.Context, string, string, string, string) (client.LearnedSkill, error) {
+	return client.LearnedSkill{}, nil
+}
+func (r *recordingSkillsLifecycle) MutateLearnedSkill(_ context.Context, action string, skill client.LearnedSkill) (client.LearnedSkill, error) {
+	r.actions = append(r.actions, action)
+	return skill, nil
+}
+func (r *recordingSkillsLifecycle) RollbackLearnedSkill(_ context.Context, skill client.LearnedSkill) (client.LearnedSkill, error) {
+	r.rolls++
+	return skill, nil
+}
+func (*recordingSkillsLifecycle) ListSkillChanges(context.Context, string) ([]client.SkillChange, error) {
+	return nil, nil
+}
+func (r *recordingSkillsLifecycle) DiffLearnedSkill(context.Context, client.LearnedSkill) (string, error) {
+	r.diffs++
+	return "diff", nil
+}
+
 func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_WidthCapAndFrameAccounting(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
+	setThemeStyleForTest(t, &th, "askCard", th.Style("askCard").PaddingLeft(4).PaddingRight(3))
 	for _, width := range []int{24, 80, 180} {
-		layout := newSkillsLayout(th, defaultHelpKeys(), width, 50, true)
-		if !layout.normal {
-			t.Fatalf("width %d unexpectedly compact", width)
-		}
-		if want := min(128, width); layout.outerWidth != want {
-			t.Fatalf("outer width=%d, want %d", layout.outerWidth, want)
-		}
-		if want := layout.outerWidth - th.Style("askCard").GetHorizontalFrameSize(); layout.bodyWidth != want {
-			t.Fatalf("body width=%d, want measured %d", layout.bodyWidth, want)
-		}
+		m := modalPlacementTestModel()
+		m.width = width
+		m.vp.SetHeight(50)
+		m.deps.Theme = th
 		st := skillsScenarioState(th, 4, 2)
-		out, _ := st.Render(width, 50)
+		m.modal = st
+		out := m.renderModalSurface()
 		assertSkillsOfferedFit(t, out, width, 50)
 		if got := skillsRenderedCardWidth(out); got != min(128, width) {
 			t.Fatalf("rendered card width=%d, want %d", got, min(128, width))
+		}
+		frame := th.Style("askCard").GetHorizontalFrameSize()
+		if st.bodyWidth != min(128, width)-frame {
+			t.Fatalf("body width=%d, want measured %d", st.bodyWidth, min(128, width)-frame)
+		}
+		body, _ := st.Render(st.bodyWidth, 50-th.Style("askCard").GetVerticalFrameSize())
+		if strings.Contains(ansi.Strip(body), "╭") || lipgloss.Width(body) > st.bodyWidth {
+			t.Fatalf("surface Render framed or exceeded its unframed offer: %q", ansi.Strip(body))
 		}
 	}
 }
@@ -97,6 +139,21 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_UsesAvailableHeightWith
 	_, _ = sole.Render(100, 24)
 	if sole.externalRows != sole.bodyRows || sole.learnedRows != 0 {
 		t.Fatalf("sole external region got %d/%d rows, learned=%d", sole.externalRows, sole.bodyRows, sole.learnedRows)
+	}
+	learnedOnly := skillsScenarioState(th, 0, 20)
+	_, _ = learnedOnly.Render(100, 24)
+	if learnedOnly.externalRows != 0 || learnedOnly.learnedRows != learnedOnly.bodyRows {
+		t.Fatalf("sole learned region got external=%d learned=%d/%d rows", learnedOnly.externalRows, learnedOnly.learnedRows, learnedOnly.bodyRows)
+	}
+	for height := 1; height < 24; height++ {
+		probe := skillsScenarioState(th, 0, 1)
+		_, _ = probe.Render(100, height)
+		if probe.normal {
+			if probe.learnedRows != 1 && height == 1 {
+				t.Fatalf("learned-only compact threshold did not require exactly one body row: %+v", probe)
+			}
+			break
+		}
 	}
 }
 
@@ -141,11 +198,27 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_CompactFallbackAndNonpo
 		st.filter.Focus()
 		st.cursor = 2
 		st.detail = &st.learned[0]
-		out, _ := st.Render(size[0], size[1])
+		m := modalPlacementTestModel()
+		m.deps.Theme, m.width = th, size[0]
+		m.vp.SetHeight(size[1])
+		m.modal = st
+		out := m.renderModalSurface()
 		assertSkillsOfferedFit(t, out, size[0], size[1])
-		if st.viewport != nil || st.filter.Focused() || st.cursor != 0 || st.detail != nil || strings.Contains(ansi.Strip(out), "Skills inventory") {
-			t.Fatalf("compact %v retained interactive state: viewport=%v focus=%v cursor=%d detail=%v out=%q", size, st.viewport, st.filter.Focused(), st.cursor, st.detail, ansi.Strip(out))
+		plain := ansi.Strip(out)
+		if st.viewport != nil || st.filter.Focused() || st.cursor != 0 || st.detail != nil || strings.Contains(plain, "Skills inventory") || strings.ContainsAny(plain, "┏┓┗┛") {
+			t.Fatalf("compact %v retained interaction/frame: viewport=%v focus=%v cursor=%d detail=%v out=%q", size, st.viewport, st.filter.Focused(), st.cursor, st.detail, plain)
 		}
+	}
+	learnedOnly := skillsScenarioState(th, 0, 1)
+	const width = 80
+	chrome := learnedOnly.externalStateLines(width)
+	fixed := len(skillsTextLines(th.Style("askTitle"), "Skills inventory", width)) + 1 + len(skillsTextLines(th.Style("muted"), fmt.Sprintf(skillsFooter, defaultHelpKeys().scroll, defaultHelpKeys().closeOnly), width)) + len(chrome) + 1
+	if out, _ := learnedOnly.Render(width, fixed); !learnedOnly.compact || learnedOnly.viewport != nil || strings.Contains(ansi.Strip(out), "Learned skills") {
+		t.Fatalf("learned-only geometry without its one body row was not compact: %q", ansi.Strip(out))
+	}
+	learnedOnly = skillsScenarioState(th, 0, 1)
+	if out, _ := learnedOnly.Render(width, fixed+1); !learnedOnly.normal || learnedOnly.externalRows != 0 || learnedOnly.learnedRows != 1 || !strings.Contains(ansi.Strip(out), "learned-00") {
+		t.Fatalf("learned-only one-row threshold did not render normally: external=%d learned=%d out=%q", learnedOnly.externalRows, learnedOnly.learnedRows, ansi.Strip(out))
 	}
 	for _, size := range [][2]int{{0, 10}, {-1, 10}, {10, 0}, {10, -1}} {
 		st := skillsScenarioState(th, 1, 0)
@@ -192,18 +265,58 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_ClampsPhysicalBrowsing(
 
 func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_CurrentOpenOwnsExternalResult(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
+	lifecycle := &mutateLifecycleClient{}
+	m := modalPlacementTestModel()
+	m.phase = phaseIdle
+	m.deps.Theme, m.deps.Skills, m.deps.Ctx = th, lifecycle, context.Background()
+	currentDetail := client.LearnedSkill{Project: "/p", ID: "learned", Version: "v1", Revision: "r1"}
 	st := skillsScenarioState(th, 20, 0)
-	st.requestID = 2
+	st.externalRequestID, st.learnedRequestID = 2, 2
 	_, _ = st.Render(60, 15)
 	st.viewport.Move(bounded.End, len(skillsRowLines(th, st.filtered, st.bodyWidth)))
-	_, _, _ = st.HandleMsg(skillsResultMsg{requestID: 2, result: client.SkillsMsg{Skills: []client.Skill{{Name: "current"}}}})
-	if len(st.skills) != 1 || st.skills[0].Name != "current" || st.viewport == nil || st.viewport.Offset() != 0 {
-		t.Fatalf("current result not installed/reset: %#v offset=%v", st.skills, st.viewport)
+	st.detail, st.view, st.learnedLifecycle = &currentDetail, skillsDetail, lifecycle
+	st.nextEpoch = func() uint64 { m.skillsEpoch++; return m.skillsEpoch + 2 }
+	m.modal = st
+	cmd, _, _ := st.HandleKey(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if cmd == nil {
+		t.Fatal("precondition: learned action did not dispatch")
 	}
+	_ = cmd()
+	mm, _ := m.Update(skillsResultMsg{requestID: 2, result: client.SkillsMsg{Skills: []client.Skill{{Name: "current"}}}})
+	m = mm.(Model)
+	st = skillsStateOf(t, m)
+	if len(st.skills) != 1 || st.skills[0].Name != "current" || st.viewport == nil || st.viewport.Offset() != 0 {
+		t.Fatalf("current result after learned traffic not installed/reset: %#v offset=%v", st.skills, st.viewport)
+	}
+
 	st.loading = true
-	_, _, _ = st.HandleMsg(skillsResultMsg{requestID: 1, result: client.SkillsMsg{Err: errors.New("stale")}})
+	mm, _ = m.Update(skillsResultMsg{requestID: 1, result: client.SkillsMsg{Err: errors.New("older-open")}})
+	m = mm.(Model)
 	if st.err != nil || !st.loading || st.skills[0].Name != "current" || st.viewport.Offset() != 0 {
 		t.Fatal("older-open response changed current state")
+	}
+	learnedEpoch := st.learnedRequestID
+	m.closeModal()
+	if m.skillsEpoch < learnedEpoch {
+		t.Fatalf("close lost learned request epoch: model=%d learned=%d", m.skillsEpoch, learnedEpoch)
+	}
+	mm, _ = m.Update(skillsResultMsg{requestID: 2, result: client.SkillsMsg{Err: errors.New("after-close")}})
+	m = mm.(Model)
+	if m.modal != nil || st.err != nil || st.skills[0].Name != "current" {
+		t.Fatal("after-close response changed closed inventory")
+	}
+
+	mmOpen, _ := m.runSkills()
+	m = mmOpen.(Model)
+	newer := skillsStateOf(t, m)
+	if newer.externalRequestID <= learnedEpoch {
+		t.Fatalf("reopen external epoch=%d did not advance past learned epoch=%d", newer.externalRequestID, learnedEpoch)
+	}
+	mm, _ = m.Update(skillsResultMsg{requestID: 2, result: client.SkillsMsg{Skills: []client.Skill{{Name: "old-open"}}}})
+	m = mm.(Model)
+	newer = skillsStateOf(t, m)
+	if len(newer.skills) != 0 || !newer.loading {
+		t.Fatal("older-open response replaced reopened inventory")
 	}
 }
 
@@ -236,7 +349,7 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_NonInventoryStatesClear
 func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_PreservesSafeFilteredRows(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
 	st := skillsScenarioState(th, 0, 0)
-	st.skills = []client.Skill{{Name: "first\x1b[31m", Description: "MATCH " + strings.Repeat("long ", 20)}, {Name: "second", Description: "match"}, {Name: "other"}}
+	st.skills = []client.Skill{{Name: "first\x1b[31m\a", Description: "MATCH " + strings.Repeat("long ", 20) + "\x1b]0;owned\a"}, {Name: "second", Description: "match"}, {Name: "other"}}
 	st.filter.SetValue("match")
 	st.syncFilter()
 	_, _ = st.Render(30, 12)
@@ -244,9 +357,15 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_PreservesSafeFilteredRo
 		t.Fatalf("filter order/case changed: %#v", st.filtered)
 	}
 	for _, row := range st.viewport.View(skillsRowLines(th, st.filtered, st.bodyWidth)).Rows {
-		if strings.Contains(ansi.Strip(row), "\x1b") || !strings.HasSuffix(row, "\x1b[0m") {
+		if strings.ContainsAny(ansi.Strip(row), "\x1b\a") || !strings.HasSuffix(row, "\x1b[0m") {
 			t.Fatalf("unsafe or unterminated row %q", row)
 		}
+	}
+	rows := skillsRowLines(th, st.filtered, st.bodyWidth)
+	st.viewport.Move(bounded.LineDown, len(rows))
+	boundary := st.viewport.View(rows).Rows
+	if len(boundary) == 0 || !strings.HasSuffix(boundary[0], "\x1b[0m") || strings.ContainsAny(ansi.Strip(boundary[0]), "\x1b\a") {
+		t.Fatalf("offset boundary leaked terminal state: %#v", boundary)
 	}
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
@@ -257,12 +376,46 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_PreservesSafeFilteredRo
 
 func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_PreservesLearnedLifecycleFencing(t *testing.T) {
 	current := client.LearnedSkill{Project: "/p", ID: "id", OwnerAgent: "owner", Version: "v2", Revision: "r2", Generation: 8, PublicationStatus: "published"}
-	st := &skillsState{view: skillsDetail, detail: &current, learned: []client.LearnedSkill{current}, project: "/p", requestID: 9, generations: map[string]uint64{"/p": 8}}
-	stale := current
-	stale.Revision = "stale"
-	_, handled, _ := st.HandleMsg(client.LearnedSkillMsg{RequestID: 8, Project: "/p", Generation: 7, SelectedSkillID: "id", SelectedOwnerAgent: "owner", SelectedVersion: "v2", ExpectedRevision: "r2", Skill: &stale, PublicationStatus: "pending_reconciliation"})
-	if !handled || st.detail.Revision != "r2" || st.detail.PublicationStatus != "published" || st.generations["/p"] != 8 {
-		t.Fatalf("stale lifecycle response replaced current: %#v", st.detail)
+	newValue := current
+	newValue.Revision, newValue.Generation = "r3", 9
+	valid := client.LearnedSkillMsg{RequestID: 9, Project: "/p", Generation: 9, SelectedSkillID: "id", SelectedOwnerAgent: "owner", SelectedVersion: "v2", ExpectedRevision: "r2", Skill: &newValue, PublicationStatus: "published"}
+
+	cases := []struct {
+		name   string
+		mutate func(*client.LearnedSkillMsg)
+	}{
+		{"request", func(m *client.LearnedSkillMsg) { m.RequestID-- }},
+		{"generation", func(m *client.LearnedSkillMsg) { m.Generation = 7 }},
+		{"partition", func(m *client.LearnedSkillMsg) { m.Project = "/other" }},
+		{"selected-identity", func(m *client.LearnedSkillMsg) { m.SelectedSkillID = "other" }},
+		{"selected-owner", func(m *client.LearnedSkillMsg) { m.SelectedOwnerAgent = "other" }},
+		{"selected-version", func(m *client.LearnedSkillMsg) { m.SelectedVersion = "v1" }},
+		{"expected-revision", func(m *client.LearnedSkillMsg) { m.ExpectedRevision = "r1" }},
+		{"publication-status", func(m *client.LearnedSkillMsg) { m.PublicationStatus = "pending_reconciliation" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			value := current
+			st := &skillsState{view: skillsDetail, detail: &value, learned: []client.LearnedSkill{value}, project: "/p", learnedRequestID: 9, generations: map[string]uint64{"/p": 8}}
+			msg := valid
+			replacement := newValue
+			msg.Skill = &replacement
+			tc.mutate(&msg)
+			_, handled, _ := st.HandleMsg(msg)
+			if !handled || st.detail.Revision != "r2" || st.detail.PublicationStatus != "published" || st.generations["/p"] != 8 {
+				t.Fatalf("%s fence allowed stale lifecycle replacement: detail=%#v generations=%v", tc.name, st.detail, st.generations)
+			}
+		})
+	}
+
+	st := &skillsState{view: skillsDetail, detail: &current, learned: []client.LearnedSkill{current}, project: "/p", learnedRequestID: 9, generations: map[string]uint64{"": 4, "/p": 8}}
+	_, _, _ = st.HandleMsg(client.LearnedSkillsMsg{RequestID: 9, Project: "/p", Generations: map[string]uint64{"": 3, "/p": 9}, Skills: []client.LearnedSkill{{ID: "stale-list"}}})
+	if st.generations[""] != 4 || st.generations["/p"] != 8 || len(st.learned) != 1 || st.learned[0].ID != "id" {
+		t.Fatalf("independent partition generation fence failed: learned=%#v generations=%v", st.learned, st.generations)
+	}
+	_, _, _ = st.HandleMsg(valid)
+	if st.detail.Revision != "r3" || st.detail.PublicationStatus != "published" || st.generations["/p"] != 9 {
+		t.Fatalf("valid lifecycle response did not land: detail=%#v generations=%v", st.detail, st.generations)
 	}
 }
 
@@ -329,9 +482,17 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_RemappablePhysicalLineA
 	if st.cursor != 1 {
 		t.Fatalf("learned down cursor=%d", st.cursor)
 	}
+	press("u")
+	if st.cursor != 0 {
+		t.Fatalf("learned up cursor=%d", st.cursor)
+	}
 	press("n")
 	if st.cursor <= 1 {
 		t.Fatalf("learned page cursor=%d", st.cursor)
+	}
+	press("p")
+	if st.cursor != 0 {
+		t.Fatalf("learned reverse page cursor=%d", st.cursor)
 	}
 	press("b")
 	if st.cursor != len(st.learned)-1 {
@@ -361,19 +522,26 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_WheelOwnershipAndCompac
 	st.learned = []client.LearnedSkill{{ID: "l1", Name: "learned-1"}, {ID: "l2", Name: "learned-2"}}
 	_ = m.View()
 	oldCursor := st.cursor
+	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = mm.(Model)
+	if st.viewport.Offset() != 0 || m.vp.YOffset() != before {
+		t.Fatal("external wheel endpoint leaked to hidden conversation")
+	}
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
 	if st.viewport == nil || st.viewport.Offset() != 1 || st.cursor != oldCursor || m.vp.YOffset() != before {
 		t.Fatalf("external wheel ownership failed offset=%v cursor=%d conversation=%d/%d", st.viewport, st.cursor, m.vp.YOffset(), before)
 	}
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyTab})
-	_, _ = st.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if st.cursor != oldCursor+1 || st.viewport.Offset() != 1 {
-		t.Fatal("learned wheel changed wrong region")
+	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	if st.cursor != oldCursor+1 || st.viewport.Offset() != 1 || m.vp.YOffset() != before {
+		t.Fatal("learned wheel changed wrong region or hidden conversation")
 	}
 	_, _ = st.Render(10, 3)
-	_, handled := st.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	if !handled || st.viewport != nil || st.cursor != 0 {
+	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	if st.viewport != nil || st.cursor != 0 || m.vp.YOffset() != before {
 		t.Fatal("compact wheel constructed or moved state")
 	}
 }
@@ -399,10 +567,49 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_PreservesLearnedControl
 		t.Fatalf("learned get calls=%d", lifecycle.calls)
 	}
 	st.view = skillsDetail
-	st.detail = &st.learned[0]
+	longDetail := st.learned[0]
+	longDetail.Body = strings.Repeat("instruction ", 80) + "BODY-END"
+	longDetail.Receipts = []client.SkillChange{{Operation: "activate", FromState: "staged", ToState: "active"}, {Operation: "archive", FromState: "active", ToState: "archived"}}
+	longDetail.Supersedes = "v0"
+	st.detail = &longDetail
+	st.diff = strings.Repeat("diff-line\n", 20) + "DIFF-END"
+	seen := ""
+	for i := 0; i < 200; i++ {
+		out, _ := st.Render(80, 14)
+		assertSkillsOfferedFit(t, out, 80, 14)
+		seen += "\n" + ansi.Strip(out)
+		_, handled := st.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		if !handled {
+			t.Fatal("detail wheel was not consumed")
+		}
+	}
+	compactSeen := strings.Join(strings.Fields(seen), "")
+	for _, want := range []string{"BODY-END", "activatestaged→active", "DIFF-END", "aactivate", "rrestorepreviousversion"} {
+		if !strings.Contains(compactSeen, want) {
+			t.Fatalf("bounded detail browsing never reached %q:\n%s", want, seen)
+		}
+	}
 	if _, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc}); !handled || st.view != skillsPanel {
 		t.Fatal("detail escape lost")
 	}
+
+	recorder := &recordingSkillsLifecycle{}
+	st.learnedLifecycle = recorder
+	epoch := uint64(20)
+	st.nextEpoch = func() uint64 { epoch++; return epoch }
+	for _, action := range []string{"a", "x", "d", "v", "r"} {
+		value := longDetail
+		st.view, st.detail, st.compact = skillsDetail, &value, false
+		cmd, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: rune(action[0]), Text: action})
+		if !handled || cmd == nil {
+			t.Fatalf("learned action %q did not dispatch", action)
+		}
+		_ = cmd()
+	}
+	if got := strings.Join(recorder.actions, ","); got != "activate,reject,archive" || recorder.diffs != 1 || recorder.rolls != 1 {
+		t.Fatalf("learned action dispatches actions=%q diffs=%d rollbacks=%d", got, recorder.diffs, recorder.rolls)
+	}
+	st.view, st.detail = skillsPanel, nil
 	_, _ = st.Render(10, 3)
 	cmd, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {

@@ -50,26 +50,27 @@ const (
 // wholesale on each RPC result (never mutated in place). skillsState implements
 // `surface` on POINTER receivers.
 type skillsState struct {
-	view     skillsView
-	loading  bool  // the ListSkills RPC is in flight
-	err      error // the ListSkills error, rendered distinctly (nil on success)
-	skills   []client.Skill
-	filtered []client.Skill // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
-	filter   textinput.Model
-	viewport *bounded.Viewport // pointer-owned external physical-row viewport
-	focus    skillsFocus
+	view           skillsView
+	loading        bool  // the ListSkills RPC is in flight
+	err            error // the ListSkills error, rendered distinctly (nil on success)
+	skills         []client.Skill
+	filtered       []client.Skill // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
+	filter         textinput.Model
+	viewport       *bounded.Viewport // pointer-owned external physical-row viewport
+	detailViewport *bounded.Viewport // pointer-owned learned-detail viewport
+	focus          skillsFocus
 	// view cache: refreshed from the offered geometry at the top of Render.
 	normal, compact                   bool
 	bodyWidth, bodyRows, externalRows int
 	learnedRows, learnedStart         int
-	scroll, width                     int // compatibility mirrors for focused legacy tests
 	learned                           []client.LearnedSkill
 	cursor                            int
 	detail                            *client.LearnedSkill
 	diff                              string
 	project                           string
 	generations                       map[string]uint64 // independent publication/catalog epoch per global/project partition
-	requestID                         uint64
+	externalRequestID                 uint64            // immutable identity of this open's ListSkills request
+	learnedRequestID                  uint64            // latest learned list/detail/action request
 
 	deps             surfaceDeps               // the shared ambient base (incl. ctx), set once at Open
 	learnedLifecycle client.LearnedSkillClient // nil unless the Skills collaborator carries the lifecycle half
@@ -78,8 +79,8 @@ type skillsState struct {
 
 // runSkills is the Open transition for the skills surface. It validates (idle +
 // lister wired), blurs the textarea, bumps the Model-owned request epoch
-// (correlation must survive close/reopen), constructs the state dynamically
-// constructs the state dynamically, installs it on m.modal, and batches the
+// (correlation must survive close/reopen), constructs the state dynamically,
+// installs it on m.modal, and batches the
 // ListSkills + (when wired) ListLearnedSkills RPCs. Render focuses the filter
 // only after normal geometry has been measured.
 func (m Model) runSkills() (tea.Model, tea.Cmd) {
@@ -93,15 +94,16 @@ func (m Model) runSkills() (tea.Model, tea.Cmd) {
 	ti.Placeholder = "filter skills…"
 	ti.SetWidth(40)
 	m.modal = &skillsState{
-		view:             skillsPanel,
-		loading:          true,
-		project:          m.deps.Workspace,
-		requestID:        m.skillsEpoch,
-		filter:           ti,
-		filtered:         nil,
-		deps:             (&m).surfaceDeps(),
-		learnedLifecycle: lifecycle,
-		nextEpoch:        func() uint64 { m.skillsEpoch++; return m.skillsEpoch },
+		view:              skillsPanel,
+		loading:           true,
+		project:           m.deps.Workspace,
+		externalRequestID: m.skillsEpoch,
+		learnedRequestID:  m.skillsEpoch,
+		filter:            ti,
+		filtered:          nil,
+		deps:              (&m).surfaceDeps(),
+		learnedLifecycle:  lifecycle,
+		nextEpoch:         func() uint64 { m.skillsEpoch++; return m.skillsEpoch },
 	}
 	requestID := m.skillsEpoch
 	cmds := []tea.Cmd{func() tea.Msg {
@@ -118,15 +120,15 @@ type skillsResultMsg struct {
 	result    client.SkillsMsg
 }
 
-func (*skillsState) modalPlacement() modalPlacement { return modalPlacementFill }
+func (*skillsState) modalMaxOuterWidth() int { return skillsMaxOuterWidth }
+func (s *skillsState) modalFrame() bool      { return !s.compact }
 
-// Render measures and renders the complete overlay from one offered geometry.
+// Render measures and renders unframed content from one parent-provided offer.
 func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {
-	s.width = width
 	s.normal, s.compact = false, false
 	s.bodyWidth, s.bodyRows, s.externalRows, s.learnedRows, s.learnedStart = 0, 0, 0, 0, 0
 	if s.view == skillsNone || width <= 0 || height <= 0 {
-		s.viewport = nil
+		s.viewport, s.detailViewport = nil, nil
 		s.filter.Blur()
 		return "", nil
 	}
@@ -136,17 +138,25 @@ func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {
 		s.filter.Placeholder = "filter skills…"
 		s.filter.SetValue(value)
 	}
-	layout := newSkillsLayout(s.deps.theme, s.deps.marks, width, height, len(s.learned) > 0)
+	if s.view == skillsDetail && s.detail != nil {
+		return s.renderDetail(width, height), nil
+	}
+
+	hasExternalRows := s.hasExternalRows()
+	externalChrome := []string(nil)
+	if !hasExternalRows && len(s.learned) > 0 {
+		externalChrome = s.externalStateLines(width)
+	}
+	layout := newSkillsLayout(s.deps.theme, s.deps.marks, width, height, hasExternalRows || len(s.learned) == 0, len(s.learned) > 0, externalChrome)
 	if !layout.normal {
 		s.compact = true
-		s.viewport = nil
+		s.viewport, s.detailViewport = nil, nil
 		s.filter.Blur()
 		s.cursor, s.detail, s.diff = 0, nil, ""
 		s.view = skillsPanel
 		return renderSkillsCompact(s.deps.theme, s.deps.marks, width), nil
 	}
 	s.normal = true
-	s.width = layout.bodyWidth
 	s.bodyWidth, s.bodyRows = layout.bodyWidth, layout.bodyRows
 	s.externalRows, s.learnedRows = layout.regionRows()
 	if s.focus == skillsFocusLearned && len(s.learned) == 0 {
@@ -157,54 +167,45 @@ func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {
 	} else {
 		s.filter.Blur()
 	}
-	if s.view == skillsDetail && s.detail != nil {
-		body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff, layout.bodyWidth)
-		if s.err != nil {
-			body += "\n" + s.deps.theme.Style("errorText").Render(terminaltext.Sanitize(s.err.Error())) + "\npress esc, then enter to refresh"
-		}
-		body = strings.Join(firstLines(body, max(1, height-layout.frameHeight)), "\n")
-		return centerSkillsCard(s.deps.theme, body, layout.outerWidth, width, height), nil
-	}
-	body := renderSkillsNormalBody(s, layout)
-	return centerSkillsCard(s.deps.theme, body, layout.outerWidth, width, height), nil
+	return renderSkillsNormalBody(s, layout), nil
 }
 
 const skillsMaxOuterWidth = 128
 
 const skillsFooter = "the agent uses skills when relevant · tab changes region · %s scroll · %s clear filter / close"
+const skillsDetailFooter = "esc back · v show changes · a activate · x reject · d archive · r restore previous version"
 
 type skillsLayout struct {
-	outerWidth, bodyWidth, frameHeight int
-	title, footer                      []string
-	bodyRows                           int
-	hasLearned, normal                 bool
+	bodyWidth                     int
+	title, footer, externalChrome []string
+	bodyRows                      int
+	hasExternal, hasLearned       bool
+	normal                        bool
 }
 
-func newSkillsLayout(th theme.Theme, hk helpKeys, width, height int, hasLearned bool) skillsLayout {
+func newSkillsLayout(th theme.Theme, hk helpKeys, width, height int, hasExternal, hasLearned bool, externalChrome []string) skillsLayout {
 	var l skillsLayout
 	if width <= 0 || height <= 0 {
 		return l
 	}
-	card := th.Style("askCard")
-	l.outerWidth = min(skillsMaxOuterWidth, width)
-	l.bodyWidth = l.outerWidth - card.GetHorizontalFrameSize()
-	l.frameHeight = card.GetVerticalFrameSize()
-	l.hasLearned = hasLearned
-	if l.bodyWidth <= 0 {
-		return l
-	}
-	l.title = skillsTextLines(th.Style("askTitle"), "Skills inventory", l.bodyWidth)
-	l.footer = skillsTextLines(th.Style("muted"), fmt.Sprintf(skillsFooter, hk.scroll, hk.closeOnly), l.bodyWidth)
-	fixed := l.frameHeight + len(l.title) + 1 + len(l.footer) // title, filter, footer
+	l.bodyWidth = width
+	l.hasExternal, l.hasLearned = hasExternal, hasLearned
+	l.title = skillsTextLines(th.Style("askTitle"), "Skills inventory", width)
+	l.footer = skillsTextLines(th.Style("muted"), fmt.Sprintf(skillsFooter, hk.scroll, hk.closeOnly), width)
+	l.externalChrome = externalChrome
+	fixed := len(l.title) + 1 + len(l.footer) + len(externalChrome) // title, filter, footer, visible status chrome
 	if hasLearned {
 		fixed++ // learned-region label
 	}
 	l.bodyRows = height - fixed
-	required := 1
-	if hasLearned {
-		required = 2
+	required := 0
+	if hasExternal {
+		required++
 	}
-	l.normal = l.bodyRows >= required
+	if hasLearned {
+		required++
+	}
+	l.normal = required > 0 && l.bodyRows >= required
 	return l
 }
 
@@ -212,10 +213,16 @@ func (l skillsLayout) regionRows() (external, learned int) {
 	if !l.normal {
 		return 0, 0
 	}
-	if !l.hasLearned {
+	switch {
+	case l.hasExternal && l.hasLearned:
+		return (l.bodyRows + 1) / 2, l.bodyRows / 2
+	case l.hasExternal:
 		return l.bodyRows, 0
+	case l.hasLearned:
+		return 0, l.bodyRows
+	default:
+		return 0, 0
 	}
-	return (l.bodyRows + 1) / 2, l.bodyRows / 2
 }
 
 func skillsTextLines(style lipgloss.Style, text string, width int) []string {
@@ -229,30 +236,64 @@ func skillsTextLines(style lipgloss.Style, text string, width int) []string {
 	return parts
 }
 
-func firstLines(text string, n int) []string {
-	lines := strings.Split(text, "\n")
-	if len(lines) > n {
-		lines = lines[:n]
-	}
-	return lines
-}
-
-func centerSkillsCard(th theme.Theme, body string, outerWidth, width, height int) string {
-	card := th.Style("askCard").Width(outerWidth).Render(body)
-	rows := strings.Split(card, "\n")
-	for i, row := range rows {
-		rows[i] = strings.Repeat(" ", max(0, (width-lipgloss.Width(row))/2)) + row
-	}
-	card = strings.Join(rows, "\n")
-	remaining := max(0, height-lipgloss.Height(card))
-	return strings.Repeat("\n", remaining/2) + card + strings.Repeat("\n", remaining-remaining/2)
-}
-
 func renderSkillsCompact(th theme.Theme, hk helpKeys, width int) string {
 	if width <= 0 {
 		return ""
 	}
 	return ansi.Cut(th.Style("muted").Render(hk.closeOnly+" close"), 0, width) + "\x1b[0m"
+}
+
+func (s *skillsState) hasExternalRows() bool {
+	return !s.loading && s.err == nil && len(s.skills) > 0 && len(s.filtered) > 0
+}
+
+func (s *skillsState) externalStateLines(width int) []string {
+	switch {
+	case s.loading:
+		return skillsTextLines(s.deps.theme.Style("muted"), "loading…", width)
+	case s.err != nil:
+		return skillsTextLines(s.deps.theme.Style("errorText"), "list skills: "+terminaltext.Sanitize(s.err.Error()), width)
+	case len(s.skills) == 0:
+		return skillsTextLines(s.deps.theme.Style("muted"), skillsEmptyCopy(s.deps.caps), width)
+	default:
+		return skillsTextLines(s.deps.theme.Style("muted"), "no skills match "+strconv.Quote(s.filter.Value())+" — "+s.deps.marks.closeOnly+" to clear", width)
+	}
+}
+
+func (s *skillsState) detailPhysicalRows() []string {
+	if s.detail == nil {
+		return nil
+	}
+	body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff, s.bodyWidth)
+	if s.err != nil {
+		body += "\n" + s.deps.theme.Style("errorText").Render(terminaltext.Sanitize(s.err.Error())) + "\npress esc, then enter to refresh"
+	}
+	return strings.Split(body, "\n")
+}
+
+func (s *skillsState) renderDetail(width, height int) string {
+	footer := skillsTextLines(s.deps.theme.Style("muted"), skillsDetailFooter, width)
+	viewportHeight := height - len(footer)
+	if viewportHeight < 1 {
+		s.compact = true
+		s.detailViewport = nil
+		return renderSkillsCompact(s.deps.theme, s.deps.marks, width)
+	}
+	s.bodyWidth = width
+	rows := s.detailPhysicalRows()
+	if s.detailViewport == nil {
+		s.detailViewport = &bounded.Viewport{}
+	}
+	s.detailViewport.SetGeometry(width, viewportHeight, 0, bounded.Clip)
+	view := s.detailViewport.View(rows)
+	visible := append([]string(nil), view.Rows...)
+	for len(visible) < viewportHeight {
+		visible = append(visible, "")
+	}
+	visible = append(visible, footer...)
+	s.normal = true
+	s.bodyWidth, s.bodyRows = width, viewportHeight
+	return strings.Join(visible, "\n")
 }
 
 // HandleKey routes all normal-panel navigation to the focused region.
@@ -270,7 +311,11 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 	}
 	if s.view == skillsDetail {
 		if key.Matches(msg, s.deps.keys.Close) {
-			s.view, s.detail = skillsPanel, nil
+			s.view, s.detail, s.detailViewport = skillsPanel, nil, nil
+			return nil, true, false
+		}
+		if move, ok := s.navigationMove(msg); ok && s.detailViewport != nil {
+			s.detailViewport.Move(move, len(s.detailPhysicalRows()))
 			return nil, true, false
 		}
 		if s.learnedLifecycle == nil || s.detail == nil {
@@ -286,18 +331,18 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 			action = "archive"
 		case "v":
 			if s.detail.Supersedes != "" {
-				s.requestID = s.nextEpoch()
-				return client.DiffLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, *s.detail, s.requestID), true, false
+				s.learnedRequestID = s.nextEpoch()
+				return client.DiffLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, *s.detail, s.learnedRequestID), true, false
 			}
 		case "r":
 			if s.detail.Supersedes != "" {
-				s.requestID = s.nextEpoch()
-				return client.RollbackLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, *s.detail, s.requestID), true, false
+				s.learnedRequestID = s.nextEpoch()
+				return client.RollbackLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, *s.detail, s.learnedRequestID), true, false
 			}
 		}
 		if action != "" {
-			s.requestID = s.nextEpoch()
-			return client.MutateLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, action, *s.detail, s.requestID), true, false
+			s.learnedRequestID = s.nextEpoch()
+			return client.MutateLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, action, *s.detail, s.learnedRequestID), true, false
 		}
 		return nil, true, false
 	}
@@ -325,8 +370,8 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 				return nil, true, false
 			}
 			selected := s.learned[min(s.cursor, len(s.learned)-1)]
-			s.requestID = s.nextEpoch()
-			return client.GetLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, selected, s.requestID), true, false
+			s.learnedRequestID = s.nextEpoch()
+			return client.GetLearnedSkillCmd(s.deps.ctx, s.learnedLifecycle, selected, s.learnedRequestID), true, false
 		}
 		s.moveLearned(msg)
 		return nil, true, false
@@ -336,7 +381,6 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 		move, ok := s.navigationMove(msg)
 		if ok {
 			s.viewport.Move(move, len(rows))
-			s.scroll = s.viewport.Offset()
 			return nil, true, false
 		}
 	}
@@ -410,6 +454,16 @@ func (s *skillsState) HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled b
 		return nil, true
 	}
 	down := msg.Mouse().Button != tea.MouseWheelUp
+	if s.view == skillsDetail {
+		if s.detailViewport != nil {
+			move := bounded.LineDown
+			if !down {
+				move = bounded.LineUp
+			}
+			s.detailViewport.Move(move, len(s.detailPhysicalRows()))
+		}
+		return nil, true
+	}
 	if s.focus == skillsFocusLearned {
 		if down {
 			s.cursor++
@@ -426,7 +480,6 @@ func (s *skillsState) HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled b
 			move = bounded.LineUp
 		}
 		s.viewport.Move(move, len(s.externalPhysicalRows()))
-		s.scroll = s.viewport.Offset()
 	}
 	return nil, true
 }
@@ -442,7 +495,7 @@ func (s *skillsState) HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled b
 //nolint:gocyclo // inventory, lifecycle detail, and diff messages share one reducer
 func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed bool) {
 	if diff, ok := msg.(client.SkillDiffMsg); ok {
-		if diff.RequestID != s.requestID || s.detail == nil || diff.Project != s.detail.Project || diff.SkillID != s.detail.ID || diff.Version != s.detail.Version {
+		if diff.RequestID != s.learnedRequestID || s.detail == nil || diff.Project != s.detail.Project || diff.SkillID != s.detail.ID || diff.Version != s.detail.Version {
 			return nil, true, false
 		}
 		if diff.Err != nil {
@@ -454,7 +507,7 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 		return nil, true, false
 	}
 	if learned, ok := msg.(client.LearnedSkillsMsg); ok {
-		if learned.RequestID != s.requestID || learned.Project != s.project {
+		if learned.RequestID != s.learnedRequestID || learned.Project != s.project {
 			return nil, true, false
 		}
 		for partition, generation := range learned.Generations {
@@ -473,7 +526,7 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 		return nil, true, false
 	}
 	if detail, ok := msg.(client.LearnedSkillMsg); ok {
-		if detail.RequestID != s.requestID || detail.Generation < s.generations[detail.Project] {
+		if detail.RequestID != s.learnedRequestID || detail.Generation < s.generations[detail.Project] {
 			return nil, true, false
 		}
 		if s.detail != nil && (detail.Project != s.detail.Project || detail.SelectedSkillID != s.detail.ID || detail.SelectedOwnerAgent != "" && detail.SelectedOwnerAgent != s.detail.OwnerAgent || detail.SelectedVersion != s.detail.Version || detail.ExpectedRevision != "" && detail.ExpectedRevision != s.detail.Revision) {
@@ -483,7 +536,7 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 		if detail.Action == "rollback" {
 			targetVersion = detail.TargetVersion
 		}
-		if detail.Err == nil && detail.Skill != nil && (detail.Skill.Project != detail.Project || detail.Skill.ID != detail.SelectedSkillID || detail.SelectedOwnerAgent != "" && detail.Skill.OwnerAgent != detail.SelectedOwnerAgent || detail.Skill.Version != targetVersion) {
+		if detail.Err == nil && detail.Skill != nil && (detail.Skill.Project != detail.Project || detail.Skill.ID != detail.SelectedSkillID || detail.SelectedOwnerAgent != "" && detail.Skill.OwnerAgent != detail.SelectedOwnerAgent || detail.Skill.Version != targetVersion || detail.PublicationStatus != "" && detail.Skill.PublicationStatus != detail.PublicationStatus) {
 			return nil, true, false
 		}
 		if detail.Err != nil {
@@ -495,7 +548,7 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 		}
 		if detail.Skill != nil {
 			value := *detail.Skill
-			s.detail, s.view = &value, skillsDetail
+			s.detail, s.view, s.detailViewport = &value, skillsDetail, nil
 			s.generations = cloneSkillGenerations(s.generations)
 			s.generations[detail.Project] = detail.Generation
 			if detail.PublicationError == "" {
@@ -512,12 +565,10 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 	var sm client.SkillsMsg
 	switch result := msg.(type) {
 	case skillsResultMsg:
-		if result.requestID != s.requestID {
+		if result.requestID != s.externalRequestID {
 			return nil, true, false
 		}
 		sm = result.result
-	case client.SkillsMsg: // compatibility for direct reducer tests
-		sm = result
 	default:
 		return nil, false, false
 	}
@@ -525,7 +576,6 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 	if sm.Err != nil {
 		s.err = sm.Err
 		s.skills, s.filtered, s.viewport = nil, nil, nil
-		s.scroll = 0
 		return nil, true, false
 	}
 	s.err = nil
@@ -533,7 +583,6 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 	if s.viewport != nil {
 		s.viewport.Reset()
 	}
-	s.scroll = 0
 	s.syncFilter()
 	return nil, true, false
 }
@@ -545,25 +594,13 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 // HandleMsg's handled=false and is dropped at the Model.
 func (*skillsState) Close() {}
 
-// rowTotal is the rendered body-row count over the FILTERED inventory — the
-// clamp target HandleKey/HandleWheel/Render use, so the scroll window and the
-// clamp can never disagree about the line count. With an empty filter
-// filtered == skills, so this doubles as the full-inventory total. The width is
-// the view-cache copy Render refreshes (HandleKey receives no width argument;
-// geometry stays pure Render input).
+// externalPhysicalRows is the sole rendered-row source used by the viewport,
+// navigation, and clamping.
 func (s *skillsState) externalPhysicalRows() []string {
 	if len(s.filtered) == 0 {
 		return nil
 	}
 	return skillsRowLines(s.deps.theme, s.filtered, s.bodyWidth)
-}
-
-func (s *skillsState) rowTotal(th theme.Theme, width int) int {
-	budget := s.bodyWidth
-	if budget <= 0 {
-		budget = cardTextWidth(width)
-	}
-	return len(skillsRowLines(th, s.filtered, budget))
 }
 
 // filterSkills returns the skills whose Name OR Description CONTAIN q
@@ -592,12 +629,10 @@ func (s *skillsState) syncFilter() {
 	s.filtered = filterSkills(s.skills, s.filter.Value())
 	if len(s.filtered) == 0 {
 		s.viewport = nil
-		s.scroll = 0
 		return
 	}
 	if s.viewport != nil {
 		s.viewport.Clamp(len(s.externalPhysicalRows()))
-		s.scroll = s.viewport.Offset()
 	}
 }
 
@@ -629,7 +664,7 @@ func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff st
 			}
 		}
 	}
-	budget := cardTextWidth(width)
+	budget := width
 	write := func(line string) { b.WriteString(wrapCardText(line, budget) + "\n") }
 	for _, line := range []string{"name: " + skill.Name, "created by: " + skill.OwnerAgent, "status: " + state, "version: " + skill.Version, "latest change: " + skill.Revision, "supporting examples: " + strconv.Itoa(skill.EvidenceCount), "what it does: " + skill.Description, "instructions: " + skill.Body} {
 		write(line)
@@ -651,8 +686,7 @@ func renderLearnedSkillDetail(th theme.Theme, skill client.LearnedSkill, diff st
 	if diff != "" {
 		b.WriteString("\nchanges from this version:\n" + wrapCardText(diff, budget) + "\n")
 	}
-	b.WriteString("\n" + wrapCardText("esc back · v show changes · a activate · x reject · d archive · r restore previous version", budget))
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // cardTextWidth is the column budget for wrapping server-derived overlay text
@@ -797,22 +831,10 @@ func renderSkillsNormalBody(s *skillsState, layout skillsLayout) string {
 	lines := append([]string(nil), layout.title...)
 	filter := ansi.Cut(s.filter.View(), 0, layout.bodyWidth) + "\x1b[0m"
 	lines = append(lines, filter)
+	lines = append(lines, layout.externalChrome...)
 
 	var external []string
-	switch {
-	case s.loading:
-		s.viewport = nil
-		external = skillsTextLines(s.deps.theme.Style("muted"), "loading…", layout.bodyWidth)
-	case s.err != nil:
-		s.viewport = nil
-		external = skillsTextLines(s.deps.theme.Style("errorText"), "list skills: "+terminaltext.Sanitize(s.err.Error()), layout.bodyWidth)
-	case len(s.skills) == 0:
-		s.viewport = nil
-		external = skillsTextLines(s.deps.theme.Style("muted"), skillsEmptyCopy(s.deps.caps), layout.bodyWidth)
-	case len(s.filtered) == 0:
-		s.viewport = nil
-		external = skillsTextLines(s.deps.theme.Style("muted"), "no skills match "+strconv.Quote(s.filter.Value())+" — "+s.deps.marks.closeOnly+" to clear", layout.bodyWidth)
-	default:
+	if s.hasExternalRows() {
 		rows := s.externalPhysicalRows()
 		viewportHeight := s.externalRows
 		showIndicator := len(rows) > viewportHeight && viewportHeight > 1
@@ -829,7 +851,11 @@ func renderSkillsNormalBody(s *skillsState, layout skillsLayout) string {
 			indicator := fmt.Sprintf("lines %d–%d of %d", view.Above+1, len(rows)-view.Below, len(rows))
 			external = append(external, ansi.Cut(s.deps.theme.Style("muted").Render(indicator), 0, layout.bodyWidth)+"\x1b[0m")
 		}
-		s.scroll = s.viewport.Offset()
+	} else {
+		s.viewport = nil
+		if layout.hasExternal {
+			external = s.externalStateLines(layout.bodyWidth)
+		}
 	}
 	if len(external) > s.externalRows {
 		external = external[:s.externalRows]
@@ -848,6 +874,7 @@ func renderSkillsNormalBody(s *skillsState, layout skillsLayout) string {
 		s.cursor = clampBounded(s.cursor, len(s.learned))
 		s.clampLearnedWindow()
 		end := min(len(s.learned), s.learnedStart+s.learnedRows)
+		learnedRendered := 0
 		for i := s.learnedStart; i < end; i++ {
 			mark := "  "
 			if i == s.cursor {
@@ -856,21 +883,13 @@ func renderSkillsNormalBody(s *skillsState, layout skillsLayout) string {
 			skill := s.learned[i]
 			text := mark + terminaltext.Sanitize(skill.Name) + " [" + terminaltext.Sanitize(skill.State) + " · " + terminaltext.Sanitize(skill.OwnerAgent) + "]"
 			lines = append(lines, ansi.Cut(s.deps.theme.Style("toolName").Render(text), 0, layout.bodyWidth)+"\x1b[0m")
+			learnedRendered++
 		}
-		for len(lines) < len(layout.title)+1+s.externalRows+1+s.learnedRows {
+		for learnedRendered < s.learnedRows {
 			lines = append(lines, "")
+			learnedRendered++
 		}
 	}
 	lines = append(lines, layout.footer...)
 	return strings.Join(lines, "\n")
-}
-
-// renderSkillsPanel is the unframed compatibility seam for focused tests.
-func renderSkillsPanel(th theme.Theme, st skillsState, caps client.Capabilities, hk helpKeys, width int) string {
-	st.deps.theme, st.deps.caps, st.deps.marks = th, caps, hk
-	layout := newSkillsLayout(th, hk, width, 1<<20, len(st.learned) > 0)
-	st.bodyWidth, st.bodyRows = layout.bodyWidth, layout.bodyRows
-	st.externalRows, st.learnedRows = layout.regionRows()
-	st.normal = true
-	return renderSkillsNormalBody(&st, layout)
 }
