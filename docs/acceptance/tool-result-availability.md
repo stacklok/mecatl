@@ -8,6 +8,7 @@
 **Delivery:** Split. The public event, persistence exclusion, guardrail release boundary, and multi-client replacement semantics need interface review before implementation.
 **Expected tasks:** 3
 **Issue:** [stacklok/mecatl#1976](https://github.com/stacklok/mecatl/issues/1976).
+**Plan PR:** [stacklok/mecatl#1982](https://github.com/stacklok/mecatl/pull/1982)
 
 A client needs to see when each tool call becomes safe to display so an operator can identify the long-running call in a concurrent batch. Every effective tool result therefore gets a transient `tool.result.available` projection as soon as its own execution, PostToolUse processing, repair, inbound review, and any release decision finish. The canonical `tool.result` remains authoritative and ordered for recorder, conversation, reconstruction, and model use.
 
