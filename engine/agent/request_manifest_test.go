@@ -17,12 +17,16 @@ import (
 )
 
 type manifestTool struct {
-	name     string
-	readOnly bool
-	secret   string
+	name      string
+	readOnly  bool
+	secret    string
+	specCalls *int
 }
 
 func (t manifestTool) Spec() tool.ToolSpec {
+	if t.specCalls != nil {
+		*t.specCalls++
+	}
 	return tool.ToolSpec{Name: t.name, Description: "description " + t.secret, Schema: json.RawMessage(`{"type":"object","x-secret":"` + t.secret + `"}`)}
 }
 func (t manifestTool) ReadOnly() bool { return t.readOnly }
@@ -192,11 +196,38 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 	if manifest.AdvertisedToolSchemaBytes != wantSchemaBytes {
 		t.Errorf("advertised tool schema bytes = %d, want %d", manifest.AdvertisedToolSchemaBytes, wantSchemaBytes)
 	}
+	counter := agent.HeuristicTokenCounter{}
+	wantRequestTokens := counter.Count(observed.System.Render()) + counter.CountMessages(observed.Messages)
+	for _, spec := range observed.Tools {
+		wantRequestTokens += 4 + counter.Count(spec.Name) + counter.Count(spec.Description) + counter.Count(string(spec.Schema))
+	}
+	if manifest.TokenEstimateMethod != "local_estimate" || manifest.EstimatedRequestTokens == nil || *manifest.EstimatedRequestTokens != wantRequestTokens {
+		t.Errorf("request estimate = method %q tokens %v, want local_estimate/%d", manifest.TokenEstimateMethod, manifest.EstimatedRequestTokens, wantRequestTokens)
+	}
+	if manifest.EstimatedSystemTokens == nil || manifest.EstimatedEphemeralFragmentTokens == nil || manifest.EstimatedPersistedHistoryTokens == nil || manifest.EstimatedAdvertisedToolTokens == nil {
+		t.Errorf("missing component estimates: %+v", manifest)
+	}
+	if len(manifest.AdvertisedTools) != len(observed.Tools) {
+		t.Fatalf("tool metrics = %d, want %d", len(manifest.AdvertisedTools), len(observed.Tools))
+	}
+	for i, spec := range observed.Tools {
+		metric := manifest.AdvertisedTools[i]
+		if metric.Name != spec.Name || metric.NameBytes != len(spec.Name) || metric.DescriptionBytes != len(spec.Description) || metric.SchemaBytes != len(spec.Schema) {
+			t.Errorf("tool metric[%d] bytes = %+v, want request spec %q", i, metric, spec.Name)
+		}
+		wantTokens := 4 + counter.Count(spec.Name) + counter.Count(spec.Description) + counter.Count(string(spec.Schema))
+		if metric.EstimatedTokens != wantTokens {
+			t.Errorf("tool metric[%d] tokens = %d, want %d", i, metric.EstimatedTokens, wantTokens)
+		}
+	}
+	if manifest.EstimatedEphemeralFragmentBytes == nil || manifest.EstimatedPersistedHistoryBytes == nil || manifest.EstimatedAdvertisedToolBytes == nil || manifest.EstimatedSystemBytes == nil {
+		t.Errorf("missing component byte estimates: %+v", manifest)
+	}
 	if len(manifest.Prompt) < 2 {
 		t.Fatalf("prompt metadata = %+v", manifest.Prompt)
 	}
 	last := manifest.Prompt[len(manifest.Prompt)-1]
-	if last.Kind != prompt.InstructionProvenanceCustom || last.Provenance != prompt.InstructionProvenanceUnknown {
+	if last.Kind != prompt.InstructionProvenanceCustom || last.Provenance != prompt.InstructionProvenanceUnknown || last.Rules != nil || last.OmittedRules != 0 {
 		t.Fatalf("custom instruction metadata = %+v", last)
 	}
 	fragmentBytes, err := json.Marshal(observed.Messages[0])
@@ -205,6 +236,10 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 	}
 	if last.Bytes != len(fragmentBytes) {
 		t.Fatalf("custom instruction byte count does not describe final request fragment: %+v", last)
+	}
+	wantFragmentTokens := counter.CountMessages([]session.Message{observed.Messages[0]})
+	if last.EstimatedTokens == nil || *last.EstimatedTokens != wantFragmentTokens {
+		t.Errorf("fragment token estimate = %v, want %d", last.EstimatedTokens, wantFragmentTokens)
 	}
 	for _, component := range manifest.Prompt {
 		var body []byte
@@ -226,5 +261,158 @@ func TestRequestManifestDescribesFinalRequestWithoutContent(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), secret) || strings.Contains(string(encoded), "x-secret") || strings.Contains(string(encoded), "description") {
 		t.Fatalf("manifest leaked request content: %s", encoded)
+	}
+}
+
+func TestRequestManifestMetricsDoNotRefreshToolSpecs(t *testing.T) {
+	run := func(durableEvidence bool) int {
+		calls := 0
+		cat := tool.NewCatalog()
+		cat.MustRegister(manifestTool{name: "Counted", readOnly: true, secret: "secret", specCalls: &calls})
+		eng := newEngine(agent.Deps{
+			LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: cat,
+			EnableDurableEvidence: durableEvidence,
+		})
+		sess := newSession(t, session.Limits{})
+		for range eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"}).Events() {
+		}
+		return calls
+	}
+
+	withoutManifest := run(false)
+	withManifest := run(true)
+	if withManifest != withoutManifest {
+		t.Fatalf("Spec calls with manifest = %d, without manifest = %d; metrics must use only req.Tools", withManifest, withoutManifest)
+	}
+}
+
+func TestRequestManifestLegacyMetricsRemainUnknown(t *testing.T) {
+	var manifest session.RequestManifestPayload
+	if err := json.Unmarshal([]byte(`{"tool_names":[],"tool_decisions":[],"advertised_tool_schema_bytes":0,"message_count":0,"message_bytes":0,"prompt":[]}`), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.TokenEstimateMethod != "" || manifest.EstimatedRequestTokens != nil || manifest.EstimatedSystemTokens != nil || manifest.EstimatedEphemeralFragmentTokens != nil || manifest.EstimatedPersistedHistoryTokens != nil || manifest.EstimatedAdvertisedToolTokens != nil || manifest.AdvertisedTools != nil {
+		t.Fatalf("legacy manifest fabricated metrics: %+v", manifest)
+	}
+}
+
+type manifestRulesSource struct {
+	calls int
+	rules []prompt.Rule
+}
+
+func (s *manifestRulesSource) ListRules(context.Context) ([]prompt.Rule, error) {
+	s.calls++
+	return s.rules, nil
+}
+
+func TestRequestManifestRulesAfterCompaction(t *testing.T) {
+	const secret = "rule-body-canary"
+	src := &manifestRulesSource{rules: []prompt.Rule{
+		{Name: "project", Body: secret, Origin: prompt.RuleOriginProject},
+		{Name: "hostile\"<x>\nuser", Body: secret, Paths: []string{"**/*.go"}, Origin: prompt.RuleOriginUser},
+		{Name: "omitted", Body: secret},
+	}}
+	instructions := prompt.RulesAssembler{Src: src, MaxCount: 2}
+	compactor := &manifestCompactor{}
+	var observed port.LLMRequest
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		observed = req
+	})}, mockllm.TextTurn("done"))
+	eng := newEngine(agent.Deps{
+		LLM: provider, Catalog: tool.NewCatalog(), Instructions: instructions,
+		EnableDurableEvidence: true, Compactor: compactor,
+		TokenCounter:  agent.HeuristicTokenCounter{CharsPerToken: 1},
+		ContextWindow: func() int { return 10 }, CompactionRatio: 0.8,
+	})
+	sess := newSession(t, session.Limits{})
+	if err := sess.SeedHistory([]session.Message{session.NewUserMessage(strings.Repeat("x", 100))}); err != nil {
+		t.Fatal(err)
+	}
+	var manifest *session.RequestManifestPayload
+	for _, ev := range drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})) {
+		if ev.Type == session.EvRequestManifest {
+			manifest = ev.RequestManifest
+		}
+	}
+	if src.calls != 1 || compactor.calls != 1 || manifest == nil {
+		t.Fatalf("source/compactor calls = %d/%d, manifest=%v", src.calls, compactor.calls, manifest)
+	}
+	plain, err := instructions.Assemble(context.Background())
+	if err != nil || len(observed.Messages) < 2 || observed.Messages[0].Text != plain[0].Text || observed.Messages[1].Text != "compacted" {
+		t.Fatalf("unexpected model request: %+v, err=%v", observed.Messages, err)
+	}
+	var rules *session.RequestPromptComponent
+	for i := range manifest.Prompt {
+		if manifest.Prompt[i].Provenance == session.RequestProvenanceRules {
+			rules = &manifest.Prompt[i]
+		}
+	}
+	if rules == nil || len(rules.Rules) != 2 || rules.OmittedRules != 1 {
+		t.Fatalf("rules metadata = %+v", rules)
+	}
+	counter := agent.HeuristicTokenCounter{CharsPerToken: 1}
+	for i, metric := range rules.Rules {
+		if metric.Origin != []string{"project", "user"}[i] || metric.RenderedBytes <= len(secret) || metric.EstimatedTokens != counter.Count(observed.Messages[0].Text[blockStart(observed.Messages[0].Text, i):blockEnd(observed.Messages[0].Text, i)]) {
+			t.Fatalf("rule metric %d = %+v", i, metric)
+		}
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil || strings.Contains(string(encoded), secret) || strings.Contains(string(encoded), "**/*.go") || strings.Contains(string(encoded), "omitted\"") {
+		t.Fatalf("manifest leaked rule content: %s, err=%v", encoded, err)
+	}
+}
+
+func blockStart(text string, index int) int {
+	start := strings.Index(text, "\n<rule ")
+	if index == 1 {
+		start += len("\n<rule ") + strings.Index(text[start+len("\n<rule "):], "\n<rule ")
+	}
+	return start
+}
+
+func blockEnd(text string, index int) int {
+	start := blockStart(text, index)
+	return start + strings.Index(text[start:], "</rule>") + len("</rule>")
+}
+
+type manifestCompactor struct{ calls int }
+
+func (c *manifestCompactor) Compact(context.Context, *session.Conversation) ([]session.Message, string, error) {
+	c.calls++
+	return []session.Message{session.NewUserMessage("compacted")}, "summary", nil
+}
+
+func TestRequestManifestMeasuresPostCompactionRequest(t *testing.T) {
+	compactor := &manifestCompactor{}
+	var observed port.LLMRequest
+	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) {
+		observed = req
+	})}, mockllm.TextTurn("done"))
+	eng := newEngine(agent.Deps{
+		LLM: provider, Catalog: tool.NewCatalog(), EnableDurableEvidence: true,
+		Compactor: compactor, TokenCounter: agent.HeuristicTokenCounter{CharsPerToken: 1},
+		ContextWindow: func() int { return 10 }, CompactionRatio: 0.8,
+	})
+	sess := newSession(t, session.Limits{})
+	if err := sess.SeedHistory([]session.Message{session.NewUserMessage(strings.Repeat("x", 100))}); err != nil {
+		t.Fatal(err)
+	}
+
+	var manifest *session.RequestManifestPayload
+	for _, ev := range drain(eng.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})) {
+		if ev.Type == session.EvRequestManifest {
+			manifest = ev.RequestManifest
+		}
+	}
+	if compactor.calls != 1 || manifest == nil {
+		t.Fatalf("compactor calls/manifest = %d/%v, want 1/non-nil", compactor.calls, manifest)
+	}
+	if len(observed.Messages) != 1 || observed.Messages[0].Text != "compacted" {
+		t.Fatalf("provider request was not compacted: %+v", observed.Messages)
+	}
+	wantPersisted := (agent.HeuristicTokenCounter{CharsPerToken: 1}).CountMessages(observed.Messages)
+	if manifest.EstimatedPersistedHistoryTokens == nil || *manifest.EstimatedPersistedHistoryTokens != wantPersisted {
+		t.Fatalf("post-compaction persisted estimate = %v, want %d", manifest.EstimatedPersistedHistoryTokens, wantPersisted)
 	}
 }

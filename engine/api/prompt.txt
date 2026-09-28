@@ -22,6 +22,7 @@
     method func (NoopExpander).List(_ context.Context) ([]Command, error)
     method func (RootAssembler).Assemble(ctx context.Context) ([]session.Message, error)
     method func (RulesAssembler).Assemble(ctx context.Context) ([]session.Message, error)
+    method func (RulesAssembler).AssembleWithManifest(ctx context.Context) ([]session.Message, []InstructionManifest, error)
     method func (SoulAssembler).Assemble(ctx context.Context) ([]session.Message, error)
     method func (UserModelAssembler).Assemble(ctx context.Context) ([]session.Message, error)
 const DefaultOperatorProfileMaxBytes untyped int = 8192
@@ -63,7 +64,8 @@ type Config struct{Role string; Tone string; Safety string; CommitCoauthor *bool
 type DirCommandExpander struct{}
 type Env struct{Cwd string; OS string; Model string; Date string; Mode string; Shell string; GitStatus string}
 type InstructionAssembler interface{Assemble(ctx context.Context) ([]session.Message, error)}
-type InstructionManifest struct{Kind string; Provenance string}
+type InstructionManifest struct{Kind string; Provenance string; Rules *InstructionRules}
+type InstructionRules struct{Spans []RuleComponentSpan; OmittedCount int}
 type Layered struct{StablePrefix string; VolatileSuffix string}
 type MemoryIndexAssembler struct{Src MemoryIndexSource; MaxEntries int; MaxBytes int}
 type MemoryIndexSource interface{Index(ctx context.Context) ([]tool.MemoryEntry, error)}
@@ -74,6 +76,7 @@ type OperatorProfileConfig struct{Entries []tool.MemoryEntry; MaxEntries int; Ma
 type OperatorProfileSource interface{List(ctx context.Context, prefix string) ([]tool.MemoryEntry, error)}
 type RootAssembler struct{Source tool.Workspace}
 type Rule struct{Name string; Body string; Paths []string; Origin RuleOrigin}
+type RuleComponentSpan struct{Name string; Origin string; Start int; End int}
 type RuleOrigin string
 type RulesAssembler struct{Src RulesSource; MaxBytes int; MaxCount int}
 type RulesSource interface{ListRules(ctx context.Context) ([]Rule, error)}

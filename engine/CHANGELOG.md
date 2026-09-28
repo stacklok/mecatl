@@ -13,6 +13,16 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Experimental per-rule request evidence** — adds optional rendered rule spans
+  to `prompt.InstructionManifest` and `RulesAssembler.AssembleWithManifest`, and
+  nested `session.RequestRuleMetric` entries on rules prompt components. Metrics
+  describe admitted blocks only, without source locations or bodies. Added (minor).
+
+- **Request-manifest local request metrics** — adds optional estimated request and
+  component token/byte metrics, per-advertised-tool safe size/token breakdowns,
+  and per-prompt-component local estimates to `session.RequestManifestPayload`.
+  Legacy manifests intentionally retain unknown metrics. Added (minor).
+
 - **Configurable standard commit co-author guidance** — adds
   `prompt.Config.CommitCoauthor`. `nil` and `true` include the canonical Mecatl
   commit-trailer guidance in the standard stable prompt prefix; `false` omits it.

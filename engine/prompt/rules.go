@@ -49,23 +49,30 @@ var _ InstructionAssembler = RulesAssembler{}
 // session workspace root. It fails soft on a nil source, a source error, or an
 // empty rule set.
 func (a RulesAssembler) Assemble(ctx context.Context) ([]session.Message, error) {
+	messages, _, err := a.AssembleWithManifest(ctx)
+	return messages, err
+}
+
+// AssembleWithManifest discovers once and reports only the rule blocks actually rendered.
+func (a RulesAssembler) AssembleWithManifest(ctx context.Context) ([]session.Message, []InstructionManifest, error) {
 	if a.Src == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rules, err := a.Src.ListRules(ctx)
 	if err != nil {
 		// Best-effort context: never fail a run on a rules fault.
-		return nil, nil
+		return nil, nil, nil
 	}
 	if len(rules) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	text := renderRules(rules, a.maxBytes(), a.maxCount())
+	meta := InstructionManifest{Kind: InstructionKindTurn0, Provenance: InstructionProvenanceRules, Rules: &InstructionRules{}}
+	text := renderRulesWithManifest(rules, a.maxBytes(), a.maxCount(), &meta)
 	if text == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return []session.Message{session.NewUserMessage(text)}, nil
+	return []session.Message{session.NewUserMessage(text)}, []InstructionManifest{meta}, nil
 }
 
 func (a RulesAssembler) maxBytes() int {
@@ -98,10 +105,7 @@ func sanitizeRuleName(name string) string {
 	return r.Replace(name)
 }
 
-// renderRules renders the rules slice as a single fenced block per rule, under the
-// shared rulesHeader (turn0.go). It stops adding rules when the combined byte cap
-// or count cap is reached, and appends a footer listing the dropped count.
-func renderRules(rules []Rule, maxBytes, maxCount int) string {
+func renderRulesWithManifest(rules []Rule, maxBytes, maxCount int, meta *InstructionManifest) string {
 	total := len(rules)
 	if total == 0 {
 		return ""
@@ -147,9 +151,41 @@ func renderRules(rules []Rule, maxBytes, maxCount int) string {
 			break
 		}
 		b.WriteString(next)
+		if meta != nil {
+			origin := InstructionProvenanceUnknown
+			switch r.Origin {
+			case RuleOriginProject:
+				origin = InstructionProvenanceProject
+			case RuleOriginUser:
+				origin = string(RuleOriginUser)
+			}
+			meta.Rules.Spans = append(meta.Rules.Spans, RuleComponentSpan{
+				Name: ruleMetricName(r.Name), Origin: origin, Start: b.Len() - len(next), End: b.Len(),
+			})
+		}
 		shown++
 
 	}
+	if meta != nil {
+		meta.Rules.OmittedCount = total - shown
+	}
 
 	return b.String()
+}
+
+// ruleMetricName preserves a logical identifier only when it can be reported
+// unchanged. Fence escaping is not identity: sanitizing or truncating a name
+// here could alias a different, actually admitted rule in the report.
+func ruleMetricName(name string) string {
+	if len(name) == 0 || len(name) > 64 {
+		return ""
+	}
+	for i := 0; i < len(name); i++ {
+		b := name[i]
+		if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || i > 0 && (b == '_' || b == '-' || b == '.') {
+			continue
+		}
+		return ""
+	}
+	return name
 }
