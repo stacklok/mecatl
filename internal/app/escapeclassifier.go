@@ -146,7 +146,13 @@ func (c *escapeClassifier) classify(toolName string, args json.RawMessage) escap
 	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {
 		rel, ok := osfs.LocalizeInRoot(path)
 		if !ok {
-			return escapeEscape // ".." climbs out: os.Root would refuse
+			// A lexical ../ escape can land in a pseudo-filesystem. Check its
+			// physical destination before posture policy can allow the escape.
+			canon, err := osfs.Canonicalize(c.root, path)
+			if err == nil && isPseudoFSPath(canon) {
+				return escapePseudoFS
+			}
+			return escapeEscape
 		}
 		canon, err := osfs.Canonicalize(c.root, rel)
 		if err != nil {

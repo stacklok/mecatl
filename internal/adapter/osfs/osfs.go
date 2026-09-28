@@ -8,10 +8,10 @@
 //     alias) — accepted by all five FS tools (Read/Write/Stat and, via the Edit
 //     read-ledger, Edit/Glob/Grep's callers).
 //
-// Every other path is rejected as a correctness invariant: an absolute path that
-// resolves OUTSIDE the workspace root, any ".." traversal that climbs out, and a
-// symlink that escapes (whether addressed relatively or absolutely) all fail with
-// ErrPathEscape.
+// By default every other path is rejected. Explicit relaxed serving options
+// permit external absolute paths, and the main yolo workspace additionally
+// permits lexical relative ../ escapes for the four file tools. Symlink escapes
+// originating inside the workspace remain rejected.
 //
 // Absolute-path acceptance is canonicalize-then-reject: an absolute path is
 // EvalSymlinks-resolved against the deepest EXISTING ancestor (so a not-yet-
@@ -101,6 +101,8 @@ type FileSystem struct {
 	// openReadRoot is a per-instance test seam for observing fresh-root lifetime.
 	// nil uses os.OpenRoot; it is consulted only after relaxed-read path vetting.
 	openReadRoot func(string) (*os.Root, error)
+	// relaxedRelativeEscapes extends the absolute carve-out to lexical ../ escapes.
+	relaxedRelativeEscapes bool
 	// relaxedWrites enables the WithRelaxedWrites out-of-root absolute write
 	// carve-out (default off) — see relaxedWriteRoot.
 	relaxedWrites bool
@@ -112,12 +114,14 @@ type Option func(*fsOptions)
 
 // fsOptions collects the construction-time options.
 type fsOptions struct {
-	relaxedReads  bool
-	relaxedWrites bool
+	relaxedReads           bool
+	relaxedWrites          bool
+	relaxedRelativeEscapes bool
 }
 
 // WithRelaxedReads lets Read, Stat, and ReadDir serve an ABSOLUTE path that
-// canonicalizes OUTSIDE the workspace root. It is an
+// canonicalizes OUTSIDE the workspace root (or a lexical relative ../ escape
+// when combined with WithRelaxedRelativeEscapes). It is an
 // EXPLICIT construction option, DEFAULT OFF: the zero-value workspace keeps the
 // canonicalize-then-reject behaviour (ErrPathEscape). The composition layer
 // enables it for the MAIN session's workspace only at every posture so an
@@ -141,7 +145,8 @@ func WithRelaxedReads() Option {
 }
 
 // WithRelaxedWrites lets Write — and, through it, the Edit tool's mutation
-// path — serve an ABSOLUTE path that canonicalizes OUTSIDE the workspace root.
+// path — serve an ABSOLUTE path that canonicalizes OUTSIDE the workspace root
+// (or a lexical relative ../ escape with WithRelaxedRelativeEscapes).
 // It is an EXPLICIT construction option, DEFAULT OFF: the
 // zero-value workspace keeps the ordinary canonicalize-then-reject behaviour
 // (ErrPathEscape). The composition layer enables it for the MAIN session's
@@ -166,6 +171,14 @@ func WithRelaxedWrites() Option {
 	}
 }
 
+// WithRelaxedRelativeEscapes extends relaxed read/write serving to lexical
+// out-of-root relative paths. It has no effect without WithRelaxedReads/Writes.
+// Only the main yolo workspace enables it; policy and pseudo-fs checks remain
+// the composition layer's responsibility.
+func WithRelaxedRelativeEscapes() Option {
+	return func(o *fsOptions) { o.relaxedRelativeEscapes = true }
+}
+
 // NewFileSystem returns a FileSystem rooted at the given directory. The root is
 // resolved to an absolute, symlink-evaluated path, created if missing, then
 // opened as an *os.Root so all subsequent operations are confined to it.
@@ -187,7 +200,7 @@ func NewFileSystem(root string, opts ...Option) (*FileSystem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileSystem{root: abs, r: r, relaxedReads: o.relaxedReads, relaxedWrites: o.relaxedWrites}, nil
+	return &FileSystem{root: abs, r: r, relaxedReads: o.relaxedReads, relaxedWrites: o.relaxedWrites, relaxedRelativeEscapes: o.relaxedRelativeEscapes}, nil
 }
 
 // Root returns the absolute workspace root.
@@ -305,7 +318,15 @@ func (f *FileSystem) Read(_ context.Context, path string) ([]byte, error) {
 func (f *FileSystem) resolveRead(path string) (*os.Root, string, error) {
 	rel, err := f.resolvePath(path)
 	if err == nil {
-		return f.r, rel, nil
+		if !filepath.IsAbs(path) && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+			if abs, ok := f.relaxedOperand(path); ok && pathAtOrBelow(f.root, abs) {
+				inside, _ := filepath.Rel(f.root, abs)
+				return f.r, inside, nil
+			}
+			err = fmt.Errorf("%w: %q", ErrPathEscape, path)
+		} else {
+			return f.r, rel, nil
+		}
 	}
 	if r, sub, ok := f.relaxedReadRoot(path); ok {
 		return r, sub, nil
@@ -319,9 +340,38 @@ func (f *FileSystem) closeResolvedReadRoot(r *os.Root) {
 	}
 }
 
-// relaxedReadRoot serves an out-of-root ABSOLUTE path under the
-// WithRelaxedReads option (default off — a zero-value FileSystem never
-// reaches here). It opens a FRESH *os.Root on the LEXICAL parent directory of
+// relaxedOperand returns an absolute address for the existing relaxed serving
+// paths. Relative escapes are joined against the canonical session root only
+// after checking every original component: Clean would erase a symlink/.. pair
+// before the parent vet could see the symlink.
+func (f *FileSystem) relaxedOperand(path string) (string, bool) {
+	if filepath.IsAbs(path) {
+		return path, true
+	}
+	if !f.relaxedRelativeEscapes || !strings.HasPrefix(filepath.Clean(path), ".."+string(filepath.Separator)) && filepath.Clean(path) != ".." {
+		return "", false
+	}
+	current := f.root
+	for _, component := range strings.Split(filepath.FromSlash(path), string(filepath.Separator)) {
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			current = filepath.Dir(current)
+		default:
+			current = filepath.Join(current, component)
+			info, err := os.Lstat(current)
+			if err == nil && info.Mode()&os.ModeSymlink != 0 || err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return "", false
+			}
+		}
+	}
+	return filepath.Join(f.root, filepath.FromSlash(path)), true
+}
+
+// relaxedReadRoot serves an out-of-root path under WithRelaxedReads
+// (default off). Only WithRelaxedRelativeEscapes permits lexical relative ../
+// operands; other relative operands stay confined. It opens a FRESH *os.Root on the LEXICAL parent directory of
 // the cleaned verbatim path and returns that root plus the leaf name, so the
 // read itself flows through that root's traversal — never a bare os.Open.
 //
@@ -343,7 +393,11 @@ func (f *FileSystem) closeResolvedReadRoot(r *os.Root) {
 // fails safe with no root (the caller returns the original escape error). Only
 // Read/Stat/ReadDir consult it (via resolveRead); writes never do.
 func (f *FileSystem) relaxedReadRoot(path string) (*os.Root, string, bool) {
-	if !f.relaxedReads || !filepath.IsAbs(path) {
+	if !f.relaxedReads {
+		return nil, "", false
+	}
+	path, ok := f.relaxedOperand(path)
+	if !ok {
 		return nil, "", false
 	}
 	cleaned := filepath.Clean(path)
@@ -421,9 +475,9 @@ func pathAtOrBelow(base, candidate string) bool {
 // cmd/mecademo to seed fixtures), which performs its OWN resolve/lock through
 // the Workspace seam.
 
-// relaxedWriteRoot serves an out-of-root ABSOLUTE write under the
-// WithRelaxedWrites option (default off — a zero-value FileSystem never
-// reaches here). It mirrors relaxedReadRoot exactly: the SAME vetRelaxedParent
+// relaxedWriteRoot serves an out-of-root path under WithRelaxedWrites
+// (default off). Only WithRelaxedRelativeEscapes permits lexical relative ../
+// operands. It mirrors relaxedReadRoot exactly: the SAME vetRelaxedParent
 // Canonicalize-based containment vet refuses a verbatim parent whose resolved
 // ancestor escapes the verbatim prefix, then a FRESH *os.Root on the lexical
 // parent serves the leaf,
@@ -437,7 +491,11 @@ func pathAtOrBelow(base, candidate string) bool {
 // strictly wider mutation the Scenario 3 relax does not grant). Only Write
 // consults it; Glob/Grep never resolve paths at all.
 func (f *FileSystem) relaxedWriteRoot(path string) (*os.Root, string, bool) {
-	if !f.relaxedWrites || !filepath.IsAbs(path) {
+	if !f.relaxedWrites {
+		return nil, "", false
+	}
+	path, ok := f.relaxedOperand(path)
+	if !ok {
 		return nil, "", false
 	}
 	cleaned := filepath.Clean(path)
@@ -851,10 +909,10 @@ func (w *Workspace) AuthorityResourcePath(path string) (target, workspace string
 // RelaxedAuthorityResourcePath resolves the physical target identity for the
 // explicitly relaxed serving path. It is adapter-specific: escapeWorkspace uses
 // it only after its ordinary escape policy has authorized the operation. The
-// relaxed filesystem seam serves absolute operands only; relative traversal is
-// never forwarded into the out-of-root carve-out.
+// relaxed serving accepts external absolute paths and, only when explicitly
+// enabled, lexical relative ../ escapes. Other relative paths stay confined.
 func (w *Workspace) RelaxedAuthorityResourcePath(path string) (target, workspace string, err error) {
-	if !filepath.IsAbs(path) {
+	if _, ok := w.fs.relaxedOperand(path); !ok {
 		return "", "", fmt.Errorf("%w: %q", ErrPathEscape, path)
 	}
 	return w.authorityResourcePath(path)
@@ -1072,6 +1130,7 @@ func (w *Workspace) ReadVersionBounded(_ context.Context, path string, maxBytes 
 	if err != nil {
 		return nil, tool.FileVersion{}, err
 	}
+	defer w.fs.closeResolvedReadRoot(r)
 	if info, statErr := r.Stat(rel); statErr == nil && info.Size() > maxBytes {
 		return nil, tool.FileVersion{}, fmt.Errorf("osfs: file %q is %d bytes, exceeds the %d-byte bounded read limit", path, info.Size(), maxBytes)
 	}
@@ -1101,6 +1160,7 @@ func (w *Workspace) ReadVersionRangeBounded(ctx context.Context, path string, of
 	if err != nil {
 		return nil, tool.FileVersion{}, 0, err
 	}
+	defer w.fs.closeResolvedReadRoot(r)
 	info, err := r.Stat(rel)
 	if err != nil {
 		return nil, tool.FileVersion{}, 0, mapEscape(path, err)
@@ -1216,6 +1276,11 @@ func canonicalMutationPath(base, path string) (string, error) {
 // a missing target resolves its parent before appending the basename. The
 // resulting in-root operation still flows through the workspace *os.Root.
 func (w *Workspace) resolveWriteAbs(path string) (canon string, rel string, root *os.Root, leaf string, err error) {
+	if !filepath.IsAbs(path) && (filepath.Clean(path) == ".." || strings.HasPrefix(filepath.Clean(path), ".."+string(filepath.Separator))) {
+		if _, ok := w.fs.relaxedOperand(path); !ok {
+			return "", "", nil, "", fmt.Errorf("%w: %q", ErrPathEscape, path)
+		}
+	}
 	canon, err = canonicalMutationPath(w.fs.root, path)
 	if err != nil {
 		return "", "", nil, "", err
@@ -1225,14 +1290,12 @@ func (w *Workspace) resolveWriteAbs(path string) (canon string, rel string, root
 		return canon, filepath.ToSlash(rel), nil, "", nil
 	}
 
-	// A relative operand, or an absolute operand lexically inside the workspace
-	// whose physical target escaped it, is never eligible for relaxed writes.
-	if !filepath.IsAbs(path) || pathAtOrBelow(w.fs.root, filepath.Clean(path)) {
+	// Relative operands qualify only when explicitly enabled and lexically
+	// outside the root; an in-root symlink alias cannot acquire relaxed access.
+	abs, ok := w.fs.relaxedOperand(path)
+	if !ok || pathAtOrBelow(w.fs.root, filepath.Clean(abs)) {
 		return "", "", nil, "", fmt.Errorf("%w: %q", ErrPathEscape, path)
 	}
-	// Out-of-root relaxed write path (WithRelaxedWrites), preserving the existing
-	// lexical-parent vet. canon remains the physical lock identity so aliases
-	// converge across Workspace instances.
 	if r, relaxedLeaf, ok := w.fs.relaxedWriteRoot(path); ok {
 		return canon, "", r, relaxedLeaf, nil
 	}

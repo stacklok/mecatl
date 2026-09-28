@@ -27,8 +27,10 @@ Read-before-overwrite:
   clobber concurrent changes. If the file changed, re-read it, then retry.
 
 Arguments:
-- path    (required): workspace-relative path to write. Absolute paths that
-  resolve inside the workspace root are accepted.
+- path    (required): workspace-relative path to write. Absolute in-root paths
+  are accepted. Local main sessions can authorize external absolute paths; at
+  posture yolo, external ../ paths can also be served. Children and other
+  postures keep relative paths workspace-confined.
 - content (required): the full new file contents.
 
 Example:
@@ -60,7 +62,7 @@ func (WriteTool) Spec() tool.ToolSpec {
 		Schema: schema(`{
   "type": "object",
   "properties": {
-    "path": {"type": "string", "description": "Workspace-relative path to write. Absolute paths that resolve inside the workspace root are accepted."},
+    "path": {"type": "string", "description": "Workspace-relative file path; absolute in-root paths are accepted. Local main sessions can authorize external absolute paths, and at yolo posture external ../ paths. Children and other postures keep relative paths confined."},
     "content": {"type": "string", "description": "Full new contents of the file."}
   },
   "required": ["path", "content"]

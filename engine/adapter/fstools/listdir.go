@@ -17,7 +17,10 @@ When to use:
 - To distinguish immediate files from subdirectories.
 
 Arguments:
-- path: directory path relative to the workspace root, or a policy-authorized absolute path when the workspace backend supports it; use "." for the root.
+- path: directory path relative to the workspace root, or a policy-authorized
+  external absolute path in a local main session. At posture yolo, local main
+  sessions can also serve external ../ paths. Children and other postures keep
+  relative paths confined. Use "." for the root.
 
 Limits:
 - Local external listing does not support the filesystem root "/"; choose a specific external directory.
@@ -39,7 +42,7 @@ func (ListDirTool) Spec() tool.ToolSpec {
 		Name: "ListDir", Description: listDirDescription,
 		Schema: schema(`{
   "type": "object",
-  "properties": {"path": {"type": "string", "description": "Directory path relative to the workspace root, or a policy-authorized absolute path when supported by the workspace backend; use '.' for the root."}},
+  "properties": {"path": {"type": "string", "description": "Directory path relative to the workspace root, or a policy-authorized external absolute path in a local main session. At yolo posture a local main session can also serve external ../ paths. Children and other postures keep relative paths confined; use '.' for the root."}},
   "required": ["path"]
 }`),
 	}

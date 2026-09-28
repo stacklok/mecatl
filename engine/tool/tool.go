@@ -327,7 +327,8 @@ func DecodeFileVersion(encoded string) FileVersion {
 // ReplaceFile on the full Workspace, NOT this plain Read.
 //
 // Workspace embeds it, so any *Workspace is usable where a WorkspaceReader is
-// expected. Paths are session-relative and adapters reject escapes.
+// expected. Paths are normally session-relative; adapter-specific serving
+// exceptions require composition-level authorization.
 type WorkspaceReader interface {
 	// Root returns the absolute session root all paths are scoped to.
 	Root() string
@@ -416,14 +417,15 @@ type AuthorityResourceResolver interface {
 	AuthorityResourcePath(path string) (target, workspace string, err error)
 }
 
-// Workspace is the session-scoped seam every Tool executes against. It scopes
-// all paths to a single session root (rejecting escapes such as "../"), exposes
+// Workspace is the session-scoped seam every Tool executes against. It normally
+// scopes paths to a single session root; explicit adapter-specific exceptions
+// require composition-level authorization. It exposes
 // the read/search operations the core file tools need, and carries the explicit,
 // unambiguous versioned mutation operations the built-in Edit/Write tools use
 // with the Environment's independently selected ReadLedger (ADR 0208, ADR 0281).
 //
-// All paths are relative to the session root unless documented otherwise;
-// adapters must reject any path that resolves outside the root.
+// Paths are normally relative to the session root. Adapters must reject
+// out-of-root paths unless explicitly paired with an authorizing policy.
 //
 // VERSION PROTOCOL (ADR 0208). The Workspace capability exposes only the
 // explicit create-only / conditional-replace-by-version pair, so a tool mutation
@@ -543,11 +545,10 @@ func (e *VersionMismatchError) Error() string {
 // RPC: physical symlink aliases may conservatively produce distinct entries
 // (a safe false-negative that forces another Read).
 //
-//   - A session-RELATIVE path keys by its cleaned slash form (filepath.Clean,
-//     ToSlash). filepath.IsLocal reports not-relative for absolute/slash-prefixed
-//     operands; a relative path that climbs above the root ("../x") still keys by
-//     its cleaned form (the ledger is a lookup, not a confinement gate —
-//     confinement is the Workspace's business at use time).
+//   - A session-RELATIVE path normally keys by its cleaned slash form. If it
+//     climbs above an absolute root, it keys by the resulting absolute path,
+//     matching an external absolute alias. The ledger is not a confinement gate;
+//     the Workspace verifies paths at use time.
 //   - An ordinary ABSOLUTE <root>/<rel> path is reduced with filepath.Rel so it
 //     converges with the relative <rel> form.
 //   - An absolute path that does NOT lie under root (an out-of-root relaxed-read
@@ -564,7 +565,11 @@ func LedgerKey(root, path string) string {
 		return "."
 	}
 	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "/") {
-		return filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+		cleaned := filepath.Clean(filepath.FromSlash(path))
+		if !filepath.IsAbs(root) || cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(cleaned)
+		}
+		path = filepath.Join(root, cleaned)
 	}
 	cleaned := filepath.Clean(path)
 	if root != "" {

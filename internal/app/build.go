@@ -2278,7 +2278,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}()
 	cfg.storageMaintenance = &storageMaintenanceState{}
 	dreamReviewer, dreamCapabilities := buildDreamReview(cfg, assets, provider != nil)
-	workspaceFactory := osfsWorkspaceFactory(cfg.diag())
+	workspaceFactory := osfsWorkspaceFactory(cfg.diag(), cfg.Posture)
 	placementScope := cfg.PlacementScope
 	if placementScope == "" {
 		placementScope = defaultPlacementScope
@@ -9739,6 +9739,9 @@ func defaultLimits() session.Limits {
 // allow at yolo, ask everywhere below), and an escape the policy leaves at
 // Ask never reaches the tool body unapproved. At strict/trusted the relaxed
 // options let an approved escape execute; a non-approved escape still dead-ends.
+// Make lexical external ../ operands available only at yolo in the main
+// session. Child views keep denying escapes; below yolo even an approved
+// external relative operand is not served.
 // The same factory is used by the composition-owned local placement provider
 // whenever it binds or exactly reattaches a local EnvironmentRef. Child engines
 // never call it directly: their workspaces come from newForkWorkspace, so the
@@ -9748,7 +9751,7 @@ func defaultLimits() session.Limits {
 // binds no-FS through the nofs adapter before this factory and rejects invalid exact
 // refs; this guard prevents any future private composition caller from turning an
 // empty path into the server process cwd.
-func osfsWorkspaceFactory(d port.Diagnostics) server.WorkspaceFactory {
+func osfsWorkspaceFactory(d port.Diagnostics, posture ...Posture) server.WorkspaceFactory {
 	return func(root string) tool.Workspace {
 		if root == "" {
 			d.Log(context.Background(), port.LevelError,
@@ -9760,7 +9763,11 @@ func osfsWorkspaceFactory(d port.Diagnostics) server.WorkspaceFactory {
 		// already authorized; at strict/trusted that is an APPROVED escape ask).
 		clf, cerr := newEscapeClassifier(root)
 		if cerr == nil {
-			ws, err := osfs.NewWorkspace(root, osfs.WithRelaxedReads(), osfs.WithRelaxedWrites())
+			options := []osfs.Option{osfs.WithRelaxedReads(), osfs.WithRelaxedWrites()}
+			if len(posture) > 0 && posture[0] == PostureYolo {
+				options = append(options, osfs.WithRelaxedRelativeEscapes())
+			}
+			ws, err := osfs.NewWorkspace(root, options...)
 			if err != nil {
 				d.Log(context.Background(), port.LevelError, "workspace factory: cannot open root", "root", root, "err", err)
 				return nil

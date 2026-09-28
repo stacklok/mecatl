@@ -40,7 +40,7 @@ before it starts.
 |`strict`|Default for interactive `mecated`; read-only calls are allowed and mutating calls use the permission rules, normally asking before they run. Project trust is not granted by the posture.|
 |`trusted`|Interactive roots admit trusted project instructions and project permission allows, but mutating calls still use the normal approval rules.|
 |`auto`|Enables the allow-all posture for the main agent and children while keeping deny rules and deliberately configured asks effective. Child substitution defenses remain enabled.|
-|`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. Use only for isolated, disposable, single-tenant deployments.|
+|`yolo`|Extends `auto` by allowing child command substitutions, backticks, and heredoc-style substitutions that `auto` keeps behind the child safety floor. The main session also accepts external relative `../` paths for `Read`, `ListDir`, `Write`, and `Edit`. Use only for isolated, disposable, single-tenant deployments.|
 
 `--yolo`, `--trust-project`, and operator-global `posture:` settings can raise
 the posture tier; the highest tier wins. A project file cannot raise it.
@@ -62,6 +62,14 @@ mecated serve --headless --posture auto
 Allow-all postures are refused when running as root unless the deployment
 explicitly declares an isolated sandbox with `MECATL_SANDBOX=1` or
 `IS_SANDBOX=1`.
+
+A main-session external path can be addressed absolutely at any posture, subject
+to its escape permission decision. Only `yolo` also serves external relative
+`../` paths for `Read`, `ListDir`, `Write`, and `Edit`; below `yolo`, those
+relative paths remain workspace-confined even after approval. Configured denies
+and asks still apply. Pseudo-filesystems (`/proc`, `/sys`, `/dev`) are never
+served through these tools. Children, namespace tools, `Glob`, and `Grep` remain
+confined to the workspace; symlink escapes are not a substitute for `../`.
 
 ## Choose a permission mode
 
