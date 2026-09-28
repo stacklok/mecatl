@@ -228,11 +228,8 @@ func (m *Model) renderModalSurface() string {
 		framed = false
 	}
 	if !framed {
-		body = ansi.Cut(body, 0, max(0, bodyW)) + "\x1b[0m"
-		placed := body
-		if bodyW > 0 && bodyH > 0 {
-			placed = lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, body)
-		}
+		body = ansi.Cut(body, 0, bodyW) + "\x1b[0m"
+		placed := lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, body)
 		if top >= 0 {
 			x, y := centeredCardOrigin(lipgloss.Width(body), lipgloss.Height(body), bodyW, bodyH)
 			bounds := cellRect{x0: x, x1: x + lipgloss.Width(body), y0: top + y, y1: top + y + lipgloss.Height(body)}
@@ -244,9 +241,6 @@ func (m *Model) renderModalSurface() string {
 	card := style.Render(body)
 	if _, capped := m.modal.(modalMaxOuterWidthSource); capped {
 		card = style.Render(lipgloss.NewStyle().Width(contentW).Render(body))
-	}
-	if bodyW <= 0 || bodyH <= 0 {
-		return card
 	}
 	if top < 0 {
 		return lipgloss.Place(bodyW, bodyH, lipgloss.Center, lipgloss.Center, card)
