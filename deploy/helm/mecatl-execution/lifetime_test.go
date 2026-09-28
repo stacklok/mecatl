@@ -262,6 +262,172 @@ func TestChartRejectsInvalidPullSecrets(t *testing.T) {
 	}
 }
 
+func TestChartSecuritySources(t *testing.T) {
+	const sources = `[{"name":"grant-keys","items":[{"key":"signing.pem","path":"grant-k1.pem"}]},{"name":"server-tls","items":[{"key":"cert","path":"tls.crt"},{"key":"key","path":"tls.key"},{"key":"ca","path":"clients.pem"}]}]`
+	const manifest = `{"keys":[{"file":"grant-k1.pem"}],"tls":{"certificateFile":"tls.crt","privateKeyFile":"tls.key","clientCAFile":"clients.pem"}}`
+	render := func(t *testing.T, src, m, secret string, extra ...string) (map[string]map[string]any, error) {
+		t.Helper()
+		args := []string{"--set", "provider.securitySecretName=" + secret, "--set-json", "provider.securitySources=" + src, "--set-literal", "provider.securityManifest=" + m}
+		return renderLifetime(t, nil, append(args, extra...)...)
+	}
+	objects, err := render(t, sources, manifest, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := &unstructured.Unstructured{Object: objects["Deployment/test-mecatl-execution"]}
+	projected, found, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "volumes")
+	if err != nil || !found {
+		t.Fatalf("volumes: %v", err)
+	}
+	var projection []any
+	for _, volume := range projected {
+		v := volume.(map[string]any)
+		if v["name"] == "security" {
+			projection = v["projected"].(map[string]any)["sources"].([]any)
+		}
+	}
+	if len(projection) != 3 {
+		t.Fatalf("want manifest and two Secrets, got %v", projection)
+	}
+	cm := projection[0].(map[string]any)["configMap"].(map[string]any)
+	if !reflect.DeepEqual(cm["items"], []any{map[string]any{"key": "manifest.json", "path": "manifest.json"}}) {
+		t.Fatalf("manifest projection: %v", cm)
+	}
+	for i, name := range []string{"grant-keys", "server-tls"} {
+		secret := projection[i+1].(map[string]any)["secret"].(map[string]any)
+		want := []any{map[string]any{"key": "signing.pem", "path": "grant-k1.pem"}}
+		if i == 1 {
+			want = []any{map[string]any{"key": "cert", "path": "tls.crt"}, map[string]any{"key": "key", "path": "tls.key"}, map[string]any{"key": "ca", "path": "clients.pem"}}
+		}
+		if secret["name"] != name || !reflect.DeepEqual(secret["items"], want) {
+			t.Fatalf("secret projection: %v", secret)
+		}
+	}
+	staged := strings.Replace(sources, `{"key":"signing.pem","path":"grant-k1.pem"}`, `{"key":"signing.pem","path":"grant-k1.pem"},{"key":"next.pem","path":"grant-k2.pem"}`, 1)
+	if _, err := render(t, staged, manifest, ""); err != nil {
+		t.Fatalf("staged unreferenced file must remain projected: %v", err)
+	}
+	profile := objects["ConfigMap/test-mecatl-execution-profiles"]
+	lifetime := profile["data"].(map[string]any)["lifetime.json"].(string)
+	if strings.Contains(lifetime, `"securitySources"`) || strings.Contains(lifetime, "signing-key-bytes") {
+		t.Fatal("projection transport must not freeze rotation mappings or contain secret bytes")
+	}
+	for _, object := range objects {
+		encoded, err := json.Marshal(object)
+		if err != nil || strings.Contains(string(encoded), "signing-key-bytes") {
+			t.Fatal("rendered secret contents")
+		}
+	}
+
+	legacy, err := renderLifetime(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDeployment := &unstructured.Unstructured{Object: legacy["Deployment/test-mecatl-execution"]}
+	volumes, _, _ := unstructured.NestedSlice(legacyDeployment.Object, "spec", "template", "spec", "volumes")
+	for _, v := range volumes {
+		volume := v.(map[string]any)
+		if volume["name"] != "security" {
+			continue
+		}
+		s := volume["projected"].(map[string]any)["sources"].([]any)
+		if len(s) != 2 || s[0].(map[string]any)["configMap"].(map[string]any)["items"] != nil || s[1].(map[string]any)["secret"].(map[string]any)["items"] != nil {
+			t.Fatalf("legacy must project all Secret files for staging: %v", s)
+		}
+	}
+	if strings.Contains(legacy["ConfigMap/test-mecatl-execution-profiles"]["data"].(map[string]any)["lifetime.json"].(string), `"securitySources"`) {
+		t.Fatal("legacy identity changed")
+	}
+
+	invalid := []struct{ name, src, m, secret string }{
+		{"both modes", sources, manifest, "synthetic"},
+		{"duplicate source", strings.Replace(sources, `"server-tls"`, `"grant-keys"`, 1), manifest, ""},
+		{"duplicate key", strings.Replace(sources, `"key":"key"`, `"key":"cert"`, 1), manifest, ""},
+		{"duplicate destination", strings.Replace(sources, `"path":"tls.key"`, `"path":"tls.crt"`, 1), manifest, ""},
+		{"reserved manifest", strings.Replace(sources, `"path":"tls.key"`, `"path":"manifest.json"`, 1), manifest, ""},
+		{"absolute path", strings.Replace(sources, `"path":"tls.key"`, `"path":"/tls.key"`, 1), manifest, ""},
+		{"traversal path", strings.Replace(sources, `"path":"tls.key"`, `"path":"../tls.key"`, 1), manifest, ""},
+		{"nested path", strings.Replace(sources, `"path":"tls.key"`, `"path":"dir/tls.key"`, 1), manifest, ""},
+		{"empty source", `[]`, manifest, ""},
+		{"missing key", strings.Replace(sources, `"key":"cert",`, ``, 1), manifest, ""},
+		{"missing path", strings.Replace(sources, `,"path":"tls.crt"`, ``, 1), manifest, ""},
+		{"missing name", strings.Replace(sources, `"name":"server-tls",`, ``, 1), manifest, ""},
+		{"unknown item", strings.Replace(sources, `"key":"cert"`, `"key":"cert","extra":true`, 1), manifest, ""},
+		{"unknown source", strings.Replace(sources, `"name":"server-tls"`, `"name":"server-tls","extra":true`, 1), manifest, ""},
+		{"empty items", strings.Replace(sources, `[{"key":"signing.pem","path":"grant-k1.pem"}]`, `[]`, 1), manifest, ""},
+		{"invalid name", strings.Replace(sources, `"server-tls"`, `"Bad_Name"`, 1), manifest, ""},
+		{"invalid key", strings.Replace(sources, `"key":"cert"`, `"key":"../cert"`, 1), manifest, ""},
+		{"unmapped key file", sources, strings.Replace(manifest, `"grant-k1.pem"`, `"grant-k2.pem"`, 1), ""},
+		{"unmapped certificate", sources, strings.Replace(manifest, `"tls.crt"`, `"other.crt"`, 1), ""},
+		{"unmapped private key", sources, strings.Replace(manifest, `"tls.key"`, `"other.key"`, 1), ""},
+		{"unmapped client CA", sources, strings.Replace(manifest, `"clients.pem"`, `"other.pem"`, 1), ""},
+		{"missing tls field", sources, strings.Replace(manifest, `,"clientCAFile":"clients.pem"`, ``, 1), ""},
+		{"missing keys", sources, `{"tls":{"certificateFile":"tls.crt","privateKeyFile":"tls.key","clientCAFile":"clients.pem"}}`, ""},
+		{"empty keys", sources, strings.Replace(manifest, `[{"file":"grant-k1.pem"}]`, `[]`, 1), ""},
+		{"invalid key entry", sources, strings.Replace(manifest, `{"file":"grant-k1.pem"}`, `null`, 1), ""},
+		{"empty manifest", sources, "", ""},
+		{"empty object manifest", sources, `{}`, ""},
+		{"malformed manifest", sources, `{ "secret": "signing-key-bytes",`, ""},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := render(t, tc.src, tc.m, tc.secret)
+			if err == nil || strings.Contains(err.Error(), "signing-key-bytes") {
+				t.Fatalf("expected redacted render failure: %v", err)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, src string }{
+		{"too many sources", `[{"name":"a","items":[{"key":"a","path":"a"}]},{"name":"b","items":[{"key":"b","path":"b"}]},{"name":"c","items":[{"key":"c","path":"c"}]},{"name":"d","items":[{"key":"d","path":"d"}]},{"name":"e","items":[{"key":"e","path":"e"}]},{"name":"f","items":[{"key":"f","path":"f"}]},{"name":"g","items":[{"key":"g","path":"g"}]},{"name":"h","items":[{"key":"h","path":"h"}]},{"name":"i","items":[{"key":"i","path":"i"}]}]`},
+		{"too many mappings", func() string {
+			sources := []map[string]any{}
+			for source, count := range []int{17, 16} {
+				items := make([]map[string]string, count)
+				for i := range items {
+					items[i] = map[string]string{"key": fmt.Sprintf("key-%d-%d", source, i), "path": fmt.Sprintf("file-%d-%d", source, i)}
+				}
+				sources = append(sources, map[string]any{"name": fmt.Sprintf("source-%d", source), "items": items})
+			}
+			b, _ := json.Marshal(sources)
+			return string(b)
+		}()},
+		{"long path", strings.Replace(sources, `"path":"tls.key"`, `"path":"`+strings.Repeat("x", 129)+`"`, 1)},
+		{"long key", strings.Replace(sources, `"key":"cert"`, `"key":"`+strings.Repeat("x", 254)+`"`, 1)},
+		{"long name", strings.Replace(sources, `"server-tls"`, `"`+strings.Repeat("a", 64)+`"`, 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := render(t, tc.src, manifest, ""); err == nil {
+				t.Fatal("expected bounded projection failure")
+			}
+		})
+	}
+	retained := map[string]map[string]any{}
+	for _, obj := range objects {
+		u := &unstructured.Unstructured{Object: obj}
+		if u.GetAnnotations()["helm.sh/resource-policy"] == "keep" {
+			retained[u.GetKind()+"/"+u.GetName()] = obj
+		}
+	}
+	retained["ConfigMap/test-mecatl-execution-security-authority"]["data"] = map[string]any{"state.json": `{"generation":7,"digest":"synthetic","fingerprints":{"k1:1":"synthetic"}}`}
+	retained["ConfigMap/mecatl-execution-profile-allocations"]["data"] = map[string]any{"profile-go": `["allocation-uid"]`}
+	retained["ExecutionEnvironment/exec-test"] = map[string]any{"apiVersion": "execution.mecatl.dev/v1alpha1", "kind": "ExecutionEnvironment", "metadata": map[string]any{"name": "exec-test", "namespace": "ns"}}
+	if _, err := renderLifetime(t, retained, "--set", "provider.securitySecretName=", "--set-json", "provider.securitySources="+sources, "--set-literal", "provider.securityManifest="+manifest); err != nil {
+		t.Fatalf("same retained mapping: %v", err)
+	}
+	stagedRender, err := renderLifetime(t, retained, "--is-upgrade", "--set", "provider.securitySecretName=", "--set-json", "provider.securitySources="+staged, "--set-literal", "provider.securityManifest="+manifest)
+	if err != nil {
+		t.Fatalf("cannot stage new projection filename while allocations survive: %v", err)
+	}
+	if !reflect.DeepEqual(stagedRender["ConfigMap/test-mecatl-execution-profiles"]["data"], retained["ConfigMap/test-mecatl-execution-profiles"]["data"]) {
+		t.Fatal("staging projection mapping changed retained profile lifetime")
+	}
+	forward := strings.Replace(manifest, `{"file":"grant-k1.pem"}`, `{"file":"grant-k1.pem"},{"file":"grant-k2.pem"}`, 1)
+	forward = strings.Replace(forward, `"keys":[`, `"generation":2,"keys":[`, 1)
+	if _, err := renderLifetime(t, retained, "--set", "provider.securitySecretName=", "--set-json", "provider.securitySources="+staged, "--set-literal", "provider.securityManifest="+forward); err != nil {
+		t.Fatalf("staged material could not serve forward manifest: %v", err)
+	}
+}
+
 func renderLifetime(t *testing.T, objects map[string]map[string]any, extra ...string) (map[string]map[string]any, error) {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {

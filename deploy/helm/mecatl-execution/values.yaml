@@ -5,6 +5,10 @@ provider:
   imagePullSecrets: []
   replicas: 2
   securitySecretName: ""
+  # Optional: project explicitly mapped files from up to eight operator-owned Secrets.
+  # securitySources:
+  #   - name: grant-keys
+  #     items: [{key: grant-k1.pem, path: grant-k1.pem}]
   securityManifest: ""
   securityReloadInterval: 2s
   maxConcurrentStreams: 64

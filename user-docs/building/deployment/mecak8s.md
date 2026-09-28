@@ -201,9 +201,10 @@ delivery system:
 
 - Digest-pinned provider and workload images. The workload image must contain
   `/mecatl-executor`, `/bin/sh`, and the toolchain used by foreground commands.
-- A projected security Secret with the keys `grant-k1.pem`, `tls.crt`, `tls.key`,
-  and `clients.pem`. The Secret bytes remain externally managed. Mount rotation
-  uses the projected volume's `..data` link, without `subPath`.
+- Security files supplied by operator-owned Kubernetes Secrets. The provider mounts
+  their projected files without `subPath`; Secret bytes remain externally managed.
+  Use `securitySecretName` for a single Secret or `securitySources` for explicit
+  mappings from multiple Secrets.
 - A `mecak8s` client mTLS Secret containing `ca.crt`, `tls.crt`, and `tls.key`.
 - Explicit provider-client pod and namespace selectors, API-server CIDRs, and DNS
   resolver CIDRs.
@@ -311,6 +312,38 @@ and verification dates with a current, reviewed rotation window. Increase
 `generation` for every authority change, including a CA, client policy,
 issuer/audience, key state, key window, or TLS identity change.
 
+To split security files across Secrets, replace `securitySecretName` in the
+provider values with an explicit mapping. For example, use these sources with
+the manifest above:
+
+```yaml
+provider:
+  securitySecretName: ""
+  securitySources:
+    - name: grant-keys
+      items:
+        - {key: signing.pem, path: grant-k1.pem}
+    - name: server-tls
+      items:
+        - {key: cert, path: tls.crt}
+        - {key: key, path: tls.key}
+        - {key: ca, path: clients.pem}
+```
+
+Create the named Secrets in the provider namespace before installation. Each
+`path` is a unique basename in the mounted directory, and every manifest key
+file and TLS file must have a mapping. The chart projects only the listed
+Secret keys and `manifest.json` from its ConfigMap. It accepts up to eight
+unique Secret names and 32 mappings total; source names, keys, and paths are
+bounded. It rejects duplicate keys within a source, duplicate file paths,
+`manifest.json` as a Secret destination, and paths with directories. Secret
+values belong in Kubernetes Secrets, not Helm values. While allocations remain,
+preserve the single-Secret versus multi-source mode and all files still named by
+the current manifest. To rotate, add new Secret mappings and keys in a quiesced
+chart upgrade before publishing the higher-generation manifest; the authority
+ledger rejects same-generation material drift. With `securitySecretName`, the
+chart projects the entire single Secret, including files staged for rotation.
+
 Install the provider chart separately from `mecak8s`, before allocating any
 execution environments. Helm 3.16 is the minimum supported version. Helm 4 uses
 server-side apply by default, so each chart lifecycle command selects client-side
@@ -398,9 +431,13 @@ to signing keys, server certificates, server private keys, and client-CA bundles
 For example, a second bundle can use `grant-k2.pem`, `server-g2.crt`,
 `server-g2.key`, and `clients-g2.pem`. Keep each name's bytes immutable.
 
-1. Add the new files to the operator-managed security Secret, retaining the files
-   referenced by the current manifest. Stage the material before changing
-   `provider.securityManifest`.
+1. Stage the new files before changing `provider.securityManifest`, retaining
+   files referenced by the current manifest. With `securitySecretName`, add
+   them to the single operator-managed Secret. With `securitySources`, first
+   populate the new Secret keys, then add their destination mappings in a
+   quiesced chart upgrade while the old manifest remains in place. Kubernetes
+   requires every projected key to exist, even when the current manifest does
+   not reference it.
 2. Publish a higher-generation manifest whose existing `file`, `certificateFile`,
    `privateKeyFile`, and `clientCAFile` fields reference those names. For CA
    rotation, first publish a separately named overlap bundle, move clients and
@@ -428,10 +465,10 @@ your secret-management procedure's responsibility.
 #### Upgrade, uninstall, and reinstall the execution provider
 
 The supported lifecycle keeps the **same Helm release name, namespace, resource
-names, profiles, network policy configuration, and security Secret name**. Keep
-`execution-values.yaml` and the current nonsecret authority manifest in your
-operator configuration store. Retain the operator-owned Secret and its key
-history independently; the chart neither owns nor reads Secret contents.
+names, profiles, network policy configuration, and security Secret name or
+source mode**. Keep `execution-values.yaml` and the current nonsecret authority
+manifest in your operator configuration store. Retain operator-owned Secrets and
+their key history independently; the chart neither owns nor reads Secret contents.
 
 Finish and verify any external authority rotation before starting a chart
 upgrade. Do not rotate the authority ConfigMap while Helm is writing chart

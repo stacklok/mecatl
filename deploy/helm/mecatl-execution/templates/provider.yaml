@@ -1,3 +1,4 @@
+{{- include "mecatl-execution.securitySources" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -105,8 +106,23 @@ spec:
           sources:
           - configMap:
               name: {{ include "mecatl-execution.fullname" . }}-security-manifest
+              {{- if .Values.provider.securitySources }}
+              items:
+              - {key: manifest.json, path: manifest.json}
+              {{- end }}
+          {{- if .Values.provider.securitySources }}
+          {{- range .Values.provider.securitySources }}
+          - secret:
+              name: {{ .name | quote }}
+              items:
+              {{- range .items }}
+              - {key: {{ .key | quote }}, path: {{ .path | quote }}}
+              {{- end }}
+          {{- end }}
+          {{- else }}
           - secret:
               name: {{ required "provider.securitySecretName is required" .Values.provider.securitySecretName }}
+          {{- end }}
       - name: tmp
         emptyDir: {sizeLimit: 64Mi}
 ---

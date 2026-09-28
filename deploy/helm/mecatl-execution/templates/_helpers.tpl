@@ -33,3 +33,60 @@ annotations:
 {{- define "mecatl-execution.lifetimeConfig" -}}
 {{- dict "profiles" .Values.profiles "networkPolicy" .Values.networkPolicy "securitySecretName" .Values.provider.securitySecretName | toJson -}}
 {{- end -}}
+
+{{/* Validate the opt-in projection before rendering; never include manifest contents in errors. */}}
+{{- define "mecatl-execution.securitySources" -}}
+{{- $sources := .Values.provider.securitySources | default list -}}
+{{- if $sources -}}
+{{- if .Values.provider.securitySecretName -}}
+{{- fail "provider.securitySources cannot be combined with securitySecretName" -}}
+{{- end -}}
+{{- $names := dict -}}
+{{- $files := dict -}}
+{{- $count := 0 -}}
+{{- range $source := $sources -}}
+{{- if hasKey $names $source.name -}}
+{{- fail "provider.securitySources has duplicate source names" -}}
+{{- end -}}
+{{- $_ := set $names $source.name true -}}
+{{- $keys := dict -}}
+{{- range $item := $source.items -}}
+{{- $count = add1 $count -}}
+{{- if gt $count 32 -}}
+{{- fail "provider.securitySources exceeds 32 mappings" -}}
+{{- end -}}
+{{- if hasKey $keys $item.key -}}
+{{- fail "provider.securitySources has duplicate keys in a source" -}}
+{{- end -}}
+{{- $_ := set $keys $item.key true -}}
+{{- if or (eq $item.path "manifest.json") (hasKey $files $item.path) -}}
+{{- fail "provider.securitySources has a duplicate or reserved destination file" -}}
+{{- end -}}
+{{- $_ := set $files $item.path true -}}
+{{- end -}}
+{{- end -}}
+{{- $manifest := .Values.provider.securityManifest | fromJson -}}
+{{- if or (not (kindIs "map" $manifest)) (not (kindIs "slice" (get $manifest "keys"))) (not (kindIs "map" (get $manifest "tls"))) -}}
+{{- fail "provider.securityManifest requires keys and tls file references with securitySources" -}}
+{{- end -}}
+{{- $refs := list -}}
+{{- range $key := get $manifest "keys" -}}
+{{- if not (kindIs "map" $key) -}}
+{{- fail "provider.securityManifest has invalid key file references" -}}
+{{- end -}}
+{{- $refs = append $refs (get $key "file") -}}
+{{- end -}}
+{{- if not $refs -}}
+{{- fail "provider.securityManifest requires key file references with securitySources" -}}
+{{- end -}}
+{{- $tls := get $manifest "tls" -}}
+{{- range $field := list "certificateFile" "privateKeyFile" "clientCAFile" -}}
+{{- $refs = append $refs (get $tls $field) -}}
+{{- end -}}
+{{- range $file := $refs -}}
+{{- if or (not (kindIs "string" $file)) (not (hasKey $files $file)) -}}
+{{- fail "provider.securityManifest references an unmapped security file" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
