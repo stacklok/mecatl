@@ -301,7 +301,7 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 		}
 		return nil, true, false
 	}
-	if msg.String() == "tab" && len(s.learned) > 0 {
+	if msg.String() == keyMenuTab && len(s.learned) > 0 {
 		if s.focus == skillsFocusExternal {
 			s.focus = skillsFocusLearned
 			s.filter.Blur()
