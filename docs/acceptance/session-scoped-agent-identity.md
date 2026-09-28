@@ -45,8 +45,12 @@ does not name.
   new, write-once creation label alongside `Profile`/`ProviderID` (additive).
   `engine/session.Authority.Ceiling` — new, write-once, OPTIONAL capability-set field set
   once alongside `BindAuthority` for an agent-bound session (nil/absent — unrestricted —
-  for an ordinary session, additive). `engine/session.Session.CompleteWorkspaceEnrollment`
-  gains a Ceiling check (Changed, not Added — see below).
+  for an ordinary session, additive). `engine/session.Session.GrantToolAuthority` and
+  `engine/session.Session.CompleteWorkspaceEnrollment` both gain a Ceiling check (Changed,
+  not Added — see below; `CompleteWorkspaceEnrollment`'s own internals are also under
+  separate, active redesign in #1741/#1809 — this plan's requirement is a contract-level
+  property of that method, not a specific internal mechanism, so it composes with either
+  ordering).
   `engine/adapter/sessnap.Snapshot.AgentDefinitionName string` — new, `json:"agent_definition_name,omitempty"`
   (additive). `internal/adapter/server.AgentDefSessionEngineFactory` — new factory type on
   `server.Config`, mirroring the existing `DebugSessionEngineFactory`. `internal/app` gains
@@ -56,8 +60,8 @@ does not name.
   module boundary. The `engine/api/*.txt` gate tracks only the eight core packages in
   `engine/arch.CorePackages` (`session`, `governance`, `learning`, `tool`, `prompt`,
   `port`, `team`, `agent`) — `engine/adapter/sessnap` is a reference adapter and is NOT in
-  that list. So `engine/session.Session.AgentDefinitionName` (Added) and
-  `Authority.Ceiling` + `CompleteWorkspaceEnrollment`'s behavior change (Added/Changed
+  that list. So `engine/session.Session.AgentDefinitionName` (Added) and `Authority.Ceiling`
+  + `GrantToolAuthority`/`CompleteWorkspaceEnrollment`'s behavior changes (Added/Changed
   respectively) need `task api:update` + classified `engine/CHANGELOG.md` entries per
   [ADR 0037](../adr/0037-engine-stability-contract.md); the `sessnap.Snapshot` field is
   additive but produces no `engine/api/*.txt` diff.
@@ -75,12 +79,14 @@ does not name.
   gains a write-once `Ceiling` set once at bind time from the def's resolved catalog, and
   `authorizeExecution` (`engine/agent/dispatch.go`, already documented as "the single
   authority-enforcement boundary") enforces it independent of what the catalog offers. The
-  ONE existing aggregate method that can widen a bound session's tools post-bind —
-  `CompleteWorkspaceEnrollment`, which today replaces `CapabilitySet.Tools` wholesale with
-  no ceiling check — rejects any grant that would exceed the Ceiling. This is deliberately
-  a `Session`-aggregate invariant, not an adapter-layer special case: enumerating adapter
-  call sites is fragile (plan review already found two real widening paths —
-  `rebuildGrantedAuthorizationEngine`'s lazy broker-OAuth grant and
+  TWO existing aggregate methods that can widen a bound session's tools post-bind —
+  `GrantToolAuthority` (ADR 0355's direct/global MCP-refresh path, today unions names into
+  `CapabilitySet.Tools` unconditionally) and `CompleteWorkspaceEnrollment` (the
+  broker-enrollment path, today replaces `CapabilitySet.Tools` wholesale) — no ceiling
+  check in either today; both are changed to reject any grant that would exceed the
+  Ceiling. This is deliberately a `Session`-aggregate invariant, not an adapter-layer
+  special case: enumerating adapter call sites is fragile (plan review already found two
+  real widening paths — `rebuildGrantedAuthorizationEngine`'s lazy broker-OAuth grant and
   `ConnectWorkspaceServices`'s workspace enrollment — beyond the four originally named),
   and any future call site this plan doesn't enumerate is still bound by the same
   aggregate check. The session's minted `session.Authority` (`mintRootAuthority`) is
@@ -247,7 +253,7 @@ lifetime" decision.
 **Acceptance:**
 - AC2.1: `agent_definition_name` is stamped onto the session at creation, persists on the
   session snapshot, and survives a save/restore round-trip — including for a session that
-  later fails closed on rehydration (AC3.2): the label itself always restores onto the
+  later fails closed on rehydration (AC3.4): the label itself always restores onto the
   session object; only the per-session ENGINE build refuses.
   - verify: `TestSessionScopedAgentIdentity_Scenario2_PersistsAcrossSnapshotRoundTrip`
 - AC2.2: `CreateSessionResponse.resolved_agent_definition_name` echoes the bound name
@@ -297,14 +303,28 @@ boundary," gated on `sess.BoundAuthority()` — what a session can ACTUALLY exec
 governed by `session.Authority.CapabilitySet`, independent of what its catalog happens to
 offer. `session.Authority` gains a write-once `Ceiling` (set once, alongside
 `BindAuthority`, from the def's resolved catalog for an agent-bound session; absent for an
-ordinary session — additive, no behavior change there). The ONE existing aggregate method
-that can widen a bound session's tools after bind — `CompleteWorkspaceEnrollment`
-(`engine/session/workspace_enrollment.go`), which today replaces
-`CapabilitySet.Tools` wholesale with no ceiling check at all — is changed to reject any
-grant that would exceed the Ceiling. This makes the ceiling a `Session`-aggregate
-invariant (matching this repo's "mutate `Session` through aggregate methods" convention)
-instead of an adapter-layer special case a future call site can bypass simply by not
-knowing about it — which is exactly how the two sites above got missed here.
+ordinary session — additive, no behavior change there). TWO existing aggregate methods can
+widen a bound session's tools after bind, and both are changed to reject any grant that
+would exceed the Ceiling: `GrantToolAuthority` (`engine/session/principal.go`, the direct/
+global MCP-refresh path, ADR 0355 — today unions names into `CapabilitySet.Tools`
+unconditionally, no ceiling check) and `CompleteWorkspaceEnrollment`
+(`engine/session/workspace_enrollment.go`, the broker-enrollment path — today replaces
+`CapabilitySet.Tools` wholesale, also no ceiling check). This makes the ceiling a
+`Session`-aggregate invariant (matching this repo's "mutate `Session` through aggregate
+methods" convention) instead of an adapter-layer special case a future call site can
+bypass simply by not knowing about it — which is exactly how the two adapter sites above
+got missed here.
+
+Coordination note: `CompleteWorkspaceEnrollment`'s internals are themselves under active,
+separate redesign — [PR #1741](https://github.com/stacklok/mecatl/pull/1741) / ADR 0358
+("workspace enrollment preserves session authority," proposed, not yet approved;
+implementation stacked in #1809) changes its `exactTools` semantics from a full-catalog
+replacement to a broker-registration-key delta against a persisted ledger, keeping the
+same method signature. This plan's Ceiling requirement is written as a property of
+`CompleteWorkspaceEnrollment`'s CONTRACT — whatever tool set it computes, for an
+agent-bound session it must never exceed the Ceiling — not a specific internal
+implementation, so it composes with #1741/#1809 landing before, after, or concurrently
+with this plan. Do not re-design the ledger/delta mechanics here; that is #1741's scope.
 
 The originally-scoped adapter-layer guards (`SetMode`; the
 `needsRehydration()`/`engineAndEnvironmentFor` choke point covering `StartRunContent`,
@@ -322,14 +342,16 @@ execution safe regardless. The two newly-found call sites join this list. Per
   session's Authority carries no Ceiling (unrestricted) — additive, not a behavior change
   for any existing session.
   - verify: `TestSessionScopedAgentIdentity_Scenario3_AuthorityCeilingBoundOnce`
-- AC3.2: `CompleteWorkspaceEnrollment` — the one verified aggregate method that can widen a
-  bound session's tools post-bind — rejects any grant that would set a tool outside an
-  agent-bound session's Ceiling; a fixture that attempts to grant a broker tool the def's
-  ceiling doesn't include fails, rather than silently widening `CapabilitySet.Tools`. This
-  is the structural guarantee: any FUTURE authority-widening aggregate method, or an
-  adapter call site this plan doesn't enumerate, is bound by the same check by
-  construction, not by remembering to add it to a list.
-  - verify: `TestSessionScopedAgentIdentity_Scenario3_CompleteWorkspaceEnrollmentRespectsCeiling`
+- AC3.2: The two verified aggregate methods that can widen a bound session's tools
+  post-bind — `GrantToolAuthority` and `CompleteWorkspaceEnrollment` — both reject any
+  grant that would set a tool outside an agent-bound session's Ceiling; fixtures that
+  attempt to grant a direct-MCP tool (`GrantToolAuthority`) or a broker tool
+  (`CompleteWorkspaceEnrollment`) the def's ceiling doesn't include both fail, rather than
+  silently widening `CapabilitySet.Tools`. This is the structural guarantee: any FUTURE
+  authority-widening aggregate method, or an adapter call site this plan doesn't
+  enumerate, is bound by the same check by construction, not by remembering to add it to
+  a list.
+  - verify: `TestSessionScopedAgentIdentity_Scenario3_GrantToolAuthorityRespectsCeiling`, `TestSessionScopedAgentIdentity_Scenario3_CompleteWorkspaceEnrollmentRespectsCeiling`
 - AC3.3: `SetMode` is rejected with `InvalidArgument` outright for an agent-bound session —
   the mode is fixed for the session's entire lifetime.
   - verify: `TestSessionScopedAgentIdentity_Scenario3_SetModeRejected`
