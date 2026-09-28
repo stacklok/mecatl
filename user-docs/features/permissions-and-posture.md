@@ -203,21 +203,42 @@ mecated serve --guardrails-model gpt-5.6-luna
 ```
 
 The experimental native Jev backend in this draft branch can instead be selected
-from operator settings:
+from operator settings. It defaults to Jev as the final checker:
 
 ```yaml
 guardrails:
   backend: jev
 ```
 
+For the nonshipping Jev-triage experiment, explicitly bind an LLM as the final
+checker:
+
+```yaml
+guardrails:
+  backend: jev
+  finalDecision: llm
+  model: gpt-5.6-luna
+```
+
+You can bind `models.slots.guardrail` instead of `guardrails.model`. A session
+model or `cheap` slot does not enable this mode. Jev's clean, prohibited, and
+unresolved choices are observations only: the LLM reviews every matching action
+and inbound result and makes the final decision. The triage probe sees the
+exact effective call or result but no LLM-bound evidence handles; incomplete
+context skips Jev without skipping the LLM. It adds latency and spend rather
+than saving a checker call. The session's checker attribution names the LLM.
+This experiment has no empirical safety validation and does not change the
+production security contract.
+
 If you used the earlier draft's `guardrails.jev` block, delete it; the
 experimental checker pins `jev-1.13.0`. Leave `models.router.jev` alone.
 
-Supply `TYPESAFE_API_KEY` through the existing server credential source. The
-backend uses the ordinary action and inbound review gates, including headless
-blocking and result withholding; it does not need an LLM guardrail model or
-slot. It sends effective tool arguments, result text, task facts, and authorized
-review evidence to TypeSafe. Incomplete context, unsupported permission reviews,
+Supply `TYPESAFE_API_KEY` through the existing server credential source. In
+Jev-final mode, the backend uses the ordinary action and inbound review gates,
+including headless blocking and result withholding; it does not need an LLM
+guardrail model or slot. It sends effective tool arguments, result text, task
+facts, and authorized review evidence to TypeSafe. Incomplete context and
+unsupported permission reviews,
 and requests beyond its input limit do not receive a clean verdict. The driver
 also treats a Jev choice below its experimental fixed `0.8` confidence cutoff
 as unresolved; this cutoff has not been calibrated for security use. This is an

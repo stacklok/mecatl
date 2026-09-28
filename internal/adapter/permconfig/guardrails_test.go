@@ -18,9 +18,16 @@ func TestExperimentalJevGuardrailsSchema(t *testing.T) {
 	if err != nil || valid.Guardrails == nil || valid.Guardrails.Backend != "jev" || valid.Models == nil || valid.Models.Router == nil || valid.Models.Router.Jev == nil || valid.Models.Router.Jev.MinimumConfidence != 0.25 {
 		t.Fatalf("independent Jev config: %#v, %v", valid, err)
 	}
+	validLLM, err := parseYAML([]byte("guardrails:\n  backend: jev\n  finalDecision: llm\n  model: deep-checker\n"))
+	if err != nil || validLLM.Guardrails.FinalDecision != "llm" || validLLM.Guardrails.Model != "deep-checker" {
+		t.Fatalf("triaged final LLM config: %+v, %v", validLLM, err)
+	}
 	for _, body := range []string{
 		"guardrails:\n  backend: jev\n  jev:\n    model: jev-1.13.0\n",
 		"guardrails:\n  backend: jev\n  model: gpt-5\n",
+		"guardrails:\n  finalDecision: llm\n  model: gpt-5\n",
+		"guardrails:\n  backend: jev\n  finalDecision: typo\n",
+		"guardrails:\n  backend: jev\n  final-decision: llm\n",
 		"guardrails:\n  backend: typo\n",
 	} {
 		_, err := parseYAML([]byte(body))

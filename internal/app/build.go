@@ -800,10 +800,11 @@ type Config struct {
 	// Empty disables guardrails. Build normalizes it once (normalizeGuardrailsModel)
 	// and FAILS FAST on a value that does not resolve to a usable model id.
 	// GuardrailsBackend selects the experimental native Jev checker or the default LLM checker.
-	GuardrailsBackend    string
-	GuardrailsJevBaseURL string // test-only endpoint override; empty uses the Typesafe endpoint.
-	guardrailJev         *jevguardrail.Driver
-	GuardrailsModel      string
+	GuardrailsBackend       string
+	GuardrailsFinalDecision string // experimental Jev triage: "jev" (default) or "llm".
+	GuardrailsJevBaseURL    string // test-only endpoint override; empty uses the Typesafe endpoint.
+	guardrailJev            *jevguardrail.Driver
+	GuardrailsModel         string
 	// GuardrailsRules is the operator-tier rule list (matcher + phases + mode +
 	// per-rule prompt + fail-closed). Empty disables guardrails. Sourced only from
 	// the operator tier (user-global YAML + CLI), never the project file.
@@ -2001,12 +2002,21 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 		return nil, err
 	}
 	cfg.GuardrailsModel = guardrailsModel
-	if cfg.GuardrailsBackend != "" && cfg.GuardrailsBackend != "llm" && cfg.GuardrailsBackend != guardrailBackendJev {
+	if cfg.GuardrailsBackend != "" && cfg.GuardrailsBackend != guardrailFinalLLM && cfg.GuardrailsBackend != guardrailBackendJev {
 		return nil, fmt.Errorf("guardrails.backend must be llm or jev")
 	}
+	if cfg.GuardrailsFinalDecision != "" && cfg.GuardrailsFinalDecision != "jev" && cfg.GuardrailsFinalDecision != guardrailFinalLLM {
+		return nil, fmt.Errorf("guardrails.finalDecision must be jev or llm")
+	}
+	if cfg.GuardrailsFinalDecision != "" && cfg.GuardrailsBackend != guardrailBackendJev {
+		return nil, fmt.Errorf("guardrails.finalDecision requires backend jev")
+	}
 	if cfg.GuardrailsBackend == guardrailBackendJev && !cfg.GuardrailsDisabled {
-		if cfg.GuardrailsModel != "" || cfg.GuardrailSlot != nil || strings.TrimSpace(cfg.ModelSlots[slotGuardrail]) != "" {
+		if cfg.GuardrailsFinalDecision != guardrailFinalLLM && (cfg.GuardrailsModel != "" || cfg.GuardrailSlot != nil || strings.TrimSpace(cfg.ModelSlots[slotGuardrail]) != "") {
 			return nil, fmt.Errorf("guardrails.backend jev conflicts with LLM guardrail model/slot")
+		}
+		if cfg.GuardrailsFinalDecision == guardrailFinalLLM && cfg.GuardrailsModel == "" && cfg.GuardrailSlot == nil && strings.TrimSpace(cfg.ModelSlots[slotGuardrail]) == "" {
+			return nil, fmt.Errorf("guardrails.finalDecision llm requires an explicit guardrails.model or guardrail slot")
 		}
 		client := withRootSessionCorrelation(&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }})
 		cfg.guardrailJev, err = jevguardrail.New(cfg.TypesafeAPIKey, cfg.GuardrailsJevBaseURL, client)
@@ -5365,9 +5375,12 @@ func guardrailsPostureLine(cfg Config, model string, src guardrailSource, specs 
 		provenance = fmt.Sprintf("via slot `guardrail`, supersedes gate value %q", strings.TrimSpace(cfg.GuardrailsModel))
 	case srcGate:
 		provenance = "via --guardrails-model"
-		if cfg.GuardrailsBackend == guardrailBackendJev {
+		if cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision != guardrailFinalLLM {
 			provenance = "via experimental guardrails.backend: jev"
 		}
+	}
+	if cfg.GuardrailsBackend == guardrailBackendJev && cfg.GuardrailsFinalDecision == guardrailFinalLLM {
+		provenance += " (experimental Jev triage; LLM final)"
 	}
 	// Mode is the highest-severity mode across the RESOLVED specs — for BOTH the
 	// default-set and explicit-rule branches. The default set is block (ADR 0060), so
