@@ -29,10 +29,9 @@ When to use:
 - To change part of an existing file. To create a new file, use Write instead.
 
 Arguments:
-- path        (required): workspace-relative path to the file. Absolute in-root
-  paths are accepted. Local main sessions can authorize external absolute paths;
-  at posture yolo, external ../ paths can also be served. Children and other
-  postures keep relative paths workspace-confined.
+- path        (required): workspace-relative or in-root absolute file path. In a
+  local main session, policy may allow external absolute paths; yolo also
+  allows external ../ paths.
 - old_string  (required): the exact text to replace.
 - new_string  (required): the replacement text (may be empty to delete).
 - replace_all (optional): replace every occurrence instead of requiring uniqueness.
@@ -67,7 +66,7 @@ func (EditTool) Spec() tool.ToolSpec {
 		Schema: schema(`{
   "type": "object",
   "properties": {
-    "path": {"type": "string", "description": "Workspace-relative file path; absolute in-root paths are accepted. Local main sessions can authorize external absolute paths, and at yolo posture external ../ paths. Children and other postures keep relative paths confined."},
+    "path": {"type": "string", "description": "File path; see tool description for external-path rules."},
     "old_string": {"type": "string", "description": "Exact text to replace (no line-number prefixes)."},
     "new_string": {"type": "string", "description": "Replacement text; may be empty to delete."},
     "replace_all": {"type": "boolean", "description": "Replace every occurrence instead of requiring a unique match."}
