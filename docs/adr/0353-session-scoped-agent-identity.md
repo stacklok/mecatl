@@ -87,8 +87,11 @@ already excludes global MCP, delegation, scheduling, and memory-management tools
 construction, since they were never in that available set to begin with. A session-root
 call site reuses the identical `scopedToolNamesMode` step over that same base set, so
 omitting `tools:` on a root-bound def can never implicitly pull in anything wider than a
-child def already gets. A def author who wants more (WebSearch, memory tools, …) lists
-them explicitly.
+child def already gets. This ceiling is unconditional: naming a tool outside that base
+set in `tools:` does not grant it either — `scopedToolNamesMode` drops any name not in
+the available set (a diagnostic, not a rejection) whether `tools:` is omitted or
+explicit. A def that needs a wider tool needs the base set itself widened for the
+root-shaped path, a decision this ADR does not make.
 
 **No delegation in v1.** `Subagent`/`Parallel`/`Team` are excluded, mirroring the
 existing rule for a def used as a child. Keeps the security story bounded; a delegating

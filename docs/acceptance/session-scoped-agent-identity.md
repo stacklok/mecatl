@@ -30,8 +30,8 @@ does not name.
 - [x] Should `AgentDefSessionEngineFactory` (the new per-session engine factory this plan introduces) ever accept a tool-widening input parameter, for symmetry with the existing `SessionEngineWithToolsFactory`? — Decision: no, never — the security property "the catalog is built exclusively from the def's tools" must be structurally impossible to violate, not merely a documented convention.
 - [x] Is failing closed (refusing to resume) an acceptable v1 cost for restart/MCP-resume on an agent-bound session, or does the motivating mecak8s Slack-bot deployment need session continuity across a pod restart badly enough to pull the larger persist-authority-and-rebuild-through-it fix (issue #1796) into this plan? — Decision: fail closed now for simplicity, matching ADR 0353's own stated v1 scope; keep #1796 as a separate follow-up.
 - [x] `memory: project` for an agent-bound session: should `resolveAgentMemoryHead` be extended to thread the session's own resolved placement (`EnvironmentRef`) into its "project" root, or should it keep reading the single process-wide `cfg.Workspace` unmodified? — Decision: implement the placement-aware version. This is real new work (today's code, including the exploratory Slice A branch, does not do this — `resolveAgentMemoryHead` is called unchanged), but it closes a real cross-placement leak risk and is what ADR 0353's own text already claims is true.
-- [x] `CreateSessionRequest.Limits` fields are plain `int32` with an existing, already-documented wire meaning ("a zero value in any field disables that particular limit"). For an agent-bound session, does a request's zero value mean "caller did not supply this field, inherit the def's cap," or does it keep its documented "caller explicitly wants unlimited" meaning? — Decision: for an agent-bound session only, a request `Limits` zero value means "not supplied, inherit the def's cap" — a caller cannot use this field to request unlimited on an agent-bound session. This is a narrow, new-call-site-only carve-out; the pre-existing "0 = unlimited" wire convention is untouched everywhere else.
-- [x] AC1.7/AC1.8 require fixing `internal/adapter/modelhook.Runner.check` to inspect a `PreToolUse` hook's `Mutated` content when present, instead of the pre-mutation `HookEvent` it reads today — a real, code-verified gap. Should this fix be in THIS plan's scope, or should AC1.7/AC1.8 be narrowed and the bypass filed separately? — Decision: fix it here. A plan that asserts a false security guarantee is worse than a slightly wider diff, and the fix is narrowly scoped to one function's input.
+- [x] `CreateSessionRequest.Limits` fields are plain `int32`. The `.proto` doc comment ("a zero value in any field disables that particular limit") is itself stale against the server's actual behavior: `createSession` (`internal/adapter/server/service.go`, ~2265-2266) already states "a zero field means 'unset', not 'explicitly unlimited'" and fills it via `limits.WithDefaults(s.cfg.DefaultLimits)`. For an agent-bound session, does zero mean "not supplied, inherit the def's cap," or "explicitly unlimited"? — Decision: for an agent-bound session, a request `Limits` zero value means "not supplied, inherit the def's cap" — a caller cannot use this field to request unlimited on an agent-bound session. This is now recognized as consistent with, not a carve-out from, the server's real existing zero-means-unset behavior — the stale "0 = unlimited" wire *documentation* is a separate, pre-existing inaccuracy this plan does not fix.
+- [x] AC1.7/AC1.8 require fixing `internal/adapter/modelhook.Runner.check` to inspect `innerOut.Mutated` when present, instead of the pre-mutation `HookEvent` it reads today — a real, code-verified gap affecting BOTH governance phases (a `PreToolUse` hook's mutated args and a `PostToolUse` hook's mutated result). Should this fix be in THIS plan's scope, or should AC1.7/AC1.8 be narrowed and the bypass filed separately? — Decision: fix it here, for both phases. A plan that asserts a false security guarantee is worse than a slightly wider diff, and the fix is narrowly scoped to one function's input.
 - [x] ADR 0353's Decision text says a def author who wants more than the bounded base set "lists them explicitly" (WebSearch, memory tools, …) — but naming one today silently drops it as an "unknown tool," it does not grant it. Should `base` be widened for the root-shaped path so naming works as the ADR describes, or should the ADR text be corrected instead? — Decision: correct the ADR text for v1 (simpler, and consistent with reusing the same bounded base set a Subagent child gets); open a follow-up issue if a concrete use case ever needs a wider explicit-opt-in set. Tracked alongside the other ADR 0353 documentation-pass items in "Deferred decisions and known risks" below.
 
 ## Interface contract
@@ -43,6 +43,10 @@ does not name.
   `task generate` regenerates `contracts/gen/**`.
 - **Exported Go APIs / interfaces:** `engine/session.Session.AgentDefinitionName string` —
   new, write-once creation label alongside `Profile`/`ProviderID` (additive).
+  `engine/session.Authority.Ceiling` — new, write-once, OPTIONAL capability-set field set
+  once alongside `BindAuthority` for an agent-bound session (nil/absent — unrestricted —
+  for an ordinary session, additive). `engine/session.Session.CompleteWorkspaceEnrollment`
+  gains a Ceiling check (Changed, not Added — see below).
   `engine/adapter/sessnap.Snapshot.AgentDefinitionName string` — new, `json:"agent_definition_name,omitempty"`
   (additive). `internal/adapter/server.AgentDefSessionEngineFactory` — new factory type on
   `server.Config`, mirroring the existing `DebugSessionEngineFactory`. `internal/app` gains
@@ -52,8 +56,9 @@ does not name.
   module boundary. The `engine/api/*.txt` gate tracks only the eight core packages in
   `engine/arch.CorePackages` (`session`, `governance`, `learning`, `tool`, `prompt`,
   `port`, `team`, `agent`) — `engine/adapter/sessnap` is a reference adapter and is NOT in
-  that list. So only `engine/session.Session.AgentDefinitionName` needs `task api:update` +
-  an `engine/CHANGELOG.md` Added entry per
+  that list. So `engine/session.Session.AgentDefinitionName` (Added) and
+  `Authority.Ceiling` + `CompleteWorkspaceEnrollment`'s behavior change (Added/Changed
+  respectively) need `task api:update` + classified `engine/CHANGELOG.md` entries per
   [ADR 0037](../adr/0037-engine-stability-contract.md); the `sessnap.Snapshot` field is
   additive but produces no `engine/api/*.txt` diff.
 - **Tool schemas:** None — no tool's own input/output schema changes; the change is which
@@ -65,24 +70,39 @@ does not name.
   same round-trip discipline as `Profile`/`ProviderID`/`ModelID`). No new `session.Event` —
   the binding is a durable session label, not an event.
 - **Security / authority:** a resolved `AgentDef`'s `tools`/`disallowedTools`/`mcpServers:`
-  become a strict, non-widenable ceiling on the session's catalog (ADR 0353). The session's
-  minted `session.Authority` (`mintRootAuthority`) is derived from that SAME resolved
-  catalog and resource-capability list — not the deployment's build-time default catalog
-  the ordinary `Config.RootAuthority` closure produces — so a def's own inline-MCP tools
-  are never silently dropped from the model-offered spec list by the authority filter.
-  `Config.MCPBroker` attachment is skipped entirely, at both the create and the
-  Fork/Clear-successor engine-build call sites, for an agent-bound session — mecak8s is
-  ADR 0353's own named deployment target, so its external-MCP-granting mechanism must not
-  be a fourth, unaddressed widening channel alongside `mcp_servers`/`debug_mcp_servers`
-  (both already rejected by the ADR) and the ordinary default catalog. Guardrails,
+  become a strict, non-widenable ceiling on the session's catalog (ADR 0353), and — the
+  load-bearing guarantee — on what the session can actually EXECUTE: `session.Authority`
+  gains a write-once `Ceiling` set once at bind time from the def's resolved catalog, and
+  `authorizeExecution` (`engine/agent/dispatch.go`, already documented as "the single
+  authority-enforcement boundary") enforces it independent of what the catalog offers. The
+  ONE existing aggregate method that can widen a bound session's tools post-bind —
+  `CompleteWorkspaceEnrollment`, which today replaces `CapabilitySet.Tools` wholesale with
+  no ceiling check — rejects any grant that would exceed the Ceiling. This is deliberately
+  a `Session`-aggregate invariant, not an adapter-layer special case: enumerating adapter
+  call sites is fragile (plan review already found two real widening paths —
+  `rebuildGrantedAuthorizationEngine`'s lazy broker-OAuth grant and
+  `ConnectWorkspaceServices`'s workspace enrollment — beyond the four originally named),
+  and any future call site this plan doesn't enumerate is still bound by the same
+  aggregate check. The session's minted `session.Authority` (`mintRootAuthority`) is
+  derived from the def's own resolved catalog and resource-capability list at bind time —
+  not the deployment's build-time default catalog the ordinary `Config.RootAuthority`
+  closure produces — so a def's own inline-MCP tools are never silently dropped from the
+  model-offered spec list by the authority filter. Adapter-layer guards remain as
+  catalog-consistency and defense-in-depth (an agent-bound session's catalog should never
+  OFFER a tool its Ceiling would refuse to execute, even though the Ceiling alone makes
+  execution safe): `Config.MCPBroker` attachment, the lazy broker-OAuth grant flow, and
+  workspace enrollment are all skipped for an agent-bound session at every reachable call
+  site (create, Fork/Clear successor, `rebuildGrantedAuthorizationEngine`,
+  `ConnectWorkspaceServices`) — mecak8s is ADR 0353's own named deployment target, so its
+  external-MCP-granting mechanisms must not be unaddressed widening channels alongside
+  `mcp_servers`/`debug_mcp_servers` (both already rejected by the ADR). Guardrails,
   `AudienceMain` governance, and the normal awaiting/approve ask-flow are unchanged from any
   other main session. Every existing engine-rebuild trigger that doesn't know about
-  `agent_definition_name` today fails closed for an agent-bound session rather than
-  silently rebuilding the wider default catalog: `SetMode` (its own direct guard, AC3.1);
-  `LoadSessionWithMCP` (its own direct guard, AC3.3, since it calls `s.cfg.SessionEngine`
-  directly and never passes through the choke point below); and — sharing ONE common choke
-  point — `StartRunContent`/run-entry, `RetryFailedRun`, `CompactSession`, and
-  `resumeFromAwaiting`. The actual shared choke point for the latter four
+  `agent_definition_name` today ALSO fails closed at the catalog layer: `SetMode` (its own
+  direct guard, AC3.3); `LoadSessionWithMCP` (its own direct guard, AC3.5, since it calls
+  `s.cfg.SessionEngine` directly and never passes through the choke point below); and —
+  sharing ONE common choke point — `StartRunContent`/run-entry, `RetryFailedRun`,
+  `CompactSession`, and `resumeFromAwaiting`. The shared choke point for the latter four
   is `needsRehydration()`/`engineAndEnvironmentFor` (`internal/adapter/server/service.go`)
   — NOT specifically `rehydrateSession`, which only fires when `needsRehydration()` already
   returns true; a fix that only touches `rehydrateSession` is a no-op for an agent-bound
@@ -94,9 +114,7 @@ does not name.
   `engineAndEnvironmentFor`, ahead of every branch), so it structurally covers all four
   callers and any future one. `buildAndRegisterSessionEngineWithBrokerTools` — the ONE
   function the guarded rehydration path and the must-succeed Fork/Clear-successor path
-  both reach — gains a dispatch arm for `AgentDefSessionEngineFactory`; the invariant this
-  whole set of guards protects is that an agent-bound session may reach that factory ONLY
-  from session-creation and the Fork/Clear successor path, never from a rebuild trigger.
+  both reach — gains a dispatch arm for `AgentDefSessionEngineFactory`.
   Definition hooks: resolving an `agent_definition_name` grants unconditional local
   command execution via the def's `hooks:` (one shell command per governance phase,
   running on every matching tool call with no model decision, no permission ask, and no
@@ -155,17 +173,19 @@ authoritative rules this scenario proves.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_OrdinaryMainSessionBehavior`
 - AC1.7: The def's own `hooks:` compose as the `inner` `HookRunner` under the existing
   operator-guardrails decorator (`modelhook.Runner`); the checker inspects the EFFECTIVE
-  payload — when a `PreToolUse` hook mutates the tool-call args, the guardrail checker is
-  extended to inspect that mutated content, not the stale pre-mutation input
-  `modelhook.Runner.check` reads today. This closes a real, code-verified gap:
-  `Runner.Run` currently calls `r.check` against the original `HookEvent`, never
-  `innerOut.Mutated`, so a hook that rewrites benign args into a dangerous call runs with
-  zero guardrail inspection.
+  payload for BOTH governance phases — a `PreToolUse` hook's mutated tool-call args AND a
+  `PostToolUse` hook's mutated result (`{content, is_error}`, per `merge.go`'s own
+  documented `Mutated` semantics for that phase) — never the stale pre-mutation
+  `HookEvent` `modelhook.Runner.check` reads today for either phase. This closes a real,
+  code-verified gap: `Runner.Run` calls `r.check` against the same original `ev` regardless
+  of phase, never `innerOut.Mutated`, so a hook that rewrites a benign call into a
+  dangerous one (Pre) or a safe result into an unsafe one (Post) runs with zero guardrail
+  inspection.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_GuardrailInspectsHookMutatedPayload`
-- AC1.8: A def hook that mutates a `PreToolUse` call's args is not exempt from guardrail
-  inspection — a fixture def whose hook rewrites a benign call into one a configured
-  guardrail rule would block is, in fact, blocked (negative test for AC1.7; today's code
-  would let it through).
+- AC1.8: A def hook that mutates either phase's payload is not exempt from guardrail
+  inspection — fixture defs whose Pre hook rewrites a benign call, and whose Post hook
+  rewrites a benign result, into ones a configured guardrail rule would block are, in
+  fact, blocked (negative tests for AC1.7; today's code would let both through).
   - verify: `TestSessionScopedAgentIdentity_Scenario1_HookMutationCannotBypassGuardrail`
 - AC1.9: The session's minted `session.Authority` is derived from the def's own resolved
   catalog and resource-capability list, not the deployment's build-time default catalog —
@@ -175,8 +195,11 @@ authoritative rules this scenario proves.
 - AC1.10: `Config.MCPBroker` attachment is skipped entirely for an agent-bound session at
   session-creation time — broker-granted tools never widen the def's ceiling.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_MCPBrokerAttachmentSkipped`
-- AC1.11: Mutation (Edit/Write/Shell) is available if and only if the def's `tools:` allows
-  it — never forced read-only the way a Subagent delegate is.
+- AC1.11: Mutation (Edit/Write/Shell) is available only if the def's `tools:` allows
+  it — never forced read-only the way a Subagent delegate is. The def allowing mutation
+  is necessary but not sufficient: `profile: "no-fs"` (AC1.15) still removes these tools
+  even when the def's `tools:` lists them, since profile/deployment authority narrow the
+  AVAILABLE set before the def's allowlist is ever consulted.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_MutationFollowsDefTools`
 - AC1.12: Request `Limits.max_turns`/`max_tool_calls` may only lower the def's configured
   values, never raise them.
@@ -185,11 +208,15 @@ authoritative rules this scenario proves.
   clamped to the def's value (`plan` < `default` < `acceptEdits`) — never rejected, never
   raised.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_PermissionModeClampedNotRaised`
-- AC1.14: `provider_id`/`model_id` resolve as a single pair: an explicit pair on the request
-  wins; a lone `provider_id` override re-derives THAT provider's own default model, rather
-  than carrying over a model the def pinned for a different provider; an unavailable
-  definition-pinned provider fails session creation rather than silently instantiating the
-  def on another provider.
+- AC1.14: `provider_id`/`model_id` resolve as a single pair, covering all 5 cases of ADR
+  0353's algorithm: (1) no request override resolves the def's own base pair (its
+  `Model`/`Provider` over the deployment default); (2) a request `model_id` alone applies
+  to the base pair's PROVIDER (never switches provider); (3) a request `provider_id` alone
+  switches provider and re-derives THAT provider's own default model, rather than carrying
+  over a model the def pinned for a different provider; (4) both fields set uses the
+  explicit pair verbatim; (5) an unavailable definition-pinned provider (case 1's base
+  pair) fails session creation rather than silently instantiating the def on another
+  provider.
   - verify: `TestSessionScopedAgentIdentity_Scenario1_ProviderModelPairResolution`
 - AC1.15: Under `profile: "no-fs"`, filesystem tools and Shell stay absent from an
   agent-bound session's catalog even when the def's `tools:` lists them — the profile and
@@ -239,7 +266,12 @@ lifetime" decision.
   bound placement (`EnvironmentRef`), not the deployment's single process-wide daemon
   workspace — two agent-bound sessions on the SAME def but DIFFERENT placements (e.g. one
   forked onto an alternate worktree per ADR 0291) never share or leak the same project
-  memory file. (Resolved per the corresponding Human decision above: the placement-aware
+  memory file. The placement-aware extension uses the ROOT-AWARE trust admission check
+  (`projectIngestionAdmittedForRoot(cfg, sessionRoot)`), never the bare
+  `projectIngestionAdmitted(cfg)` global-flag check `resolveAgentMemoryHead` calls today —
+  a session forked onto a placement the operator never specifically vetted must not read
+  or write project memory there merely because the deployment's global trust flag happens
+  to be true. (Resolved per the corresponding Human decision above: the placement-aware
   version is required, not today's unmodified process-wide `resolveAgentMemoryHead`.)
   - verify: `TestSessionScopedAgentIdentity_Scenario2_ProjectMemoryScopedToOwnPlacement`
 - AC2.6: Under `profile: "no-fs"`, `memory: project` is inert (a silent no-op) for an
@@ -247,29 +279,61 @@ lifetime" decision.
   to, and the ceiling never signals an unrelated failure for it.
   - verify: `TestSessionScopedAgentIdentity_Scenario2_ProjectMemoryInertUnderNoFS`
 
-### Scenario 3 — The binding fails closed, never silently widens, across every engine-rebuild path
+### Scenario 3 — The tool ceiling is a session-aggregate invariant, not an enumerated adapter-layer guard list
 
-A session's per-session engine gets rebuilt at points that have nothing to do with
-`agent_definition_name` today: a `SetMode` switch, a client-MCP resume
-(`LoadSessionWithMCP`, which calls the generic session-engine factory directly), and —
-sharing one common choke point, `needsRehydration()`/`engineAndEnvironmentFor`
-(`internal/adapter/server/service.go`) — every run-entry path that can reach a session
-with no live per-session engine registered: `StartRunContent`, `RetryFailedRun`,
-`CompactSession`, and `resumeFromAwaiting`. None of those paths read the new binding —
-they all fall through to the deployment's shared default engine (`engineAndEnvironmentFor`
-initializes `engine := s.cfg.Engine` and only ever overwrites it if a rebuild branch
-fires). This scenario proves each one is closed, per
-[ADR 0353](../adr/0353-session-scoped-agent-identity.md)'s fail-closed decision — and,
-specifically, that the fix lives in the SHARED choke point
-(`needsRehydration()`, or an unconditional check at the top of `engineAndEnvironmentFor`
-itself), not only in `rehydrateSession`, which is unreachable in exactly the case that
-matters most (see AC3.2).
+Enumerating adapter-layer rebuild call sites (the original framing of this scenario) is
+fragile: plan/interface review already found two more real widening paths beyond the four
+originally named — `rebuildGrantedAuthorizationEngine`
+(`internal/adapter/server/mcp_authorization.go`, the lazy per-tool broker-OAuth grant
+flow) and `ConnectWorkspaceServices`/`connectWorkspaceServicesLocked`
+(`internal/adapter/server/workspace_enrollment.go`, the client-callable workspace/bundle
+enrollment RPC) — neither reachable through `needsRehydration()`/`engineAndEnvironmentFor`
+at all, so neither of Scenario 3's two proposed guard locations would have caught them.
+
+Rather than keep enumerating adapter call sites, the actual security-relevant boundary
+belongs one layer down, at the session aggregate: `authorizeExecution`
+(`engine/agent/dispatch.go`) is already documented as "the single authority-enforcement
+boundary," gated on `sess.BoundAuthority()` — what a session can ACTUALLY execute is
+governed by `session.Authority.CapabilitySet`, independent of what its catalog happens to
+offer. `session.Authority` gains a write-once `Ceiling` (set once, alongside
+`BindAuthority`, from the def's resolved catalog for an agent-bound session; absent for an
+ordinary session — additive, no behavior change there). The ONE existing aggregate method
+that can widen a bound session's tools after bind — `CompleteWorkspaceEnrollment`
+(`engine/session/workspace_enrollment.go`), which today replaces
+`CapabilitySet.Tools` wholesale with no ceiling check at all — is changed to reject any
+grant that would exceed the Ceiling. This makes the ceiling a `Session`-aggregate
+invariant (matching this repo's "mutate `Session` through aggregate methods" convention)
+instead of an adapter-layer special case a future call site can bypass simply by not
+knowing about it — which is exactly how the two sites above got missed here.
+
+The originally-scoped adapter-layer guards (`SetMode`; the
+`needsRehydration()`/`engineAndEnvironmentFor` choke point covering `StartRunContent`,
+`RetryFailedRun`, `CompactSession`, and `resumeFromAwaiting`; `LoadSessionWithMCP`) still
+matter and still fail closed — but now as catalog-consistency and defense-in-depth, not as
+the sole enforcement mechanism: an agent-bound session's catalog should never OFFER a tool
+its Authority Ceiling would refuse to execute, even though the Ceiling itself makes actual
+execution safe regardless. The two newly-found call sites join this list. Per
+[ADR 0353](../adr/0353-session-scoped-agent-identity.md)'s fail-closed decision.
 
 **Acceptance:**
-- AC3.1: `SetMode` is rejected with `InvalidArgument` outright for an agent-bound session —
+- AC3.1: An agent-bound session's bound `session.Authority` carries a write-once `Ceiling`
+  — the def's resolved tool/resource-capability set — set once at bind time
+  (`BindAuthority`/`RestoreLabels`), never re-derived. An ordinary (non-agent-bound)
+  session's Authority carries no Ceiling (unrestricted) — additive, not a behavior change
+  for any existing session.
+  - verify: `TestSessionScopedAgentIdentity_Scenario3_AuthorityCeilingBoundOnce`
+- AC3.2: `CompleteWorkspaceEnrollment` — the one verified aggregate method that can widen a
+  bound session's tools post-bind — rejects any grant that would set a tool outside an
+  agent-bound session's Ceiling; a fixture that attempts to grant a broker tool the def's
+  ceiling doesn't include fails, rather than silently widening `CapabilitySet.Tools`. This
+  is the structural guarantee: any FUTURE authority-widening aggregate method, or an
+  adapter call site this plan doesn't enumerate, is bound by the same check by
+  construction, not by remembering to add it to a list.
+  - verify: `TestSessionScopedAgentIdentity_Scenario3_CompleteWorkspaceEnrollmentRespectsCeiling`
+- AC3.3: `SetMode` is rejected with `InvalidArgument` outright for an agent-bound session —
   the mode is fixed for the session's entire lifetime.
   - verify: `TestSessionScopedAgentIdentity_Scenario3_SetModeRejected`
-- AC3.2: An agent-bound session with an EMPTY provider/model selector (the def resolves
+- AC3.4: An agent-bound session with an EMPTY provider/model selector (the def resolves
   its own provider/model — the common case), default (non-no-fs) profile, and a deployment
   with no `Config.MCPBroker`/`Config.LearnedSkills` configured — the "boring" configuration
   under which `needsRehydration()`'s OTHER clauses are all false, so a fix that only
@@ -279,17 +343,23 @@ matters most (see AC3.2).
   other eviction of the live registration), reached via EACH of `StartRunContent`,
   `RetryFailedRun`, `CompactSession`, and `resumeFromAwaiting`.
   - verify: `TestSessionScopedAgentIdentity_Scenario3_RestartFailsClosedOnBoringConfig`
-- AC3.3: `LoadSessionWithMCP` is rejected with `InvalidArgument` for an agent-bound session
+- AC3.5: `LoadSessionWithMCP` is rejected with `InvalidArgument` for an agent-bound session
   whenever the caller supplies client MCP servers on resume.
   - verify: `TestSessionScopedAgentIdentity_Scenario3_LoadSessionWithMCPRejected`
+- AC3.6: The lazy per-tool broker-OAuth grant flow (`rebuildGrantedAuthorizationEngine`)
+  and the workspace/bundle enrollment RPC (`ConnectWorkspaceServices`) are both
+  skipped/rejected for an agent-bound session, so its catalog is never widened by either —
+  reinforcing AC3.2, since a session whose catalog can't be widened this way never even
+  offers a tool its Ceiling would refuse to execute.
+  - verify: `TestSessionScopedAgentIdentity_Scenario3_BrokerAuthorizationAndWorkspaceEnrollmentSkipped`
 
 Implementation note, not a separate AC (pinning it would test an internal code path, not
 observable behavior): `engineAndEnvironmentFor`'s ordinary mode-switch/promotion rebuild
-branches (CASE 1 and CASE 2) need no direct edit — AC3.1 makes a mode change on an
-agent-bound session impossible, and AC3.2 makes every entry into `engineAndEnvironmentFor`
+branches (CASE 1 and CASE 2) need no direct edit — AC3.3 makes a mode change on an
+agent-bound session impossible, and AC3.4 makes every entry into `engineAndEnvironmentFor`
 fail closed before either branch could fire, so both are closed transitively. A future
 refactor of those branches should not need to touch this feature's guards at all; if it
-does, that is a sign the transitive closure broke and AC3.1/AC3.2 should catch it directly.
+does, that is a sign the transitive closure broke and AC3.3/AC3.4 should catch it directly.
 
 
 ## Out of scope
