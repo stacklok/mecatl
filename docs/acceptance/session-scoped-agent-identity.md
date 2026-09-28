@@ -32,7 +32,7 @@ does not name.
 - [x] `memory: project` for an agent-bound session: should `resolveAgentMemoryHead` be extended to thread the session's own resolved placement (`EnvironmentRef`) into its "project" root, or should it keep reading the single process-wide `cfg.Workspace` unmodified? — Decision: implement the placement-aware version. This is real new work (today's code, including the exploratory Slice A branch, does not do this — `resolveAgentMemoryHead` is called unchanged), but it closes a real cross-placement leak risk and is what ADR 0353's own text already claims is true.
 - [x] `CreateSessionRequest.Limits` fields are plain `int32`. The `.proto` doc comment ("a zero value in any field disables that particular limit") is itself stale against the server's actual behavior: `createSession` (`internal/adapter/server/service.go`, ~2265-2266) already states "a zero field means 'unset', not 'explicitly unlimited'" and fills it via `limits.WithDefaults(s.cfg.DefaultLimits)`. For an agent-bound session, does zero mean "not supplied, inherit the def's cap," or "explicitly unlimited"? — Decision: for an agent-bound session, a request `Limits` zero value means "not supplied, inherit the def's cap" — a caller cannot use this field to request unlimited on an agent-bound session. This is now recognized as consistent with, not a carve-out from, the server's real existing zero-means-unset behavior — the stale "0 = unlimited" wire *documentation* is a separate, pre-existing inaccuracy this plan does not fix.
 - [x] AC1.7/AC1.8 originally required fixing `internal/adapter/modelhook.Runner.check` to inspect `innerOut.Mutated` when present, instead of the pre-mutation `HookEvent` it read at draft time — a real, code-verified gap affecting BOTH governance phases. `modelhook.Runner` no longer exists on `main` (ADR 0363 replaced hook-decorator guardrails with dispatch-level contextual review, `reviewAction`/`prepareInboundAssessment` in `engine/agent/dispatch.go`), re-verified to already inspect the effective/post-mutation payload for both phases — is a fix still needed, and if not, what should AC1.7/AC1.8 become? — Decision: retired. No fix needed; AC1.7/AC1.8 are now pinning regression tests against the real current mechanism instead of a fix against removed code.
-- [x] ADR 0353's Decision text says a def author who wants more than the bounded base set "lists them explicitly" (WebSearch, memory tools, …) — but naming one today silently drops it as an "unknown tool," it does not grant it. Should `base` be widened for the root-shaped path so naming works as the ADR describes, or should the ADR text be corrected instead? — Decision: correct the ADR text for v1 (simpler, and consistent with reusing the same bounded base set a Subagent child gets); open a follow-up issue if a concrete use case ever needs a wider explicit-opt-in set. Tracked alongside the other ADR 0353 documentation-pass items in "Deferred decisions and known risks" below.
+- [x] ADR 0353's Decision text says a def author who wants more than the bounded base set "lists them explicitly" (WebSearch, memory tools, …) — but naming one today silently drops it as an "unknown tool," it does not grant it. Should `base` be widened for the root-shaped path so naming works as the ADR describes, or should the ADR text be corrected instead? — Decision: correct the ADR text for v1 (simpler, and consistent with reusing the same bounded base set a Subagent child gets); open a follow-up issue if a concrete use case ever needs a wider explicit-opt-in set. Already done in this PR's own diff (`docs/adr/0353-session-scoped-agent-identity.md`) — not deferred.
 
 ## Interface contract
 
@@ -241,11 +241,16 @@ authoritative rules this scenario proves.
   any other tool the ordinary default catalog has but a Subagent child does not — never
   causes that tool to appear in an agent-bound session's catalog, whether `tools:` is
   omitted (AC1.3) or explicitly names it. (This is the negative case AC1.3 alone doesn't
-  cover. Per the corresponding Human decision above, ADR 0353's "a def author who wants
-  more (WebSearch, memory tools, …) lists them explicitly" claim is corrected — as a
-  separate documentation follow-up, not this AC — to match this always-bounded behavior,
-  rather than the code being widened to match the ADR's original wording.)
+  cover. ADR 0353's text is already corrected in this PR's own diff to match this
+  always-bounded behavior, rather than the code being widened to match the ADR's
+  original wording.)
   - verify: `TestSessionScopedAgentIdentity_Scenario1_ExplicitlyListedToolOutsideBaseSetStillDropped`
+- AC1.17: An `agent_definition_name` resolves through the existing `AgentDefSource` port
+  exactly like the three existing call sites (startup Subagent construction, the
+  `agent`+`model` override, the `agent`+`read-write` override) — no special-casing by
+  discovery mechanism, whether the def comes from `--agents-dir` filesystem discovery or
+  the remote `--agent-source-url` driver.
+  - verify: `TestSessionScopedAgentIdentity_Scenario1_ResolvesViaExistingAgentDefSource`
 
 ### Scenario 2 — The identity is durable: it persists, echoes, and survives fork/clear
 
@@ -310,17 +315,14 @@ boundary," gated on `sess.BoundAuthority()` — what a session can ACTUALLY exec
 governed by `session.Authority.CapabilitySet`, independent of what its catalog happens to
 offer. `session.Authority` gains a write-once `Ceiling` (set once, alongside
 `BindAuthority`, from the def's resolved catalog for an agent-bound session; absent for an
-ordinary session — additive, no behavior change there). TWO existing aggregate methods can
-widen a bound session's tools after bind, and both are changed to reject any grant that
-would exceed the Ceiling: `GrantToolAuthority` (`engine/session/principal.go`, the direct/
-global MCP-refresh path, ADR 0355 — today unions names into `CapabilitySet.Tools`
-unconditionally, no ceiling check) and `CompleteWorkspaceEnrollment`
-(`engine/session/workspace_enrollment.go`, the broker-enrollment path — today replaces
-`CapabilitySet.Tools` wholesale, also no ceiling check). This makes the ceiling a
-`Session`-aggregate invariant (matching this repo's "mutate `Session` through aggregate
-methods" convention) instead of an adapter-layer special case a future call site can
-bypass simply by not knowing about it — which is exactly how the two adapter sites above
-got missed here.
+ordinary session — additive, no behavior change there). The two aggregate methods that can
+widen a bound session's tools after bind — `GrantToolAuthority` and
+`CompleteWorkspaceEnrollment`, exact mechanisms named in the Security/authority section of
+the Interface contract above, not restated here — are both changed to reject any grant
+that would exceed the Ceiling. This makes the ceiling a `Session`-aggregate invariant
+(matching [AGENTS.md](../../AGENTS.md)'s "mutate `Session` through aggregate methods"
+rule) instead of an adapter-layer special case a future call site can bypass simply by
+not knowing about it — which is exactly how the two adapter sites above got missed here.
 
 Coordination note: `CompleteWorkspaceEnrollment`'s internals are themselves under active,
 separate redesign — [PR #1741](https://github.com/stacklok/mecatl/pull/1741) / ADR 0358
@@ -413,9 +415,8 @@ does, that is a sign the transitive closure broke and AC3.3/AC3.4 should catch i
 
 ## Deferred decisions and known risks
 
-- AC1.9/AC1.10 and AC2.4 (the `RootAuthority`-minting and `MCPBroker`-skip fixes), the
-  guardrail-mutation-inspection fix (AC1.7/AC1.8, if the corresponding Human decision keeps
-  it in scope), and the `hooks:`-execution-surface and discovery-tier-blindness
+- AC1.9/AC1.10 and AC2.4 (the `RootAuthority`-minting and `MCPBroker`-skip fixes) and the
+  `hooks:`-execution-surface and discovery-tier-blindness
   reconciliations in the Security/authority section above are all consistent
   implementations or clarifications of ADR 0353's stated ceiling guarantee, not deviations
   from it — but ADR 0353's own Decision text does not currently name any of them. Once this
