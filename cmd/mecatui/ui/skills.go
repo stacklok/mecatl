@@ -34,7 +34,7 @@ const (
 	// panel (the same discipline soulNone's doc comment records).
 	skillsNone   skillsView = iota // overlay closed
 	skillsPanel                    // inventory (external + learned lifecycle)
-	skillsDetail                   // learned-skill bounded detail and actions
+	skillsDetail                   // learned-skill detail and actions
 )
 
 type skillsFocus uint8
@@ -50,15 +50,14 @@ const (
 // wholesale on each RPC result (never mutated in place). skillsState implements
 // `surface` on POINTER receivers.
 type skillsState struct {
-	view           skillsView
-	loading        bool  // the ListSkills RPC is in flight
-	err            error // the ListSkills error, rendered distinctly (nil on success)
-	skills         []client.Skill
-	filtered       []client.Skill // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
-	filter         textinput.Model
-	viewport       *bounded.Viewport // pointer-owned external physical-row viewport
-	detailViewport *bounded.Viewport // pointer-owned learned-detail viewport
-	focus          skillsFocus
+	view     skillsView
+	loading  bool  // the ListSkills RPC is in flight
+	err      error // the ListSkills error, rendered distinctly (nil on success)
+	skills   []client.Skill
+	filtered []client.Skill // subset matching filter.Value(); recomputed on each key (mirror models.filtered)
+	filter   textinput.Model
+	viewport *bounded.Viewport // pointer-owned external physical-row viewport
+	focus    skillsFocus
 	// view cache: refreshed from the offered geometry at the top of Render.
 	normal, compact                   bool
 	bodyWidth, bodyRows, externalRows int
@@ -128,7 +127,7 @@ func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {
 	s.normal, s.compact = false, false
 	s.bodyWidth, s.bodyRows, s.externalRows, s.learnedRows, s.learnedStart = 0, 0, 0, 0, 0
 	if s.view == skillsNone || width <= 0 || height <= 0 {
-		s.viewport, s.detailViewport = nil, nil
+		s.viewport = nil
 		s.filter.Blur()
 		return "", nil
 	}
@@ -147,10 +146,14 @@ func (s *skillsState) Render(width, height int) (string, []ClickableRegion) {
 	if !hasExternalRows && len(s.learned) > 0 {
 		externalChrome = s.externalStateLines(width)
 	}
-	layout := newSkillsLayout(s.deps.theme, s.deps.marks, width, height, hasExternalRows || len(s.learned) == 0, len(s.learned) > 0, externalChrome)
+	externalRowCount := 0
+	if hasExternalRows {
+		externalRowCount = len(skillsRowLines(s.deps.theme, s.filtered, width))
+	}
+	layout := newSkillsLayout(s.deps.theme, s.deps.marks, width, height, hasExternalRows || len(s.learned) == 0, len(s.learned) > 0, externalChrome, externalRowCount)
 	if !layout.normal {
 		s.compact = true
-		s.viewport, s.detailViewport = nil, nil
+		s.viewport = nil
 		s.filter.Blur()
 		s.cursor, s.detail, s.diff = 0, nil, ""
 		s.view = skillsPanel
@@ -180,10 +183,10 @@ type skillsLayout struct {
 	title, footer, externalChrome []string
 	bodyRows                      int
 	hasExternal, hasLearned       bool
-	normal                        bool
+	overflow, normal              bool
 }
 
-func newSkillsLayout(th theme.Theme, hk helpKeys, width, height int, hasExternal, hasLearned bool, externalChrome []string) skillsLayout {
+func newSkillsLayout(th theme.Theme, hk helpKeys, width, height int, hasExternal, hasLearned bool, externalChrome []string, externalRowCount int) skillsLayout {
 	var l skillsLayout
 	if width <= 0 || height <= 0 {
 		return l
@@ -198,6 +201,13 @@ func newSkillsLayout(th theme.Theme, hk helpKeys, width, height int, hasExternal
 		fixed++ // learned-region label
 	}
 	l.bodyRows = height - fixed
+	if hasExternal && externalRowCount > 0 {
+		externalRows, _ := l.regionRowsFor(l.bodyRows)
+		l.overflow = externalRowCount > externalRows
+		if l.overflow {
+			l.bodyRows-- // overflow chrome is physical and precedes region assignment
+		}
+	}
 	required := 0
 	if hasExternal {
 		required++
@@ -209,20 +219,24 @@ func newSkillsLayout(th theme.Theme, hk helpKeys, width, height int, hasExternal
 	return l
 }
 
+func (l skillsLayout) regionRowsFor(rows int) (external, learned int) {
+	switch {
+	case l.hasExternal && l.hasLearned:
+		return (rows + 1) / 2, rows / 2
+	case l.hasExternal:
+		return rows, 0
+	case l.hasLearned:
+		return 0, rows
+	default:
+		return 0, 0
+	}
+}
+
 func (l skillsLayout) regionRows() (external, learned int) {
 	if !l.normal {
 		return 0, 0
 	}
-	switch {
-	case l.hasExternal && l.hasLearned:
-		return (l.bodyRows + 1) / 2, l.bodyRows / 2
-	case l.hasExternal:
-		return l.bodyRows, 0
-	case l.hasLearned:
-		return 0, l.bodyRows
-	default:
-		return 0, 0
-	}
+	return l.regionRowsFor(l.bodyRows)
 }
 
 func skillsTextLines(style lipgloss.Style, text string, width int) []string {
@@ -260,40 +274,20 @@ func (s *skillsState) externalStateLines(width int) []string {
 	}
 }
 
-func (s *skillsState) detailPhysicalRows() []string {
-	if s.detail == nil {
-		return nil
-	}
-	body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff, s.bodyWidth)
-	if s.err != nil {
-		body += "\n" + s.deps.theme.Style("errorText").Render(terminaltext.Sanitize(s.err.Error())) + "\npress esc, then enter to refresh"
-	}
-	return strings.Split(body, "\n")
-}
-
 func (s *skillsState) renderDetail(width, height int) string {
-	footer := skillsTextLines(s.deps.theme.Style("muted"), skillsDetailFooter, width)
-	viewportHeight := height - len(footer)
-	if viewportHeight < 1 {
+	if height < 2 {
 		s.compact = true
-		s.detailViewport = nil
+		s.detail, s.diff, s.view = nil, "", skillsPanel
 		return renderSkillsCompact(s.deps.theme, s.deps.marks, width)
 	}
-	s.bodyWidth = width
-	rows := s.detailPhysicalRows()
-	if s.detailViewport == nil {
-		s.detailViewport = &bounded.Viewport{}
-	}
-	s.detailViewport.SetGeometry(width, viewportHeight, 0, bounded.Clip)
-	view := s.detailViewport.View(rows)
-	visible := append([]string(nil), view.Rows...)
-	for len(visible) < viewportHeight {
-		visible = append(visible, "")
-	}
-	visible = append(visible, footer...)
 	s.normal = true
-	s.bodyWidth, s.bodyRows = width, viewportHeight
-	return strings.Join(visible, "\n")
+	s.bodyWidth, s.bodyRows = width, height
+	body := renderLearnedSkillDetail(s.deps.theme, *s.detail, s.diff, width)
+	if s.err != nil {
+		body += "\n\n" + s.deps.theme.Style("errorText").Render(terminaltext.Sanitize(s.err.Error())) + "\npress esc, then enter to refresh"
+	}
+	body += "\n\n" + s.deps.theme.Style("muted").Render(skillsDetailFooter)
+	return body
 }
 
 // HandleKey routes all normal-panel navigation to the focused region.
@@ -311,11 +305,7 @@ func (s *skillsState) HandleKey(msg tea.KeyPressMsg) (cmd tea.Cmd, handled bool,
 	}
 	if s.view == skillsDetail {
 		if key.Matches(msg, s.deps.keys.Close) {
-			s.view, s.detail, s.detailViewport = skillsPanel, nil, nil
-			return nil, true, false
-		}
-		if move, ok := s.navigationMove(msg); ok && s.detailViewport != nil {
-			s.detailViewport.Move(move, len(s.detailPhysicalRows()))
+			s.view, s.detail = skillsPanel, nil
 			return nil, true, false
 		}
 		if s.learnedLifecycle == nil || s.detail == nil {
@@ -455,13 +445,6 @@ func (s *skillsState) HandleWheel(msg tea.MouseWheelMsg) (cmd tea.Cmd, handled b
 	}
 	down := msg.Mouse().Button != tea.MouseWheelUp
 	if s.view == skillsDetail {
-		if s.detailViewport != nil {
-			move := bounded.LineDown
-			if !down {
-				move = bounded.LineUp
-			}
-			s.detailViewport.Move(move, len(s.detailPhysicalRows()))
-		}
 		return nil, true
 	}
 	if s.focus == skillsFocusLearned {
@@ -548,7 +531,7 @@ func (s *skillsState) HandleMsg(msg tea.Msg) (cmd tea.Cmd, handled bool, closed 
 		}
 		if detail.Skill != nil {
 			value := *detail.Skill
-			s.detail, s.view, s.detailViewport = &value, skillsDetail, nil
+			s.detail, s.view = &value, skillsDetail
 			s.generations = cloneSkillGenerations(s.generations)
 			s.generations[detail.Project] = detail.Generation
 			if detail.PublicationError == "" {
@@ -836,18 +819,13 @@ func renderSkillsNormalBody(s *skillsState, layout skillsLayout) string {
 	var external []string
 	if s.hasExternalRows() {
 		rows := s.externalPhysicalRows()
-		viewportHeight := s.externalRows
-		showIndicator := len(rows) > viewportHeight && viewportHeight > 1
-		if showIndicator {
-			viewportHeight--
-		}
 		if s.viewport == nil {
 			s.viewport = &bounded.Viewport{}
 		}
-		s.viewport.SetGeometry(layout.bodyWidth, viewportHeight, 0, bounded.Clip)
+		s.viewport.SetGeometry(layout.bodyWidth, s.externalRows, 0, bounded.Clip)
 		view := s.viewport.View(rows)
 		external = append(external, view.Rows...)
-		if showIndicator {
+		if layout.overflow {
 			indicator := fmt.Sprintf("lines %d–%d of %d", view.Above+1, len(rows)-view.Below, len(rows))
 			external = append(external, ansi.Cut(s.deps.theme.Style("muted").Render(indicator), 0, layout.bodyWidth)+"\x1b[0m")
 		}
@@ -857,8 +835,12 @@ func renderSkillsNormalBody(s *skillsState, layout skillsLayout) string {
 			external = s.externalStateLines(layout.bodyWidth)
 		}
 	}
-	if len(external) > s.externalRows {
-		external = external[:s.externalRows]
+	externalLimit := s.externalRows
+	if layout.overflow {
+		externalLimit++
+	}
+	if len(external) > externalLimit {
+		external = external[:externalLimit]
 	}
 	for len(external) < s.externalRows {
 		external = append(external, "")

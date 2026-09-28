@@ -187,6 +187,11 @@ func (m *Model) renderModalSurface() string {
 	}
 	top := convTopRow(*m)
 	bodyW, bodyH := m.width, m.vp.Height()
+	if bodyW <= 0 || bodyH <= 0 {
+		m.hits.clear()
+		m.metrics.clear()
+		return ""
+	}
 	if placement == modalPlacementFill {
 		body, regions := m.modal.Render(bodyW, bodyH)
 		if top >= 0 {
@@ -207,18 +212,20 @@ func (m *Model) renderModalSurface() string {
 	contentW := max(0, outerW-style.GetHorizontalFrameSize())
 	contentH := max(0, bodyH-style.GetVerticalFrameSize())
 	offerW, offerH := contentW, contentH
-	if _, responsive := m.modal.(modalFrameSource); responsive {
-		if bodyW > 0 {
-			offerW = max(1, offerW)
-		}
-		if bodyH > 0 {
-			offerH = max(1, offerH)
-		}
+	_, responsive := m.modal.(modalFrameSource)
+	forceCompact := responsive && (contentW <= 0 || contentH <= 0)
+	if forceCompact {
+		offerW, offerH = max(1, bodyW), 1
+	} else if responsive {
+		offerW, offerH = max(1, offerW), max(1, offerH)
 	}
 	body, regions := m.modal.Render(offerW, offerH)
 	framed := true
 	if source, ok := m.modal.(modalFrameSource); ok {
 		framed = source.modalFrame()
+	}
+	if forceCompact {
+		framed = false
 	}
 	if !framed {
 		body = ansi.Cut(body, 0, max(0, bodyW)) + "\x1b[0m"

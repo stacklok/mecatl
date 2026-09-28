@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
-	"unsafe"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -58,13 +56,6 @@ func skillsRenderedCardWidth(rendered string) int {
 	return 0
 }
 
-func setThemeStyleForTest(t *testing.T, th *theme.Theme, name string, style lipgloss.Style) {
-	t.Helper()
-	value := reflect.ValueOf(th).Elem().FieldByName("styles")
-	writable := reflect.NewAt(value.Type(), unsafe.Pointer(value.UnsafeAddr())).Elem()
-	writable.SetMapIndex(reflect.ValueOf(name), reflect.ValueOf(style))
-}
-
 type recordingSkillsLifecycle struct {
 	actions      []string
 	diffs, rolls int
@@ -95,7 +86,6 @@ func (r *recordingSkillsLifecycle) DiffLearnedSkill(context.Context, client.Lear
 
 func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_WidthCapAndFrameAccounting(t *testing.T) {
 	th := theme.New("aztec", theme.AztecPalette())
-	setThemeStyleForTest(t, &th, "askCard", th.Style("askCard").PaddingLeft(4).PaddingRight(3))
 	for _, width := range []int{24, 80, 180} {
 		m := modalPlacementTestModel()
 		m.width = width
@@ -131,8 +121,15 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_UsesAvailableHeightWith
 		if st.externalRows < st.learnedRows || st.externalRows-st.learnedRows > 1 {
 			t.Fatalf("uneven split external=%d learned=%d", st.externalRows, st.learnedRows)
 		}
-		if st.viewport.Height() > st.externalRows {
-			t.Fatalf("viewport height=%d exceeds measured external region=%d", st.viewport.Height(), st.externalRows)
+		if st.viewport.Height() != st.externalRows {
+			t.Fatalf("viewport height=%d, want assigned external region=%d", st.viewport.Height(), st.externalRows)
+		}
+		plain := ansi.Strip(out)
+		if !strings.Contains(plain, fmt.Sprintf("lines 1–%d of ", st.externalRows)) {
+			t.Fatalf("overflow indicator was not rendered outside the %d-row viewport:\n%s", st.externalRows, plain)
+		}
+		if lipgloss.Height(out) != st.bodyRows+len(skillsTextLines(th.Style("askTitle"), "Skills inventory", 100))+1+len(skillsTextLines(th.Style("muted"), fmt.Sprintf(skillsFooter, defaultHelpKeys().scroll, defaultHelpKeys().closeOnly), 100))+1+1 {
+			t.Fatalf("height does not account for viewport, learned label, and overflow chrome: body=%d rendered=%d", st.bodyRows, lipgloss.Height(out))
 		}
 	}
 	sole := skillsScenarioState(th, 20, 0)
@@ -220,10 +217,30 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario1_CompactFallbackAndNonpo
 	if out, _ := learnedOnly.Render(width, fixed+1); !learnedOnly.normal || learnedOnly.externalRows != 0 || learnedOnly.learnedRows != 1 || !strings.Contains(ansi.Strip(out), "learned-00") {
 		t.Fatalf("learned-only one-row threshold did not render normally: external=%d learned=%d out=%q", learnedOnly.externalRows, learnedOnly.learnedRows, ansi.Strip(out))
 	}
+	frame := th.Style("askCard").GetHorizontalFrameSize()
+	if frame < 1 {
+		t.Fatal("test theme has no askCard frame")
+	}
+	narrow := skillsScenarioState(th, 4, 4)
+	m := modalPlacementTestModel()
+	m.deps.Theme, m.width = th, frame-1
+	m.vp.SetHeight(30)
+	m.modal = narrow
+	out := m.renderModalSurface()
+	wantClose := ansi.Strip(ansi.Cut(th.Style("muted").Render(defaultHelpKeys().closeOnly+" close"), 0, frame-1))
+	if !narrow.compact || strings.Join(strings.Fields(ansi.Strip(out)), " ") != strings.Join(strings.Fields(wantClose), " ") || strings.ContainsAny(ansi.Strip(out), "┏┓┗┛╭╮╰╯") {
+		t.Fatalf("too-narrow parent geometry did not use unframed close-only fallback: %q", ansi.Strip(out))
+	}
+
 	for _, size := range [][2]int{{0, 10}, {-1, 10}, {10, 0}, {10, -1}} {
 		st := skillsScenarioState(th, 1, 0)
-		if out, _ := st.Render(size[0], size[1]); out != "" {
-			t.Fatalf("geometry %v rendered %q", size, ansi.Strip(out))
+		m := modalPlacementTestModel()
+		m.deps.Theme, m.width = th, size[0]
+		m.vp.SetHeight(size[1])
+		m.modal = st
+		*m.metrics = renderedSurfaceMetrics{outerBounds: cellRect{x0: 1, x1: 2, y0: 3, y1: 4}}
+		if out := m.renderModalSurface(); out != "" || *m.metrics != (renderedSurfaceMetrics{}) {
+			t.Fatalf("parent geometry %v rendered %q or retained metrics: %+v", size, ansi.Strip(out), *m.metrics)
 		}
 	}
 }
@@ -356,16 +373,16 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario2_PreservesSafeFilteredRo
 	if len(st.filtered) != 2 || st.filtered[0].Name[:5] != "first" || st.filtered[1].Name != "second" {
 		t.Fatalf("filter order/case changed: %#v", st.filtered)
 	}
-	for _, row := range st.viewport.View(skillsRowLines(th, st.filtered, st.bodyWidth)).Rows {
-		if strings.ContainsAny(ansi.Strip(row), "\x1b\a") || !strings.HasSuffix(row, "\x1b[0m") {
-			t.Fatalf("unsafe or unterminated row %q", row)
+	rows := skillsRowLines(th, st.filtered, st.bodyWidth)
+	for _, row := range rows {
+		if strings.Contains(row, "\x1b]") || strings.Contains(row, "\x9d") || strings.ContainsRune(row, '\a') {
+			t.Fatalf("raw rendered row retained OSC/control input %q", row)
 		}
 	}
-	rows := skillsRowLines(th, st.filtered, st.bodyWidth)
 	st.viewport.Move(bounded.LineDown, len(rows))
 	boundary := st.viewport.View(rows).Rows
-	if len(boundary) == 0 || !strings.HasSuffix(boundary[0], "\x1b[0m") || strings.ContainsAny(ansi.Strip(boundary[0]), "\x1b\a") {
-		t.Fatalf("offset boundary leaked terminal state: %#v", boundary)
+	if len(boundary) == 0 || !strings.HasSuffix(boundary[0], "\x1b[0m") || strings.Contains(boundary[0], "\x1b]") || strings.Contains(boundary[0], "\x9d") || strings.ContainsRune(boundary[0], '\a') {
+		t.Fatalf("raw offset boundary leaked terminal state/control input: %#v", boundary)
 	}
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
@@ -519,24 +536,45 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_WheelOwnershipAndCompac
 	mm, cmd := m.runSkills()
 	m = feedCmd(t, mm.(Model), cmd)
 	st := skillsStateOf(t, m)
-	st.learned = []client.LearnedSkill{{ID: "l1", Name: "learned-1"}, {ID: "l2", Name: "learned-2"}}
+	st.learned = []client.LearnedSkill{{ID: "l1", Name: "learned-1"}, {ID: "l2", Name: "learned-2"}, {ID: "l3", Name: "learned-3"}, {ID: "l4", Name: "learned-4"}}
 	_ = m.View()
 	oldCursor := st.cursor
+	for i := 0; i < 2; i++ {
+		mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		m = mm.(Model)
+	}
+	if st.viewport == nil || st.viewport.Offset() != 2 || st.cursor != oldCursor || m.vp.YOffset() != before {
+		t.Fatalf("external downward setup changed wrong owner: offset=%v cursor=%d conversation=%d/%d", st.viewport, st.cursor, m.vp.YOffset(), before)
+	}
+	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = mm.(Model)
+	if st.viewport.Offset() != 1 || st.cursor != oldCursor || m.vp.YOffset() != before {
+		t.Fatalf("external wheel-up did not decrement exactly one row: offset=%d cursor=%d conversation=%d/%d", st.viewport.Offset(), st.cursor, m.vp.YOffset(), before)
+	}
+	st.viewport.Move(bounded.Top, len(st.externalPhysicalRows()))
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	m = mm.(Model)
 	if st.viewport.Offset() != 0 || m.vp.YOffset() != before {
-		t.Fatal("external wheel endpoint leaked to hidden conversation")
-	}
-	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-	m = mm.(Model)
-	if st.viewport == nil || st.viewport.Offset() != 1 || st.cursor != oldCursor || m.vp.YOffset() != before {
-		t.Fatalf("external wheel ownership failed offset=%v cursor=%d conversation=%d/%d", st.viewport, st.cursor, m.vp.YOffset(), before)
+		t.Fatal("external top endpoint was not consumed")
 	}
 	_, _, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+	for i := 0; i < 2; i++ {
+		mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		m = mm.(Model)
+	}
+	if st.cursor != oldCursor+2 || st.viewport.Offset() != 0 || m.vp.YOffset() != before {
+		t.Fatal("learned downward setup changed wrong region or hidden conversation")
+	}
+	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	m = mm.(Model)
+	if st.cursor != oldCursor+1 || st.viewport.Offset() != 0 || m.vp.YOffset() != before {
+		t.Fatal("learned wheel-up did not decrement exactly one row")
+	}
+	st.cursor = len(st.learned) - 1
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if st.cursor != oldCursor+1 || st.viewport.Offset() != 1 || m.vp.YOffset() != before {
-		t.Fatal("learned wheel changed wrong region or hidden conversation")
+	if st.cursor != len(st.learned)-1 || m.vp.YOffset() != before {
+		t.Fatal("learned bottom endpoint was not consumed")
 	}
 	_, _ = st.Render(10, 3)
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
@@ -573,21 +611,25 @@ func TestMecatuiSkillsInventoryBoundedViewport_Scenario3_PreservesLearnedControl
 	longDetail.Supersedes = "v0"
 	st.detail = &longDetail
 	st.diff = strings.Repeat("diff-line\n", 20) + "DIFF-END"
-	seen := ""
-	for i := 0; i < 200; i++ {
-		out, _ := st.Render(80, 14)
-		assertSkillsOfferedFit(t, out, 80, 14)
-		seen += "\n" + ansi.Strip(out)
-		_, handled := st.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
-		if !handled {
-			t.Fatal("detail wheel was not consumed")
+	out, _ := st.Render(80, 14)
+	plain := strings.Join(strings.Fields(ansi.Strip(out)), "")
+	for _, want := range []string{"BODY-END", "activatestaged→active", "DIFF-END"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("pre-migration detail rendering lost %q:\n%s", want, ansi.Strip(out))
 		}
 	}
-	compactSeen := strings.Join(strings.Fields(seen), "")
-	for _, want := range []string{"BODY-END", "activatestaged→active", "DIFF-END", "aactivate", "rrestorepreviousversion"} {
-		if !strings.Contains(compactSeen, want) {
-			t.Fatalf("bounded detail browsing never reached %q:\n%s", want, seen)
-		}
+	beforeDetail := out
+	_, handled = st.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if !handled {
+		t.Fatal("detail wheel was not consumed")
+	}
+	_, handled, _ = st.HandleKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !handled {
+		t.Fatal("detail arrow was not consumed")
+	}
+	afterDetail, _ := st.Render(80, 14)
+	if afterDetail != beforeDetail {
+		t.Fatal("detail wheel/arrow introduced new browsing semantics")
 	}
 	if _, handled, _ := st.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc}); !handled || st.view != skillsPanel {
 		t.Fatal("detail escape lost")
