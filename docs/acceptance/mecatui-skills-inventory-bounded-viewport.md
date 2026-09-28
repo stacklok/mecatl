@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes the local, user-visible geometry and browsing behavior of the existing mecatui skills panel without changing a public API, persistence boundary, protocol, security boundary, or system architecture.
 **Decision record:** None — the responsive card geometry and bounded physical viewport remain confined to `cmd/mecatui/ui`; their rationale belongs in this plan rather than a durable architecture record.
 **Phase:** bounded-inventory adoption, skills inventory slice
-**Status:** proposed, 2026-09-26. The directing operator selected the bounded learned-skill region below for Plan / Interface review.
+**Status:** in-progress, 2026-09-28. Implementation is underway against the contract approved in #1973 at `7ab88c5a6aa6242af705ac2480f6e8eae54409e2`.
 **Delivery:** Split. The panel's geometry, filter, learned-skill lifecycle controls, and input-ownership contract require plan/interface review before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1898](https://github.com/stacklok/mecatl/issues/1898).
