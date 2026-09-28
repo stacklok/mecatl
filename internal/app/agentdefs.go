@@ -18,6 +18,7 @@ import (
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
 	"github.com/stacklok/mecatl/internal/adapter/mcp"
+	"github.com/stacklok/mecatl/internal/adapter/modelhook"
 	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 	"github.com/stacklok/mecatl/internal/adapter/skills"
@@ -831,19 +832,30 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 	return engines, meta, closeFn
 }
 
-// buildAgentDefEngine builds ONE def's scoped engine on an already-resolved
-// (childProvider, model, windowFn) tuple. It is the SINGLE shared engine-construction
-// step both the STARTUP path (buildAgentSubagentEngines, which resolves the tuple via
-// resolveChildProvider) and the PER-CALL agent+model override path
-// (buildAgentModelEngineFactory, which resolves its own tuple to rebuild the SAME scoped
-// engine on the override model) consume, so the two paths cannot drift in catalog/prompt/
-// hooks/memory/MCP wiring — they differ ONLY in the resolved (provider, model, windowFn)
-// and the role label. It returns the engine + the def's inline-MCP close func (nil when
-// the def opened no inline server).
-//
-// role is the child engine's Deps.Role (a telemetry/diagnostic label); the startup path
-// passes "task:"+def.Name, the agent+model override path passes
-// "task:"+def.Name+":model="+model so the override child's series is distinguishable.
+// agentDefCatalogResult is the resolved, engine-shape-agnostic half of a def's
+// construction: everything a CHILD-shaped engine (buildAgentDefEngine) and a
+// ROOT-shaped engine (buildAgentDefRootEngine) share — catalog, per-def MCP, preloaded
+// skills, per-def hooks (UNWRAPPED — a root caller decides whether/how to layer
+// guardrails over hooks; that decision does not belong at this shared step), and
+// per-agent memory, all folded into the resolved prompt.Config. Splitting this out
+// means catalog/prompt/hooks/memory/MCP resolution literally cannot drift between the
+// two engine shapes.
+type agentDefCatalogResult struct {
+	catalog      *tool.Catalog
+	mcpClose     func() error
+	names        []string
+	resources    []string
+	skillCount   int
+	promptConfig prompt.Config
+	hooks        port.HookRunner
+}
+
+// resolvedAgentDefCatalog runs the engine-shape-agnostic half of building a def's
+// engine: scope tools → register core+MCP tools → preload skills → resolve
+// hooks/memory. It performs NO Deps/engine construction — see agentDefCatalogResult's
+// doc comment for why that split exists. model is needed here (not just at the
+// Deps-construction step) because it is folded into the returned promptConfig via
+// agentPromptConfig.
 //
 // source is the def's origin locator (reg.Detail(def.Name)) threaded in so the tool-scope
 // and unknown-skill WARNs carry it (an operator disambiguates same-named defs across tiers
@@ -864,12 +876,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // runner is the command runner (sandboxed for a read-only explorer, the MAIN runner for a
 // writable specialist — nil when Shell is disabled); mainMgr supplies the reference-MCP
 // base manager (defMCPTools).
-//
-// It returns the engine + the def's inline-MCP close func (nil when the def opened no
-// inline server) + the scoped tool NAMES + the preloaded-skill COUNT, so callers can log
-// the "agent def engine built" INFO with the same fields the pre-extraction inline path
-// carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
-func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
+func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDef, source, model string, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) agentDefCatalogResult {
 	names, diags := scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
 		cfg.diag().Log(ctx, port.LevelWarn, "agent def tool scoping",
@@ -929,13 +936,88 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 	// build time (like skillBodies) so it rides the cache-stable StablePrefix.
 	memHead, _ := resolveAgentMemoryHead(cfg, def)
 
+	return agentDefCatalogResult{
+		catalog:      cat,
+		mcpClose:     mcpClose,
+		names:        names,
+		resources:    resourceCapabilities,
+		skillCount:   len(bodies),
+		promptConfig: agentPromptConfig(cfg, def, model, memHead, bodies...),
+		hooks:        hooks,
+	}
+}
+
+// buildAgentDefEngine builds ONE def's CHILD-shaped scoped engine on an
+// already-resolved (childProvider, model, windowFn) tuple. It is the SINGLE shared
+// engine-construction step both the STARTUP path (buildAgentSubagentEngines, which
+// resolves the tuple via resolveChildProvider) and the PER-CALL agent+model override
+// path (buildAgentModelEngineFactory, which resolves its own tuple to rebuild the SAME
+// scoped engine on the override model) consume, so the two paths cannot drift in
+// catalog/prompt/hooks/memory/MCP wiring — they differ ONLY in the resolved (provider,
+// model, windowFn) and the role label. It shares its catalog/prompt/hooks/memory/MCP
+// resolution with the ROOT-shaped buildAgentDefRootEngine via resolvedAgentDefCatalog;
+// the two differ ONLY in which engine-Deps constructor they bottom out in
+// (newChildEngineForProvider here — no guardrails, headless auto-deny, no ask-reviewer;
+// engineDepsForProvider + buildGuardrailsHooks there — ordinary main-session Deps). It
+// returns the engine + the def's inline-MCP close func (nil when the def opened no
+// inline server).
+//
+// role is the child engine's Deps.Role (a telemetry/diagnostic label); the startup path
+// passes "task:"+def.Name, the agent+model override path passes
+// "task:"+def.Name+":model="+model so the override child's series is distinguishable.
+//
+// It returns the engine + the def's inline-MCP close func (nil when the def opened no
+// inline server) + the scoped tool NAMES + the preloaded-skill COUNT, so callers can log
+// the "agent def engine built" INFO with the same fields the pre-extraction inline path
+// carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
+func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
+	res := resolvedAgentDefCatalog(ctx, cfg, def, source, model, base, allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr)
+
 	// ProgressiveTools deliberately OFF: child catalogs are tiny and a ToolSearch
 	// tool would not be in the def allowlist. newChildEngineForProvider leaves it at
 	// its zero value (off), matching the original explicit omission, AND routes the
 	// child's compactor/counter/window through the resolved provider+model
 	// (contamination fix).
-	eng := newChildEngineForProvider(cfg, role, childProvider, model, windowFn, cat, agentPromptConfig(cfg, def, model, memHead, bodies...), hooks)
-	return eng, mcpClose, names, resourceCapabilities, len(bodies)
+	eng := newChildEngineForProvider(cfg, role, childProvider, model, windowFn, res.catalog, res.promptConfig, res.hooks)
+	return eng, res.mcpClose, res.names, res.resources, res.skillCount
+}
+
+// buildAgentDefRootEngine builds ONE def's ROOT-shaped scoped engine: the SAME
+// catalog/prompt/hooks/memory/MCP resolution as buildAgentDefEngine
+// (resolvedAgentDefCatalog), but bottoming out in ordinary main-session Deps
+// (engineDepsForProvider) instead of child-shaped Deps — real Store, real
+// Instructions, Interactive per cfg, AudienceMain policy (the caller's policy
+// parameter, NOT childPermPolicy) — and with the def's own hooks composed under
+// operator guardrails via the existing buildGuardrailsHooks decorator (the SAME
+// mechanism the two main-engine sites already use; the def's hooks become the
+// decorator's `inner`, so guardrails always run second and can never be bypassed).
+//
+// It is currently unused by any session-creation path (added ahead of the wire-level
+// work in ADR 0350's implementation) — see docs/adr/0350-session-scoped-agent-identity.md.
+//
+// Callers MUST mint this session's Authority from the returned tool names/resource
+// capabilities (e.g. mintRootAuthority(catalog, resources, kind)), never from
+// cfg.RootAuthority(kind) — the latter is bound once at Build() time over the shared
+// default catalog and would silently omit a def's own inline-MCP tools from the
+// authority-filtered spec list even though they're genuinely registered in the catalog.
+func buildAgentDefRootEngine(
+	ctx context.Context, cfg Config, def agents.AgentDef, role, source string,
+	provider port.LLMProvider, model string, windowFn func() int,
+	base map[string]tool.Tool, allowMutating, allowShell bool,
+	skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager,
+	store port.SessionStore, policy port.PermissionPolicy, mcpProvider mcp.Provider, instructions prompt.InstructionAssembler,
+	provReg *providerRegistry, guardrailProvider port.LLMProvider, guardrailProviderID string, guardrailWaiver *modelhook.WaiverHolder,
+) (*agent.Engine, func() error, []string, []string, int) {
+	res := resolvedAgentDefCatalog(ctx, cfg, def, source, model, base, allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr)
+
+	deps := engineDepsForProvider(cfg, provider, model, windowFn, store, policy, res.hooks, mcpProvider, instructions)
+	deps.Catalog = res.catalog
+	deps.PromptConfig = res.promptConfig
+	deps.Hooks = buildGuardrailsHooks(cfg, provReg, guardrailProvider, guardrailProviderID, model, deps.Hooks, guardrailWaiver)
+	deps = attachAskAdjudicator(deps, cfg, provReg, guardrailProvider, guardrailProviderID, model)
+	deps.Role = role
+
+	return agent.NewEngine(deps), res.mcpClose, res.names, res.resources, res.skillCount
 }
 
 // composeCloseErr chains two optional error-returning close funcs into one (first
