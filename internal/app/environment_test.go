@@ -94,7 +94,7 @@ func TestChildWorkspaceViewPreservesContentBackend(t *testing.T) {
 		t.Fatal("a non-relaxed custom Workspace must pass through by identity")
 	}
 
-	relaxed := newEscapeWorkspace(base, &escapeClassifier{})
+	relaxed := newEscapeWorkspace(base, &escapeClassifier{}, false)
 	got, ok := childWorkspaceView(relaxed).(*escapeWorkspace)
 	if !ok {
 		t.Fatalf("child view type = %T, want *escapeWorkspace", childWorkspaceView(relaxed))

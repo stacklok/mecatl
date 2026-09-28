@@ -9751,7 +9751,7 @@ func defaultLimits() session.Limits {
 // binds no-FS through the nofs adapter before this factory and rejects invalid exact
 // refs; this guard prevents any future private composition caller from turning an
 // empty path into the server process cwd.
-func osfsWorkspaceFactory(d port.Diagnostics, posture ...Posture) server.WorkspaceFactory {
+func osfsWorkspaceFactory(d port.Diagnostics, posture Posture) server.WorkspaceFactory {
 	return func(root string) tool.Workspace {
 		if root == "" {
 			d.Log(context.Background(), port.LevelError,
@@ -9763,16 +9763,12 @@ func osfsWorkspaceFactory(d port.Diagnostics, posture ...Posture) server.Workspa
 		// already authorized; at strict/trusted that is an APPROVED escape ask).
 		clf, cerr := newEscapeClassifier(root)
 		if cerr == nil {
-			options := []osfs.Option{osfs.WithRelaxedReads(), osfs.WithRelaxedWrites()}
-			if len(posture) > 0 && posture[0] == PostureYolo {
-				options = append(options, osfs.WithRelaxedRelativeEscapes())
-			}
-			ws, err := osfs.NewWorkspace(root, options...)
+			ws, err := osfs.NewWorkspace(root, osfs.WithRelaxedReads(), osfs.WithRelaxedWrites())
 			if err != nil {
 				d.Log(context.Background(), port.LevelError, "workspace factory: cannot open root", "root", root, "err", err)
 				return nil
 			}
-			return newEscapeWorkspace(ws, clf)
+			return newEscapeWorkspace(ws, clf, posture == PostureYolo)
 		}
 		d.Log(context.Background(), port.LevelError, "workspace factory: cannot build the escape classifier for a relaxed workspace; serving the deny-on-escape workspace", "root", root, "err", cerr)
 		ws, err := osfs.NewWorkspace(root)

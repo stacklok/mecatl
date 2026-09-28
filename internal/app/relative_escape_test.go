@@ -248,6 +248,15 @@ func TestYoloRelativeEscapeBoundaries(t *testing.T) {
 		t.Fatal("missing workspace")
 	}
 	child := childWorkspaceView(ws)
+	if err := os.WriteFile(filepath.Join(f.workspace, "inside.txt"), []byte("inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := ws.Read(t.Context(), "../workspace/inside.txt"); err != nil || string(data) != "inside" {
+		t.Fatalf("relative re-entry: %q, %v", data, err)
+	}
+	if _, err := child.Read(t.Context(), "../workspace/inside.txt"); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("child relative re-entry: %v", err)
+	}
 	if _, err := child.Read(t.Context(), "../outside/secret.txt"); !errors.Is(err, osfs.ErrPathEscape) {
 		t.Fatalf("child relative read: %v", err)
 	}
@@ -274,5 +283,13 @@ func TestYoloRelativeEscapeBoundaries(t *testing.T) {
 	}
 	if _, err := ws.Read(t.Context(), "../outside/link/../secret.txt"); !errors.Is(err, osfs.ErrPathEscape) {
 		t.Fatalf("nested symlink traversal: %v", err)
+	}
+	if _, err := ws.CreateFile(t.Context(), "../outside/link/../new.txt", []byte("bad")); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("nested symlink write: %v", err)
+	}
+	if _, _, err := ws.(interface {
+		AuthorityResourcePath(string) (string, string, error)
+	}).AuthorityResourcePath("../outside/link/../secret.txt"); !errors.Is(err, osfs.ErrPathEscape) {
+		t.Fatalf("nested symlink authority: %v", err)
 	}
 }

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -374,10 +377,13 @@ func (p *escapePolicy) isEscapeCall(c session.ToolCall) bool {
 // mutations (`ReadVersion`/`CreateFile`/`ReplaceFile`) are overridden with the
 // same guard so the inner relaxed osfs operations cannot bypass it (AC-W2-F1).
 // A confined child view uses these same choke points to reject every escape.
+// Only the main yolo view normalizes lexical relative escapes after vetting the
+// original components, then delegates to the existing osfs absolute paths.
 type escapeWorkspace struct {
 	tool.Workspace                   // the relaxed *osfs.Workspace (WithRelaxedReads/Writes)
 	classifier     *escapeClassifier // the SAME classification the policy wrapper uses
 	confined       bool              // child view: deny every escape while retaining the same content backend
+	relativeYolo   bool              // main-session yolo may normalize lexical relative escapes
 }
 
 // newEscapeWorkspace wraps a relaxed ws with the escape classifier. It is
@@ -387,8 +393,8 @@ type escapeWorkspace struct {
 // main session's workspace factory. childWorkspaceView derives the only child
 // form by retaining this wrapper's exact content backend and classifier while
 // enabling its confined mode; it never reconstructs storage from Root.
-func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier) tool.Workspace {
-	return &escapeWorkspace{Workspace: ws, classifier: classifier}
+func newEscapeWorkspace(ws tool.Workspace, classifier *escapeClassifier, relativeYolo bool) tool.Workspace {
+	return &escapeWorkspace{Workspace: ws, classifier: classifier, relativeYolo: relativeYolo}
 }
 
 // childWorkspaceView removes the main session's relaxed path reach without
@@ -406,7 +412,8 @@ func childWorkspaceView(ws tool.Workspace) tool.Workspace {
 // Read consults the escape classifier (pseudo-fs hard-deny) then delegates to
 // the relaxed osfs Read. An ordinary in-root path is untouched.
 func (w *escapeWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, err
 	}
 	return w.Workspace.Read(ctx, path)
@@ -415,14 +422,16 @@ func (w *escapeWorkspace) Read(ctx context.Context, path string) ([]byte, error)
 // ReadVersion consults the escape classifier then delegates to the relaxed osfs
 // version-bearing read.
 func (w *escapeWorkspace) ReadVersion(ctx context.Context, path string) ([]byte, tool.FileVersion, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, tool.FileVersion{}, err
 	}
 	return w.Workspace.ReadVersion(ctx, path)
 }
 
 func (w *escapeWorkspace) ReadVersionBounded(ctx context.Context, path string, maxBytes int64) ([]byte, tool.FileVersion, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, tool.FileVersion{}, err
 	}
 	reader, ok := w.Workspace.(tool.BoundedWorkspaceReader)
@@ -433,7 +442,8 @@ func (w *escapeWorkspace) ReadVersionBounded(ctx context.Context, path string, m
 }
 
 func (w *escapeWorkspace) ReadVersionRangeBounded(ctx context.Context, path string, offset, maxBytes, totalLimit int64) ([]byte, tool.FileVersion, int64, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, tool.FileVersion{}, 0, err
 	}
 	reader, ok := w.Workspace.(tool.BoundedWorkspaceRangeReader)
@@ -445,14 +455,16 @@ func (w *escapeWorkspace) ReadVersionRangeBounded(ctx context.Context, path stri
 
 // Stat consults the escape classifier (pseudo-fs hard-deny) then delegates.
 func (w *escapeWorkspace) Stat(ctx context.Context, path string) (tool.FileInfo, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return tool.FileInfo{}, err
 	}
 	return w.Workspace.Stat(ctx, path)
 }
 
 func (w *escapeWorkspace) ReadDir(ctx context.Context, path string) ([]tool.FileInfo, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return nil, err
 	}
 	ns, ok := w.Workspace.(tool.WorkspaceNamespace)
@@ -504,7 +516,8 @@ func (w *escapeWorkspace) CopyFile(ctx context.Context, source, destination stri
 // CreateFile consults the escape classifier (pseudo-fs hard-deny) then delegates
 // to the relaxed osfs create-only mutation.
 func (w *escapeWorkspace) CreateFile(ctx context.Context, path string, data []byte) (tool.FileVersion, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return tool.FileVersion{}, err
 	}
 	return w.Workspace.CreateFile(ctx, path, data)
@@ -513,7 +526,8 @@ func (w *escapeWorkspace) CreateFile(ctx context.Context, path string, data []by
 // ReplaceFile consults the escape classifier (pseudo-fs hard-deny) then delegates
 // to the relaxed osfs conditional replace.
 func (w *escapeWorkspace) ReplaceFile(ctx context.Context, path string, old tool.FileVersion, data []byte) (tool.FileVersion, error) {
-	if err := w.refusePath(path); err != nil {
+	path, err := w.servePath(path)
+	if err != nil {
 		return tool.FileVersion{}, err
 	}
 	return w.Workspace.ReplaceFile(ctx, path, old, data)
@@ -529,7 +543,8 @@ type relaxedAuthorityResourceResolver interface {
 // AuthorityResourcePath applies the wrapper's pseudo-filesystem deny before
 // preserving the inner workspace's physical authority identity.
 func (w *escapeWorkspace) AuthorityResourcePath(path string) (target, workspace string, err error) {
-	if err := w.refusePath(path); err != nil {
+	path, err = w.servePath(path)
+	if err != nil {
 		return "", "", err
 	}
 	resolver, ok := w.Workspace.(tool.AuthorityResourceResolver)
@@ -558,17 +573,45 @@ func (w *escapeWorkspace) refuseNamespacePath(path string) error {
 	return nil
 }
 
-// refusePath returns the hard-deny error for pseudo-filesystems in every view.
-// A confined child view additionally rejects every ordinary escape while the
-// main view continues to serve policy-approved escapes.
-func (w *escapeWorkspace) refusePath(path string) error {
+// servePath preserves the verbatim classifier decision, then converts only a
+// main-session yolo lexical escape to the existing absolute osfs serving seam.
+func (w *escapeWorkspace) servePath(path string) (string, error) {
 	args, _ := json.Marshal(map[string]string{"path": path})
 	kind := w.classifier.classify("Read", args)
 	if kind == escapePseudoFS {
-		return fmt.Errorf("%w: pseudo-filesystem (/proc, /sys, /dev) is never served at any posture", osfs.ErrPathEscape)
+		return "", fmt.Errorf("%w: pseudo-filesystem (/proc, /sys, /dev) is never served at any posture", osfs.ErrPathEscape)
 	}
 	if w.confined && kind != escapeInRoot {
-		return fmt.Errorf("%w: child environment does not inherit relaxed path access", osfs.ErrPathEscape)
+		return "", fmt.Errorf("%w: child environment does not inherit relaxed path access", osfs.ErrPathEscape)
 	}
-	return nil
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	if _, local := osfs.LocalizeInRoot(path); local {
+		return path, nil
+	}
+	if w.confined || !w.relativeYolo {
+		return "", fmt.Errorf("%w: relative escape requires main-session yolo", osfs.ErrPathEscape)
+	}
+	// Walk the original components before joining: Clean would erase a
+	// symlink/.. pair and launder the path into an unrelated absolute target.
+	current := w.classifier.root
+	for _, component := range strings.Split(filepath.FromSlash(path), string(filepath.Separator)) {
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			current = filepath.Dir(current)
+		default:
+			current = filepath.Join(current, component)
+			info, err := os.Lstat(current)
+			if err == nil && info.Mode()&os.ModeSymlink != 0 || err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return "", fmt.Errorf("%w: unverifiable relative escape %q", osfs.ErrPathEscape, path)
+			}
+		}
+	}
+	if isPseudoFSPath(current) {
+		return "", fmt.Errorf("%w: pseudo-filesystem (/proc, /sys, /dev) is never served at any posture", osfs.ErrPathEscape)
+	}
+	return current, nil
 }

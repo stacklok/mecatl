@@ -35,7 +35,7 @@ func newNamespaceTestWorkspace(t *testing.T) (ws *escapeWorkspace, root string) 
 	if err != nil {
 		t.Fatalf("osfs.NewWorkspace: %v", err)
 	}
-	return newEscapeWorkspace(base, clf).(*escapeWorkspace), root
+	return newEscapeWorkspace(base, clf, false).(*escapeWorkspace), root
 }
 
 func TestADR_0315_EscapeWorkspace_ReadDir_InRootDelegates(t *testing.T) {
