@@ -222,13 +222,17 @@ guardrails:
 
 You can bind `models.slots.guardrail` instead of `guardrails.model`. A session
 model or `cheap` slot does not enable this mode. Jev's clean, prohibited, and
-unresolved choices are observations only: the LLM reviews every matching action
-and inbound result and makes the final decision. The triage probe sees the
+unresolved choices are observations only: when a review is invoked, the LLM
+makes the final decision. Existing exact-repeat grants and rule skips still
+bypass review. The triage probe sees the
 exact effective call or result but no LLM-bound evidence handles; incomplete
 context skips Jev without skipping the LLM. It adds latency and spend rather
-than saving a checker call. The session's checker attribution names the LLM.
-This experiment has no empirical safety validation and does not change the
-production security contract.
+than saving a checker call. Session coverage and `/guardrails` identify the LLM
+as the final checker, not Jev triage health. With debug diagnostics enabled,
+Jev probe failures are reported as `degraded`; the LLM still reviews the call,
+and `onCheckerDown` applies to that final LLM review. This experiment has no
+empirical safety validation and does not change the production security
+contract.
 
 If you used the earlier draft's `guardrails.jev` block, delete it; the
 experimental checker pins `jev-1.13.0`. Leave `models.router.jev` alone.

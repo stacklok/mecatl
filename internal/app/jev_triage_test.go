@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/jevguardrail"
@@ -40,12 +41,24 @@ func TestExperimentalJevTriageLLMFinalHTTP(t *testing.T) {
 					State string `json:"state"`
 				}
 				decodeErr := json.NewDecoder(r.Body).Decode(&input)
-				job := "action"
-				if strings.Contains(input.State, `"job":"inbound"`) {
-					job = "inbound"
+				var state struct {
+					Job        string          `json:"job"`
+					EventInput json.RawMessage `json:"event_input"`
+					Call       struct {
+						Name string          `json:"name"`
+						Args json.RawMessage `json:"args"`
+					} `json:"effective_call"`
 				}
-				if decodeErr != nil || !strings.Contains(input.State, `"job":"`+job+`"`) {
-					t.Errorf("unexpected Jev probe: %v", decodeErr)
+				fenced := strings.TrimSuffix(strings.TrimPrefix(input.State, governance.UntrustedFence+"\n"), "\n"+governance.UntrustedFence+"\n")
+				if decodeErr != nil || json.Unmarshal([]byte(fenced), &state) != nil || state.Call.Name != "Shell" || !strings.Contains(string(state.Call.Args), "safe-guardrail-result") {
+					t.Error("Jev triage lost the exact effective Shell action")
+				}
+				job := state.Job
+				if job != "action" && job != "inbound" {
+					t.Errorf("unexpected Jev job %q", job)
+				}
+				if job == "inbound" && !strings.Contains(string(state.EventInput), "safe-guardrail-result") {
+					t.Error("Jev triage lost the exact inbound result")
 				}
 				if strings.Contains(input.State, `"source_evidence"`) && !strings.Contains(input.State, `"source_evidence":[]`) {
 					t.Error("LLM-bound evidence leaked to Jev triage")
