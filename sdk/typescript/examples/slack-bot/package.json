@@ -14,6 +14,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "record:blocks-validate": "tsx test/record-blocks-validate-cache.ts",
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts"
   },
@@ -23,7 +24,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
+    "@slack/types": "3.1.0",
+    "@slack/web-api": "8.1.1",
     "@types/node": "24.13.3",
+    "fast-check": "4.10.2",
     "tsx": "4.23.13",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
