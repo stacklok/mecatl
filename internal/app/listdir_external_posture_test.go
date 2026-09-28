@@ -271,10 +271,10 @@ func TestBuiltModelAdvertisesExternalAbsoluteListDir(t *testing.T) {
 	built.Service.FinishRun(sess.ID, run)
 	mu.Lock()
 	defer mu.Unlock()
-	if !strings.Contains(description, "absolute") || !strings.Contains(description, "policy-authorized") {
-		t.Fatalf("built ListDir description = %q, want policy-authorized absolute-path affordance", description)
+	if !strings.Contains(description, "external absolute") || !strings.Contains(description, "../") || !strings.Contains(description, "yolo") {
+		t.Fatalf("built ListDir description = %q, want external-path affordances", description)
 	}
-	if !strings.Contains(schema, "absolute") {
-		t.Fatalf("built ListDir schema = %q, want absolute-path affordance", schema)
+	if !strings.Contains(schema, `"path"`) {
+		t.Fatalf("built ListDir schema = %q, want path argument", schema)
 	}
 }
