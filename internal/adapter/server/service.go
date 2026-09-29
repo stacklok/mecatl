@@ -1816,6 +1816,12 @@ type createSessionOpts struct {
 	// publication even when the provider has no detachable attachment. ACP editor
 	// buffers are the only such create-time override.
 	placementEnvironmentOverride bool
+	// agentDefinitionName optionally binds this session's root to a named
+	// AgentDef (ADR 0353). Empty is the byte-identical default-explorer session.
+	// Plumbing only here: it is stamped onto the aggregate and echoed back: NO
+	// catalog restriction, provider/model/limits/permission-mode resolution, or
+	// validation is wired from this field yet (a later task's scope).
+	agentDefinitionName string
 }
 
 // WithSessionID overrides the session id a CreateSession* call mints. When set,
@@ -1862,6 +1868,16 @@ func WithDebugTarget(id session.SessionID) CreateSessionOption {
 // cross this seam.
 func WithDebugMCP(names []string) CreateSessionOption {
 	return func(o *createSessionOpts) { o.debugMCPServers = append([]string(nil), names...) }
+}
+
+// WithAgentDefinitionName binds this session's root to a named AgentDef (ADR
+// 0353). Empty (the default, zero-value opts) is byte-identical to today's
+// behavior. This option ONLY stamps the durable label onto the created
+// session's aggregate for persistence/echo; it does not yet build the
+// session's engine from the definition, restrict its catalog, or validate the
+// name against any def source — that is a later task's scope.
+func WithAgentDefinitionName(name string) CreateSessionOption {
+	return func(o *createSessionOpts) { o.agentDefinitionName = name }
 }
 
 // ClientMCPGrant is a DECIDED client-MCP result: specs that have passed the shared
@@ -1982,14 +1998,27 @@ func resolveOwner(ctx context.Context, opts createSessionOpts) *session.Principa
 }
 
 func newCreatedSession(id session.SessionID, mode session.PermissionMode, ref session.EnvironmentRef, limits session.Limits, createdAt time.Time, opts createSessionOpts) (*session.Session, error) {
+	var (
+		sess *session.Session
+		err  error
+	)
 	switch {
 	case opts.debugTargetID != "":
-		return session.NewDebug(id, mode, ref, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
+		sess, err = session.NewDebug(id, mode, ref, limits, createdAt, opts.debugTargetID, opts.debugTargetIncarnation)
 	case opts.scheduled != nil:
-		return session.NewScheduled(id, mode, ref, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
+		sess, err = session.NewScheduled(id, mode, ref, limits, createdAt, opts.scheduled.ScheduleName, opts.scheduled.OriginSessionID, opts.scheduled.OriginIncarnation)
 	default:
-		return session.New(id, mode, ref, limits, createdAt), nil
+		sess = session.New(id, mode, ref, limits, createdAt)
 	}
+	if err != nil {
+		return nil, err
+	}
+	// Write-once creation-time label (ADR 0353), stamped here rather than through
+	// setSessionLabels/setPerSessionLabels so both create paths (shared-engine
+	// fast path and per-session-engine path) get it uniformly without changing
+	// those functions' signatures. Empty is the byte-identical default.
+	sess.AgentDefinitionName = opts.agentDefinitionName
+	return sess, nil
 }
 
 // CreateSession allocates a new idle session on the server-owned default placement,

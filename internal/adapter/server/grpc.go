@@ -101,6 +101,9 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 	if names := req.GetDebugMcpServers(); len(names) > 0 {
 		opts = append(opts, WithDebugMCP(names))
 	}
+	if name := req.GetAgentDefinitionName(); name != "" {
+		opts = append(opts, WithAgentDefinitionName(name))
+	}
 	// Client-provided MCP servers (issue #821, ADR 0237). Both wire transports go
 	// through the ONE Service seam, which classifies through the same validator the
 	// ACP surface uses and then applies the deployment policy — so this handler
@@ -134,6 +137,9 @@ func (h *HarnessServer) CreateSession(ctx context.Context, req *mecatlv1.CreateS
 		},
 		ResolvedModel: resolvedModelToProto(h.svc.resolvedModelFor(sess)),
 		Placement:     placementMetadataToProto(sess.Placement),
+		// resolved_agent_definition_name echoes the bound name VERBATIM off the
+		// session aggregate, mirroring resolved_model's single-source discipline.
+		ResolvedAgentDefinitionName: sess.AgentDefinitionName,
 	}, nil
 }
 
