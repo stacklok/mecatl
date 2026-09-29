@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - environment/microvm/**
+      - integration/microvm/**
       - engine/**
       - internal/adapter/microvm/**
       - internal/adapter/microvmmanager/**
@@ -28,6 +29,7 @@ on:
   pull_request:
     paths:
       - environment/microvm/**
+      - integration/microvm/**
       - engine/**
       - internal/adapter/microvm/**
       - internal/adapter/microvmmanager/**

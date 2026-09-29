@@ -8,6 +8,8 @@ use ./authn/oidc
 
 use ./environment/microvm
 
+use ./integration/microvm
+
 use ./provider/anthropic
 
 use ./provider/openai

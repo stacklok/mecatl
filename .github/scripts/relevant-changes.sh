@@ -111,7 +111,7 @@ irrelevant() {
       # The runtime's nested module and direct root integration closure must run.
       # Known separate components cannot alter it; unknown paths remain fail-closed.
       case "$1" in
-        environment/microvm/*|engine/*|internal/adapter/microvm/*|internal/adapter/microvmmanager/*|internal/app/*|cmd/mecated/*|cmd/mecatui/*|go.mod|go.sum|go.work|Taskfile.yml|.golangci.yml|.github/workflows/ci.yml|.github/workflows/microvm-e2e.yml|.github/scripts/relevant-changes.sh|.github/scripts/relevant-changes_test.sh|.github/scripts/relevant-changes-workflow_test.sh|.github/scripts/race-test.sh|.github/scripts/root-race-packages.sh|.github/scripts/microvm-ci-release_test.sh|.github/scripts/install-microvm-release.sh)
+        environment/microvm/*|integration/microvm/*|engine/*|internal/adapter/microvm/*|internal/adapter/microvmmanager/*|internal/app/*|cmd/mecated/*|cmd/mecatui/*|go.mod|go.sum|go.work|Taskfile.yml|.golangci.yml|.github/workflows/ci.yml|.github/workflows/microvm-e2e.yml|.github/scripts/relevant-changes.sh|.github/scripts/relevant-changes_test.sh|.github/scripts/relevant-changes-workflow_test.sh|.github/scripts/race-test.sh|.github/scripts/root-race-packages.sh|.github/scripts/microvm-ci-release_test.sh|.github/scripts/install-microvm-release.sh)
           return 1 ;;
         README.md|docs/*|user-docs/*|website/*|sdk/*|apps/*|authn/*|provider/*|contracts/*|deploy/*|examples/*|perf/*|cmd/mecademo/*|cmd/mecak8s/*|cmd/mecatequi/*|internal/adapter/*|internal/apicheck/*|internal/buildinfo/*|internal/codex/*|internal/fixture/*|internal/test/*)
           return 0 ;;

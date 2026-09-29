@@ -366,6 +366,7 @@ tasks:
       # The opt-in OIDC adapter and microVM runtime are separate non-provider modules.
       - cd authn/oidc && go test {{.RACE}} ./...
       - cd environment/microvm && go test {{.RACE}} ./...
+      - cd integration/microvm && go test {{.RACE}} ./...
       # provider/ submodules (ADR 0093) — each its own module under the workspace;
       # the per-module `./...` invocation runs their tests through the workspace.
       - cd provider/ssefilter && go test {{.RACE}} ./...
@@ -375,6 +376,7 @@ tasks:
       - task: test:engine-standalone
       - task: test:authn-standalone
       - task: test:microvm-standalone
+      - task: test:microvm-integration-standalone
       - task: test:microvm-dev-tag
       - task: test:provider-standalone
 
@@ -545,6 +547,11 @@ tasks:
     cmds:
       - cd environment/microvm && GOWORK=off go build ./...
       - cd environment/microvm && GOWORK=off go test ./...
+
+  test:microvm-integration-standalone:
+    desc: Prove the test-only microVM integration module tests with GOWORK=off.
+    cmds:
+      - cd integration/microvm && GOWORK=off go test ./...
 
   test:engine-standalone:
     desc: |
@@ -1006,6 +1013,7 @@ tasks:
       # sharing the root config.
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       - 'cd environment/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd integration/microvm && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
       # provider/ submodules (ADR 0093) — each its own module; sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
       - 'cd provider/ssefilter && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
@@ -1142,6 +1150,7 @@ tasks:
       # The microVM runtime is isolated in its own module; its tools-tag anchor
       # retains the future runtime dependency without linking it by default.
       - cd environment/microvm && GOWORK=off go mod tidy
+      - cd integration/microvm && GOWORK=off go mod tidy
       # All provider modules now use resolvable standalone dependencies. The
       # OpenAI-family modules pin the ssefilter module to an immutable revision
       # until the provider module release tags are cut.

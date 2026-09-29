@@ -626,6 +626,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -637,6 +639,7 @@ jobs:
             engine/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -690,6 +693,11 @@ jobs:
           (cd provider/anthropic && go build ./...)
           (cd provider/openai && go build ./...)
           (cd provider/openaichat && go build ./...)
+
+      - name: Verify Go module and workspace metadata freshness
+        run: |
+          task tidy
+          git diff --exit-code -- go.mod go.sum go.work go.work.sum engine/go.mod engine/go.sum authn/oidc/go.mod authn/oidc/go.sum environment/microvm/go.mod environment/microvm/go.sum integration/microvm/go.mod integration/microvm/go.sum provider/ssefilter/go.mod provider/ssefilter/go.sum provider/anthropic/go.mod provider/anthropic/go.sum provider/openai/go.mod provider/openai/go.sum provider/openaichat/go.mod provider/openaichat/go.sum
 
       # Prove the macOS-job cost gate stays sound: the terminal leaf directories
       # that macos-relevant-changes.sh skips must remain OUTSIDE the darwin+freebsd
@@ -812,6 +820,7 @@ jobs:
             engine/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -833,6 +842,7 @@ jobs:
           bash .github/scripts/race-test.sh root-a -count=1 "${packages[@]}"
           (cd engine && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...)
           (cd authn/oidc && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...)
+          (cd integration/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm-integration ./...)
           (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
           (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
           (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
@@ -960,6 +970,7 @@ jobs:
           go test -count=1 ./cmd/mecatui/ui
           (cd engine && go test ./...)
           (cd authn/oidc && go test ./...)
+          (cd integration/microvm && go test ./...)
           (cd provider/ssefilter && go test ./...)
           (cd provider/anthropic && go test ./...)
           (cd provider/openai && go test ./...)
@@ -1031,6 +1042,7 @@ jobs:
             engine/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1070,6 +1082,9 @@ jobs:
       - name: golangci-lint (microVM module)
         if: needs.changes.outputs.microvm_relevant == 'true'
         run: cd environment/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      - name: golangci-lint (microVM integration module)
+        run: cd integration/microvm && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
 
       # provider/ submodules (ADR 0093) — each its own module, sharing the ROOT
       # golangci config so the depguard allowlists stay the single source of truth.
@@ -1219,6 +1234,7 @@ jobs:
             engine/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1302,6 +1318,7 @@ jobs:
           cache-dependency-path: |
             engine/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
 
       - name: go build (microVM standalone)
         env:
@@ -1312,6 +1329,11 @@ jobs:
         env:
           GOWORK: off
         run: cd environment/microvm && go test ./...
+
+      - name: go test (microVM integration standalone)
+        env:
+          GOWORK: off
+        run: cd integration/microvm && go test ./...
 
   provider-standalone:
     name: Provider modules (standalone, GOWORK=off)
@@ -1416,6 +1438,7 @@ jobs:
             engine/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1463,6 +1486,7 @@ jobs:
             engine/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum
@@ -1546,6 +1570,7 @@ jobs:
             engine/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
+            integration/microvm/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
             provider/openai/go.sum

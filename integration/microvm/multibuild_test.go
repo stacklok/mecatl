@@ -1,4 +1,4 @@
-package app
+package microvm_test
 
 import (
 	"context"
@@ -29,6 +29,7 @@ import (
 	microvmadapter "github.com/stacklok/mecatl/internal/adapter/microvm"
 	"github.com/stacklok/mecatl/internal/adapter/microvmmanager"
 	"github.com/stacklok/mecatl/internal/adapter/server"
+	"github.com/stacklok/mecatl/internal/app"
 )
 
 type multiBuildNetwork struct{ socket string }
@@ -229,27 +230,27 @@ func newMultiBuildFixture(t *testing.T) *multiBuildFixture {
 	return &multiBuildFixture{repository: repository, composition: composition, backend: backend, verified: verified, endpoint: "unix://" + socket}
 }
 
-func (f *multiBuildFixture) build(ctx context.Context, t *testing.T, checkout, storeDir string, turns ...mockllm.Turn) (*Built, *microvmadapter.Client, *[]port.LLMRequest) {
+func (f *multiBuildFixture) build(ctx context.Context, t *testing.T, checkout, storeDir string, turns ...mockllm.Turn) (*app.Built, *microvmadapter.Client, *[]port.LLMRequest) {
 	t.Helper()
 	settings := filepath.Join(t.TempDir(), "settings.yaml")
 	mbWriteFile(t, settings, "harness_context:\n  enabled_sources: [repository]\n  kinds:\n    instructions: {sources: [repository], mode: combine}\n    commands: {sources: [repository], mode: combine}\n    rules: {sources: [], mode: combine}\n    skills: {sources: [], mode: combine}\n    agent_defs: {sources: [], mode: combine}\npermissions:\n  allow: [Read, Shell]\n", 0o600)
 	var requests []port.LLMRequest
-	cfg, err := ConfigureExecution(Config{
+	cfg, err := app.ConfigureExecution(app.Config{
 		Workspace: checkout, StoreDir: storeDir, UserModelDir: t.TempDir(), MemoryDir: t.TempDir(), NoSoul: true, Shell: "/bin/sh",
 		UseMock: true, MockProvider: mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(request port.LLMRequest) { requests = append(requests, request) })}, turns...),
-		TrustProject: true, OwnershipEnforced: true, PermissionConfigs: []string{settings}, DefaultPlacement: PlacementMicroVMLocal, DefaultPlacementSet: true,
+		TrustProject: true, OwnershipEnforced: true, PermissionConfigs: []string{settings}, DefaultPlacement: app.PlacementMicroVMLocal, DefaultPlacementSet: true,
 		SchedulerEnabled: true, SchedulerTickInterval: time.Hour, SessionLeaseTTL: time.Second,
 		MicroVMReadyRequest: func(microvmmanager.GuestEgressSelection) (microvmmanager.ReadyRequest, error) {
 			return microvmmanager.ReadyRequest{}, nil
 		},
-		MicroVMManagerFactory: func() (MicroVMReadyManager, string, error) {
+		MicroVMManagerFactory: func() (app.MicroVMReadyManager, string, error) {
 			return &placementReadyManager{endpoint: f.endpoint}, f.endpoint, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	built, err := Build(ctx, cfg)
+	built, err := app.Build(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +321,7 @@ func TestMicroVMTwoBuildsSeparatePlacementsSurvivePeerClose(t *testing.T) {
 			}
 
 			for _, run := range []struct {
-				built *Built
+				built *app.Built
 				id    session.SessionID
 			}{{first, one.ID}, {second, two.ID}} {
 				commands, err := run.built.Service.ListCommandsForSession(ctx, run.id)
@@ -518,6 +519,42 @@ func runGitEnv(t *testing.T, dir string, env []string, args ...string) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, output)
 	}
+}
+
+func placementTestSocketPath(t *testing.T) string {
+	t.Helper()
+	// Unix sockets have a short path limit; keep this fixture path short.
+	dir, err := os.MkdirTemp("/tmp", "mecatl-microvm-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove socket directory: %v", err)
+		}
+	})
+	return filepath.Join(dir, "microvmd.sock")
+}
+
+type placementReadyManager struct{ endpoint string }
+
+func (m *placementReadyManager) EnsureReady(context.Context, microvmmanager.ReadyRequest) (string, error) {
+	return m.endpoint, nil
+}
+
+//nolint:revive // Test helpers consistently take testing.T first.
+func harnessRun(t *testing.T, b *app.Built, ctx context.Context, id session.SessionID, text string) []session.Event {
+	t.Helper()
+	run, err := b.Service.StartRun(ctx, id, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []session.Event
+	for ev := range run.Events() {
+		events = append(events, ev)
+	}
+	b.Service.FinishRun(id, run)
+	return events
 }
 
 // Keep compile-time coverage of the service's placement scope used by the real adapter.

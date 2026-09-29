@@ -109,6 +109,7 @@ run "studio: .github/scripts change runs" studio true .github/scripts/relevant-c
 # The nested module, its direct root integration closure, and the exact execution
 # control files run MicroVM CI; unrelated established component trees skip.
 run "microvm: nested module runs" microvm true environment/microvm/internal/runtime/runtime.go
+run "microvm: integration module runs" microvm true integration/microvm/multibuild_test.go integration/microvm/go.mod
 run "microvm: engine replacement runs" microvm true engine/session/session.go
 run "microvm: root integration runs" microvm true internal/adapter/microvm/production_e2e_test.go internal/app/build.go cmd/mecated/main.go cmd/mecatui/main.go
 run "microvm: workspace and CI control run" microvm true go.mod go.sum go.work Taskfile.yml .golangci.yml .github/workflows/ci.yml .github/workflows/microvm-e2e.yml .github/scripts/race-test.sh .github/scripts/install-microvm-release.sh
