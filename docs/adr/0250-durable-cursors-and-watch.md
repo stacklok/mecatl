@@ -31,7 +31,7 @@ A cursor is the one primitive that fixes both: an opaque token meaning "you have
 received everything up to append position P".
 
 **The Redis datatype is the crux.** The event log is currently a **LIST** —
-[`redisstore.Append`](../../internal/adapter/redisstore/redisstore.go) is `RPUSH` onto
+[`redisstore.Append`](https://github.com/stacklok/mecatl/blob/ad1cfe3c89a640905b88fb69f9905df498ba5c9c/internal/adapter/redisstore/redisstore.go) is `RPUSH` onto
 `mecatl:events:<id>`, `Read` is `LRANGE 0 -1`. A LIST gives ordering but no blocking read
 and no stable per-entry identity: follow degenerates to `LLEN` polling per watcher;
 position is an index, stable only because nothing is ever trimmed from the head (true
@@ -133,9 +133,9 @@ Bounded paging over a long log becomes possible for the first time.
 
 - **A Redis storage-format migration.** Existing `mecatl:events:*` LIST keys must be read
   by a legacy path or migrated, and `eventsKey(id)` is embedded in the delete/rebuild Lua
-  scripts in [`internal/adapter/redisstore/metadata_index.go`](../../internal/adapter/redisstore/metadata_index.go),
+  scripts in [internal/adapter/redisstore/metadata_index.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/redisstore/metadata_index.go),
   so a new key shape threads through those too. [`migration.go` at the decision commit](https://github.com/stacklok/mecatl/blob/ad1cfe3c89a640905b88fb69f9905df498ba5c9c/internal/adapter/redisstore/migration.go)
-  and [`internal/adapter/redisstore/generation.go`](../../internal/adapter/redisstore/generation.go)
+  and [internal/adapter/redisstore/generation.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/redisstore/generation.go)
   are precedent, but this is real work with a real crash-safety surface.
 
 - **A blocking `XREAD` occupies a pooled connection for the duration of its block.**
@@ -144,7 +144,7 @@ Bounded paging over a long log becomes possible for the first time.
   `10 × GOMAXPROCS`, and that pool is shared with `Save`/`Append` — so watchers do not
   merely consume spare capacity, they compete with the write path that keeps runs alive.
   Follow therefore blocks in BOUNDED slices and re-acquires between them
-  ([`internal/adapter/redisstore/cursoreventlog.go`](../../internal/adapter/redisstore/cursoreventlog.go)),
+  ([internal/adapter/redisstore/cursoreventlog.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/redisstore/cursoreventlog.go)),
   which bounds the hold and makes cancellation prompt but does not make it free: N
   concurrent watchers still want N connections. A deployment expecting many should size
   the pool for them, and `mecak8s` — the multi-replica shape that makes cross-process
@@ -176,8 +176,8 @@ Bounded paging over a long log becomes possible for the first time.
   it fiddlier still, because a log that does not exist yet reports the same value a legacy
   log does, so a follower attaching before the first append must ADOPT the generation that
   append mints rather than read it as a reset — see `logBasis` in
-  [`internal/adapter/redisstore/cursoreventlog.go`](../../internal/adapter/redisstore/cursoreventlog.go)
-  and its counterpart in [`internal/adapter/store/jsonlstore/cursoreventlog.go`](../../internal/adapter/store/jsonlstore/cursoreventlog.go).
+  [internal/adapter/redisstore/cursoreventlog.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/redisstore/cursoreventlog.go)
+  and its counterpart in [internal/adapter/store/jsonlstore/cursoreventlog.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/store/jsonlstore/cursoreventlog.go).
   Raised in review on #869 after `memstore` and `jsonlstore` had independently got this
   right and `redisstore` had not; it is pinned for every backend by a case in
   [`engine/adapter/eventlogconformance/cursor.go`](../../engine/adapter/eventlogconformance/cursor.go).

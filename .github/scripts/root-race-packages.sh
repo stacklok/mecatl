@@ -21,12 +21,9 @@ readonly ui_package='github.com/stacklok/mecatl/cmd/mecatui/ui'
 readonly -a root_a_packages=(
   'github.com/stacklok/mecatl/docs/lint'
   'github.com/stacklok/mecatl/internal/adapter/acp'
-  'github.com/stacklok/mecatl/internal/adapter/grpcdriver'
   'github.com/stacklok/mecatl/internal/adapter/mcp'
   'github.com/stacklok/mecatl/internal/adapter/mcp/jq'
   'github.com/stacklok/mecatl/internal/adapter/server'
-  'github.com/stacklok/mecatl/internal/adapter/store/jsonlstore'
-  'github.com/stacklok/mecatl/internal/adapter/redisstore'
   'github.com/stacklok/mecatl/internal/apicheck'
   'github.com/stacklok/mecatl/internal/app'
 )

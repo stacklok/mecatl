@@ -283,7 +283,7 @@ loop import no gRPC, ever. The domain-level representation of a grant is a
 neutral value object (a `ResourceGrant` in `engine/tool`, next to `Workspace`
 for the same cycle-avoidance reason), plus a resolver port that turns a grant
 into a typed client. The gRPC specifics live in an adapter, wired in
-composition. This is the existing `internal/adapter/grpcdriver` pattern one
+composition. This is the existing `adapters/grpcdriver` pattern one
 level deeper: today composition resolves config-time endpoints into port
 implementations once per process; this adds a runtime resolver that does it
 per grant. The modulith's composition gets more complicated. That is the tax

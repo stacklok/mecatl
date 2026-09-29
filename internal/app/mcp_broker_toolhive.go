@@ -7,10 +7,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/stacklok/mecatl/adapters/redisstore"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/mcpbroker"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
-	"github.com/stacklok/mecatl/internal/adapter/redisstore"
 )
 
 // buildToolHiveAuthRedisClient connects to the operator's configured Redis

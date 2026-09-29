@@ -1272,7 +1272,7 @@ endpoint.
 **mecak8s — the storage-free Kubernetes-native agent (`cmd/mecak8s`).** A fifth
 composition root and a *thin peer of `mecated`* over the same `app.Build`: it composes the
 shared assembly with **k8s-native defaults** — a **Redis** session store + durable event log
-(`internal/adapter/redisstore`, ADR 0048), a `coordination.k8s.io` Lease per session
+(`adapters/redisstore`, ADR 0048), a `coordination.k8s.io` Lease per session
 (`internal/adapter/k8slease`, the in-cluster multi-replica single-writer path), a dynamic
 `/readyz` (drain-gated + Redis-pinged), and a bounded `GracefulStop`. The agent pods are
 **storage-free**: no PVC, no `--store-dir`, no local state — every piece of state is a

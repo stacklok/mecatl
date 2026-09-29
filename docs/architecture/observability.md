@@ -389,7 +389,24 @@ samples follow the same median-per-commit rule through `perf/cmd/perfconvert`.
   conformance contract is `leaseconformance`. See `docs/adr/0027-cloud-native.md`
   Phase 4.
 
-### Remote store + source drivers (`internal/adapter/grpcdriver`)
+### Remote store + source drivers (`adapters/grpcdriver`)
+
+External Go applications use `github.com/stacklok/mecatl/adapters/grpcdriver`;
+local stores are in the sibling `jsonlstore` and `redisstore` packages. The
+[store integration guide](../../user-docs/building/extension-points/session-store.md)
+owns construction examples, capability checks, reader limitations, and resource
+ownership. The complete concrete packages are retained, including their write,
+schedule, content-source, and learning APIs.
+
+The generated import path
+`github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1` belongs to the
+independent parent module `github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver`.
+Shared watcher and soul-validation implementation lives in the private
+`internal/adaptersupport/` module; callers retain lifecycle ownership. Engine
+source and its dependency graph are unchanged. See the
+[adapter compatibility policy](../../adapters/COMPATIBILITY.md) for the separate
+Go API and protobuf wire contracts, pending initial releases, and standalone
+candidate proof.
 
 > Design rationale — the port/driver pattern, the per-seam lifecycle and
 > failure-posture decisions, the deferrals, and the workspace-driver sketch —
@@ -434,7 +451,8 @@ loads the body and logical inventory, and `Skill({name, asset})` fetches one bou
 textual payload on demand. No temp cache, materialization, executable-bit application,
 or workspace read root is created. `--soul-source-url` occupies the USER slot
 of the soul selection (mutually exclusive with `--soul-file`; `--no-soul`
-wins); the body is RE-VALIDATED client-side (`soul.ValidateBody` — byte cap,
+wins); the body is RE-VALIDATED client-side (`soulbody.ValidateBody` in
+`internal/adaptersupport/soulbody/` — byte cap,
 injection scan, fence integrity) because a driver is never trusted to
 sanitize, the drift baseline is SKIPPED for driver provenance, and the driver
 is probed at build (fatal if unreachable; runtime faults degrade fail-soft).
@@ -489,20 +507,20 @@ drift from the in-process semantics:
 | Suite | Backend | Run site |
 |---|---|---|
 | `storeconformance` (`Run` + `RunPrunable`) | `memstore` | `engine/adapter/memstore/conformance_test.go` |
-| `storeconformance` (`Run` + `RunPrunable`) | `jsonlstore` | `internal/adapter/store/jsonlstore/conformance_test.go` |
-| `storeconformance` (`Run` + `RunPrunable`) | grpcdriver → bufconn → `NewSessionStoreServer(memstore)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `storeconformance` (`Run` + `RunPrunable`) | `jsonlstore` | `adapters/jsonlstore/conformance_test.go` |
+| `storeconformance` (`Run` + `RunPrunable`) | grpcdriver → bufconn → `NewSessionStoreServer(memstore)` | `adapters/grpcdriver/conformance_test.go` |
 | `memconformance` | flock `memory.Store` | `internal/adapter/memory/conformance_test.go` |
-| `memconformance` | grpcdriver → bufconn → `NewMemoryStoreServer(memory.Store)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `memconformance` | grpcdriver → bufconn → `NewMemoryStoreServer(memory.Store)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunSkillSource` | in-memory `NewFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
 | `sourceconformance.RunSkillSource` | `skills.FSSource` over a written-out fixture tree | `engine/adapter/skillfs/conformance_test.go` |
-| `sourceconformance.RunSkillSource` | grpcdriver → bufconn → `NewSkillSourceServer(NewFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunSkillSource` | grpcdriver → bufconn → `NewSkillSourceServer(NewFixtureSource)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunSoulSource` | `soul.Store` (temp file) | `internal/adapter/soul/conformance_test.go` |
-| `sourceconformance.RunSoulSource` | grpcdriver → bufconn → `NewSoulSourceServer(verbatim fake)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunSoulSource` | grpcdriver → bufconn → `NewSoulSourceServer(verbatim fake)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunAgentSource` | in-memory `NewAgentFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
 | `sourceconformance.RunAgentSource` | `agents.FSSource` over a written-out fixture tree | `engine/adapter/agentfs/conformance_test.go` |
-| `sourceconformance.RunAgentSource` | grpcdriver → bufconn → `NewAgentSourceServer(NewAgentFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunAgentSource` | grpcdriver → bufconn → `NewAgentSourceServer(NewAgentFixtureSource)` | `adapters/grpcdriver/conformance_test.go` |
 | `sourceconformance.RunCommandSource` | in-memory `NewCommandFixtureSource` (self-test) | `engine/adapter/sourceconformance/sourceconformance_selftest_test.go` |
-| `sourceconformance.RunCommandSource` | grpcdriver → bufconn → `NewCommandSourceServer(NewCommandFixtureSource)` | `internal/adapter/grpcdriver/conformance_test.go` |
+| `sourceconformance.RunCommandSource` | grpcdriver → bufconn → `NewCommandSourceServer(NewCommandFixtureSource)` | `adapters/grpcdriver/conformance_test.go` |
 
 (Deliberately NO filesystem row for commands: `prompt.DirCommandExpander` is
 the workspace-tier surface — live, workspace-relative, read through the

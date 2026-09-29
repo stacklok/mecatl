@@ -82,6 +82,9 @@ tasks:
       # engine/ is its own Go module (consumed via the committed go.work). Building
       # it here keeps the importable-core module compiling alongside the binaries.
       - cd engine && go build ./...
+      - cd internal/adaptersupport && go build ./...
+      - cd contracts/gen/go/mecatl/driver && go build ./...
+      - cd adapters && go build ./...
       # authn/oidc is the opt-in caller-identity adapter module (ADR 0206),
       # separate from both the dependency-free engine and provider modules.
       - cd authn/oidc && go build ./...
@@ -266,6 +269,21 @@ tasks:
           fi
         silent: true
 
+  release:persistence-support-preflight:
+    desc: Networked manual preflight before tagging internal/adaptersupport/v0.1.0
+    cmds:
+      - sh scripts/preflight-persistence-module-release.sh support
+
+  release:persistence-driver-preflight:
+    desc: Networked manual preflight before tagging contracts/gen/go/mecatl/driver/v0.1.0
+    cmds:
+      - sh scripts/preflight-persistence-module-release.sh driver
+
+  release:persistence-adapters-preflight:
+    desc: Networked manual preflight before tagging adapters/v0.1.0 (requires published dependencies and real go.sum)
+    cmds:
+      - sh scripts/preflight-persistence-module-release.sh adapters
+
   release:check:
     desc: Validate .goreleaser.yaml offline (strict schema; tolerates the deliberate `brews` deprecation)
     cmds:
@@ -363,6 +381,9 @@ tasks:
       # engine/ is a separate module under the workspace — `./...` from the root
       # does NOT cross the module boundary, so its tests are a second invocation.
       - cd engine && go test {{.RACE}} ./...
+      - cd internal/adaptersupport && go test {{.RACE}} ./...
+      - cd contracts/gen/go/mecatl/driver && go test {{.RACE}} ./...
+      - cd adapters && go test {{.RACE}} ./...
       # The opt-in OIDC adapter and microVM runtime are separate non-provider modules.
       - cd authn/oidc && go test {{.RACE}} ./...
       - cd environment/microvm && go test {{.RACE}} ./...
@@ -379,6 +400,8 @@ tasks:
       - task: test:microvm-integration-standalone
       - task: test:microvm-dev-tag
       - task: test:provider-standalone
+      - task: test:persistence-standalone
+        vars: {RACE: '{{.RACE}}'}
 
   microvm:build:
     desc: Build the opt-in microvmd and Linux guest-agent artifacts without widening standard binaries.
@@ -530,6 +553,16 @@ tasks:
     cmds:
       - task: test:_suite
         vars: {RACE: '-race'}
+
+  test:persistence-standalone:
+    desc: Prove public persistence modules and an external consumer offline without workspace replacements.
+    vars:
+      RACE: '{{default "" .RACE}}'
+    cmds:
+      - |
+          out=".scratch/external-persistence-$$"
+          while [ -e "$out" ]; do out="$out-next"; done
+          sh scripts/prove-external-persistence.sh "$out" {{.RACE}}
 
   test:authn-standalone:
     desc: Prove the opt-in OIDC module builds and tests with GOWORK=off.
@@ -1009,6 +1042,9 @@ tasks:
       # engine-local .golangci.yml) so the depguard layering allowlists stay the
       # single source of truth across the module boundary.
       - 'cd engine && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd internal/adaptersupport && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd contracts/gen/go/mecatl/driver && "$GOLANGCI_LINT" run --config ../../../../../.golangci.yml --allow-parallel-runners ./...'
+      - 'cd adapters && "$GOLANGCI_LINT" run --config ../.golangci.yml --allow-parallel-runners ./...'
       # authn/oidc and environment/microvm are separate opt-in adapter modules,
       # sharing the root config.
       - 'cd authn/oidc && "$GOLANGCI_LINT" run --config ../../.golangci.yml --allow-parallel-runners ./...'
@@ -1130,18 +1166,17 @@ tasks:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
 
   tidy:
-    desc: Tidy root, engine, and opt-in module manifests, then sync the workspace
+    desc: Tidy root and published nested module manifests (adapters standalone is release-gated)
     cmds:
-      # INVARIANT — do NOT reorder these steps. The order
-      #   (1) root `go mod tidy` → (2) `go work sync` → (3) each standalone
-      #   module's `GOWORK=off go mod tidy`
-      # is load-bearing. Separate modules must be tidied with the workspace OFF
-      # so each go.sum reflects its OWN closure, not the host repo's heavy cone.
-      # `go work sync` can drop `/go.mod` hash lines, so standalone tidy MUST run
-      # after sync. Running sync last leaves standalone sums incomplete.
+      # Tidy the workspace's root manifest and standalone published modules.
+      # go work sync and adapters/go mod tidy resolve the unpublished support
+      # and driver v0.1.0 even with go.work enabled; neither can run in ordinary
+      # CI until those tags exist. The isolated candidate-proxy proof exercises
+      # standalone adapters tidy without inventing committed checksums.
       - go mod tidy
-      - go work sync
       - cd engine && GOWORK=off go mod tidy
+      - cd internal/adaptersupport && GOWORK=off go mod tidy
+      - cd contracts/gen/go/mecatl/driver && GOWORK=off go mod tidy
       # The OIDC adapter's own sum must cover its standalone closure. Its go.mod
       # deliberately has no replace directive. Until an engine minor containing
       # PrincipalFromClaims/GrantTypeFromClaims is published, this command is an

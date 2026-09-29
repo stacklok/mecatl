@@ -14,11 +14,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	driverv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver/v1"
 	"github.com/stacklok/mecatl/engine/adapter/automaticconformance"
 	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/internal/adapter/automaticstore"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
 func TestAutomaticStoreConformance(t *testing.T) {

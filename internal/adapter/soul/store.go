@@ -35,34 +35,25 @@ package soul
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/hashutil"
 	"github.com/stacklok/mecatl/internal/adapter/xdgconfig"
+	"github.com/stacklok/mecatl/internal/adaptersupport/soulbody"
 )
 
 // DefaultMaxBytes is the load-time byte ceiling on the soul body (matching the
 // Hermes 20 KiB cap the spike cites). Over the cap the soul is REJECTED (no
 // fragment), not truncated: a half-truncated persona is worse than none.
-const DefaultMaxBytes = 20 * 1024
+const DefaultMaxBytes = soulbody.DefaultMaxBytes
 
 // soulSubpath is the conventional soul file relative to the XDG config base, i.e.
 // <config>/mecatl/soul.md (fallback ~/.config/mecatl/soul.md). Mirrors
 // permconfig.userSubdirMecatl / skills.userSubdirMecatl path conventions.
 const soulSubpath = "mecatl/soul.md"
-
-// soulCloseTag is the data-fence close delimiter the prompt renderer wraps the
-// body in (prompt.renderSoul uses "<soul>"/"</soul>"). A body containing this
-// literal could close the fence early and let trailing text escape the data zone,
-// so Load rejects any body that contains it. It is hardcoded here (with this
-// comment) rather than imported from engine/prompt to avoid coupling the adapter
-// to a domain magic-constant path; the two must stay in sync (one cheap string).
-const soulCloseTag = "</soul>"
 
 // readFunc opens a soul file for a bounded read and returns its content limited to
 // at most limit bytes (the caller passes MaxBytes+1 to detect an over-cap file
@@ -233,38 +224,8 @@ func (s *Store) LoadWithMeta(ctx context.Context) (Result, error) {
 	return Result{Body: body, SHA256: hashutil.SHA256Hex([]byte(body)), Size: len(body)}, nil
 }
 
-// ValidateBody is the SINGLE soul-body validation discipline, extracted so
-// every soul source — the local file Store here and the remote-driver client
-// (grpcdriver), which RE-VALIDATES because a driver is never trusted to
-// sanitize — applies byte-identical rules. It returns the clean (trimmed)
-// body and "" on success, or ("", reason) on rejection:
-//   - over the byte cap (maxBytes; <=0 uses DefaultMaxBytes) — REJECTED, not
-//     truncated (a half-truncated persona is worse than none); the cap is
-//     measured on the RAW input, before trimming;
-//   - empty or whitespace-only after trimming;
-//   - an injection-scan hit (scanForInjection);
-//   - a data-fence breakout (the body contains the literal close tag).
-//
-// It is a pure function: no I/O, no logging — callers own the fail-soft
-// posture (log the reason, contribute no fragment, never abort a run).
+// ValidateBody preserves the local soul API while delegating the single
+// validation discipline to soulbody, shared with the gRPC driver client.
 func ValidateBody(body string, maxBytes int) (string, string) {
-	if maxBytes <= 0 {
-		maxBytes = DefaultMaxBytes
-	}
-	if len(body) > maxBytes {
-		return "", fmt.Sprintf("body is %d bytes, over the %d-byte cap (rejected, not truncated)", len(body), maxBytes)
-	}
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return "", "body is empty or whitespace-only"
-	}
-	if marker, found := scanForInjection(body); found {
-		return "", fmt.Sprintf("injection marker detected: %s", marker)
-	}
-	// Fence-integrity guard: a body containing the literal close-tag could close
-	// the data fence early and smuggle trailing text out of the data zone.
-	if strings.Contains(body, soulCloseTag) {
-		return "", fmt.Sprintf("body contains the data-fence close-tag %s", soulCloseTag)
-	}
-	return body, ""
+	return soulbody.ValidateBody(body, maxBytes)
 }

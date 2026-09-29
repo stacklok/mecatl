@@ -37,7 +37,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 ### Architecture & implementation
 - [0001 — Agent Client Protocol (ACP) adapter](./0001-acp-adapter.md)
 - [0004 — v1 architecture](./0004-v1-architecture.md) *(historical)*
-- [0005 — Driver seams](./0005-driver-seams.md) *(skill-asset materialization/read-root decision superseded by 0108)*
+- [0005 — Driver seams](./0005-driver-seams.md) *(skill-asset materialization/read-root decision superseded by 0108; deferred public promotion superseded by 0372)*
+- [0372 - Public persistence adapter modules](./0372-public-persistence-adapters.md)
 - [0006 — v1 step-chain](./0006-v1-step-chain.md) *(historical)*
 - [0007 — Twelve-patterns audit](./0007-twelve-patterns-audit.md) *(historical)*
 - [0027 — Cloud-native arc](./0027-cloud-native.md)

@@ -2,6 +2,12 @@ go 1.27.0
 
 use ./
 
+use ./adapters
+
+use ./contracts/gen/go/mecatl/driver
+
+use ./internal/adaptersupport
+
 use ./engine
 
 use ./authn/oidc

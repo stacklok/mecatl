@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/stacklok/mecatl/adapters/grpcdriver"
 	"github.com/stacklok/mecatl/engine/learning"
-	"github.com/stacklok/mecatl/internal/adapter/grpcdriver"
 )
 
 func resolveLearningRepositories(ctx context.Context, cfg Config) (learning.AttemptRepository, learning.ProposalRepository, learning.SkillRepository, learning.AutomaticAdmissionLedger, func(), error) {

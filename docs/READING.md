@@ -69,3 +69,5 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | 2 | [`engine/session`](../engine/session) — the domain entry point |
 | 3 | [Extension points](../user-docs/building/extension-points/index.md) |
 | 4 | [`engine/COMPATIBILITY.md`](../engine/COMPATIBILITY.md) — the stability contract |
+| Persistence | [Built-in stores and remote drivers](../user-docs/building/extension-points/session-store.md) — external Go integration |
+| Adapter releases | [`adapters/COMPATIBILITY.md`](../adapters/COMPATIBILITY.md) — public exports, wire compatibility, and independent module releases |

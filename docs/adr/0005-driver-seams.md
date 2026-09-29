@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026
 - Scope: every externalizable store/source in the harness — session store, memory, skills, soul, agent defs, slash commands, event log
-- Superseded by: [ADR 0108](./0108-on-demand-logical-skill-assets.md) — ONLY the skill-asset materialization/read-root decision; all other decisions remain authoritative
+- Superseded by: [ADR 0108](./0108-on-demand-logical-skill-assets.md) — ONLY the skill-asset materialization/read-root decision; [ADR 0372](./0372-public-persistence-adapters.md) — ONLY the deferred public promotion of driver clients/server wrappers; all other decisions remain authoritative
 
 ## Context
 
@@ -59,7 +59,7 @@ linking into mecatl. Five rules, in dependency order:
    `internal/adapter/grpcdriver/` holds every driver client (and the matching
    server wrappers, see Deferred §1); each client implements the Go port over
    the corresponding service and confines all proto/status translation to
-   itself. Read `internal/adapter/grpcdriver/doc.go` first — it is the
+   itself. Read [internal/adapter/grpcdriver/doc.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/grpcdriver/doc.go) first — it is the
    package-level statement of the trust model, wire format, and resilience
    posture.
 4. **In-process reference adapters are the defaults AND the conformance
@@ -87,7 +87,7 @@ returns YOUR implementation of the Go port. For a remote endpoint that means
 the grpcdriver client dialed at your service
 (`storeconformance.Run(t, func(t) port.SessionStore { return
 grpcdriver.NewSessionStore(conn) })` — exactly what
-`internal/adapter/grpcdriver/conformance_test.go` does over bufconn). The
+[internal/adapter/grpcdriver/conformance_test.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/grpcdriver/conformance_test.go) does over bufconn). The
 suites live under `engine/adapter/` and are importable; the grpcdriver client
 needed to point them at a live endpoint is still `internal/` — running against
 a real remote endpoint is therefore an in-repo test today, and exporting the
@@ -153,7 +153,7 @@ backend never sees the wire bytes. The same read-set-accept / write-newest
 discipline applies to a future event-format bump.
 
 **Capacity: 64 MiB unary, no streaming.** `grpcdriver.MaxSnapshotBytes`
-(64 MiB, `internal/adapter/grpcdriver/sessionstore.go`) is the protocol's
+(64 MiB, [internal/adapter/grpcdriver/sessionstore.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/grpcdriver/sessionstore.go)) is the protocol's
 required minimum message capacity: media-carrying snapshots far exceed gRPC's
 4 MiB default, so `Dial` raises the client send/recv limits and a conforming
 driver mounts `grpc.MaxRecvMsgSize(MaxSnapshotBytes)` (pinned by the
@@ -210,7 +210,7 @@ tier**: the same trust class as the on-disk store directory / an explicit
 claimed origin is driver-side observability only.
 
 **Non-local cleartext is refused for ALL driver dials**, token or not
-(`internal/adapter/grpcdriver/dial.go`): pre-dial, any non-loopback/non-unix
+([internal/adapter/grpcdriver/dial.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/grpcdriver/dial.go)): pre-dial, any non-loopback/non-unix
 target without TLS is rejected, because a driver delivers session payloads,
 memories, model-steering skill bodies, and 0o755-materialized executables —
 an on-path attacker over cleartext would gain driver-equivalent capability
@@ -273,7 +273,7 @@ model-addressable tool error — never a partial bundle on disk.
    clients) to an importable package for external Go driver authors is a
    public-API commitment** — every exported symbol becomes a compatibility
    surface — and is made deliberately when an external Go consumer exists,
-   not implied by the current placement (`internal/adapter/grpcdriver/server.go`
+   not implied by the current placement ([internal/adapter/grpcdriver/server.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/grpcdriver/server.go)
    says the same in code). Non-Go drivers are unaffected: the proto is the contract.
 2. **User-model store driver flag.** `--memory-store-url` drives the
    project-memory store only; the user-model store stays on the local flock

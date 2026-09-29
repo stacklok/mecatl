@@ -48,7 +48,7 @@ if ! grep -Fq 'github.event.pull_request.draft == true' "$workflow"; then
   fail 'draft coverage job must be draft-gated'
 fi
 
-cache_dependencies=$'cache-dependency-path: |\n            go.sum\n            engine/go.sum\n            authn/oidc/go.sum\n            provider/ssefilter/go.sum\n            provider/anthropic/go.sum\n            provider/openai/go.sum\n            provider/openaichat/go.sum'
+cache_dependencies=$'cache-dependency-path: |\n            go.sum\n            engine/go.sum\n            internal/adaptersupport/go.sum\n            contracts/gen/go/mecatl/driver/go.sum\n            adapters/go.mod\n            authn/oidc/go.sum\n            provider/ssefilter/go.sum\n            provider/anthropic/go.sum\n            provider/openai/go.sum\n            provider/openaichat/go.sum'
 for job in test-race-root-a test-race-root-b test-race-ui test-non-race-draft; do
   block="$(awk -v job="$job" '
     $0 == "  " job ":" { in_job = 1 }

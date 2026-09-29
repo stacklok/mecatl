@@ -107,8 +107,8 @@ so operators must still secure the owner-only store tree.
 
 ## See also
 
-- `internal/adapter/store/jsonlstore/jsonlstore.go` (`SnapshotDurability`)
-- `internal/adapter/store/jsonlstore/jsonlstore.go` (`appendLine`)
+- [internal/adapter/store/jsonlstore/jsonlstore.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/store/jsonlstore/jsonlstore.go) (`SnapshotDurability`)
+- [internal/adapter/store/jsonlstore/jsonlstore.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/store/jsonlstore/jsonlstore.go) (`appendLine`)
 - [`migrateLegacyFamily` in `resolve.go` at the decision commit](https://github.com/stacklok/mecatl/blob/ad1cfe3c89a640905b88fb69f9905df498ba5c9c/internal/adapter/store/jsonlstore/resolve.go)
 - `docs/architecture/observability.md`
 - [Historical implementation notes](https://github.com/stacklok/mecatl/blob/773c6c4220c6cc8afa9e80976eb2e739efdce367/docs/design/IMPLEMENTATION-NOTES.md)

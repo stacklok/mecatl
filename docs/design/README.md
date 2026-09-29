@@ -93,7 +93,7 @@ match is anchored, so a near-miss typo (for example a pluralized
 
 The marker exempts every citation on its line. Reach for it only when a span is
 genuinely not a repo file. An abbreviated-but-real path (for example
-`grpcdriver/server.go` for `internal/adapter/grpcdriver/server.go`) is NOT an
+`grpcdriver/server.go` for `adapters/grpcdriver/server.go`) is NOT an
 illustrative path: expand it to the full repo-root-relative form rather than
 hiding it behind the marker. The test flags the abbreviation on purpose, and the
 basename suggestion points the way.

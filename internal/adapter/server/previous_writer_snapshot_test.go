@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/adapters/jsonlstore"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/internal/adapter/store/jsonlstore"
 )
 
 type previousWriterEnvelope struct {
@@ -20,7 +20,7 @@ type previousWriterEnvelope struct {
 
 func installPreviousWriterSnapshot(t *testing.T, st *jsonlstore.Store, dir, name string) session.SessionID {
 	t.Helper()
-	fixture, err := os.ReadFile(filepath.Join("..", "store", "jsonlstore", "testdata", "previous-writer", name))
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "adapters", "jsonlstore", "testdata", "previous-writer", name))
 	if err != nil {
 		t.Fatalf("read previous-writer fixture: %v", err)
 	}

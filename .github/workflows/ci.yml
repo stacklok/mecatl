@@ -288,6 +288,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
@@ -345,6 +348,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -401,6 +407,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -463,6 +472,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -512,6 +524,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -597,6 +612,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
 
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
@@ -637,6 +655,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -655,8 +676,14 @@ jobs:
           for attempt in 1 2 3; do
             if (
               go mod download all
+              # Standalone graphs fetch the published engine baseline archive and
+              # their own selected dependency versions for the file-only proof.
+              (cd internal/adaptersupport && GOWORK=off go mod download all)
+              (cd contracts/gen/go/mecatl/driver && GOWORK=off go mod download all)
               cd engine && go mod download all
-              cd ../authn/oidc && go mod download all
+              cd ../internal/adaptersupport && go mod download all
+              cd ../../contracts/gen/go/mecatl/driver && go mod download all
+              cd ../../../../../authn/oidc && go mod download all
               cd ../../provider/ssefilter && go mod download all
               cd ../anthropic && go mod download all
               cd ../openai && go mod download all
@@ -678,6 +705,12 @@ jobs:
       - name: go build (engine module)
         run: cd engine && go build ./...
 
+      - name: go build (public persistence modules)
+        run: |
+          (cd internal/adaptersupport && go build ./...)
+          (cd contracts/gen/go/mecatl/driver && go build ./...)
+          (cd adapters && go build ./...)
+
       - name: go build (OIDC authn module)
         run: cd authn/oidc && go build ./...
 
@@ -697,7 +730,12 @@ jobs:
       - name: Verify Go module and workspace metadata freshness
         run: |
           task tidy
-          git diff --exit-code -- go.mod go.sum go.work go.work.sum engine/go.mod engine/go.sum authn/oidc/go.mod authn/oidc/go.sum environment/microvm/go.mod environment/microvm/go.sum integration/microvm/go.mod integration/microvm/go.sum provider/ssefilter/go.mod provider/ssefilter/go.sum provider/anthropic/go.mod provider/anthropic/go.sum provider/openai/go.mod provider/openai/go.sum provider/openaichat/go.mod provider/openaichat/go.sum
+          git diff --exit-code -- go.mod go.sum go.work go.work.sum engine/go.mod engine/go.sum authn/oidc/go.mod authn/oidc/go.sum environment/microvm/go.mod environment/microvm/go.sum integration/microvm/go.mod integration/microvm/go.sum provider/ssefilter/go.mod provider/ssefilter/go.sum provider/anthropic/go.mod provider/anthropic/go.sum provider/openai/go.mod provider/openai/go.sum provider/openaichat/go.mod provider/openaichat/go.sum internal/adaptersupport/go.mod internal/adaptersupport/go.sum contracts/gen/go/mecatl/driver/go.mod contracts/gen/go/mecatl/driver/go.sum adapters/go.mod
+          # adapters/go.sum is intentionally absent until support and driver v0.1.0
+          # are published. Candidate-proxy tidy verifies its standalone closure.
+
+      - name: Prove standalone public persistence consumers offline
+        run: task test:persistence-standalone
 
       # Prove the macOS-job cost gate stays sound: the terminal leaf directories
       # that macos-relevant-changes.sh skips must remain OUTSIDE the darwin+freebsd
@@ -740,6 +778,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
       - name: Build and run the formula's executables
         env:
           # A recognisable stand-in for a release tag. The release build stamps
@@ -790,6 +831,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
       - name: Run managed temporary storage tests
         run: |
           go test ./internal/adapter/managedtemp -count=1
@@ -818,6 +862,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -841,12 +888,20 @@ jobs:
           mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-a)
           bash .github/scripts/race-test.sh root-a -count=1 "${packages[@]}"
           (cd engine && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...)
+          (cd internal/adaptersupport && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" adaptersupport ./...)
+          (cd contracts/gen/go/mecatl/driver && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" driver-contracts ./...)
+          (cd adapters && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" adapters ./...)
           (cd authn/oidc && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...)
           (cd integration/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm-integration ./...)
           (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
           (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
           (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
           (cd provider/openaichat && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openaichat ./...)
+      - name: Prove standalone public persistence consumers with race detection
+        run: |
+          (cd internal/adaptersupport && GOWORK=off go mod download all && GOWORK=off go mod tidy)
+          (cd contracts/gen/go/mecatl/driver && GOWORK=off go mod download all && GOWORK=off go mod tidy)
+          task test:persistence-standalone RACE=-race
       - name: go test -race (microVM module)
         if: needs.changes.outputs.microvm_relevant == 'true'
         env:
@@ -880,6 +935,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
@@ -920,6 +978,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
@@ -955,6 +1016,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             provider/ssefilter/go.sum
             provider/anthropic/go.sum
@@ -969,6 +1033,9 @@ jobs:
           go test -count=1 "${root_b[@]}"
           go test -count=1 ./cmd/mecatui/ui
           (cd engine && go test ./...)
+          (cd internal/adaptersupport && go test ./...)
+          (cd contracts/gen/go/mecatl/driver && go test ./...)
+          (cd adapters && go test ./...)
           (cd authn/oidc && go test ./...)
           (cd integration/microvm && go test ./...)
           (cd provider/ssefilter && go test ./...)
@@ -1040,6 +1107,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1075,6 +1145,12 @@ jobs:
       # action above installed onto PATH.
       - name: golangci-lint (engine module)
         run: cd engine && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...
+
+      - name: golangci-lint (public persistence modules)
+        run: |
+          (cd internal/adaptersupport && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd contracts/gen/go/mecatl/driver && golangci-lint run --config ../../../../../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
+          (cd adapters && golangci-lint run --config ../.golangci.yml --allow-parallel-runners --timeout=10m ./...)
 
       - name: golangci-lint (OIDC authn module)
         run: cd authn/oidc && golangci-lint run --config ../../.golangci.yml --allow-parallel-runners --timeout=10m ./...
@@ -1232,6 +1308,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1436,6 +1515,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1484,6 +1566,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1568,6 +1653,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum

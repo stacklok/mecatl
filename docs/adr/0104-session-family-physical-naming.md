@@ -38,7 +38,7 @@ the file's own contents anyway.
 ## Decision
 
 **A canonical family name is bounded, injective, and NOT reversible.**
-`internal/adapter/store/jsonlstore/resolve.go` (`encodeSessionToken`) emits
+[internal/adapter/store/jsonlstore/resolve.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/store/jsonlstore/resolve.go) (`encodeSessionToken`) emits
 `sid-v1-<up to 40 sanitized chars>-<32 hex of SHA-256>` under a `sid-v1`
 subdirectory, so the longest filename is 94 bytes for an id of **any** length.
 This is the shape `internal/adapter/flocklease/flocklease.go` (`safeName`)
@@ -71,7 +71,7 @@ error that callers must propagate rather than fold into "not ours".
 interrupted migration leaves the family discoverable and retryable.
 
 **A torn tail does not corrupt the next record.**
-`internal/adapter/store/jsonlstore/jsonlstore.go` (`appendLine`) emits a
+[internal/adapter/store/jsonlstore/jsonlstore.go](https://github.com/stacklok/mecatl/blob/6142f5252a09/internal/adapter/store/jsonlstore/jsonlstore.go) (`appendLine`) emits a
 separating newline when the file does not end in one, bounding the damage from an
 interrupted write to the single record it interrupted.
 

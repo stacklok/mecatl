@@ -2,6 +2,11 @@
 # example image, the Mecatl Studio image (early access, ADR 0351), the mecak8s
 # Helm chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
 # stacklok/homebrew-tap formula) from root `v*` tags or an explicitly selected tag.
+# Nested persistence modules are NOT published by root v* releases. Their
+# initial tags do not yet exist: support and driver v0.1.0 must be published
+# first, then adapters/v0.1.0 after a real standalone adapters/go.sum is committed.
+# The manual preflight is scripts/preflight-persistence-module-release.sh;
+# update the release owner documentation when these tags become public.
 name: Release
 
 on:
@@ -165,6 +170,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
 
@@ -338,6 +346,9 @@ jobs:
           cache: true
           cache-dependency-path: |
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             environment/microvm/go.sum
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -604,6 +615,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             environment/microvm/go.sum
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Download matching microVM bootstrap defaults
@@ -719,6 +733,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
             environment/microvm/go.sum
 
@@ -884,6 +901,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
@@ -1609,6 +1629,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             engine/go.sum
+            internal/adaptersupport/go.sum
+            contracts/gen/go/mecatl/driver/go.sum
+            adapters/go.mod
             authn/oidc/go.sum
 
       # GoReleaser shells out to cosign for signs: and syft for sboms:; neither
