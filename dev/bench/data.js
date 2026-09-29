@@ -280163,6 +280163,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790687362991,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49777c8d96e42864fcb16e4ef642e468ba871a9e",
+          "message": "fix(release): track execution image bases and build before tagging (#2000)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-29T16:52:05+03:00",
+          "tree_id": "db97f19a528d8b8d95f2d9f95e34053659c71642",
+          "url": "https://github.com/stacklok/mecatl/commit/49777c8d96e42864fcb16e4ef642e468ba871a9e"
+        },
+        "date": 1790690664990,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3302,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 92.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -367183,6 +367222,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790690661668,
+  "lastUpdate": 1790690666671,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
