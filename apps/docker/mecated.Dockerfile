@@ -12,12 +12,12 @@
 # Build context is the repository root (see docker-compose.yml: `context: ..`)
 # since mecated needs the whole Go workspace (go.work references ./engine and the
 # other in-repo modules).
-FROM golang:1.27-bookworm AS build
+FROM golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mecated ./cmd/mecated
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/mecated /usr/local/bin/mecated
