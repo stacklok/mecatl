@@ -279766,6 +279766,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790385067963,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6142f5252a092c69a9c18f9bbf09bee884339421",
+          "message": "fix(test): isolate microVM integration dependencies and stabilize workspace metadata (#1999)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-29T15:56:53+03:00",
+          "tree_id": "f71fc9cdc3b35903077d36196f5ad2551d9fa7a2",
+          "url": "https://github.com/stacklok/mecatl/commit/6142f5252a092c69a9c18f9bbf09bee884339421"
+        },
+        "date": 1790687362991,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 112.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -366672,6 +366711,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790687359650,
+  "lastUpdate": 1790687364557,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
