@@ -49,13 +49,17 @@ jobs:
         with:
           persist-credentials: false
           ref: refs/heads/main
-      # No release environment here: read the same repository variables as the
-      # publishing jobs, without environment-scoped overrides or write tokens.
+      # Validate the tracked defaults on main before any release write authority.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          version: v0.30.1
       - name: Validate execution base images
-        env:
-          GO_IMAGE: ${{ vars.EXECUTION_GO_IMAGE }}
-          PROVIDER_RUNTIME_IMAGE: ${{ vars.EXECUTION_PROVIDER_RUNTIME_IMAGE }}
         run: sh .github/scripts/validate-execution-base-images.sh
+      - name: Build execution images without publishing
+        run: |
+          for dockerfile in build/execution-provider/Dockerfile build/execution-workload/Dockerfile; do
+            docker buildx build --platform linux/amd64,linux/arm64 --file "$dockerfile" --output=type=cacheonly .
+          done
 
   release-pr:
     needs: preflight

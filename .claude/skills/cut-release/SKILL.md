@@ -69,10 +69,16 @@ Run from the repo root.
    gh workflow run create-release-pr.yml -f bump_type=patch
    gh run watch "$(gh run list --workflow=create-release-pr.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
    ```
-   The workflow checks the digest-pinned `EXECUTION_GO_IMAGE` and
-   `EXECUTION_PROVIDER_RUNTIME_IMAGE` repository variables before opening the PR.
-   If the check fails, have a maintainer configure reviewed immutable image refs;
-   do not print or guess the values, and do not bypass the check. It then bumps
+   The workflow validates the tracked `ARG` defaults in
+   `build/execution-provider/Dockerfile` and `build/execution-workload/Dockerfile`
+   on `main`: the Go builder, static provider runtime, and Brood Box workload
+   runtime must have tagged digest pins available for Linux amd64 and arm64;
+   it also builds both images without publishing. The tag workflow repeats those
+   checks on the merged commit before tagging. Renovate updates the pins through
+   its native Dockerfile manager; no image repository variables are required.
+   If validation fails, fix the tracked pins through review (or retry a transient
+   registry failure); do not bypass the check. The publishing job validates the
+   tagged checkout again. The workflow bumps
    `VERSION`, the `mecak8s` chart version and app version, and the chart's default
    image tag. It opens `Release vX.Y.Z` from branch `release/vX.Y.Z`, then asserts that the
    required values are synchronized. **If that verification step fails, do not merge the PR**;
