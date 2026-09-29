@@ -172,6 +172,15 @@ type SessionEngineResult struct {
 	// publication. Engines do not hold runtime pins; run admission compares this
 	// tag with the operation pin and rebuilds before use.
 	RuntimeRevision uint64
+	// Authority is the per-session session.Authority the factory minted
+	// DIRECTLY from THIS session's own resolved catalog + resource-capability
+	// list (ADR 0353) — set only by a factory whose Authority must NOT be
+	// derived from Config.RootAuthority's deployment-default closure (today:
+	// AgentDefSessionEngine). The zero value means "the caller derives
+	// Authority the ordinary way" (Config.RootAuthority / carried-authority-
+	// on-fork); every other factory leaves this zero and setPerSessionLabels
+	// ignores it.
+	Authority session.Authority
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
 }
@@ -239,6 +248,20 @@ type SessionEngineFactory func(ctx context.Context, sel ProviderSelector, specs 
 // authorized target incarnation; neither may be projected to the model or wire.
 type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, target session.SessionID, targetFingerprint string, targetOwner *session.Principal, selectedServers, toolCeiling []string) (SessionEngineResult, error)
 
+// AgentDefSessionEngineFactory builds the dedicated engine for a session bound
+// to a named AgentDef (ADR 0353): the session's catalog is built EXCLUSIVELY
+// from the resolved def's own tools/mcpServers (never the deployment's default
+// explorer catalog), and its minted session.Authority (SessionEngineResult.Authority)
+// is derived from that SAME resolved catalog — never Config.RootAuthority's
+// build-time default closure. It mirrors DebugSessionEngineFactory's shape,
+// replacing the debug-target inputs with the def name that selects the engine;
+// no workspace parameter is needed because catalog assembly never binds a
+// filesystem root itself (the session's own tool.Environment does that at run
+// time, exactly like every other per-session factory). An unresolvable
+// defName is a loud error wrapping ErrInvalidArgument, mirroring how an
+// unknown provider_id is handled today.
+type AgentDefSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, defName string) (SessionEngineResult, error)
+
 // ModelSnapshot captures model rows and provider statuses from one publication.
 type ModelSnapshot struct {
 	Models         []*mecatlv1.ModelInfo
@@ -282,6 +305,12 @@ type Config struct {
 	// Nil disables creation and makes persisted debug sessions fail closed at
 	// rehydration rather than falling back to Engine or SessionEngine.
 	DebugSessionEngine DebugSessionEngineFactory
+	// AgentDefSessionEngine builds the dedicated engine for a session bound to
+	// a named AgentDef (ADR 0353). Nil rejects a create naming
+	// agent_definition_name with ErrInvalidArgument, mirroring the
+	// DebugSessionEngine-nil posture. The composition root (internal/app)
+	// supplies it.
+	AgentDefSessionEngine AgentDefSessionEngineFactory
 	// DebugMCP reports whether the debug factory can currently borrow selected
 	// direct tools from the published direct MCP runtime. It is read on every
 	// capabilities request because the runtime can change after startup. Nil
@@ -1961,6 +1990,27 @@ func validateDebugMCPNames(target session.SessionID, names []string) error {
 	return nil
 }
 
+// validateAgentDefCreate rejects two agent_definition_name combinations
+// (ADR 0353) at the create boundary, before any factory is consulted: a debug
+// target (AC1.5 — a named specialist root and the session-debugger admin
+// transport are unrelated concepts) and client-supplied MCP servers, wire or
+// debug-shaped (AC1.2 — the def's own mcpServers: is the exclusive MCP scope;
+// already-configured global servers the def doesn't reference must stay
+// unexposed). An empty agent_definition_name is a no-op — the byte-identical
+// default path.
+func validateAgentDefCreate(opts createSessionOpts) error {
+	if opts.agentDefinitionName == "" {
+		return nil
+	}
+	if opts.debugTargetID != "" {
+		return fmt.Errorf("%w: agent_definition_name cannot be combined with a debug target", ErrInvalidArgument)
+	}
+	if len(opts.clientMCP) > 0 || len(opts.debugMCPServers) > 0 {
+		return fmt.Errorf("%w: agent_definition_name cannot be combined with client-supplied MCP servers (the def's own mcpServers: is the exclusive MCP scope)", ErrInvalidArgument)
+	}
+	return nil
+}
+
 // WithOwner overrides the owner a CreateSession* call stamps on the new session
 // (ADR 0204 decision 4). By DEFAULT the owner comes from the verified principal
 // on the context (session.PrincipalFromContext) — a caller can never name its
@@ -2051,18 +2101,27 @@ func (s *Service) CreateSessionWithProvider(ctx context.Context, mode session.Pe
 // path mints a "sched--"-prefixed id). Zero opts is byte-identical to the
 // pre-Phase-2 signature.
 func (s *Service) CreateSessionWithProfile(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts ...CreateSessionOption) (*session.Session, error) {
-	if sel.ProviderID == "" && sel.ModelID != "" {
-		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
-	}
 	var o createSessionOpts
 	for _, opt := range opts {
 		opt(&o)
+	}
+	// model_id requires provider_id on an ORDINARY session (a bare model on the
+	// default provider is ambiguous) — but an agent_definition_name-bound
+	// session resolves its provider from the def itself (ADR 0353), so once a
+	// later task wires that resolution on top of this factory the combination
+	// is no longer ambiguous. Opts must be parsed BEFORE this guard so it can
+	// see agentDefinitionName.
+	if sel.ProviderID == "" && sel.ModelID != "" && o.agentDefinitionName == "" {
+		return nil, fmt.Errorf("%w: model_id requires provider_id (a bare model on the default provider is ambiguous)", ErrInvalidArgument)
 	}
 	return s.createSessionWithOptions(ctx, mode, limits, sel, profile, o)
 }
 
 func (s *Service) createSessionWithOptions(ctx context.Context, mode session.PermissionMode, limits session.Limits, sel ProviderSelector, profile SessionProfile, opts createSessionOpts) (*session.Session, error) {
 	if err := validateDebugMCPNames(opts.debugTargetID, opts.debugMCPServers); err != nil {
+		return nil, err
+	}
+	if err := validateAgentDefCreate(opts); err != nil {
 		return nil, err
 	}
 	return s.createSession(ctx, mode, limits, sel, opts.clientMCP, profile, opts)
@@ -2108,32 +2167,44 @@ func (s *Service) setTitleGenerationEligibility(sess *session.Session, sel Provi
 }
 
 func (s *Service) setPerSessionLabels(sess *session.Session, sel ProviderSelector, profile SessionProfile, owner *session.Principal, opts createSessionOpts, res SessionEngineResult, broker []tool.Tool, carried session.Authority, carriedBound bool) error {
-	authority := s.rootAuthority(sess.Kind, carried, carriedBound)
-	// Broker wrappers and client-mounted MCP tools are both resolved only after
-	// the process root authority was minted (they are per-SESSION, not known at
-	// build time). Include this session's exact set in a fresh root without
-	// widening authority carried from another session.
-	if !carriedBound && (len(broker) != 0 || len(res.MountedClientMCPTools) != 0) {
-		seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker)+len(res.MountedClientMCPTools))
-		for _, name := range authority.CapabilitySet.Tools {
-			seen[name] = struct{}{}
-		}
-		for _, candidate := range broker {
-			name := candidate.Spec().Name
-			if _, ok := seen[name]; ok {
-				continue
+	var authority session.Authority
+	if opts.agentDefinitionName != "" {
+		// An agent-bound session's Authority is minted DIRECTLY from the def's
+		// own resolved catalog + resource-capability list by
+		// AgentDefSessionEngine (ADR 0353, AC1.9) — never
+		// Config.RootAuthority's deployment-default closure, and never widened
+		// by broker/client-MCP tools below: neither channel reaches an
+		// agent-bound session's create path (AC1.10), so res.MountedClientMCPTools
+		// and broker are always empty here.
+		authority = res.Authority
+	} else {
+		authority = s.rootAuthority(sess.Kind, carried, carriedBound)
+		// Broker wrappers and client-mounted MCP tools are both resolved only after
+		// the process root authority was minted (they are per-SESSION, not known at
+		// build time). Include this session's exact set in a fresh root without
+		// widening authority carried from another session.
+		if !carriedBound && (len(broker) != 0 || len(res.MountedClientMCPTools) != 0) {
+			seen := make(map[string]struct{}, len(authority.CapabilitySet.Tools)+len(broker)+len(res.MountedClientMCPTools))
+			for _, name := range authority.CapabilitySet.Tools {
+				seen[name] = struct{}{}
 			}
-			seen[name] = struct{}{}
-			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
-		}
-		for _, name := range res.MountedClientMCPTools {
-			if _, ok := seen[name]; ok {
-				continue
+			for _, candidate := range broker {
+				name := candidate.Spec().Name
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
 			}
-			seen[name] = struct{}{}
-			authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+			for _, name := range res.MountedClientMCPTools {
+				if _, ok := seen[name]; ok {
+					continue
+				}
+				seen[name] = struct{}{}
+				authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, name)
+			}
+			sort.Strings(authority.CapabilitySet.Tools)
 		}
-		sort.Strings(authority.CapabilitySet.Tools)
 	}
 	if sess.Kind == session.SessionKindDebug {
 		authority.CapabilitySet.Tools = append(authority.CapabilitySet.Tools, res.DebugMCPTools...)
@@ -2405,14 +2476,21 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	if err := s.validateDebugCreate(ctx, profile, specs, opts); err != nil {
 		return nil, err
 	}
-	definitelyPerSession := s.cfg.MCPBroker != nil || sel.ProviderID != "" || sel.ModelID != "" || sel.ReasoningEffort != "" || len(specs) != 0 || profile == ProfileNoFS || s.cfg.LearnedSkills != nil
+	definitelyPerSession := s.cfg.MCPBroker != nil || sel.ProviderID != "" || sel.ModelID != "" || sel.ReasoningEffort != "" || len(specs) != 0 || profile == ProfileNoFS || s.cfg.LearnedSkills != nil || opts.agentDefinitionName != ""
 	if definitelyPerSession {
-		if opts.debugTargetID != "" {
+		switch {
+		case opts.agentDefinitionName != "":
+			if s.cfg.AgentDefSessionEngine == nil {
+				return nil, fmt.Errorf("%w: session-scoped agent identity is not supported (no agent-def session-engine factory configured)", ErrInvalidArgument)
+			}
+		case opts.debugTargetID != "":
 			if s.cfg.DebugSessionEngine == nil {
 				return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
 			}
-		} else if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
-			return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+		default:
+			if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
+				return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+			}
 		}
 		s.mu.Lock()
 		full := len(s.sessionEngines) >= s.cfg.MaxSessionEngines
@@ -2554,7 +2632,7 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 		owner = srcOwner
 	}
 
-	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil
+	needPerSession := s.cfg.MCPBroker != nil || s.sessionNeedsPerFactory(sel, specs, profile, workspace) || s.cfg.LearnedSkills != nil || opts.agentDefinitionName != ""
 	if !needPerSession {
 		// Shared-engine fast path (today's behaviour, byte-identical). The labels are
 		// the empty pair + default profile here (the empty-selector default profile is
@@ -2593,12 +2671,19 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 //
 //nolint:gocyclo // Creation keeps factory, authorization, broker ownership, registration, and teardown in one transaction.
 func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() session.SessionID, mode session.PermissionMode, workspace string, limits session.Limits, sel ProviderSelector, specs []mcp.ServerConfig, profile SessionProfile, carrySnap []session.Message, owner *session.Principal, opts createSessionOpts, carriedAuthority session.Authority, carriedAuthorityBound bool, retryRequest *createRequest, placement *PlacementBinding, publishedPlacement *bool) (*session.Session, error) {
-	if opts.debugTargetID != "" {
+	switch {
+	case opts.agentDefinitionName != "":
+		if s.cfg.AgentDefSessionEngine == nil {
+			return nil, fmt.Errorf("%w: session-scoped agent identity is not supported (no agent-def session-engine factory configured)", ErrInvalidArgument)
+		}
+	case opts.debugTargetID != "":
 		if s.cfg.DebugSessionEngine == nil {
 			return nil, fmt.Errorf("%w: session debugging is not supported", ErrInvalidArgument)
 		}
-	} else if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
-		return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+	default:
+		if s.cfg.SessionEngine == nil && s.cfg.SessionEngineWithTools == nil {
+			return nil, fmt.Errorf("%w: per-session engine not supported (no session-engine factory configured)", ErrInvalidArgument)
+		}
 	}
 	// Cheap cap pre-check (CWE-770): reject BEFORE the factory connects MCP /
 	// allocates an engine when the registry is already full, so a hostile client
@@ -2629,7 +2714,15 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			s.cfg.Commands.Retire(id)
 		}
 	}()
-	if opts.debugTargetID != "" {
+	switch {
+	case opts.agentDefinitionName != "":
+		// Agent-bound sessions (ADR 0353) never reach the MCPBroker attach
+		// branch below — AC1.10. This case is entirely independent of the
+		// debug/broker/callSessionEngine machinery in the default case.
+		factoryDone := creatediag.Begin(ctx, "engine_factory")
+		res, err = s.cfg.AgentDefSessionEngine(ctx, sel, profile, mode, opts.agentDefinitionName)
+		factoryDone(err)
+	case opts.debugTargetID != "":
 		debugTarget, err = s.cfg.Store.Load(ctx, opts.debugTargetID)
 		if err != nil || debugTarget == nil || s.authorizeSession(ctx, debugTarget) != nil {
 			return nil, fmt.Errorf("%w: debug target is unavailable", ErrNotFound)
@@ -2638,7 +2731,7 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 			return nil, fmt.Errorf("%w: debug target incarnation changed during creation", ErrFailedPrecondition)
 		}
 		res, err = s.cfg.DebugSessionEngine(ctx, sel, profile, mode, opts.debugTargetID, session.DebugTargetFingerprint(debugTarget), debugTarget.Owner, opts.debugMCPServers, nil)
-	} else {
+	default:
 		if s.cfg.MCPBroker != nil {
 			if id == "" {
 				id = mintID()

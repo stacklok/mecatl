@@ -33,6 +33,14 @@ func TestSessionScopedAgentIdentity_Scenario2_ResponseEchoesBoundName(t *testing
 		Store:         memstore.New(),
 		DefaultLimits: session.Limits{MaxTurns: 10, MaxToolCalls: 20},
 		Now:           func() time.Time { return time.Unix(0, 0) },
+		// A named agent_definition_name now REQUIRES a per-session engine
+		// (Task B, ADR 0353) — this stub is a trivial "reuse the shared
+		// engine" factory so THIS plumbing-only echo test (AC2.2, Scenario 2)
+		// keeps exercising only the label/echo path; the real catalog-scoping
+		// behaviour is pinned by the Scenario 1 tests instead.
+		AgentDefSessionEngine: func(context.Context, server.ProviderSelector, server.SessionProfile, session.PermissionMode, string) (server.SessionEngineResult, error) {
+			return server.SessionEngineResult{Engine: shared, Close: func() error { return nil }}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
