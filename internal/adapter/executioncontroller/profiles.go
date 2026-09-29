@@ -6,14 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
+
+const maxTolerationSeconds int64 = 86400
 
 // ProfilesFile is the strict operator profile-file schema.
 type ProfilesFile struct {
@@ -22,22 +26,24 @@ type ProfilesFile struct {
 
 // ProfileSpec defines immutable image, storage, resource, and operation bounds.
 type ProfileSpec struct {
-	Image                   string        `yaml:"image"`
-	StorageClass            string        `yaml:"storageClass"`
-	StorageSize             string        `yaml:"storageSize"`
-	CPURequest              string        `yaml:"cpuRequest"`
-	MemoryRequest           string        `yaml:"memoryRequest"`
-	CPULimit                string        `yaml:"cpuLimit"`
-	MemoryLimit             string        `yaml:"memoryLimit"`
-	EphemeralStorageRequest string        `yaml:"ephemeralStorageRequest"`
-	EphemeralStorageLimit   string        `yaml:"ephemeralStorageLimit"`
-	TmpSizeLimit            string        `yaml:"tmpSizeLimit"`
-	RuntimeClassName        string        `yaml:"runtimeClassName"`
-	ImagePullSecrets        []string      `yaml:"imagePullSecrets,omitempty"`
-	MaxFileBytes            int64         `yaml:"maxFileBytes"`
-	MaxCommandBytes         int64         `yaml:"maxCommandBytes"`
-	MaxCommandDuration      time.Duration `yaml:"maxCommandDuration"`
-	MaxEnvironments         int           `yaml:"maxEnvironments"`
+	Image                   string              `yaml:"image"`
+	StorageClass            string              `yaml:"storageClass"`
+	StorageSize             string              `yaml:"storageSize"`
+	CPURequest              string              `yaml:"cpuRequest"`
+	MemoryRequest           string              `yaml:"memoryRequest"`
+	CPULimit                string              `yaml:"cpuLimit"`
+	MemoryLimit             string              `yaml:"memoryLimit"`
+	EphemeralStorageRequest string              `yaml:"ephemeralStorageRequest"`
+	EphemeralStorageLimit   string              `yaml:"ephemeralStorageLimit"`
+	TmpSizeLimit            string              `yaml:"tmpSizeLimit"`
+	RuntimeClassName        string              `yaml:"runtimeClassName"`
+	ImagePullSecrets        []string            `yaml:"imagePullSecrets,omitempty"`
+	NodeSelector            map[string]string   `yaml:"nodeSelector,omitempty"`
+	Tolerations             []corev1.Toleration `yaml:"tolerations,omitempty"`
+	MaxFileBytes            int64               `yaml:"maxFileBytes"`
+	MaxCommandBytes         int64               `yaml:"maxCommandBytes"`
+	MaxCommandDuration      time.Duration       `yaml:"maxCommandDuration"`
+	MaxEnvironments         int                 `yaml:"maxEnvironments"`
 }
 
 // Profiles is a validated immutable profile registry.
@@ -118,7 +124,60 @@ func validateProfile(name string, s ProfileSpec) (resolvedProfile, error) {
 	if err := validateImagePullSecrets(name, s.ImagePullSecrets); err != nil {
 		return resolvedProfile{}, err
 	}
+	if err := validateScheduling(name, s.NodeSelector, s.Tolerations); err != nil {
+		return resolvedProfile{}, err
+	}
 	return quantities, nil
+}
+
+func validateScheduling(name string, nodeSelector map[string]string, tolerations []corev1.Toleration) error {
+	if len(nodeSelector) > 32 {
+		return fmt.Errorf("profile %q has too many nodeSelector entries", name)
+	}
+	for key, value := range nodeSelector {
+		if len(validation.IsQualifiedName(key)) != 0 || len(validation.IsValidLabelValue(value)) != 0 {
+			return fmt.Errorf("profile %q has invalid nodeSelector %q", name, key)
+		}
+	}
+	if len(tolerations) > 16 {
+		return fmt.Errorf("profile %q has too many tolerations", name)
+	}
+	for i, toleration := range tolerations {
+		if err := validateToleration(toleration); err != nil {
+			return fmt.Errorf("profile %q toleration %d: %w", name, i, err)
+		}
+		for _, previous := range tolerations[:i] {
+			if reflect.DeepEqual(previous, toleration) {
+				return fmt.Errorf("profile %q has duplicate toleration", name)
+			}
+		}
+	}
+	return nil
+}
+
+func validateToleration(t corev1.Toleration) error {
+	if t.Key != "" && len(validation.IsQualifiedName(t.Key)) != 0 {
+		return fmt.Errorf("invalid key %q", t.Key)
+	}
+	if t.Operator != corev1.TolerationOpExists && t.Operator != corev1.TolerationOpEqual {
+		return fmt.Errorf("invalid operator %q", t.Operator)
+	}
+	if t.Operator == corev1.TolerationOpExists && t.Value != "" {
+		return errors.New("exists operator requires an empty value")
+	}
+	if t.Operator == corev1.TolerationOpEqual && t.Key == "" {
+		return errors.New("equal operator requires a key")
+	}
+	if t.Operator == corev1.TolerationOpEqual && len(validation.IsValidLabelValue(t.Value)) != 0 {
+		return fmt.Errorf("invalid value %q", t.Value)
+	}
+	if t.Effect != "" && t.Effect != corev1.TaintEffectNoSchedule && t.Effect != corev1.TaintEffectPreferNoSchedule && t.Effect != corev1.TaintEffectNoExecute {
+		return fmt.Errorf("invalid effect %q", t.Effect)
+	}
+	if t.TolerationSeconds != nil && (*t.TolerationSeconds < 0 || *t.TolerationSeconds > maxTolerationSeconds || t.Effect != corev1.TaintEffectNoExecute) {
+		return fmt.Errorf("tolerationSeconds must be between 0 and %d and requires the NoExecute effect", maxTolerationSeconds)
+	}
+	return nil
 }
 
 func validateImagePullSecrets(name string, secrets []string) error {

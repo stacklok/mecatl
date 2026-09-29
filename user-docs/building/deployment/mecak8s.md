@@ -210,9 +210,10 @@ delivery system:
   resolver CIDRs.
 
 The provider validates every configured RuntimeClass and StorageClass with
-cluster-scoped `get` requests before it becomes ready. The chart grants those
-requests only for the names present in `profiles`; it grants no cluster-wide list
-or watch access.
+cluster-scoped `get` requests before it becomes ready. RuntimeClasses must have
+no scheduling selectors or tolerations: only the operator profile may define
+executor scheduling. The chart grants those requests only for the names present
+in `profiles`; it grants no cluster-wide list or watch access.
 
 The following profile shows every required chart key. Save it as
 `execution-values.yaml` and replace each placeholder:
@@ -280,6 +281,14 @@ profiles:
     ephemeralStorageLimit: 1Gi
     tmpSizeLimit: 256Mi
     runtimeClassName: <RUNTIME_CLASS>
+    # Optional operator-only scheduling constraints.
+    nodeSelector:
+      node.kubernetes.io/instance-type: <WORKER_TYPE>
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: build
+        effect: NoSchedule
     maxFileBytes: 5242880
     maxCommandBytes: 1048576
     maxCommandDuration: 5m
@@ -304,6 +313,21 @@ resourceGovernance:
   limitsMemory: 80Gi
   limitsEphemeralStorage: 80Gi
 ```
+
+`nodeSelector` and `tolerations` are optional, immutable, operator-only profile
+settings; clients cannot select or change them. Omit either setting when unused:
+the chart rejects explicit empty maps and lists. A profile accepts at most 32
+qualified label selectors and 16 unique tolerations. Tolerations use `Exists`
+(with an empty value) or `Equal` (with a key); `tolerationSeconds` must be
+between 0 and 86,400 seconds and only applies to `NoExecute`. New executor Pods
+explicitly include the 300-second `NoExecute` tolerations for
+`node.kubernetes.io/not-ready` and `node.kubernetes.io/unreachable` unless the profile already specifies that key
+and effect; previously created Pods may retain cluster-configured default
+durations of up to one day. The controller rejects other scheduling or affinity
+mutations. Scheduling changes the immutable profile identity. While retained
+allocations or configuration remain, the chart rejects profile changes even after
+quiescing and retiring allocations; use a new provider release in a dedicated
+namespace instead.
 
 Replace the all-zero `publicKeySHA256` with the lowercase hexadecimal SHA-256
 hash of the **raw 32-byte Ed25519 public key** corresponding to `grant-k1.pem`,

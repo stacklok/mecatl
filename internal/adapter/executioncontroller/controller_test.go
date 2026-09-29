@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -89,6 +90,94 @@ func TestReconcileCreatesTokenlessNonRootPodAndRetainedPVC(t *testing.T) {
 	}
 }
 
+func TestExecutorAppliesAndValidatesProfileScheduling(t *testing.T) {
+	ctx := t.Context()
+	env := testEnvironment()
+	profiles := testProfiles()
+	profile, _ := profiles.get("go")
+	seconds := int64(60)
+	profile.Spec.NodeSelector = map[string]string{"node.kubernetes.io/instance-type": "worker"}
+	profile.Spec.Tolerations = []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpEqual, Value: "build", Effect: corev1.TaintEffectNoSchedule}, {Key: "drain", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds}}
+	profiles.byName["go"] = profile
+	k := kubefake.NewSimpleClientset()
+	r := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env), k, "ns", profiles)
+	for range 2 {
+		if err := r.Reconcile(ctx, env.GetName()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pod, err := k.CoreV1().Pods("ns").Get(ctx, "executor-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultSeconds := int64(300)
+	defaultSuffix := []corev1.Toleration{
+		{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &defaultSeconds},
+		{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &defaultSeconds},
+	}
+	if !reflect.DeepEqual(pod.Spec.NodeSelector, profile.Spec.NodeSelector) || !reflect.DeepEqual(pod.Spec.Tolerations, append(append([]corev1.Toleration(nil), profile.Spec.Tolerations...), defaultSuffix...)) {
+		t.Fatalf("scheduling not applied: %+v", pod.Spec)
+	}
+	legacy := pod.DeepCopy()
+	legacy.Spec.Tolerations = append([]corev1.Toleration(nil), profile.Spec.Tolerations...)
+	if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, legacy); err != nil {
+		t.Fatalf("pre-default Pod rejected: %v", err)
+	}
+	custom := pod.DeepCopy()
+	custom.Spec.Tolerations[2].TolerationSeconds = new(int64(600))
+	custom.Spec.Tolerations[3].TolerationSeconds = new(int64(600))
+	if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, custom); err != nil {
+		t.Fatalf("older Pod with cluster default duration rejected: %v", err)
+	}
+	if _, err := k.CoreV1().Pods("ns").Update(ctx, custom, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(ctx, env.GetName()); err != nil {
+		t.Fatalf("older Pod with cluster defaults became unavailable: %v", err)
+	}
+	withoutProfileTolerations := profile
+	withoutProfileTolerations.Spec.Tolerations = nil
+	withoutProfileDefaults := pod.DeepCopy()
+	withoutProfileDefaults.Spec.Tolerations = append([]corev1.Toleration(nil), custom.Spec.Tolerations[2:]...)
+	if err := validatePod(env, withoutProfileTolerations, "workspace-test", profiles.executorServiceAccount, withoutProfileDefaults); err != nil {
+		t.Fatalf("older Pod with no profile tolerations and cluster defaults rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*corev1.Pod){
+		"unexpected toleration": func(p *corev1.Pod) {
+			p.Spec.Tolerations = append(p.Spec.Tolerations, corev1.Toleration{Key: "injected", Operator: corev1.TolerationOpExists})
+		},
+		"changed default operator":  func(p *corev1.Pod) { p.Spec.Tolerations[2].Operator = corev1.TolerationOpEqual },
+		"changed default value":     func(p *corev1.Pod) { p.Spec.Tolerations[2].Value = "injected" },
+		"excessive default seconds": func(p *corev1.Pod) { p.Spec.Tolerations[2].TolerationSeconds = new(int64(86401)) },
+		"changed selector":          func(p *corev1.Pod) { p.Spec.NodeSelector["injected"] = "true" },
+		"injected affinity":         func(p *corev1.Pod) { p.Spec.Affinity = &corev1.Affinity{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := pod.DeepCopy()
+			mutate(changed)
+			if err := validatePod(env, profile, "workspace-test", profiles.executorServiceAccount, changed); err == nil {
+				t.Fatal("unexpected scheduling mutation accepted")
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name       string
+		configured corev1.Toleration
+		want       int
+	}{
+		{"matching key and effect with Equal value", corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpEqual, Value: "other", Effect: corev1.TaintEffectNoExecute}, 2},
+		{"wildcard key", corev1.Toleration{Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute}, 3},
+		{"wrong effect", corev1.Toleration{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := expectedPodTolerations([]corev1.Toleration{tc.configured})
+			if len(got) != tc.want || got[0] != tc.configured {
+				t.Fatalf("default admission matching: %+v", got)
+			}
+		})
+	}
+}
+
 func TestExecutorRequiresDedicatedServiceAccount(t *testing.T) {
 	for _, name := range []string{"", "default"} {
 		t.Run(name, func(t *testing.T) {
@@ -165,41 +254,55 @@ func TestExecutorPullIdentity(t *testing.T) {
 }
 
 func TestExecutorPullProfileDigestMismatchDoesNotAllocate(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "profiles.yaml")
-	load := func(content string) *Profiles {
-		t.Helper()
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		profiles, err := LoadProfiles(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return profiles.WithExecutorServiceAccount("release-executor")
-	}
-	original := load(validProfileYAML())
-	old, _ := original.get("go")
-	changed := load(validProfileYAML() + "    imagePullSecrets: [registry]\n")
-	env := testEnvironment()
-	if err := unstructured.SetNestedField(env.Object, old.Digest, "spec", "profileDigest"); err != nil {
-		t.Fatal(err)
-	}
-	d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
-	k := kubefake.NewSimpleClientset()
-	if err := NewReconciler(d, k, "ns", changed).Reconcile(t.Context(), env.GetName()); err != nil {
-		t.Fatal(err)
-	}
-	got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), env.GetName(), metav1.GetOptions{})
-	if err != nil || conditionTrue(got, "Ready") || textNested(got.Object, "status", "pod", "uid") != "" || textNested(got.Object, "spec", "profileDigest") != old.Digest {
-		t.Fatalf("old profile was adopted or changed: %v: %v", got, err)
-	}
-	pods, err := k.CoreV1().Pods("ns").List(t.Context(), metav1.ListOptions{})
-	if err != nil || len(pods.Items) != 0 {
-		t.Fatalf("Pod created for stale profile: %v: %v", pods, err)
-	}
-	pvcs, err := k.CoreV1().PersistentVolumeClaims("ns").List(t.Context(), metav1.ListOptions{})
-	if err != nil || len(pvcs.Items) != 0 {
-		t.Fatalf("PVC created for stale profile: %v: %v", pvcs, err)
+	for _, tc := range []struct {
+		name  string
+		drift string
+	}{
+		{name: "pull secrets", drift: "    imagePullSecrets: [registry]\n"},
+		{name: "scheduling", drift: "    nodeSelector: {node.kubernetes.io/instance-type: worker}\n    tolerations: [{key: dedicated, operator: Equal, value: build, effect: NoSchedule}]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profiles.yaml")
+			load := func(content string) *Profiles {
+				t.Helper()
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				profiles, err := LoadProfiles(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return profiles.WithExecutorServiceAccount("release-executor")
+			}
+			original := load(validProfileYAML())
+			old, _ := original.get("go")
+			changed := load(validProfileYAML() + tc.drift)
+			current, _ := changed.get("go")
+			if current.Digest == old.Digest {
+				t.Fatal("changed profile digest did not differ")
+			}
+			env := testEnvironment()
+			if err := unstructured.SetNestedField(env.Object, old.Digest, "spec", "profileDigest"); err != nil {
+				t.Fatal(err)
+			}
+			d := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), env)
+			k := kubefake.NewSimpleClientset()
+			if err := NewReconciler(d, k, "ns", changed).Reconcile(t.Context(), env.GetName()); err != nil {
+				t.Fatal(err)
+			}
+			got, err := d.Resource(ExecutionEnvironmentGVR).Namespace("ns").Get(t.Context(), env.GetName(), metav1.GetOptions{})
+			if err != nil || conditionTrue(got, "Ready") || textNested(got.Object, "status", "pod", "uid") != "" || textNested(got.Object, "spec", "profileDigest") != old.Digest {
+				t.Fatalf("old profile was adopted or changed: %v: %v", got, err)
+			}
+			pods, err := k.CoreV1().Pods("ns").List(t.Context(), metav1.ListOptions{})
+			if err != nil || len(pods.Items) != 0 {
+				t.Fatalf("Pod created for stale profile: %v: %v", pods, err)
+			}
+			pvcs, err := k.CoreV1().PersistentVolumeClaims("ns").List(t.Context(), metav1.ListOptions{})
+			if err != nil || len(pvcs.Items) != 0 {
+				t.Fatalf("PVC created for stale profile: %v: %v", pvcs, err)
+			}
+		})
 	}
 }
 
@@ -527,6 +630,29 @@ func TestInitializeRefusesMissingRuntimeClassBeforeCreatingPods(t *testing.T) {
 		if action.GetVerb() == "create" && action.GetResource().Resource == "pods" {
 			t.Fatal("profile preflight created a Pod")
 		}
+	}
+}
+
+func TestInitializeRefusesRuntimeClassScheduling(t *testing.T) {
+	for name, scheduling := range map[string]*nodev1.Scheduling{
+		"selector":   {NodeSelector: map[string]string{"pool": "workers"}},
+		"toleration": {Tolerations: []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpExists}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			kube := kubefake.NewSimpleClientset(
+				&nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "sandboxed"}, Scheduling: scheduling},
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "standard"}},
+			)
+			r := NewReconciler(dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), testEnvironment()), kube, "ns", testProfiles())
+			if err := r.Initialize(t.Context()); err == nil || !strings.Contains(err.Error(), `RuntimeClass "sandboxed" must not define scheduling`) || r.Ready() {
+				t.Fatalf("preflight accepted RuntimeClass scheduling: ready=%v error=%v", r.Ready(), err)
+			}
+			for _, action := range kube.Actions() {
+				if action.GetVerb() == "create" && action.GetResource().Resource == "pods" {
+					t.Fatal("preflight created a Pod")
+				}
+			}
+		})
 	}
 }
 

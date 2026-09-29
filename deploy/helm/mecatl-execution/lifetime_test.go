@@ -130,6 +130,8 @@ func TestChartRetainedLifetime(t *testing.T) {
 		{name: "removed profile policy", args: []string{"--set-json", "networkPolicy.workloadProfiles={}"}, want: "configuration is incompatible"},
 		{name: "changed egress", args: []string{"--set", "networkPolicy.workloadProfiles.go.egress[0].cidr=10.3.0.0/16"}, want: "configuration is incompatible"},
 		{name: "changed profile", args: []string{"--set", "profiles.go.maxEnvironments=30"}, want: "configuration is incompatible"},
+		{name: "changed profile scheduling", args: []string{"--set", "profiles.go.nodeSelector.pool=workers"}, want: "configuration is incompatible"},
+		{name: "changed profile tolerations", args: []string{"--set", "profiles.go.tolerations[0].key=dedicated", "--set", "profiles.go.tolerations[0].operator=Exists"}, want: "configuration is incompatible"},
 		{name: "changed profile pulls", args: []string{"--set-json", `profiles.go.imagePullSecrets=["registry"]`}, want: "configuration is incompatible"},
 		{name: "changed fullname", args: []string{"--set", "fullnameOverride=other"}, want: "ServiceAccount other-executor with token automount disabled"},
 		{name: "missing profiles with orphan policies", mutate: func(m map[string]map[string]any) {
@@ -259,6 +261,40 @@ func TestChartRejectsInvalidPullSecrets(t *testing.T) {
 	}
 	if _, err := renderLifetime(t, nil, "--set-json", `provider.imagePullSecrets=["a","b","c","d","e","f","g","h"]`, "--set-json", `profiles.go.imagePullSecrets=["a","b","c","d","e","f","g","h"]`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestChartSchedulingSchema(t *testing.T) {
+	objects, err := renderLifetime(t, nil,
+		"--set-json", `profiles.go.nodeSelector={"node.kubernetes.io/instance-type":"worker"}`,
+		"--set-json", `profiles.go.tolerations=[{"key":"dedicated","operator":"Equal","value":"build","effect":"NoSchedule"}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileCM := &unstructured.Unstructured{Object: objects["ConfigMap/test-mecatl-execution-profiles"]}
+	content, _, _ := unstructured.NestedString(profileCM.Object, "data", "profiles.yaml")
+	var decoded map[string]any
+	if err := yaml.NewYAMLOrJSONDecoder(strings.NewReader(content), 4096).Decode(&decoded); err != nil {
+		t.Fatal(err)
+	}
+	profile := decoded["profiles"].(map[string]any)["go"].(map[string]any)
+	if !reflect.DeepEqual(profile["nodeSelector"], map[string]any{"node.kubernetes.io/instance-type": "worker"}) || !reflect.DeepEqual(profile["tolerations"], []any{map[string]any{"key": "dedicated", "operator": "Equal", "value": "build", "effect": "NoSchedule"}}) {
+		t.Fatalf("rendered profile scheduling: %v", profile)
+	}
+	for _, tc := range []struct{ key, value string }{
+		{"profiles.go.nodeSelector", `{}`},
+		{"profiles.go.tolerations", `[]`},
+		{"profiles.go.tolerations", `[{"key":"dedicated"}]`},
+		{"profiles.go.tolerations", `[{"key":"dedicated","operator":"Exists"},{"key":"dedicated","operator":"Exists"}]`},
+		{"profiles.go.nodeSelector", `{"bad/key/again":"worker"}`},
+		{"profiles.go.tolerations", `[{"operator":"Exists","value":"build"}]`},
+		{"profiles.go.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoSchedule","tolerationSeconds":1}]`},
+		{"profiles.go.tolerations", `[{"key":"dedicated","operator":"Exists","effect":"NoExecute","tolerationSeconds":86401}]`},
+		{"profiles.go.tolerations", `[{"key":"dedicated","operator":"Exists","unknown":true}]`},
+	} {
+		if _, err := renderLifetime(t, nil, "--set-json", tc.key+"="+tc.value); err == nil {
+			t.Fatalf("invalid scheduling accepted: %s=%s", tc.key, tc.value)
+		}
 	}
 }
 

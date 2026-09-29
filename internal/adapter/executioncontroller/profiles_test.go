@@ -1,10 +1,13 @@
 package executioncontroller
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestLoadProfilesStrictAndDigestPinned(t *testing.T) {
@@ -121,6 +124,62 @@ func TestProfilePullSecretDigestAndValidation(t *testing.T) {
 	}
 	if _, err := load("    imagePullSecret: [registry]\n"); err == nil {
 		t.Fatal("unknown field accepted")
+	}
+}
+
+func TestProfileSchedulingDigestAndValidation(t *testing.T) {
+	load := func(extra string) (resolvedProfile, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "profiles.yaml")
+		if err := os.WriteFile(path, []byte(validProfileYAML()+extra), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		profiles, err := LoadProfiles(path)
+		if err != nil {
+			return resolvedProfile{}, err
+		}
+		profile, _ := profiles.get("go")
+		return profile, nil
+	}
+	legacy, err := load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := load("    nodeSelector: {}\n    tolerations: []\n")
+	if err != nil || legacy.Digest != empty.Digest {
+		t.Fatalf("empty scheduling changed digest: legacy=%s empty=%s err=%v", legacy.Digest, empty.Digest, err)
+	}
+	configured, err := load("    nodeSelector: {node.kubernetes.io/instance-type: worker}\n    tolerations:\n      - key: dedicated\n        operator: Equal\n        value: build\n        effect: NoSchedule\n      - key: node.kubernetes.io/not-ready\n        operator: Exists\n        effect: NoExecute\n        tolerationSeconds: 300\n")
+	if err != nil || configured.Digest == legacy.Digest || configured.Spec.NodeSelector["node.kubernetes.io/instance-type"] != "worker" || len(configured.Spec.Tolerations) != 2 || configured.Spec.Tolerations[0].Operator != corev1.TolerationOpEqual {
+		t.Fatalf("configured scheduling=%+v: %v", configured, err)
+	}
+	for name, value := range map[string]string{
+		"unknown nested field":   "    tolerations:\n      - operator: Exists\n        unexpected: true\n",
+		"invalid selector key":   "    nodeSelector: {'bad/key/again': worker}\n",
+		"invalid selector value": "    nodeSelector: {pool: 'bad value'}\n",
+		"exists value":           "    tolerations: [{operator: Exists, value: build}]\n",
+		"equal no key":           "    tolerations: [{operator: Equal, value: build}]\n",
+		"empty key equal":        "    tolerations: [{key: '', operator: Equal, value: build}]\n",
+		"invalid effect":         "    tolerations: [{key: dedicated, operator: Exists, effect: Invalid}]\n",
+		"seconds wrong effect":   "    tolerations: [{key: dedicated, operator: Exists, effect: NoSchedule, tolerationSeconds: 1}]\n",
+		"negative seconds":       "    tolerations: [{key: dedicated, operator: Exists, effect: NoExecute, tolerationSeconds: -1}]\n",
+		"excessive seconds":      "    tolerations: [{key: dedicated, operator: Exists, effect: NoExecute, tolerationSeconds: 86401}]\n",
+		"duplicate":              "    tolerations: [{key: dedicated, operator: Exists}, {key: dedicated, operator: Exists}]\n",
+		"unsupported operator":   "    tolerations: [{key: dedicated, operator: Lt, value: '1'}]\n",
+		"too many tolerations":   "    tolerations:\n" + strings.Repeat("      - {key: dedicated, operator: Exists}\n", 17),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := load(value); err == nil {
+				t.Fatal("invalid scheduling accepted")
+			}
+		})
+	}
+	selectors := "    nodeSelector:\n"
+	for i := range 33 {
+		selectors += fmt.Sprintf("      key%d: value\n", i)
+	}
+	if _, err := load(selectors); err == nil {
+		t.Fatal("too many selectors accepted")
 	}
 }
 

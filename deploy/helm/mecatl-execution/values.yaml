@@ -57,6 +57,10 @@ profiles: {}
 #     ephemeralStorageLimit: 1Gi
 #     tmpSizeLimit: 256Mi
 #     runtimeClassName: gvisor
+#     # Optional operator-only scheduling constraints (up to 32 selectors and 16 tolerations).
+#     nodeSelector: {node.kubernetes.io/instance-type: worker}
+#     tolerations:
+#       - {key: dedicated, operator: Equal, value: build, effect: NoSchedule}
 #     maxFileBytes: 5242880
 #     maxCommandBytes: 1048576
 #     maxCommandDuration: 5m

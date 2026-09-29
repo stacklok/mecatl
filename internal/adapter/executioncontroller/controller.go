@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"sync"
@@ -91,8 +92,12 @@ func (r *Reconciler) Initialize(ctx context.Context) error {
 func (r *Reconciler) preflightProfiles(ctx context.Context) error {
 	runtimeClasses, storageClasses := r.profiles.clusterResources()
 	for _, name := range runtimeClasses {
-		if _, err := r.kube.NodeV1().RuntimeClasses().Get(ctx, name, metav1.GetOptions{}); err != nil {
+		runtimeClass, err := r.kube.NodeV1().RuntimeClasses().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
 			return fmt.Errorf("profile preflight: RuntimeClass %q unavailable: %w", name, err)
+		}
+		if runtimeClass.Scheduling != nil && (len(runtimeClass.Scheduling.NodeSelector) != 0 || len(runtimeClass.Scheduling.Tolerations) != 0) {
+			return fmt.Errorf("profile preflight: RuntimeClass %q must not define scheduling", name)
 		}
 	}
 	for _, name := range storageClasses {
@@ -319,7 +324,7 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 	for _, secret := range p.Spec.ImagePullSecrets {
 		pullSecrets = append(pullSecrets, corev1.LocalObjectReference{Name: secret})
 	}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"execution.mecatl.dev/environment": env.GetName(), "execution.mecatl.dev/profile": hashText(textNested(env.Object, "spec", "profile"))[:16]}, Finalizers: []string{executorFinalizer}, OwnerReferences: []metav1.OwnerReference{{APIVersion: env.GetAPIVersion(), Kind: env.GetKind(), Name: env.GetName(), UID: env.GetUID(), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: r.profiles.executorServiceAccount, ImagePullSecrets: pullSecrets, AutomountServiceAccountToken: &noPriv, RuntimeClassName: &p.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: p.Spec.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: cpuReq, corev1.ResourceMemory: memReq, corev1.ResourceEphemeralStorage: ephemeralReq}, Limits: corev1.ResourceList{corev1.ResourceCPU: cpuLim, corev1.ResourceMemory: memLim, corev1.ResourceEphemeralStorage: ephemeralLim}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &tmpLim}}}}}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"execution.mecatl.dev/environment": env.GetName(), "execution.mecatl.dev/profile": hashText(textNested(env.Object, "spec", "profile"))[:16]}, Finalizers: []string{executorFinalizer}, OwnerReferences: []metav1.OwnerReference{{APIVersion: env.GetAPIVersion(), Kind: env.GetKind(), Name: env.GetName(), UID: env.GetUID(), Controller: &nonroot}}}, Spec: corev1.PodSpec{ServiceAccountName: r.profiles.executorServiceAccount, ImagePullSecrets: pullSecrets, NodeSelector: maps.Clone(p.Spec.NodeSelector), Tolerations: expectedPodTolerations(p.Spec.Tolerations), AutomountServiceAccountToken: &noPriv, RuntimeClassName: &p.Spec.RuntimeClassName, RestartPolicy: corev1.RestartPolicyNever, SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonroot, RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{Name: "executor", Image: p.Spec.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &noPriv, ReadOnlyRootFilesystem: &ro, RunAsNonRoot: &nonroot, RunAsUser: &uid, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: cpuReq, corev1.ResourceMemory: memReq, corev1.ResourceEphemeralStorage: ephemeralReq}, Limits: corev1.ResourceList{corev1.ResourceCPU: cpuLim, corev1.ResourceMemory: memLim, corev1.ResourceEphemeralStorage: ephemeralLim}}, VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}, {Name: "tmp", MountPath: "/tmp"}}}}, Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvc}}}, {Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &tmpLim}}}}}}
 	created, err := pods.Create(ctx, pod, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		created, err = pods.Get(ctx, name, metav1.GetOptions{})
@@ -328,6 +333,49 @@ func (r *Reconciler) ensurePod(ctx context.Context, env *unstructured.Unstructur
 		return nil, err
 	}
 	return created, validatePod(env, p, pvc, r.profiles.executorServiceAccount, created)
+}
+
+func expectedPodTolerations(configured []corev1.Toleration) []corev1.Toleration {
+	tolerations := append([]corev1.Toleration(nil), configured...)
+	for _, key := range []string{"node.kubernetes.io/not-ready", "node.kubernetes.io/unreachable"} {
+		if toleratesDefaultNoExecute(tolerations, key) {
+			continue
+		}
+		seconds := int64(300)
+		tolerations = append(tolerations, corev1.Toleration{Key: key, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds})
+	}
+	return tolerations
+}
+
+func toleratesDefaultNoExecute(tolerations []corev1.Toleration, key string) bool {
+	for _, toleration := range tolerations {
+		if toleration.Key == key && toleration.Effect == corev1.TaintEffectNoExecute {
+			return true
+		}
+	}
+	return false
+}
+
+func validPodTolerations(got, configured []corev1.Toleration) bool {
+	if reflect.DeepEqual(got, expectedPodTolerations(configured)) || reflect.DeepEqual(got, configured) {
+		return true
+	}
+	// Older Pods could have received cluster-configured DefaultTolerationSeconds.
+	// Only the exact admission key/operator/value/effect suffix may vary in duration.
+	want := expectedPodTolerations(configured)
+	if len(got) != len(want) || (len(configured) != 0 && !reflect.DeepEqual(got[:len(configured)], configured)) {
+		return false
+	}
+	for i := len(configured); i < len(want); i++ {
+		if got[i].Key != want[i].Key || got[i].Operator != corev1.TolerationOpExists || got[i].Value != "" || got[i].Effect != corev1.TaintEffectNoExecute || got[i].TolerationSeconds == nil || *got[i].TolerationSeconds < 0 || *got[i].TolerationSeconds > maxTolerationSeconds {
+			return false
+		}
+	}
+	return true
+}
+
+func equalNodeSelectors(got, want map[string]string) bool {
+	return len(got) == 0 && len(want) == 0 || reflect.DeepEqual(got, want)
 }
 
 func validatePVC(env *unstructured.Unstructured, p resolvedProfile, pvc *corev1.PersistentVolumeClaim) error {
@@ -358,6 +406,9 @@ func validatePod(env *unstructured.Unstructured, p resolvedProfile, pvcName, ser
 		if pod.Spec.ImagePullSecrets[i].Name != secret {
 			return errors.New("pod image pull secrets mismatch")
 		}
+	}
+	if !equalNodeSelectors(pod.Spec.NodeSelector, p.Spec.NodeSelector) || !validPodTolerations(pod.Spec.Tolerations, p.Spec.Tolerations) || pod.Spec.Affinity != nil {
+		return errors.New("pod scheduling specification mismatch")
 	}
 	if pod.Spec.RestartPolicy != corev1.RestartPolicyNever || pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken || pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName != p.Spec.RuntimeClassName || len(pod.Spec.Containers) != 1 || len(pod.Spec.InitContainers) != 0 || len(pod.Spec.EphemeralContainers) != 0 || len(pod.Spec.Volumes) != 2 {
 		return errors.New("pod immutable specification mismatch")
