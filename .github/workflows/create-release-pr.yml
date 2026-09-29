@@ -39,7 +39,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Validate release base images
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/heads/main
+      # No release environment here: read the same repository variables as the
+      # publishing jobs, without environment-scoped overrides or write tokens.
+      - name: Validate execution base images
+        env:
+          GO_IMAGE: ${{ vars.EXECUTION_GO_IMAGE }}
+          PROVIDER_RUNTIME_IMAGE: ${{ vars.EXECUTION_PROVIDER_RUNTIME_IMAGE }}
+        run: sh .github/scripts/validate-execution-base-images.sh
+
   release-pr:
+    needs: preflight
     name: Open release PR
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -6,6 +6,8 @@ taskfile="$repo_root/Taskfile.yml"
 ci="$repo_root/.github/workflows/ci.yml"
 e2e="$repo_root/.github/workflows/microvm-e2e.yml"
 release="$repo_root/.github/workflows/release.yml"
+release_pr="$repo_root/.github/workflows/create-release-pr.yml"
+validate_execution_images="$repo_root/.github/scripts/validate-execution-base-images.sh"
 package="$repo_root/.github/scripts/package-microvm-release.sh"
 prepare_dev="$repo_root/.github/scripts/prepare-microvm-development-release.sh"
 sign="$repo_root/.github/scripts/sign-microvm-release-evidence.sh"
@@ -31,6 +33,24 @@ forbid() {
     exit 1
   fi
 }
+
+# Release input validation must reject missing, mutable, and malformed digests
+# without echoing the image reference or needing access to repository settings.
+digest=$(printf '%064d' 0)
+GO_IMAGE="example.invalid/go@sha256:$digest" PROVIDER_RUNTIME_IMAGE="example.invalid/runtime@sha256:$digest" \
+  sh "$validate_execution_images"
+for bad in '' 'example.invalid/go:latest' 'example.invalid/go@sha256:abcd' "example.invalid/go@sha256:${digest%0}g"; do
+  if GO_IMAGE="$bad" PROVIDER_RUNTIME_IMAGE="example.invalid/runtime@sha256:$digest" \
+    sh "$validate_execution_images" >/dev/null 2>&1; then
+    echo 'release input validation accepted a mutable or malformed Go image' >&2
+    exit 1
+  fi
+  if GO_IMAGE="example.invalid/go@sha256:$digest" PROVIDER_RUNTIME_IMAGE="$bad" \
+    sh "$validate_execution_images" >/dev/null 2>&1; then
+    echo 'release input validation accepted a mutable or malformed provider runtime image' >&2
+    exit 1
+  fi
+done
 
 # Release archive creation must stay portable across GNU and BSD hosts.
 forbid 'find "$prepared/package" -mindepth 1 -printf' "$prepare_dev"
@@ -145,7 +165,7 @@ printf '%s\n' "$publish_cli_needs" | grep -Fx '    needs: [guard, create-release
 # Every publishing job must have an explicit or transitive dependency on the
 # immutable-ref validator. This graph check catches a newly added publisher as
 # well as a one-off dependency typo.
-python3 - "$release" <<'PY'
+python3 - "$release" "$release_pr" <<'PY'
 import re
 import sys
 
@@ -198,6 +218,27 @@ assert '''      - name: Assert guard and immutable run commits agree
 for job in sorted(name for name in jobs if name == "publish" or name.startswith("publish-")):
     if not reaches_validation(job):
         raise SystemExit(f"publishing job {job} bypasses validate-release-ref")
+
+# The mecated image must receive the same completed microVM defaults as mecatui
+# before ko templates its linker flags. A whole-workflow string check misses this.
+publish = "\n".join(job_lines["publish"])
+assert "publish-microvm" in jobs["publish"]
+assert publish.index("pattern: microvm-default-*") < publish.index("MICROVM_RELEASE_DEFAULTS_B64=") < publish.index("ko build")
+assert "map({key:.platform,value:.}) | from_entries" in publish
+
+resolver = "\n".join(job_lines["resolve-brood-base"])
+assert 'GOWORK=off go -C environment/microvm build' in resolver
+assert '-o "../../brood-tree/digest-${arch}" ./cmd/mecatl-oci-tree-digest' in resolver
+
+validator = "sh .github/scripts/validate-execution-base-images.sh"
+assert validator in "\n".join(job_lines["publish-execution-images"])
+release_pr = open(sys.argv[2], encoding="utf-8").read()
+assert 'GO_IMAGE: ${{ vars.EXECUTION_GO_IMAGE }}' in release_pr
+assert 'PROVIDER_RUNTIME_IMAGE: ${{ vars.EXECUTION_PROVIDER_RUNTIME_IMAGE }}' in release_pr
+preflight = release_pr.split("  preflight:\n", 1)[1].split("  release-pr:\n", 1)[0]
+assert validator in preflight and "environment: release" not in preflight
+assert "    needs: preflight" in release_pr
+assert release_pr.index(validator) < release_pr.index("name: Refuse or clean up an in-flight release")
 PY
 # Exercise the real guard and validator agreement step with divergent on-main
 # commits; counting checkout producers alone cannot establish revision authority.
@@ -290,6 +331,11 @@ printf '%s\n' "$publish_host_section" | grep -F 'binary: [mecated, mecatui]' >/d
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseVersion' >/dev/null
 printf '%s\n' "$publish_host_section" | grep -F 'main.microVMReleaseStampRequired=release' >/dev/null
 require '[ "${PLATFORM}" != linux-amd64 ] && [ "${name}" = install-microvm-release.sh ]' "$release"
+
+# Build the Brood Box digest helper from its own module, as the release job does.
+mkdir -p "$repo_root/.scratch/microvm-oci-digest-test"
+CGO_ENABLED=0 GOWORK=off go -C "$repo_root/environment/microvm" build -trimpath -buildvcs=false -ldflags='-buildid=' \
+  -o "$repo_root/.scratch/microvm-oci-digest-test/digest" ./cmd/mecatl-oci-tree-digest
 
 # Functional host-stamp/entrypoint contract: both real binaries consume the same
 # defaults through their package-specific version symbol. Mecated exercises its offline

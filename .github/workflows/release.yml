@@ -117,7 +117,7 @@ jobs:
 
   publish:
     name: Build, publish, sign, attest
-    needs: [guard, validate-release-ref]
+    needs: [guard, validate-release-ref, publish-microvm]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -142,6 +142,19 @@ jobs:
 
       - name: Assert checkout is the immutable run commit
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Download versioned microVM platform defaults
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: microvm-default-*
+          path: microvm-defaults
+          merge-multiple: true
+
+      - name: Stamp strict microVM release defaults
+        run: |
+          set -euo pipefail
+          jq -s 'map({key:.platform,value:.}) | from_entries' microvm-defaults/microvm-default-*.json > microvm-defaults.json
+          echo "MICROVM_RELEASE_DEFAULTS_B64=$(base64 -w0 microvm-defaults.json)" >> "$GITHUB_ENV"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -501,7 +514,7 @@ jobs:
             for arch in amd64 arm64; do
               manifest="$(jq -er --arg arch "${arch}" '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] | if length == 1 then .[0] else error("expected exactly one linux/" + $arch + " manifest") end' brood-base-index.json)"
               reference="ghcr.io/stacklok/brood-box/base@${manifest}"
-              CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" GOWORK=off go build -trimpath -buildvcs=false -ldflags='-buildid=' -o "brood-tree/digest-${arch}" ./environment/microvm/cmd/mecatl-oci-tree-digest
+              CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" GOWORK=off go -C environment/microvm build -trimpath -buildvcs=false -ldflags='-buildid=' -o "../../brood-tree/digest-${arch}" ./cmd/mecatl-oci-tree-digest
               mkdir -p "brood-tree/cache-${arch}"
               tree="$(docker run --rm --platform "linux/${arch}" -v "${PWD}/brood-tree:/release" 'docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce' "/release/digest-${arch}" "${reference}" "/release/cache-${arch}")"
               jq -n --arg reference "${reference}" --arg manifest_digest "${manifest}" --arg tree_digest "${tree}" \
@@ -1024,11 +1037,7 @@ jobs:
       - uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v4.0.0
         with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
       - name: Validate immutable base inputs
-        run: |
-          case "$GO_IMAGE" in *@sha256:*) ;; *) echo "EXECUTION_GO_IMAGE must be digest-pinned" >&2; exit 1;; esac
-          if [ "${{ matrix.name }}" = provider ]; then
-            case "$PROVIDER_RUNTIME_IMAGE" in *@sha256:*) ;; *) echo "EXECUTION_PROVIDER_RUNTIME_IMAGE must be digest-pinned" >&2; exit 1;; esac
-          fi
+        run: sh .github/scripts/validate-execution-base-images.sh
       - name: Build and push image
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
