@@ -73,9 +73,10 @@ Run from the repo root.
    `build/execution-provider/Dockerfile` and `build/execution-workload/Dockerfile`
    on `main`: the Go builder, static provider runtime, and Brood Box workload
    runtime must have tagged digest pins available for Linux amd64 and arm64;
-   it also builds both images without publishing. The tag workflow repeats those
-   checks on the merged commit before tagging. Renovate updates the pins through
-   its native Dockerfile manager; no image repository variables are required.
+   it also builds both images without publishing. The tag workflow repeats the
+   pin and availability validation on the merged commit before tagging. Renovate
+   updates the pins through its native Dockerfile manager; no image repository
+   variables are required.
    If validation fails, fix the tracked pins through review (or retry a transient
    registry failure); do not bypass the check. The publishing job validates the
    tagged checkout again. The workflow bumps
