@@ -252460,6 +252460,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790385063427,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6142f5252a092c69a9c18f9bbf09bee884339421",
+          "message": "fix(test): isolate microVM integration dependencies and stabilize workspace metadata (#1999)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-29T15:56:53+03:00",
+          "tree_id": "f71fc9cdc3b35903077d36196f5ad2551d9fa7a2",
+          "url": "https://github.com/stacklok/mecatl/commit/6142f5252a092c69a9c18f9bbf09bee884339421"
+        },
+        "date": 1790687358631,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -366638,6 +366672,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790687355539,
+  "lastUpdate": 1790687359650,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
