@@ -454,7 +454,9 @@ checker model detects every prompt injection, secret, or dynamic Shell dependenc
 Use release-validation evidence before making an efficacy claim.
 
 A confidently read-only Shell command skips only **action** review; inbound Shell
-results remain covered. Every contextual review uses the fixed harness-owned
+results remain covered. For `ListDir` inbound review, the checker inspects the
+returned listing without reading the directory as a file or opening listed files.
+Every contextual review uses the fixed harness-owned
 safety, authority, provenance, evidence, and structured-output rubric. A rule's
 optional `prompt` adds operator task-risk context beneath that rubric; it cannot
 replace or weaken the fixed contract.

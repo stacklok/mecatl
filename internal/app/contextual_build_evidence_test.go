@@ -446,3 +446,124 @@ func TestBuildWiresFiniteScriptEvidenceToContextualReviewer(t *testing.T) {
 		t.Fatalf("checker prompt leaked private environment path %q", cfg.Workspace)
 	}
 }
+
+type listDirReviewProvider struct {
+	assessment string
+
+	mainCalls, reviewCalls int
+	reviewInput            string
+	mainInput              string
+	mainResultError        bool
+}
+
+func (*listDirReviewProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *listDirReviewProvider) Stream(_ context.Context, req port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	var chunks []port.Chunk
+	if strings.Contains(req.System.Render(), contextualReviewerSystemPrompt) {
+		p.reviewCalls++
+		for _, message := range req.Messages {
+			p.reviewInput += message.Text
+		}
+		switch p.assessment {
+		case "prohibited":
+			chunks = []port.Chunk{{Kind: port.ChunkText, Text: `{"assessment":"prohibited","concerns":[{"ref":"listing","category":"untrusted_content","rationale":"listing is prohibited","source_ref":"call"}],"evidence":[],"missing_evidence":[]}`}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+		case "malformed":
+			chunks = []port.Chunk{{Kind: port.ChunkText, Text: `not JSON`}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+		default:
+			chunks = []port.Chunk{{Kind: port.ChunkText, Text: `{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+		}
+	} else if p.mainCalls == 0 {
+		p.mainCalls++
+		chunks = toolCallChunks(session.NewToolCall("list-workspace", "ListDir", json.RawMessage(`{"path":"."}`)))
+	} else {
+		p.mainCalls++
+		for _, message := range req.Messages {
+			if message.ToolResult != nil {
+				p.mainInput += message.ToolResult.Content
+				p.mainResultError = message.ToolResult.IsError
+			}
+		}
+		chunks = []port.Chunk{{Kind: port.ChunkText, Text: "done"}, {Kind: port.ChunkDone, Stop: session.StopEndTurn}}
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		for _, chunk := range chunks {
+			if !yield(chunk, nil) {
+				return
+			}
+		}
+	}, nil
+}
+
+func TestBuildListDirInboundReviewUsesReturnedListingOnly(t *testing.T) {
+	const listing = "LISTDIR_REVIEW_EVIDENCE.txt"
+	for _, tc := range []struct {
+		name              string
+		assessment        string
+		wantReviewCalls   int
+		wantListingInMain bool
+	}{
+		{name: "acceptable", wantReviewCalls: 1, wantListingInMain: true},
+		{name: "prohibited", assessment: "prohibited", wantReviewCalls: 1},
+		{name: "malformed is withheld after retries", assessment: "malformed", wantReviewCalls: maxReviewAttempts},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			cfg := guardrailE2ECfg(t, false, PostureAuto, "")
+			cfg.GuardrailsRules = []GuardrailRule{{Match: "ListDir", Phases: []string{"post"}, Mode: "block"}}
+			if err := os.WriteFile(cfg.Workspace+"/"+listing, []byte("fixture"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			provider := &listDirReviewProvider{assessment: tc.assessment}
+			cfg.providerConstructor = func(_ Config, _, _, _ string) port.LLMProvider { return provider }
+			built, err := buildIsolated(t, ctx, cfg)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			defer built.Close()
+			sess, err := built.Service.CreateSession(ctx, session.ModeDefault, session.Limits{MaxTurns: 2})
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			run, err := built.Service.StartRunContent(ctx, sess.ID, "list the workspace", nil)
+			if err != nil {
+				t.Fatalf("StartRunContent: %v", err)
+			}
+			for range run.Events() {
+			}
+			built.Service.FinishRun(sess.ID, run)
+
+			if provider.reviewCalls != tc.wantReviewCalls {
+				t.Fatalf("reviewer calls = %d, want %d", provider.reviewCalls, tc.wantReviewCalls)
+			}
+			if !strings.Contains(provider.reviewInput, `"EvidenceComplete":true`) {
+				t.Fatalf("checker did not receive complete evidence: %q", provider.reviewInput)
+			}
+			if !strings.Contains(provider.reviewInput, listing) {
+				t.Fatalf("checker did not receive exact listing %q: %q", listing, provider.reviewInput)
+			}
+			if provider.mainCalls != 2 || provider.mainInput == "" {
+				t.Fatalf("main model did not consume the result: calls=%d input=%q", provider.mainCalls, provider.mainInput)
+			}
+			if provider.mainResultError == tc.wantListingInMain {
+				t.Fatalf("model result error=%t, want %t: %q", provider.mainResultError, !tc.wantListingInMain, provider.mainInput)
+			}
+			if strings.Contains(provider.mainInput, listing) != tc.wantListingInMain {
+				t.Fatalf("model received listing=%t, want %t: %q", strings.Contains(provider.mainInput, listing), tc.wantListingInMain, provider.mainInput)
+			}
+		})
+	}
+}
+
+func TestReviewEvidencePathsSkipsListDirDirectoryOperand(t *testing.T) {
+	listDir := session.NewToolCall("list", "ListDir", json.RawMessage(`{"path":"directory"}`))
+	if paths := reviewEvidencePaths(listDir); paths != nil {
+		t.Fatalf("ListDir review evidence paths = %v, want nil", paths)
+	}
+	read := session.NewToolCall("read", "Read", json.RawMessage(`{"path":"file"}`))
+	if paths := reviewEvidencePaths(read); len(paths) != 1 || paths[0] != "file" {
+		t.Fatalf("Read review evidence paths = %v, want [file]", paths)
+	}
+}

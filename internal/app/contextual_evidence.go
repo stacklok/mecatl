@@ -137,6 +137,9 @@ func (r *guardrailActionReviewer) PrepareReviewEvidence(ctx context.Context, pre
 }
 
 func reviewEvidencePaths(call session.ToolCall) []string {
+	if call.Name == listDirToolName {
+		return nil
+	}
 	return tool.LocalFileOperands(call.Name, call.Args)
 }
 
