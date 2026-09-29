@@ -252818,6 +252818,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790687358631,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49777c8d96e42864fcb16e4ef642e468ba871a9e",
+          "message": "fix(release): track execution image bases and build before tagging (#2000)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-29T16:52:05+03:00",
+          "tree_id": "db97f19a528d8b8d95f2d9f95e34053659c71642",
+          "url": "https://github.com/stacklok/mecatl/commit/49777c8d96e42864fcb16e4ef642e468ba871a9e"
+        },
+        "date": 1790690659931,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -367149,6 +367183,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790690656757,
+  "lastUpdate": 1790690661668,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
