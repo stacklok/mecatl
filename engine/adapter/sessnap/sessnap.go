@@ -63,6 +63,12 @@ type Snapshot struct {
 	// purely additive, no format-tag bump (the same precedent as ProviderPhase /
 	// Parts).
 	Profile string `json:"profile,omitempty"`
+	// AgentDefinitionName is the session's opaque write-once agent-definition
+	// binding label (ADR 0353). omitempty keeps a pre-0353 snapshot with no
+	// "agent_definition_name" key decoding to "" (an ordinary session) —
+	// additive, no format-tag bump, same round-trip discipline as
+	// Profile/ProviderID/ModelID.
+	AgentDefinitionName string `json:"agent_definition_name,omitempty"`
 	// ProviderID and ModelID are the session's opaque neutral provider+model
 	// selector pair. omitempty keeps a v1 snapshot with no key decoding to the empty
 	// pair ("server default") — additive, no version bump. Persisting them lets a
@@ -294,6 +300,7 @@ func Of(s *session.Session) (Snapshot, error) {
 		EnvironmentRef:         s.EnvironmentRef,
 		Placement:              s.Placement,
 		Profile:                s.Profile,
+		AgentDefinitionName:    s.AgentDefinitionName,
 		ProviderID:             s.ProviderID,
 		ModelID:                s.ModelID,
 		ReasoningEffort:        s.ReasoningEffort,
@@ -375,6 +382,7 @@ func (s Snapshot) Restore() (*session.Session, error) {
 	// Restore opaque creation labels by direct assignment. Title-specific metadata
 	// restores atomically through RestoreTitleMetadata below.
 	restored.Profile = s.Profile
+	restored.AgentDefinitionName = s.AgentDefinitionName
 	restored.ProviderID = s.ProviderID
 	restored.ModelID = s.ModelID
 	restored.ReasoningEffort = s.ReasoningEffort
