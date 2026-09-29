@@ -133,6 +133,13 @@ func (s *Session) CompleteWorkspaceEnrollment(pending PendingWorkspaceEnrollment
 	if !s.authorityBound || !ValidWorkspaceEnrollmentToolNames(exactTools) {
 		return fmt.Errorf("%w: invalid workspace enrollment tool set", ErrIllegalTransition)
 	}
+	if ceiling := s.Authority.Ceiling; ceiling != nil {
+		for _, name := range exactTools {
+			if !ceiling.AllowsTool(name) {
+				return fmt.Errorf("%w: workspace enrollment tool %q exceeds bound ceiling", ErrIllegalTransition, name)
+			}
+		}
+	}
 
 	exact := s.Authority.Clone()
 	exact.CapabilitySet.Tools = append([]string(nil), exactTools...)

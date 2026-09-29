@@ -211,11 +211,24 @@ type Authority struct {
 	CapabilitySet      governance.CapabilitySet `json:"capability_set"`
 	Provenance         string                   `json:"provenance"`
 	DefinitionIdentity string                   `json:"definition_identity,omitempty"`
+	// Ceiling is a write-once, OPTIONAL capability-set upper bound set once
+	// alongside BindAuthority for an agent-bound session — the def's resolved
+	// tool/resource-capability set. A nil Ceiling (the zero value) is
+	// unrestricted: an ordinary, non-agent-bound session's Authority never
+	// carries one. It is never re-derived after bind; GrantToolAuthority and
+	// CompleteWorkspaceEnrollment enforce it as the session-aggregate
+	// invariant that keeps CapabilitySet.Tools from ever widening past it.
+	Ceiling *governance.CapabilitySet `json:"ceiling,omitempty"`
 }
 
 // Clone returns an independent copy of a.
 func (a Authority) Clone() Authority {
 	a.CapabilitySet.Tools = append([]string(nil), a.CapabilitySet.Tools...)
+	if a.Ceiling != nil {
+		ceiling := *a.Ceiling
+		ceiling.Tools = append([]string(nil), a.Ceiling.Tools...)
+		a.Ceiling = &ceiling
+	}
 	return a
 }
 
@@ -317,6 +330,9 @@ func (s *Session) GrantToolAuthority(names []string) error {
 		}
 		if !validToolAuthorityName(name) {
 			return errors.New("session: invalid tool authority name")
+		}
+		if s.Authority.Ceiling != nil && !s.Authority.Ceiling.AllowsTool(name) {
+			return errors.New("session: tool authority name exceeds bound ceiling")
 		}
 		seen[name] = struct{}{}
 		additions = append(additions, name)
