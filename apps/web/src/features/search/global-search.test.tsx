@@ -883,11 +883,18 @@ describe("GlobalSearch", () => {
 
     await act(async () => trigger?.click());
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    const overlay = document.querySelector<HTMLElement>('[data-slot="dialog-overlay"]');
+    expect(overlay).not.toBeNull();
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
-      document.body.dispatchEvent(
+      // Radix dismisses an outside primary press after its matching click.
+      overlay?.dispatchEvent(
         new PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "mouse" }),
       );
+      overlay?.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, cancelable: true, pointerType: "mouse" }),
+      );
+      overlay?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
