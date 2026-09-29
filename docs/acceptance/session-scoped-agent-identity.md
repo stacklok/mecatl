@@ -6,14 +6,15 @@ ceiling, guardrail wiring, minted Authority) and a public gRPC/protobuf compatib
 surface (`CreateSessionRequest`/`CreateSessionResponse`).
 **Decision record:** [ADR 0353](../adr/0353-session-scoped-agent-identity.md)
 **Phase:** capability
-**Status:** proposed, 2026-09-23. Authored via `/to-acceptance-plan` after ADR 0353 merged
-(`862bb4632`); all Human decisions resolved by the directing human on 2026-09-23.
+**Status:** in-progress, 2026-09-29. Authored via `/to-acceptance-plan` after ADR 0353 merged
+(`862bb4632`); all Human decisions resolved by the directing human on 2026-09-23. Approved
+via merged Plan / Interface PR; `/plan-orchestrate` began implementation 2026-09-29.
 **Delivery:** Split. Interface-bearing (proto field, exported Go types, a security/authority
 boundary) — the default two-PR path applies.
-**Expected tasks:** deferred to orchestration
+**Expected tasks:** 7 (decomposition: `.scratch/orchestrate/session-scoped-agent-identity/tasks/`)
 **Issue:** [stacklok/mecatl#1053](https://github.com/stacklok/mecatl/issues/1053).
-**Plan PR:** <added when opened>
-**Approved baseline:** <merged plan commit; absent until approved>
+**Plan PR:** [stacklok/mecatl#1815](https://github.com/stacklok/mecatl/pull/1815) (merged)
+**Approved baseline:** `a9dfd84c63475a48f11f1eaaf74cfa2b4213d7c8`
 
 Make a `CreateSessionRequest.agent_definition_name` binding demonstrable end-to-end: a
 session whose root engine is built exclusively from a named `AgentDef`'s own tools,
