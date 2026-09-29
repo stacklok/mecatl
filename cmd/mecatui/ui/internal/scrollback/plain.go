@@ -55,6 +55,34 @@ func (p PlainCards) AddNotice(text string) BlockID {
 	return p.conversation.append(NoticeCardSnapshot{Text: text})
 }
 
+// UpdateNotice replaces a notice without changing its identity or position.
+func (p PlainCards) UpdateNotice(id BlockID, text string) bool {
+	for i, card := range p.conversation.cards {
+		if card.id == id {
+			if notice, ok := card.payload.(NoticeCardSnapshot); ok {
+				notice.Text = text
+				return p.conversation.replace(i, notice)
+			}
+			return false
+		}
+	}
+	return false
+}
+
+// RemoveNotice removes only the notice with the given identity.
+func (p PlainCards) RemoveNotice(id BlockID) bool {
+	for i, card := range p.conversation.cards {
+		if card.id == id {
+			if _, ok := card.payload.(NoticeCardSnapshot); !ok {
+				return false
+			}
+			p.conversation.removeCard(i)
+			return true
+		}
+	}
+	return false
+}
+
 // RetractLatestNotice removes the most-recent matching notice. It is used when
 // a provisional approval notice is refused before it reaches the server.
 func (p PlainCards) RetractLatestNotice(text string) bool {

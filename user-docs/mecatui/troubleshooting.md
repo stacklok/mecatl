@@ -195,8 +195,22 @@ or credentials.
 
 Start `mecatui` with `--debug`, or set `MECATUI_DEBUG=1` when the flag is
 omitted. Debug mode enables the mouse-coordinate footer, steer correlation,
-keymap-resolution diagnostics at startup, and debug-only local commands such as
-`/debug-ask`. These surfaces are off by default.
+keymap-resolution diagnostics at startup, compact guardrail success diagnostics,
+and debug-only local commands such as `/debug-ask`. These surfaces are off by
+default.
+
+Normal conversation output omits guardrail checks that completed successfully
+and allowed an action or released a result. Mecatui does not request explanations
+for those checks. `--debug` shows a compact success entry with the review's
+technical metadata. Stored-session transcripts use the same visibility rules.
+
+Warnings, unresolved reviews, checker outages, and unknown states remain visible.
+A warning's explanation updates its existing entry when available; a review that
+needs your decision shows the explanation in its approval prompt. An unavailable
+or expired explanation does not imply a security finding. Check the displayed
+outcome to see whether the action stopped, the result was withheld, or work
+continued. See [guardrail approvals](/features/permissions-and-posture.md#guardrails)
+for the available choices.
 
 An explicit `--debug=false` overrides the environment. Debug mode is client-only
 and does not change server configuration or the operational log level.

@@ -1137,10 +1137,8 @@ func (m Model) updateLifecycle(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.refreshView()
 		return m, nil, true
 	case client.GuardrailReviewDetailMsg:
-		if msg.Err == nil {
-			m.conv.addNotice(guardrailDetailNotice(msg.Detail))
-			m.refreshView()
-		}
+		m.applyGuardrailDetail(msg)
+		m.refreshView()
 		return m, nil, true
 	case client.ResolvedModelMsg:
 		return m.onResolvedModelMsg(msg)
@@ -1377,12 +1375,22 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
-	m.conv.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
-	model, cmd := m.afterEvent()
-	if msg.Guardrail == nil || m.deps.Guardrails == nil {
-		return model, cmd
+	if msg.Guardrail != nil {
+		if s := approvalSurfaceFor(&m); s != nil && s.applyGuardrailHook(msg) {
+			m.conv.guardrailReview(msg.Guardrail.ReviewID).hook = msg
+			return m.afterEvent()
+		}
 	}
-	detailCmd := client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID)
+	r := m.conv.addGuardrailHook(msg, m.deps.Debug)
+	var detailCmd tea.Cmd
+	if r != nil && msg.Guardrail.Disposition != "ask_action" && !routineGuardrail(msg.Guardrail) && !r.requested && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
+		m.guardrailDetailRequest++
+		r.requestID, r.requested = m.guardrailDetailRequest, true
+		r.unavailable = false
+		m.conv.scrollback.Notices().UpdateNotice(r.blockID, guardrailPresentationText(r, m.deps.Debug))
+		detailCmd = client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID, r.requestID)
+	}
+	model, cmd := m.afterEvent()
 	return model, tea.Batch(cmd, detailCmd)
 }
 
@@ -3512,6 +3520,7 @@ func (m Model) failStartupRunEntry(err error) Model {
 	m = m.resetDocumentProjection()
 	m.conv = conversationFromTranscript(m.deps.Resume.Transcript.Messages)
 	m.modal = &sessionsState{
+		debug:    m.deps.Debug,
 		selected: m.deps.Resume.Row,
 		inspect:  true,
 		loadErr: &startupRunEntryError{

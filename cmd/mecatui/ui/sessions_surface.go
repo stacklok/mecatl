@@ -258,7 +258,7 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
 	case client.HookMsg:
-		c.addHook(guardrailHookText(msg), msg.Phase, msg.Tool, string(msg.Decision))
+		c.addGuardrailHook(msg, s.debug)
 	case client.ResultMsg:
 		if msg.Stop == stopError && msg.Error != "" {
 			if msg.Permanent {
@@ -298,6 +298,7 @@ type sessionForker interface {
 }
 
 type sessionsState struct {
+	debug             bool
 	view              sessionsView
 	startup           bool // same /sessions renderer, with launch-only new/quit hints
 	tab               sessionsTab

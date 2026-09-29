@@ -223,6 +223,19 @@ var oracleSteps = []struct {
 			client.Usage{InputTokens: 500, OutputTokens: 90}, 2, "end_turn", false, 900)
 	}},
 	{"parallelEnd", func(c *conversation) { c.parallelEnd("call-par", "first", 2, 0, "end_turn") }},
+	{"addGuardrailHook", func(c *conversation) {
+		c.addGuardrailHook(guardrailTestHook("oracle-review", "complete", "unresolved", "pass_advisory"), false)
+	}},
+	{"guardrail detail update", func(c *conversation) {
+		r := c.guardrailReview("oracle-review")
+		r.requestID = 1
+		m := Model{conv: *c, sessionID: "session"}
+		m.applyGuardrailDetail(client.GuardrailReviewDetailMsg{SessionID: "session", ReviewID: "oracle-review", RequestID: 1, Detail: client.GuardrailReviewDetail{ReviewID: "oracle-review", Concern: "Check this source."}})
+		*c = m.conv
+	}},
+	{"guardrail approval takeover", func(c *conversation) {
+		c.scrollback.Notices().RemoveNotice(c.guardrailReview("oracle-review").blockID)
+	}},
 	{"addHook", func(c *conversation) { c.addHook("blocked by PreToolUse hook", "PreToolUse", "Shell", "blocked") }},
 	{"addError", func(c *conversation) { c.addError("stream failed: boom") }},
 	{"addPermanentError", func(c *conversation) { c.addPermanentError("permanent provider error: auth failed") }},
@@ -235,6 +248,7 @@ var oracleSteps = []struct {
 // method fails TestConversationMutatorsCoveredByOracle until it is either added
 // as an oracle step or consciously listed here.
 var oracleNonMutators = map[string]string{
+	"guardrailReview":       "lazy accessor, driven via addGuardrailHook and detail update steps",
 	"subagentCard":          "typed snapshot lookup",
 	"teamCard":              "typed snapshot lookup",
 	"latestPendingToolName": "pure read",

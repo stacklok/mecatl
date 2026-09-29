@@ -250,7 +250,8 @@ type subagentLane struct {
 // the conversation) drops it too.
 type conversation struct {
 	// scrollback is the authoritative logical conversation document.
-	scrollback scrollback.Conversation
+	scrollback       scrollback.Conversation
+	guardrailReviews map[string]*guardrailPresentation
 	// subagentFleet preserves first-seen order; fleetIndex maps ChildID → its slot so
 	// repeated tool/end events for a child update the same lane in O(1).
 	subagentFleet []subagentLane

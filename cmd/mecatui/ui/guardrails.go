@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
 func (m Model) runGuardrails() (tea.Model, tea.Cmd) {
@@ -18,18 +19,102 @@ func (m Model) runGuardrails() (tea.Model, tea.Cmd) {
 	return m, client.ListGuardrailCoverageCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, m.guardrailStatusRequest, false)
 }
 
-func guardrailDetailNotice(detail client.GuardrailReviewDetail) string {
-	parts := []string{"Guardrail detail"}
-	if detail.Concern != "" {
-		parts = append(parts, "Concern: "+terminaltext.Sanitize(detail.Concern))
+type guardrailPresentation struct {
+	blockID          scrollback.BlockID
+	hook             client.HookMsg
+	requestID        uint64
+	requested        bool
+	approvalResolved bool
+	detail           client.GuardrailReviewDetail
+	unavailable      bool
+}
+
+func routineGuardrail(review *client.GuardrailReview) bool {
+	return review.Inspection == "complete" && review.Assessment == "acceptable" &&
+		(review.Disposition == "execute" || review.Disposition == "release_result") &&
+		(review.Job == "action" || review.Job == "inbound")
+}
+
+func (c *conversation) guardrailReview(id string) *guardrailPresentation {
+	if id == "" {
+		return &guardrailPresentation{}
 	}
-	if detail.SourceDisplay != "" {
-		parts = append(parts, "Source: "+terminaltext.Sanitize(detail.SourceDisplay))
+	if c.guardrailReviews == nil {
+		c.guardrailReviews = make(map[string]*guardrailPresentation)
 	}
-	if detail.NextAction != "" {
-		parts = append(parts, "Next: "+terminaltext.Sanitize(detail.NextAction))
+	if c.guardrailReviews[id] == nil {
+		c.guardrailReviews[id] = &guardrailPresentation{}
 	}
-	return strings.Join(parts, " · ")
+	return c.guardrailReviews[id]
+}
+
+// Live and replay share the visibility policy. A live approval takes ownership
+// of its review's explanation when the permission request arrives.
+func (c *conversation) addGuardrailHook(msg client.HookMsg, debug bool) *guardrailPresentation {
+	if msg.Guardrail == nil {
+		c.addHook(msg.Text, msg.Phase, msg.Tool, string(msg.Decision))
+		return nil
+	}
+	if !debug && routineGuardrail(msg.Guardrail) {
+		return nil
+	}
+	r := c.guardrailReview(msg.Guardrail.ReviewID)
+	// A replayed pending-action hook must not undo an answer. Final outcomes,
+	// including checker outages after releasing a result, still update the card.
+	if r.approvalResolved && msg.Guardrail.Disposition == "ask_action" {
+		return nil
+	}
+	r.hook = msg
+	text := guardrailPresentationText(r, debug)
+	if r.blockID == 0 {
+		r.blockID = c.scrollback.Notices().AddNotice(text)
+	} else {
+		c.scrollback.Notices().UpdateNotice(r.blockID, text)
+	}
+	return r
+}
+
+func guardrailPresentationText(r *guardrailPresentation, debug bool) string {
+	text := guardrailHookText(r.hook)
+	if routineGuardrail(r.hook.Guardrail) {
+		text = "Guardrail check passed: " + terminaltext.Sanitize(r.hook.Tool) + "."
+	} else {
+		text = "⚠ " + text
+	}
+	return text + guardrailDetailText(r, debug)
+}
+
+func guardrailDetailText(r *guardrailPresentation, debug bool) string {
+	text := ""
+	if r.unavailable {
+		text += " Detailed explanation unavailable or expired."
+	} else if r.detail.Concern != "" {
+		text += " " + terminaltext.Sanitize(r.detail.Concern)
+	}
+	if r.detail.SourceDisplay != "" {
+		text += " Source: " + terminaltext.Sanitize(r.detail.SourceDisplay)
+	}
+	if debug && r.hook.Guardrail != nil {
+		review := r.hook.Guardrail
+		text += terminaltext.Sanitize(fmt.Sprintf(" [%s · %s · %s · %s · %s · checker %s/%s]", r.hook.Phase, review.Job, review.Inspection, review.Assessment, review.Disposition, review.CheckerProviderID, review.CheckerModelID))
+	}
+	return text
+}
+
+func guardrailReviewReason(review *client.GuardrailReview) string {
+	why := "The review status is unknown; do not assume the check passed."
+	switch {
+	case review.Inspection == "operational_failure":
+		why = "The safety check could not finish because of a checker outage; this is not a security finding."
+	case review.Inspection != "complete":
+	case review.Assessment == "prohibited":
+		why = "The safety check reported a security finding."
+	case review.Assessment == "unresolved":
+		why = "The safety check could not determine whether this is safe; no specific security finding was established."
+	case review.Assessment == "acceptable":
+		why = "The safety check found no concern."
+	}
+	return why
 }
 
 func guardrailHookText(msg client.HookMsg) string {
@@ -37,22 +122,41 @@ func guardrailHookText(msg client.HookMsg) string {
 	if review == nil {
 		return msg.Text
 	}
-	label := "inspection completed"
-	switch {
-	case review.Inspection == "operational_failure":
-		label = "inspection outage (no unsafe finding inferred)"
-	case review.Assessment == "prohibited":
-		label = "security finding"
-	case review.Assessment == "unresolved":
-		label = "inspection completed unresolved (not an unsafe finding)"
-	case review.Assessment == "acceptable":
-		label = "inspection completed acceptable"
+	outcome := "The outcome is unknown. Check /guardrails before continuing."
+	switch review.Disposition {
+	case "ask_action":
+		outcome = "Action paused for your decision."
+	case "withhold_result":
+		outcome = "Result withheld from the model. The tool has already run; withholding its result does not undo its side effects."
+	case "deny":
+		outcome = "Action stopped. Review the explanation before retrying."
+		if review.Job == "inbound" {
+			outcome = "Result withheld from the model. The tool has already run; withholding its result does not undo its side effects."
+		}
+	case "execute":
+		outcome = "Action allowed to continue. Review the warning before relying on its result."
+	case "release_result":
+		outcome = "Result released to the model. Review the warning before relying on it."
+	case "pass_advisory", "continue_warning":
+		outcome = "Work continued with a warning. Review the explanation before relying on the result."
 	}
-	route := ""
-	if review.CheckerProviderID != "" || review.CheckerModelID != "" {
-		route = " · checker " + review.CheckerProviderID + "/" + review.CheckerModelID
+	return "Guardrail: " + terminaltext.Sanitize(msg.Tool) + ". " + outcome + " " + guardrailReviewReason(review)
+}
+
+func (m *Model) applyGuardrailDetail(msg client.GuardrailReviewDetailMsg) {
+	r := m.conv.guardrailReviews[msg.ReviewID]
+	if msg.SessionID != m.sessionID || r == nil || r.requestID == 0 || r.requestID != msg.RequestID {
+		return
 	}
-	return fmt.Sprintf("Guardrail %s: %s %s · %s%s", label, review.Job, msg.Tool, review.Disposition, route)
+	if msg.Err == nil && msg.Detail.ReviewID != msg.ReviewID {
+		return
+	}
+	r.requestID = 0
+	r.unavailable = msg.Err != nil
+	if msg.Err == nil {
+		r.detail = msg.Detail
+	}
+	m.conv.scrollback.Notices().UpdateNotice(r.blockID, guardrailPresentationText(r, m.deps.Debug))
 }
 
 func guardrailCoverageCurrent(msg client.GuardrailCoverageMsg, sessionID string, requestID uint64) bool {
