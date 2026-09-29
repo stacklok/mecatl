@@ -176,19 +176,10 @@ func (s *approvalSurface) applyGuardrailHook(msg client.HookMsg) bool {
 }
 
 func (s *approvalSurface) applyReviewDetail(ask *pendingAsk, msg client.GuardrailReviewDetailMsg) bool {
-	if ask.guardrail == nil || ask.reviewDetailRequest == 0 || ask.reviewDetailRequest != msg.RequestID ||
-		msg.ReviewID != ask.guardrail.ReviewID || msg.SessionID != guardrailReviewSessionID(ask.AskID, s.sessionID) {
+	if ask.guardrail == nil {
 		return false
 	}
-	if msg.Err == nil && msg.Detail.ReviewID != msg.ReviewID {
-		return false
-	}
-	ask.reviewDetailRequest = 0
-	ask.reviewDetailUnavailable = msg.Err != nil
-	if msg.Err == nil {
-		ask.reviewDetail = msg.Detail
-	}
-	return true
+	return ask.applyDetail(msg, guardrailReviewSessionID(ask.AskID, s.sessionID), ask.guardrail.ReviewID)
 }
 
 func (s *approvalSurface) HandleWheel(msg tea.MouseWheelMsg) (tea.Cmd, bool) {
@@ -312,7 +303,7 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 	next := pendingAsk{
 		AskID: msg.AskID, Tool: msg.Tool, Args: msg.Args, Reason: msg.Reason, expectedRunID: msg.ExpectedRunID,
 		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail,
-		reviewDetailRequest: detailRequest,
+		guardrailDetailState: guardrailDetailState{requestID: detailRequest},
 	}
 	if open {
 		s.enqueue(next)
@@ -370,7 +361,7 @@ func (s *approvalSurface) markAskResolved(id string) {
 // the run's single reader, which delivers the resumed events after the one send.
 func (s *approvalSurface) resolveAsk(v client.Verdict) approvalResolvedIntent {
 	ask := s.ask
-	ask.reviewDetailRequest = 0
+	ask.requestID = 0
 	askID := ask.AskID
 	s.markAskResolved(askID)
 	s.clearPlanReview()
@@ -547,17 +538,15 @@ func (s *approvalSurface) approvalExpandToggle() (approval bool) {
 // a surfaced subagent ask (a child engine's permission policy has a nil learn
 // store, so always-allow would be a silent no-op there).
 type pendingAsk struct {
-	AskID                   string
-	Tool                    string
-	Args                    string
-	Reason                  string
-	focusedVerdict          client.Verdict
-	offerAlways             bool
-	guardrail               *client.GuardrailApprovalScope
-	expectedRunID           string
-	reviewDetail            client.GuardrailReviewDetail
-	reviewDetailRequest     uint64
-	reviewDetailUnavailable bool
+	AskID          string
+	Tool           string
+	Args           string
+	Reason         string
+	focusedVerdict client.Verdict
+	offerAlways    bool
+	guardrail      *client.GuardrailApprovalScope
+	expectedRunID  string
+	guardrailDetailState
 }
 
 // isPlanAsk reports whether a permission ask is a plan-approval gate (the model
@@ -925,14 +914,14 @@ func writeGuardrailApprovalDetail(b *strings.Builder, th theme.Theme, ask pendin
 		b.WriteString(th.Style("muted").Render(wrapApprovalReason(text, contentWidth)) + "\n")
 	}
 	write(guardrailApprovalDescription(ask.guardrail))
-	if ask.reviewDetailUnavailable {
+	if ask.unavailable {
 		write("Detailed explanation unavailable or expired. Review the available information before proceeding.")
 	}
-	if ask.reviewDetail.Concern != "" {
-		write("Explanation: " + ask.reviewDetail.Concern)
+	if ask.detail.Concern != "" {
+		write("Explanation: " + ask.detail.Concern)
 	}
-	if ask.reviewDetail.SourceDisplay != "" {
-		write("Source: " + ask.reviewDetail.SourceDisplay)
+	if ask.detail.SourceDisplay != "" {
+		write("Source: " + ask.detail.SourceDisplay)
 	}
 }
 

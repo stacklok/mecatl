@@ -40,6 +40,14 @@ func guardrailTestHook(id, inspection, assessment, disposition string) client.Ho
 	return client.HookMsg{Tool: "Read", Phase: "PostToolUse", Guardrail: &client.GuardrailReview{ReviewID: id, Job: "inbound", Inspection: inspection, Assessment: assessment, Disposition: disposition, CheckerProviderID: "provider", CheckerModelID: "model"}}
 }
 
+// updateGuardrail runs the real reducer and its commands, leaving detail replies
+// unapplied so each test controls their ordering and correlation.
+func updateGuardrail(m *Model, msg tea.Msg) []client.GuardrailReviewDetailMsg {
+	next, cmd := m.Update(msg)
+	*m = next.(Model)
+	return guardrailReplies(cmd)
+}
+
 func guardrailReplies(cmd tea.Cmd) []client.GuardrailReviewDetailMsg {
 	if cmd == nil {
 		return nil
@@ -68,9 +76,7 @@ func TestGuardrailRoutineReviewsQuiet(t *testing.T) {
 			if i == 1 {
 				msg.Guardrail.Job, msg.Guardrail.Disposition = "action", "execute"
 			}
-			next, cmd := m.Update(msg)
-			m = next.(Model)
-			runBatchLeaves(cmd)
+			updateGuardrail(&m, msg)
 			replay.applyReplayEvent(msg)
 		}
 		want := 0
@@ -107,9 +113,7 @@ func TestGuardrailWarningsVisibleLiveAndReplay(t *testing.T) {
 			r := &guardrailDetailRecorder{}
 			m := guardrailTestModel(t, r, false)
 			msg := guardrailTestHook("review", tc.inspection, tc.assessment, tc.disposition)
-			next, cmd := m.Update(msg)
-			m = next.(Model)
-			replies := guardrailReplies(cmd)
+			replies := updateGuardrail(&m, msg)
 			replay := m.newSessionsSurface(false)
 			m.closeModal()
 			replay.applyReplayEvent(msg)
@@ -124,9 +128,7 @@ func TestGuardrailWarningsVisibleLiveAndReplay(t *testing.T) {
 			for _, reply := range replies {
 				m = applyAll(m, reply, reply)
 			}
-			next, cmd = m.Update(msg)
-			m = next.(Model)
-			runBatchLeaves(cmd)
+			updateGuardrail(&m, msg)
 			wantCalls := 1
 			if tc.disposition == "ask_action" {
 				wantCalls = 0
@@ -156,9 +158,7 @@ func TestGuardrailDetailCorrelationAndLifecycle(t *testing.T) {
 		}
 		m := guardrailTestModel(t, r, false)
 		hook := guardrailTestHook("review", "operational_failure", "unresolved", "pass_advisory")
-		next, cmd := m.Update(hook)
-		m = next.(Model)
-		reply := guardrailReplies(cmd)[0]
+		reply := updateGuardrail(&m, hook)[0]
 		for _, wrong := range []client.GuardrailReviewDetailMsg{
 			{SessionID: "other", ReviewID: reply.ReviewID, RequestID: reply.RequestID, Err: r.err, Detail: reply.Detail},
 			{SessionID: reply.SessionID, ReviewID: "other", RequestID: reply.RequestID, Err: r.err, Detail: reply.Detail},
@@ -181,9 +181,7 @@ func TestGuardrailDetailCorrelationAndLifecycle(t *testing.T) {
 		// A new conversation can reuse both session/review IDs. Its new request
 		// must not accept a reply from the old conversation (including errors).
 		m.conv = conversation{}
-		next, cmd = m.Update(hook)
-		m = next.(Model)
-		fresh := guardrailReplies(cmd)[0]
+		fresh := updateGuardrail(&m, hook)[0]
 		m = applyAll(m, reply)
 		if m.conv.scrollback.SnapshotAt(0).Revision != 0 {
 			t.Fatal("old UI lifecycle changed replacement warning")
@@ -202,19 +200,13 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	hook.Guardrail.Job = "action"
 	m = applyAll(m, hook)
 	ask := client.PermissionAskMsg{AskID: "session:1:action", Tool: "Shell\x1b[2J", Reason: "PreToolUse inbound checker metadata", Guardrail: &client.GuardrailApprovalScope{ReviewID: "action", Kind: "action", RepeatAvailable: true}}
-	next, cmd := m.Update(ask)
-	m = next.(Model)
-	actionReply := guardrailReplies(cmd)[0]
-	next, cmd = m.Update(ask)
-	m = next.(Model)
-	runBatchLeaves(cmd)
+	actionReply := updateGuardrail(&m, ask)[0]
+	updateGuardrail(&m, ask)
 	if r.calls != 1 || m.conv.scrollback.Len() != 0 {
 		t.Fatal("approval did not take exclusive ownership")
 	}
 	queued := client.PermissionAskMsg{AskID: "child:2:result", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "result", Kind: "result_release"}}
-	next, cmd = m.Update(queued)
-	m = next.(Model)
-	resultReply := guardrailReplies(cmd)[0]
+	resultReply := updateGuardrail(&m, queued)[0]
 	if resultReply.SessionID != "child" {
 		t.Fatalf("child detail request = %+v", resultReply)
 	}
@@ -223,12 +215,12 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	bad.Err = errors.New("wrong child failure")
 	m = applyAll(m, bad)
 	s := approvalSurfaceOf(t, m)
-	if s.ask.reviewDetailUnavailable || s.queue[0].reviewDetailUnavailable {
+	if s.ask.unavailable || s.queue[0].unavailable {
 		t.Fatal("wrong-session failure affected approval")
 	}
 	m = applyAll(m, resultReply, actionReply, actionReply)
 	s = approvalSurfaceOf(t, m)
-	if s.ask.reviewDetail.ReviewID != "action" || s.queue[0].reviewDetail.ReviewID != "result" {
+	if s.ask.detail.ReviewID != "action" || s.queue[0].detail.ReviewID != "result" {
 		t.Fatal("queued detail lost or sent to wrong approval")
 	}
 	body, _ := s.permissionModalBodyParts(100, 80)
@@ -251,7 +243,7 @@ func TestGuardrailApprovalOwnsExplanationAndQueuedReplies(t *testing.T) {
 	late.Err = errors.New("late failure")
 	m = applyAll(m, late)
 	s = approvalSurfaceOf(t, m)
-	if s.ask.guardrail.ReviewID != "result" || s.ask.reviewDetailUnavailable {
+	if s.ask.guardrail.ReviewID != "result" || s.ask.unavailable {
 		t.Fatal("resolved prompt failure affected successor")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -266,32 +258,28 @@ func TestGuardrailApprovalDetailFailureCorrelation(t *testing.T) {
 	r := &guardrailDetailRecorder{err: errors.New("private outage detail")}
 	m := guardrailTestModel(t, r, false)
 	ask := client.PermissionAskMsg{AskID: "session:1:result", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "result", Kind: "result_release"}}
-	next, cmd := m.Update(ask)
-	m = next.(Model)
-	reply := guardrailReplies(cmd)[0]
+	reply := updateGuardrail(&m, ask)[0]
 	wrong := reply
 	wrong.ReviewID = "other"
 	m = applyAll(m, wrong)
 	wrong = reply
 	wrong.RequestID++
 	m = applyAll(m, wrong)
-	if approvalSurfaceOf(t, m).ask.reviewDetailUnavailable {
+	if approvalSurfaceOf(t, m).ask.unavailable {
 		t.Fatal("uncorrelated error changed prompt")
 	}
 	m = applyAll(m, reply)
 	s := approvalSurfaceOf(t, m)
 	body, _ := s.permissionModalBodyParts(100, 80)
 	body = stripANSIstr(body)
-	if !s.ask.reviewDetailUnavailable || !strings.Contains(body, "unavailable or expired") || !strings.Contains(body, "withheld from the model") || strings.Contains(body, "private outage detail") || strings.Contains(body, "Concern:") {
+	if !s.ask.unavailable || !strings.Contains(body, "unavailable or expired") || !strings.Contains(body, "withheld from the model") || strings.Contains(body, "private outage detail") || strings.Contains(body, "Concern:") {
 		t.Fatalf("failure prompt = %q", body)
 	}
 
 	// An unrelated warning reply must pass through the approval surface to its
 	// own entry, rather than being swallowed or changing the active prompt.
 	hook := guardrailTestHook("warning", "complete", "unresolved", "pass_advisory")
-	next, cmd = m.Update(hook)
-	m = next.(Model)
-	warning := guardrailReplies(cmd)[0]
+	warning := updateGuardrail(&m, hook)[0]
 	m = applyAll(m, warning)
 	if m.conv.scrollback.Len() != 1 || !strings.Contains(lastNotice(m), "unavailable or expired") {
 		t.Fatal("approval swallowed unrelated warning detail")
@@ -301,18 +289,16 @@ func TestGuardrailApprovalDetailFailureCorrelation(t *testing.T) {
 	// from the previous prompt may modify it.
 	m.closeModal()
 	m.conv = conversation{}
-	next, cmd = m.Update(ask)
-	m = next.(Model)
-	fresh := guardrailReplies(cmd)[0]
+	fresh := updateGuardrail(&m, ask)[0]
 	m = applyAll(m, reply)
 	reply.Err = nil
 	reply.Detail = client.GuardrailReviewDetail{ReviewID: "result", Concern: "stale"}
 	m = applyAll(m, reply)
-	if s = approvalSurfaceOf(t, m); s.ask.reviewDetailUnavailable || s.ask.reviewDetail.Concern != "" {
+	if s = approvalSurfaceOf(t, m); s.ask.unavailable || s.ask.detail.Concern != "" {
 		t.Fatal("previous prompt changed reopened approval")
 	}
 	m = applyAll(m, fresh)
-	if !approvalSurfaceOf(t, m).ask.reviewDetailUnavailable {
+	if !approvalSurfaceOf(t, m).ask.unavailable {
 		t.Fatal("current prompt error not applied")
 	}
 }

@@ -22,9 +22,7 @@ func TestGuardrailInboundOutcomeAfterApproval(t *testing.T) {
 						r := &guardrailDetailRecorder{}
 						m := guardrailTestModel(t, r, debug)
 						ask := client.PermissionAskMsg{AskID: "session:1:result", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "result", Kind: "result_release"}}
-						next, cmd := m.Update(ask)
-						m = next.(Model)
-						delayed := guardrailReplies(cmd)[0]
+						delayed := updateGuardrail(&m, ask)[0]
 						failure := delayed
 						failure.Err = errors.New("private original failure")
 						if initialFailed {
@@ -51,9 +49,7 @@ func TestGuardrailInboundOutcomeAfterApproval(t *testing.T) {
 						if freshFailed {
 							r.err = errors.New("private fresh failure")
 						}
-						next, cmd = m.Update(final)
-						m = next.(Model)
-						fresh := guardrailReplies(cmd)
+						fresh := updateGuardrail(&m, final)
 						if len(fresh) != 1 || fresh[0].RequestID == delayed.RequestID || fresh[0].SessionID != delayed.SessionID || fresh[0].ReviewID != delayed.ReviewID {
 							t.Fatalf("missing fresh correlated request: %+v", fresh)
 						}
@@ -66,9 +62,7 @@ func TestGuardrailInboundOutcomeAfterApproval(t *testing.T) {
 							t.Fatalf("duplicate outcome: %+v", after)
 						}
 						m = applyAll(m, delayed, failure)
-						next, cmd = m.Update(final)
-						m = next.(Model)
-						runBatchLeaves(cmd)
+						updateGuardrail(&m, final)
 						if got := m.conv.scrollback.SnapshotAt(0); got != after || r.calls != 2 {
 							t.Fatalf("stale reply or duplicate final hook changed pending receipt: %+v calls=%d", got, r.calls)
 						}
@@ -86,9 +80,7 @@ func TestGuardrailInboundOutcomeAfterApproval(t *testing.T) {
 							t.Fatalf("fresh explanation missing: %q", text)
 						}
 						m = applyAll(m, delayed, failure, fresh[0])
-						next, cmd = m.Update(final)
-						m = next.(Model)
-						runBatchLeaves(cmd)
+						updateGuardrail(&m, final)
 						if got := m.conv.scrollback.SnapshotAt(0); got != updated || r.calls != 2 {
 							t.Fatalf("completed receipt changed on stale/duplicate reply: %+v calls=%d", got, r.calls)
 						}
@@ -107,9 +99,7 @@ func TestGuardrailFinalHookSkipsUnneededDetailFetch(t *testing.T) {
 		for _, tc := range []struct{ routine, explained bool }{{true, false}, {true, true}, {false, true}} {
 			r := &guardrailDetailRecorder{}
 			m := guardrailTestModel(t, r, debug)
-			next, cmd := m.Update(client.PermissionAskMsg{AskID: "ask", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "review", Kind: "result_release"}})
-			m = next.(Model)
-			original := guardrailReplies(cmd)[0]
+			original := updateGuardrail(&m, client.PermissionAskMsg{AskID: "ask", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "review", Kind: "result_release"}})[0]
 			if tc.explained {
 				m = applyAll(m, original)
 			}
@@ -121,9 +111,7 @@ func TestGuardrailFinalHookSkipsUnneededDetailFetch(t *testing.T) {
 			}
 			final := guardrailTestHook("review", "complete", assessment, "release_result")
 			for range 2 {
-				next, cmd = m.Update(final)
-				m = next.(Model)
-				runBatchLeaves(cmd)
+				updateGuardrail(&m, final)
 			}
 			after := m.conv.scrollback.SnapshotAt(0)
 			if r.calls != 1 || m.conv.scrollback.Len() != 1 || after.ID != before.ID {
@@ -188,9 +176,7 @@ func TestGuardrailSessionReadyInvalidatesPendingDetails(t *testing.T) {
 				if approval {
 					event = client.PermissionAskMsg{AskID: "ask", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: "same-review", Kind: "result_release"}}
 				}
-				next, cmd := m.Update(event)
-				m = next.(Model)
-				old := guardrailReplies(cmd)[0]
+				old := updateGuardrail(&m, event)[0]
 				m = applyAll(m, client.SessionReadyMsg{SessionID: "other"}, old)
 				if approvalSurfaceFor(&m) != nil {
 					t.Fatal("old prompt survived SessionReady")
@@ -202,9 +188,7 @@ func TestGuardrailSessionReadyInvalidatesPendingDetails(t *testing.T) {
 						t.Fatal("old session reply mutated retained transcript")
 					}
 				}
-				next, cmd = m.Update(event)
-				m = next.(Model)
-				replies := guardrailReplies(cmd)
+				replies := updateGuardrail(&m, event)
 				if len(replies) != 1 {
 					t.Fatalf("new session reused stale request state: %d requests", len(replies))
 				}
@@ -212,14 +196,14 @@ func TestGuardrailSessionReadyInvalidatesPendingDetails(t *testing.T) {
 				m = applyAll(m, old)
 				if approval {
 					s := approvalSurfaceOf(t, m)
-					if s.ask.reviewDetailUnavailable || s.ask.reviewDetail.Concern != "" {
+					if s.ask.unavailable || s.ask.detail.Concern != "" {
 						t.Fatal("old reply affected new prompt")
 					}
 				}
 				m = applyAll(m, current)
 				if approval {
 					s := approvalSurfaceOf(t, m)
-					if s.ask.reviewDetailUnavailable != failed || (!failed && s.ask.reviewDetail.Concern == "") {
+					if s.ask.unavailable != failed || (!failed && s.ask.detail.Concern == "") {
 						t.Fatal("current prompt detail not applied")
 					}
 				} else if text := lastNotice(m); !strings.Contains(text, "Test explanation") && !strings.Contains(text, "unavailable or expired") {
@@ -276,18 +260,14 @@ func TestGuardrailQueuedFailureStaysWithPromotedPrompt(t *testing.T) {
 	ask := func(id string) client.PermissionAskMsg {
 		return client.PermissionAskMsg{AskID: "session:1:" + id, Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: id, Kind: "result_release"}}
 	}
-	next, cmd := m.Update(ask("head"))
-	m = next.(Model)
-	head := guardrailReplies(cmd)[0]
-	next, cmd = m.Update(ask("queued"))
-	m = next.(Model)
-	queued := guardrailReplies(cmd)[0]
+	head := updateGuardrail(&m, ask("head"))[0]
+	queued := updateGuardrail(&m, ask("queued"))[0]
 	failure := queued
 	failure.Err = errors.New("private queued failure")
 	m = applyAll(m, head, failure)
 	s := approvalSurfaceOf(t, m)
 	body, _ := s.permissionModalBodyParts(100, 80)
-	if s.ask.reviewDetailUnavailable || !s.queue[0].reviewDetailUnavailable || strings.Contains(stripANSIstr(body), "unavailable or expired") {
+	if s.ask.unavailable || !s.queue[0].unavailable || strings.Contains(stripANSIstr(body), "unavailable or expired") {
 		t.Fatal("queued error leaked into head prompt")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter}, queued, head)
@@ -295,7 +275,7 @@ func TestGuardrailQueuedFailureStaysWithPromotedPrompt(t *testing.T) {
 	m = applyAll(m, head)
 	s = approvalSurfaceOf(t, m)
 	body, _ = s.permissionModalBodyParts(100, 80)
-	if s.ask.guardrail.ReviewID != "queued" || !s.ask.reviewDetailUnavailable || s.ask.reviewDetail.Concern != "" || !strings.Contains(stripANSIstr(body), "unavailable or expired") {
+	if s.ask.guardrail.ReviewID != "queued" || !s.ask.unavailable || s.ask.detail.Concern != "" || !strings.Contains(stripANSIstr(body), "unavailable or expired") {
 		t.Fatalf("promoted prompt changed by stale reply: %q", body)
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})

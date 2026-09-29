@@ -64,9 +64,9 @@ func TestContextualGuardrailApprovalChoicesAndCoverage(t *testing.T) {
 }
 
 func TestGuardrailDetailFailureIsVisibleWithoutInventingFinding(t *testing.T) {
-	s := &approvalSurface{sessionID: "session", ask: pendingAsk{reviewDetailRequest: 1, guardrail: &client.GuardrailApprovalScope{ReviewID: "r", Kind: "result_release"}}}
+	s := &approvalSurface{sessionID: "session", ask: pendingAsk{guardrailDetailState: guardrailDetailState{requestID: 1}, guardrail: &client.GuardrailApprovalScope{ReviewID: "r", Kind: "result_release"}}}
 	_, handled, _ := s.HandleMsg(client.GuardrailReviewDetailMsg{SessionID: "session", ReviewID: "r", RequestID: 1, Err: errors.New("expired private detail")})
-	if !handled || !s.ask.reviewDetailUnavailable || s.ask.reviewDetail.Concern != "" {
+	if !handled || !s.ask.unavailable || s.ask.detail.Concern != "" {
 		t.Fatalf("detail failure state = %+v handled=%v", s.ask, handled)
 	}
 	var b strings.Builder

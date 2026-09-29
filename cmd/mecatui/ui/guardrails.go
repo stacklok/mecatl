@@ -22,11 +22,28 @@ func (m Model) runGuardrails() (tea.Model, tea.Cmd) {
 type guardrailPresentation struct {
 	blockID          scrollback.BlockID
 	hook             client.HookMsg
-	requestID        uint64
 	requested        bool
 	approvalResolved bool
-	detail           client.GuardrailReviewDetail
-	unavailable      bool
+	guardrailDetailState
+}
+
+type guardrailDetailState struct {
+	requestID   uint64
+	detail      client.GuardrailReviewDetail
+	unavailable bool
+}
+
+func (d *guardrailDetailState) applyDetail(msg client.GuardrailReviewDetailMsg, sessionID, reviewID string) bool {
+	if msg.SessionID != sessionID || msg.ReviewID != reviewID || d.requestID == 0 || d.requestID != msg.RequestID ||
+		(msg.Err == nil && msg.Detail.ReviewID != msg.ReviewID) {
+		return false
+	}
+	d.requestID = 0
+	d.unavailable = msg.Err != nil
+	if msg.Err == nil {
+		d.detail = msg.Detail
+	}
+	return true
 }
 
 func routineGuardrail(review *client.GuardrailReview) bool {
@@ -126,12 +143,10 @@ func guardrailHookText(msg client.HookMsg) string {
 	switch review.Disposition {
 	case "ask_action":
 		outcome = "Action paused for your decision."
-	case "withhold_result":
+	case "withhold_result", "deny":
 		outcome = "Result withheld from the model. The tool has already run; withholding its result does not undo its side effects."
-	case "deny":
-		outcome = "Action stopped. Review the explanation before retrying."
-		if review.Job == "inbound" {
-			outcome = "Result withheld from the model. The tool has already run; withholding its result does not undo its side effects."
+		if review.Disposition == "deny" && review.Job != "inbound" {
+			outcome = "Action stopped. Review the explanation before retrying."
 		}
 	case "execute":
 		outcome = "Action allowed to continue. Review the warning before relying on its result."
@@ -145,16 +160,8 @@ func guardrailHookText(msg client.HookMsg) string {
 
 func (m *Model) applyGuardrailDetail(msg client.GuardrailReviewDetailMsg) {
 	r := m.conv.guardrailReviews[msg.ReviewID]
-	if msg.SessionID != m.sessionID || r == nil || r.requestID == 0 || r.requestID != msg.RequestID {
+	if r == nil || !r.applyDetail(msg, m.sessionID, msg.ReviewID) {
 		return
-	}
-	if msg.Err == nil && msg.Detail.ReviewID != msg.ReviewID {
-		return
-	}
-	r.requestID = 0
-	r.unavailable = msg.Err != nil
-	if msg.Err == nil {
-		r.detail = msg.Detail
 	}
 	m.conv.scrollback.Notices().UpdateNotice(r.blockID, guardrailPresentationText(r, m.deps.Debug))
 }

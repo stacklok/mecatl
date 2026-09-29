@@ -171,12 +171,11 @@ func (m *Model) addApprovalNotice(ask pendingAsk, text string) string {
 		return text
 	}
 	r := m.conv.guardrailReview(ask.guardrail.ReviewID)
+	r.guardrailDetailState = ask.guardrailDetailState
 	r.requestID, r.approvalResolved = 0, true
-	r.detail = ask.reviewDetail
 	// A final nonroutine hook may fetch missing detail once with a new token;
 	// the closed prompt's request must never be reused.
 	r.requested = r.detail.Concern != "" || r.detail.SourceDisplay != ""
-	r.unavailable = ask.reviewDetailUnavailable
 	if r.hook.Guardrail != nil {
 		text += ". " + guardrailReviewReason(r.hook.Guardrail)
 	}
