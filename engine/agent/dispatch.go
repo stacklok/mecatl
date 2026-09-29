@@ -411,7 +411,7 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 		} else {
 			result, cancelled = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
 		}
-		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result)
+		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, false)
 		out[p.call.ID] = result
 	}
 
@@ -1589,7 +1589,7 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	return executionRecord{result: res, queued: queued, duration: dur, assessment: assessment, postEvents: postEvents}
 }
 
-func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, c session.ToolCall, record executionRecord, result session.ToolResult) {
+func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, c session.ToolCall, record executionRecord, result session.ToolResult, available bool) {
 	// A held assessment suppresses PostToolUse annotation prose even after a
 	// release: a hook is allowed to quote its input, and no annotation may become
 	// a side channel around the held-result decision.
@@ -1597,6 +1597,9 @@ func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, 
 		for _, event := range record.postEvents {
 			e.emit(r, event)
 		}
+	}
+	if available && !inboundNeedsHold(record.assessment) {
+		e.emit(r, session.Event{Type: session.EvToolResultAvailable, Turn: turnIdx, ToolResult: ptr(result)})
 	}
 	if e.deps.ToolCallRecorder != nil {
 		if aware, ok := e.deps.ToolCallRecorder.(port.RunAwareToolCallRecorder); ok {
@@ -1611,7 +1614,7 @@ func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, 
 func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, bool) {
 	record := e.executePrivate(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
 	result, cancelled := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
-	e.finalizeToolResult(r, sess, turnIdx, c, record, result)
+	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil)
 	return result, cancelled
 }
 

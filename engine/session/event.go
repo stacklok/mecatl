@@ -40,6 +40,9 @@ const (
 	EvReasoningDelta EventType = "reasoning.delta"
 	// EvToolCall is emitted when a tool is about to run.
 	EvToolCall EventType = "tool.call"
+	// EvToolResultAvailable carries a live, display-only safe result before the
+	// canonical tool.result. It is not part of session or model history.
+	EvToolResultAvailable EventType = "tool.result.available"
 	// EvToolResult carries the result of a tool execution.
 	EvToolResult EventType = "tool.result"
 	// EvToolProgress is transient progress for a long-running tool: it carries a
@@ -1519,7 +1522,7 @@ type Event struct {
 	Title *TitlePayload
 	// ToolCall is set on EvToolCall.
 	ToolCall *ToolCall
-	// ToolResult is set on EvToolResult.
+	// ToolResult is set on EvToolResultAvailable and EvToolResult.
 	ToolResult *ToolResult
 	// Ask is set on EvPermissionAsk.
 	Ask *PendingAsk

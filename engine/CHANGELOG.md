@@ -13,6 +13,9 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Live tool-result availability** — adds `session.EvToolResultAvailable` for
+  safe display payloads ahead of the canonical `tool.result`. Added (minor).
+
 - **Configurable standard commit co-author guidance** — adds
   `prompt.Config.CommitCoauthor`. `nil` and `true` include the canonical Mecatl
   commit-trailer guidance in the standard stable prompt prefix; `false` omits it.
