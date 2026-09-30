@@ -430,6 +430,9 @@ func TestCarryoverHandoff(t *testing.T) {
 
 	// The carryover create fired (recreate signal shared with restart-now).
 	waitClosed(t, "carryover re-create", conv.recreated, 5*time.Second)
+	// Wait for adoption and closure before quitting: re-created only means
+	// CreateSession was entered, not that the close command has run.
+	waitForClosedSession(t, "old session close after carryover handoff", conv, "sess-test-0001", 5*time.Second)
 
 	// Graceful double-ctrl+c quit, then assert on the final model.
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
@@ -445,7 +448,6 @@ func TestCarryoverHandoff(t *testing.T) {
 		t.Fatalf("carryover source ids = %v, want [sess-test-0001] (the old session)", srcs)
 	}
 	// (b) the OLD session was closed (best-effort, after the new one was ready).
-	waitForClosedSession(t, "old session close after carryover handoff", conv, "sess-test-0001", 5*time.Second)
 	closed := conv.closed()
 	if len(closed) != 1 || closed[0] != "sess-test-0001" {
 		t.Fatalf("CloseSession calls = %v, want [sess-test-0001] (the old session, closed after the new one was ready)", closed)
