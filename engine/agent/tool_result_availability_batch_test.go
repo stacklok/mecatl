@@ -54,6 +54,39 @@ func availabilityBatch(t *testing.T) (*agent.Run, *session.Session, <-chan sessi
 	return r, sess, started, gates
 }
 
+func simultaneousAvailabilityBatch(t *testing.T) (*agent.Run, <-chan session.ToolCallID, chan struct{}) {
+	t.Helper()
+	started := make(chan session.ToolCallID, 2)
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	read := &fakeTool{name: "Read", readOnly: true, exec: func(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		started <- call.ID
+		select {
+		case <-release:
+			return session.NewToolResultWithParts(call.ID, "result "+string(call.ID), []session.Content{
+				session.NewTextBlock("typed " + string(call.ID)),
+				session.NewStructuredContentBlock(`{"safe":true}`),
+			}), nil
+		case <-ctx.Done():
+			return session.NewToolError(call.ID, "cancelled"), nil
+		}
+	}}
+	llm := mockllm.New(
+		mockllm.ToolCallTurn(toolCall("slow", "Read", `{}`), toolCall("fast", "Read", `{}`)),
+		mockllm.TextTurn("done"),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	r := newEngine(agent.Deps{LLM: llm, Catalog: catalogWith(t, read)}).Run(ctx, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+	return r, started, release
+}
+
 func awaitAvailabilityBatchStart(t *testing.T, started <-chan session.ToolCallID) {
 	t.Helper()
 	seen := map[session.ToolCallID]bool{}
@@ -169,13 +202,14 @@ func TestADR_0370_Scenario1_PresentationAndCanonicalOrdering(t *testing.T) {
 }
 
 func TestADR_0370_Scenario1_SerializedAvailabilityPublication(t *testing.T) {
-	// Repeated simultaneous releases probe the publication seam under -race.
+	// A shared release makes both workers eligible to complete at once; the
+	// all-started handshake prevents the release from favoring launch order.
 	for iteration := range 20 {
 		t.Run(fmt.Sprint(iteration), func(t *testing.T) {
-			r, _, started, gates := availabilityBatch(t)
+			r, started, release := simultaneousAvailabilityBatch(t)
 			awaitAvailabilityBatchStart(t, started)
-			close(gates["fast"])
-			close(gates["slow"])
+			close(release)
+
 			var previous int64
 			available := map[session.ToolCallID]int{}
 			for ev := range r.Events() {
