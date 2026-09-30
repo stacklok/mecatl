@@ -482,6 +482,43 @@ func TestEndToEndPromptWithPermission(t *testing.T) {
 	}
 }
 
+// TestACPToolAvailabilityRelay drives the real ACP prompt relay against the
+// offline engine and verifies availability plus its canonical confirmation update
+// one existing tool-call card exactly once.
+func TestACPToolAvailabilityRelay(t *testing.T) {
+	read := &scriptTool{name: "Read", readOnly: true, content: "available"}
+	svc := newService(t, mockllm.New(
+		mockllm.ToolCallTurn(call("c-availability", "Read", `{"path":"a"}`)),
+		mockllm.TextTurn("done"),
+	), allowRules(), read)
+	e, cleanup := startAgent(t, svc)
+	defer cleanup()
+
+	res := e.call("session/new", map[string]any{"cwd": testCWD(t), "mcpServers": []any{}})
+	var created struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(res, &created); err != nil || created.SessionID == "" {
+		t.Fatalf("session/new: %s err=%v", res, err)
+	}
+	_ = e.call("session/prompt", map[string]any{"sessionId": created.SessionID,
+		"prompt": []any{map[string]any{"type": "text", "text": "run"}}})
+
+	updates := drainUpdates(e.notes)
+	settled := 0
+	for _, update := range updates {
+		if update["sessionUpdate"] == "tool_call_update" && update["toolCallId"] == "c-availability" {
+			settled++
+			if update["status"] != "completed" {
+				t.Fatalf("availability settlement status = %v, want completed", update["status"])
+			}
+		}
+	}
+	if settled != 1 {
+		t.Fatalf("tool call settled %d times, want one availability/canonical lifecycle: %v", settled, updates)
+	}
+}
+
 // drainUpdates collects all session/update notifications currently buffered.
 func drainUpdates(notes chan rpcMsg) []map[string]any {
 	var out []map[string]any

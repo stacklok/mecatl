@@ -517,6 +517,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 
 	stop := stopEndTurn
 	authorizationIneligible := false
+	projector := newRunProjector()
 	for ev := range run.Events() {
 		switch ev.Type {
 		case session.EvPermissionAsk:
@@ -533,7 +534,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 			}
 		case session.EvAuthorizationRequired:
 			authorizationIneligible = true
-			if update, ok := projectUpdate(ev); ok {
+			if update, ok := projector.project(ev); ok {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		case session.EvResult:
@@ -541,7 +542,7 @@ func (a *Agent) handleSessionPrompt(ctx context.Context, params json.RawMessage)
 				stop = stopReasonFor(ev.Result.Stop)
 			}
 		default:
-			if update, ok := projectUpdate(ev); ok {
+			if update, ok := projector.project(ev); ok {
 				a.notifyUpdate(ctx, req.SessionID, update)
 			}
 		}
