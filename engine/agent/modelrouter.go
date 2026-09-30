@@ -15,10 +15,18 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 )
 
-// ModelRouteResult is one backend-neutral classifier result. Category and Model are
+// ModelTarget is a provider/model target selected for delegated work. An empty
+// Provider preserves the caller's contextual provider.
+type ModelTarget struct {
+	Provider string
+	Model    string
+}
+
+// ModelRouteResult is one backend-neutral classifier result. Category and target are
 // validated candidates even when OK is false; OK alone says whether the route was accepted.
 type ModelRouteResult struct {
 	Category   string
+	Provider   string
 	Model      string
 	Usage      session.Usage
 	Reason     string

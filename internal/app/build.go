@@ -267,6 +267,9 @@ type Config struct {
 	// catalogued; the mock path never consults the resolved default).
 	DefaultProvider string
 	DefaultModel    string
+	// defaultModelFromAlias records an already Build-validated provider-aware alias.
+	// Its opaque model is provider runtime truth and is not catalog-probed.
+	defaultModelFromAlias bool
 
 	// DefaultProviderFlagSet records whether the operator passed an explicit
 	// --default-provider flag. When true, foldOperatorDefaultProvider leaves the
@@ -1889,6 +1892,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	// feeds the UNCHANGED preferredDefaultProvider ladder as an explicit override; it
 	// does NOT lower the precedence of key-driven providers. No-op when absent.
 	cfg = foldOperatorDefaultProvider(cfg)
+	resolvedDefaultCfg, err := applyDeploymentDefaultTarget(cfg)
+	if err != nil {
+		return nil, err
+	}
+	cfg = resolvedDefaultCfg
 
 	reg, provider, err := buildProvider(ctx, cfg)
 	if err != nil {
@@ -5163,16 +5171,16 @@ func normalizeSubagentModel(cfg Config) (string, error) {
 	if sel == "" {
 		return "", nil
 	}
-	resolved, known := lookupModelAlias(cfg, sel)
+	target, known := lookupModelAliasTarget(cfg, sel)
 	switch {
 	case !known:
 		return "", fmt.Errorf("--subagent-model / models.subagent %q: unknown model alias (not in --model-alias, not a built-in alias, and a bare token is not a concrete model id); every def-less child would silently run on the parent model — pass a concrete model id or define the alias", sel)
-	case resolved == "":
+	case strings.TrimSpace(target.Model) == "":
 		return "", fmt.Errorf("--subagent-model / models.subagent %q: the alias resolves to \"inherit\" (the built-in sonnet/opus/haiku aliases mean inherit unless overridden via --model-alias), which would make the child-default override a no-op — pass a concrete model id or map the alias to one", sel)
 	}
 	cfg.diag().Log(context.Background(), port.LevelInfo,
 		"subagent default model ACTIVE: def-less Subagent explorer / Parallel-branch / undefined-team-member children run on it (the Parallel judge stays on the session model); a def `model:` or per-call override still wins",
-		"model", resolved)
+		"provider", target.ProviderID, "model", target.Model)
 	return sel, nil
 }
 
@@ -5514,7 +5522,7 @@ func validateDefaultModel(cfg Config, reg *providerRegistry) error {
 	if cfg.UseMock || (cfg.DefaultProvider == "" && cfg.DefaultModel == "") {
 		return nil
 	}
-	if cfg.DefaultModel != "" && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
+	if cfg.DefaultModel != "" && !cfg.defaultModelFromAlias && !modelCatalogued(reg.Default(), cfg.DefaultModel) && reg.DefaultModelFor(reg.Default()) != cfg.DefaultModel {
 		return fmt.Errorf("--default-model %q: not catalogued for the default provider %q; a deployment-wide default must be known-good at startup — either choose a catalogued model id, or pass it as the per-session passthrough --model (which accepts any model the provider serves)", cfg.DefaultModel, reg.Default())
 	}
 	if cfg.DefaultModel != "" && cfg.Model != "" {
@@ -7095,8 +7103,8 @@ func buildChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMPr
 // assert the resolved Deps directly (Model / PromptConfig.Env.Model /
 // ContextWindow are private once inside the engine).
 func childExplorerDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) agent.Deps {
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-	return childEngineDepsForProvider(cfg, "task", provider, model, windowFn,
+	childProvider, _, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
+	return childEngineDepsForProvider(cfg, "task", childProvider, model, windowFn,
 		readOnlyExplorerCatalog(runner), explorerPromptConfig(modelCfgFor(cfg, model)), nil)
 }
 
@@ -7211,7 +7219,7 @@ func buildParallelChildEngine(cfg Config, provReg *providerRegistry, provider po
 // buildParallelChildEngine (the childExplorerDeps precedent) so a test can assert
 // the resolved Deps directly.
 func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) agent.Deps {
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+	childProvider, _, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 	// Start from the read-only explorer surface (Read/Grep/Glob + sandboxed Shell) then
 	// LAYER Edit/Write on top — a Parallel branch MAY mutate its OWN fork. Shell is
 	// workspace-aware (ShellTool reads its runner from the per-branch Environment bound to
@@ -7220,7 +7228,7 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 	// excluded — readOnlyExplorerCatalog never adds them — so a branch can't recurse.)
 	childCat := writableExplorerCatalog(runner, "parallel child tool catalog")
 
-	return childEngineDepsForProvider(cfg, "parallel", provider, model, windowFn,
+	return childEngineDepsForProvider(cfg, "parallel", childProvider, model, windowFn,
 		childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 }
 
@@ -7240,8 +7248,8 @@ func parallelChildDeps(cfg Config, provReg *providerRegistry, provider port.LLMP
 // through the SAME def-less chain (SubagentModel > parentModel) as the read-only
 // explorer and Parallel branches.
 func buildWritableSubagentChildEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, runner tool.CommandRunner) *agent.Engine {
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
-	return agent.NewEngine(writableExplorerDeps(cfg, provider, model, "task:read-write", windowFn, runner))
+	childProvider, _, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
+	return agent.NewEngine(writableExplorerDeps(cfg, childProvider, model, "task:read-write", windowFn, runner))
 }
 
 // writableExplorerDeps builds the agent.Deps for a WRITABLE explorer child engine on a
@@ -7485,12 +7493,13 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 			result.Reason, result.OK = fmt.Sprintf("category-selector-empty (category=%s)", category), false
 			return result
 		}
-		id, known := lookupModelAlias(cfg, sel)
-		if !known || id == "" {
+		resolved, err := resolveModelTarget(cfg, parentProviderID, "", sel)
+		if err != nil || resolved.Model == "" {
 			result.Reason, result.OK = fmt.Sprintf("category-target-unresolvable (category=%s selector=%s)", category, sel), false
 			return result
 		}
-		result.Model = id
+		result.Provider = resolved.ProviderID
+		result.Model = resolved.Model
 		return result
 	}
 	if cfg.RouterBackend == routerBackendJev {
@@ -7758,11 +7767,11 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 // the same def-less chain as everywhere (SubagentModel > parent). The returned
 // tool has no close func (no inline MCP managers are connected on this path).
 func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, hooks port.HookRunner, store port.SessionStore, a catalogAssets) tool.Tool {
-	newNoFSChild := func(role, model string, windowFn func() int) *agent.Engine {
+	newNoFSChild := func(role string, childProvider port.LLMProvider, model string, windowFn func() int) *agent.Engine {
 		pc := applyNoFSPosture(explorerPromptConfig(modelCfgFor(cfg, model)), noFSMemberNote)
-		return newChildEngineForProvider(cfg, role, provider, model, windowFn, noFSChildCatalog(ctx, cfg, a), pc, nil)
+		return newChildEngineForProvider(cfg, role, childProvider, model, windowFn, noFSChildCatalog(ctx, cfg, a), pc, nil)
 	}
-	model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+	childProvider, _, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 	opts := []agent.SubagentOption{
 		agent.WithSubagentStopHook(hooks),
 		agent.WithSubagentStore(store),
@@ -7775,10 +7784,10 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 				return nil, false
 			}
 			w := childWindowFor(cfg, provReg, parentProviderID, overrideModel)
-			return newNoFSChild("task:model="+overrideModel, overrideModel, w), true
+			return newNoFSChild("task:model="+overrideModel, provider, overrideModel, w), true
 		}),
 	}
-	return agent.NewSubagentTool(newNoFSChild("task", model, windowFn), opts...)
+	return agent.NewSubagentTool(newNoFSChild("task", childProvider, model, windowFn), opts...)
 }
 
 // buildSubagentEngineFactory returns the per-call model-override factory the Subagent tool
@@ -7801,6 +7810,32 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 // Cross-provider routing by a bare model id is intentionally out of scope this round
 // (the registry is keyed by provider, not model) — a def's `provider:` remains the
 // cross-provider seam.
+func buildSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string, runner tool.CommandRunner) func(agent.ModelTarget) (*agent.Engine, bool) {
+	return func(target agent.ModelTarget) (*agent.Engine, bool) {
+		providerID := strings.TrimSpace(target.Provider)
+		model := strings.TrimSpace(target.Model)
+		if providerID == "" {
+			providerID = parentProviderID
+		}
+		if model == "" {
+			return nil, false
+		}
+		provider := parentProvider
+		if providerID != parentProviderID {
+			entry, ok := provReg.Lookup(providerID)
+			if !ok {
+				return nil, false
+			}
+			provider = entry.provider
+		}
+		childCat := readOnlyExplorerCatalog(runner)
+		windowFn := childWindowFor(cfg, provReg, providerID, model)
+		eng := newChildEngineForProvider(cfg, "task:model="+model, provider, model, windowFn,
+			childCat, explorerPromptConfig(modelCfgFor(cfg, model)), nil)
+		return eng, true
+	}
+}
+
 func buildSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string, runner tool.CommandRunner) func(model string) (*agent.Engine, bool) {
 	return func(model string) (*agent.Engine, bool) {
 		model = strings.TrimSpace(model)
@@ -8224,7 +8259,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			return agent.MemberBuild{}
 		}
 		if noFS {
-			model, windowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+			childProvider, _, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 			// OPT-IN model router (ADR 0034): an undefined member the supervisor classified
 			// runs on the ALREADY-RESOLVED routed model with its re-derived window, through
 			// the SAME contamination-safe newChildEngineForProvider path the default uses.
@@ -8247,7 +8282,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			}
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
-			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, provider, model, windowFn, cat, pc, nil)
+			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, model, windowFn, cat, pc, nil)
 			return agent.MemberBuild{Engine: eng, Close: generationClose, MCPToolNames: exempt}
 		}
 		classified := newClassifiedCatalog()
@@ -8259,7 +8294,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 		// LEAD INCLUDED (a lead-strong/member-cheap split is deferred — a lead that
 		// must stay on the strong model can pin it via an agent def today). A
 		// DEFINED member overrides all of this via resolveChildProvider below.
-		defaultModel, defaultWindowFn := resolveDefaultChildModel(cfg, provReg, parentProviderID, parentModel)
+		defaultProvider, _, defaultModel, defaultWindowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
 		var (
 			// Default (undefined) member: inherit the parent provider + the resolved
 			// def-less model the call site supplied (the build-time default, or a
@@ -8267,7 +8302,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// via resolveProviderModel below.
 			model         = defaultModel
 			pc            = promptConfig(modelCfgFor(cfg, defaultModel), cfg.gitStatus)
-			childProvider = provider
+			childProvider = defaultProvider
 			windowFn      = defaultWindowFn
 			mode          session.PermissionMode
 			// memberLimits carries ONLY the def-set per-round stop conditions (zero =

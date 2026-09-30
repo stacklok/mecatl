@@ -13,6 +13,11 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
+- **Provider-aware delegation target seam** — adds `agent.ModelTarget` and the
+  optional `Provider` field on `agent.ModelRouteResult`, allowing composition to
+  preserve an automatic router's concrete provider/model pair while rebuilding
+  provider-dependent child dependencies. Added (minor).
+
 - **Configurable standard commit co-author guidance** — adds
   `prompt.Config.CommitCoauthor`. `nil` and `true` include the canonical Mecatl
   commit-trailer guidance in the standard stable prompt prefix; `false` omits it.

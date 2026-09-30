@@ -93,34 +93,49 @@ func resolveModel(cfg Config, def agents.AgentDef) string {
 // resolveModel chain (def.Model > SubagentModel > parentModel) applies unchanged —
 // full back-compat for every existing def.
 func resolveProviderModel(cfg Config, provReg *providerRegistry, def agents.AgentDef, parentProviderID, parentModel string) (providerID, model string) {
-	pid := parentProviderID
-	if p := strings.TrimSpace(def.Provider); p != "" {
-		if _, ok := provReg.Lookup(p); ok {
-			pid = p
+	explicitProvider := strings.TrimSpace(def.Provider)
+	resolvedProvider := parentProviderID
+	invalidExplicitProvider := false
+	if explicitProvider != "" {
+		if _, ok := provReg.Lookup(explicitProvider); ok {
+			resolvedProvider = explicitProvider
 		} else {
+			invalidExplicitProvider = true
 			cfg.diag().Log(context.Background(), port.LevelWarn, "agent def references an unknown/unavailable provider; inheriting parent provider",
-				"agent", def.Name, "provider", p, "origin", string(def.Origin))
-			// pid stays parentProviderID (fail-safe).
+				"agent", def.Name, "provider", explicitProvider, "origin", string(def.Origin))
 		}
 	}
-
-	if pid != parentProviderID {
-		// Provider SWITCHED: never inherit the parent model string (different endpoint).
-		if m := strings.TrimSpace(def.Model); m != "" && m != "inherit" {
-			if resolved := resolveAlias(cfg, def, m); resolved != "" {
-				return pid, resolved
-			}
+	fallback := func() (string, string) {
+		if resolvedProvider != parentProviderID {
+			return resolvedProvider, provReg.DefaultModelFor(resolvedProvider)
 		}
-		// No explicit def model (or an alias that resolves to inherit): rebase off the
-		// new provider's builtin default, NOT the parent model.
-		return pid, provReg.DefaultModelFor(pid)
+		return parentProviderID, parentModel
 	}
 
-	// Same provider as the parent: the existing chain is correct (full back-compat).
-	// Resolve the model against the parent model rather than cfg.Model, so a session
-	// that selected a non-default model on the SAME provider propagates it to a def
-	// that pins no model of its own.
-	return pid, resolveModelFor(cfg, def, parentModel)
+	selector := strings.TrimSpace(def.Model)
+	if selector == "" || selector == "inherit" {
+		selector = strings.TrimSpace(cfg.SubagentModel)
+	}
+	if selector == "" {
+		return fallback()
+	}
+
+	if raw, known := lookupModelAliasTarget(cfg, selector); invalidExplicitProvider && known && raw.ProviderID != "" {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target conflicts with its unavailable provider; inheriting fallback target",
+			"agent", def.Name, "origin", string(def.Origin))
+		return fallback()
+	}
+	providerConstraint := ""
+	if explicitProvider != "" && !invalidExplicitProvider {
+		providerConstraint = resolvedProvider
+	}
+	target, err := resolveModelTarget(cfg, parentProviderID, providerConstraint, selector)
+	if err != nil || target.Model == "" {
+		cfg.diag().Log(context.Background(), port.LevelWarn, "agent def model target is unavailable or conflicts with its provider; inheriting fallback target",
+			"agent", def.Name, "origin", string(def.Origin))
+		return fallback()
+	}
+	return target.ProviderID, target.Model
 }
 
 // resolveChildProvider resolves a def to the (childProvider, model, windowFn)
