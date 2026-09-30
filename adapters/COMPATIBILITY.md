@@ -58,33 +58,27 @@ Edit protobuf sources under `contracts/proto/mecatl/driver/v1/` and regenerate
 through `task generate`, never by editing generated Go output.
 
 The adapter manifest requires the real engine baseline
-`v0.15.1-0.20260929125653-6142f5252a09` and the independently resolved,
-checksum-verifiable support and driver revisions
-`v0.0.0-20260929205240-3fd4c343ca56`. Publication leaves engine source and its
-dependency graph unchanged: an engine-only application does not acquire Redis,
-gRPC, the root host, or adapters. Root `go.mod` replacements and `go.work` are
-checkout conveniences, not external installation requirements.
+`v0.15.1-0.20260929125653-6142f5252a09` and the independently tagged
+`v0.1.0` support and driver modules. Engine-only applications do not acquire
+Redis, gRPC, the root host, or adapters. Root `go.mod` replacements and
+`go.work` are checkout conveniences, not external installation requirements.
 
-## Initial release sequence
+## Release verification
 
-The support and driver dependency revisions already resolve through the public Go
-proxy with verified checksums. `adapters/go.sum` records the standalone closure;
-normal `task tidy` and builds do not depend on future release tags. The first
-`v0.1.0` tags remain human-controlled and are not published by root releases.
+The `adapters/v0.1.0` tag retains dependency pins to a revision that the Go
+module resolver cannot fetch. That immutable tag does not support standalone
+installation; publish a patch version from the corrected manifest after
+review and standalone verification.
 
-From reviewed commits, release dependency-first:
+Release dependency-first from reviewed commits:
 
-1. From each of `internal/adaptersupport/` and
-   `contracts/gen/go/mecatl/driver/`, run `GOWORK=off go mod tidy -diff` and
-   `GOWORK=off go test ./...`; a human may then publish their independent tags.
-2. From `adapters/`, run `GOWORK=off go mod tidy -diff` and
-   `GOWORK=off go test ./...` against the pinned public dependencies. Check
-   the committed `go.sum` and review the independent dependency tags.
-3. A human may publish `adapters/v0.1.0` from a reviewed commit. Confirm external
-   installation without workspace or replace directives before announcing it.
-
-Run the checks against the public checksum-backed proxy when preparing a
-release; a local tag or workspace build is not proof of public availability.
+1. For each dependency module, run `GOWORK=off go mod tidy -diff` and
+   `GOWORK=off go test ./...` before publishing its independent tag.
+2. In `adapters/`, run `GOWORK=off go mod tidy -diff` and
+   `GOWORK=off go test ./...` against the pinned public dependencies. Review
+   `go.sum` and the dependency tags.
+3. A human publishes the adapters tag after confirming installation without
+   workspace or replace directives against the public checksum-backed proxy.
 
 ## Module tests
 
