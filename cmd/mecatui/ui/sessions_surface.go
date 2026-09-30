@@ -254,7 +254,13 @@ func (s *sessionsState) applyReplayEvent(msg tea.Msg) {
 	case client.ToolCallMsg:
 		c.addTool(msg.ID, msg.Name, msg.Args)
 	case client.ToolResultMsg:
-		if !c.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
+		resolved := false
+		if msg.Available {
+			resolved = c.resolveAvailableTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
+		} else {
+			resolved = c.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
+		}
+		if !resolved {
 			c.addNotice("orphan tool result for " + msg.CallID)
 		}
 	case client.HookMsg:

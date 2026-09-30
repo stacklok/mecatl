@@ -5,6 +5,69 @@ import (
 	"testing"
 )
 
+func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
+	var c Conversation
+	c.Tools().Add(ToolCall{ID: "one", Name: "Read"})
+	available := ToolResult{Body: "ready", Artifacts: []Artifact{{Kind: "resource_link", Name: "item"}}}
+	if !c.Tools().ResolveAvailable("one", available) {
+		t.Fatal("availability did not settle card")
+	}
+	before := c.SnapshotAt(0)
+	if !c.Tools().Resolve("one", available) {
+		t.Fatal("canonical confirmation rejected")
+	}
+	if got := c.SnapshotAt(0); !reflect.DeepEqual(got, before) {
+		t.Fatalf("confirmation changed card: %+v", got)
+	}
+	cancelled := ToolResult{Body: "cancelled", IsError: true}
+	c.Tools().Add(ToolCall{ID: "replace", Name: "Read"})
+	if !c.Tools().ResolveAvailable("replace", available) {
+		t.Fatal("replacement availability rejected")
+	}
+	before = c.SnapshotAt(1)
+	if !c.Tools().Resolve("replace", cancelled) {
+		t.Fatal("canonical replacement rejected")
+	}
+	after := c.SnapshotAt(1)
+	if after.ID != before.ID || after.Revision != before.Revision+1 || !reflect.DeepEqual(after.Payload.(ToolCardSnapshot).Result, cancelled) || c.Len() != 2 {
+		t.Fatalf("replacement = %+v", after)
+	}
+	if c.Tools().Resolve("replace", available) || c.Tools().ResolveAvailable("replace", available) {
+		t.Fatal("stale result replay changed canonical card")
+	}
+	if got := c.SnapshotAt(1); !reflect.DeepEqual(got, after) {
+		t.Fatalf("stale replay changed card: %+v", got)
+	}
+	c.Tools().Add(ToolCall{ID: "two", Name: "Grep"})
+	if !c.Tools().Resolve("two", cancelled) {
+		t.Fatal("canonical-only stream did not settle call")
+	}
+
+	for _, tc := range []struct {
+		name  string
+		start func(*Conversation, string) bool
+	}{
+		{"Subagent", func(c *Conversation, id string) bool { return c.Subagents().Start(id, SubagentStart{}) }},
+		{"Team", func(c *Conversation, id string) bool { return c.Teams().Start(id, TeamStart{}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var specialized Conversation
+			specialized.Tools().Add(ToolCall{ID: "delegated", Name: tc.name})
+			if !tc.start(&specialized, "delegated") || !specialized.Tools().ResolveAvailable("delegated", available) {
+				t.Fatal("specialized card did not settle from availability")
+			}
+			before := specialized.SnapshotAt(0)
+			if !specialized.Tools().Resolve("delegated", cancelled) {
+				t.Fatal("specialized card did not accept canonical replacement")
+			}
+			after := specialized.SnapshotAt(0)
+			if after.ID != before.ID || after.Revision != before.Revision+1 || specialized.Len() != 1 {
+				t.Fatalf("specialized card duplicated or not replaced: %+v", after)
+			}
+		})
+	}
+}
+
 func TestToolLifecycle(t *testing.T) {
 	var c Conversation
 	call := ToolCall{ID: "read", Name: "Read", Artifacts: []Artifact{{Data: []byte("request")}}}

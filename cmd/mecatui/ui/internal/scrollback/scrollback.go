@@ -64,9 +64,10 @@ type BlockMetadata struct {
 }
 
 type card struct {
-	id       BlockID
-	revision uint64
-	payload  PayloadSnapshot
+	id        BlockID
+	revision  uint64
+	payload   PayloadSnapshot
+	available bool
 }
 
 // Conversation is an ordered, mutable logical conversation document. It owns its

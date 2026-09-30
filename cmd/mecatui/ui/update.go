@@ -1343,7 +1343,13 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.afterEvent()
 	case client.ToolResultMsg:
-		if !m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...) {
+		resolved := false
+		if msg.Available {
+			resolved = m.conv.resolveAvailableTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
+		} else {
+			resolved = m.conv.resolveTool(msg.CallID, msg.Content, msg.IsError, msg.Blocks...)
+		}
+		if !resolved {
 			m.conv.addNotice("orphan tool result for " + msg.CallID)
 		}
 		m.activeTool = m.conv.latestPendingToolName()

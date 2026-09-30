@@ -96,11 +96,15 @@ func TestProjectUpdateToolResult(t *testing.T) {
 	}
 }
 
-// TestACPToolAvailabilityConfirmation asserts that one prompt relay settles a
-// call from availability, treats an identical canonical result as confirmation,
-// and replaces that display when the canonical result is authoritative.
-func TestACPToolAvailabilityConfirmation(t *testing.T) {
+// TestADR_0370_Scenario3_ClientConfirmationAndReplacement pins ACP's single
+// call-ID-correlated card/update lifecycle alongside Mecatui's named proof.
+func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
 	projector := newRunProjector()
+	call := session.NewToolCall("call-availability", "Read", json.RawMessage(`{}`))
+	opened, ok := projector.project(session.Event{Type: session.EvToolCall, ToolCall: &call})
+	if !ok || opened.(toolCallUpdate).ToolCallID != "call-availability" || opened.(toolCallUpdate).Status != toolStatusPending {
+		t.Fatalf("pending call = %+v, projected=%v", opened, ok)
+	}
 	available := session.NewToolResult("call-availability", "available")
 
 	got, ok := projector.project(session.Event{Type: session.EvToolResultAvailable, ToolResult: &available})
@@ -116,13 +120,17 @@ func TestACPToolAvailabilityConfirmation(t *testing.T) {
 		t.Fatal("identical canonical result emitted a duplicate tool_call_update")
 	}
 
-	cancelled := session.NewToolError("call-availability", "cancelled")
+	cancelled := session.NewToolError("call-cancelled", "cancelled")
+	prior := session.NewToolResult("call-cancelled", "available")
+	if _, ok := projector.project(session.Event{Type: session.EvToolResultAvailable, ToolResult: &prior}); !ok {
+		t.Fatal("second availability did not settle its call")
+	}
 	got, ok = projector.project(session.Event{Type: session.EvToolResult, ToolResult: &cancelled})
 	if !ok {
 		t.Fatal("differing canonical result did not replace availability")
 	}
 	update = got.(toolCallUpdate)
-	if update.ToolCallID != "call-availability" || update.Status != toolStatusFailed || update.Content[0].Content.Text != "cancelled" {
+	if update.ToolCallID != "call-cancelled" || update.Status != toolStatusFailed || update.Content[0].Content.Text != "cancelled" {
 		t.Fatalf("replacement update = %+v", update)
 	}
 

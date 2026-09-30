@@ -386,6 +386,10 @@ func (c *conversation) resolveTool(callID, body string, isErr bool, blocks ...cl
 	return c.scrollback.Tools().Resolve(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)})
 }
 
+func (c *conversation) resolveAvailableTool(callID, body string, isErr bool, blocks ...client.ContentBlock) bool {
+	return c.scrollback.Tools().ResolveAvailable(callID, scrollback.ToolResult{Body: body, IsError: isErr, Artifacts: artifacts(blocks)})
+}
+
 // cloneRoutingDecision takes ownership of optional scalar presence as well as the
 // value itself. UI state must not retain pointers owned by a transient client event.
 func cloneRoutingDecision(in *client.RoutingDecision) *client.RoutingDecision {

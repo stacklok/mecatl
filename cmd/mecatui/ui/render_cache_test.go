@@ -120,6 +120,11 @@ var oracleSteps = []struct {
 		c.addTool("call-2", "Shell", `{"command":"go vet ./..."}`)
 		c.resolveTool("call-2", "ok", false) // tail
 	}},
+	{"resolveAvailableTool", func(c *conversation) {
+		c.addTool("available-1", "Read", `{}`)
+		c.resolveAvailableTool("available-1", "available", false)
+		c.resolveTool("available-1", "cancelled", true)
+	}},
 	{"applySubagentTyped", func(c *conversation) {
 		c.addTool("typed-sub", "Subagent", `{}`)
 		c.applySubagentTyped(client.SubagentMsg{Kind: client.SubagentStart, ParentCallID: "typed-sub", ChildID: "typed-child", Goal: "typed"})

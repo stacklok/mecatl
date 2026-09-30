@@ -103,37 +103,61 @@ func (t ToolCards) Finish(callID string, failed bool) bool {
 	return c.replace(i, payload)
 }
 
-// Resolve records result as the terminal result for the call indexed by callID.
-// It returns false for an unknown call or a conflicting replay. An identical
-// replay succeeds without changing the card or its revision.
+// Resolve records the authoritative result for the call indexed by callID.
+// It confirms identical availability without changing the visible revision, or
+// replaces a different available result. A conflicting canonical replay fails.
 func (t ToolCards) Resolve(callID string, result ToolResult) bool {
+	return t.resolve(callID, result, false)
+}
+
+// ResolveAvailable settles a pending card with a transient display result.
+func (t ToolCards) ResolveAvailable(callID string, result ToolResult) bool {
+	return t.resolve(callID, result, true)
+}
+
+func (t ToolCards) resolve(callID string, result ToolResult, available bool) bool {
 	c := t.conversation
 	i, ok := c.call(callID)
 	if !ok {
 		return false
 	}
-	switch payload := c.cards[i].payload.(type) {
+	entry := &c.cards[i]
+	var prior ToolResult
+	var resolved bool
+	switch payload := entry.payload.(type) {
 	case ToolCardSnapshot:
-		if payload.Resolved {
-			return reflect.DeepEqual(payload.Result, result)
-		}
-		payload.Resolved = true
-		payload.Result = cloneResult(result)
-		return c.replace(i, payload)
+		prior, resolved = payload.Result, payload.Resolved
 	case SubagentCardSnapshot:
-		if payload.Resolved {
-			return reflect.DeepEqual(payload.Result, result)
-		}
-		payload.Resolved = true
-		payload.Result = cloneResult(result)
-		return c.replace(i, payload)
+		prior, resolved = payload.Result, payload.Resolved
 	case TeamCardSnapshot:
-		if payload.Resolved {
-			return reflect.DeepEqual(payload.Result, result)
-		}
-		payload.Resolved = true
-		payload.Result = cloneResult(result)
-		return c.replace(i, payload)
+		prior, resolved = payload.Result, payload.Resolved
+	default:
+		return false
 	}
-	return false
+	if resolved {
+		if available && !entry.available {
+			return false // canonical already settled this card
+		}
+		identical := reflect.DeepEqual(prior, result)
+		if !entry.available || available || identical {
+			if !available {
+				entry.available = false
+			}
+			return identical
+		}
+	}
+	var updated PayloadSnapshot
+	switch payload := entry.payload.(type) {
+	case ToolCardSnapshot:
+		payload.Resolved, payload.Result = true, cloneResult(result)
+		updated = payload
+	case SubagentCardSnapshot:
+		payload.Resolved, payload.Result = true, cloneResult(result)
+		updated = payload
+	case TeamCardSnapshot:
+		payload.Resolved, payload.Result = true, cloneResult(result)
+		updated = payload
+	}
+	entry.available = available
+	return c.replace(i, updated)
 }

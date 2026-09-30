@@ -77,6 +77,7 @@ type ToolResultMsg struct {
 	CallID            string
 	Content           string
 	IsError           bool
+	Available         bool // transient availability; false for canonical results
 	Blocks            []ContentBlock
 	StructuredContent string
 }
@@ -1175,12 +1176,13 @@ func EventToMsg(ev *mecatlv1.Event) tea.Msg {
 	case "tool.call":
 		tc := ev.GetToolCall()
 		return ToolCallMsg{ID: tc.GetId(), Name: tc.GetName(), Args: tc.GetArgs()}
-	case "tool.result":
+	case "tool.result", "tool.result.available":
 		tr := ev.GetToolResult()
 		return ToolResultMsg{
 			CallID:            tr.GetCallId(),
 			Content:           tr.GetContent(),
 			IsError:           tr.GetIsError(),
+			Available:         ev.GetType() == "tool.result.available",
 			Blocks:            contentBlocksFromProto(tr.GetBlocks()),
 			StructuredContent: tr.GetStructuredContent(),
 		}
