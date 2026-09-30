@@ -424,9 +424,19 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testi
 }
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *testing.T) {
 	m, s := savedMemoryOpened(t, savedMemoryEntries(60))
+	m.vp.SetContent(strings.Repeat("conversation\n", 100))
+	m.vp.SetYOffset(5)
+	before := m.vp.YOffset()
+	withoutModal := m
+	withoutModal.modal = nil
+	mm, _ := withoutModal.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	withoutModal = mm.(Model)
+	if got := withoutModal.vp.YOffset(); got <= before {
+		t.Fatalf("wheel without modal did not move scrollable conversation: got %d, want > %d", got, before)
+	}
+
 	s.Render(45, 9)
 	selected := s.list.CursorID()
-	before := m.vp.YOffset()
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 1, Y: 1})
 	if s.list.Offset() != 0 || m.vp.YOffset() != before {
 		t.Fatal("top endpoint wheel escaped saved-memory panel")
