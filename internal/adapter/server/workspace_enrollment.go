@@ -33,6 +33,17 @@ func (s *Service) ConnectWorkspaceServices(ctx context.Context, id session.Sessi
 // under ONE lock/lease acquisition so a prompt can never enter between the
 // cancellation and the replacement begin.
 func (s *Service) connectWorkspaceServicesLocked(ctx context.Context, id session.SessionID) (WorkspaceEnrollmentProjection, error) {
+	// ADR 0353 (AC3.6): fail closed for an agent-bound session before any broker
+	// attachment is opened — the workspace/bundle enrollment RPC could otherwise
+	// widen the session's catalog past the bound def's own tools/mcpServers:, the
+	// exact widening Authority.Ceiling (AC3.2) exists to refuse at execution
+	// time. This adapter-layer guard keeps the catalog from ever offering the
+	// tool in the first place. A probe load (rather than reusing
+	// workspaceEnrollmentTarget's own load) lets this reject fire even when
+	// Config.MCPBroker is nil or the session is not otherwise enrollment-eligible.
+	if s.agentDefinitionBoundSession(ctx, id) {
+		return WorkspaceEnrollmentProjection{}, fmt.Errorf("%w: workspace/bundle enrollment is not supported for an agent-bound session %q", ErrInvalidArgument, id)
+	}
 	sess, enroller, release, err := s.workspaceEnrollmentTarget(ctx, id)
 	if err != nil {
 		if sess != nil && errors.Is(err, brokercontract.ErrStateUnavailable) {
@@ -244,6 +255,18 @@ func (s *Service) workspaceEnrollmentTarget(ctx context.Context, id session.Sess
 		return nil, nil, nil, fmt.Errorf("%w: workspace services are not configured", ErrFailedPrecondition)
 	}
 	return sess, enroller, brokerUnlock, nil
+}
+
+// agentDefinitionBoundSession reports whether id's persisted session is bound
+// to an AgentDef (ADR 0353). It is a small, single-purpose probe load
+// extracted so early-reject guards (ConnectWorkspaceServices/AC3.6) stay a
+// single decision point in their caller instead of inflating the caller's own
+// cyclomatic complexity. A load error is treated as "not agent-bound" here —
+// the caller's own subsequent load (workspaceEnrollmentTarget) is the
+// authoritative source for an unknown/inaccessible session's error shape.
+func (s *Service) agentDefinitionBoundSession(ctx context.Context, id session.SessionID) bool {
+	probe, err := s.cfg.Store.Load(ctx, id)
+	return err == nil && probe != nil && probe.AgentDefinitionName != ""
 }
 
 // withdrawBrokerEngine removes only the broker-bearing session engine. It is

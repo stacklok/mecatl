@@ -416,6 +416,18 @@ func (s *Service) continueGrantedAuthorizationLocked(ctx context.Context, sess *
 // rebuildGrantedAuthorizationEngine rebuilds the parked session from the exact
 // authenticated snapshot and compensates a failed handoff by restoring its claim.
 func (s *Service) rebuildGrantedAuthorizationEngine(ctx context.Context, sess *session.Session, claimed session.PendingAuthorization, exactTools []tool.Tool) error {
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.6): an agent-bound session never attaches to
+		// Config.MCPBroker at all (AC1.10), so it should never legitimately reach
+		// a lazy broker-OAuth grant continuation in the first place — this is
+		// defense-in-depth against exactly that regression, failing closed rather
+		// than widening the session's catalog with a freshly authenticated broker
+		// tool the def's own Ceiling may not include.
+		if restoreErr := s.restoreAuthorizationClaimOrSettle(ctx, sess.ID, sess, claimed); restoreErr != nil {
+			return fmt.Errorf("%w: restore unregistered authorization claim: %v", ErrInternal, restoreErr)
+		}
+		return fmt.Errorf("%w: broker-OAuth grant continuation is not supported for an agent-bound session %q", ErrInvalidArgument, sess.ID)
+	}
 	sel := ProviderSelector{ProviderID: sess.ProviderID, ModelID: sess.ModelID, ReasoningEffort: sess.ReasoningEffort}
 	if _, err := s.buildAndRegisterSessionEngineWithBrokerTools(ctx, sess, sel, profileForSession(sess), sess.Mode, true, exactTools, true); err != nil {
 		if errors.Is(err, ErrInvalidArgument) {

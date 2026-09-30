@@ -339,6 +339,14 @@ type Session struct {
 	// process rebuild the same tool surface. The exact EnvironmentRef remains the
 	// sole placement identity.
 	Profile string
+	// AgentDefinitionName optionally binds this session's root to a named
+	// AgentDef (ADR 0353). The aggregate STORES it but never interprets it: the
+	// meaning (catalog restriction, provider/model/limits/permission-mode
+	// resolution) lives entirely in composition, like Profile. It is a
+	// write-once creation label set by the composition root after New (no
+	// mutator); persisting it lets a restarted process re-identify the binding.
+	// Empty means an ordinary session (today's default-explorer behavior).
+	AgentDefinitionName string
 	// ProviderID and ModelID are the opaque neutral provider+model selector pair
 	// this session was bound to. The aggregate STORES them but never interprets
 	// them — the ProviderSelector type and all resolution stay in composition; only
