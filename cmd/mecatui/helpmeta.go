@@ -152,6 +152,7 @@ var flagApplicabilityByFlag = map[string]flagApplicability{
 	// ── Agent teams & delegation (embedded-only) ──────────────────────────
 	"subagent-model":        {group: groupDelegation, common: false, local: true, connect: false},
 	"model-alias":           {group: groupDelegation, common: false, local: true, connect: false},
+	"model-alias-provider":  {group: groupDelegation, common: false, local: true, connect: false},
 	"model-slot":            {group: groupDelegation, common: false, local: true, connect: false},
 	"subagent-model-router": {group: groupDelegation, common: false, local: true, connect: false},
 

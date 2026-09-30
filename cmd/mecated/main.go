@@ -322,10 +322,11 @@ type config struct {
 	// The *cliconfig.KeyValueList pointers are the flag bindings returned by
 	// cliconfig.RegisterModelFlags (issue #93: the type lives in cliconfig so the
 	// two mains cannot drift).
-	agentsDirs         stringList
-	agentsConventional bool
-	subagentModel      string
-	modelAliases       *cliconfig.KeyValueList
+	agentsDirs          stringList
+	agentsConventional  bool
+	subagentModel       string
+	modelAliases        *cliconfig.KeyValueList
+	modelAliasProviders *cliconfig.KeyValueList
 	// modelSlots binds a named internal lightweight call (compaction/ask-reviewer/
 	// guardrail) — or a tier (cheap/fast/reasoning) a slot falls through to — to a
 	// model selector (an alias or a concrete id), via the repeatable --model-slot
@@ -1293,7 +1294,8 @@ func appConfig(cfg config, sink port.EventSink, recorder port.ToolCallRecorder, 
 		// flag cannot express a rule list.
 		GuardrailsModel:     cfg.guardrailsModel,
 		GuardrailsDisabled:  cfg.guardrailsOff,
-		ModelAliases:        cfg.modelAliases.AsMap(),
+		ModelAliases:        cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelAliasTargets:   cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
 		ModelSlots:          cfg.modelSlots.AsMap(),
 		CommandsDir:         cfg.commandsDir,
 		EnableCommands:      cfg.enableCommands,
@@ -1824,7 +1826,7 @@ func parseFlagsModeOut(mode commandMode, argv []string, out io.Writer) (*flag.Fl
 	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "default model for child subagents, parallel branches, and team members. Accepts a model identifier or --model-alias. Empty inherits --model; an unresolved value prevents startup.")
 	// Shared model alias/slot flags (cliconfig): mecated uses the default help
 	// wording, so a zero ModelFlagHelp is enough.
-	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
+	cfg.modelAliases, cfg.modelAliasProviders, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
 	fs.StringVar(&cfg.subagentAskReviewer, "subagent-ask-reviewer", "", "model identifier or --model-alias for reviewing child permission requests in headless mode. An allow applies only to that request; denied or failed reviews deny it. Empty disables reviews.")
 	fs.IntVar(&cfg.subagentAskReviewerMaxDenies, "subagent-ask-reviewer-max-denies", agent.DefaultAskReviewMaxDenies, "maximum consecutive denied, failed, or timed-out child-permission reviews before later requests are automatically denied. An allowed review resets the count. Values at or below 0 use the default of 3.")
 	fs.StringVar(&cfg.subagentAskReviewerPolicyFile, "subagent-ask-reviewer-policy", "", "path to a trusted policy file that replaces the built-in child-permission review rubric. Startup fails if the file is unreadable.")

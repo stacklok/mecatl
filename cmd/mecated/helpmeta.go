@@ -234,6 +234,7 @@ var flagMetaByFlag = map[string]flagMeta{
 	// ── Agent teams & delegation (both) ──────────────────────────────────
 	"subagent-model":                   {group: groupAgentTeams, common: false, acp: acpInclude},
 	"model-alias":                      {group: groupAgentTeams, common: false, acp: acpInclude},
+	"model-alias-provider":             {group: groupAgentTeams, common: false, acp: acpInclude},
 	"model-slot":                       {group: groupAgentTeams, common: false, acp: acpInclude},
 	"subagent-ask-reviewer":            {group: groupAgentTeams, common: false, acp: acpInclude},
 	"subagent-ask-reviewer-max-denies": {group: groupAgentTeams, common: false, acp: acpInclude},

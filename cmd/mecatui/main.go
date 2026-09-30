@@ -1318,8 +1318,9 @@ func embeddedConfig(cfg config, diag port.Diagnostics) app.Config {
 		// Per-slot models (ADR 0030): the mecated flags mirror, mapped verbatim.
 		// The *cliconfig.KeyValueList flag bindings are converted to the plain
 		// map[string]string app.Config expects (nil for an unset flag).
-		ModelAliases: cfg.modelAliases.AsMap(),
-		ModelSlots:   cfg.modelSlots.AsMap(),
+		ModelAliases:      cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelAliasTargets: cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelSlots:        cfg.modelSlots.AsMap(),
 		// Subagent model router (ADR 0042): kill-switch. =false forces the router OFF
 		// (RouterDisabled); a bare flag / =true is a harmless no-op (the router stays
 		// governed by the taxonomy); unset leaves routing governed by the operator-tier

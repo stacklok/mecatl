@@ -9,10 +9,8 @@ import (
 
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
-	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/jevrouter"
 	"github.com/stacklok/mecatl/internal/adapter/openaicompat"
-	"github.com/stacklok/mecatl/internal/adapter/osfs"
 	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
@@ -250,6 +248,9 @@ func foldOperatorModelSlots(cfg Config) Config {
 	}
 	// Aliases: YAML entries fill in any key the CLI did not set (CLI wins per key).
 	if len(m.Aliases) > 0 {
+		if cfg.ModelAliasTargets == nil {
+			cfg.ModelAliasTargets = make(ModelAliases, len(m.Aliases))
+		}
 		if cfg.ModelAliases == nil {
 			cfg.ModelAliases = make(map[string]string, len(m.Aliases))
 		}
@@ -261,7 +262,14 @@ func foldOperatorModelSlots(cfg Config) Config {
 			if _, cliSet := cfg.ModelAliases[k]; cliSet {
 				continue // CLI --model-alias wins.
 			}
-			cfg.ModelAliases[k] = strings.TrimSpace(v)
+			if _, cliSet := cfg.ModelAliasTargets[k]; cliSet {
+				continue
+			}
+			if v.Provider == "" {
+				cfg.ModelAliases[k] = strings.TrimSpace(v.Model)
+			} else {
+				cfg.ModelAliasTargets[k] = ModelTarget{ProviderID: strings.TrimSpace(v.Provider), Model: strings.TrimSpace(v.Model)}
+			}
 		}
 	}
 	// Slots: same per-key CLI-wins fold, with fail-soft validation of the slot key.
@@ -346,6 +354,9 @@ func captureCLIModelKeys(cfg Config) cliModelKeys {
 		keys.slots[k] = struct{}{}
 	}
 	for k := range cfg.ModelAliases {
+		keys.aliases[k] = struct{}{}
+	}
+	for k := range cfg.ModelAliasTargets {
 		keys.aliases[k] = struct{}{}
 	}
 	return keys
@@ -469,173 +480,6 @@ func foldOperatorDefaultProvider(cfg Config) Config {
 	}
 	cfg.DefaultProvider = yamlProvider
 	return cfg
-}
-
-// foldProjectModelBindings merges a TRUSTED project's `.mecatl/settings.yaml` models:
-// bindings (slots/aliases/default) onto cfg, CAPPED by the operator allowlist (ADR 0030
-// Phase 4). It runs in Build ONCE, AFTER foldOperatorModelSlots (so it overrides the
-// operator-YAML layer) and AFTER cfg.Model has been resolved to the registry default (so
-// a project `default` can re-bind cfg.Model and the cap resolves through the
-// operator-merged alias map), and BEFORE modeNeedsEngine/logSlotConfigFacts (so the plan
-// slot, the predicate, and the narration see the final merged maps).
-//
-// PRECEDENCE: CLI (operator flags) > project-YAML (capped) > operator-YAML > built-in.
-// A project binding overrides an operator-YAML-set key but SKIPS any key the operator set
-// on the CLI (cliKeys) — the operator's explicit per-run flag is a deliberate override
-// that still wins. This rests on the cliKeys SNAPSHOT having been taken BEFORE
-// foldOperatorModelSlots (see captureCLIModelKeys' ordering invariant): cliKeys must name
-// ONLY the CLI-set keys, never the operator-YAML ones, or a project binding would wrongly
-// skip an operator-YAML key (precedence inverts). The allowlist + its canonicalization are
-// ALWAYS operator-only.
-//
-// CAP — resolve-then-check: each project binding VALUE is resolved through lookupModelAlias
-// to a concrete id, and that id is tested for membership in the canonical allowlist set
-// (each allowlist ENTRY likewise resolved to a concrete id via the operator-merged alias
-// map). Accept ⇒ merge; reject ⇒ DROP and keep the operator/default value, with ONE
-// build-once WARN per dropped binding. Slots are ALSO validated against knownSlotNames.
-//
-// No-op fast paths (each keeps cfg byte-identical): nil/absent permResolver; empty
-// operator allowlist (the opt-in); project ingestion not admitted; no project
-// models block. Under any of these foldProjectModelBindings returns cfg unchanged
-// and logs nothing.
-func foldProjectModelBindings(cfg Config, cliKeys cliModelKeys) Config {
-	res, ok := cfg.permResolver.(*permconfig.Resolver)
-	if !ok || res == nil {
-		return cfg
-	}
-	policy := res.OperatorModelPolicy()
-	if policy == nil || len(policy.Allowlist) == 0 {
-		return cfg // opt-in: no operator allowlist ⇒ project models WARN-ignored upstream.
-	}
-	if !projectIngestionAdmitted(cfg) {
-		return cfg // untrusted, or ingestion grant withheld: the project block was already WARN-ignored at capture.
-	}
-	proj := res.ProjectModelBindings(projectModelWorkspace(cfg))
-	if proj == nil {
-		return cfg // no honoured project models block.
-	}
-
-	// Canonicalize the operator allowlist to a concrete-id SET (each entry resolved
-	// through the operator-merged alias map — at this point cfg.ModelAliases already
-	// holds the operator-YAML aliases, folded by foldOperatorModelSlots).
-	allowed := canonicalAllowlist(cfg, policy.Allowlist)
-
-	// default: re-bind cfg.Model within the cap (CLI --model still wins).
-	if sel := strings.TrimSpace(proj.Default); sel != "" && !cliKeys.modelSet {
-		if id, okCap := capResolve(cfg, sel, allowed); okCap {
-			cfg.Model = id
-			cfg.diag().Log(context.Background(), port.LevelInfo,
-				"models.default: project binding ACCEPTED (within the operator allowlist)", "selector", sel, "model", id)
-		} else {
-			cfg.diag().Log(context.Background(), port.LevelWarn,
-				"models.default: project binding DROPPED (outside the operator allowlist); keeping the operator/default model",
-				"selector", sel, "model", cfg.Model)
-		}
-	}
-
-	// aliases: re-bind each alias key within the cap (CLI --model-alias key wins).
-	cfg.ModelAliases = capMergeProjectBindings(cfg, "aliases", proj.Aliases, cfg.ModelAliases, cliKeys.aliases, allowed, false)
-	// slots: re-bind each slot key within the cap (CLI --model-slot key wins; the slot
-	// NAME is validated against knownSlotNames, the slot VALUE is capped resolve-then-check).
-	cfg.ModelSlots = capMergeProjectBindings(cfg, "slots", scalarModelSlots(proj.Slots), cfg.ModelSlots, cliKeys.slots, allowed, true)
-	return cfg
-}
-
-// capMergeProjectBindings merges one project-binding MAP (slots or aliases) onto dst,
-// capped by the operator allowlist (ADR 0030 Phase 4). For each project entry: SKIP a
-// CLI-set key (cliKeys — the CLI flag wins); for slots, drop an unknown slot NAME
-// fail-soft (knownSlotNames, validateName==true); resolve-then-check the VALUE against
-// the allowlist (accept→merge the concrete id, drop→keep dst's existing value); emit one
-// build-once INFO per accept and one build-once WARN per drop, tagged with kind
-// ("slots"/"aliases"). It is the shared loop body for the two project-binding maps so
-// foldProjectModelBindings stays under the gocyclo budget. dst is allocated lazily on the
-// first accept and returned (cfg's map is reassigned to it by the caller).
-func capMergeProjectBindings(cfg Config, kind string, src, dst map[string]string, cliKeys map[string]struct{}, allowed map[string]struct{}, validateName bool) map[string]string {
-	for k, v := range src {
-		k = strings.TrimSpace(k)
-		if k == "" {
-			continue
-		}
-		if validateName {
-			if _, known := knownSlotNames[k]; !known {
-				cfg.diag().Log(context.Background(), port.LevelWarn,
-					"models.slots: unknown project slot key IGNORED (not a known call-slot or tier)",
-					"slot", k, "known", knownSlotNamesList())
-				continue
-			}
-		}
-		if _, cli := cliKeys[k]; cli {
-			continue // a CLI --model-slot/--model-alias for this key wins.
-		}
-		if id, okCap := capResolve(cfg, strings.TrimSpace(v), allowed); okCap {
-			if dst == nil {
-				dst = map[string]string{}
-			}
-			dst[k] = id
-			cfg.diag().Log(context.Background(), port.LevelInfo,
-				"models."+kind+": project binding ACCEPTED (within the operator allowlist)", "key", k, "model", id)
-		} else {
-			cfg.diag().Log(context.Background(), port.LevelWarn,
-				"models."+kind+": project binding DROPPED (outside the operator allowlist); keeping the operator/default value",
-				"key", k, "selector", v)
-		}
-	}
-	return dst
-}
-
-// projectModelWorkspace builds the read-only workspace the resolver reads the project
-// models: block through (ProjectModelBindings). It mirrors the build-time workspace the
-// permission resolver/agent registry are resolved against (cfg.Workspace); a "" workspace
-// yields nil (no project root ⇒ no project models, the fast path in
-// foldProjectModelBindings handles the nil). It uses the read-only OS workspace so the
-// resolver's Stat/Read seam works against the host filesystem.
-func projectModelWorkspace(cfg Config) tool.WorkspaceReader {
-	if strings.TrimSpace(cfg.Workspace) == "" {
-		return nil
-	}
-	ws, err := osfs.NewWorkspace(cfg.Workspace)
-	if err != nil {
-		return nil
-	}
-	return ws
-}
-
-// canonicalAllowlist resolves every operator-allowlist ENTRY (an alias name or a concrete
-// id) through lookupModelAlias against the operator-merged alias map, returning the SET of
-// concrete ids a project binding must resolve INTO to be honoured. An entry that does not
-// resolve to a concrete id (unknown bare token, or an alias meaning inherit) contributes
-// nothing — fail-closed: an unresolvable allowlist entry never widens the cap.
-func canonicalAllowlist(cfg Config, entries []string) map[string]struct{} {
-	set := make(map[string]struct{}, len(entries))
-	for _, e := range entries {
-		e = strings.TrimSpace(e)
-		if e == "" {
-			continue
-		}
-		if id, known := lookupModelAlias(cfg, e); known && id != "" {
-			set[id] = struct{}{}
-		}
-	}
-	return set
-}
-
-// capResolve resolves a project selector to a concrete id and tests it against the
-// canonical allowlist set (resolve-then-check). It returns (id, true) when the selector
-// resolves to a concrete id that IS in the set, else ("", false). A selector that does not
-// resolve to a concrete id (unknown bare token / inherit) is rejected — a project binding
-// must name something the operator vetted.
-func capResolve(cfg Config, sel string, allowed map[string]struct{}) (string, bool) {
-	if sel == "" {
-		return "", false
-	}
-	id, known := lookupModelAlias(cfg, sel)
-	if !known || id == "" {
-		return "", false
-	}
-	if _, ok := allowed[id]; !ok {
-		return "", false
-	}
-	return id, true
 }
 
 // foldOperatorModelRouter folds the OPERATOR-TIER `models.router:` taxonomy (ADR 0031,

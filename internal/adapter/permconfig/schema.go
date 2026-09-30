@@ -1620,20 +1620,74 @@ func (s *ModelSlots) UnmarshalYAML(node ast.Node) error {
 	return nil
 }
 
+// ModelAliasTarget is one operator alias target. An empty Provider preserves the
+// scalar, contextual-provider form; a non-empty Provider is an atomic pair.
+type ModelAliasTarget struct {
+	Provider string
+	Model    string
+}
+
+// ModelAliases is the strict models.aliases mapping.
+type ModelAliases map[string]ModelAliasTarget
+
+// UnmarshalYAML accepts scalar aliases and exact {provider, model} objects.
+func (a *ModelAliases) UnmarshalYAML(node ast.Node) error {
+	mapping, ok := permconfigMapping(node)
+	if !ok {
+		return fmt.Errorf("models.aliases: must be a mapping")
+	}
+	out := make(ModelAliases, len(mapping.Values))
+	for _, entry := range mapping.Values {
+		name, stringKey := permconfigMappingKey(entry.Key)
+		if !stringKey || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("models.aliases: alias key must be a non-empty string")
+		}
+		if _, duplicate := out[name]; duplicate {
+			return fmt.Errorf("models.aliases.%s: duplicate alias key", name)
+		}
+		if fields, isMapping := permconfigMapping(entry.Value); isMapping {
+			var target ModelAliasTarget
+			seen := map[string]bool{}
+			for _, field := range fields.Values {
+				key, isString := permconfigMappingKey(field.Key)
+				if !isString || (key != "provider" && key != "model") || seen[key] {
+					return fmt.Errorf("models.aliases.%s: object must contain exactly provider and model", name)
+				}
+				seen[key] = true
+				var scalar string
+				if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(field.Value, &scalar); err != nil {
+					return fmt.Errorf("models.aliases.%s.%s: must be a string", name, key)
+				}
+				if key == "provider" {
+					target.Provider = strings.TrimSpace(scalar)
+				} else {
+					target.Model = strings.TrimSpace(scalar)
+				}
+			}
+			if len(seen) != 2 || target.Provider == "" || target.Model == "" {
+				return fmt.Errorf("models.aliases.%s: provider and model are both required and non-empty", name)
+			}
+			out[name] = target
+			continue
+		}
+		var scalar string
+		if err := yaml.NewDecoder(bytes.NewReader(nil)).DecodeFromNode(entry.Value, &scalar); err != nil {
+			return fmt.Errorf("models.aliases.%s: target must be a string or provider/model object", name)
+		}
+		out[name] = ModelAliasTarget{Model: strings.TrimSpace(scalar)}
+	}
+	*a = out
+	return nil
+}
+
 // ModelsSection is the `models:` YAML subtree (ADR 0030): a per-slot model-binding
 // map, an alias map, a session-default binding, and the operator-tier allowlist cap.
 // The TOP mapping is parsed STRICTLY (unknown keys error); the inner Slots/Aliases
 // maps are free-form name→selector (composition validates the slot names fail-soft
 // via knownSlotNames).
 //
-// The block appears at BOTH tiers but the tiers differ in what they may carry
-// (Phase 4):
-//   - OPERATOR tier (user-global + CLI): all four fields. The Allowlist is the
-//     non-wideable cap on what a PROJECT may bind; Slots/Aliases/Default are the
-//     operator's own bindings (never capped — the operator is authoritative).
-//   - PROJECT tier (.mecatl/settings.yaml): Slots/Aliases/Default ONLY, honoured
-//     only within the operator Allowlist and only on a TRUSTED workspace. A project
-//     Allowlist: key is IGNORED with a WARN (a project cannot widen its own cap).
+// The block is operator-tier policy. Project-tier models nodes are removed as
+// opaque content before this decoder runs.
 type ModelsSection struct {
 	// Slots binds a slot name to a model selector. Call slots include
 	// "compaction", "ask-reviewer", and "guardrail"; tier slots include
@@ -1645,7 +1699,7 @@ type ModelsSection struct {
 	Slots ModelSlots `yaml:"slots"`
 	// Aliases binds a short alias to a concrete model id (merged onto the CLI
 	// --model-alias map, CLI winning per key).
-	Aliases map[string]string `yaml:"aliases"`
+	Aliases ModelAliases `yaml:"aliases"`
 	// Default is the session-default model selector (alias or concrete id). It is the
 	// project-overridable session default (ADR 0030 Phase 4) — within the operator
 	// allowlist; the operator's own Default is uncapped. Empty = absent.

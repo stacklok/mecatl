@@ -329,16 +329,11 @@ func lookupModelAlias(cfg Config, sel string) (id string, known bool) {
 	if sel == "" {
 		return "", true
 	}
-	if id, ok := cfg.ModelAliases[sel]; ok {
-		return strings.TrimSpace(id), true
+	target, known := lookupModelAliasTarget(cfg, sel)
+	if !known || target.ProviderID != "" {
+		return "", false
 	}
-	if id, ok := builtinModelAliases[sel]; ok {
-		return id, true // may be "" => inherit
-	}
-	if strings.ContainsAny(sel, "-./:") || strings.Contains(sel, " ") {
-		return sel, true
-	}
-	return "", false
+	return strings.TrimSpace(target.Model), true
 }
 
 // resolvePermissionMode maps a def's frontmatter permissionMode string to a

@@ -142,8 +142,9 @@ type config struct {
 	toolhiveLLMFlags *cliconfig.ToolhiveLLMFlags
 	// modelAliases/modelSlots are the repeatable --model-alias/--model-slot
 	// bindings (cliconfig.RegisterModelFlags), threaded onto app.Config.
-	modelAliases *cliconfig.KeyValueList
-	modelSlots   *cliconfig.KeyValueList
+	modelAliases        *cliconfig.KeyValueList
+	modelAliasProviders *cliconfig.KeyValueList
+	modelSlots          *cliconfig.KeyValueList
 	// mcpServers holds the repeatable --mcp-server name=URL entries (issue #341,
 	// the factory MCP wiring), via the SAME cliconfig.MCPServerList helper as
 	// mecated/mecatequi: a per-server bearer rides the MCP_<NAME>_TOKEN env (a
@@ -380,7 +381,7 @@ func parseFlags(argv []string) (config, error) {
 	// config file, so this is inert unless an operator mounts one or passes
 	// --toolhive-llm-base-url explicitly.
 	cfg.toolhiveLLMFlags = cliconfig.RegisterToolhiveLLMFlags(fs, cliconfig.DefaultToolhiveLLMFlagHelp)
-	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
+	cfg.modelAliases, cfg.modelAliasProviders, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{})
 	// Remote MCP servers (issue #341): the shared repeatable name=URL flag +
 	// MCP_<NAME>_TOKEN bearer convention, identical to mecated/mecatequi.
 	cfg.mcpServers = cliconfig.RegisterMCPServerFlag(fs, "")
@@ -757,7 +758,8 @@ func appConfig(cfg config, diag port.Diagnostics, obs observability) app.Config 
 		RouterDisabled:                cfg.subagentModelRouterSet && !cfg.subagentModelRouter,
 		GuardrailsModel:               cfg.guardrailsModel,
 		GuardrailsDisabled:            cfg.guardrailsOff,
-		ModelAliases:                  cfg.modelAliases.AsMap(),
+		ModelAliases:                  cliconfig.ScalarModelAliases(cfg.modelAliases, cfg.modelAliasProviders),
+		ModelAliasTargets:             cliconfig.ModelAliasTargets(cfg.modelAliases, cfg.modelAliasProviders),
 		ModelSlots:                    cfg.modelSlots.AsMap(),
 		// Remote MCP servers (issue #341): the static name=URL entries (with any
 		// MCP_<NAME>_TOKEN bearer already resolved into Headers at parse time).

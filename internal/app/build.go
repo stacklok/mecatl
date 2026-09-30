@@ -829,6 +829,9 @@ type Config struct {
 	// concrete provider model id. Resolved only here; the domain/agent always
 	// receives a concrete model string.
 	ModelAliases map[string]string
+	// ModelAliasTargets carries provider-aware alias targets from typed config and
+	// shared CLI plumbing. ModelAliases remains the scalar compatibility seam.
+	ModelAliasTargets ModelAliases
 
 	// ModelSlots binds a named internal lightweight LLM call (a "slot") to a model
 	// selector — an alias or a concrete id (ADR 0030, Phase 1+2). The wired slots
@@ -1893,6 +1896,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := validateModelAliases(cfg.ModelAliasTargets, reg); err != nil {
+		return nil, err
+	}
 	discovery = reg.discovery
 	reg.contextWindows = cfg.contextWindows
 	reg.contextWindowOverride = cfg.ContextWindowOverride
@@ -1919,23 +1925,9 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	}
 	// Operator-YAML models.default (ADR 0030 Phase 4): an operator's settings.yaml
 	// `models.default:` re-binds the session default OVER the registry default, but UNDER
-	// a CLI --model. The operator's OWN default is UNCAPPED (the allowlist caps PROJECT
-	// bindings only — the operator is authoritative). It is the operator-YAML rung of the
-	// default precedence: CLI --model > project-YAML default (capped) > operator-YAML
-	// default > registry default. Runs after the registry default so it overrides it, and
-	// before foldProjectModelBindings so a capped project default can override it in turn.
-	// No-op (byte-identical) when no operator models.default is configured.
+	// a CLI --model. The operator's own default is authoritative. Runs after the
+	// registry default so it overrides it. No-op when absent.
 	cfg = foldOperatorModelDefault(cfg, cliModelKeys)
-	// Project-overridable model bindings within the operator allowlist (ADR 0030
-	// Phase 4): a TRUSTED project's .mecatl/settings.yaml models: block may re-bind
-	// default/slots/aliases, but ONLY to allowlisted entries (resolve-then-check). Runs
-	// AFTER foldOperatorModelSlots (so it overrides the operator-YAML layer) and AFTER
-	// cfg.Model was resolved to the registry default (so a project `default` can re-bind
-	// it and the cap resolves through the operator-merged alias map), and BEFORE
-	// modeNeedsEngine/logSlotConfigFacts below (so the plan slot, the predicate, and the
-	// narration all see the final merged maps). No-op (byte-identical) when there is no
-	// operator allowlist, an untrusted workspace, or no project models block.
-	cfg = foldProjectModelBindings(cfg, cliModelKeys)
 	// issue #262 §1 deviation, review finding 1: the shared engine booted with
 	// an UNRESOLVED default model (sole intent-driven provider, probe down —
 	// none of the folds above filled cfg.Model either). Route every
