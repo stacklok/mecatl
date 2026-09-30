@@ -519,13 +519,16 @@ jobs:
           else
             docker buildx imagetools inspect "${BROOD_DISCOVERY_REFERENCE}" --raw > brood-base-index.json
             resolution_evidence="sha256:$(sha256sum brood-base-index.json | cut -d' ' -f1)"
+            alpine_index="$(docker buildx imagetools inspect 'docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce' --raw)"
             mkdir -p brood-tree
             for arch in amd64 arm64; do
               manifest="$(jq -er --arg arch "${arch}" '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] | if length == 1 then .[0] else error("expected exactly one linux/" + $arch + " manifest") end' brood-base-index.json)"
               reference="ghcr.io/stacklok/brood-box/base@${manifest}"
+              alpine_manifest="$(printf '%s\n' "${alpine_index}" | jq -er --arg arch "${arch}" '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest] | if length == 1 then .[0] else error("expected exactly one Alpine linux/" + $arch + " manifest") end')"
+              alpine_reference="docker.io/library/alpine@${alpine_manifest}"
               CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" GOWORK=off go -C environment/microvm build -trimpath -buildvcs=false -ldflags='-buildid=' -o "../../brood-tree/digest-${arch}" ./cmd/mecatl-oci-tree-digest
               mkdir -p "brood-tree/cache-${arch}"
-              tree="$(docker run --rm --platform "linux/${arch}" -v "${PWD}/brood-tree:/release" 'docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce' "/release/digest-${arch}" "${reference}" "/release/cache-${arch}")"
+              tree="$(docker run --rm --platform "linux/${arch}" -v "${PWD}/brood-tree:/release" "${alpine_reference}" "/release/digest-${arch}" "${reference}" "/release/cache-${arch}")"
               jq -n --arg reference "${reference}" --arg manifest_digest "${manifest}" --arg tree_digest "${tree}" \
                 --arg discovery_reference "${BROOD_DISCOVERY_REFERENCE}" --arg resolution_evidence "${resolution_evidence}" --arg platform "linux/${arch}" \
                 '{reference:$reference,manifest_digest:$manifest_digest,tree_digest:$tree_digest,discovery_reference:$discovery_reference,resolution_evidence:$resolution_evidence,platform:$platform}' > "brood-${arch}.json"
