@@ -290,7 +290,8 @@ func TestDefaultConfigPolicyEvaluatesWithoutPanic(t *testing.T) {
 		NoSoul:    true,
 		// DEFAULT permission posture: no Conventional, no ExplicitFiles, no AllowAll —
 		// so Build takes the resolver branch with a typed-nil *permconfig.Resolver.
-		envDetector: fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		envDetector:         fakeEnv(map[string]string{"OPENAI_API_KEY": "sk-x"}),
+		liveModelHTTPClient: offlineHTTPClient(),
 		providerConstructor: func(_ Config, _, _, _ string) port.LLMProvider {
 			return mockllm.New(
 				mockllm.ToolCallTurn(session.NewToolCall("w1", "Write", []byte(`{"path":"note.txt","content":"x"}`))),

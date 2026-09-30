@@ -3297,6 +3297,7 @@ func sessionEngineFactoryWithTools(
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.SessionEngineWithToolsFactory {
 	build := func(ctx context.Context, sel server.ProviderSelector, specs []mcp.ServerConfig, profile server.SessionProfile, workspace string, mode session.PermissionMode, sessionTools []tool.Tool) (server.SessionEngineResult, error) {
+		cfg := cfg // Permission resolver overrides belong to this invocation, not the shared closure.
 		runtimeAssets := mcpCatalogAssets(ctx, assets)
 		runtimeRevision := mcpRuntimeRevision(ctx)
 		// Pin the CHILD permission resolver to THIS session's base root (issue
