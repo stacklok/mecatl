@@ -254250,6 +254250,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790752530764,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0213c108fdda21ee79176ccbcf95d71ec8fdf69c",
+          "message": "fix(sdk): update brace-expansion advisory resolution (#2007)",
+          "timestamp": "2026-09-30T11:13:47+03:00",
+          "tree_id": "d9ae19f71c04b039863b914fcd1b51bba76e95cb",
+          "url": "https://github.com/stacklok/mecatl/commit/0213c108fdda21ee79176ccbcf95d71ec8fdf69c"
+        },
+        "date": 1790756709551,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -369193,6 +369227,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790756706790,
+  "lastUpdate": 1790756710472,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
