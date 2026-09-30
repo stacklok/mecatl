@@ -449,15 +449,21 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 				r.reviewRoot.dropHeld(key)
 			}
 			result = session.NewToolError(p.call.ID, withheldResultText+": batch release was cancelled")
+			p.record.result = session.ToolResult{}
+			p.record.postEvents = nil
 		} else if available[i] {
 			result = p.record.result
 		} else {
 			result, cancelled = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
+			if cancelled {
+				p.record.result = session.ToolResult{}
+				p.record.postEvents = nil
+			}
 		}
 		// A held result becomes displayable only after resolveInbound returns its
 		// release or synthetic withholding decision. Clean results were published
 		// on completion and must not be published twice.
-		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !available[i] && !cancelled && ctx.Err() == nil)
+		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !available[i])
 		out[p.call.ID] = result
 	}
 	return cancelled

@@ -156,6 +156,193 @@ func (selectiveAvailabilityReviewer) Review(_ context.Context, req agent.ToolRev
 	return agent.ToolReviewResult{Assessment: agent.ReviewProhibited}, nil
 }
 
+func TestADR_0370_Scenario2_ExactReleasedAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict session.ApprovalVerdict
+		want    bool
+	}{
+		{"release", session.VerdictAllowOnce, true},
+		{"deny", session.VerdictDeny, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const private = "PRIVATE_HELD_RESULT"
+			var executions int
+			hooks := &countingPostHook{}
+			reviewer := &inboundReviewer{}
+			recorder := &resultRecorder{}
+			payload := session.NewToolResultWithParts("one", private, []session.Content{session.NewTextBlock("PRIVATE_TYPED"), session.NewStructuredContentBlock(`{"private":true}`)})
+			read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, _ session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+				executions++
+				return payload, nil
+			}}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			sess := newSession(t, session.Limits{})
+			policy := &noLearnPolicy{}
+			run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("one", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: policy, Hooks: hooks, ToolReviewer: reviewer, ToolCallRecorder: recorder, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+			var events []session.Event
+			var asks int
+			for {
+				select {
+				case ev, ok := <-run.Events():
+					if !ok {
+						goto finished
+					}
+					events = append(events, ev)
+					if ev.Type == session.EvPermissionAsk {
+						asks++
+						if ev.Ask.Guardrail == nil || ev.Ask.Guardrail.Kind != session.GuardrailApprovalResultRelease {
+							t.Fatalf("unexpected ask: %+v", ev.Ask)
+						}
+						if err := resolveScoped(t, run, ev.Ask, tc.verdict); err != nil {
+							t.Fatal(err)
+						}
+					}
+				case <-ctx.Done():
+					t.Fatal("release decision did not finish")
+				}
+			}
+		finished:
+			var available, canonical []session.ToolResult
+			for _, ev := range events {
+				if ev.ToolResult == nil {
+					continue
+				}
+				switch ev.Type {
+				case session.EvToolResultAvailable:
+					available = append(available, *ev.ToolResult)
+				case session.EvToolResult:
+					canonical = append(canonical, *ev.ToolResult)
+				}
+				if !tc.want && strings.Contains(fmt.Sprint(*ev.ToolResult), "PRIVATE_") {
+					t.Fatalf("denied bytes escaped: %+v", ev)
+				}
+			}
+			if asks != 1 || executions != 1 || hooks.posts != 1 || reviewer.calls != 1 || policy.learns != 0 || len(available) != 1 || len(canonical) != 1 || len(recorder.results) != 1 || !reflect.DeepEqual(available[0], canonical[0]) || !reflect.DeepEqual(available[0], recorder.results[0]) {
+				t.Fatalf("asks=%d executions=%d posts=%d reviews=%d learns=%d available=%+v canonical=%+v recorded=%+v", asks, executions, hooks.posts, reviewer.calls, policy.learns, available, canonical, recorder.results)
+			}
+			if tc.want && !reflect.DeepEqual(available[0], payload) {
+				t.Fatalf("released payload = %+v, want %+v", available[0], payload)
+			}
+			if !tc.want && (!available[0].IsError || !strings.Contains(available[0].Content, "tool result withheld by contextual guardrail") || len(available[0].Parts) != 0) {
+				t.Fatalf("denial must contain only synthetic withholding: %+v", available[0])
+			}
+		})
+	}
+}
+
+func TestADR_0370_Scenario2_CanonicalCancellationReplacement(t *testing.T) {
+	const private = "PRIVATE_HELD_RESULT"
+	read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		if c.ID == "held" {
+			return session.NewToolResult(c.ID, private), nil
+		}
+		return session.NewToolResult(c.ID, "public success"), nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sess := newSession(t, session.Limits{})
+	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("held", "Read", `{}`), toolCall("clean", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: selectiveAvailabilityReviewer{}, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+	var events []session.Event
+	for {
+		select {
+		case ev, ok := <-run.Events():
+			if !ok {
+				t.Fatal("closed before held release ask")
+			}
+			events = append(events, ev)
+			if ev.Type == session.EvPermissionAsk {
+				if ev.Ask.Call != "held" {
+					t.Fatalf("unexpected ask: %+v", ev.Ask)
+				}
+				goto cancelRun
+			}
+		case <-ctx.Done():
+			t.Fatal("held release ask timed out")
+		}
+	}
+cancelRun:
+	cleanAvailable := 0
+	for _, ev := range events {
+		if ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID == "clean" {
+			cleanAvailable++
+		}
+		if ev.Type == session.EvToolResult || ev.Type == session.EvToolResultAvailable && ev.ToolResult.CallID == "held" || ev.ToolResult != nil && strings.Contains(fmt.Sprint(*ev.ToolResult), private) {
+			t.Fatalf("held bytes or canonical escaped before cancellation: type=%s result=%+v events=%v", ev.Type, ev.ToolResult, typesOf(events))
+		}
+	}
+	if cleanAvailable != 1 {
+		t.Fatalf("clean sibling must be available before cancellation, got %d", cleanAvailable)
+	}
+	run.Cancel()
+	for ev := range run.Events() {
+		events = append(events, ev)
+	}
+	available := map[session.ToolCallID][]session.ToolResult{}
+	canonical := map[session.ToolCallID][]session.ToolResult{}
+	var order []session.ToolCallID
+	for _, ev := range events {
+		if ev.ToolResult == nil {
+			continue
+		}
+		if strings.Contains(fmt.Sprint(*ev.ToolResult), private) {
+			t.Fatalf("cancelled held bytes escaped: %+v", ev)
+		}
+		switch ev.Type {
+		case session.EvToolResultAvailable:
+			available[ev.ToolResult.CallID] = append(available[ev.ToolResult.CallID], *ev.ToolResult)
+		case session.EvToolResult:
+			canonical[ev.ToolResult.CallID] = append(canonical[ev.ToolResult.CallID], *ev.ToolResult)
+			order = append(order, ev.ToolResult.CallID)
+			if ev.ToolResult.CallID == "held" && len(available["held"]) != 1 {
+				t.Fatal("held canonical error arrived before safe availability")
+			}
+		}
+	}
+	if len(canonical["held"]) != 1 || len(canonical["clean"]) != 1 || len(available["clean"]) != 1 || len(available["held"]) != 1 || available["clean"][0].Content != "public success" || !available["held"][0].IsError || !reflect.DeepEqual(available["held"][0], canonical["held"][0]) || !canonical["clean"][0].IsError || canonical["clean"][0].Content == available["clean"][0].Content || !strings.Contains(canonical["held"][0].Content, "release decision was cancelled") || len(canonical["held"][0].Parts) != 0 || !reflect.DeepEqual(order, []session.ToolCallID{"held", "clean"}) {
+		t.Fatalf("available=%+v canonical=%+v order=%v", available, canonical, order)
+	}
+
+	// A sibling still running at cancellation has no prior availability either.
+	batch, _, started, gates := availabilityBatch(t)
+	awaitAvailabilityBatchStart(t, started)
+	close(gates["fast"])
+	batchEvents := awaitBatchEvent(t, batch, session.EvToolResultAvailable, "fast")
+	batch.Cancel()
+	for ev := range batch.Events() {
+		batchEvents = append(batchEvents, ev)
+	}
+	seen := map[session.ToolCallID]int{}
+	var slowAvailable session.ToolResult
+	var slowCanonical session.ToolResult
+	var fastCanonical session.ToolResult
+	for _, ev := range batchEvents {
+		if ev.ToolResult == nil {
+			continue
+		}
+		switch ev.Type {
+		case session.EvToolResultAvailable:
+			seen[ev.ToolResult.CallID]++
+			if ev.ToolResult.CallID == "slow" {
+				slowAvailable = *ev.ToolResult
+			}
+		case session.EvToolResult:
+			if ev.ToolResult.CallID == "slow" {
+				if seen["slow"] != 1 {
+					t.Fatal("slow canonical result arrived before synthetic availability")
+				}
+				slowCanonical = *ev.ToolResult
+			} else {
+				fastCanonical = *ev.ToolResult
+			}
+		}
+	}
+	if seen["fast"] != 1 || seen["slow"] != 1 || !slowAvailable.IsError || !reflect.DeepEqual(slowAvailable, slowCanonical) || !fastCanonical.IsError {
+		t.Fatalf("running sibling cancellation: availability=%v slow=%+v/%+v fast=%+v", seen, slowAvailable, slowCanonical, fastCanonical)
+	}
+}
+
 func TestADR_0370_Scenario2_CleanSiblingBypassesHeldPresentation(t *testing.T) {
 	started := make(chan session.ToolCallID, 3)
 	gates := map[session.ToolCallID]chan struct{}{"held-one": make(chan struct{}), "clean": make(chan struct{}), "held-two": make(chan struct{})}
