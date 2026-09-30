@@ -284133,6 +284133,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790800857370,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fee19378aabdd7a67425d4731b917ab6cea913ef",
+          "message": "fix(modules): pin published adapters v0.1.1 (#2023)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T00:13:44+03:00",
+          "tree_id": "42141d012f0fcaa69771fb0c8e6c4cae7f0a55b3",
+          "url": "https://github.com/stacklok/mecatl/commit/fee19378aabdd7a67425d4731b917ab6cea913ef"
+        },
+        "date": 1790803586146,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3324.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 113,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -372293,6 +372332,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790803581323,
+  "lastUpdate": 1790803586873,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
