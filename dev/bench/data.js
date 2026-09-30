@@ -255324,6 +255324,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790767921327,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e52e8da8d76c72913ca5453be74b297fbd5565d6",
+          "message": "fix(release): resolve helper image per platform (#2011)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T15:23:21+03:00",
+          "tree_id": "f0c6385af1e3abfcb479cad7feea422ea67c2e96",
+          "url": "https://github.com/stacklok/mecatl/commit/e52e8da8d76c72913ca5453be74b297fbd5565d6"
+        },
+        "date": 1790771710538,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -370726,6 +370760,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790771707134,
+  "lastUpdate": 1790771712074,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
