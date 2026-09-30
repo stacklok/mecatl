@@ -5,15 +5,15 @@
 
 
 
-       ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-       ┃                                                                                    ┃
-       ┃  Saved memory                                                                      ┃
-       ┃                                                                                    ┃
-       ┃  No saved memory yet.                                                              ┃
-       ┃                                                                                    ┃
-       ┃  ↑/↓ select · enter inspect · the agent saves and updates these facts · esc close  ┃
-       ┃                                                                                    ┃
-       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Saved memory                                                                                    ┃
+┃  No saved memory yet.                                                                            ┃
+┃  ↑/↓ select · enter inspect · the agent saves and updates these facts · esc close                ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
 
 
 
@@ -27,4 +27,4 @@
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
-? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+u clear · ctrl+c quit
+? help · / commands · ctrl+c quit

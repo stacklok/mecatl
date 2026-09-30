@@ -328,8 +328,8 @@ func TestUserModelSlashCommandEndToEnd(t *testing.T) {
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if m.userModel.view != userModelPanel {
-		t.Fatalf("/usermodel+enter should open the panel, view=%v", m.userModel.view)
+	if s, ok := m.modal.(*userModelState); !ok || s.view != userModelPanel {
+		t.Fatalf("/usermodel+enter should open the panel, surface=%T", m.modal)
 	}
 	if fum.calls != 1 {
 		t.Errorf("GetUserModel calls = %d, want 1 (the /usermodel built-in fired the RPC)", fum.calls)

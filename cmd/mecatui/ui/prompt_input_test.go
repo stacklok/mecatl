@@ -188,7 +188,7 @@ func TestSelectableMatchesAllBodyOwners(t *testing.T) {
 		{"team", func(m *Model) { m.team.view = teamRoster }, false},
 		{"agents inventory", func(m *Model) { m.agentsInv.view = agentsInvPanel }, false},
 		{"modal surface", func(m *Model) { m.modal = &bodyOwnerTestSurface{} }, false},
-		{"user model", func(m *Model) { m.userModel.view = userModelPanel }, false},
+		{"user model", func(m *Model) { m.modal = &userModelState{view: userModelPanel} }, false},
 		{"reflections", func(m *Model) { m.reflections.view = reflectionsList }, false},
 		{"dream", func(m *Model) { m.dream.view = dreamTargets }, false},
 		{"effort", func(m *Model) { m.effort.view = effortPanel }, false},

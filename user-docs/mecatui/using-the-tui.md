@@ -144,9 +144,17 @@ commands supported by the connected server.
 |Refresh direct MCP tools or broker workspace services|`/mcp-refresh`|[Use learning and memory commands](./commands-and-memory.md#workspace-service-enrollment)|
 |Inspect named agent definitions|`/agents`|[Named agents](/features/named-agents.md)|
 |Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/skills-commands-and-soul.md)|
-|Inspect the user model|`/usermodel`|[Memory](/building/what-you-get/memory.md)|
+|Inspect saved memory|`/usermodel`|[Memory](/building/what-you-get/memory.md)|
 |Manage recurring and one-shot tasks|`/schedule`|[Scheduled tasks](/features/scheduled-tasks.md)|
 |Review learning and maintain memory|`/learning`, `/reflections`, `/reflect`, and `/dream`|[Use learning and memory commands](./commands-and-memory.md)|
+
+To browse saved memory while idle, open `/usermodel`. Use `up`/`down` to select
+a fact, `pgup`/`pgdn` to move by page, or `home`/`end` to select the first or
+last fact. The mouse wheel scrolls the visible rows without changing your
+selection. Press `enter` to inspect its current value, provenance, and available
+history; the same movement keys scroll the detail. Press `esc` to return to your
+place in the list, then press it again to close. In a very small terminal the
+panel shows a close hint until there is room for the list or detail.
 
 The palette also includes workspace-defined slash commands. See
 [Skills, commands, and soul](/features/skills-commands-and-soul.md) for how the

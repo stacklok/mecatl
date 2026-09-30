@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 // TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth verifies AC3.2: every
@@ -51,7 +52,12 @@ func TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth(t *testing.T) {
 		proposal := &client.LearningProposal{ID: long, Status: long, Version: long, Kind: long, Key: long, Value: long, Description: long, Body: long, Triggers: []string{long}, Evidence: []client.LearningEvidence{{Locator: long, SessionID: long, Digest: long, Preview: long}}}
 		assertFits(t, "reflections", renderReflectionsOverlay(th, reflectionsState{view: reflectionsDetail, detail: proposal}, client.Capabilities{LearningProposals: true}, hk, width, 60))
 		assertFits(t, "soul", centerCard(th, renderSoulPanel(th, soulState{soul: client.Soul{Present: true, Content: long, SHA256: long}}, client.Capabilities{Soul: true}, hk, width), width, 40))
-		assertFits(t, "user model inventory", renderUserModelOverlay(th, userModelState{view: userModelPanel, model: client.UserModel{Entries: []client.UserModelEntry{{Key: long, Description: long}}}}, client.Capabilities{UserModel: true}, hk, width, 40))
-		assertFits(t, "user model", renderUserModelOverlay(th, userModelState{view: userModelDetail, detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: long, Status: long, Version: long, Writer: long, Origin: long, SourceSessionID: long, SourceProposalID: long, Description: long, Value: long}}}, client.Capabilities{UserModel: true}, hk, width, 40))
+		inventory := &userModelState{deps: surfaceDeps{theme: th, caps: client.Capabilities{UserModel: true}, marks: hk}, list: &bounded.List{}, viewport: &bounded.Viewport{}}
+		inventory.setModel(client.UserModel{Entries: []client.UserModelEntry{{Key: long, Description: long}}})
+		body, _ := inventory.Render(width, 40)
+		assertFits(t, "user model inventory", body)
+		detail := &userModelState{deps: inventory.deps, view: userModelDetail, viewport: &bounded.Viewport{}, detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: long, Status: long, Version: long, Writer: long, Origin: long, SourceSessionID: long, SourceProposalID: long, Description: long, Value: long}}}
+		body, _ = detail.Render(width, 40)
+		assertFits(t, "user model", body)
 	})
 }

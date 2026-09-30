@@ -295,7 +295,7 @@ func TestADR_0303_DoubleEscape_Scenario1_AllEscapeOwnersSuppressGesture(t *testi
 		{"modal", func(m Model) Model { m.modal = shellAskModel(t, `{"command":"true"}`).modal; return m }},
 		{"team", func(m Model) Model { m.team.view = teamRoster; return m }},
 		{"agents inventory", func(m Model) Model { m.agentsInv.view = agentsInvPanel; return m }},
-		{"user model", func(m Model) Model { m.userModel.view = userModelPanel; return m }},
+		{"user model", func(m Model) Model { m.modal = &userModelState{view: userModelPanel}; return m }},
 		{"reflections", func(m Model) Model { m.reflections.view = reflectionsList; return m }},
 		{"dream", func(m Model) Model { m.dream.view = dreamGenerating; return m }},
 		{"connect", func(m Model) Model { m.connect.open = true; return m }},

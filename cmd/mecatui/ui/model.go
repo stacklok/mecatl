@@ -650,8 +650,7 @@ type Model struct {
 	subagents                    subagentState      // Subagents-tab state of the unified agents overlay (roster | focus)
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
 	agentsInv                    agentsInvState     // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	userModel                    userModelState     // user-model inspection overlay state (view==userModelNone when closed)
-	userModelGen                 uint64             // monotonic request generation; invalidates delayed detail/index responses
+	userModelGen                 uint64             // Model-lifetime fence for delayed saved-memory results
 	reflections                  reflectionsState
 	reflectionsGen               uint64
 	dream                        dreamState

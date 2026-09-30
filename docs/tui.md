@@ -867,13 +867,21 @@ soul is agent-read-only); trust/drift are computed server-side in composition an
 only displayed here.
 
 **`/usermodel` (read-only user-model inspection).** Gated on `caps.user_model` AND
-a wired user-model lister. It fires `GetUserModel` (a **live** read of the
-user-model store's bounded index) and shows count · size · hash over a key/description
-list. Move with `↑`/`↓`; `enter` lazily requests the selected key's exact current
-value and up to 16 recent lifecycle revisions. Every server-derived field is terminal-
-sanitized. Current stores show the exact current value and up to 16 retained revisions. Proposal-linked revisions show the proposal id beside their existing provenance.
-`esc` returns from detail or closes the panel. The surface is read-only:
-Forget remains an ordinary model tool behind its permission gate.
+a wired user-model lister. It fires one live index read each time the inspector
+opens. The centered card fits the conversation region, up to 128 columns wide,
+and uses the available height for keys, descriptions, and count · size · hash.
+`↑`/`↓` select facts, `pgup`/`pgdn` select by physical page, and `home`/`end`
+select endpoints. The mouse wheel moves visible rows without changing the
+selected key. Configured key overrides apply. `enter` requests that key's exact
+current value, provenance, and up to 16 recent lifecycle revisions. Detail uses
+the same line, page, and endpoint keys to scroll its full read-only history.
+Every server-derived field is terminal-sanitized. A matching detail may retain
+history even if its key is no longer in the active index; a missing detail
+shows only the requested key. `esc` returns to the retained inventory selection
+and scroll position, then closes and refocuses the prompt. When there is too
+little space for the card's title, a content row, and footer, a clipped
+close-only hint replaces the inspector until the terminal grows. Forget remains
+an ordinary model tool behind its permission gate.
 
 **`/dream` (manual memory maintenance).** The command appears only when the server sends
 the `manual_dream` capability object and the dream client is wired; an older server hides it.

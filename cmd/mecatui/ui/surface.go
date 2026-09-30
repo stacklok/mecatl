@@ -152,6 +152,8 @@ func (m *Model) closeModal() {
 		case *sessionsState:
 			m.sessionsTranscriptRequestToken = max(m.sessionsTranscriptRequestToken, s.transcriptSurfaceRequestToken)
 			m.sessionsPageRequestToken = max(m.sessionsPageRequestToken, s.pageRequestToken)
+		case *userModelState:
+			m.userModelGen = max(m.userModelGen, s.generation)
 		case *modelsState:
 			m.modelCatalogRequestToken = max(m.modelCatalogRequestToken, s.requestToken)
 		}
