@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -27,6 +28,89 @@ func (availabilityRewriteHook) Run(_ context.Context, ev governance.HookEvent) (
 func TestADR_0370_Scenario2_AvailabilityAfterEffectiveRelease(t *testing.T) {
 	t.Run("released effective payload", testAvailabilityReleasedEffectivePayload)
 	t.Run("unattended hold", testAvailabilityUnattendedHold)
+	t.Run("PostToolUse UTF-8 repair", testAvailabilityAfterUTF8Repair)
+	t.Run("stale principal revision", testAvailabilityAfterStalePrincipalRevision)
+}
+
+func testAvailabilityAfterUTF8Repair(t *testing.T) {
+	recorder := &resultRecorder{}
+	read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		return session.NewToolResult(c.ID, "result "+invalidUTF8), nil
+	}}
+	sess := newSession(t, session.Limits{})
+	events := drain(agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("one", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolCallRecorder: recorder}).Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"}))
+
+	available, canonical := availabilityAndCanonical(t, events, "one")
+	for _, result := range []session.ToolResult{available, canonical, recorder.results[0]} {
+		if !utf8.ValidString(result.Content) || !strings.ContainsRune(result.Content, '�') || strings.Contains(result.Content, invalidUTF8) || !strings.Contains(result.Content, "result ") {
+			t.Fatalf("result was not repaired effective payload: %+v", result)
+		}
+	}
+	if !reflect.DeepEqual(available, canonical) || !reflect.DeepEqual(available, recorder.results[0]) {
+		t.Fatalf("availability/canonical/recorder differ: available=%+v canonical=%+v recorder=%+v", available, canonical, recorder.results)
+	}
+	for _, message := range sess.Conversation.Messages {
+		if message.ToolResult != nil && (!utf8.ValidString(message.ToolResult.Content) || !reflect.DeepEqual(*message.ToolResult, available)) {
+			t.Fatalf("model history did not receive repaired effective payload: %+v", message)
+		}
+	}
+}
+
+func testAvailabilityAfterStalePrincipalRevision(t *testing.T) {
+	const held = "PRIVATE_STALE_PRINCIPAL"
+	reviewRelease := make(chan struct{})
+	reviewer := &inboundReviewer{entered: make(chan session.ToolCallID, 1), release: reviewRelease, assessment: agent.ReviewProhibited}
+	recorder := &resultRecorder{}
+	read := &fakeTool{name: "Read", readOnly: true, exec: func(_ context.Context, c session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+		return session.NewToolResult(c.ID, held), nil
+	}}
+	sess := newSession(t, session.Limits{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("one", "Read", `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, read), Policy: staticAllowPolicy{}, ToolReviewer: reviewer, ToolCallRecorder: recorder, Interactive: true}).Run(ctx, sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "read"})
+	select {
+	case <-reviewer.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("inbound review did not start")
+	}
+	agent.RefreshReviewTasksForTest(run, []session.Message{{Role: session.RoleUser, Text: "changed principal task", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
+	close(reviewRelease)
+	events := drain(run)
+
+	available, canonical := availabilityAndCanonical(t, events, "one")
+	if !available.IsError || !strings.Contains(available.Content, "root instructions changed during review") || !reflect.DeepEqual(available, canonical) || len(recorder.results) != 1 || !reflect.DeepEqual(available, recorder.results[0]) {
+		t.Fatalf("stale revision must produce only the synthetic safe result: available=%+v canonical=%+v recorder=%+v", available, canonical, recorder.results)
+	}
+	for _, event := range events {
+		if strings.Contains(event.Text, held) || event.ToolResult != nil && strings.Contains(fmt.Sprint(*event.ToolResult), held) {
+			t.Fatalf("stale principal held bytes escaped: %+v", event)
+		}
+	}
+	for _, message := range sess.Conversation.Messages {
+		if message.ToolResult != nil && strings.Contains(message.ToolResult.Content, held) {
+			t.Fatalf("model history saw stale principal held result: %+v", message)
+		}
+	}
+}
+
+func availabilityAndCanonical(t *testing.T, events []session.Event, callID session.ToolCallID) (session.ToolResult, session.ToolResult) {
+	t.Helper()
+	var available, canonical *session.ToolResult
+	for _, event := range events {
+		if event.ToolResult == nil || event.ToolResult.CallID != callID {
+			continue
+		}
+		switch event.Type {
+		case session.EvToolResultAvailable:
+			available = event.ToolResult
+		case session.EvToolResult:
+			canonical = event.ToolResult
+		}
+	}
+	if available == nil || canonical == nil {
+		t.Fatalf("missing availability or canonical result for %q: %v", callID, typesOf(events))
+	}
+	return *available, *canonical
 }
 
 func testAvailabilityReleasedEffectivePayload(t *testing.T) {
