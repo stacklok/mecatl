@@ -44,7 +44,7 @@ func buildAgentDefRootEngine(
 	ctx context.Context,
 	cfg Config,
 	def agents.AgentDef,
-	role, source string,
+	source string,
 	provider port.LLMProvider,
 	model string,
 	windowFn func() int,
@@ -68,7 +68,23 @@ func buildAgentDefRootEngine(
 	deps := engineDepsForProvider(cfg, provider, model, windowFn, store, policy, hooks, mcpProvider, instructions)
 	deps.Catalog = cat
 	deps.PromptConfig = pc
-	deps.Role = role
+	// Deps.Role is deliberately left at engineDepsForProvider's default (empty)
+	// — NOT set to role, despite role being exactly the diagnostic label a
+	// child-shaped engine would carry there. engine/agent uses `Role != ""`
+	// throughout (loop.go, steer.go, actionreview.go, dispatch.go) as the
+	// signal that an engine is a delegated child, gating principal-prompt
+	// trust, review-principal establishment, and external-authorization
+	// presentation accordingly. This engine is a SESSION ROOT (AC1.6:
+	// "ordinary main-session behavior... in every respect except its tool
+	// catalog") — setting a non-empty Role here would silently mis-trigger
+	// every one of those child-only behaviors for it (confirmed: doing so
+	// made every "acceptable" contextual-guardrail verdict untrustworthy via
+	// unestablished principal facts, and deadlocked engine/agent's existing
+	// child-fixture tests that construct a Deps{Role: ...} literal directly
+	// and rely on Role alone to mean "child"). The bound AgentDef's name is
+	// already logged once per engine build by this function's caller
+	// (agentDefSessionEngineFactory's "agent-bound session engine built" log),
+	// so no diagnostic value is lost by leaving Role empty here.
 	// Guardrails (ADR 0363): the SAME attach step both existing main-engine call
 	// sites use (build.go's shared engine and per-session factory) — never the
 	// removed buildGuardrailsHooks. This is what keeps an agent-bound session's
@@ -159,7 +175,7 @@ func agentDefSessionEngineFactory(
 		parentProviderID := provReg.Default()
 		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, cfg.Model)
 
-		eng, mcpClose, authority := buildAgentDefRootEngine(ctx, cfg, def, "agent-root:"+def.Name, assets.agentReg.Detail(def.Name),
+		eng, mcpClose, authority := buildAgentDefRootEngine(ctx, cfg, def, assets.agentReg.Detail(def.Name),
 			childProvider, model, windowFn, base, allowShell, assets.skillIndex, hooks, runner, assets.globalMgr,
 			store, policy, mcpProvider, instructions, provReg, parentProviderID, guardrailWaiver)
 
