@@ -282545,6 +282545,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790765243810,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "280093410+toolhive-release-app[bot]@users.noreply.github.com",
+            "name": "toolhive-release-app[bot]",
+            "username": "toolhive-release-app[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7fea7017e1a4933b691393a4ae5f0ce5755fa3dd",
+          "message": "Release v0.0.43 (#2010)\n\nCo-authored-by: toolhive-release-app[bot] <280093410+toolhive-release-app[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-30T14:19:32+03:00",
+          "tree_id": "5b56c474b68a75140e45cf5ec04ff22ad97e5473",
+          "url": "https://github.com/stacklok/mecatl/commit/7fea7017e1a4933b691393a4ae5f0ce5755fa3dd"
+        },
+        "date": 1790767925691,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3322,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -370249,6 +370288,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790767922463,
+  "lastUpdate": 1790767926877,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
