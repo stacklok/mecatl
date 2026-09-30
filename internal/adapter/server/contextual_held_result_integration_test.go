@@ -195,7 +195,7 @@ func TestGRPCHeldResultIsPrivateUntilExactRelease(t *testing.T) {
 		break
 	}
 	_ = stream.CloseSend()
-	wireResults := 0
+	wireAvailable, wireCanonical := 0, 0
 	for {
 		response, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
@@ -206,7 +206,14 @@ func TestGRPCHeldResultIsPrivateUntilExactRelease(t *testing.T) {
 		}
 		wire = append(wire, response)
 		if strings.Contains(response.GetEvent().GetToolResult().GetContent(), secret) {
-			wireResults++
+			switch response.GetEvent().GetType() {
+			case string(session.EvToolResultAvailable):
+				wireAvailable++
+			case string(session.EvToolResult):
+				wireCanonical++
+			default:
+				t.Fatalf("held bytes in unexpected event %s", response.GetEvent().GetType())
+			}
 		}
 	}
 	loaded, err := store.Load(context.Background(), id)
@@ -229,8 +236,8 @@ func TestGRPCHeldResultIsPrivateUntilExactRelease(t *testing.T) {
 		}
 	}
 	recorded := recorder.snapshot()
-	if read.runs() != 1 || loaded.Counters.ToolCalls != 1 || wireResults != 1 || storedResults != 1 || loggedResults != 1 || len(recorded) != 1 || recorded[0].Content != secret {
-		t.Fatalf("runs=%d toolCalls=%d wire=%d store=%d log=%d recorder=%+v", read.runs(), loaded.Counters.ToolCalls, wireResults, storedResults, loggedResults, recorded)
+	if read.runs() != 1 || loaded.Counters.ToolCalls != 1 || wireAvailable != 1 || wireCanonical != 1 || storedResults != 1 || loggedResults != 1 || len(recorded) != 1 || recorded[0].Content != secret {
+		t.Fatalf("runs=%d toolCalls=%d available=%d canonical=%d store=%d log=%d recorder=%+v", read.runs(), loaded.Counters.ToolCalls, wireAvailable, wireCanonical, storedResults, loggedResults, recorded)
 	}
 }
 
