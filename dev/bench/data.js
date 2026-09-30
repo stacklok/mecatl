@@ -253534,6 +253534,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790747668881,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee5c721836d493a704bf5bf9ee22a01c459c9d6c",
+          "message": "fix(mecatui): silence routine guardrails and unify review feedback (#2002)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T09:47:09+03:00",
+          "tree_id": "2cc3657c7dd7ad2175c801d3e81009b905fae222",
+          "url": "https://github.com/stacklok/mecatl/commit/ee5c721836d493a704bf5bf9ee22a01c459c9d6c"
+        },
+        "date": 1790751538787,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -368171,6 +368205,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790751535493,
+  "lastUpdate": 1790751540262,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
