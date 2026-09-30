@@ -4,7 +4,7 @@
 **Work classification:** Architectural - adds a stable public engine and wire event, defines a live-only persistence boundary, and separates client presentation order from canonical conversation order across the engine, transports, SDK, ACP, and Mecatui.
 **Decision record:** [ADR 0370](../adr/0370-live-tool-result-availability.md)
 **Phase:** live per-call tool-result availability
-**Status:** in-progress, 2026-09-29. Plan / Interface PR #1982 approved by merge; implementation in progress.
+**Status:** landed, 2026-09-29. Proposed on the implementation PR; authoritative after merge.
 **Delivery:** Split. The public event, persistence exclusion, guardrail release boundary, and multi-client replacement semantics need interface review before implementation.
 **Expected tasks:** 3
 **Issue:** [stacklok/mecatl#1976](https://github.com/stacklok/mecatl/issues/1976).
