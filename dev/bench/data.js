@@ -280957,6 +280957,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790747672790,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ee5c721836d493a704bf5bf9ee22a01c459c9d6c",
+          "message": "fix(mecatui): silence routine guardrails and unify review feedback (#2002)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T09:47:09+03:00",
+          "tree_id": "2cc3657c7dd7ad2175c801d3e81009b905fae222",
+          "url": "https://github.com/stacklok/mecatl/commit/ee5c721836d493a704bf5bf9ee22a01c459c9d6c"
+        },
+        "date": 1790751543964,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3322.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 111,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -368205,6 +368244,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790751540262,
+  "lastUpdate": 1790751545127,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
