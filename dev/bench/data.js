@@ -255682,6 +255682,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790771710538,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ce948582151971c7128fef13d29c90078ddd9f1c",
+          "message": "test(microvm): respect host umask in merge ownership assertions (#2014)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T20:58:59+03:00",
+          "tree_id": "0d29b4b8de5b3d27a944ff97fac9936905a0cfbc",
+          "url": "https://github.com/stacklok/mecatl/commit/ce948582151971c7128fef13d29c90078ddd9f1c"
+        },
+        "date": 1790791868466,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -371237,6 +371271,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790791864527,
+  "lastUpdate": 1790791869550,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
