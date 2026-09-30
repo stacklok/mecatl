@@ -182,6 +182,13 @@ type SessionEngineResult struct {
 	// on-fork); every other factory leaves this zero and setPerSessionLabels
 	// ignores it.
 	Authority session.Authority
+	// Limits is the ADR-0353 tighten-only clamped run-limit ceiling this
+	// agent-bound session's create should actually PERSIST (AC1.12) — set only
+	// by AgentDefSessionEngine, which alone knows the bound def's own configured
+	// Limits. nil means "the caller's ordinary WithDefaults path applies
+	// unchanged"; every other factory leaves this nil and the caller's existing
+	// limits.WithDefaults(cfg.DefaultLimits) fold is untouched.
+	Limits *session.Limits
 	// Close tears down the session's MCP manager. Never nil (a no-op when no specs).
 	Close func() error
 }
@@ -261,7 +268,19 @@ type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, p
 // time, exactly like every other per-session factory). An unresolvable
 // defName is a loud error wrapping ErrInvalidArgument, mirroring how an
 // unknown provider_id is handled today.
-type AgentDefSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, defName string) (SessionEngineResult, error)
+//
+// limits is the caller's REQUEST Limits, threaded in RAW (never
+// WithDefaults-filled by the caller — see createSession, which skips its
+// general WithDefaults(cfg.DefaultLimits) fold for an agent-bound create):
+// only the composition-layer factory knows the bound def's own configured
+// Limits/permissionMode ceiling (AC1.12/AC1.13, ADR 0353's tighten-only
+// clamps), so it alone can tell "a zero field means not supplied, inherit the
+// def's cap" apart from "the operator's own default already filled it in."
+// The factory returns the clamped mode via SessionEngineResult.BuiltForMode
+// (echoed exactly like every other factory when no def restricts it further)
+// and the clamped Limits via SessionEngineResult.Limits; the caller applies
+// both to what it actually persists on the session.
+type AgentDefSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, limits session.Limits, defName string) (SessionEngineResult, error)
 
 // ModelSnapshot captures model rows and provider statuses from one publication.
 type ModelSnapshot struct {
@@ -2523,7 +2542,17 @@ func (s *Service) createSession(ctx context.Context, mode session.PermissionMode
 	// unbounded); a Limits that pins only some caps keeps those and inherits the
 	// rest, rather than the old all-or-nothing substitution that silently disabled
 	// the unset caps. A zero field means "unset", not "explicitly unlimited".
-	limits = limits.WithDefaults(s.cfg.DefaultLimits)
+	//
+	// Skipped for an agent-bound create (ADR 0353, AC1.12): the bound def's OWN
+	// configured Limits substitute for the deployment default there, and the
+	// AgentDefSessionEngine factory alone can tell "zero means not supplied" apart
+	// from "already filled in" — folding cfg.DefaultLimits in here first would
+	// destroy that signal before the factory ever sees it. createPerSessionEngine
+	// applies the factory-returned, already-tightened SessionEngineResult.Limits
+	// in its place.
+	if opts.agentDefinitionName == "" {
+		limits = limits.WithDefaults(s.cfg.DefaultLimits)
+	}
 
 	// The owner stamped on the new session: the explicit WithOwner injection, else
 	// the verified principal on the context, else nil (the ownerless no-auth path).
@@ -2732,8 +2761,20 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		// branch below — AC1.10. This case is entirely independent of the
 		// debug/broker/callSessionEngine machinery in the default case.
 		factoryDone := creatediag.Begin(ctx, "engine_factory")
-		res, err = s.cfg.AgentDefSessionEngine(ctx, sel, profile, mode, opts.agentDefinitionName)
+		res, err = s.cfg.AgentDefSessionEngine(ctx, sel, profile, mode, limits, opts.agentDefinitionName)
 		factoryDone(err)
+		if err == nil {
+			// ADR 0353 tighten-only clamps (AC1.12/AC1.13): the factory alone
+			// resolved the bound def's own configured Limits/permissionMode
+			// ceiling (opaque to this adapter, which knows nothing of AgentDef).
+			// Reassigning `mode`/`limits` here — not merely res's own cached
+			// fields — is what makes the clamp the session's ACTUAL enforced
+			// posture: newCreatedSession below persists these locals verbatim.
+			mode = res.BuiltForMode
+			if res.Limits != nil {
+				limits = *res.Limits
+			}
+		}
 	case opts.debugTargetID != "":
 		debugTarget, err = s.cfg.Store.Load(ctx, opts.debugTargetID)
 		if err != nil || debugTarget == nil || s.authorizeSession(ctx, debugTarget) != nil {
