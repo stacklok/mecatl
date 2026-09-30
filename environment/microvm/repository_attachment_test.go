@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -462,7 +463,7 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	if len(guestMode) < 3 {
 		t.Fatalf("unexpected override_stat value %q", guestMode)
 	}
-	guestMode = guestMode[:len(guestMode)-3] + "640"
+	guestMode = guestMode[:len(guestMode)-3] + "750"
 	if err := unix.Setxattr(trackedPath, "user.containers.override_stat", []byte(guestMode), 0); err != nil {
 		t.Fatal(err)
 	}
@@ -506,13 +507,17 @@ func TestMicroVMMVP_Scenario5_BasicExistingMergeBehavior(t *testing.T) {
 	if prepareCalls != 1 {
 		t.Fatalf("merge ownership preparation calls = %d, want 1", prepareCalls)
 	}
-	if got := overrideStatForTest(t, trackedPath); got == guestMode || !strings.HasSuffix(got, "644") {
-		t.Fatalf("replacement file ownership = %q, want host-derived mode without stale %q", got, guestMode)
+	trackedInfo, err := os.Stat(trackedPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := overrideStatForTest(t, filepath.Join(parent.Logical.WorktreePath, "child.txt")); !strings.HasPrefix(got, "65532:65532:") || !strings.HasSuffix(got, "755") {
-		t.Fatalf("new executable merged file ownership = %q, want host-derived executable mode", got)
+	if got := overrideStatForTest(t, trackedPath); got == guestMode || !strings.HasSuffix(got, fmt.Sprintf("%03o", trackedInfo.Mode().Perm())) {
+		t.Fatalf("replacement file ownership = %q, want host-derived mode %o without stale %q", got, trackedInfo.Mode().Perm(), guestMode)
 	}
-	if info, err := os.Stat(filepath.Join(parent.Logical.WorktreePath, "child.txt")); err != nil || info.Mode().Perm() != refreshedChildHostMode || info.Mode().Perm() != 0o755 {
+	if got := overrideStatForTest(t, filepath.Join(parent.Logical.WorktreePath, "child.txt")); !strings.HasPrefix(got, "65532:65532:") || !strings.HasSuffix(got, fmt.Sprintf("%03o", refreshedChildHostMode)) {
+		t.Fatalf("new executable merged file ownership = %q, want host-derived mode %o", got, refreshedChildHostMode)
+	}
+	if info, err := os.Stat(filepath.Join(parent.Logical.WorktreePath, "child.txt")); err != nil || info.Mode().Perm() != refreshedChildHostMode {
 		t.Fatalf("ownership refresh changed new file host mode: before=%o after=%v err=%v", refreshedChildHostMode, infoMode(info), err)
 	}
 	stableAfter, err := os.Stat(stablePath)
