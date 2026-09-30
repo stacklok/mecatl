@@ -841,6 +841,9 @@ type Config struct {
 	// ModelAliasTargets carries provider-aware alias targets from typed config and
 	// shared CLI plumbing. ModelAliases remains the scalar compatibility seam.
 	ModelAliasTargets ModelAliases
+	// modelProviderRegistry is the immutable Build-owned registry used only to mint
+	// provider-specific auxiliary-call dependencies. It never reaches engine core.
+	modelProviderRegistry *providerRegistry
 
 	// ModelSlots binds a named internal lightweight LLM call (a "slot") to a model
 	// selector — an alias or a concrete id. The recognised call slots are listed in
@@ -1921,6 +1924,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	if err := validateModelAliases(cfg.ModelAliasTargets, reg); err != nil {
 		return nil, err
 	}
+	cfg.modelProviderRegistry = reg
 	discovery = reg.discovery
 	reg.contextWindows = cfg.contextWindows
 	reg.contextWindowOverride = cfg.ContextWindowOverride
@@ -2484,11 +2488,7 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 				providerID = reg.Default()
 			}
 			modelID = selectedProviderModel(reg, providerID, modelID)
-			if mode == session.ModePlan {
-				if planModel, configured := resolveSlotModel(cfg, slotPlan, modelID); configured && planModel != "" {
-					modelID = planModel
-				}
-			}
+			modelID, _ = resolvePlanSessionModel(cfg, providerID, modelID, mode)
 			return modelCapability(reg, providerID, modelID)
 		},
 		ResolveSessionModel: func(sel server.ProviderSelector, mode session.PermissionMode) server.ResolvedModel {
@@ -3129,7 +3129,7 @@ func selectedProviderModel(reg *providerRegistry, providerID, model string) stri
 	return reg.DefaultModelFor(providerID)
 }
 
-func resolvedSessionIdentity(cfg Config, reg *providerRegistry, sel server.ProviderSelector, mode session.PermissionMode) (string, string) {
+func resolvedSessionIdentity(cfg Config, reg *providerRegistry, sel server.ProviderSelector, mode session.PermissionMode) (string, string, bool) {
 	providerID, model := reg.Default(), cfg.Model
 	if sel.ProviderID != "" {
 		providerID = sel.ProviderID
@@ -3137,16 +3137,12 @@ func resolvedSessionIdentity(cfg Config, reg *providerRegistry, sel server.Provi
 	} else if model == "" {
 		model = reg.ResolvedDefaultModel()
 	}
-	if mode == session.ModePlan {
-		if planModel, configured := resolveSlotModel(cfg, slotPlan, model); configured && planModel != "" {
-			model = planModel
-		}
-	}
-	return providerID, model
+	model, crossProviderFallback := resolvePlanSessionModel(cfg, providerID, model, mode)
+	return providerID, model, crossProviderFallback
 }
 
 func resolvedSessionProjection(cfg Config, reg *providerRegistry, sel server.ProviderSelector, mode session.PermissionMode) server.ResolvedModel {
-	providerID, model := resolvedSessionIdentity(cfg, reg, sel, mode)
+	providerID, model, _ := resolvedSessionIdentity(cfg, reg, sel, mode)
 	effort, ok := NormalizeReasoningEffort(sel.ReasoningEffort)
 	if strings.TrimSpace(sel.ReasoningEffort) == "" || !ok {
 		effort, _ = NormalizeReasoningEffort(cfg.ReasoningEffort)
@@ -3198,11 +3194,8 @@ func debugSessionEngineFactory(cfg Config, reg *providerRegistry, fallback port.
 			provider, providerID = entry.provider, sel.ProviderID
 			model = selectedProviderModel(reg, providerID, sel.ModelID)
 		}
-		if mode == session.ModePlan {
-			if planModel, configured := resolveSlotModel(cfg, slotPlan, model); configured && planModel != "" {
-				model = planModel
-			}
-		}
+		model, planProviderFallback := resolvePlanSessionModel(cfg, providerID, model, mode)
+		warnPlanProviderFallback(ctx, cfg, planProviderFallback)
 
 		cat := tool.NewCatalog()
 		cat.MustRegister(sessiondebug.NewBound(target, expectedFingerprint, expectedOwner, cfg.OwnershipEnforced, store, eventLog))
@@ -3340,7 +3333,8 @@ func sessionEngineFactoryWithTools(
 		// keeps the default provider + cfg.Model. resolvedProviderID
 		// is threaded so the per-session capability intersection (modelCapability) keys
 		// on the right provider — the zero selector uses the registry default.
-		resolvedProviderID, resolvedModel := resolvedSessionIdentity(cfg, reg, sel, mode)
+		resolvedProviderID, resolvedModel, planProviderFallback := resolvedSessionIdentity(cfg, reg, sel, mode)
+		warnPlanProviderFallback(ctx, cfg, planProviderFallback)
 		resolvedProvider := provider
 		if sel.ProviderID == "" && cfg.Model == "" && resolvedModel != "" {
 			if entry, ok := reg.Lookup(resolvedProviderID); ok {
@@ -4873,8 +4867,9 @@ func engineDepsForProvider(
 	// supplies a request-local budget derived from the live session window and complete
 	// request. The tier-4 Model remains the load-bearing slot swap (the heuristic
 	// compactor has no Model/Counter at all, so it is unaffected).
-	compactorCfg, compactorCounter := modelCfg, counter
-	if cm, ok := resolveSlotModel(cfg, slotCompaction, model); ok {
+	compactorCfg, compactorCounter, compactorProvider, compactorProviderID := modelCfg, counter, provider, providerModel.ProviderID
+	if cp, cpID, cm, ok := resolveAuxiliarySlotTarget(cfg, cfg.modelProviderRegistry, slotCompaction, provider, providerModel.ProviderID, model); ok {
+		compactorProvider, compactorProviderID = cp, cpID
 		compactorCfg = modelCfg
 		compactorCfg.Model = cm
 		compactorCounter = buildTokenCounter(compactorCfg)
@@ -4908,7 +4903,7 @@ func engineDepsForProvider(
 		CompactionRatio:       defaultCompactionRatio,
 		OperatorProfileSource: cfg.operatorProfileSource,
 		TokenCounter:          counter,
-		Compactor:             buildCompactor(compactorCfg, provider, session.ProviderModelID{ProviderID: providerModel.ProviderID, ModelID: compactorCfg.Model}, compactorCounter),
+		Compactor:             buildCompactor(compactorCfg, compactorProvider, session.ProviderModelID{ProviderID: compactorProviderID, ModelID: compactorCfg.Model}, compactorCounter),
 		CommandExpander:       buildCommandExpander(cfg, mcpProvider),
 		// No-progress nudge budget: operator-tunable (cfg), inherited by children
 		// (childEngineDepsForProvider keeps this field). Zero → NewEngine applies the
@@ -5216,12 +5211,12 @@ func normalizeAskReviewerModel(cfg Config) (string, error) {
 	// rather than the day someone adds --headless and the now-active reviewer can't
 	// resolve its model. (Skipped only under UseMock, where the model is a literal
 	// the offline mock ignores.)
-	resolved, known := lookupModelAlias(cfg, sel)
+	target, known := lookupModelAliasTarget(cfg, sel)
 	if !cfg.UseMock {
 		switch {
 		case !known:
 			return "", fmt.Errorf("--subagent-ask-reviewer %q: unknown model alias (not in --model-alias, not a built-in alias, and a bare token is not a concrete model id); the headless ask reviewer would silently stay off — pass a concrete model id or define the alias", sel)
-		case resolved == "":
+		case target.Model == "":
 			return "", fmt.Errorf("--subagent-ask-reviewer %q: the alias resolves to \"inherit\" (the built-in sonnet/opus/haiku aliases mean inherit unless overridden via --model-alias); pass a concrete model id or map the alias to one", sel)
 		}
 	}
@@ -5266,12 +5261,12 @@ func normalizeGuardrailsModel(cfg Config) (string, error) {
 	if sel == "" || cfg.GuardrailsDisabled {
 		return sel, nil
 	}
-	resolved, known := lookupModelAlias(cfg, sel)
+	target, known := lookupModelAliasTarget(cfg, sel)
 	if !cfg.UseMock {
 		switch {
 		case !known:
 			return "", fmt.Errorf("--guardrails-model %q: unknown model alias (not in --model-alias, not a built-in alias, and a bare token is not a concrete model id); guardrails would silently stay off — pass a concrete model id or define the alias", sel)
-		case resolved == "":
+		case target.Model == "":
 			return "", fmt.Errorf("--guardrails-model %q: the alias resolves to \"inherit\" (the built-in sonnet/opus/haiku aliases mean inherit unless overridden via --model-alias); pass a concrete model id or map the alias to one", sel)
 		}
 	}
@@ -7434,24 +7429,28 @@ func askAdjudicatorDeps(cfg Config, provReg *providerRegistry, provider port.LLM
 	// ASK-REVIEWER SLOT: a configured `ask-reviewer` slot
 	// SUPERSEDES the flag's model (the flag still gates ON/OFF). Otherwise resolve the
 	// flag's value through the alias machinery.
-	var model string
-	if sm, ok := resolveSlotModel(cfg, slotAskReviewer, parentModel); ok {
-		model = sm
-	} else {
-		model, _ = lookupModelAlias(cfg, sel)
+	model := parentModel
+	reviewerProvider, reviewerProviderID := provider, parentProviderID
+	if slotProvider, slotProviderID, slotModel, ok := resolveAuxiliarySlotTarget(cfg, provReg, slotAskReviewer, provider, parentProviderID, parentModel); ok {
+		reviewerProvider, reviewerProviderID, model = slotProvider, slotProviderID, slotModel
+	} else if target, err := resolveModelTarget(cfg, parentProviderID, "", sel); err == nil {
+		model = target.Model
+		if target.ProviderID != parentProviderID && provReg != nil {
+			if entry, found := provReg.Lookup(target.ProviderID); found {
+				reviewerProvider, reviewerProviderID = entry.provider, target.ProviderID
+			}
+		}
 	}
 	if model == "" {
-		// Defensive only: Build's normalizeAskReviewerModel already rejected an
-		// unknown/inherit value fail-fast (and UseMock passes the literal through).
 		model = parentModel
 	}
-	windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-	providerModel := session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}
+	windowFn := childWindowFor(cfg, provReg, reviewerProviderID, model)
+	providerModel := session.ProviderModelID{ProviderID: reviewerProviderID, ModelID: model}
 	// newChildEngineForProvider's deps builder: the reviewer compacts/counts/
 	// prompts on ITS resolved model with a re-derived window — and, crucially,
 	// childEngineDepsForProvider forces ChildAskReviewer nil, so the reviewer
 	// engine can never carry a nested reviewer (no construct-recursion).
-	deps := childEngineDepsForProvider(cfg, "ask-reviewer", provider, providerModel, windowFn,
+	deps := childEngineDepsForProvider(cfg, "ask-reviewer", reviewerProvider, providerModel, windowFn,
 		tool.NewCatalog(), promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 	// Disable the no-progress nudge on the reviewer engine: its session caps at
 	// MaxTurns=1, and an EMPTY (verdict-less) first turn must terminate cleanly in
@@ -7512,6 +7511,14 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 		return nil
 	}
 	classifierModel := resolveRouterClassifierModel(cfg, parentModel)
+	classifierProvider, classifierProviderID := provider, parentProviderID
+	classifierSlot := slotRouter
+	if cfg.RouterClassifierSlot != "" {
+		classifierSlot = cfg.RouterClassifierSlot
+	}
+	if routedProvider, routedProviderID, routedModel, ok := resolveAuxiliarySlotTarget(cfg, provReg, classifierSlot, provider, parentProviderID, parentModel); ok {
+		classifierProvider, classifierProviderID, classifierModel = routedProvider, routedProviderID, routedModel
+	}
 	cats := make([]agent.ModelRouteCategory, 0, len(cfg.RouterCategories))
 	selectorByName := make(map[string]string, len(cfg.RouterCategories))
 	for _, c := range cfg.RouterCategories {
@@ -7571,7 +7578,7 @@ func buildModelRouterTask(cfg Config, provReg *providerRegistry, provider port.L
 	return &agent.SubagentModelRouter{
 		Backend: routerBackendLLM, ClassifierModel: classifierModel,
 		Route: func(ctx context.Context, taskPrompt string) agent.ModelRouteResult {
-			deps := modelRouterDeps(cfg, provReg, provider, parentProviderID, classifierModel)
+			deps := modelRouterDeps(cfg, provReg, classifierProvider, classifierProviderID, classifierModel)
 			eng := agent.NewEngine(deps)
 			category, classifierUsage, missReason, ok := agent.RunModelRouter(ctx, eng, agent.ModelRouteRequest{
 				TaskPrompt: taskPrompt, Categories: cats, Default: cfg.RouterDefaultCategory,

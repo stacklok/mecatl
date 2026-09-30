@@ -546,27 +546,30 @@ func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, mod
 	if cfg.GuardrailsDisabled {
 		return "", "", srcNone, false, nil
 	}
-	var selector string
+	var selector, explicitProvider string
 	if cfg.GuardrailSlot != nil {
-		providerID = strings.TrimSpace(cfg.GuardrailSlot.ProviderID)
+		explicitProvider = strings.TrimSpace(cfg.GuardrailSlot.ProviderID)
 		selector = strings.TrimSpace(cfg.GuardrailSlot.Model)
 		src = srcSlot
 	} else if selector = selectorForSlot(cfg, slotGuardrail); selector != "" {
-		providerID = reg.Default()
 		src = srcSlot
 	} else if selector = strings.TrimSpace(cfg.GuardrailsModel); selector != "" {
-		providerID = reg.Default()
 		src = srcGate
 	} else {
 		return "", "", srcNone, false, nil
 	}
-	model, known := lookupModelAlias(cfg, selector)
-	if (!known || model == "") && cfg.UseMock {
-		model = selector
+	target, targetErr := resolveModelTarget(cfg, reg.Default(), explicitProvider, selector)
+	if targetErr != nil && cfg.UseMock {
+		target = ModelTarget{ProviderID: explicitProvider, Model: selector}
+		if target.ProviderID == "" {
+			target.ProviderID = reg.Default()
+		}
+		targetErr = nil
 	}
-	if !known && !cfg.UseMock {
+	if targetErr != nil {
 		return "", "", srcNone, false, fmt.Errorf("guardrail model selector %q is not resolvable", selector)
 	}
+	providerID, model = target.ProviderID, target.Model
 	if model == "" {
 		return "", "", srcNone, false, fmt.Errorf("guardrail model selector %q resolves to inherit", selector)
 	}
@@ -579,8 +582,9 @@ func resolveGuardrailBinding(cfg Config, reg *providerRegistry) (providerID, mod
 	if src == srcSlot {
 		gate := strings.TrimSpace(cfg.GuardrailsModel)
 		if gate != "" {
-			gateModel, _ := lookupModelAlias(cfg, gate)
-			if gateModel == "" && cfg.UseMock {
+			gateTarget, gateErr := resolveModelTarget(cfg, reg.Default(), "", gate)
+			gateModel := gateTarget.Model
+			if gateErr != nil && cfg.UseMock {
 				gateModel = gate
 			}
 			if gateModel != model {
