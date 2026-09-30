@@ -246,8 +246,9 @@ func assembleCatalog(ctx context.Context, cfg Config, reg *providerRegistry, sto
 		classified.mustRegister(extra, &entry)
 	}
 
-	if modelDiscoveryAvailable(reg, a.modelInventory) {
-		classified.mustRegister(newAgentModelDiscoveryTool(a.modelInventory), classification(server.KindSharedInfrastructure,
+	routerCategories := routerDiscoveryCategories(cfg)
+	if modelDiscoveryAvailable(reg, a.modelInventory, routerCategories) {
+		classified.mustRegister(newAgentModelDiscoveryTool(a.modelInventory, routerCategories), classification(server.KindSharedInfrastructure,
 			"bounded projection of the composition-owned resolved model inventory"))
 	}
 

@@ -47,6 +47,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
@@ -1961,7 +1962,18 @@ func (c *RouterCategory) strictFields() map[string]any {
 
 // UnmarshalYAML decodes a router category mapping STRICTLY.
 func (c *RouterCategory) UnmarshalYAML(node ast.Node) error {
-	return decodeStrictMapping(node, "models.router.categories[]", c.strictFields())
+	if err := decodeStrictMapping(node, "models.router.categories[]", c.strictFields()); err != nil {
+		return err
+	}
+	if !utf8.ValidString(c.Description) || len(c.Description) > 512 {
+		return errors.New("models.router.categories[].description: must be valid UTF-8 and at most 512 bytes")
+	}
+	for _, r := range c.Description {
+		if unicode.IsControl(r) {
+			return errors.New("models.router.categories[].description: must not contain control characters")
+		}
+	}
+	return nil
 }
 
 func (m *ModelsSection) strictFields() map[string]any {

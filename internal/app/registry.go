@@ -39,6 +39,9 @@ import (
 // mock) are explicit exceptions. Lowercase, never localized.
 const (
 	providerOpenAI = "openai"
+	// providerModelRouter is reserved for virtual delegation discovery rows and is
+	// never admitted as an inference provider.
+	providerModelRouter = "model-router"
 	// providerOpenAICodex is the manual ChatGPT-subscription credential route.
 	// It speaks the same Responses protocol as providerOpenAI but is a distinct
 	// billing identity with a fixed, policy-enforced backend endpoint.
@@ -762,6 +765,9 @@ func sortedProviderDefinitions(definitions permconfig.ProviderDefinitions) []per
 func addCustomProviderEntries(ctx context.Context, entries map[string]providerEntry, cfg Config, meta *liveMetaStore) (map[string]struct{}, error) {
 	unavailableNative := make(map[string]struct{})
 	for _, definition := range sortedProviderDefinitions(cfg.ProviderDefinitions) {
+		if definition.ID == providerModelRouter {
+			return nil, fmt.Errorf("provider id %q is reserved", providerModelRouter)
+		}
 		if definition.Auth.Method == "oidc" {
 			if cfg.NativeEndpointCredentialLoader == nil {
 				unavailableNative[definition.ID] = struct{}{}
