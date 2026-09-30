@@ -256398,6 +256398,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790800853229,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fee19378aabdd7a67425d4731b917ab6cea913ef",
+          "message": "fix(modules): pin published adapters v0.1.1 (#2023)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T00:13:44+03:00",
+          "tree_id": "42141d012f0fcaa69771fb0c8e6c4cae7f0a55b3",
+          "url": "https://github.com/stacklok/mecatl/commit/fee19378aabdd7a67425d4731b917ab6cea913ef"
+        },
+        "date": 1790803580285,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -372259,6 +372293,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790803574686,
+  "lastUpdate": 1790803581323,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
