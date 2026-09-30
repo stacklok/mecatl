@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes the local, user-visible layout, browsing, and overlay ownership of one existing mecatui inspector without changing the memory store or a public interface.
 **Decision record:** None — the existing `surface` and bounded controls cover this client-local interaction; no durable architecture decision is required.
 **Phase:** bounded-inventory adoption, saved-memory slice
-**Status:** in-progress, 2026-09-29. Plan / Interface PR #1995 merged; implementation is underway against approved commit `f64f4ebd15b05ace1fa758c69ab8df3ec09ee495`.
+**Status:** landed, 2026-09-29. Implementation is proposed in this PR against approved Plan / Interface commit `f64f4ebd15b05ace1fa758c69ab8df3ec09ee495`; it becomes authoritative when the implementation PR merges.
 **Delivery:** Split. Selection, wheel ownership, responsive geometry, and surface migration warrant separate contract review before implementation.
 **Expected tasks:** deferred to orchestration
 **Issue:** [stacklok/mecatl#1896](https://github.com/stacklok/mecatl/issues/1896).
