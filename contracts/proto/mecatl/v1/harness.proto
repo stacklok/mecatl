@@ -734,7 +734,7 @@ message ServerCapabilities {
   // GetSoul returns its snapshot). Gates the /soul read-only inspection panel.
   bool soul = 10;
   // user_model is true when the user-model store is wired (GetUserModel reads its
-  // live index). Gates the /usermodel read-only inspection panel.
+  // live index). Gates the /memory read-only inspection panel.
   bool user_model = 11;
   // model_selection is true when >=1 provider is available (ListModels would return
   // >0). Gates the client's /models picker the same way `agents` gates /agents.

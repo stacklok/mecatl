@@ -2,9 +2,9 @@ package ui
 
 // surface_arch_test.go is the structural gate for the issue #555 Phase-2
 // surface interface (soul proof-of-pattern): it fails CI if any surface/soul
-// /skills/mcp/sessions/models vocabulary is added outside its declared homes, or if
+// /skills/mcp/sessions/models/memory vocabulary is added outside its declared homes, or if
 // Model acquires a second `surface` field or any soulState/skillsState/mcpState/
-// sessionsState/modelsState field back. It imitates approval_arch_test.go —
+// sessionsState/modelsState/userModelState field back. It imitates approval_arch_test.go —
 // placement-only, additive; it never touches rendered output (the soul goldens
 // own that).
 
@@ -33,11 +33,12 @@ var surfaceFileHomes = map[string]bool{
 	"models.go":           true,
 	"models_catalog.go":   true,
 	"models_surface.go":   true,
+	"usermodel.go":        true,
 }
 
 // surfaceFileCount is the explicit homes the gate counts — another surface file
 // is an explicit decision here, not a silent drift.
-const surfaceFileCount = 9
+const surfaceFileCount = 10
 
 // surfaceToken identifies declarations governed by the surface placement gate.
 var surfaceToken = regexp.MustCompile(`^(?:surface|surfaceDeps|session[A-Za-z0-9]*|soulView|soulNone|soulPanel|soulBodyLines|soulState|soulMaxScroll|clampSoulScroll|soulContentLines|renderSoulPanel|renderSoulMeta|renderSoulBody|soulDisabledNote|soulTrustLabel|skillsView|skillsNone|skillsPanel|skillsDetail|skillsBodyLines|skillsState|filterSkills|cloneSkillGenerations|skillsDisabledNote|skillsEmptyCopy|skillsRowLines|renderLearnedSkillDetail|openSkills|closeSkills|onSkillsKey|updateSkillsMsg|skillsFilteredRowTotal|syncSkillsFilter|renderSkillsOverlay|mcpView|mcpNone|mcpPanel|mcpResources|mcpResourcePrev|mcpPrompts|mcpPromptArgs|mcpState|brokerMCPSetupState|canConnect|syncMCPSetup|renderBrokerMCPPanel|brokerEnrollmentLabel|brokerCatalogueLabel|argField|renderMCPOverlay|renderMCPPanel|renderMCPListHeader|renderResourceList|renderResourcePreview|renderPromptList|renderPromptArgs|mcpStatusLine|mcpPanelFooter|renderGroupsLine|renderRow|hasRequiredArgs|mcpEmptyCopy|mcpDisabledNote|runMCP|runMCPResources|runMCPPrompts|openMCP|closeMCP|onMCPKey|updateMCPMsg|insertIntoInput|joinContents|joinPromptMessages|handlePanelKey|handleResourceKey|handlePromptListKey|handlePromptArgsKey|focusArg|selectPrompt|submitPromptArgs|refreshPanel|modelsView|modelsNone|modelsPanel|modelsChrome|modelsState|modelsCatalogIntent|modelsSelectIntent|modelsGlobalDefaultIntent|filterModels|modelsDisabledNote|modelsErrorHint|modelsGatewayEmptyNote|modelsEmptyCopy|promotedStatus|providerStatusLine|renderProviderStatusLines|modelRowText|modelLabel|modelCapSegments|openModels|configProvenanceProviderSet|availableNotDefaultStatus)$`)
@@ -62,6 +63,11 @@ var modelsSymbolHomes = map[string]string{
 	"modelsDisabledNote": "models_surface.go", "modelsErrorHint": "models_surface.go", "modelsGatewayEmptyNote": "models_surface.go", "modelsEmptyCopy": "models_surface.go",
 	"promotedStatus": "models_surface.go", "providerStatusLine": "models_surface.go", "renderProviderStatusLines": "models_surface.go",
 	"modelRowText": "models_surface.go", "modelLabel": "models_surface.go", "modelCapSegments": "models_surface.go",
+}
+
+var userModelSymbolHomes = map[string]string{
+	"userModelView": "usermodel.go", "userModelPanel": "usermodel.go", "userModelDetail": "usermodel.go", "userModelState": "usermodel.go",
+	"openUserModel": "usermodel.go", "userModelMove": "usermodel.go", "userModelDisabledNote": "usermodel.go", "userModelEmptyCopy": "usermodel.go", "renderUserModelMeta": "usermodel.go",
 }
 
 // TestSurfaceSymbolsLiveInSurfaceFiles walks every non-test ui package file and
@@ -107,14 +113,18 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 					continue
 				}
 				_, isModelsSymbol := modelsSymbolHomes[n]
-				if !surfaceToken.MatchString(n) && !isModelsSymbol {
+				_, isUserModelSymbol := userModelSymbolHomes[n]
+				if !surfaceToken.MatchString(n) && !isModelsSymbol && !isUserModelSymbol {
 					continue
 				}
 				if !surfaceFileHomes[file] {
-					t.Errorf("surface/soul/skills/mcp/sessions-vocabulary declaration %q in non-surface file %s (want surface.go, soul.go, skills.go, mcp.go, or sessions.go)", n, file)
+					t.Errorf("surface vocabulary declaration %q in non-surface file %s", n, file)
 				}
 				if want, ok := modelsSymbolHomes[n]; ok && file != want {
 					t.Errorf("/models declaration %q lives in %s, want %s", n, file, want)
+				}
+				if want, ok := userModelSymbolHomes[n]; ok && file != want {
+					t.Errorf("/memory declaration %q lives in %s, want %s", n, file, want)
 				}
 			}
 		}
@@ -229,6 +239,27 @@ func TestModelHasNoModelsStateField(t *testing.T) {
 		if st.Field(i).Type.Name() == "modelsState" {
 			t.Error("Model has a modelsState field; /models state lives only in m.modal")
 		}
+	}
+}
+
+func TestModelHasNoUserModelStateField(t *testing.T) {
+	st := reflect.TypeOf(Model{})
+	stateType := reflect.TypeFor[userModelState]()
+	pointerStateType := reflect.PointerTo(stateType)
+	for i := 0; i < st.NumField(); i++ {
+		fieldType := st.Field(i).Type
+		if fieldType == stateType || fieldType == pointerStateType {
+			t.Errorf("Model field %q has userModelState type; /memory state lives only in m.modal", st.Field(i).Name)
+		}
+	}
+}
+
+// TestModelKeepsUserModelRequestToken pins the Model-lifetime request token that
+// invalidates detail replies after the dynamic surface closes or is replaced.
+func TestModelKeepsUserModelRequestToken(t *testing.T) {
+	field, ok := reflect.TypeOf(Model{}).FieldByName("userModelRequestToken")
+	if !ok || field.Type.Kind() != reflect.Uint64 {
+		t.Error("Model must retain uint64 userModelRequestToken as the /memory lifetime token")
 	}
 }
 

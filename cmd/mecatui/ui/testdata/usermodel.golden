@@ -3,20 +3,20 @@
 
 
 
-       ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-       ┃                                                                                    ┃
-       ┃  Saved memory                                                                      ┃
-       ┃                                                                                    ┃
-       ┃  2 facts · 64 bytes · sha:abc123def456                                             ┃
-       ┃                                                                                    ┃
-       ┃  › name                                                                            ┃
-       ┃    the operator's name                                                             ┃
-       ┃    stack                                                                           ┃
-       ┃    prefers Go + hexagonal architecture                                             ┃
-       ┃                                                                                    ┃
-       ┃  ↑/↓ select · enter inspect · the agent saves and updates these facts · esc close  ┃
-       ┃                                                                                    ┃
-       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Saved memory                                                                                    ┃
+┃  2 facts · 64 bytes · sha:abc123def456                                                           ┃
+┃  ▶ name                                                                                          ┃
+┃    │ the operator's name                                                                         ┃
+┃    stack                                                                                         ┃
+┃    │ prefers Go + hexagonal architecture                                                         ┃
+┃  ↑/↓ select · enter inspect · the agent saves and updates these facts · esc close                ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+
 
 
 
@@ -27,4 +27,4 @@
 │
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  connected                                                                   ctx 0 · ↑0 ↓0 cache 0%
-? help · / commands · ctrl+g select all · ctrl+y copy · ctrl+u clear · ctrl+c quit
+? help · / commands · ctrl+c quit

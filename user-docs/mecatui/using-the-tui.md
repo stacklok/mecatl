@@ -54,10 +54,10 @@ steering. Otherwise, it queues the instruction as a follow-up. Images and other
 supported staged media stay attached, including media-only input. Multiple
 queued lines become one prompt.
 
-Bare TUI commands stay in the client. For example, `/help` opens local help and
-`/clear` can replace the session during a run or approval. Unknown slash
-commands, workspace commands, and built-in commands with arguments go to the
-model.
+Bare TUI commands stay in the client. For example, `/help` opens local help.
+While a run is active and the prompt is available, `/clear` replaces the session.
+Unknown slash commands, workspace commands, and built-in commands with
+arguments go to the model.
 
 To revise queued input, empty the prompt and press `↑`. This restores the
 pending steer or queued follow-up with its staged media. Press `ctrl+u` to clear
@@ -144,7 +144,7 @@ commands supported by the connected server.
 |Refresh direct MCP tools or broker workspace services|`/mcp-refresh`|[Use learning and memory commands](./commands-and-memory.md#workspace-service-enrollment)|
 |Inspect named agent definitions|`/agents`|[Named agents](/features/named-agents.md)|
 |Inspect available skills and the active soul|`/skills` and `/soul`|[Skills, commands, and soul](/features/skills-commands-and-soul.md)|
-|Inspect the user model|`/usermodel`|[Memory](/building/what-you-get/memory.md)|
+|Inspect saved memory|`/memory`|[Memory](/building/what-you-get/memory.md)|
 |Manage recurring and one-shot tasks|`/schedule`|[Scheduled tasks](/features/scheduled-tasks.md)|
 |Review learning and maintain memory|`/learning`, `/reflections`, `/reflect`, and `/dream`|[Use learning and memory commands](./commands-and-memory.md)|
 

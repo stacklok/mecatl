@@ -314,29 +314,50 @@ func TestSoulSlashCommandEndToEnd(t *testing.T) {
 	}
 }
 
-// TestUserModelSlashCommandEndToEnd drives the /usermodel built-in through the real
-// palette + keypress reducer: typing "/usermodel"+enter opens the read-only panel and
+// TestUserModelSlashCommandEndToEnd drives the /memory built-in through the real
+// palette + keypress reducer: typing "/memory"+enter opens the read-only panel and
 // fires GetUserModel, rendering the live index.
 func TestUserModelSlashCommandEndToEnd(t *testing.T) {
 	fum := sampleUserModel()
 	m := newUserModelModel(t, fum, client.Capabilities{UserModel: true})
 
-	m = typeText(t, m, "/usermodel")
+	m = typeText(t, m, "/memory")
 	if !m.palette.open {
-		t.Fatal("palette should be open after typing /usermodel")
+		t.Fatal("palette should be open after typing /memory")
 	}
 	mm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = feedCmd(t, mm.(Model), cmd)
 
-	if m.userModel.view != userModelPanel {
-		t.Fatalf("/usermodel+enter should open the panel, view=%v", m.userModel.view)
+	if s, ok := m.modal.(*userModelState); !ok || s.view != userModelPanel {
+		t.Fatalf("/memory+enter should open the panel, surface=%T", m.modal)
 	}
 	if fum.calls != 1 {
-		t.Errorf("GetUserModel calls = %d, want 1 (the /usermodel built-in fired the RPC)", fum.calls)
+		t.Errorf("GetUserModel calls = %d, want 1 (the /memory built-in fired the RPC)", fum.calls)
 	}
 	body := stripANSIstr(m.View().Content)
 	if !strings.Contains(body, "the operator's name") {
 		t.Errorf("the rendered panel should carry the live entries, got:\n%s", body)
+	}
+}
+
+// TestUserModelLegacySlashCommandIsNotAnAlias keeps the removed command from
+// silently reopening saved memory through the root reducer.
+func TestUserModelLegacySlashCommandIsNotAnAlias(t *testing.T) {
+	fum := sampleUserModel()
+	m := newUserModelModel(t, fum, client.Capabilities{UserModel: true})
+
+	for _, r := range "/usermodel" {
+		updated, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = updated.(Model)
+	}
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(Model)
+
+	if m.modal != nil {
+		t.Fatalf("/usermodel+enter opened saved memory: %T", m.modal)
+	}
+	if fum.calls != 0 {
+		t.Fatalf("/usermodel+enter called GetUserModel %d times, want 0", fum.calls)
 	}
 }
 

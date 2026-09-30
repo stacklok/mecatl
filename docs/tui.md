@@ -791,15 +791,15 @@ whole-bundle setup actions), `/agents` (browse the agent-definition inventory �
 resolved registry the `Subagent` tool routes delegations to), `/team` (the unified
 agents overlay pinned to the Teams tab — same surface as `f6`, which picks a
 context-sensitive default tab), `/skills` (browse the skills inventory),
-`/soul` (inspect the persona — read-only), `/usermodel` (inspect the user
-model and its proposal linkage — read-only), `/reflections` (review bounded pending/recent
+`/soul` (inspect the persona — read-only), `/memory` (inspect saved memory
+and its proposal linkage — read-only), `/reflections` (review bounded pending/recent
 learning proposals), `/reflect` (explicitly reflect the current completed session), `/dream`
 (manually review project-memory or user-model consolidation),
 `/models` (pick the model for the next session), `/worktrees`
 (switch to a sibling git worktree), and `/schedule` (browse & manage scheduled
 tasks) appear
 only when the connected server advertises those capabilities (and, for
-`/compact`/`/mcp`/`/agents`/`/skills`/`/soul`/`/usermodel`/`/reflections`/`/reflect`/`/dream`/`/models`/`/worktrees`/`/schedule`, the matching client
+`/compact`/`/mcp`/`/agents`/`/skills`/`/soul`/`/memory`/`/reflections`/`/reflect`/`/dream`/`/models`/`/worktrees`/`/schedule`, the matching client
 collaborator is wired). The fixed palette order starts
 `clear, help, quit, session, retry, diagnostics, compact`, then the available inventory, model,
 workspace, schedule, and operator-setting commands (locked by a test).
@@ -866,14 +866,23 @@ when the content overflows the window; `esc` closes. It NEVER edits the soul (th
 soul is agent-read-only); trust/drift are computed server-side in composition and
 only displayed here.
 
-**`/usermodel` (read-only user-model inspection).** Gated on `caps.user_model` AND
-a wired user-model lister. It fires `GetUserModel` (a **live** read of the
-user-model store's bounded index) and shows count · size · hash over a key/description
-list. Move with `↑`/`↓`; `enter` lazily requests the selected key's exact current
-value and up to 16 recent lifecycle revisions. Every server-derived field is terminal-
-sanitized. Current stores show the exact current value and up to 16 retained revisions. Proposal-linked revisions show the proposal id beside their existing provenance.
-`esc` returns from detail or closes the panel. The surface is read-only:
-Forget remains an ordinary model tool behind its permission gate.
+**`/memory` (read-only saved-memory inspection).** Gated on `caps.user_model` AND
+a wired user-model lister. It fires one live index read each time the inspector
+opens. The centered card fits the conversation region, up to 128 columns wide,
+and uses the available height for keys, descriptions, and count · size · hash.
+Descriptions display in a subdued `│ ` rail attached to their fact. `↑`/`↓`
+select facts, `pgup`/`pgdn` select by physical page, and `home`/`end` select
+endpoints. The mouse wheel moves visible rows without changing the selected key.
+Configured key overrides apply. `enter` requests that key's exact current value,
+provenance, and up to 16 recent lifecycle revisions. Detail uses the same line,
+page, and endpoint keys to scroll its full read-only history. Every server-derived
+field is terminal-sanitized. A matching detail may retain history even if its key
+is no longer in the active index; a missing detail shows only the requested key.
+`esc` returns to the retained inventory selection and scroll position, then
+closes and refocuses the prompt. When there is too little space for the card's
+title, a content row, and footer, a clipped close-only hint replaces the inspector
+until the terminal grows. Forget remains an ordinary model tool behind its
+permission gate.
 
 **`/dream` (manual memory maintenance).** The command appears only when the server sends
 the `manual_dream` capability object and the dream client is wired; an older server hides it.
@@ -1316,7 +1325,7 @@ show the plain prompt-hint card.
 | middle-click | **paste the primary selection** (X11/Wayland select-to-copy buffer) into the prompt — read via the shell backend (`wl-paste --primary` / `xclip -selection primary -o`), falling back to an OSC52 primary read; routed through the same pipeline as a bracketed paste, so a large selection stages as `[Pasted text #N]`. `shift+middle-click` always performs the terminal-native paste instead. |
 | `esc` (with an active selection) | **clear the selection** first — before any other `esc` meaning |
 | `?` | help overlay (on an empty prompt) |
-| `/` | slash-command palette (built-in `/clear`, `/help`, `/quit`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
+| `/` | slash-command palette (built-in `/clear`, `/help`, `/quit`, `/session`, `/retry`; capability-gated `/compact`, `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/memory`, `/reflections`, `/reflect`, `/dream`, `/models`, `/effort`, `/worktrees`, `/schedule`; operator-setting `/learning`; plus workspace commands) |
 | `shift+tab` | cycle the current session permission mode outside an MCP prompt argument form: **default → plan → accept-edits → default**. In that form, it moves focus to the previous required argument instead. The server/session is authoritative; if the aggregate rejects the switch because a turn is running or awaiting approval, mecatui shows a notice and retries the selected mode at the next prompt boundary. |
 | `ctrl+a` / `ctrl+e` | move to the start / end of the current prompt line |
 | `ctrl+p` | move to the previous prompt line |
@@ -1371,22 +1380,6 @@ single-line passthrough) shows no toggle hint. `esc` or
 `ctrl+t` routes by ask type: plan asks keep the scrollable plan-review view and
 Edit/Write asks keep the in-modal diff expand — see
 [ADR 0222](./adr/0222-mecatui-ask-args-view.md).
-
-For hand-testing the modal's long-args surfaces without driving a live run,
-start mecatui with `--debug` (or `MECATUI_DEBUG=1`) and invoke `/debug-ask`.
-The built-in injects a fake long-args permission ask through the real reducer. It
-is absent from the normal palette and help when debug mode is off. The legacy
-`MECATUI_DEBUG_ASK=1` alias enables only this built-in.
-
-The `?` overlay enumerates the rest of the chords — `ctrl+v` (paste a clipboard
-image), `ctrl+o`/`ctrl+r` (MCP inventory / resources), `f8` (MCP prompts), `f6`
-(the unified agents overlay — three tabs, available idle **and** mid-run; see the
-keys table above), `ctrl+t`
-(expand/collapse details), and the scroll keys (`pgup`/`pgdn`, `home`/`end`, mouse
-wheel) — and greys out any whose feature the connected server has not enabled
-(driven by the server's relayed capabilities). When the server serves agent
-definitions (`caps.agents`), it also notes that `/agents` browses the definition
-inventory.
 
 ### Remapping keys
 
@@ -1545,6 +1538,18 @@ An invalid override fails startup with a `keymap:` error. The rules
 - **Approval consistency**: `Deny` may not share a chord with `Allow`,
   `AllowAlways`, `Submit`, or `Cancel`.
 - **`Submit` ≠ `Newline`**: the send key and the newline key must be distinct.
+
+## Visual conventions
+
+Selectable inventories use `presentListRow` for the selection marker, optional
+status cells, and padding. The slash palette uses `│ ` to distinguish a command's
+continuation text from the next selectable item. Keep secondary text visually
+attached to its item without turning it into another selection row.
+
+Normal list and inspector cards, including the slash palette, mentions, agent
+definitions, skills, and saved memory, cap their **outer** width at 128 cells or
+the available width, whichever is smaller. Derive body width from the measured
+frame. Permission cards use a 132-cell cap; inline tool cards use 100 cells.
 
 **Scrollback and auto-follow.** The conversation viewport **auto-follows** the
 bottom (tails streaming output) until you scroll up — with `pgup`, `home`, or the
@@ -2004,7 +2009,7 @@ an active run directly while preserving the draft, queued follow-ups, and steer.
 idle it leaves the draft intact; the paused-queue case clears only that queue.
 Conversation selection is **blocked** while
 an overlay/modal owns the screen (permission ask, `/mcp`, `/team`, `/agents`,
-`/skills`, `/soul`, `/usermodel`, `/models`, help, the fatal screen) — a press there
+`/skills`, `/soul`, `/memory`, `/models`, help, the fatal screen) — a press there
 starts nothing, and opening an overlay clears an in-progress conversation selection
 while stopping a prompt drag without changing an already completed prompt selection.
 An existing prompt selection is preserved through those non-content changes. The wheel
@@ -2237,83 +2242,6 @@ theme IS the opt-out.
 - `cmd/mecatui/theme/` — pure styling: palette, derived styles, glamour config,
   registry, JSON loading. No `contracts/gen`, no `ui`, no grpc.
 
-**The emoji width-method invariant.** Assistant markdown is wrapped by glamour and
-painted by Bubble Tea's differential renderer, and the two measure cell width with
-DIFFERENT methods: glamour wraps on GraphemeWidth (a VS16 selector promotes a
-cluster to width 2), while the renderer paints on WcWidth on any terminal that does
-not confirm DEC mode 2027 (Apple Terminal, most SSH sessions). When the two
-disagree on an emoji cluster, every cell to its right is offset and the line
-scrambles ("mecatl" → "mec##atl"), persisting after the stream settles. `render.go`
-normalises emoji presentation (`normalizeEmojiWidth`, strips VS16 + collapses any
-residual divergent cluster) BEFORE glamour, so for every rendered line
-`WcWidth == GraphemeWidth` — the two layers agree without relying on the terminal
-upgrading the renderer. The invariant is guarded by
-`TestMarkdownWidthMethodAgreement`. `trimTrailingSpaces` and the reserve-final-column
-wrap are retained as harmless hygiene, not the fix.
-
-**Streaming render coalescing.** Streamed assistant/reasoning deltas arrive far
-faster than the eye can see, and a full conversation re-render per token would
-re-run glamour on the live (growing) block every token — O(n²) over a turn. So a
-delta only appends to the conversation and marks the view dirty (`m.viewDirty`); it
-does NOT re-render. The first delta of a burst arms a single one-shot frame-cadence
-tick (`renderTickMsg`, ~16ms ≈ one 60fps frame, guarded by `tickArmed` so a burst
-schedules exactly one tick, not one per delta); the tick flushes the dirty view,
-disarms, and re-arms only if more deltas arrived — so it idles to zero when the
-stream goes quiet and never free-runs. Every turn/tool/result/error boundary still
-force-flushes (via `afterEvent`/`endRun`, both of which call `refreshView`, which
-clears `viewDirty`), so no flush depends on the tick: a dropped or late tick can
-never lose the tail, and the final frame and event ordering are unchanged — only the
-per-token re-render churn is coalesced. This does NOT touch the emoji
-width-normalization path above.
-The `renderer.mdRenders` counter (incremented only at the real `glamour` call site)
-is the test seam: N coalesced deltas leave it unchanged, one flush bumps it by one
-(`coalesce_test.go`).
-
-**Per-block render cache.** On top of the coalescing sits a per-BLOCK render
-cache (`renderer.blockCache`):
-each scrollback block's full rendered string is memoized keyed on the block's
-render revision (`block.rev`, bumped by the conversation's mutation gateways),
-the wrap width, and the ctrl+t expand toggle. On every flushed frame, settled
-blocks join the conversation string straight from cache — only blocks whose
-rev/width/expand changed re-render (in practice just the live tail block), so
-the per-frame styling cost is O(changed blocks) rather than O(scrollback). The
-`renderer.blockRenders` counter (incremented only on a cache miss) is the test
-seam, and the cache-equivalence oracle in `render_cache_test.go` proves the
-cache is output-invisible after every conversation mutator. Both per-block
-caches (`blockCache` and the inner assistant-glamour memo `blockMD`) are dropped
-when the conversation is rebuilt — `/clear` and the `/models` seamless-switch
-handoff — because a rebuilt transcript reuses block indices.
-
-**Input render memoization.** The INPUT region got the same treatment (issue #45):
-the bubbles textarea's `View()` re-wraps (and SHA-256-keys, even on its internal
-cache hits) every buffered line on every call, and `renderInput` runs at least
-twice per reduced message (the `relayout` chokepoint's `chrome()` plus `View`'s
-`assembleLayout`) — so a big input buffer taxed every streamed-delta frame and
-every keystroke. `renderInput` now memoizes the rendered string on a single-entry
-cache (`renderer.inputKey`/`inputView`) **keyed on state** — the buffer value,
-cursor position (logical row + soft-wrap row/column offsets), focus, and box
-dimensions — rather than dirty-flagged: the textarea is mutated from ~30 ui call
-sites and a missed dirty-set would freeze the input, while the key is
-self-validating. The textarea's only un-keyed state (its internal scroll offset;
-the virtual cursor's blink phase — static in mecatui, since `cursor.BlinkMsg` is
-never routed to the textarea) can change only alongside a keyed fact in the same
-reducer step, and `renderInput` re-keys on every step, so the single entry can
-never serve stale (see `renderInput`'s doc). Paired with the **large-paste
-placeholder staging** (`[Pasted text #N]`, see "Large text pastes" above) that
-keeps the buffer — and thus the key compare — small, this removes the
-paste-induced keystroke lag end to end. Guarded by the `TestRenderInput*` cases
-in `paste_large_test.go` (cache hit, edit/cursor/focus invalidation).
-
-**Spinner tick phase-gate.** The footer spinner's bubbles tick chain is
-self-perpetuating (every `sp.Update` returns the next tick cmd), so the reducer
-drops `spinner.TickMsg` in any phase where the spinner is not rendered
-(`spinnerVisible`: only `phaseRunning`/`phaseConnecting`) — terminating the chain
-instead of re-rendering the whole screen at 10fps forever. Every transition INTO a
-visible phase re-arms `m.sp.Tick` (submit, approval resolve, ask retraction,
-restart/retry, model-switch restart; bubbles' id+tag dedup makes the blanket
-re-arm safe). Together with the coalesced render tick above, an idle mecatui
-performs zero Update→View cycles (`spinner_gate_test.go`).
-
 Tests are fully offline and deterministic: the stream is driven from a scripted
 fake behind the `Recv()` interface (no gRPC, no network), and whole-program /
 View goldens are captured with teatest at a fixed terminal size. Refresh the
@@ -2326,50 +2254,7 @@ task test:golden     # go test ./cmd/mecatui/ui -update, then re-run
 ## See also
 
 - [User documentation](../user-docs/intro.md) — the `mecated` deployment guide, settings, and client reference.
+- [mecatui container image](../user-docs/building/deployment/mecatui.md) — image, brood-box import, and provider egress.
 - [Architecture guide](architecture.md) — the event stream and gRPC `Converse` surface this client renders.
 - [UX discoverability design](adr/0025-ux-discoverability.md) — the rationale behind the capability-wiring approach this UI takes.
 - [Clipboard image paste design](adr/0026-clipboard-image-paste.md) — the non-obvious decisions behind `ctrl+v`.
-
-## Container image / brood-box
-
-`mecatui` ships as a container image on every release, alongside `mecated`:
-`ghcr.io/stacklok/mecatl/mecatui` (tagged `<version>` and `latest`, multi-arch
-`linux/amd64` + `linux/arm64`, signed with cosign + SBOM + SLSA provenance —
-the same supply-chain story as the `mecated` image; see the release workflow
-in `.github/workflows/README.md`). It is built with ko from `./cmd/mecatui`
-onto the digest-pinned brood-box wolfi base (`baseImageOverrides` in
-`.ko.yaml`) and carries a
-brood-box agent manifest at `/var/run/ko/agent.yaml` (from
-`cmd/mecatui/kodata/agent.yaml`), located via the OCI config label
-`org.stacklok.broodbox.agent`.
-
-Import it into brood-box:
-
-```sh
-bbox agents import ghcr.io/stacklok/mecatl/mecatui:latest
-```
-
-The manifest forwards `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, and `OPENCODE_API_KEY` and allows egress to all four provider
-endpoints; mecatl auto-detects the provider from whichever key is set. Edit the
-manifest for a deployment that pins a single provider or a stricter egress
-profile.
-
-
-### Agents overlay viewport behavior
-
-F6 opens the client-only Agents overlay. At known terminal heights of 24 rows or
-more, each Subagents, Parallel, and Teams view is physically line-budgeted to the
-offered conversation viewport: frames, tabs, wrapped metadata, overflow range, and
-footer are included. The remappable `Up`, `Down`, `ScrollU`, `ScrollD`, `JumpTop`,
-and `JumpEnd` actions move the selection in Subagent and Team rosters and in a
-focused Parallel group; in Subagent or Team focus, tasks, and findings views they
-scroll the rendered lines. If the surrounding UI leaves too little conversation
-space for even the complete minimal card, an unframed `vp short` line identifies
-the active tab and the available `esc` action instead of clipping the card.
-
-At known terminal heights below 24 rows, the overlay uses a separate unframed,
-width-truncated compact line. A roster identifies its active tab; focus identifies
-the child, Parallel group, or team member, while task and finding views identify
-their subview. The line retains `esc close` or `esc back`, and other overlay
-navigation is suspended.

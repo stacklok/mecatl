@@ -507,7 +507,7 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateInventoryMsgs is the fall-through chain for the unmigrated inventory
-// overlays (agentsInv, userModel, reflections, dream, worktrees, schedule):
+// overlays (agentsInv, reflections, dream, worktrees, schedule):
 // each per-overlay helper returns handled=false for a non-matching msg, so at
 // most one consumes. Most carry no follow-up command; /schedule's
 // ScheduleActionMsg re-lists on success so the cmd is propagated. Surfaces
@@ -515,9 +515,6 @@ func (m Model) dispatchNonInputMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 // routing.
 func (m Model) updateInventoryMsgs(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 	if mm, handled := m.updateAgentsInvMsg(msg); handled {
-		return mm, nil, true
-	}
-	if mm, handled := m.updateUserModelMsg(msg); handled {
 		return mm, nil, true
 	}
 	if mm, handled := m.updateReflectionsMsg(msg); handled {
@@ -2392,7 +2389,7 @@ func (m *Model) clampHelpScroll() {
 func (m Model) clearAnySelection(msg tea.KeyPressMsg) (Model, bool) {
 	if !key.Matches(msg, m.keys.Cancel) || (!m.sel.active && !m.prompt.HasSelection()) ||
 		m.showHelp || m.modal != nil || m.team.view != teamNone || m.agentsInv.view != agentsInvNone ||
-		m.userModel.view != userModelNone || m.reflections.view != reflectionsNone ||
+		m.reflections.view != reflectionsNone ||
 		m.dream.view != dreamClosed || m.effort.view != effortNone || m.worktrees.view != worktreesNone {
 		return m, false
 	}
@@ -2459,7 +2456,6 @@ func (m Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.onSessionDetailsKey,
 		m.onAgentsKey,
 		m.onAgentsInvKey,
-		m.onUserModelKey,
 		m.onReflectionsKey,
 		m.onDreamKey,
 		m.onConnectKey,
@@ -2484,12 +2480,6 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
-	// A clear command composed while running stays actionable if a permission ask
-	// opens before Enter is pressed. Route it ahead of the approval surface:
-	// ClearSession cancels the ask and must never become Allow/Deny/Learn.
-	if m.pendingRecovery == nil && clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
-		return m.dispatchBareBuiltin(m.prompt.Value())
-	}
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -2507,10 +2497,6 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 		return m, tea.Batch(cmd, m.prompt.Focus()), true
 	}
 	return m, cmd, true
-}
-
-func clearCommandSubmitted(msg tea.KeyPressMsg, submit key.Binding, prompt string) bool {
-	return key.Matches(msg, submit) && strings.EqualFold(strings.TrimSpace(prompt), "/clear")
 }
 
 // dispatchSurfaceMsg routes a NON-input Msg through the open modal surface

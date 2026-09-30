@@ -535,13 +535,13 @@ also accepts `--yolo` (the allow-all operator posture — same semantics, root
 refusal, and `MECATL_SANDBOX`/ `IS_SANDBOX` env as `mecated`; see the allow-all
 note in §12). It is **rejected in `connect` mode** — the dialed server owns its
 own posture. Note the TUI's **built-in slash commands** (`/clear`, `/help`, and
-the caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/usermodel`,
+the caps-gated `/mcp`, `/agents`, `/team`, `/skills`, `/soul`, `/memory`,
 `/reflections`, `/reflect`, `/models`, `/effort`, `/worktrees`) still work
 regardless — they act on the TUI itself, not the server, so typing `/` always
 opens a useful palette even with workspace slash-command expansion off
 (`/agents` browses the agent-definition inventory; `/team`, also `ctrl+a`, opens
-the live agent-team overlay; `/skills` the skills inventory; `/soul` and
-`/usermodel` the persona/user-model views; `/reflections` lists bounded staged
+the live agent-team overlay; `/skills` the skills inventory; `/soul` the persona view;
+`/memory` the saved-memory view; `/reflections` lists bounded staged
 proposals and supports CAS approve/reject/undo; `/reflect` explicitly reflects
 the current completed session even when automatic learning is off; `/models` the
 model picker; `/effort` picks the session's reasoning-effort tier

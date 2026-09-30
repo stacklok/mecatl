@@ -275,7 +275,7 @@ type helpKeys struct {
 	rawArgs       string // RawArgs — pretty↔raw toggle inside the full-screen ask-args view (r)
 
 	// Overlay-navigation markings (issue #457). The agents/team/mcp/effort/models/
-	// sessions/worktrees/schedule/skills/soul/usermodel overlays render inline hints
+	// sessions/worktrees/schedule/skills/soul/memory overlays render inline hints
 	// whose chords are backed by rebindable keyMap actions; these carry the LIVE
 	// first chord (or, for JumpTop/JumpEnd, the full joined help key) so an override
 	// propagates to the displayed hint. With DEFAULT keys each resolves to exactly

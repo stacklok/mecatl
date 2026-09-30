@@ -50,7 +50,7 @@ var sdkBoundaryBuiltins = map[string]sdkBoundaryRow{
 	"team":        {category: sdkBacked, sdkOperation: "Team.list"},
 	"skills":      {category: sdkBacked, sdkOperation: "Client.skills.list"},
 	"soul":        {category: sdkBacked, sdkOperation: "Client.soul.get"},
-	"usermodel":   {category: sdkBacked, sdkOperation: "Client.userModel.get"},
+	"memory":      {category: sdkBacked, sdkOperation: "Client.userModel.get"},
 	"reflections": {category: sdkBacked, sdkOperation: "Client.learningProposals.list"},
 	"reflect":     {category: sdkBacked, sdkOperation: "Client.reflection.reflect"},
 	"dream":       {category: sdkBacked, sdkOperation: "Client.dreamPlans.generate"},

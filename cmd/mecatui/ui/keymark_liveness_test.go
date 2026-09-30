@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 )
 
@@ -901,8 +902,10 @@ func TestSoulAndUserModelOverlayHintsReflectKeyOverride(t *testing.T) {
 		}
 	})
 	t.Run("user model", func(t *testing.T) {
-		st := userModelState{view: userModelPanel, model: client.UserModel{Entries: []client.UserModelEntry{{Key: "k"}}}}
-		got := stripANSIstr(renderUserModelOverlay(th, st, client.Capabilities{UserModel: true}, hk, 100, 30))
+		st := &userModelState{deps: surfaceDeps{theme: th, marks: hk, caps: client.Capabilities{UserModel: true}}, list: &bounded.List{}, viewport: &bounded.Viewport{}}
+		st.setModel(client.UserModel{Entries: []client.UserModelEntry{{Key: "k"}}})
+		body, _ := st.Render(100, 30)
+		got := stripANSIstr(body)
 		if !strings.Contains(got, "ctrl+f16 close") {
 			t.Errorf("user-model hint should carry live close: %q", got)
 		}

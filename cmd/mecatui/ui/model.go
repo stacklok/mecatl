@@ -145,7 +145,7 @@ type Deps struct {
 	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
 	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
 	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
-	UserModel   client.UserModelLister  // user-model inspection for the /usermodel panel; nil disables it
+	UserModel   client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
 	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
 	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
 	Compactor   client.SessionCompactor // out-of-band session compaction; nil disables /compact
@@ -650,8 +650,7 @@ type Model struct {
 	subagents                    subagentState      // Subagents-tab state of the unified agents overlay (roster | focus)
 	parallel                     parallelState      // Parallel-tab state of the unified agents overlay (roster | group focus)
 	agentsInv                    agentsInvState     // agent-definition inventory overlay state (view==agentsInvNone when closed)
-	userModel                    userModelState     // user-model inspection overlay state (view==userModelNone when closed)
-	userModelGen                 uint64             // monotonic request generation; invalidates delayed detail/index responses
+	userModelRequestToken        uint64             // Model-lifetime fence for delayed saved-memory results
 	reflections                  reflectionsState
 	reflectionsGen               uint64
 	dream                        dreamState

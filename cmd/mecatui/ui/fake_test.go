@@ -717,7 +717,7 @@ func (f *fakeSoul) GetSoul(_ context.Context) (client.Soul, error) {
 	return f.soul, nil
 }
 
-// fakeUserModel is a scripted client.UserModelLister for the /usermodel panel
+// fakeUserModel is a scripted client.UserModelLister for the /memory panel
 // tests: GetUserModel returns the canned model, or err when set.
 type fakeUserModel struct {
 	model client.UserModel

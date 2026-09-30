@@ -89,7 +89,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // collaborator is wired (w.Agents); /team (the live-team overlay) only when the
 // server advertises Teams; /skills only when the server advertises Skills
 // AND a skills collaborator is wired (w.Skills); /soul only when the server
-// advertises Soul AND a soul collaborator is wired (w.Soul); /usermodel only
+// advertises Soul AND a soul collaborator is wired (w.Soul); /memory only
 // when the server advertises UserModel AND a user-model collaborator is wired
 // (w.UserModel); /models (the model picker) only when the server advertises
 // model_selection AND a model lister is wired (w.Models); /worktrees (the
@@ -99,7 +99,7 @@ func (m Model) wiredCollaborators() wiredCollaborators {
 // scheduling AND a schedule lister is wired (w.Scheduling). /effort (the
 // reasoning-effort picker, ADR 0055) is gated identically to /models and sits
 // directly after it. The order is fixed (clear, help, quit, mcp, agents, team, skills,
-// soul, usermodel, models, effort, worktrees, schedule, tools-connect, tools-cancel) and locked by a test so
+// soul, memory, models, effort, worktrees, schedule, tools-connect, tools-cancel) and locked by a test so
 // the palette ordering is stable.
 //
 //nolint:gocyclo // capability-gated built-ins remain explicit and ordered
@@ -197,8 +197,8 @@ func builtinCommands(caps client.Capabilities, w wiredCollaborators) []builtin {
 	}
 	if caps.UserModel && w.UserModel {
 		out = append(out, builtin{
-			name: "usermodel",
-			desc: "inspect the user model (read-only)",
+			name: "memory",
+			desc: "inspect saved memory (read-only)",
 			run:  Model.runUserModel,
 		})
 	}
@@ -645,7 +645,7 @@ var builtinNameRegistry = []builtinName{
 	{name: "clear", acceptsArgs: false}, {name: "help", acceptsArgs: false}, {name: "quit", acceptsArgs: false}, {name: "title", acceptsArgs: true}, {name: "session", acceptsArgs: false},
 	{name: "retry", acceptsArgs: false}, {name: "diagnostics", acceptsArgs: false}, {name: "compact", acceptsArgs: false},
 	{name: "mcp", acceptsArgs: false}, {name: "agents", acceptsArgs: false}, {name: "team", acceptsArgs: false},
-	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "usermodel", acceptsArgs: false},
+	{name: "skills", acceptsArgs: false}, {name: "soul", acceptsArgs: false}, {name: "memory", acceptsArgs: false},
 	{name: "models", acceptsArgs: false}, {name: "effort", acceptsArgs: false}, {name: "worktrees", acceptsArgs: false},
 	{name: "schedule", acceptsArgs: false}, {name: "sessions", acceptsArgs: false}, {name: "learning", acceptsArgs: false},
 	{name: "learning-sensitivity", acceptsArgs: false}, {name: "posture", acceptsArgs: false},
