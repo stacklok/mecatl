@@ -47,8 +47,8 @@ type PayloadSnapshot interface {
 }
 
 // BlockSnapshot is a detached view of one conversation card. ID remains stable
-// for the card's lifetime, while Revision starts at zero and advances only when
-// that card's visible payload changes.
+// for the card's lifetime. Revision starts at zero and advances when the card's
+// payload changes, including confirmation of a provisional tool result.
 type BlockSnapshot struct {
 	ID       BlockID
 	Revision uint64
@@ -64,10 +64,9 @@ type BlockMetadata struct {
 }
 
 type card struct {
-	id        BlockID
-	revision  uint64
-	payload   PayloadSnapshot
-	available bool
+	id       BlockID
+	revision uint64
+	payload  PayloadSnapshot
 }
 
 // Conversation is an ordered, mutable logical conversation document. It owns its

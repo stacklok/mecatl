@@ -715,7 +715,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.action.principalRevision) {
 		res := session.NewToolError(call.ID, "contextual guardrail review context changed during review; retry the action for a fresh assessment")
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
 	if assessment.grantHit {
@@ -757,7 +757,7 @@ func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *sess
 	}
 	if !e.deps.Interactive {
 		res := session.NewToolError(call.ID, reason)
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
 	return e.resolveActionAsk(ctx, r, sess, env, turnIdx, call, auth, assessment, reason)
@@ -779,13 +779,13 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 	}
 	if answer.verdict != session.VerdictAllowOnce && answer.verdict != session.VerdictAllowAlways {
 		res := session.NewToolError(call.ID, reason)
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "denied"))
 		return res, false, false, false
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.action.principalRevision) {
 		res := session.NewToolError(call.ID, "contextual guardrail review context changed while approval was pending; retry the action for a fresh assessment")
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
 	allowed, cancelled, staleReason := e.reauthorizeAction(ctx, r, sess, env, turnIdx, call, auth)
@@ -797,7 +797,7 @@ func (e *Engine) resolveActionAsk(ctx context.Context, r *Run, sess *session.Ses
 			staleReason = "contextual guardrail approval became stale before execution"
 		}
 		res := session.NewToolError(call.ID, staleReason)
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, false, false, false
 	}
 	r.reviewRoot.record(reviewFact(call, assessment.action.request.Target, "approved"))
@@ -852,7 +852,7 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 	if applies, _ := reviewPolicy(r.reviewRoot.reviewer, call.Name, ReviewJobAction, false); !applies {
 		if !r.reviewRoot.admitPrincipalRevisions(nil, auth.permissionReviewRevision) {
 			res := session.NewToolError(call.ID, "contextual guardrail review context changed before execution; retry the action for a fresh assessment")
-			e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			return res, nil, false, false
 		}
 		return session.ToolResult{}, nil, false, true
@@ -879,13 +879,13 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 				reason = "contextual guardrail binding became stale before execution"
 			}
 			res = session.NewToolError(call.ID, reason)
-			e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+			e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			return res, nil, false, false
 		}
 	}
 	if !r.reviewRoot.admitPrincipalRevisions(&assessment.action.principalRevision, auth.permissionReviewRevision) {
 		res = session.NewToolError(call.ID, "contextual guardrail review context changed before execution; retry the action for a fresh assessment")
-		e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
+		e.publishToolResult(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 		return res, nil, false, false
 	}
 	res, park, cancelled := tail()

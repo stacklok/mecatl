@@ -79,7 +79,7 @@ Availability uses the existing tool-result payload and call ID across the [API s
   - verify: `TestADR_0370_Scenario3_LiveOnlyProjection`
 - AC3.2: event-source reconstruction from completion-order availability plus call-order canonical events equals reconstruction from canonical events alone and counts every tool call exactly once.
   - verify: `TestADR_0370_Scenario3_CanonicalReconstructionOnly`
-- AC3.3: Mecatui and ACP correlate availability and canonical result by call ID, create one card/update lifecycle, make identical canonical confirmation a no-op, and replace the displayed payload when canonical cancellation differs.
+- AC3.3: Mecatui and ACP correlate availability and canonical result by call ID and keep one card/update lifecycle. Identical canonical confirmation leaves the displayed payload unchanged but may advance an internal card revision or invalidate a render cache; a differing canonical result, including cancellation, replaces the displayed payload.
   - verify: `TestADR_0370_Scenario3_ClientConfirmationAndReplacement`
 - AC3.4: the TypeScript SDK recognizes `tool.result.available` as the existing tool-result payload type; old clients and streams where availability is missed remain correct because canonical `tool.result` implies availability.
   - verify: `TestADR_0370_Scenario3_SDKCompatibility`

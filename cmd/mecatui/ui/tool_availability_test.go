@@ -30,8 +30,11 @@ func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
 	available.Type = "tool.result"
 	m = applyAll(m, client.EventToMsg(available))
 	confirmed, _ := m.conv.scrollback.SnapshotForCall("fast")
-	if !reflect.DeepEqual(confirmed, snap) || m.conv.scrollback.Len() != 2 {
-		t.Fatalf("identical canonical changed card: before=%+v after=%+v len=%d", snap, confirmed, m.conv.scrollback.Len())
+	confirmedCard := confirmed.Payload.(scrollback.ToolCardSnapshot)
+	if confirmed.ID != snap.ID || !reflect.DeepEqual(confirmedCard.Call, card.Call) ||
+		confirmedCard.Resolved != card.Resolved || confirmedCard.Finished != card.Finished ||
+		confirmedCard.Failed != card.Failed || !reflect.DeepEqual(confirmedCard.Result, card.Result) || m.conv.scrollback.Len() != 2 {
+		t.Fatalf("identical canonical changed displayed card or identity: before=%+v after=%+v len=%d", snap, confirmed, m.conv.scrollback.Len())
 	}
 	available.Type = "tool.result.available"
 	available.ToolResult.CallId = "slow"

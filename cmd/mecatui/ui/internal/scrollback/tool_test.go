@@ -16,8 +16,15 @@ func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
 	if !c.Tools().Resolve("one", available) {
 		t.Fatal("canonical confirmation rejected")
 	}
-	if got := c.SnapshotAt(0); !reflect.DeepEqual(got, before) {
-		t.Fatalf("confirmation changed card: %+v", got)
+	confirmed := c.SnapshotAt(0)
+	beforePayload := before.Payload.(ToolCardSnapshot)
+	confirmedPayload := confirmed.Payload.(ToolCardSnapshot)
+	beforePayload.available, confirmedPayload.available = false, false
+	if confirmed.ID != before.ID || !reflect.DeepEqual(confirmedPayload, beforePayload) {
+		t.Fatalf("confirmation changed displayed card or identity: %+v", confirmed)
+	}
+	if !c.Tools().Resolve("one", available) || c.SnapshotAt(0).Revision != confirmed.Revision {
+		t.Fatal("canonical replay changed confirmed card")
 	}
 	cancelled := ToolResult{Body: "cancelled", IsError: true}
 	c.Tools().Add(ToolCall{ID: "replace", Name: "Read"})
@@ -63,6 +70,18 @@ func TestADR_0370_Scenario3_ClientConfirmationAndReplacement(t *testing.T) {
 			after := specialized.SnapshotAt(0)
 			if after.ID != before.ID || after.Revision != before.Revision+1 || specialized.Len() != 1 {
 				t.Fatalf("specialized card duplicated or not replaced: %+v", after)
+			}
+			switch payload := after.Payload.(type) {
+			case SubagentCardSnapshot:
+				if !reflect.DeepEqual(payload.Result, cancelled) {
+					t.Fatalf("subagent result = %+v, want %+v", payload.Result, cancelled)
+				}
+			case TeamCardSnapshot:
+				if !reflect.DeepEqual(payload.Result, cancelled) {
+					t.Fatalf("team result = %+v, want %+v", payload.Result, cancelled)
+				}
+			default:
+				t.Fatalf("unexpected specialized payload %T", after.Payload)
 			}
 		})
 	}

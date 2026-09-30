@@ -36,6 +36,7 @@ type ToolCardSnapshot struct {
 	Resolved, Finished bool
 	Failed             bool
 	Result             ToolResult
+	available          bool // provisional result awaiting canonical confirmation
 }
 
 // Kind returns KindTool.
@@ -104,8 +105,8 @@ func (t ToolCards) Finish(callID string, failed bool) bool {
 }
 
 // Resolve records the authoritative result for the call indexed by callID.
-// It confirms identical availability without changing the visible revision, or
-// replaces a different available result. A conflicting canonical replay fails.
+// It confirms identical availability or replaces a different available result.
+// A conflicting canonical replay fails.
 func (t ToolCards) Resolve(callID string, result ToolResult) bool {
 	return t.resolve(callID, result, false)
 }
@@ -123,41 +124,36 @@ func (t ToolCards) resolve(callID string, result ToolResult, available bool) boo
 	}
 	entry := &c.cards[i]
 	var prior ToolResult
-	var resolved bool
+	var resolved, provisional bool
 	switch payload := entry.payload.(type) {
 	case ToolCardSnapshot:
-		prior, resolved = payload.Result, payload.Resolved
+		prior, resolved, provisional = payload.Result, payload.Resolved, payload.available
 	case SubagentCardSnapshot:
-		prior, resolved = payload.Result, payload.Resolved
+		prior, resolved, provisional = payload.Result, payload.Resolved, payload.available
 	case TeamCardSnapshot:
-		prior, resolved = payload.Result, payload.Resolved
+		prior, resolved, provisional = payload.Result, payload.Resolved, payload.available
 	default:
 		return false
 	}
 	if resolved {
-		if available && !entry.available {
-			return false // canonical already settled this card
+		if available {
+			return provisional && reflect.DeepEqual(prior, result)
 		}
-		identical := reflect.DeepEqual(prior, result)
-		if !entry.available || available || identical {
-			if !available {
-				entry.available = false
-			}
-			return identical
+		if !provisional {
+			return reflect.DeepEqual(prior, result)
 		}
 	}
 	var updated PayloadSnapshot
 	switch payload := entry.payload.(type) {
 	case ToolCardSnapshot:
-		payload.Resolved, payload.Result = true, cloneResult(result)
+		payload.Resolved, payload.Result, payload.available = true, cloneResult(result), available
 		updated = payload
 	case SubagentCardSnapshot:
-		payload.Resolved, payload.Result = true, cloneResult(result)
+		payload.Resolved, payload.Result, payload.available = true, cloneResult(result), available
 		updated = payload
 	case TeamCardSnapshot:
-		payload.Resolved, payload.Result = true, cloneResult(result)
+		payload.Resolved, payload.Result, payload.available = true, cloneResult(result), available
 		updated = payload
 	}
-	entry.available = available
 	return c.replace(i, updated)
 }
