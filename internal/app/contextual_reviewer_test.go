@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
@@ -168,7 +169,7 @@ func TestContextualReviewerFactoryExcludesOrdinaryChildContext(t *testing.T) {
 	}
 	req := reviewRequestWithoutEvidence()
 	req.PrincipalFacts = append(req.PrincipalFacts, agent.ReviewPrincipalFact{Kind: "admitted_instruction", Ref: "P3", Statement: factSentinel})
-	if _, err := reviewer.Review(t.Context(), req, nil); err != nil {
+	if _, _, err := reviewer.Review(t.Context(), req, nil); err != nil {
 		t.Fatalf("Review: %v", err)
 	}
 	if len(reviewRequests) != 2 {
@@ -194,7 +195,7 @@ func TestContextualReviewerFactoryExcludesOrdinaryChildContext(t *testing.T) {
 
 	var ordinaryRequest port.LLMRequest
 	ordinaryProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { ordinaryRequest = req })}, mockllm.TextTurn("done"))
-	ordinary := newChildEngineForProvider(cfg, "task", ordinaryProvider, "review-model", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+	ordinary := newChildEngineForProvider(cfg, "task", ordinaryProvider, session.ProviderModelID{ProviderID: "mock", ModelID: "review-model"}, fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
 	runChildProfileTurn(t, ordinary, "ordinary-child", "ordinary task")
 	ordinaryContext := ordinaryRequest.System.Render()
 	for _, message := range ordinaryRequest.Messages {
@@ -204,6 +205,27 @@ func TestContextualReviewerFactoryExcludesOrdinaryChildContext(t *testing.T) {
 		if !strings.Contains(ordinaryContext, expected) {
 			t.Errorf("ordinary child omitted context %q", expected)
 		}
+	}
+}
+
+func TestGuardrailAttemptUsageUsesCanonicalProviderModelAttribution(t *testing.T) {
+	usage := session.Usage{InputTokens: 3, OutputTokens: 1}
+	for _, tc := range []struct {
+		name, providerID, modelID, want string
+	}{
+		{name: "canonical whitespace", providerID: " provider\t id ", modelID: " model\n id ", want: "provider id/model id"},
+		{name: "missing provider", modelID: "model", want: "unknown"},
+		{name: "missing model", providerID: "provider", want: "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sess := session.New("guardrail-attribution", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "workspace", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
+			sess.RecordTokenUsage(session.UsageKindMain, tc.providerID, tc.modelID, usage)
+
+			got := guardrailAttemptUsage(tc.providerID, tc.modelID, sess).Buckets[session.UsageKindGuardrail]
+			if got.Models[tc.want] != usage || len(got.Models) != 1 {
+				t.Fatalf("guardrail attribution = %#v, want %s", got.Models, tc.want)
+			}
+		})
 	}
 }
 

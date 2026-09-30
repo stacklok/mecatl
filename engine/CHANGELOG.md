@@ -359,6 +359,15 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `AuxiliaryUsageReporterFromContext` provide the synchronous request-scoped adapter
   seam used by the main-session path-escape check. Changed (breaking, pre-v1 minor).
 
+- **Run ownership transition and typed cancellation** — adds idempotent
+  `(*agent.Run).OwnershipLost()` to revoke run-owned auxiliary admission without
+  cancelling, allowing lease-owning hosts to retract a pending ask before
+  cancellation. Adds `agent.CancelCause` with zero-value `CancelCauseRequested`
+  and `CancelCauseOwnershipLost`, and changes `(*agent.Run).Cancel()` to
+  `Cancel(CancelCause)`. Ownership-loss and unknown causes revoke auxiliary
+  admission as a backstop; requested cancellation preserves join-and-drain
+  behavior. Changed (breaking, pre-v1 minor).
+
 - **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
   `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
   `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and
@@ -369,7 +378,7 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `agent.EvidenceReflector.Reflect` / `ReflectProjection`, and the
   `learning.Reflector` seam now return `session.AuxiliaryUsage`; direct compaction
   and reflection callers record it only while they retain current session
-  ownership. Changed (minor).
+  ownership. Changed (breaking, pre-v1 minor).
 
 - **Exact Team parent-call correlation** — Team-tool member relationships now
   populate the existing `session.SessionRelationship.CallID`; validation permits

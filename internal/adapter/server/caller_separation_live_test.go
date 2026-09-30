@@ -112,7 +112,7 @@ func TestCallerSeparation_Scenario3_LiveRunVerbsAreOwnerChecked(t *testing.T) {
 	svc, aliceCtx, bobCtx := callerSeparationLiveService(t)
 	sess, run, askID := callerSeparationAwaitingRun(aliceCtx, t, svc)
 	defer func() {
-		run.Cancel()
+		run.Cancel(agent.CancelCauseRequested)
 		for range run.Events() {
 		}
 		svc.FinishRun(sess.ID, run)
@@ -238,7 +238,7 @@ func TestCallerSeparation_Scenario3_ForeignLiveRunReplayIsNotFound(t *testing.T)
 	if err := svc.Cancel(bobCtx, sess.ID, ""); !errors.Is(err, server.ErrNotFound) {
 		t.Fatalf("foreign Cancel while live = %v, want ErrNotFound", err)
 	}
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	for range run.Events() {
 	}
 	svc.FinishRun(sess.ID, run)

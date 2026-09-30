@@ -484,9 +484,11 @@ func guardrailAttemptUsage(providerID, modelID string, sess *session.Session) se
 	var out session.AuxiliaryUsage
 	for kind, bucket := range sess.TokenUsageSnapshot() {
 		if kind == session.UsageKindMain {
-			attribution := strings.TrimSpace(providerID) + "/" + strings.TrimSpace(modelID)
-			if strings.Trim(attribution, "/") == "" {
-				attribution = "unknown"
+			providerID = strings.Join(strings.Fields(providerID), " ")
+			modelID = strings.Join(strings.Fields(modelID), " ")
+			attribution := "unknown"
+			if providerID != "" && modelID != "" {
+				attribution = providerID + "/" + modelID
 			}
 			out = out.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
 				session.UsageKindGuardrail: {Total: bucket.Total, Models: map[string]session.Usage{attribution: bucket.Total}},

@@ -308,7 +308,7 @@ func TestGuardrailAskResumeFromAwaitingAllow(t *testing.T) {
 				t.Fatal("the awaiting ask must be hook-guardrail-originated")
 			}
 			snap, snapErr = sessnap.Of(sess)
-			r.Cancel()
+			r.Cancel(agent.CancelCauseRequested)
 		}
 	}
 	if askID == "" {
@@ -367,7 +367,7 @@ func TestGuardrailAskResumeAllowAlwaysDoesNotReArm(t *testing.T) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && askID == "" {
 			askID = ev.Ask.AskID
 			snap, _ = sessnap.Of(sess)
-			r.Cancel()
+			r.Cancel(agent.CancelCauseRequested)
 		}
 	}
 	if askID == "" {
@@ -422,7 +422,7 @@ func TestGuardrailAskResumePolicyAskRefinedBlockFailsSafe(t *testing.T) {
 				t.Fatal("the live ask must be the permission-policy ask, not hook-guardrail-originated")
 			}
 			snap, _ = sessnap.Of(sess)
-			r.Cancel()
+			r.Cancel(agent.CancelCauseRequested)
 		}
 	}
 	if askID == "" {

@@ -16,6 +16,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -127,6 +128,113 @@ func (blockingProvider) Capabilities() port.ProviderCapabilities { return port.P
 
 var _ port.LLMProvider = blockingProvider{}
 
+type backgroundParentProvider struct {
+	calls atomic.Int32
+	call  session.ToolCall
+}
+
+func (*backgroundParentProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+func (p *backgroundParentProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	if p.calls.Add(1) == 1 {
+		return func(yield func(port.Chunk, error) bool) {
+			yield(port.Chunk{Kind: port.ChunkToolCall, ToolCall: &p.call}, nil)
+			yield(port.Chunk{Kind: port.ChunkUsage, Usage: &session.Usage{}}, nil)
+			yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopEndTurn}, nil)
+		}, nil
+	}
+	return func(yield func(port.Chunk, error) bool) {
+		<-ctx.Done()
+		yield(port.Chunk{Kind: port.ChunkDone, Stop: session.StopCancelled}, nil)
+	}, nil
+}
+
+func TestLeaseRenewLossDropsLateParentCapsUsageAndPreservesSuccessor(t *testing.T) {
+	lease := &fakeLease{}
+	allowLoss := make(chan struct{})
+	lease.renewHook = func(port.Lease) (port.Lease, error) {
+		<-allowLoss
+		return port.Lease{}, port.ErrLeaseHeld
+	}
+	usage := session.Usage{InputTokens: 9}
+	routerEntered := make(chan struct{}, 1)
+	releaseRouter := make(chan struct{})
+	child := agent.NewEngine(agent.Deps{
+		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(),
+		Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil), Role: "subagent",
+	})
+	parentCatalog := tool.NewCatalog()
+	parentCatalog.MustRegister(agent.NewSubagentTool(child, agent.WithSubagentEngineFactory(func(model string) (*agent.Engine, bool) {
+		return child, model == "routed-model"
+	})))
+	subCall := session.NewToolCall("sub", "Subagent", []byte(`{"prompt":"child","background":true}`))
+	parent := agent.NewEngine(agent.Deps{
+		LLM: &backgroundParentProvider{call: subCall}, Catalog: parentCatalog,
+		Policy: permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil),
+		SubagentModelRouter: &agent.SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) agent.ModelRouteResult {
+			routerEntered <- struct{}{}
+			<-releaseRouter
+			return agent.ModelRouteResult{Category: "large", Model: "routed-model", OK: true,
+				Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+					session.UsageKindRouter: {Models: map[string]session.Usage{"provider/router": usage}},
+				}}}
+		}},
+	})
+	store := memstore.New()
+	svc, err := newPlacementTestService(server.Config{
+		Engine: parent, Store: store, SessionLease: lease, LeaseOwner: "lost-owner",
+		LeaseTTL: time.Hour, LeaseRenewInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	sess, err := svc.CreateSession(t.Context(), session.ModeDefault, session.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartRun(t.Context(), sess.ID, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-routerEntered
+	close(allowLoss)
+	if !eventually(time.Second, func() bool { return lease.releaseCount() == 1 }) {
+		t.Fatal("definitive lease loss did not release ownership")
+	}
+	successor, err := store.Load(t.Context(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor.RecordTokenUsage(session.UsageKindMain, "successor", "model", session.Usage{InputTokens: 99})
+	if err := store.Save(t.Context(), successor); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseRouter)
+	<-done
+	svc.FinishRun(sess.ID, run)
+	if got := sess.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
+		t.Fatalf("stale original session mutated after lease loss: %+v", got)
+	}
+	loaded, err := store.Load(t.Context(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.UsageFor(session.UsageKindMain).InputTokens; got != 99 {
+		t.Fatalf("successor usage = %d, want 99", got)
+	}
+	if got := loaded.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
+		t.Fatalf("late router usage persisted after lease loss: %+v", got)
+	}
+}
+
 // newLeasedService builds a Service whose engine drives one mockllm turn, wired
 // with the given SessionLease, a short TTL, and an immediate renew interval so the
 // renewer fires quickly under test. An optional now func injects a clock for the
@@ -198,7 +306,7 @@ func TestLeaseRenewLossCancelsRun(t *testing.T) {
 	if !sawCancel {
 		t.Fatal("the run was not cancelled after the lease loss (renewer→LookupRun→Cancel did not fire)")
 	}
-	// run.Cancel() only signals cancellation; it does not block until the
+	// run.Cancel(agent.CancelCauseOwnershipLost) only signals cancellation; it does not block until the
 	// renewer's own goroutine reaches its subsequent Release call, and the run's
 	// events channel can close (ending the drain above) before that happens. So
 	// wait for the Release rather than asserting on it immediately.
@@ -659,7 +767,7 @@ func TestLeaseRenewedWhileRunLive(t *testing.T) {
 	}
 	got := renews.Load()
 	svc.CloseSession(sess.ID) // stops the renewer + Releases the (refreshed) lease.
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	for range run.Events() {
 	}
 	svc.FinishRun(sess.ID, run)
@@ -699,7 +807,7 @@ func TestRenewerRaceWithClose(t *testing.T) {
 	// Let a few ticks land (interval 15ms), then close while ticks are in flight.
 	time.Sleep(40 * time.Millisecond)
 	svc.CloseSession(sess.ID)
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	for range run.Events() {
 	}
 	svc.FinishRun(sess.ID, run)
@@ -736,7 +844,7 @@ func TestStaleRenewCompletionCannotAffectReacquiredLease(t *testing.T) {
 	// Remove the captured hold while its backend Renew is blocked, then finish the
 	// old run and reacquire a successor generation for the same session id.
 	svc.CloseSession(sess.ID)
-	first.Cancel()
+	first.Cancel(agent.CancelCauseRequested)
 	for range first.Events() {
 	}
 	svc.FinishRun(sess.ID, first)
@@ -754,7 +862,7 @@ func TestStaleRenewCompletionCannotAffectReacquiredLease(t *testing.T) {
 		t.Fatal("stale renew completion cancelled the current run")
 	}
 
-	second.Cancel()
+	second.Cancel(agent.CancelCauseRequested)
 	for range second.Events() {
 	}
 	svc.FinishRun(sess.ID, second)
@@ -811,14 +919,14 @@ func TestLeaseTransientRenewBlipKeepsRun(t *testing.T) {
 	if calls.Load() < 2 {
 		t.Fatalf("renewer fired %d times, want >=2 (blip + recovery)", calls.Load())
 	}
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	svc.CloseSession(sess.ID)
 	<-cancelled // the explicit cancel now ends it cleanly.
 }
 
 // TestReconcileLeaseLossTombstoneRecoversCancelledSession is issue #1334's core
 // repro: onLeaseLost drives a session with no parked ask OUT of StateRunning
-// via run.Cancel() (to StateCancelled), so it can never again match the
+// via run.Cancel(agent.CancelCauseOwnershipLost) (to StateCancelled), so it can never again match the
 // StateRunning-only stale-session sweep (SessionStale/SettleIfStale) and the
 // lostOwnership tombstone would otherwise never clear short of CloseSession or
 // a process restart. ReconcileLeaseLossTombstone must clear it once a genuine
@@ -927,7 +1035,7 @@ func TestReconcileLeaseLossTombstoneRecoversCancelledSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartRun after ReconcileLeaseLossTombstone = %v, want success (tombstone should be cleared)", err)
 	}
-	run2.Cancel()
+	run2.Cancel(agent.CancelCauseRequested)
 	for range run2.Events() {
 	}
 	svc.FinishRun(sess.ID, run2)
@@ -1018,7 +1126,7 @@ func TestOnLeaseLostSerializesAgainstReconcileTrial(t *testing.T) {
 	}
 	lease.mu.Unlock()
 
-	// Drain to StopCancelled: onLeaseLost's run.Cancel() runs BEFORE its Release
+	// Drain to StopCancelled: onLeaseLost's run.Cancel(agent.CancelCauseOwnershipLost) runs BEFORE its Release
 	// call, so the run can finish while our Release hook is still blocked.
 	for ev := range run.Events() {
 		if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
@@ -1093,7 +1201,7 @@ func TestOnLeaseLostSerializesAgainstReconcileTrial(t *testing.T) {
 // reopening real Acquire can only happen once the tombstone is actually
 // cleared — exactly the moment this test needs to observe. The same review
 // also flagged that draining to StopCancelled only proves onLeaseLost called
-// run.Cancel(), which happens BEFORE its own Release in the function body —
+// run.Cancel(agent.CancelCauseOwnershipLost), which happens BEFORE its own Release in the function body —
 // not that the Release itself had returned — so swapping in the
 // trial-blocking releaseHook right after was not provably safe from
 // intercepting that first Release instead of the trial's. Fixed by an
@@ -1133,7 +1241,7 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	}
 
 	// Installed BEFORE the loss so onLeaseLost's own Release (the FIRST
-	// Release call, made from inside its function body AFTER run.Cancel())
+	// Release call, made from inside its function body AFTER run.Cancel(agent.CancelCauseOwnershipLost))
 	// is provably observed complete before this test ever installs the
 	// trial-blocking hook below.
 	firstReleaseDone := make(chan struct{})
@@ -1151,7 +1259,7 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	lease.mu.Unlock()
 
 	// Drive the loss: draining to StopCancelled only proves onLeaseLost
-	// called run.Cancel(), which precedes its own Release call in the
+	// called run.Cancel(agent.CancelCauseOwnershipLost), which precedes its own Release call in the
 	// function body — the explicit wait below is what actually proves that
 	// Release returned.
 	for ev := range run.Events() {
@@ -1305,7 +1413,7 @@ func TestCloseSessionSerializesAgainstReconcileTrial(t *testing.T) {
 	if run2 == nil {
 		t.Fatal("reopening StartRun failed for a reason other than ErrSessionLeasedElsewhere")
 	}
-	run2.Cancel()
+	run2.Cancel(agent.CancelCauseRequested)
 	for range run2.Events() {
 	}
 	svc.FinishRun(sess.ID, run2)

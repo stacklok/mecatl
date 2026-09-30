@@ -353,7 +353,7 @@ func TestSteer_PromotionUsesRunEntryFunnel(t *testing.T) {
 			t.Fatalf("drive cancelled: %v", err)
 		}
 		<-block.started
-		run.Cancel()
+		run.Cancel(agent.CancelCauseRequested)
 		drainRun(t, run)
 		f.svc.FinishRun(f.sess.ID, run)
 		assertSteerState(t, f.svc, f.sess.ID, session.StateCancelled)

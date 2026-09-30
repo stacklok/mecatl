@@ -285,7 +285,7 @@ func pendingSteerControlRun(t *testing.T) *agent.Run {
 	})
 	run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "go", RunID: "run-old"})
 	t.Cleanup(func() {
-		run.Cancel()
+		run.Cancel(agent.CancelCauseRequested)
 		for range run.Events() {
 		}
 	})
@@ -325,7 +325,7 @@ func activeStrictControlRunWithID(t *testing.T, runID string) *agent.Run {
 	run := eng.Run(context.Background(), sess, env, agent.RunRequest{Text: "go", RunID: runID})
 	t.Cleanup(func() {
 		close(release)
-		run.Cancel()
+		run.Cancel(agent.CancelCauseRequested)
 		for range run.Events() {
 		}
 	})

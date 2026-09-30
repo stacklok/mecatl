@@ -18,10 +18,13 @@ type guardrailUsageReviewer struct {
 	mu         sync.Mutex
 	calls      []ReviewJob
 	usage      session.AuxiliaryUsage
+	usageFor   func(ToolReviewRequest) session.AuxiliaryUsage
 	assessment ReviewAssessment
 	err        error
 	entered    chan struct{}
 	release    <-chan struct{}
+	releaseFor func(ToolReviewRequest) <-chan struct{}
+	after      func(ToolReviewRequest)
 }
 
 func (r *guardrailUsageReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, session.AuxiliaryUsage, error) {
@@ -31,14 +34,25 @@ func (r *guardrailUsageReviewer) Review(_ context.Context, req ToolReviewRequest
 	if r.entered != nil {
 		r.entered <- struct{}{}
 	}
-	if r.release != nil {
-		<-r.release
+	release := r.release
+	if r.releaseFor != nil {
+		release = r.releaseFor(req)
+	}
+	if release != nil {
+		<-release
 	}
 	assessment := r.assessment
 	if assessment == "" {
 		assessment = ReviewAcceptable
 	}
-	return ToolReviewResult{Assessment: assessment}, r.usage, r.err
+	usage := r.usage
+	if r.usageFor != nil {
+		usage = r.usageFor(req)
+	}
+	if r.after != nil {
+		r.after(req)
+	}
+	return ToolReviewResult{Assessment: assessment}, usage, r.err
 }
 
 func (*guardrailUsageReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, _ bool) (bool, bool) {
@@ -112,23 +126,6 @@ func TestContextualGuardrailUsage_Scenario1_RetryAndTerminalUsageCountedOnce(t *
 	}
 }
 
-func TestContextualGuardrailUsage_Scenario1_ComposedWorkerRecordsOwnUsage(t *testing.T) {
-	reviewer := &guardrailUsageReviewer{usage: testGuardrailUsage(4)}
-	root := newReviewRoot(reviewer, nil, nil)
-	root.establishInstructions(nil)
-	root.refreshTasks([]session.Message{{Role: session.RoleUser, Text: "root task", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
-	cat := tool.NewCatalog()
-	cat.MustRegister(guardrailUsageTool{name: "Read", readOnly: true})
-	eng := NewEngine(Deps{LLM: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("read", "Read", []byte(`{"path":"a"}`))), mockllm.TextTurn("done")), Catalog: cat, Policy: guardrailUsagePolicy{}, Role: "subagent"})
-	env := memEnv("/ws")
-	worker := session.New("worker", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
-	for range eng.Run(t.Context(), worker, env, RunRequest{Text: "inspect", reviewRoot: root, reviewIsolated: true}).Events() {
-	}
-	if got := worker.UsageFor(session.UsageKindGuardrail); got.InputTokens != 8 {
-		t.Fatalf("worker guardrail usage = %d, want 8", got.InputTokens)
-	}
-}
-
 func TestContextualGuardrailUsage_Scenario2_OrderedDrainRecordsCompletedReviews(t *testing.T) {
 	reviewer := &guardrailUsageReviewer{usage: testGuardrailUsage(1)}
 	sess := runGuardrailUsageSession(t, reviewer,
@@ -141,11 +138,33 @@ func TestContextualGuardrailUsage_Scenario2_OrderedDrainRecordsCompletedReviews(
 
 func TestContextualGuardrailUsage_Scenario2_CancellationDrainsCompletedUsage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	releaseReviews := make(chan struct{})
+	firstRelease := make(chan struct{})
+	secondRelease := make(chan struct{})
+	releaseFirst := sync.OnceFunc(func() { close(firstRelease) })
+	releaseSecond := sync.OnceFunc(func() { close(secondRelease) })
+	t.Cleanup(func() { releaseFirst(); releaseSecond(); cancel() })
+	deadline := time.After(3 * time.Second)
+	secondReturned := make(chan struct{})
 	reviewer := &guardrailUsageReviewer{
-		usage: testGuardrailUsage(5), assessment: ReviewProhibited,
-		entered: make(chan struct{}, 2), release: releaseReviews,
+		assessment: ReviewProhibited,
+		entered:    make(chan struct{}, 2),
+		usageFor: func(req ToolReviewRequest) session.AuxiliaryUsage {
+			if req.Event.CallID == "first" {
+				return testGuardrailUsage(2)
+			}
+			return testGuardrailUsage(7)
+		},
+		releaseFor: func(req ToolReviewRequest) <-chan struct{} {
+			if req.Event.CallID == "first" {
+				return firstRelease
+			}
+			return secondRelease
+		},
+		after: func(req ToolReviewRequest) {
+			if req.Event.CallID == "second" {
+				close(secondReturned)
+			}
+		},
 	}
 	cat := tool.NewCatalog()
 	cat.MustRegister(guardrailUsageTool{name: "Read", readOnly: true})
@@ -158,22 +177,90 @@ func TestContextualGuardrailUsage_Scenario2_CancellationDrainsCompletedUsage(t *
 	env := memEnv("/ws")
 	sess := session.New("cancelled", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
 	done := make(chan struct{})
+	usageAtFirstAsk := make(chan int, 1)
 	go func() {
 		defer close(done)
 		for ev := range eng.Run(ctx, sess, env, RunRequest{Text: "inspect"}).Events() {
 			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Guardrail != nil {
+				usageAtFirstAsk <- sess.UsageFor(session.UsageKindGuardrail).InputTokens
 				cancel()
 			}
 		}
 	}()
-	// The action assessments fan out before ordered resolution. Hold them until both
-	// have entered, so cancellation of the first ordered ask must drain both usages.
-	<-reviewer.entered
-	<-reviewer.entered
-	close(releaseReviews)
-	<-done
-	if got := sess.UsageFor(session.UsageKindGuardrail); got.InputTokens != 10 {
-		t.Fatalf("completed read-batch cancellation usage = %d, want both action reviews once", got.InputTokens)
+	// Complete the second assessment first. Neither worker may mutate the
+	// session before the dispatcher joins and drains records in call order.
+	for range 2 {
+		select {
+		case <-reviewer.entered:
+		case <-deadline:
+			t.Fatal("parallel reviews did not both start")
+		}
+	}
+	releaseSecond()
+	select {
+	case <-secondReturned:
+	case <-deadline:
+		t.Fatal("second review did not complete first")
+	}
+	earlyUsage := sess.UsageFor(session.UsageKindGuardrail)
+	releaseFirst()
+	select {
+	case <-done:
+	case <-deadline:
+		t.Fatal("cancelled read batch did not finish")
+	}
+	if earlyUsage != (session.Usage{}) {
+		t.Fatalf("out-of-order worker mutated session before drain: %+v", earlyUsage)
+	}
+	select {
+	case got := <-usageAtFirstAsk:
+		if got != 2 {
+			t.Fatalf("guardrail usage at first ordered ask = %d, want first call's two tokens", got)
+		}
+	case <-deadline:
+		t.Fatal("first ordered guardrail ask was not emitted")
+	}
+	if got := sess.UsageFor(session.UsageKindGuardrail); got.InputTokens != 9 {
+		t.Fatalf("completed read-batch cancellation usage = %d, want 2+7 once", got.InputTokens)
+	}
+}
+
+func TestContextualGuardrailUsage_Scenario2_SerialCancellationDrainsCompletedUsage(t *testing.T) {
+	runReady := make(chan *Run, 1)
+	reviewer := &guardrailUsageReviewer{
+		usageFor: func(req ToolReviewRequest) session.AuxiliaryUsage {
+			if req.Job == ReviewJobInbound {
+				return testGuardrailUsage(11)
+			}
+			return testGuardrailUsage(3)
+		},
+		after: func(req ToolReviewRequest) {
+			if req.Job == ReviewJobInbound {
+				(<-runReady).Cancel(CancelCauseRequested) // completed serial review races requested cancellation
+			}
+		},
+	}
+	cat := tool.NewCatalog()
+	cat.MustRegister(guardrailUsageTool{name: "Write", readOnly: false})
+	eng := NewEngine(Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("write", "Write", []byte(`{}`))), mockllm.TextTurn("done")),
+		Catalog: cat, Policy: guardrailUsagePolicy{}, ToolReviewer: reviewer,
+	})
+	env := memEnv("/ws")
+	sess := session.New("serial-cancel", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	run := eng.Run(t.Context(), sess, env, RunRequest{Text: "write"})
+	runReady <- run
+	var sawCancelled bool
+	for ev := range run.Events() {
+		if ev.Type == session.EvResult && ev.Result != nil && ev.Result.Stop == session.StopCancelled {
+			sawCancelled = true
+		}
+	}
+	if !sawCancelled {
+		t.Fatal("serial review did not trigger requested cancellation")
+	}
+	if got := sess.UsageFor(session.UsageKindGuardrail).InputTokens; got != 14 {
+		t.Fatalf("completed serial action/inbound usage on cancellation = %d, want 3+11 once", got)
 	}
 }
 
@@ -198,8 +285,8 @@ func TestContextualGuardrailUsage_Scenario2_LateUsageIsDropped(t *testing.T) {
 
 	// The callback may outlive the run, but its ownership fence must prevent both
 	// ledger mutation and unbounded diagnostics after the lifecycle has closed.
-	r.recordAuxiliaryUsageWhileActive(t.Context(), sess, session.UsageKindGuardrail, testGuardrailUsage(7))
-	r.recordAuxiliaryUsageWhileActive(t.Context(), sess, session.UsageKindGuardrail, testGuardrailUsage(7))
+	r.recordGuardrailUsageWhileActive(t.Context(), sess, testGuardrailUsage(7))
+	r.recordGuardrailUsageWhileActive(t.Context(), sess, testGuardrailUsage(7))
 	if got := sess.UsageFor(session.UsageKindGuardrail); got != (session.Usage{}) {
 		t.Fatalf("late usage persisted after ownership loss: %+v", got)
 	}

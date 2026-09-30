@@ -404,7 +404,7 @@ func TestBackgroundPendingNudgeSkippedOnCancel(t *testing.T) {
 	r := e.Run(context.Background(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
 	go func() {
 		<-gate.started // the background child is genuinely mid-flight
-		r.Cancel()
+		r.Cancel(agent.CancelCauseRequested)
 	}()
 	evs := drainObserving(t, r, nil)
 

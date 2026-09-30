@@ -235,7 +235,7 @@ func (r *Run) recordCompletedActionUsage(ctx context.Context, sess *session.Sess
 		if assessment == nil || assessment.usageConsumed {
 			continue
 		}
-		r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
+		r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
 		assessment.usageConsumed = true
 	}
 }
@@ -452,13 +452,15 @@ func (e *Engine) publishCleanReadBatch(ctx context.Context, r *Run, sess *sessio
 func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, out map[session.ToolCallID]session.ToolResult) (cancelled bool) {
 	for i := range pending {
 		p := &pending[i]
+		r.recordCompleteAuxiliaryUsageWhileActive(sess, p.record.auxiliaryUsage)
+		r.drainPendingAuxiliaryUsage(sess)
 		var result session.ToolResult
 		var originalReleased bool
 		if cancelled || ctx.Err() != nil {
 			cancelled = true
 			// A clean result may already have consumed its usage when published.
 			if !p.available {
-				r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, p.record.assessment.usage)
+				r.recordGuardrailUsageWhileActive(ctx, sess, p.record.assessment.usage)
 			}
 			// resolveInbound may already have closed a clean result; successful
 			// evidence preparation wraps Close in sync.Once.
@@ -1150,7 +1152,7 @@ func (e *Engine) permissionDecision(ctx context.Context, r *Run, sess *session.S
 		return e.permissionDecisionOwned(ctx, sess, env, c)
 	}
 	ctx, deactivate := port.WithAuxiliaryUsageReporter(ctx, func(usage session.AuxiliaryUsage) {
-		r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, usage)
+		r.recordGuardrailUsageWhileActive(ctx, sess, usage)
 	})
 	defer deactivate()
 	return e.permissionDecisionOwned(ctx, sess, env, c)
@@ -1378,7 +1380,7 @@ func (e *Engine) preHook(ctx context.Context, r *Run, sess *session.Session, tur
 		SessionID: string(sess.ID),
 		CallID:    string(c.ID),
 	}
-	outcome, herr := e.runOwnedHook(ctx, r, sess, ev)
+	outcome, herr := e.deps.Hooks.Run(ctx, ev)
 
 	// Normalize the hook's producer-influenced output to valid UTF-8 HERE — the
 	// one point both values arrive (issue #402). A hook is a subprocess and its
@@ -1629,11 +1631,12 @@ func planApprovedTargetForVerdict(v session.ApprovalVerdict) session.PermissionM
 // annotates (the tool already ran; a block neither undoes nor suppresses the
 // result).
 type executionRecord struct {
-	result     session.ToolResult
-	queued     time.Duration
-	duration   time.Duration
-	assessment inboundAssessment
-	postEvents []session.Event
+	result         session.ToolResult
+	queued         time.Duration
+	duration       time.Duration
+	assessment     inboundAssessment
+	postEvents     []session.Event
+	auxiliaryUsage session.AuxiliaryUsage
 }
 
 func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) executionRecord {
@@ -1648,25 +1651,29 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 
 	var res session.ToolResult
 	var dur time.Duration
+	var auxiliaryUsage session.AuxiliaryUsage
 	if auth == nil || !auth.authorityStillValid(sess, c, env) {
 		res = session.NewToolError(c.ID, "tool was not executed: authority binding changed after admission")
 	} else if _, ok := t.(*tool.Search); ok {
 		if authority, bound := sess.BoundAuthority(); bound {
 			res = authorityToolSearch(c, e.deps.Catalog, authority.CapabilitySet)
 		} else {
-			res, dur = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+			res, dur, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
 		}
 	} else {
-		res, dur = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
+		res, dur, auxiliaryUsage = e.timeExecute(ctx, r, sess, env, turnIdx, c, t, execStart)
 	}
-	res, postEvents := e.postHook(ctx, r, sess, turnIdx, c, res)
+	res, postEvents := e.postHook(ctx, sess, turnIdx, c, res)
 	res = session.RepairToolResult(res)
 	var assessment inboundAssessment
 	if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
 		assessment = e.prepareInboundAssessment(r, sess, env, c, res)
 		assessInbound(ctx, r, &assessment)
 	}
-	return executionRecord{result: res, queued: queued, duration: dur, assessment: assessment, postEvents: postEvents}
+	return executionRecord{
+		result: res, queued: queued, duration: dur, assessment: assessment, postEvents: postEvents,
+		auxiliaryUsage: auxiliaryUsage,
+	}
 }
 
 func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, c session.ToolCall, record executionRecord, result session.ToolResult, available, originalReleased bool) {
@@ -1694,6 +1701,8 @@ func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, 
 
 func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, bool) {
 	record := e.executePrivate(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
+	r.recordCompleteAuxiliaryUsageWhileActive(sess, record.auxiliaryUsage)
+	r.drainPendingAuxiliaryUsage(sess)
 	result, cancelled, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
 	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil, originalReleased)
 	return result, cancelled
@@ -1916,10 +1925,11 @@ func authorityWorkspaceResource(path string, env tool.Environment) (*port.Author
 // concurrent, read-parallel) tool goroutine — consistent with the existing
 // dispatch emits, which e.emit serialises. Tools that do not implement the seam
 // take the ordinary Execute path unchanged.
-func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, start time.Time) (session.ToolResult, time.Duration) {
+func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, start time.Time) (session.ToolResult, time.Duration, session.AuxiliaryUsage) {
 	var (
-		res session.ToolResult
-		err error
+		res            session.ToolResult
+		err            error
+		auxiliaryUsage session.AuxiliaryUsage
 	)
 	// CHILD emits route through the registry's seal guard (A4c): a background
 	// child's goroutine outlives its dispatch slot and may emit subagent.tool/end
@@ -1933,11 +1943,25 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	}
 	switch ct := t.(type) {
 	case childCapableTool:
-		// A subagent-spawning tool (Subagent/Team/Fork) also receives the parent's caps so a
-		// child's permission ask can be SURFACED to the human (interactive) or auto-denied
-		// with the accurate message + operator diagnostic (headless). The surface seam is
-		// bound to THIS parent Run (register-then-emit), symmetric to the emit closure.
-		res, err = ct.ExecuteWithParent(ctx, c, env, emit, e.parentCaps(r, sess, turnIdx))
+		// Child-capable tools may execute in read-batch workers. Keep their returned
+		// auxiliary usage private until the dispatcher drains this execution record.
+		var usageMu sync.Mutex
+		usageActive := true
+		reportUsage := func(usage session.AuxiliaryUsage) {
+			usageMu.Lock()
+			if usageActive {
+				auxiliaryUsage = auxiliaryUsage.Merge(usage)
+				usageMu.Unlock()
+				return
+			}
+			usageMu.Unlock()
+			r.enqueueAuxiliaryUsageWhileActive(context.Background(), usage)
+		}
+		caps := e.parentCaps(r, sess, turnIdx, reportUsage)
+		res, err = ct.ExecuteWithParent(ctx, c, env, emit, caps)
+		usageMu.Lock()
+		usageActive = false
+		usageMu.Unlock()
 	case observableTool:
 		res, err = ct.ExecuteObserved(ctx, c, env, emit)
 	default:
@@ -1950,7 +1974,7 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 	if e.deps.Clock != nil {
 		dur = e.deps.Clock.Now().Sub(start)
 	}
-	return res, dur
+	return res, dur, auxiliaryUsage
 }
 
 // parentCaps builds the parent-capability bundle threaded into a subagent-spawning
@@ -1964,11 +1988,18 @@ func (e *Engine) timeExecute(ctx context.Context, r *Run, sess *session.Session,
 // (gauntlet #7: an ASK with a tool name + clamped command + static-framed reason, never
 // transcript content). diag is the parent run's run-scoped diagnostics for the headless
 // auto-deny operator line.
-func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCaps {
+func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int, reporters ...func(session.AuxiliaryUsage)) parentCaps {
+	reportUsage := func(usage session.AuxiliaryUsage) {
+		r.enqueueAuxiliaryUsageWhileActive(context.Background(), usage)
+	}
+	if len(reporters) > 0 && reporters[0] != nil {
+		reportUsage = reporters[0]
+	}
 	interactive := r.childAsks != nil
 	caps := parentCaps{
-		interactive: interactive,
-		diag:        r.diag,
+		interactive:          interactive,
+		diag:                 r.diag,
+		recordAuxiliaryUsage: reportUsage,
 		// The run's explicit unwedge signal (fired hardAbortGrace after Run.Cancel)
 		// rides down so a delegation tool's internal forwarding sends can give up
 		// alongside the run's own guarded emits — see parentCaps.hardAbort.
@@ -1989,7 +2020,6 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	// snapshot it before any detach), never inside a detached background goroutine.
 	// nil when no parent session is threaded (plain Execute) — fork then unsupported.
 	if sess != nil {
-		caps.recordAuxiliaryUsage = func(usage session.AuxiliaryUsage) { r.recordAuxiliaryUsage(sess, usage) }
 		caps.forkHistory = func() []session.Message {
 			return session.ForkSnapshot(sess.Conversation)
 		}
@@ -2035,7 +2065,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 			ctx, cancel := context.WithTimeout(detachedRunContext(r.ctx), askReviewTimeout)
 			defer cancel()
 			review, usage, err := reviewer.Review(ctx, ChildAskReviewRequest{Ask: ask, Isolated: isolated})
-			r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindAskReviewer, usage)
+			reportUsage(RemapAuxiliaryUsage(ctx, r.diag, session.UsageKindAskReviewer, usage))
 			switch {
 			case errors.Is(err, ErrNotReviewable):
 				// ABSTENTION: the reviewer cannot judge THIS ask. Fall through to the
@@ -2078,7 +2108,7 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	if e.deps.SubagentModelRouter != nil && r.router != nil {
 		// Pre-build a nil-safe usage-fold func to keep the closure branch-free (#92 fix,
 		// avoids +1 cyclomatic complexity inside the already-branchy closure).
-		foldUsage := foldClassifierUsage(r, sess)
+		foldUsage := foldClassifierUsage(r.diag, reportUsage)
 		// The classification body lives in a package-level func (routeTaskBody) so this
 		// already-branchy constructor stays under the gocyclo budget; the closure here is
 		// a one-line adapter capturing the run-scoped breaker/hardAbort/diag/foldUsage.
@@ -2161,16 +2191,11 @@ func (e *Engine) parentCaps(r *Run, sess *session.Session, turnIdx int) parentCa
 	return caps
 }
 
-// foldClassifierUsage returns a nil-safe fold function that records a classifier's
-// purpose-attributed usage on the invoking session. The separate router bucket is
-// included by the loop's budget calculation without changing main usage. When sess
-// is nil (plain Execute with no parent session threaded), the returned func is a no-op.
-func foldClassifierUsage(r *Run, sess *session.Session) func(session.AuxiliaryUsage) {
-	if sess == nil {
-		return func(session.AuxiliaryUsage) {} // nil-safe nop: plain Execute, no parent session.
-	}
+// foldClassifierUsage confines classifier spend to the router purpose before
+// returning it to the parent dispatcher's private usage collector.
+func foldClassifierUsage(diag port.Diagnostics, report func(session.AuxiliaryUsage)) func(session.AuxiliaryUsage) {
 	return func(u session.AuxiliaryUsage) {
-		r.recordAuxiliaryUsage(sess, remapAuxiliaryUsage(context.Background(), r.diag, session.UsageKindRouter, u))
+		report(RemapAuxiliaryUsage(context.Background(), diag, session.UsageKindRouter, u))
 	}
 }
 
@@ -2347,7 +2372,7 @@ func postHookContent(res session.ToolResult) string {
 // what the model sees the tool returned (e.g. redact secrets from output). Because
 // execute emits the EFFECTIVE result, the client stream shows the rewritten result
 // too — there is no hidden divergence between the client and model views.
-func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, turnIdx int, c session.ToolCall, res session.ToolResult) (session.ToolResult, []session.Event) {
+func (e *Engine) postHook(ctx context.Context, sess *session.Session, turnIdx int, c session.ToolCall, res session.ToolResult) (session.ToolResult, []session.Event) {
 	if e.deps.Hooks == nil || ctx.Err() != nil {
 		return res, nil
 	}
@@ -2360,7 +2385,7 @@ func (e *Engine) postHook(ctx context.Context, r *Run, sess *session.Session, tu
 		Phase: governance.PhasePostToolUse, Tool: c.Name, Input: input,
 		SessionID: string(sess.ID), CallID: string(c.ID),
 	}
-	outcome, err := e.runOwnedHook(ctx, r, sess, ev)
+	outcome, err := e.deps.Hooks.Run(ctx, ev)
 	if err != nil {
 		return res, nil
 	}

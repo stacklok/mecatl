@@ -87,7 +87,7 @@ func TestADR_0363_ContextualGuardrails_Scenario7_FactoryPrompts(t *testing.T) {
 			if detailErr != nil || !strings.Contains(detail.Concern, "merges a PR unattended") || strings.Contains(detail.Concern, "DETAIL_SECRET_CANARY") || strings.Contains(detail.Concern, "<<<UNTRUSTED") || detail.SourceDisplay != "effective call c1 (Shell)" {
 				t.Fatalf("live detail=%+v err=%v", detail, detailErr)
 			}
-			run.Cancel()
+			run.Cancel(agent.CancelCauseRequested)
 		}
 	}
 	built.Service.FinishRun(sess.ID, run)

@@ -67,7 +67,3 @@ func RemapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose ses
 	}
 	return out
 }
-
-func remapAuxiliaryUsage(ctx context.Context, diag port.Diagnostics, purpose session.UsageKind, in session.AuxiliaryUsage) session.AuxiliaryUsage {
-	return RemapAuxiliaryUsage(ctx, diag, purpose, in)
-}

@@ -238,7 +238,7 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 // from whether its assessment needed a hold. PostToolUse prose is still suppressed
 // for held results even after Release once.
 func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, result session.ToolResult, assessment inboundAssessment) (resolved session.ToolResult, cancelled, originalReleased bool) {
-	r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
+	r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
 	if assessment.close != nil {
 		defer assessment.close()
 	}

@@ -663,7 +663,7 @@ func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *ses
 		Capacity: ReviewCapacity{MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
 	result, usage, err := r.reviewRoot.reviewer.Review(ctx, req, nil)
-	r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, usage)
+	r.recordGuardrailUsageWhileActive(ctx, sess, usage)
 	if err == nil && !validReviewAssessment(result.Assessment) {
 		result.Assessment = ReviewUnresolved
 		err = reviewFailure(ReviewFailureInvalidAssessment)
@@ -713,7 +713,7 @@ func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessmen
 }
 
 func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment) (session.ToolResult, bool, bool, bool) {
-	r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
+	r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
 	if assessment.action.close != nil {
 		defer assessment.action.close()
 	}
@@ -864,7 +864,7 @@ func (e *Engine) reviewActionWithTail(ctx context.Context, r *Run, sess *session
 	assessment := e.prepareActionAssessment(ctx, r, sess, env, call)
 	assessAction(ctx, r, &assessment)
 	if ctx.Err() != nil {
-		r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
+		r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
 		if assessment.action.close != nil {
 			assessment.action.close()
 		}

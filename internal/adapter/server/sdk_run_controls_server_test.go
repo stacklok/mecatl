@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permstore"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -253,7 +254,7 @@ func TestSDKRunControls_Scenario3_ResolveOrdinaryAsk(t *testing.T) {
 			if _, resolveErr := planSvc.ResolveRunAsk(t.Context(), planSession.ID, planRun.RunID(), ev.Ask.AskID, session.VerdictAllowOnce); !errors.Is(resolveErr, server.ErrPlanResolutionRequired) {
 				t.Fatalf("plan resolve = %v, want ErrPlanResolutionRequired", resolveErr)
 			}
-			planRun.Cancel()
+			planRun.Cancel(agent.CancelCauseRequested)
 		}
 	}
 	planSvc.FinishRun(planSession.ID, planRun)
@@ -282,7 +283,7 @@ func TestADR_0347_StaleControlCannotMutateSuccessor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		second.Cancel()
+		second.Cancel(agent.CancelCauseRequested)
 		close(releaseSuccessor)
 		drainRun(t, second)
 		svc.FinishRun(sess.ID, second)

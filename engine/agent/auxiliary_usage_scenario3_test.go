@@ -2,13 +2,19 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"iter"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stacklok/mecatl/engine/adapter/memstore"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/governance"
+	"github.com/stacklok/mecatl/engine/learning"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -38,6 +44,616 @@ func (d *auxiliaryRecordingDiagnostics) count(msg string) int {
 	return count
 }
 
+type blockingParallelJudgeUsageTool struct {
+	entered  chan<- struct{}
+	release  <-chan struct{}
+	usage    session.AuxiliaryUsage
+	readOnly bool
+	err      error
+	retained chan<- func(session.AuxiliaryUsage)
+}
+
+func (*blockingParallelJudgeUsageTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "ParallelUsage", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (t *blockingParallelJudgeUsageTool) ReadOnly() bool { return t.readOnly }
+func (*blockingParallelJudgeUsageTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
+	return session.ToolResult{}, errors.New("parent capabilities were not supplied")
+}
+func (t *blockingParallelJudgeUsageTool) ExecuteWithParent(_ context.Context, call session.ToolCall, _ tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	caps.recordAuxiliaryUsage(t.usage)
+	if t.retained != nil {
+		t.retained <- caps.recordAuxiliaryUsage
+	}
+	t.entered <- struct{}{}
+	<-t.release
+	return session.NewToolResult(call.ID, "done"), t.err
+}
+
+type parentCapsProducerTool struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+}
+
+func (*parentCapsProducerTool) Spec() tool.ToolSpec {
+	return tool.ToolSpec{Name: "ParentCapsProducer", Schema: json.RawMessage(`{"type":"object"}`)}
+}
+func (*parentCapsProducerTool) ReadOnly() bool { return true }
+func (*parentCapsProducerTool) Execute(context.Context, session.ToolCall, tool.Environment) (session.ToolResult, error) {
+	return session.ToolResult{}, errors.New("parent capabilities were not supplied")
+}
+func (t *parentCapsProducerTool) ExecuteWithParent(ctx context.Context, call session.ToolCall, _ tool.Environment, _ func(session.Event), caps parentCaps) (session.ToolResult, error) {
+	if routed := caps.routeConfigured(ctx, "route child"); !routed.ok {
+		return session.NewToolError(call.ID, "router failed"), nil
+	}
+	if reviewed := caps.adjudicate(shellAsk("git status"), true); !reviewed.allowed {
+		return session.NewToolError(call.ID, "reviewer failed"), nil
+	}
+	t.entered <- struct{}{}
+	<-t.release
+	return session.NewToolResult(call.ID, "done"), nil
+}
+
+func TestParentCapsRouterAndReviewerUseExecutionLocalReporter(t *testing.T) {
+	routerUsage := session.Usage{InputTokens: 3}
+	reviewerUsage := session.Usage{InputTokens: 4}
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(&parentCapsProducerTool{entered: entered, release: release})
+	call := session.NewToolCall("parent-caps", "ParentCapsProducer", []byte(`{}`))
+	engine := NewEngine(Deps{
+		LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: allowAllInt(),
+		SubagentModelRouter: &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
+			return ModelRouteResult{Category: "large", Model: "large-model", OK: true, Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+				session.UsageKindRouter: {Models: map[string]session.Usage{"provider/router": routerUsage}},
+			}}}
+		}},
+		ChildAskReviewer: fixedUsageReviewer{usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+			session.UsageKindAskReviewer: {Models: map[string]session.Usage{"provider/reviewer": reviewerUsage}},
+		}}},
+	})
+	env := memEnv("/ws")
+	sess := session.New("parent-caps-reporter", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	run := engine.Run(t.Context(), sess, env, RunRequest{Text: "run producers"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-entered
+	run.auxiliaryUsageMu.Lock()
+	pending := len(run.auxiliaryUsagePending.Buckets)
+	run.auxiliaryUsageMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("router/reviewer bypassed execution-local reporter into terminal queue: %d buckets", pending)
+	}
+	if got := sess.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
+		t.Fatalf("worker mutated router usage before dispatcher drain: %+v", got)
+	}
+	if got := sess.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
+		t.Fatalf("worker mutated ask-reviewer usage before dispatcher drain: %+v", got)
+	}
+	close(release)
+	<-done
+	if got := sess.UsageFor(session.UsageKindRouter); got != routerUsage {
+		t.Fatalf("router usage = %+v, want %+v", got, routerUsage)
+	}
+	if got := sess.UsageFor(session.UsageKindAskReviewer); got != reviewerUsage {
+		t.Fatalf("reviewer usage = %+v, want %+v", got, reviewerUsage)
+	}
+}
+
+func TestRunOwnershipLostRevokesUsageWithoutCancelling(t *testing.T) {
+	usage := session.Usage{InputTokens: 5}
+	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindAskReviewer: {Models: map[string]session.Usage{"provider/reviewer": usage}},
+	}}
+	sess := session.New("ownership-lost", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "ws", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
+	cancelled := false
+	run := &Run{auxiliaryUsageActive: true, auxiliaryUsagePending: aux, cancel: func() { cancelled = true }}
+	run.OwnershipLost()
+	run.OwnershipLost()
+	if cancelled {
+		t.Fatal("ownership notification cancelled the run before its pending ask could be retracted")
+	}
+	run.recordCompleteAuxiliaryUsageWhileActive(sess, aux)
+	run.enqueueAuxiliaryUsageWhileActive(t.Context(), aux)
+	run.closeAuxiliaryUsageOwnershipAndDrain(sess)
+	if got := sess.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
+		t.Fatalf("usage accepted after ownership loss: %+v", got)
+	}
+	run.Cancel(CancelCauseRequested)
+	if !cancelled {
+		t.Fatal("explicit cancellation did not stop the run")
+	}
+}
+
+type auxiliaryLockCheckingDiagnostics struct {
+	port.Diagnostics
+	run      *Run
+	unlocked bool
+}
+
+func (d *auxiliaryLockCheckingDiagnostics) Log(context.Context, port.Level, string, ...any) {
+	if d.run.auxiliaryUsageMu.TryLock() {
+		d.unlocked = true
+		d.run.auxiliaryUsageMu.Unlock()
+	}
+}
+
+func TestRunOwnershipLostDoesNotHoldUsageLockDuringDiagnostics(t *testing.T) {
+	sess := session.New("ownership-diagnostic", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "ws", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
+	run := &Run{auxiliaryUsageActive: true}
+	diag := &auxiliaryLockCheckingDiagnostics{Diagnostics: port.NopDiagnostics{}, run: run}
+	run.diag = diag
+	run.OwnershipLost()
+	run.recordCompleteAuxiliaryUsageWhileActive(sess, session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindGuardrail: {Models: map[string]session.Usage{"provider/model": {InputTokens: 1}}},
+	}})
+	if !diag.unlocked {
+		t.Fatal("late-result diagnostic ran under the usage lock")
+	}
+}
+
+func TestCancelCauseOwnershipLostRevokesAuxiliaryUsage(t *testing.T) {
+	usage := session.Usage{InputTokens: 5}
+	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindAskReviewer: {Models: map[string]session.Usage{"provider/reviewer": usage}},
+	}}
+	for _, tc := range []struct {
+		name  string
+		cause CancelCause
+		keep  bool
+	}{
+		{name: "requested", cause: CancelCauseRequested, keep: true},
+		{name: "ownership_lost", cause: CancelCauseOwnershipLost},
+		{name: "unknown_fails_closed", cause: CancelCause(255)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cancelled := false
+			run := &Run{auxiliaryUsageActive: true, cancel: func() { cancelled = true }}
+			run.auxiliaryUsagePending = aux
+			run.Cancel(tc.cause)
+			if !cancelled {
+				t.Fatal("run context was not cancelled")
+			}
+			sess := session.New("cancel-cause", session.ModeDefault, session.EnvironmentRef{Kind: session.EnvKindMem, ID: "ws", Revision: "r1"}, session.Limits{}, time.Unix(0, 0))
+			run.drainPendingAuxiliaryUsage(sess)
+			if got := sess.UsageFor(session.UsageKindAskReviewer); (got == usage) != tc.keep {
+				t.Fatalf("drained usage = %+v, keep=%v", got, tc.keep)
+			}
+			if tc.keep != run.auxiliaryUsageActive {
+				t.Fatalf("auxiliary ownership active = %v, want %v", run.auxiliaryUsageActive, tc.keep)
+			}
+		})
+	}
+}
+
+func TestParallelJudgeUsageStaysPrivateUntilDispatcherDrain(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		readOnly bool
+		cancel   bool
+		toolErr  error
+	}{
+		{name: "serial_completed"},
+		{name: "serial_tool_error", toolErr: errors.New("tool failed after judge")},
+		{name: "read_batch_completed", readOnly: true},
+		{name: "read_batch_cancelled", readOnly: true, cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			usage := session.Usage{InputTokens: 8, OutputTokens: 2}
+			returned := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+				session.UsageKindParallelJudge: {Models: map[string]session.Usage{"provider-p/judge-model": usage}},
+			}}
+			entered := make(chan struct{}, 1)
+			release := make(chan struct{})
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(&blockingParallelJudgeUsageTool{entered: entered, release: release, usage: returned, readOnly: tc.readOnly, err: tc.toolErr})
+			call := session.NewToolCall("parallel-usage", "ParallelUsage", []byte(`{}`))
+			store := memstore.New()
+			engine := NewEngine(Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")),
+				Catalog: catalog, Policy: allowAllInt(), Store: store,
+			})
+			env := memEnv("/ws")
+			sess := session.New(session.SessionID("parallel-usage-"+tc.name), session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			run := engine.Run(ctx, sess, env, RunRequest{Text: "run parallel judge"})
+			done := make(chan struct{})
+			var events []session.Event
+			go func() {
+				defer close(done)
+				for event := range run.Events() {
+					events = append(events, event)
+				}
+			}()
+
+			<-entered
+			if got := sess.UsageFor(session.UsageKindParallelJudge); got != (session.Usage{}) {
+				t.Fatalf("worker mutated parent usage before dispatcher drain: %+v", got)
+			}
+			if tc.cancel {
+				cancel()
+			}
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("run did not finish after tool release")
+			}
+			if tc.cancel {
+				sawCancel := false
+				for _, event := range events {
+					sawCancel = sawCancel || event.Type == session.EvResult && event.Result != nil && event.Result.Stop == session.StopCancelled
+				}
+				if !sawCancel {
+					t.Fatal("cancel row emitted no StopCancelled result")
+				}
+			}
+			if tc.toolErr != nil {
+				found := false
+				for _, event := range events {
+					found = found || event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.IsError
+				}
+				if !found {
+					t.Fatal("tool-error row emitted no error ToolResult")
+				}
+			}
+			bucket := sess.TokenUsageSnapshot()[session.UsageKindParallelJudge]
+			if bucket.Total != usage || bucket.Models["provider-p/judge-model"] != usage || len(bucket.Models) != 1 {
+				t.Fatalf("drained parallel judge usage = %#v, want exact usage once", bucket)
+			}
+			loaded, err := store.Load(t.Context(), sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := loaded.TokenUsageSnapshot()[session.UsageKindParallelJudge]; !reflect.DeepEqual(got, bucket) {
+				t.Fatalf("persisted parallel judge usage = %#v, want %#v", got, bucket)
+			}
+		})
+	}
+}
+
+type auxiliaryDrainRecorder struct {
+	sess      *session.Session
+	calls     []session.ToolCallID
+	snapshots []session.Usage
+}
+
+func (r *auxiliaryDrainRecorder) ToolCall(_ session.SessionID, call session.ToolCall, _ session.ToolResult, _, _ time.Duration) {
+	r.calls = append(r.calls, call.ID)
+	r.snapshots = append(r.snapshots, r.sess.UsageFor(session.UsageKindParallelJudge))
+}
+
+func TestParallelJudgeUsageReadBatchDrainsInCallOrder(t *testing.T) {
+	usage := session.Usage{InputTokens: 5}
+	returned := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindParallelJudge: {Models: map[string]session.Usage{"provider-p/judge-model": usage}},
+	}}
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(&blockingParallelJudgeUsageTool{entered: entered, release: release, usage: returned, readOnly: true})
+	calls := []session.ToolCall{
+		session.NewToolCall("first", "ParallelUsage", []byte(`{}`)),
+		session.NewToolCall("second", "ParallelUsage", []byte(`{}`)),
+	}
+	env := memEnv("/ws")
+	sess := session.New("parallel-ordered", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	recorder := &auxiliaryDrainRecorder{sess: sess}
+	engine := NewEngine(Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(calls...), mockllm.TextTurn("done")),
+		Catalog: catalog, Policy: allowAllInt(), ToolCallRecorder: recorder,
+	})
+	run := engine.Run(t.Context(), sess, env, RunRequest{Text: "run parallel judges"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-entered
+	<-entered
+	if got := sess.UsageFor(session.UsageKindParallelJudge); got != (session.Usage{}) {
+		t.Fatalf("parallel workers mutated parent before ordered drain: %+v", got)
+	}
+	close(release)
+	<-done
+
+	if !reflect.DeepEqual(recorder.calls, []session.ToolCallID{"first", "second"}) {
+		t.Fatalf("drain order = %v, want first then second", recorder.calls)
+	}
+	if len(recorder.snapshots) != 2 || recorder.snapshots[0] != usage || recorder.snapshots[1] != usage.Add(usage) {
+		t.Fatalf("ordered usage snapshots = %+v, want one then two reports", recorder.snapshots)
+	}
+}
+
+type blockingPostToolHook struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+}
+
+func (h blockingPostToolHook) Run(_ context.Context, ev governance.HookEvent) (governance.HookOutcome, error) {
+	if ev.Phase == governance.PhasePostToolUse {
+		h.entered <- struct{}{}
+		<-h.release
+	}
+	return governance.HookOutcome{}, nil
+}
+
+func TestParentCapsAuxiliaryCallbackQueuesWhileOwnershipActive(t *testing.T) {
+	askUsage := session.Usage{InputTokens: 6, OutputTokens: 1}
+	returned := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindAskReviewer: {Models: map[string]session.Usage{"provider-a/reviewer": askUsage}},
+	}}
+	toolRelease := make(chan struct{})
+	close(toolRelease)
+	toolEntered := make(chan struct{}, 1)
+	retained := make(chan func(session.AuxiliaryUsage), 1)
+	hookEntered := make(chan struct{}, 1)
+	hookRelease := make(chan struct{})
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(&blockingParallelJudgeUsageTool{entered: toolEntered, release: toolRelease, retained: retained})
+	call := session.NewToolCall("background-review", "ParallelUsage", []byte(`{}`))
+	engine := NewEngine(Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")),
+		Catalog: catalog, Policy: allowAllInt(), Hooks: blockingPostToolHook{entered: hookEntered, release: hookRelease},
+	})
+	env := memEnv("/ws")
+	sess := session.New("background-review", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	run := engine.Run(t.Context(), sess, env, RunRequest{Text: "start background review"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-toolEntered
+	callback := <-retained
+	<-hookEntered
+	callback(returned)
+	if got := sess.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
+		t.Fatalf("late active callback mutated parent before dispatcher drain: %+v", got)
+	}
+	close(hookRelease)
+	<-done
+	bucket := sess.TokenUsageSnapshot()[session.UsageKindAskReviewer]
+	if bucket.Total != askUsage || bucket.Models["provider-a/reviewer"] != askUsage || len(bucket.Models) != 1 {
+		t.Fatalf("queued background ask-reviewer usage = %#v, want exact attribution once", bucket)
+	}
+}
+
+func TestParentCapsAuxiliaryCallbackDropsAfterOwnershipCloses(t *testing.T) {
+	usage := session.Usage{InputTokens: 4, OutputTokens: 1}
+	returned := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindParallelJudge: {Models: map[string]session.Usage{"provider-p/judge-model": usage}},
+	}}
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	retained := make(chan func(session.AuxiliaryUsage), 1)
+	diag := &auxiliaryRecordingDiagnostics{}
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(&blockingParallelJudgeUsageTool{entered: entered, release: release, usage: returned, retained: retained})
+	call := session.NewToolCall("parallel-retained", "ParallelUsage", []byte(`{}`))
+	engine := NewEngine(Deps{
+		LLM:     mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")),
+		Catalog: catalog, Policy: allowAllInt(), Diagnostics: diag,
+	})
+	env := memEnv("/ws")
+	sess := session.New("parallel-retained", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	run := engine.Run(t.Context(), sess, env, RunRequest{Text: "run parallel judge"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-entered
+	callback := <-retained
+	close(release)
+	<-done
+
+	callback(returned)
+	if got := sess.UsageFor(session.UsageKindParallelJudge); got != usage {
+		t.Fatalf("retained callback changed closed parent usage: %+v", got)
+	}
+	if got := diag.count("late auxiliary usage dropped after parent run ended"); got != 1 {
+		t.Fatalf("late callback diagnostics = %d, want one bounded line", got)
+	}
+}
+
+type blockingAuxiliaryProvider struct {
+	started chan<- struct{}
+	once    sync.Once
+}
+
+func (*blockingAuxiliaryProvider) Capabilities() port.ProviderCapabilities {
+	return port.ProviderCapabilities{}
+}
+
+func (p *blockingAuxiliaryProvider) Stream(ctx context.Context, _ port.LLMRequest) (iter.Seq2[port.Chunk, error], error) {
+	return func(yield func(port.Chunk, error) bool) {
+		p.once.Do(func() { p.started <- struct{}{} })
+		<-ctx.Done()
+		yield(port.Chunk{}, ctx.Err())
+	}, nil
+}
+
+type blockingCompletionObserver struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+}
+
+func (o blockingCompletionObserver) Observe(context.Context, learning.Trajectory) error {
+	o.entered <- struct{}{}
+	<-o.release
+	return nil
+}
+
+func TestCompletionObserverPersistsPendingParentCapsUsage(t *testing.T) {
+	usage := session.Usage{InputTokens: 5, OutputTokens: 1}
+	returned := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindParallelJudge: {Models: map[string]session.Usage{"provider/judge": usage}},
+	}}
+	toolRelease := make(chan struct{})
+	close(toolRelease)
+	toolEntered := make(chan struct{}, 1)
+	retained := make(chan func(session.AuxiliaryUsage), 1)
+	observerEntered := make(chan struct{}, 1)
+	observerRelease := make(chan struct{})
+	store := memstore.New()
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(&blockingParallelJudgeUsageTool{entered: toolEntered, release: toolRelease, retained: retained})
+	call := session.NewToolCall("observer-pending", "ParallelUsage", []byte(`{}`))
+	engine := NewEngine(Deps{
+		LLM: mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")), Catalog: catalog, Policy: allowAllInt(), Store: store,
+		LearningMode: learning.Auto, LearningObserver: blockingCompletionObserver{entered: observerEntered, release: observerRelease},
+	})
+	env := memEnv("/ws")
+	sess := session.New("observer-pending", session.ModeDefault, env.Ref(), session.Limits{}, time.Unix(0, 0))
+	run := engine.Run(t.Context(), sess, env, RunRequest{Text: "complete"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-toolEntered
+	callback := <-retained
+	<-observerEntered
+	callback(returned)
+	close(observerRelease)
+	<-done
+	loaded, err := store.Load(t.Context(), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket := loaded.TokenUsageSnapshot()[session.UsageKindParallelJudge]
+	if bucket.Total != usage || bucket.Models["provider/judge"] != usage || len(bucket.Models) != 1 {
+		t.Fatalf("persisted observer-time usage = %#v, want exact pending usage", bucket)
+	}
+}
+
+func TestParallelBranchRouterUsageStaysPrivateUntilDispatcherDrain(t *testing.T) {
+	usage := session.Usage{InputTokens: 7, OutputTokens: 2}
+	started := make(chan struct{})
+	child := NewEngine(Deps{
+		LLM: &blockingAuxiliaryProvider{started: started}, Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "routed-model",
+	})
+	parallel := NewParallelTool(child, auxiliaryUsageForker{}, WithParallelEngineFactory(func(model string) (*Engine, bool) {
+		return child, model == "routed-model"
+	})).(*ParallelTool)
+	catalog := tool.NewCatalog()
+	catalog.MustRegister(parallel)
+	router := &SubagentModelRouter{Backend: "llm", Route: func(context.Context, string) ModelRouteResult {
+		return ModelRouteResult{
+			Category: "large", Model: "routed-model", OK: true,
+			Usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+				session.UsageKindRouter: {Models: map[string]session.Usage{"provider-r/classifier": usage}},
+			}},
+		}
+	}}
+	call := session.NewToolCall("parallel-route", parallelToolName, []byte(`{"tasks":["one"]}`))
+	owner := NewEngine(Deps{
+		LLM: mockllm.New(mockllm.ToolCallTurn(call)), Catalog: catalog, Policy: allowAllInt(), SubagentModelRouter: router,
+	})
+	sess := session.New("parallel-route-parent", session.ModeDefault, judgeEnvironment.Ref(), session.Limits{}, time.Unix(0, 0))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	run := owner.Run(ctx, sess, judgeEnvironment, RunRequest{Text: "route branch"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-started
+	if got := sess.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
+		t.Fatalf("Parallel branch router mutated parent before drain: %+v", got)
+	}
+	cancel()
+	<-done
+	bucket := sess.TokenUsageSnapshot()[session.UsageKindRouter]
+	if bucket.Total != usage || bucket.Models["provider-r/classifier"] != usage || len(bucket.Models) != 1 {
+		t.Fatalf("Parallel branch router usage = %#v, want exact routed attribution once", bucket)
+	}
+}
+
+func TestAuxiliaryUsageRealProducerExcludesSensitiveInputsAndOutputs(t *testing.T) {
+	const (
+		prompt = "private guardrail prompt with request-secret-123 and Bearer accounting-secret"
+		output = "private model output"
+	)
+	usage := session.Usage{InputTokens: 7, OutputTokens: 3}
+	checker := NewEngine(Deps{
+		LLM: mockllm.New(mockllm.ChunksTurn(
+			mockllm.TextChunk(output),
+			mockllm.UsageChunk(usage),
+			mockllm.DoneChunk(session.StopEndTurn),
+		)),
+		Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "server-model",
+		ProviderModel: session.ProviderModelID{ProviderID: "server-provider", ModelID: "server-model"},
+	})
+	gotOutput, record, err := RunGuardrailCheck(t.Context(), checker, prompt)
+	if err != nil || gotOutput != output {
+		t.Fatalf("RunGuardrailCheck output = %q, err=%v", gotOutput, err)
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{prompt, output, "request-secret-123", "Bearer accounting-secret", "client-selected-provider", "client-selected-model"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("auxiliary usage retained sensitive producer data %q: %s", forbidden, raw)
+		}
+	}
+	bucket := record.Buckets[session.UsageKindGuardrail]
+	if bucket.Total != usage || bucket.Models["server-provider/server-model"] != usage || len(bucket.Models) != 1 {
+		t.Fatalf("real producer accounting = %#v, want tokens plus selected server identity only", bucket)
+	}
+}
+
+func TestAuxiliaryTokenUsage_Scenario3_ComposedRouterRecordsSelectedProviderModel(t *testing.T) {
+	usage := session.Usage{InputTokens: 11, OutputTokens: 4}
+	classifier := NewEngine(Deps{
+		LLM: mockllm.New(mockllm.ChunksTurn(
+			mockllm.TextChunk(`{"category":"large"}`),
+			mockllm.UsageChunk(usage),
+			mockllm.DoneChunk(session.StopEndTurn),
+		)),
+		Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "classifier-model",
+		ProviderModel: session.ProviderModelID{ProviderID: "classifier-provider", ModelID: "classifier-model"},
+	})
+	router := &SubagentModelRouter{Backend: "llm", ClassifierModel: "classifier-model"}
+	router.Route = func(ctx context.Context, prompt string) ModelRouteResult {
+		category, returned, reason, ok := RunModelRouter(ctx, classifier, ModelRouteRequest{
+			TaskPrompt: prompt,
+			Categories: []ModelRouteCategory{{Name: "small", Description: "small work"}, {Name: "large", Description: "large work"}},
+			Default:    "small",
+		})
+		return ModelRouteResult{Category: category, Model: "large-model", Usage: returned, Reason: reason, OK: ok}
+	}
+	owner := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), SubagentModelRouter: router})
+	parent := runningAuxiliaryParent(t, "composed-router-parent")
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), diag: port.NopDiagnostics{}, auxiliaryUsageActive: true}
+
+	if got := owner.parentCaps(run, parent, 0).routeDecision(t.Context(), "classify this task"); !got.ok {
+		t.Fatalf("composed route failed: %+v", got)
+	}
+	if got := parent.UsageFor(session.UsageKindRouter); got != (session.Usage{}) {
+		t.Fatalf("router mutated parent before owner drain: %+v", got)
+	}
+	run.drainPendingAuxiliaryUsage(parent)
+	bucket := parent.TokenUsageSnapshot()[session.UsageKindRouter]
+	if bucket.Total != usage || bucket.Models["classifier-provider/classifier-model"] != usage || len(bucket.Models) != 1 {
+		t.Fatalf("composed router attribution = %#v, want selected classifier provider/model", bucket)
+	}
+}
+
 func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	usage := session.Usage{InputTokens: 7, OutputTokens: 3}
 	injected := session.Usage{InputTokens: 2, OutputTokens: 1}
@@ -53,12 +669,13 @@ func TestAuxiliaryTokenUsage_Scenario3_RouterDoesNotFoldIntoMain(t *testing.T) {
 	})
 	parent := runningAuxiliaryParent(t, "router-parent")
 	diag := &auxiliaryRecordingDiagnostics{}
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), diag: diag}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), diag: diag, auxiliaryUsageActive: true}
 
 	got := engine.parentCaps(run, parent, 0).routeDecision(t.Context(), "classify")
 	if !got.ok {
 		t.Fatalf("routeDecision ok = false, reason %q", got.reason)
 	}
+	run.drainPendingAuxiliaryUsage(parent)
 	if main := parent.UsageFor(session.UsageKindMain); main != (session.Usage{}) {
 		t.Fatalf("main usage = %+v, want zero", main)
 	}
@@ -104,15 +721,6 @@ func (r fixedUsageReviewer) Review(context.Context, ChildAskReviewRequest) (Chil
 	return ChildAskReview{Allowed: true}, r.usage, nil
 }
 
-type concurrentUsageHook struct {
-	usage session.AuxiliaryUsage
-}
-
-func (h concurrentUsageHook) Run(ctx context.Context, _ governance.HookEvent) (governance.HookOutcome, error) {
-	port.AuxiliaryUsageReporterFromContext(ctx)(h.usage)
-	return governance.HookOutcome{}, nil
-}
-
 func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.T) {
 	reviewerUsage := session.Usage{InputTokens: 4, OutputTokens: 1}
 	reviewer := NewEngineAskReviewer(
@@ -128,7 +736,6 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	}
 
 	guardrailUsage := session.Usage{InputTokens: 6, OutputTokens: 2}
-	unexpectedGuardrailUsage := session.Usage{InputTokens: 3, OutputTokens: 1}
 	checker := reviewerEngine(mockllm.New(mockllm.Turn{Chunks: []port.Chunk{
 		{Kind: port.ChunkText, Text: `{"safe":true}`},
 		{Kind: port.ChunkUsage, Usage: &guardrailUsage},
@@ -138,10 +745,10 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got := checkedUsage.Buckets[session.UsageKindGuardrail].Total; got != guardrailUsage {
+		t.Fatalf("guardrail usage = %+v, want %+v", got, guardrailUsage)
+	}
 
-	checkedUsage = checkedUsage.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
-		session.UsageKindMain: {Models: map[string]session.Usage{"provider-g/checker": unexpectedGuardrailUsage}},
-	}})
 	parent := runningAuxiliaryParent(t, "safety-parent")
 	reviewUsage = reviewUsage.Merge(session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
 		session.UsageKindMain: {Models: map[string]session.Usage{"provider-a/reviewer": {InputTokens: 2}}},
@@ -157,50 +764,35 @@ func TestAuxiliaryTokenUsage_Scenario3_SafetyChecksRecordParentUsage(t *testing.
 	if outcome := reviewEngine.parentCaps(reviewRun, parent, 0).adjudicate(shellAsk("git status"), true); !outcome.allowed {
 		t.Fatalf("review outcome = %+v, want allowed", outcome)
 	}
-	hook := &replayingUsageHook{usage: checkedUsage}
-	hookEngine := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main", Hooks: hook})
-	if _, err := hookEngine.runOwnedHook(t.Context(), &Run{diag: port.NopDiagnostics{}}, parent, governance.HookEvent{Phase: governance.PhasePreToolUse}); err != nil {
-		t.Fatal(err)
+	if got := parent.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
+		t.Fatalf("ask reviewer mutated parent before owner drain: %+v", got)
 	}
-	if hook.reporter == nil {
-		t.Fatal("Engine did not install AuxiliaryUsageReporter during hook request")
-	}
-	// A retained callback is inert as soon as HookRunner.Run returns.
-	hook.reporter(checkedUsage)
+	reviewRun.drainPendingAuxiliaryUsage(parent)
 	wantReview := reviewerUsage.Add(session.Usage{InputTokens: 2})
 	if got := parent.UsageFor(session.UsageKindAskReviewer); got != wantReview {
 		t.Fatalf("ask reviewer usage = %+v, want remapped %+v", got, wantReview)
 	}
-	wantGuardrail := guardrailUsage.Add(unexpectedGuardrailUsage)
-	if got := parent.UsageFor(session.UsageKindGuardrail); got != wantGuardrail {
-		t.Fatalf("guardrail usage = %+v, want remapped %+v", got, wantGuardrail)
-	}
 	if got := parent.UsageFor(session.UsageKindMain); got != (session.Usage{}) {
 		t.Fatalf("main usage = %+v, want zero", got)
 	}
+}
 
-	// PostToolUse guardrails run in read-parallel dispatch goroutines. Exercise that
-	// exact concurrent reporting shape against one run-owned Session under -race.
-	concurrentParent := runningAuxiliaryParent(t, "concurrent-guardrail-parent")
-	concurrentRun := &Run{diag: port.NopDiagnostics{}}
-	one := session.Usage{InputTokens: 1}
-	concurrentEngine := NewEngine(Deps{
-		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Model: "main",
-		Hooks: concurrentUsageHook{usage: auxiliaryUsage(session.UsageKindGuardrail, session.ProviderModelID{ProviderID: "provider-g", ModelID: "checker"}, one)},
-	})
-	var wg sync.WaitGroup
-	for range 32 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := concurrentEngine.runOwnedHook(t.Context(), concurrentRun, concurrentParent, governance.HookEvent{Phase: governance.PhasePostToolUse}); err != nil {
-				t.Errorf("runOwnedHook: %v", err)
-			}
-		}()
+func TestGenericHookRunnerCannotReportAuxiliaryUsage(t *testing.T) {
+	usage := session.Usage{InputTokens: 6, OutputTokens: 2}
+	hook := &replayingUsageHook{usage: auxiliaryUsage(session.UsageKindGuardrail,
+		session.ProviderModelID{ProviderID: "provider-g", ModelID: "checker"}, usage)}
+	eng := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(), Hooks: hook})
+	sess := runningAuxiliaryParent(t, "generic-hook-no-reporter")
+	run := &Run{diag: port.NopDiagnostics{}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
+
+	if blocked, reason := eng.fireSessionStart(t.Context(), run, sess); blocked {
+		t.Fatalf("SessionStart blocked: %s", reason)
 	}
-	wg.Wait()
-	if got := concurrentParent.UsageFor(session.UsageKindGuardrail); got.InputTokens != 32 {
-		t.Fatalf("concurrent guardrail usage = %+v, want 32 input tokens", got)
+	if hook.reporter != nil {
+		t.Fatal("generic HookRunner received an AuxiliaryUsageReporter")
+	}
+	if got := sess.UsageFor(session.UsageKindGuardrail); got != (session.Usage{}) {
+		t.Fatalf("generic hook recorded guardrail usage: %+v", got)
 	}
 }
 
@@ -214,6 +806,39 @@ func (r blockingUsageReviewer) Review(context.Context, ChildAskReviewRequest) (C
 	r.started <- struct{}{}
 	<-r.release
 	return ChildAskReview{Allowed: true}, r.usage, nil
+}
+
+func TestChildAskReviewerUsageQueuesUntilParentOwnerDrain(t *testing.T) {
+	usage := session.Usage{InputTokens: 4, OutputTokens: 1}
+	parent := runningAuxiliaryParent(t, "queued-review-parent")
+	reviewerStarted := make(chan struct{}, 1)
+	releaseReviewer := make(chan struct{})
+	engine := NewEngine(Deps{
+		LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt(),
+		ChildAskReviewer: blockingUsageReviewer{started: reviewerStarted, release: releaseReviewer,
+			usage: auxiliaryUsage(session.UsageKindAskReviewer,
+				session.ProviderModelID{ProviderID: "provider-a", ModelID: "reviewer"}, usage)},
+	})
+	run := &Run{
+		askReview: &askReviewBreaker{max: DefaultAskReviewMaxDenies}, hardAbort: make(chan struct{}),
+		diag: port.NopDiagnostics{}, children: newChildRunRegistry(), auxiliaryUsageActive: true,
+	}
+	caps := engine.parentCaps(run, parent, 0)
+	outcomeReady := make(chan askReviewOutcome, 1)
+	go func() { outcomeReady <- caps.adjudicate(shellAsk("git status"), true) }()
+	<-reviewerStarted
+	close(releaseReviewer)
+	if outcome := <-outcomeReady; !outcome.allowed {
+		t.Fatalf("review outcome = %+v, want allowed", outcome)
+	}
+	if got := parent.UsageFor(session.UsageKindAskReviewer); got != (session.Usage{}) {
+		t.Fatalf("ask reviewer mutated parent before owner drain: %+v", got)
+	}
+	run.drainPendingAuxiliaryUsage(parent)
+	bucket := parent.TokenUsageSnapshot()[session.UsageKindAskReviewer]
+	if bucket.Total != usage || bucket.Models["provider-a/reviewer"] != usage || len(bucket.Models) != 1 {
+		t.Fatalf("queued ask-reviewer usage = %#v, want exact attribution once", bucket)
+	}
 }
 
 func TestChildAskReviewerUsageDropsAfterParentRunOwnershipEnds(t *testing.T) {
@@ -337,7 +962,7 @@ func TestUtilityEngineUsageReturnsActualTier4CompactionToCallerOwner(t *testing.
 	}
 
 	returned := utilityEngineUsage(session.UsageKindRouter, utilityIdentity, utility)
-	owned := remapAuxiliaryUsage(t.Context(), port.NopDiagnostics{}, session.UsageKindRouter, returned)
+	owned := RemapAuxiliaryUsage(t.Context(), port.NopDiagnostics{}, session.UsageKindRouter, returned)
 	bucket := owned.Buckets[session.UsageKindRouter]
 	wantTotal := mainUsage.Add(compactionUsage)
 	if bucket.Total != wantTotal || bucket.Models["provider-u/utility"] != mainUsage || bucket.Models["provider-c/summary"] != compactionUsage {
@@ -421,15 +1046,22 @@ func TestAuxiliaryTokenUsage_Scenario3_ParallelJudgeRecordsInheritedModel(t *tes
 			}))
 
 			parallel := NewParallelTool(child, auxiliaryUsageForker{}, WithParallelJudge(judge), WithParallelConcurrency(1)).(*ParallelTool)
-			parent := runningAuxiliaryParent(t, session.SessionID("parallel-parent-"+join))
-			owner := NewEngine(Deps{LLM: mockllm.New(), Catalog: tool.NewCatalog(), Policy: allowAllInt()})
-			caps := owner.parentCaps(&Run{children: newChildRunRegistry(), diag: port.NopDiagnostics{}}, parent, 0)
-			result, err := parallel.ExecuteWithParent(t.Context(), session.NewToolCall("parallel-call", parallelToolName, []byte(`{"tasks":["one","two"],"join":"`+join+`"}`)), judgeEnvironment, nil, caps)
-			if err != nil || result.IsError {
-				t.Fatalf("Parallel %s result = %#v, %v", join, result, err)
+			catalog := tool.NewCatalog()
+			catalog.MustRegister(parallel)
+			call := session.NewToolCall("parallel-call", parallelToolName, []byte(`{"tasks":["one","two"],"join":"`+join+`"}`))
+			owner := NewEngine(Deps{
+				LLM:     mockllm.New(mockllm.ToolCallTurn(call), mockllm.TextTurn("done")),
+				Catalog: catalog, Policy: allowAllInt(),
+			})
+			parent := session.New(session.SessionID("parallel-parent-"+join), session.ModeDefault, judgeEnvironment.Ref(), session.Limits{}, time.Unix(1, 0))
+			var result session.ToolResult
+			for ev := range owner.Run(t.Context(), parent, judgeEnvironment, RunRequest{Text: "compare branches"}).Events() {
+				if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == call.ID {
+					result = *ev.ToolResult
+				}
 			}
-			if !strings.Contains(result.Content, "branch-2 [WINNER]") {
-				t.Fatalf("Parallel %s did not apply actual judge result: %s", join, result.Content)
+			if result.IsError || !strings.Contains(result.Content, "branch-2 [WINNER]") {
+				t.Fatalf("Parallel %s result = %#v, want actual judge winner", join, result)
 			}
 			bucket := parent.TokenUsageSnapshot()[session.UsageKindParallelJudge]
 			if bucket.Total != usage || bucket.Models["provider-p/inherited-model"] != usage {
