@@ -22,6 +22,20 @@ type ModelTarget struct {
 	Model    string
 }
 
+// ResolvedModelSelector is composition's validated interpretation of one explicit
+// delegation selector. ProviderBearing distinguishes a contextual bare model from
+// a selector that explicitly carries provider intent (including pair aliases).
+type ResolvedModelSelector struct {
+	Target                 ModelTarget
+	ActualProvider         string
+	ProviderBearing        bool
+	ExplicitRouterCategory string
+}
+
+// SubagentSelectorResolver resolves call-level provider/model syntax without
+// exposing provider registries or router configuration to engine core.
+type SubagentSelectorResolver func(provider, model string) (ResolvedModelSelector, error)
+
 // ModelRouteResult is one backend-neutral classifier result. Category and target are
 // validated candidates even when OK is false; OK alone says whether the route was accepted.
 type ModelRouteResult struct {
@@ -45,6 +59,7 @@ type SubagentModelRouter struct {
 
 type modelRoutingResult struct {
 	category string
+	provider string
 	model    string
 	reason   string
 	ok       bool

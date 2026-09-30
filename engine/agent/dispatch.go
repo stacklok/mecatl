@@ -2157,7 +2157,7 @@ func routeTaskBody(
 	if diag != nil {
 		diag.Log(ctx, port.LevelInfo, "subagent routed", routingDiagnosticAttrs(decision)...)
 	}
-	return modelRoutingResult{category: result.Category, model: result.Model, ok: true, decision: decision}
+	return modelRoutingResult{category: result.Category, provider: result.Provider, model: result.Model, ok: true, decision: decision}
 }
 
 // logRouterMissReason emits the per-miss model-router INFO (issue #287) naming WHY a plain

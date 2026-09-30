@@ -13,9 +13,12 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 
 ### Added
 
-- **Provider-aware delegation target seam** — adds `agent.ModelTarget` and the
-  optional `Provider` field on `agent.ModelRouteResult`, allowing composition to
-  preserve an automatic router's concrete provider/model pair while rebuilding
+- **Provider-aware delegation target seam** — adds `agent.ModelTarget`,
+  `agent.ResolvedModelSelector`, `agent.SubagentSelectorResolver`, provider-aware
+  Subagent engine-factory options, and the optional `Provider` field on
+  `agent.ModelRouteResult`. `session.SubagentPayload` gains concrete `Provider`
+  and `ExplicitRouterCategory` start metadata. Composition can preserve direct,
+  aliased, and automatic router provider/model pairs while rebuilding
   provider-dependent child dependencies. Added (minor).
 
 - **Configurable standard commit co-author guidance** — adds

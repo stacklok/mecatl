@@ -232,10 +232,13 @@ func WithSharedChildWorkspace(view func(tool.Workspace) tool.Workspace) Subagent
 func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
 func WithSubagentNoFSNote() SubagentOption
 func WithSubagentOwnershipEnforced(ownershipEnforced bool) SubagentOption
+func WithSubagentProvider(provider string) SubagentOption
 func WithSubagentReadLedgerFactory(factory func() tool.ReadLedger) SubagentOption
+func WithSubagentSelectorResolver(r SubagentSelectorResolver) SubagentOption
 func WithSubagentShellDisabledNote(reason string) SubagentOption
 func WithSubagentStopHook(h port.HookRunner) SubagentOption
 func WithSubagentStore(store port.SessionStore) SubagentOption
+func WithSubagentTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption
 func WithTeamConcurrency(n int) SupervisorOption
 func WithTeamGoal(goal string) SupervisorOption
 func WithTeamHooks(h port.HookRunner) SupervisorOption
@@ -256,7 +259,8 @@ func WithUntrustedGoal(untrusted bool) SupervisorOption
 func WithWinnerReaper(s PreservedForkStore) ParallelOption
 func WithWritableChildEngine(e *Engine) SubagentOption
 func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOption
-type AgentMeta struct{Name string; Description string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
+func WithWritableTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption
+type AgentMeta struct{Name string; Description string; Provider string; Limits session.Limits; AuthorityCeiling governance.CapabilitySet; WritableAuthorityCeiling governance.CapabilitySet; Managed bool}
 type ApprovalResolution struct{AskID string; ReviewID string; Kind session.GuardrailApprovalKind; Verdict session.ApprovalVerdict}
 type ArtifactHandle string
 type AskResolution uint8
@@ -301,6 +305,7 @@ type PreparedRun struct{}
 type PreparedRunTransition string
 type PreservedForkStore interface{Preserve(handle ArtifactHandle, cleanup func() error)}
 type ReflectionLimits struct{InputBytes int; Events int; Existing int; Candidates int; EvidencePerCandidate int; OutputBytes int; Tokens int; Timeout time.Duration}
+type ResolvedModelSelector struct{Target ModelTarget; ActualProvider string; ProviderBearing bool; ExplicitRouterCategory string}
 type ResumeApprovalOptions struct{CanPresentAuthorization bool}
 type ReviewAssessment string
 type ReviewCaller struct{Role string; Isolated bool; Capabilities []string}
@@ -335,6 +340,7 @@ type ShellTool struct{}
 type SteerOutcome string
 type SubagentModelRouter struct{Backend string; ClassifierModel string; MinimumConfidence *float64; Route func(context.Context, string) ModelRouteResult}
 type SubagentOption func(*SubagentTool)
+type SubagentSelectorResolver func(provider string, model string) (ResolvedModelSelector, error)
 type SubagentStatusTool struct{}
 type SubagentTool struct{}
 type Supervisor struct{}

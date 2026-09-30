@@ -890,6 +890,10 @@ type SubagentPayload struct {
 	// the gRPC + HTTP relays and the mecatui client).
 	RoutedCategory string
 	RoutedModel    string
+	// Provider is the concrete provider that actually ran this child.
+	Provider string
+	// ExplicitRouterCategory is set only for provider:"model-router" selection.
+	ExplicitRouterCategory string
 	// RoutingReason names WHY the router did NOT classify this delegation (EvSubagentStart
 	// only): EMPTY on a routed hit (RoutedCategory/RoutedModel set), otherwise one of the
 	// RoutingReason* gate constants (pinned-model / agent-def-pinned-model / resume / fork /
