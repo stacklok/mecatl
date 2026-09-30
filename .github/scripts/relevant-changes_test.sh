@@ -112,7 +112,7 @@ run "microvm: nested module runs" microvm true environment/microvm/internal/runt
 run "microvm: integration module runs" microvm true integration/microvm/multibuild_test.go integration/microvm/go.mod
 run "microvm: engine replacement runs" microvm true engine/session/session.go
 run "microvm: root integration runs" microvm true internal/adapter/microvm/production_e2e_test.go internal/app/build.go cmd/mecated/main.go cmd/mecatui/main.go
-run "microvm: workspace and CI control run" microvm true go.mod go.sum go.work Taskfile.yml .golangci.yml .github/workflows/ci.yml .github/workflows/microvm-e2e.yml .github/scripts/race-test.sh .github/scripts/install-microvm-release.sh
+run "microvm: workspace and CI control run" microvm true go.mod go.sum go.work Taskfile.yml .golangci.yml .github/workflows/ci.yml .github/workflows/microvm-e2e.yml .github/scripts/install-microvm-release.sh
 run "microvm: unrelated components skip" microvm false docs/intro.md user-docs/intro.md website/src/index.tsx sdk/typescript/src/client.ts apps/web/src/main.tsx authn/oidc/main.go provider/openai/client.go contracts/proto/mecatl/v1/agent.proto deploy/helm/mecak8s/values.yaml examples/first-agent/main.go perf/scenarios/loop_bench_test.go cmd/mecademo/main.go cmd/mecak8s/main.go cmd/mecatequi/main.go internal/adapter/osfs/osfs.go internal/apicheck/check.go
 run "microvm: mixed change runs" microvm true docs/intro.md internal/adapter/microvm/production_e2e_test.go
 run "microvm: unknown path fails closed to run" microvm true new-component/entry.go

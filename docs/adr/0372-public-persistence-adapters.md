@@ -42,8 +42,10 @@ compatibility remains separate from generated Go module versions.
 Release support and driver before adapters, using independent nested tags:
 `internal/adaptersupport/v0.1.0`,
 `contracts/gen/go/mecatl/driver/v0.1.0`, then `adapters/v0.1.0`. These initial tags
-are pending human publication. Generate final adapter sums from the real released
-dependencies; offline candidate-proxy checksums are not published release sums.
+remain subject to human publication. Ordinary standalone builds and tidy do not
+wait for tags: the adapter manifest pins both dependencies to the public,
+checksum-verified `v0.0.0-20260929205240-3fd4c343ca56` revision and commits its
+real standalone sums. Offline candidate-proxy sums are not release sums.
 
 ## Consequences
 

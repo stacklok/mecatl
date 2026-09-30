@@ -269,21 +269,6 @@ tasks:
           fi
         silent: true
 
-  release:persistence-support-preflight:
-    desc: Networked manual preflight before tagging internal/adaptersupport/v0.1.0
-    cmds:
-      - sh scripts/preflight-persistence-module-release.sh support
-
-  release:persistence-driver-preflight:
-    desc: Networked manual preflight before tagging contracts/gen/go/mecatl/driver/v0.1.0
-    cmds:
-      - sh scripts/preflight-persistence-module-release.sh driver
-
-  release:persistence-adapters-preflight:
-    desc: Networked manual preflight before tagging adapters/v0.1.0 (requires published dependencies and real go.sum)
-    cmds:
-      - sh scripts/preflight-persistence-module-release.sh adapters
-
   release:check:
     desc: Validate .goreleaser.yaml offline (strict schema; tolerates the deliberate `brews` deprecation)
     cmds:
@@ -346,61 +331,45 @@ tasks:
           echo "==> brew style dist/homebrew/Formula/mecatl.rb"
           brew style dist/homebrew/Formula/mecatl.rb
 
-  test:root-race-partition:
-    desc: Test and validate the static root-module race package partition
+  test:_module:
+    internal: true
+    requires:
+      vars: [MODULE]
+    vars:
+      RACE: '{{default "" .RACE}}'
     cmds:
-      - bash .github/scripts/root-race-packages_test.sh
-      - bash .github/scripts/root-race-packages.sh validate
-
-  test:race-timing-wrapper:
-    desc: Test normal and diagnostic race-test wrapper behavior
-    cmds:
-      - bash .github/scripts/race-test_test.sh
-
-  test:race-ui:
-    desc: Run the root-module UI race-test shard
-    cmds:
-      - go test -race -count=1 ./cmd/mecatui/ui
-
-  test:race-root-a:
-    desc: Run the maintained root-a race-test shard
-    cmds:
-      - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-a); go test -race -count=1 "${packages[@]}"'
-
-  test:race-root-b:
-    desc: Run the automatic root-b race-test shard (all non-UI, non-root-a packages)
-    cmds:
-      - bash -c 'set -euo pipefail; mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b); go test -race -count=1 "${packages[@]}"'
+      - cd {{.MODULE}} && GOWORK=off go test -mod=readonly {{.RACE}} ./...
 
   test:_suite:
     internal: true
     requires:
       vars: [RACE]
-    cmds:
-      - go test {{.RACE}} ./...
-      # engine/ is a separate module under the workspace — `./...` from the root
-      # does NOT cross the module boundary, so its tests are a second invocation.
-      - cd engine && go test {{.RACE}} ./...
-      - cd internal/adaptersupport && go test {{.RACE}} ./...
-      - cd contracts/gen/go/mecatl/driver && go test {{.RACE}} ./...
-      - cd adapters && go test {{.RACE}} ./...
-      # The opt-in OIDC adapter and microVM runtime are separate non-provider modules.
-      - cd authn/oidc && go test {{.RACE}} ./...
-      - cd environment/microvm && go test {{.RACE}} ./...
-      - cd integration/microvm && go test {{.RACE}} ./...
-      # provider/ submodules (ADR 0093) — each its own module under the workspace;
-      # the per-module `./...` invocation runs their tests through the workspace.
-      - cd provider/ssefilter && go test {{.RACE}} ./...
-      - cd provider/anthropic && go test {{.RACE}} ./...
-      - cd provider/openai && go test {{.RACE}} ./...
-      - cd provider/openaichat && go test {{.RACE}} ./...
-      - task: test:engine-standalone
-      - task: test:authn-standalone
-      - task: test:microvm-standalone
-      - task: test:microvm-integration-standalone
+    deps:
+      - task: test:_module
+        vars: {MODULE: '.', RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: engine, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: internal/adaptersupport, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: contracts/gen/go/mecatl/driver, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: adapters, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: authn/oidc, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: environment/microvm, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: integration/microvm, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/ssefilter, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/anthropic, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/openai, RACE: '{{.RACE}}'}
+      - task: test:_module
+        vars: {MODULE: provider/openaichat, RACE: '{{.RACE}}'}
       - task: test:microvm-dev-tag
-      - task: test:provider-standalone
-      - task: test:persistence-standalone
         vars: {RACE: '{{.RACE}}'}
 
   microvm:build:
@@ -572,8 +541,10 @@ tasks:
 
   test:microvm-dev-tag:
     desc: Compile and run the offline developer-only MicroVM activation gates.
+    vars:
+      RACE: '{{default "" .RACE}}'
     cmds:
-      - go test -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui
+      - go test -mod=readonly {{.RACE}} -tags=microvm_dev ./internal/adapter/microvmmanager ./cmd/mecated ./cmd/mecatui
 
   test:microvm-standalone:
     desc: Prove the opt-in microVM module builds and tests with GOWORK=off.
@@ -1117,7 +1088,6 @@ tasks:
     cmds:
       - bash .github/scripts/docs-only-changes_test.sh
       - bash .github/scripts/docs-only-workflow_test.sh
-      - bash .github/scripts/race-aggregate-workflow_test.sh
       - bash .github/scripts/relevant-changes_test.sh
       - bash .github/scripts/relevant-changes-workflow_test.sh
 
@@ -1166,21 +1136,15 @@ tasks:
       - cmd: test -z "$(gofmt -l .)" || { echo "gofmt needs to run on:"; gofmt -l .; exit 1; }
 
   tidy:
-    desc: Tidy root and published nested module manifests (adapters standalone is release-gated)
+    desc: Tidy root and every nested module, including standalone adapters
     cmds:
-      # Tidy the workspace's root manifest and standalone published modules.
-      # go work sync and adapters/go mod tidy resolve the unpublished support
-      # and driver v0.1.0 even with go.work enabled; neither can run in ordinary
-      # CI until those tags exist. The isolated candidate-proxy proof exercises
-      # standalone adapters tidy without inventing committed checksums.
       - go mod tidy
+      - go work sync
       - cd engine && GOWORK=off go mod tidy
       - cd internal/adaptersupport && GOWORK=off go mod tidy
       - cd contracts/gen/go/mecatl/driver && GOWORK=off go mod tidy
-      # The OIDC adapter's own sum must cover its standalone closure. Its go.mod
-      # deliberately has no replace directive. Until an engine minor containing
-      # PrincipalFromClaims/GrantTypeFromClaims is published, this command is an
-      # intentional release-sequencing gate and may fail against the older tag.
+      - cd adapters && GOWORK=off go mod tidy
+      # OIDC resolves its published engine baseline independently of the workspace.
       - cd authn/oidc && GOWORK=off go mod tidy
       # The microVM runtime is isolated in its own module; its tools-tag anchor
       # retains the future runtime dependency without linking it by default.

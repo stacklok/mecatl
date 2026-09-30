@@ -58,40 +58,33 @@ Edit protobuf sources under `contracts/proto/mecatl/driver/v1/` and regenerate
 through `task generate`, never by editing generated Go output.
 
 The adapter manifest requires the real engine baseline
-`v0.15.1-0.20260929125653-6142f5252a09`. Publication leaves engine source and its
+`v0.15.1-0.20260929125653-6142f5252a09` and the independently resolved,
+checksum-verifiable support and driver revisions
+`v0.0.0-20260929205240-3fd4c343ca56`. Publication leaves engine source and its
 dependency graph unchanged: an engine-only application does not acquire Redis,
 gRPC, the root host, or adapters. Root `go.mod` replacements and `go.work` are
 checkout conveniences, not external installation requirements.
 
 ## Initial release sequence
 
-The initial support, driver, and adapter `v0.1.0` tags are **pending human
-publication**. Support and driver already have real dependency sums; the final
-standalone `adapters/go.sum` is absent until those dependencies are published.
-Do not invent published checksums or commit candidate-proxy sums as release sums.
+The support and driver dependency revisions already resolve through the public Go
+proxy with verified checksums. `adapters/go.sum` records the standalone closure;
+normal `task tidy` and builds do not depend on future release tags. The first
+`v0.1.0` tags remain human-controlled and are not published by root releases.
 
 From reviewed commits, release dependency-first:
 
-1. Run `task release:persistence-support-preflight` and
-   `task release:persistence-driver-preflight`. Each runs
-   `scripts/preflight-persistence-module-release.sh` for its module with
-   `GOWORK=off`, the public Go proxy, checksum verification, and `go mod tidy -diff`.
-   A human then publishes `internal/adaptersupport/v0.1.0` and
-   `contracts/gen/go/mecatl/driver/v0.1.0`. Neither depends on the other.
-2. After both versions resolve from the public proxy, generate the real adapter
-   sums with `cd adapters && GOWORK=off go mod tidy`. Review and commit the actual
-   sums through the normal human-directed release process.
-3. Run `task release:persistence-adapters-preflight`. It first downloads both
-   published dependencies through the public checksum-backed proxy, refuses an
-   absent adapter sum file, and requires standalone `go mod tidy -diff` to pass.
-   Run standalone adapter tests with `cd adapters && GOWORK=off go test ./...`.
-4. A human publishes `adapters/v0.1.0` from the later reviewed commit containing
-   those real sums. Confirm external installation without workspace or replace
-   directives before announcing availability.
+1. From each of `internal/adaptersupport/` and
+   `contracts/gen/go/mecatl/driver/`, run `GOWORK=off go mod tidy -diff` and
+   `GOWORK=off go test ./...`; a human may then publish their independent tags.
+2. From `adapters/`, run `GOWORK=off go mod tidy -diff` and
+   `GOWORK=off go test ./...` against the pinned public dependencies. Check
+   the committed `go.sum` and review the independent dependency tags.
+3. A human may publish `adapters/v0.1.0` from a reviewed commit. Confirm external
+   installation without workspace or replace directives before announcing it.
 
-The preflight script is a networked manual gate, not a publisher or an offline
-CI check. It uses a checkout-local release module cache and never creates or
-pushes tags. A local tag or workspace build is not proof of public availability.
+Run the checks against the public checksum-backed proxy when preparing a
+release; a local tag or workspace build is not proof of public availability.
 
 ## Offline candidate verification
 
@@ -103,10 +96,11 @@ sh scripts/prove-external-persistence.sh .scratch/external-proof-N
 sh scripts/prove-external-persistence.sh .scratch/external-proof-race-N -race
 ```
 
-The helper builds a file-only module proxy from candidate archives and cached
-third-party dependencies. Only staged manifests use candidate `v0.1.0-dev`
-versions. It runs standalone module tests and an unrelated external consumer with
+The helper packages current adapter source as a candidate archive and resolves
+its real support, driver, engine, and third-party dependencies from cached
+public download artifacts. It runs an unrelated external consumer with
 `GOWORK=off`, no replacements, an isolated module cache, and no network fallback.
+Standalone module tests separately cover current support and driver code.
 It checks the external and engine-only graphs and leaves the checkout's release
 requirements unchanged. Missing cached artifacts fail the proof.
 

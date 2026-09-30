@@ -6,5 +6,5 @@ github.com/goccy/go-yaml v1.19.2 h1:PmFC1S6h8ljIz6gMRBopkjP1TVT7xuwrButHID66PoM=
 github.com/goccy/go-yaml v1.19.2/go.mod h1:XBurs7gK8ATbW4ZPGKgcbrY1Br56PdM69F7LkFRi1kA=
 github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09 h1:MHooQaFSrL9EC73VaJuZwyr+qSDJIIL043yJ2smSUT8=
 github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09/go.mod h1:hI3EP11xB9K+trfc4cf+GrLMY86wFdeye+tcLVIlZtI=
-golang.org/x/sys v0.13.0 h1:Af8nKPmuFypiUBjVoU9V20FiaFXOcuZI21p0ycVYYGE=
-golang.org/x/sys v0.13.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=

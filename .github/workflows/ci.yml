@@ -20,17 +20,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
-    inputs:
-      race_timing:
-        description: Capture and upload per-command go test JSONL timing records
-        required: false
-        type: boolean
-        default: false
-      race_vet_off:
-        description: "Experimental: append -vet=off to race tests (manual dispatch only)"
-        required: false
-        type: boolean
-        default: false
 
 # Least-privilege default for the whole workflow. The CI jobs only read source.
 permissions:
@@ -179,10 +168,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Validate the path classifiers HERE, in the always-run changes job — never
-      # in a flag-gated Go job. These tests decide which jobs run; if they lived in
-      # test-race-root-a (gated on go_relevant) a `go`/`docs_only`/`site`
-      # misclassification could skip the very tests that would catch it, and the
-      # always() aggregators would then report success on the gap. Pure bash, no Go
+      # in a flag-gated Go job. These tests decide which jobs run; misclassification
+      # could otherwise skip the very tests that would catch it. Pure bash, no Go
       # toolchain, so they are cheap to run on every push/PR.
       - name: Validate path classifiers
         run: |
@@ -290,7 +277,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
 
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
         with:
@@ -350,7 +337,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -409,7 +396,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -474,7 +461,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -526,7 +513,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
 
       - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
 
@@ -614,7 +601,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
 
       - name: Integration-test Studio against a spawned mecated --mock
         run: task studio:test:integration
@@ -657,7 +644,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -666,36 +653,16 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
-      # Resolve the declared dependency graphs before compiling. A successful main
-      # run then saves a complete shared module cache for later PR jobs. Retry only
-      # network resolution, never build or test execution.
+      # Populate both workspace and standalone dependency graphs before the offline proof.
       - name: Download Go modules
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            if (
-              go mod download all
-              # Standalone graphs fetch the published engine baseline archive and
-              # their own selected dependency versions for the file-only proof.
-              (cd internal/adaptersupport && GOWORK=off go mod download all)
-              (cd contracts/gen/go/mecatl/driver && GOWORK=off go mod download all)
-              cd engine && go mod download all
-              cd ../internal/adaptersupport && go mod download all
-              cd ../../contracts/gen/go/mecatl/driver && go mod download all
-              cd ../../../../../authn/oidc && go mod download all
-              cd ../../provider/ssefilter && go mod download all
-              cd ../anthropic && go mod download all
-              cd ../openai && go mod download all
-              cd ../openaichat && go mod download all
-            ); then
-              exit 0
-            fi
-            if [[ "$attempt" -eq 3 ]]; then
-              exit 1
-            fi
-            sleep "$((attempt * 5))"
-          done
+          go mod download all
+          modules=$(go work edit -json | jq -r '.Use[].DiskPath | select(. != "./")')
+          while IFS= read -r module; do
+            (cd "$module" && GOWORK=off go mod download all)
+          done <<< "$modules"
 
       - name: go build
         run: go build ./...
@@ -728,11 +695,13 @@ jobs:
           (cd provider/openaichat && go build ./...)
 
       - name: Verify Go module and workspace metadata freshness
+        shell: bash
         run: |
+          set -euo pipefail
           task tidy
-          git diff --exit-code -- go.mod go.sum go.work go.work.sum engine/go.mod engine/go.sum authn/oidc/go.mod authn/oidc/go.sum environment/microvm/go.mod environment/microvm/go.sum integration/microvm/go.mod integration/microvm/go.sum provider/ssefilter/go.mod provider/ssefilter/go.sum provider/anthropic/go.mod provider/anthropic/go.sum provider/openai/go.mod provider/openai/go.sum provider/openaichat/go.mod provider/openaichat/go.sum internal/adaptersupport/go.mod internal/adaptersupport/go.sum contracts/gen/go/mecatl/driver/go.mod contracts/gen/go/mecatl/driver/go.sum adapters/go.mod
-          # adapters/go.sum is intentionally absent until support and driver v0.1.0
-          # are published. Candidate-proxy tidy verifies its standalone closure.
+          git diff --exit-code -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum'
+          untracked=$(git ls-files --others --exclude-standard -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum')
+          if [[ -n "$untracked" ]]; then printf 'Untracked Go metadata:\n%s\n' "$untracked" >&2; exit 1; fi
 
       - name: Prove standalone public persistence consumers offline
         run: task test:persistence-standalone
@@ -780,7 +749,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
       - name: Build and run the formula's executables
         env:
           # A recognisable stand-in for a release tag. The release build stamps
@@ -833,7 +802,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
       - name: Run managed temporary storage tests
         run: |
           go test ./internal/adapter/managedtemp -count=1
@@ -843,251 +812,35 @@ jobs:
           # Linux/macOS, and ToolHive's 1Password SDK cannot compile on FreeBSD.
           GOOS=freebsd GOARCH=amd64 go test -c -o "$RUNNER_TEMP/osfs-freebsd.test" ./internal/adapter/osfs
 
-  test-race-root-a:
-    name: Test (race root-a)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
-            authn/oidc/go.sum
-            environment/microvm/go.sum
-            integration/microvm/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: Validate race workflow contracts
-        run: |
-          bash .github/scripts/root-race-packages_test.sh
-          bash .github/scripts/root-race-packages.sh validate
-          bash .github/scripts/race-test_test.sh
-          bash .github/scripts/race-vet-off-workflow_test.sh
-          bash .github/scripts/race-aggregate-workflow_test.sh
-          bash .github/scripts/deslop-workflow_test.sh
-      - name: go test -race (root-a and modules)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: |
-          set -euo pipefail
-          mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-a)
-          bash .github/scripts/race-test.sh root-a -count=1 "${packages[@]}"
-          (cd engine && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" engine ./...)
-          (cd internal/adaptersupport && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" adaptersupport ./...)
-          (cd contracts/gen/go/mecatl/driver && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" driver-contracts ./...)
-          (cd adapters && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" adapters ./...)
-          (cd authn/oidc && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" oidc ./...)
-          (cd integration/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm-integration ./...)
-          (cd provider/ssefilter && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-ssefilter ./...)
-          (cd provider/anthropic && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-anthropic ./...)
-          (cd provider/openai && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openai ./...)
-          (cd provider/openaichat && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" provider-openaichat ./...)
-      - name: Prove standalone public persistence consumers with race detection
-        run: |
-          (cd internal/adaptersupport && GOWORK=off go mod download all && GOWORK=off go mod tidy)
-          (cd contracts/gen/go/mecatl/driver && GOWORK=off go mod download all && GOWORK=off go mod tidy)
-          task test:persistence-standalone RACE=-race
-      - name: go test -race (microVM module)
-        if: needs.changes.outputs.microvm_relevant == 'true'
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: cd environment/microvm && bash "$GITHUB_WORKSPACE/.github/scripts/race-test.sh" microvm ./...
-      - name: Upload root-a race timing records
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: race-timing-root-a
-          path: .scratch/race-timing/*.jsonl
-          if-no-files-found: warn
-          retention-days: 3
-
-  test-race-root-b:
-    name: Test (race root-b)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
-            authn/oidc/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: go test -race (root-b)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: |
-          set -euo pipefail
-          mapfile -t packages < <(bash .github/scripts/root-race-packages.sh root-b)
-          bash .github/scripts/race-test.sh root-b -count=1 "${packages[@]}"
-      - name: Upload root-b race timing records
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: race-timing-root-b
-          path: .scratch/race-timing/*.jsonl
-          if-no-files-found: warn
-          retention-days: 3
-
-  test-race-ui:
-    name: Test (race UI)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RACE_VET_OFF: ${{ github.event_name == 'workflow_dispatch' && inputs.race_vet_off }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
-            authn/oidc/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: go test -race (UI)
-        env:
-          RACE_TIMING: ${{ github.event_name == 'workflow_dispatch' && inputs.race_timing }}
-        run: bash .github/scripts/race-test.sh ui -count=1 ./cmd/mecatui/ui
-      - name: Upload UI race timing records
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.race_timing
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: race-timing-ui
-          path: .scratch/race-timing/*.jsonl
-          if-no-files-found: warn
-          retention-days: 3
-
-  test-non-race-draft:
-    name: Test (non-race draft coverage)
-    needs: changes
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == true
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            engine/go.sum
-            internal/adaptersupport/go.sum
-            contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
-            authn/oidc/go.sum
-            provider/ssefilter/go.sum
-            provider/anthropic/go.sum
-            provider/openai/go.sum
-            provider/openaichat/go.sum
-      - name: Complete test coverage without race detector
-        run: |
-          set -euo pipefail
-          mapfile -t root_a < <(bash .github/scripts/root-race-packages.sh root-a)
-          mapfile -t root_b < <(bash .github/scripts/root-race-packages.sh root-b)
-          go test -count=1 "${root_a[@]}"
-          go test -count=1 "${root_b[@]}"
-          go test -count=1 ./cmd/mecatui/ui
-          (cd engine && go test ./...)
-          (cd internal/adaptersupport && go test ./...)
-          (cd contracts/gen/go/mecatl/driver && go test ./...)
-          (cd adapters && go test ./...)
-          (cd authn/oidc && go test ./...)
-          (cd integration/microvm && go test ./...)
-          (cd provider/ssefilter && go test ./...)
-          (cd provider/anthropic && go test ./...)
-          (cd provider/openai && go test ./...)
-          (cd provider/openaichat && go test ./...)
-      - name: go test (microVM module)
-        if: needs.changes.outputs.microvm_relevant == 'true'
-        run: cd environment/microvm && go test ./...
-
-  # The stable required context is emitted only by full-race push/non-draft PR
-  # runs. Draft coverage and docs-only runs use distinct contexts.
   test:
-    name: ${{ needs.changes.outputs.docs_only == 'true' && 'Test (docs-only)' || github.event_name == 'pull_request' && github.event.pull_request.draft && 'Test (non-race draft)' || github.event_name == 'workflow_dispatch' && 'Test (race experiment)' || 'Test (race)' }}
-    needs: [changes, test-race-root-a, test-race-root-b, test-race-ui, test-non-race-draft]
+    name: ${{ needs.changes.outputs.docs_only == 'true' && 'Test (docs-only)' || github.event_name == 'pull_request' && github.event.pull_request.draft && 'Test (non-race draft)' || 'Test (race)' }}
+    needs: changes
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
-      - name: Require the applicable test coverage
-        shell: bash
+      - name: Require successful change classification
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
-          GO_RELEVANT: ${{ needs.changes.outputs.go_relevant }}
-          ROOT_A_RESULT: ${{ needs.test-race-root-a.result }}
-          ROOT_B_RESULT: ${{ needs.test-race-root-b.result }}
-          UI_RESULT: ${{ needs.test-race-ui.result }}
-          DRAFT_RESULT: ${{ needs.test-non-race-draft.result }}
+        run: test "$CHANGES_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        with:
+          persist-credentials: false
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: '**/go.sum'
+      - name: Test modules
+        if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+        env:
           IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
         run: |
-          set -euo pipefail
-          if [[ "$CHANGES_RESULT" != success ]]; then
-            echo "changes job did not succeed: $CHANGES_RESULT" >&2
-            exit 1
-          fi
-          if [[ "$DOCS_ONLY" == true ]]; then
-            exit 0
-          fi
-          # A change that cannot affect a Go binary/test legitimately skips every
-          # race + draft shard, so there is nothing to require.
-          if [[ "$GO_RELEVANT" != true ]]; then
-            exit 0
-          fi
-          if [[ "$IS_DRAFT" == true ]]; then
-            [[ "$DRAFT_RESULT" == success ]] || { echo "draft non-race coverage failed: $DRAFT_RESULT" >&2; exit 1; }
-            exit 0
-          fi
-          if [[ "$ROOT_A_RESULT" != success || "$ROOT_B_RESULT" != success || "$UI_RESULT" != success ]]; then
-            echo "race shard failure: root-a=$ROOT_A_RESULT root-b=$ROOT_B_RESULT ui=$UI_RESULT" >&2
-            exit 1
-          fi
+          if [ "$IS_DRAFT" = true ]; then task --concurrency 3 test; else task --concurrency 3 test:race; fi
 
   analysis:
     name: Analysis
@@ -1109,7 +862,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1310,7 +1063,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1517,7 +1270,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1568,7 +1321,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum
@@ -1655,7 +1408,7 @@ jobs:
             engine/go.sum
             internal/adaptersupport/go.sum
             contracts/gen/go/mecatl/driver/go.sum
-            adapters/go.mod
+            adapters/go.sum
             authn/oidc/go.sum
             environment/microvm/go.sum
             integration/microvm/go.sum

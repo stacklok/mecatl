@@ -211,7 +211,7 @@ results from earlier inputs are not proof of the repair. Reviewers consume the r
 results and run focused reproductions when needed, rather than repeat aggregate gates.
 
 `task ci` and its `task all` alias include the race suite. For applicable Go changes, CI
-runs non-race coverage on draft PRs and sharded race coverage on ready PRs and main. CI
+runs non-race coverage on draft PRs and module-parallel race coverage on ready PRs and main. CI
 independently verifies the submitted branch; it does not replace focused local verification
 or the final gates.
 

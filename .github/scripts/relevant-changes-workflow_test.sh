@@ -110,9 +110,9 @@ if [[ -z "$validate_line" || -z "$extract_line" || "$extract_line" -le "$validat
 fi
 
 # --- per-job gating ------------------------------------------------------------
-# The Go build/test matrix gates on go_relevant.
-for job in build analysis fuzz-smoke engine-standalone provider-standalone \
-  api-compat vuln test-race-root-a test-race-root-b test-race-ui test-non-race-draft; do
+# The remaining Go build/analysis jobs gate on go_relevant; the required test
+# context checks changes.result itself, even when no Go tests need running.
+for job in build analysis fuzz-smoke engine-standalone provider-standalone api-compat vuln; do
   assert_if "$job" has "needs.changes.outputs.go_relevant == 'true'"
 done
 
@@ -141,45 +141,10 @@ assert_if studio has "needs.changes.outputs.studio_relevant == 'true' || needs.c
 assert_if studio has "needs.changes.outputs.docs_only != 'true'"
 assert_if studio hasnot "sdk_relevant"
 
-# The opt-in MicroVM runtime gets a dedicated relevance output. Its standalone job
-# and the four nested-module steps must not run for unrelated Go changes.
+# The opt-in MicroVM standalone job still uses the dedicated relevance output.
 assert_if microvm-standalone has "needs.changes.outputs.microvm_relevant == 'true'"
-for job in build test-race-root-a test-non-race-draft analysis; do
-  if ! grep -Fq "if: needs.changes.outputs.microvm_relevant == 'true'" <<<"$(job_block "$job")"; then
-    fail "job '$job' must gate its MicroVM-specific step on microvm_relevant"
-  fi
-done
 
-# Drift guard: pin the number of job-level `if:` gates carrying go_relevant so
-# adding or removing a Go-gated job forces a conscious update to the job lists
-# above. Unlike the macOS jobs (which share the `runs-on: macos-14` marker the
-# sibling test counts), Linux Go jobs share `runs-on: ubuntu-24.04` with
-# legitimately-ungated jobs (changes, docs, domain-model, the always() aggregators,
-# sdk, user-docs), so there is no runner marker to count — this pins the gate set
-# instead. Expected 16 = 11 go-family/race/draft (the loop above) + 4 go||sdk jobs
-# + the studio job (go||studio).
-# The residual this cannot catch is a NEW Go job shipped with NO gate at all; the
-# job lists above are the record for that.
-go_gate_count="$(grep -cF "needs.changes.outputs.go_relevant == 'true'" "$workflow" || true)"
-if [[ "$go_gate_count" -ne 16 ]]; then
-  fail "expected 16 job if: gates on go_relevant (11 go-family + 4 go||sdk + studio), found $go_gate_count — update the job lists in this test when gating/ungating a job"
-fi
-
-# --- required-check aggregators tolerate the new skips -------------------------
-# test and lint are the required checks; both must gain a go_relevant branch or a
-# non-Go PR (which legitimately skips the race shards / analysis) fails them.
-go_relevant_env="GO_RELEVANT: \${{ needs.changes.outputs.go_relevant }}"
-env_count="$(grep -cF "$go_relevant_env" "$workflow" || true)"
-if [[ "$env_count" -lt 2 ]]; then
-  fail "both test and lint aggregators must read go_relevant (found $env_count of 2)"
-fi
-# The identical GO_RELEVANT early-exit appears in BOTH aggregators, so a whole-file
-# grep cannot tell which one has it. Pin each within its own job body: the test
-# aggregator's shard-requirement skip, and the lint aggregator's analysis-skipped
-# requirement (its message is already unique to lint).
-if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block test)"; then
-  fail 'the test aggregator must skip the shard requirement for a non-Go change'
-fi
+# --- lint aggregator tolerates non-Go skips ------------------------------------
 if ! grep -Fq 'if [[ "$GO_RELEVANT" != true ]]; then' <<<"$(job_block lint)"; then
   fail 'the lint aggregator must branch on go_relevant for a non-Go change'
 fi
@@ -204,17 +169,12 @@ else
 fi
 
 # The path classifiers decide which jobs run, so their self-tests must live in the
-# always-run `changes` job — never a flag-gated Go job that a misclassification
-# could skip. Pin that the changes job runs the relevant-changes tests and that
-# they are NOT (also) left in the go_relevant-gated test-race-root-a.
+# always-run `changes` job, not a flag-gated Go job.
 changes_block="$(job_block changes)"
 grep -Fq 'bash .github/scripts/relevant-changes_test.sh' <<<"$changes_block" \
   || fail 'the changes job must run relevant-changes_test.sh (always-run, not flag-gated)'
 grep -Fq 'bash .github/scripts/relevant-changes-workflow_test.sh' <<<"$changes_block" \
   || fail 'the changes job must run relevant-changes-workflow_test.sh (always-run, not flag-gated)'
-if grep -Fq 'bash .github/scripts/relevant-changes_test.sh' <<<"$(job_block test-race-root-a)"; then
-  fail 'classifier tests must not run in the go_relevant-gated test-race-root-a (self-gating blind spot)'
-fi
 
 if [[ "$failures" -ne 0 ]]; then
   exit 1

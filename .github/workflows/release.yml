@@ -2,11 +2,9 @@
 # example image, the Mecatl Studio image (early access, ADR 0351), the mecak8s
 # Helm chart, and the mecated+mecatui CLI archives (a GitHub Release plus a
 # stacklok/homebrew-tap formula) from root `v*` tags or an explicitly selected tag.
-# Nested persistence modules are NOT published by root v* releases. Their
-# initial tags do not yet exist: support and driver v0.1.0 must be published
-# first, then adapters/v0.1.0 after a real standalone adapters/go.sum is committed.
-# The manual preflight is scripts/preflight-persistence-module-release.sh;
-# update the release owner documentation when these tags become public.
+# Nested persistence modules are NOT published by root v* releases. Ordinary
+# builds and tidy use public, checksum-verified immutable dependency revisions;
+# independent release tags remain human-controlled; see adapters/COMPATIBILITY.md.
 name: Release
 
 on:

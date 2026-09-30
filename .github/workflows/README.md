@@ -3,7 +3,6 @@
 The workflow YAML files in this directory are the source of truth for CI and
 release behavior. This page is only a stable index to operational guidance.
 
-- [CI race-shard maintenance](../scripts/root-race-packages.sh)
 - [Live end-to-end testing](../../e2e/README.md)
 - [Performance tracking rationale](../../docs/adr/0019-perf-tracking.md)
 - [Deslop advisory duplication analysis](deslop.yml) (not a required CI gate)
