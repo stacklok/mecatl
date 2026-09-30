@@ -215,7 +215,7 @@ func TestPermissionReviewFreshnessAtExecutionAdmission(t *testing.T) {
 						if ev.Type == session.EvPermissionAsk {
 							t.Fatal("unexpected ordinary permission ask")
 						}
-						if ev.ToolResult != nil && ev.ToolResult.CallID == "c1" && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "review context changed") {
+						if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.CallID == "c1" && ev.ToolResult.IsError && strings.Contains(ev.ToolResult.Content, "review context changed") {
 							stale++
 						}
 						if ev.Hook != nil && ev.Hook.Guardrail != nil && ev.Hook.Guardrail.Disposition == "pass_advisory" {

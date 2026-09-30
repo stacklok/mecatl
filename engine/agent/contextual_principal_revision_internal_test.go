@@ -88,7 +88,7 @@ func TestReadBatchFinalAdmissionRejectsContextChange(t *testing.T) {
 	close(policy.release)
 	stale := 0
 	for ev := range run.Events() {
-		if ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, "review context changed") {
+		if ev.Type == session.EvToolResult && ev.ToolResult != nil && strings.Contains(ev.ToolResult.Content, "review context changed") {
 			stale++
 		}
 	}

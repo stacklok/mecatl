@@ -595,6 +595,11 @@ type Run struct {
 	seq     atomic.Int64
 	outcome atomic.Int32
 
+	// availability tracks display publication across every canonical producer in
+	// this run, including early read-batch completion and cancellation replacement.
+	availabilityMu sync.Mutex
+	available      map[session.ToolCallID]struct{}
+
 	// closureMu linearizes the final authorization.required publication against
 	// Cancel. That publication is the one nonterminal way an event stream closes.
 	closureMu       sync.Mutex

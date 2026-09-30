@@ -2380,10 +2380,32 @@ func (e *Engine) openCard(r *Run, turnIdx int, c session.ToolCall) {
 	e.emit(r, session.Event{Type: session.EvToolCall, Turn: turnIdx, ToolCall: &call})
 }
 
-// emit assigns the next Seq via Run.emit, then mirrors the sequenced event to the
-// injected EventSink when one is configured. The Run channel is the primary
-// surface; the sink is an optional secondary relay.
+// emit publishes live-only availability before any canonical result that was not
+// already published on the read-batch completion path. Every producer (including
+// resume and synthetic closeout) uses this seam, so none can omit the projection.
+// Run.emit sequences each event before it is mirrored to the optional sink.
 func (e *Engine) emit(r *Run, ev session.Event) {
+	if (ev.Type == session.EvToolResult || ev.Type == session.EvToolResultAvailable) && ev.ToolResult != nil {
+		r.availabilityMu.Lock()
+		if r.available == nil {
+			r.available = make(map[session.ToolCallID]struct{})
+		}
+		_, published := r.available[ev.ToolResult.CallID]
+		if ev.Type == session.EvToolResultAvailable && published {
+			r.availabilityMu.Unlock()
+			return
+		}
+		if !published {
+			r.available[ev.ToolResult.CallID] = struct{}{}
+		}
+		r.availabilityMu.Unlock()
+		if ev.Type == session.EvToolResult && !published {
+			available := ev
+			available.Type = session.EvToolResultAvailable
+			sequenced := r.emit(available)
+			e.mirrorEvent(r, sequenced)
+		}
+	}
 	sequenced := r.emit(ev)
 	e.mirrorEvent(r, sequenced)
 }
