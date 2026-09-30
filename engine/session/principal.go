@@ -291,6 +291,21 @@ func (s *Session) BindAuthority(authority Authority) error {
 	if !authority.Valid() {
 		return errors.New("session: invalid authority payload")
 	}
+	// A Ceiling bounds TOOL names only (AC3.1/AC3.2 — the same convention
+	// GrantToolAuthority and CompleteWorkspaceEnrollment already use via
+	// AllowsTool, never governance.CapabilitySet.Contains's fuller dimensional
+	// check): a payload whose CapabilitySet.Tools already exceeds its own
+	// Ceiling at bind time would leave the session outside its stated
+	// non-widenable ceiling from the moment it exists, and neither post-bind
+	// guard can repair that. Reject it here instead of trusting every caller to
+	// keep the two consistent by construction.
+	if authority.Ceiling != nil {
+		for _, name := range authority.CapabilitySet.Tools {
+			if !authority.Ceiling.AllowsTool(name) {
+				return errors.New("session: authority CapabilitySet exceeds its own Ceiling")
+			}
+		}
+	}
 	s.Authority = authority.Clone()
 	s.authorityBound = true
 	return nil

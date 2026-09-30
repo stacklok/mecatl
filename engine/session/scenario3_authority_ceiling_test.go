@@ -92,6 +92,30 @@ func TestSessionScopedAgentIdentity_Scenario3_AuthorityCeilingBoundOnce(t *testi
 			t.Fatalf("Ceiling = %+v, want nil for an ordinary session", got.Ceiling)
 		}
 	})
+
+	t.Run("rejects a bind whose CapabilitySet already exceeds its own Ceiling", func(t *testing.T) {
+		// Hardening beyond the original AC3.1/AC3.2 scope: GrantToolAuthority and
+		// CompleteWorkspaceEnrollment reject a POST-bind widening past Ceiling, but
+		// nothing previously stopped BindAuthority itself from accepting an
+		// already-inconsistent payload — leaving an agent-bound session outside
+		// its own stated non-widenable ceiling from the moment it's created, with
+		// neither guard able to repair it after the fact. BindAuthority now
+		// refuses that payload outright (mutation-verified: this subtest failed
+		// with a nil error before the Ceiling.Contains check was added).
+		s := New("ceiling-inconsistent", ModeDefault, EnvironmentRef{Kind: EnvKindLocal, ID: ".", Revision: "in-tree-v1"}, Limits{}, time.Unix(1, 0).UTC())
+		err := s.BindAuthority(Authority{
+			CapabilitySet:      governance.CapabilitySet{Tools: []string{"Read", "Shell"}},
+			Provenance:         "agent-def:test",
+			DefinitionIdentity: "agent:test",
+			Ceiling:            &governance.CapabilitySet{Tools: []string{"Read"}},
+		})
+		if err == nil {
+			t.Fatal("BindAuthority accepted a CapabilitySet exceeding its own Ceiling")
+		}
+		if _, bound := s.BoundAuthority(); bound {
+			t.Fatal("session left in a bound state after a rejected BindAuthority call")
+		}
+	})
 }
 
 func ceilingBoundSession(t *testing.T, ceilingTools, boundTools []string) *Session {

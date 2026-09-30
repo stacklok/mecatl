@@ -7,6 +7,7 @@ import (
 
 	agents "github.com/stacklok/mecatl/engine/adapter/agentfs"
 	"github.com/stacklok/mecatl/engine/agent"
+	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
@@ -81,6 +82,19 @@ func buildAgentDefRootEngine(
 	// the only kind an agent-bound session can ever be (AC1.5 rejects the debug
 	// combination at the create boundary before this ever runs).
 	authority := mintRootAuthority(cat, resources, session.SessionKindMain)
+	// Ceiling (AC3.1) is set HERE, at mint time, to a deep copy of the SAME
+	// CapabilitySet just minted — the one place an agent-bound session's
+	// Authority is ever constructed. Without this, GrantToolAuthority /
+	// CompleteWorkspaceEnrollment's Ceiling checks (engine/session, AC3.2) are
+	// unreachable for every real session: BindAuthority only ever sees whatever
+	// Ceiling this caller supplies, and a nil Ceiling means "unrestricted."
+	ceiling := governance.CapabilitySet{
+		Tools:                    append([]string(nil), authority.CapabilitySet.Tools...),
+		RemainingDelegationDepth: authority.CapabilitySet.RemainingDelegationDepth,
+		FileSystem:               authority.CapabilitySet.FileSystem,
+		DirectWrite:              authority.CapabilitySet.DirectWrite,
+	}
+	authority.Ceiling = &ceiling
 	return agent.NewEngine(deps), mcpClose, authority
 }
 

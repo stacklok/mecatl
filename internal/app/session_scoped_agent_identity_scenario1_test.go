@@ -219,6 +219,19 @@ func TestSessionScopedAgentIdentity_Scenario1_AuthorityMintedFromDefCatalog(t *t
 	if !toolSet["mcp__inline__echo"] {
 		t.Fatalf("minted Authority does not include the def's own inline-MCP tool — it must be derived from the def's resolved catalog, not the deployment default: %v", authority.CapabilitySet.Tools)
 	}
+
+	// AC3.1: the minted Authority must carry a non-nil Ceiling matching this
+	// SAME resolved catalog — GrantToolAuthority/CompleteWorkspaceEnrollment
+	// (engine/session) enforce it only when set; a nil Ceiling here would make
+	// their enforcement a structural no-op for every real agent-bound session,
+	// silently defeating AC3.1/AC3.2 despite those tests passing in isolation
+	// (they construct a Ceiling by hand rather than going through this mint path).
+	if authority.Ceiling == nil {
+		t.Fatalf("minted Authority has a nil Ceiling — GrantToolAuthority/CompleteWorkspaceEnrollment would treat this agent-bound session as unrestricted")
+	}
+	if !authority.Ceiling.Contains(authority.CapabilitySet) {
+		t.Fatalf("minted Ceiling does not contain the minted CapabilitySet: ceiling=%v capability=%v", authority.Ceiling.Tools, authority.CapabilitySet.Tools)
+	}
 }
 
 // --- AC1.4 -------------------------------------------------------------------
