@@ -3933,7 +3933,9 @@ export type Event = Message<"mecatl.v1.Event"> & {
   /**
    * type is the event kind (mirrors session.EventType: session.init,
    * turn.start, turn.end, message.delta, reasoning.delta, tool.call,
-   * tool.result, permission.ask, hook, compaction, result).
+   * tool.result.available, tool.result, permission.ask, hook, compaction, result).
+   * tool.result.available is a transient live display event; tool.result is the
+   * canonical durable result.
    *
    * @generated from field: string type = 1;
    */
@@ -3969,7 +3971,8 @@ export type Event = Message<"mecatl.v1.Event"> & {
   toolCall?: ToolCall | undefined;
 
   /**
-   * tool_result is set on tool.result events.
+   * tool_result is set on transient tool.result.available and canonical
+   * tool.result events.
    *
    * @generated from field: mecatl.v1.ToolResult tool_result = 6;
    */

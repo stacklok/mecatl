@@ -1886,7 +1886,9 @@ message PlanContinuationFailure {
 message Event {
   // type is the event kind (mirrors session.EventType: session.init,
   // turn.start, turn.end, message.delta, reasoning.delta, tool.call,
-  // tool.result, permission.ask, hook, compaction, result).
+  // tool.result.available, tool.result, permission.ask, hook, compaction, result).
+  // tool.result.available is a transient live display event; tool.result is the
+  // canonical durable result.
   string type = 1;
   // seq is the monotonically increasing sequence number within a run.
   int64 seq = 2;
@@ -1897,7 +1899,8 @@ message Event {
   string text = 4;
   // tool_call is set on tool.call events.
   ToolCall tool_call = 5;
-  // tool_result is set on tool.result events.
+  // tool_result is set on transient tool.result.available and canonical
+  // tool.result events.
   ToolResult tool_result = 6;
   // ask is set on permission.ask events; ask_id is echoed in ResumeApproval.
   PermissionAsk ask = 7;

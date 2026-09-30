@@ -72,6 +72,31 @@ func TestRunEventRecorderPersistsNetworkAttemptPayload(t *testing.T) {
 	}
 }
 
+func TestRunEventRecorderOmitsToolResultAvailable(t *testing.T) {
+	log := &countingEventLog{}
+	recorder := NewRunEventRecorder(context.Background(), recorderService(log, port.NopDiagnostics{}), "s1")
+
+	recorder.Observe(session.Event{Type: session.EvMessageDelta, Turn: 1, Text: "pending"})
+	available := session.NewToolResult("call-1", "safe")
+	canonical := session.NewToolResult("call-1", "safe")
+	recorder.Observe(session.Event{Type: session.EvToolResultAvailable, Turn: 1, ToolResult: &available})
+	if got := len(log.recorded); got != 0 {
+		t.Fatalf("availability flushed or appended %d durable events, want none", got)
+	}
+	recorder.Observe(session.Event{Type: session.EvToolResult, Turn: 1, ToolResult: &canonical})
+	recorder.Close()
+
+	if got, want := len(log.recorded), 2; got != want {
+		t.Fatalf("durable events = %+v, want only pending delta and canonical result", log.recorded)
+	}
+	if got := log.recorded[0]; got.Type != session.EvMessageDelta || got.Text != "pending" {
+		t.Fatalf("durable event[0] = %+v, want pending delta", got)
+	}
+	if got := log.recorded[1]; got.Type != session.EvToolResult {
+		t.Fatalf("durable event[1] = %+v, want canonical tool result", got)
+	}
+}
+
 func TestRunEventRecorderCoalescesDeltasInFirstObservedOrder(t *testing.T) {
 	log := &countingEventLog{}
 	recorder := NewRunEventRecorder(context.Background(), recorderService(log, port.NopDiagnostics{}), "s1")

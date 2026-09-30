@@ -975,12 +975,12 @@ event kind; the structured submessages are populated per kind.
 
 | Field | Type | Label | Oneof | Description |
 |---|---|---|---|---|
-| `type` | `string` |  |  | type is the event kind (mirrors session.EventType: session.init, turn.start, turn.end, message.delta, reasoning.delta, tool.call, tool.result, permission.ask, hook, compaction, result). |
+| `type` | `string` |  |  | type is the event kind (mirrors session.EventType: session.init, turn.start, turn.end, message.delta, reasoning.delta, tool.call, tool.result.available, tool.result, permission.ask, hook, compaction, result). tool.result.available is a transient live display event; tool.result is the canonical durable result. |
 | `seq` | `int64` |  |  | seq is the monotonically increasing sequence number within a run. |
 | `turn` | `int32` |  |  | turn is the 0-based turn index this event belongs to (mirrors session.Event.Turn; clients add 1 for a human-facing &#34;turn N&#34;). |
 | `text` | `string` |  |  | text carries streamed or final text where applicable. |
 | `tool_call` | `ToolCall` |  |  | tool_call is set on tool.call events. |
-| `tool_result` | `ToolResult` |  |  | tool_result is set on tool.result events. |
+| `tool_result` | `ToolResult` |  |  | tool_result is set on transient tool.result.available and canonical tool.result events. |
 | `ask` | `PermissionAsk` |  |  | ask is set on permission.ask events; ask_id is echoed in ResumeApproval. |
 | `result` | `Result` |  |  | result is set on the terminal result event. |
 | `turn_end` | `TurnEnd` |  |  | turn_end is set on turn.end events (this turn&#39;s usage + elapsed time). |
