@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
@@ -80,9 +82,14 @@ func (noExternalEvidenceSource) ReadReviewEvidence(context.Context, agent.Review
 	return agent.ReviewEvidence{}, fmt.Errorf("no evidence handles were advertised")
 }
 
-type noExternalEvidencePreparer struct{}
+type noExternalEvidencePreparer struct{ before func(context.Context) error }
 
-func (noExternalEvidencePreparer) PrepareReviewEvidence(context.Context, agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
+func (p noExternalEvidencePreparer) PrepareReviewEvidence(ctx context.Context, _ agent.ReviewEvidencePreparation) (agent.PreparedReviewEvidence, error) {
+	if p.before != nil {
+		if err := p.before(ctx); err != nil {
+			return agent.PreparedReviewEvidence{}, err
+		}
+	}
 	return agent.PreparedReviewEvidence{Source: noExternalEvidenceSource{}, Complete: true}, nil
 }
 
@@ -121,6 +128,59 @@ func (*noLearnPolicy) Evaluate(context.Context, session.SessionID, session.Permi
 	return port.PermissionResult{Decision: governance.PermissionDecision{Effect: governance.Allow}}
 }
 func (p *noLearnPolicy) Learn(session.SessionID, session.ToolCall) { p.learns++ }
+
+func TestActionApprovalWaitOutlivesReviewBudgetAndArmsGrant(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		reviewer := &scenario1GrantReviewer{}
+		parent, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		parentDeadline, _ := parent.Deadline()
+		prepares := 0
+		preparer := noExternalEvidencePreparer{before: func(ctx context.Context) error {
+			prepares++
+			if prepares == 2 { // post-action grant binding, after the human wait and execution
+				if deadline, _ := ctx.Deadline(); deadline != parentDeadline {
+					t.Errorf("post-action preparation deadline=%v, want parent %v", deadline, parentDeadline)
+				}
+				select {
+				case <-time.After(91 * time.Second):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+			}
+			return nil
+		}}
+		executions := 0
+		cat := tool.NewCatalog()
+		cat.MustRegister(&fakeTool{name: "Write", exec: func(ctx context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+			if deadline, _ := ctx.Deadline(); ctx.Err() != nil || deadline != parentDeadline {
+				t.Errorf("execution context err=%v deadline=%v, want live parent %v", ctx.Err(), deadline, parentDeadline)
+			}
+			executions++
+			return session.NewToolResult(call.ID, "ok"), nil
+		}})
+		args := []byte(`{"path":"new.txt","content":"x"}`)
+		engine := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(session.NewToolCall("first", "Write", args)), mockllm.ToolCallTurn(session.NewToolCall("second", "Write", args)), mockllm.TextTurn("done")), Catalog: cat, Policy: &noLearnPolicy{}, ToolReviewer: reviewer, ReviewEvidencePreparer: preparer, Interactive: true})
+		env := agent.MemEnv("/ws")
+		run := engine.Run(parent, newSession(t, session.Limits{}), env, agent.RunRequest{Text: "write it"})
+		asks := 0
+		for ev := range run.Events() {
+			if ev.Type == session.EvPermissionAsk && ev.Ask != nil {
+				asks++
+				<-time.After(91 * time.Second)
+				if err := run.Approve(ev.Ask.AskID, session.VerdictAllowAlways); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if asks != 1 || reviewer.reviews != 1 || executions != 2 || prepares != 3 || !reviewer.AllowsGrant("Write:"+string(args)+":"+env.Ref().Revision) {
+			t.Fatalf("asks=%d reviews=%d executions=%d prepares=%d grants=%v", asks, reviewer.reviews, executions, prepares, reviewer.armed)
+		}
+	})
+}
 
 func TestADR_0363_ContextualGuardrails_Scenario1_ExactRepeatGrant(t *testing.T) {
 	reviewer := &scenario1GrantReviewer{}
