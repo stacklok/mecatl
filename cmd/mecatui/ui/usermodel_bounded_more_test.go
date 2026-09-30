@@ -134,11 +134,27 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_StableSelectionAndReveal(t *
 		}
 	}
 
-	m, s = savedMemoryOpened(t, savedMemoryEntries(40))
+	m = newUserModelModel(t, &fakeUserModel{model: client.UserModel{Entries: savedMemoryEntries(40)}}, client.Capabilities{UserModel: true})
+	m.keys = applyKeyOverrides(m.keys, map[string][]string{
+		"Up": {"u"}, "Down": {"d"}, "ScrollU": {"p"}, "ScrollD": {"n"}, "ScrollTop": {"t"}, "ScrollBottom": {"b"},
+	})
+	m, s = openedUserModel(t, m)
 	s.Render(30, 10)
-	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgDown}, tea.KeyPressMsg{Code: tea.KeyEnd}, tea.KeyPressMsg{Code: tea.KeyHome})
-	if s.list.CursorID() != "fact/000" {
-		t.Fatalf("root Update did not route page/end/home navigation: %q", s.list.CursorID())
+	m = applyAll(m, tea.KeyPressMsg{Code: 'd'})
+	if s.list.CursorID() != "fact/001" {
+		t.Fatalf("remapped Down did not select next key: %q", s.list.CursorID())
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: 'n'})
+	if s.list.CursorID() == "fact/001" || s.list.Offset() == 0 {
+		t.Fatalf("remapped PageDown did not page/reveal: selected=%q offset=%d", s.list.CursorID(), s.list.Offset())
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: 'p'}, tea.KeyPressMsg{Code: 'u'}, tea.KeyPressMsg{Code: 'b'})
+	if s.list.CursorID() != "fact/039" || s.list.Offset() == 0 {
+		t.Fatalf("remapped PageUp/Up/End did not reach bottom: selected=%q offset=%d", s.list.CursorID(), s.list.Offset())
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: 't'})
+	if s.list.CursorID() != "fact/000" || s.list.Offset() != 0 {
+		t.Fatalf("remapped Home did not return to top: selected=%q offset=%d", s.list.CursorID(), s.list.Offset())
 	}
 }
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_IdentityAndAnchorContinuity(t *testing.T) {
@@ -185,8 +201,8 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_ExactDetailConsistency(t *te
 		t.Fatal("matching deleted fact lost detail")
 	}
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
-	if s.list.CursorID() != "fact/001" {
-		t.Fatalf("escape did not clamp deleted detail selection: %q", s.list.CursorID())
+	if m.modal != s || s.view != userModelPanel || s.list.CursorID() != "fact/001" {
+		t.Fatalf("escape did not clamp deleted detail selection: view=%d selected=%q", s.view, s.list.CursorID())
 	}
 	s.setModel(client.UserModel{Entries: savedMemoryEntries(2)})
 	s.list.SetCursor(0)
@@ -210,7 +226,11 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_ExactDetailConsistency(t *te
 	}
 }
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_DetailHistoryAndReturn(t *testing.T) {
-	m, s := savedMemoryOpened(t, savedMemoryEntries(30))
+	m := newUserModelModel(t, &fakeUserModel{model: client.UserModel{Entries: savedMemoryEntries(30)}}, client.Capabilities{UserModel: true})
+	m.keys = applyKeyOverrides(m.keys, map[string][]string{
+		"Down": {"d"}, "ScrollD": {"n"}, "ScrollTop": {"t"}, "ScrollBottom": {"b"},
+	})
+	m, s := openedUserModel(t, m)
 	s.Render(60, 12)
 	s.list.SetCursor(20)
 	s.Render(60, 12)
@@ -223,9 +243,17 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_DetailHistoryAndReturn(t *te
 	detail := client.UserModel{Entries: savedMemoryEntries(30), Detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: selected, Value: strings.Repeat("value ", 100), Writer: "agent", Origin: "session"}, HistoryAvailable: true, History: []client.UserModelRevision{{Version: "v1", Status: "active"}}}}
 	m = applyAll(m, client.UserModelDetailMsg{Generation: s.generation, RequestKey: selected, UserModel: detail})
 	s.Render(60, 12)
-	for _, k := range []tea.KeyPressMsg{{Code: tea.KeyDown}, {Code: tea.KeyPgDown}, {Code: tea.KeyEnd}} {
-		s.HandleKey(k)
+	for _, step := range []struct {
+		code rune
+		want string
+	}{
+		{'d', "down"}, {'n', "page"}, {'t', "top"}, {'b', "bottom"},
+	} {
+		m = applyAll(m, tea.KeyPressMsg{Code: step.code})
 		s.Render(60, 12)
+		if step.want == "top" && s.viewport.Offset() != 0 || step.want != "top" && s.viewport.Offset() == 0 {
+			t.Fatalf("remapped detail %s offset=%d", step.want, s.viewport.Offset())
+		}
 	}
 	if s.viewport.Offset() == 0 {
 		t.Fatal("detail scroll not available")
@@ -302,7 +330,6 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testi
 	// response stale without leaving the panel in loading state, so B can retry.
 	mm, first := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
-	s = m.modal.(*userModelState)
 	lateA := first().(client.UserModelDetailMsg)
 	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = mm.(Model)
@@ -326,7 +353,6 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testi
 	}
 
 	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
-	s = m.modal.(*userModelState)
 	mm, failed := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = mm.(Model)
 	failure := failed().(client.UserModelDetailMsg)
@@ -416,5 +442,28 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if s.viewport.Offset() != detailEnd || m.vp.YOffset() != detailBefore {
 		t.Fatal("detail bottom endpoint wheel escaped modal")
+	}
+
+	// The modal blocks primary paste but does not disable copying an existing
+	// prompt selection. Both buttons route through the root mouse dispatcher.
+	cb := &fakeClipboard{primary: "must not paste"}
+	m.deps.Clipboard = cb
+	m.prompt.Rewrite("copy retained selection")
+	m.prompt.SelectAll()
+	if !m.prompt.HasSelection() {
+		t.Fatal("copy gate precondition: no selected text")
+	}
+	mm, copyCmd := m.Update(tea.MouseClickMsg{Button: tea.MouseRight, X: 1, Y: 1})
+	m = mm.(Model)
+	if copyCmd == nil {
+		t.Fatal("right click dropped existing prompt selection")
+	}
+	if payload, ok := osc52Payload(collectLeaves(copyCmd)); !ok || payload != "copy retained selection" {
+		t.Fatalf("right-click copied %q, want retained selection", payload)
+	}
+	mm, pasteCmd := m.Update(tea.MouseClickMsg{Button: tea.MouseMiddle, X: 1, Y: 1})
+	m = mm.(Model)
+	if pasteCmd != nil || cb.primaryCalls != 0 || m.prompt.Value() != "copy retained selection" {
+		t.Fatalf("middle-click bypassed modal paste gate: cmd=%v reads=%d draft=%q", pasteCmd != nil, cb.primaryCalls, m.prompt.Value())
 	}
 }

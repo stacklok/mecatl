@@ -36,8 +36,18 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 		}
 		if width == 140 {
 			s := m.modal.(*userModelState)
-			if got := len(s.list.View().Rows); got <= 14 {
-				t.Fatalf("normal body still capped at fourteen rows: %d", got)
+			content := m.metrics.contentBounds
+			budget := content.y1 - content.y0 - len(skillsTextLines(m.deps.Theme.Style("askTitle"), "Saved memory", content.x1-content.x0)) - len(skillsTextLines(m.deps.Theme.Style("muted"), renderUserModelMeta(s.model), content.x1-content.x0)) - len(skillsTextLines(m.deps.Theme.Style("muted"), "↑/↓ select · enter inspect · the agent saves and updates these facts · "+s.deps.marks.closeOnly+" close", content.x1-content.x0))
+			view := s.list.View()
+			indicators := 0
+			if view.Above > 0 {
+				indicators++
+			}
+			if view.Below > 0 {
+				indicators++
+			}
+			if got := s.list.Height() + indicators; got != budget || len(view.Rows) != s.list.Height() || budget <= 15 {
+				t.Fatalf("panel usable rows=%d + indicators=%d, offered content budget=%d, visible=%d", s.list.Height(), indicators, budget, len(view.Rows))
 			}
 			if got := len(strings.Split(stripANSIstr(m.renderBody()), "\n")); got != m.metrics.outerBounds.y1-m.metrics.outerBounds.y0 {
 				t.Fatalf("panel frame/chrome body rows=%d, card budget=%d", got, m.metrics.outerBounds.y1-m.metrics.outerBounds.y0)
@@ -58,8 +68,10 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 		}
 		if width == 140 {
 			s := m.modal.(*userModelState)
-			if got := len(s.viewport.View(s.detailLines).Rows); got <= 14 {
-				t.Fatalf("detail body still capped at fourteen rows: %d", got)
+			content := m.metrics.contentBounds
+			budget := content.y1 - content.y0 - len(skillsTextLines(m.deps.Theme.Style("askTitle"), "User model detail", content.x1-content.x0)) - len(skillsTextLines(m.deps.Theme.Style("muted"), s.deps.marks.scroll+" scroll · read-only · ask the agent to remove or restore this saved fact · "+s.deps.marks.closeOnly+" back", content.x1-content.x0))
+			if got := s.viewport.Height(); got != budget || len(s.viewport.View(s.detailLines).Rows) != budget || budget <= 15 {
+				t.Fatalf("detail usable rows=%d, offered content budget=%d, visible=%d", got, budget, len(s.viewport.View(s.detailLines).Rows))
 			}
 			if got := len(strings.Split(stripANSIstr(m.renderBody()), "\n")); got != m.metrics.outerBounds.y1-m.metrics.outerBounds.y0 {
 				t.Fatalf("detail frame/chrome body rows=%d, card budget=%d", got, m.metrics.outerBounds.y1-m.metrics.outerBounds.y0)
