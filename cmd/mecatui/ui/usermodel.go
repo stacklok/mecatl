@@ -1,7 +1,7 @@
 package ui
 
 // usermodel.go owns the open-only, read-only saved-memory inspector. The Model
-// retains only the request generation across surface lifetimes.
+// retains only the request token across surface lifetimes.
 import (
 	"fmt"
 	"strings"
@@ -44,8 +44,8 @@ func (m Model) openUserModel() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.prompt.Blur()
-	m.userModelGen++
-	s := &userModelState{deps: (&m).surfaceDeps(), generation: m.userModelGen, view: userModelPanel, loading: true, list: &bounded.List{}, viewport: &bounded.Viewport{}}
+	m.userModelRequestToken++
+	s := &userModelState{deps: (&m).surfaceDeps(), generation: m.userModelRequestToken, view: userModelPanel, loading: true, list: &bounded.List{}, viewport: &bounded.Viewport{}}
 	s.detailer, _ = m.deps.UserModel.(client.UserModelDetailer)
 	m.modal = s
 	return m, client.GetUserModelCmdTagged(m.deps.Ctx, m.deps.UserModel, s.generation)

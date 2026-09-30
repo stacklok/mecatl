@@ -254,12 +254,12 @@ func TestModelHasNoUserModelStateField(t *testing.T) {
 	}
 }
 
-// TestModelKeepsUserModelGeneration pins the Model-lifetime request token that
+// TestModelKeepsUserModelRequestToken pins the Model-lifetime request token that
 // invalidates detail replies after the dynamic surface closes or is replaced.
-func TestModelKeepsUserModelGeneration(t *testing.T) {
-	field, ok := reflect.TypeOf(Model{}).FieldByName("userModelGen")
+func TestModelKeepsUserModelRequestToken(t *testing.T) {
+	field, ok := reflect.TypeOf(Model{}).FieldByName("userModelRequestToken")
 	if !ok || field.Type.Kind() != reflect.Uint64 {
-		t.Error("Model must retain uint64 userModelGen as the /memory lifetime token")
+		t.Error("Model must retain uint64 userModelRequestToken as the /memory lifetime token")
 	}
 }
 
