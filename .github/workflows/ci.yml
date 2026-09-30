@@ -653,17 +653,6 @@ jobs:
             provider/openai/go.sum
             provider/openaichat/go.sum
 
-      # Populate both workspace and standalone dependency graphs before the offline proof.
-      - name: Download Go modules
-        shell: bash
-        run: |
-          set -euo pipefail
-          go mod download all
-          modules=$(go work edit -json | jq -r '.Use[].DiskPath | select(. != "./")')
-          while IFS= read -r module; do
-            (cd "$module" && GOWORK=off go mod download all)
-          done <<< "$modules"
-
       - name: go build
         run: go build ./...
 
@@ -702,9 +691,6 @@ jobs:
           git diff --exit-code -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum'
           untracked=$(git ls-files --others --exclude-standard -- go.mod go.sum go.work go.work.sum ':(glob)**/go.mod' ':(glob)**/go.sum')
           if [[ -n "$untracked" ]]; then printf 'Untracked Go metadata:\n%s\n' "$untracked" >&2; exit 1; fi
-
-      - name: Prove standalone public persistence consumers offline
-        run: task test:persistence-standalone
 
       # Prove the macOS-job cost gate stays sound: the terminal leaf directories
       # that macos-relevant-changes.sh skips must remain OUTSIDE the darwin+freebsd

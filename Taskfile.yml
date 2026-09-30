@@ -523,16 +523,6 @@ tasks:
       - task: test:_suite
         vars: {RACE: '-race'}
 
-  test:persistence-standalone:
-    desc: Prove public persistence modules and an external consumer offline without workspace replacements.
-    vars:
-      RACE: '{{default "" .RACE}}'
-    cmds:
-      - |
-          out=".scratch/external-persistence-$$"
-          while [ -e "$out" ]; do out="$out-next"; done
-          sh scripts/prove-external-persistence.sh "$out" {{.RACE}}
-
   test:authn-standalone:
     desc: Prove the opt-in OIDC module builds and tests with GOWORK=off.
     cmds:

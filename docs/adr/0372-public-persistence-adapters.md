@@ -45,15 +45,15 @@ Release support and driver before adapters, using independent nested tags:
 remain subject to human publication. Ordinary standalone builds and tidy do not
 wait for tags: the adapter manifest pins both dependencies to the public,
 checksum-verified `v0.0.0-20260929205240-3fd4c343ca56` revision and commits its
-real standalone sums. Offline candidate-proxy sums are not release sums.
+real standalone sums.
 
 ## Consequences
 
 External applications can reuse the existing implementations and conformance
 suites. Maintainers take on compatibility review for the complete concrete API
-and a dependency-first release sequence. Candidate standalone verification proves
-packaging without replacements, but cannot prove publication or backend ACL
-compatibility. No storage format, protocol behavior, authorization boundary,
+and a dependency-first release sequence. Standalone module tests use the pinned
+dependencies without workspace replacements, but cannot prove publication or
+backend ACL compatibility. No storage format, protocol behavior, authorization boundary,
 constructor side effect, or resource lifetime changes as part of this extraction.
 
 ## See also

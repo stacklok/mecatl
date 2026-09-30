@@ -28,8 +28,8 @@ While these modules are pre-v1:
 This follows the engine/provider pre-v1 versioning discipline, but it is a
 separate compatibility commitment. The engine's eight-package API snapshot gate
 **does not cover adapters**. Review adapter exports and changelog classifications
-explicitly; backend conformance tests and the standalone consumer proof exercise
-behavior and packaging, not a complete exported-API diff.
+explicitly; backend conformance and integration tests exercise behavior, not a
+complete exported-API diff.
 
 ## Modules and protocol versions
 
@@ -86,25 +86,18 @@ From reviewed commits, release dependency-first:
 Run the checks against the public checksum-backed proxy when preparing a
 release; a local tag or workspace build is not proof of public availability.
 
-## Offline candidate verification
+## Module tests
 
-Run this from the repository root, choosing a fresh output directory:
+From `adapters/`, run:
 
 ```sh
-sh scripts/prove-external-persistence.sh .scratch/external-proof-N
-# Optional race verification, also with a fresh directory:
-sh scripts/prove-external-persistence.sh .scratch/external-proof-race-N -race
+GOWORK=off go test ./...
+GOWORK=off go test -race ./...
 ```
 
-The helper packages current adapter source as a candidate archive and resolves
-its real support, driver, engine, and third-party dependencies from cached
-public download artifacts. It runs an unrelated external consumer with
-`GOWORK=off`, no replacements, an isolated module cache, and no network fallback.
-Standalone module tests separately cover current support and driver code.
-It checks the external and engine-only graphs and leaves the checkout's release
-requirements unchanged. Missing cached artifacts fail the proof.
+These commands include the cross-adapter tests in `integration/`, using pinned
+module dependencies and Go's normal download and build caches. The repository's
+`task test` and `task test:race` already include this module.
 
-This proves candidate packaging and the exercised integration contracts, **not
-live tag publication**, real Redis ACL behavior, or read-only filesystem access.
-See the [external consumer fixture](../integration/external-persistence-consumer/README.md)
-for its scope and limitations.
+Tests use local fixtures, not live services. They do not verify public tag
+availability, real Redis ACL behavior, or read-only filesystem access.
