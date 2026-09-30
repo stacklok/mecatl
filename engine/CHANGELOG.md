@@ -29,6 +29,14 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 - **Live tool-result availability** — adds `session.EvToolResultAvailable` for
   safe display payloads ahead of the canonical `tool.result`. Added (minor).
 
+- **Session-scoped agent identity** — adds `session.Session.AgentDefinitionName`
+  (a write-once creation label, empty for an ordinary session) and
+  `session.Authority.Ceiling` (an optional, write-once capability-set upper
+  bound set once at bind time for an agent-bound session; nil/absent —
+  unrestricted — for an ordinary session). `GrantToolAuthority` and
+  `CompleteWorkspaceEnrollment` now reject any grant that would exceed a bound
+  session's Ceiling (ADR 0353). Both additions are additive. Added (minor).
+
 - **Configurable standard commit co-author guidance** — adds
   `prompt.Config.CommitCoauthor`. `nil` and `true` include the canonical Mecatl
   commit-trailer guidance in the standard stable prompt prefix; `false` omits it.
