@@ -581,6 +581,7 @@ func ptr[T any](v T) *T { return &v }
 func TestADR_0370_Scenario3_CanonicalReconstructionOnly(t *testing.T) {
 	first := toolCall("first", "Read", `{"path":"first.go"}`)
 	second := toolCall("second", "Read", `{"path":"second.go"}`)
+	availableFirst := session.NewToolResult("first", "completed second")
 	availableSecond := session.NewToolResultWithParts("second", "completed first", []session.Content{
 		session.NewTextBlock("typed completion payload"),
 		session.NewStructuredContentBlock(`{"source":"availability"}`),
@@ -594,12 +595,19 @@ func TestADR_0370_Scenario3_CanonicalReconstructionOnly(t *testing.T) {
 		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("second", "cancelled before canonical drain"))},
 		{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}},
 	}
-	withAvailability := append([]session.Event{
-		// The later call completed first and its displayable typed payload is later
-		// replaced by the canonical cancellation result.
+	withAvailability := []session.Event{
+		{Type: session.EvTurnStart},
+		{Type: session.EvToolCall, ToolCall: &first},
+		{Type: session.EvToolCall, ToolCall: &second},
+		// The later call completes first. The successful availability payloads arrive
+		// before the read-batch barrier drains canonical results in model-call order.
 		{Type: session.EvToolResultAvailable, ToolResult: &availableSecond},
-		{Type: session.EvToolResultAvailable, ToolResult: ptr(session.NewToolResult("first", "completed second"))},
-	}, canonical...)
+		{Type: session.EvToolResultAvailable, ToolResult: &availableFirst},
+		// Cancellation then replaces both live successes with synthetic canonical errors.
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("first", "cancelled before canonical drain"))},
+		{Type: session.EvToolResult, ToolResult: ptr(session.NewToolError("second", "cancelled before canonical drain"))},
+		{Type: session.EvResult, Result: &session.ResultPayload{Stop: session.StopCancelled}},
+	}
 
 	canonicalOnly, err := eventsource.Fold(meta(), seq(canonical))
 	if err != nil {
