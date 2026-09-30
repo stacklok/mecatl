@@ -256040,6 +256040,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790791868466,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9fb86105bc90e28185be8552179d7dfbdb18040a",
+          "message": "fix(adapters): use released module dependencies for standalone tests (#2021)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T23:28:30+03:00",
+          "tree_id": "4f4e7d35f2c071f1cec15eb4aebc9134a4f43bc9",
+          "url": "https://github.com/stacklok/mecatl/commit/9fb86105bc90e28185be8552179d7dfbdb18040a"
+        },
+        "date": 1790800853229,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -371748,6 +371782,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790800850302,
+  "lastUpdate": 1790800854433,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
