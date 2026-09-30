@@ -233,16 +233,19 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 	e.emit(r, session.Event{Type: session.EvHook, Turn: turnIdx, Hook: &session.HookPayload{Phase: string(governance.PhasePostToolUse), Tool: call.Name, Decision: session.HookInfo, CallID: call.ID, Guardrail: machine}})
 }
 
-func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, result session.ToolResult, assessment inboundAssessment) (session.ToolResult, bool) {
+// resolveInbound returns whether the effective tool result was released, distinct
+// from whether its assessment needed a hold. PostToolUse prose is still suppressed
+// for held results even after Release once.
+func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, result session.ToolResult, assessment inboundAssessment) (resolved session.ToolResult, cancelled, originalReleased bool) {
 	if assessment.close != nil {
 		defer assessment.close()
 	}
 	if !assessment.applies {
-		return result, false
+		return result, false, true
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.principalRevision) {
 		e.emitInboundReview(r, turnIdx, call, assessment, "withhold_result")
-		return session.NewToolError(call.ID, withheldResultText+": root instructions changed during review; retry the action for a fresh assessment"), false
+		return session.NewToolError(call.ID, withheldResultText+": root instructions changed during review; retry the action for a fresh assessment"), false, false
 	}
 	r.publishInboundDetail(ctx, sess.ID, assessment)
 	if !inboundNeedsHold(assessment) {
@@ -251,18 +254,18 @@ func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Sessi
 			disposition = "pass_advisory"
 		}
 		e.emitInboundReview(r, turnIdx, call, assessment, disposition)
-		return result, false
+		return result, false, true
 	}
 	key := heldResultKey{reviewID: assessment.request.ReviewID, session: sess.ID, call: call.ID, env: env.Ref()}
 	if !r.reviewRoot.holdResult(key, result) {
 		e.emitInboundReview(r, turnIdx, call, assessment, "deny")
-		return session.NewToolError(call.ID, withheldResultText+": private hold capacity unavailable"), false
+		return session.NewToolError(call.ID, withheldResultText+": private hold capacity unavailable"), false, false
 	}
 	r.reviewRoot.record(reviewFact(call, assessment.request.Target, "withheld"))
 	if !e.deps.Interactive {
 		r.reviewRoot.dropHeld(key)
 		e.emitInboundReview(r, turnIdx, call, assessment, "withhold_result")
-		return session.NewToolError(call.ID, withheldResultText), false
+		return session.NewToolError(call.ID, withheldResultText), false, false
 	}
 	ask := session.PendingAsk{
 		AskID: r.issueAskID(sess.ID, sess.Counters.ToolCalls, call.ID), Tool: call.Name,
@@ -272,28 +275,28 @@ func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Sessi
 	}
 	if !r.reviewRoot.bindHeldAsk(key, ask.AskID) {
 		r.reviewRoot.dropHeld(key)
-		return session.NewToolError(call.ID, withheldResultText+": live hold binding unavailable"), false
+		return session.NewToolError(call.ID, withheldResultText+": live hold binding unavailable"), false, false
 	}
 	answer, ok, paused := e.surfaceAsk(ctx, r, sess, turnIdx, ask)
 	if !paused || !ok {
 		r.reviewRoot.dropHeld(key)
-		return session.NewToolError(call.ID, withheldResultText+": release decision was cancelled"), true
+		return session.NewToolError(call.ID, withheldResultText+": release decision was cancelled"), true, false
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.principalRevision) {
 		r.reviewRoot.dropHeld(key)
-		return session.NewToolError(call.ID, withheldResultText+": root instructions changed while release approval was pending; retry the action for a fresh assessment"), false
+		return session.NewToolError(call.ID, withheldResultText+": root instructions changed while release approval was pending; retry the action for a fresh assessment"), false, false
 	}
 	if answer.verdict == session.VerdictAllowOnce {
 		released, found := r.reviewRoot.consumeHeld(key, ask.AskID)
 		if !found {
-			return session.NewToolError(call.ID, withheldResultText+": held result is unavailable"), false
+			return session.NewToolError(call.ID, withheldResultText+": held result is unavailable"), false, false
 		}
 		r.reviewRoot.record(reviewFact(call, assessment.request.Target, "released"))
 		e.emitInboundReview(r, turnIdx, call, assessment, "release_result")
-		return released, false
+		return released, false, true
 	}
 	r.reviewRoot.dropHeld(key)
 	r.reviewRoot.record(reviewFact(call, assessment.request.Target, "denied"))
 	e.emitInboundReview(r, turnIdx, call, assessment, "deny")
-	return session.NewToolError(call.ID, withheldResultText), false
+	return session.NewToolError(call.ID, withheldResultText), false, false
 }

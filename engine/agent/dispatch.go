@@ -416,11 +416,10 @@ func (e *Engine) publishCleanReadBatch(ctx context.Context, r *Run, sess *sessio
 		// Non-held assessments have a final, non-asking inbound disposition.
 		// Resolve it before publishing: principal revision changes can replace
 		// even an otherwise clean payload with a synthetic safe error.
-		result, _ := e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
-		// A stale binding can replace a clean assessment with a synthetic
-		// withholding result. Do not let a PostToolUse annotation quote the
-		// unreleased original in that case.
-		if reflect.DeepEqual(result, p.record.result) {
+		result, _, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
+		// A stale binding can withhold a clean assessment. Do not let a
+		// PostToolUse annotation quote the unreleased original in that case.
+		if originalReleased {
 			for _, event := range p.record.postEvents {
 				e.emit(r, event)
 			}
@@ -439,6 +438,7 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 	for i := range pending {
 		p := &pending[i]
 		var result session.ToolResult
+		var originalReleased bool
 		if cancelled || ctx.Err() != nil {
 			cancelled = true
 			// resolveInbound may already have closed a clean result; successful
@@ -454,7 +454,7 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 		} else if available[i] {
 			result = p.record.result
 		} else {
-			result, cancelled = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
+			result, cancelled, originalReleased = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
 			if cancelled {
 				p.record.result = session.ToolResult{}
 				p.record.postEvents = nil
@@ -463,7 +463,7 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 		// A held result becomes displayable only after resolveInbound returns its
 		// release or synthetic withholding decision. Clean results were published
 		// on completion and must not be published twice.
-		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !available[i])
+		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !available[i], originalReleased)
 		out[p.call.ID] = result
 	}
 	return cancelled
@@ -1639,11 +1639,12 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	return executionRecord{result: res, queued: queued, duration: dur, assessment: assessment, postEvents: postEvents}
 }
 
-func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, c session.ToolCall, record executionRecord, result session.ToolResult, available bool) {
+func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, c session.ToolCall, record executionRecord, result session.ToolResult, available, originalReleased bool) {
 	// A held assessment suppresses PostToolUse annotation prose even after a
 	// release: a hook is allowed to quote its input, and no annotation may become
-	// a side channel around the held-result decision.
-	if !inboundNeedsHold(record.assessment) {
+	// a side channel around the held-result decision. A stale principal revision
+	// can also withhold an otherwise clean assessment.
+	if originalReleased && !inboundNeedsHold(record.assessment) {
 		for _, event := range record.postEvents {
 			e.emit(r, event)
 		}
@@ -1663,8 +1664,8 @@ func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, 
 
 func (e *Engine) execute(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, c session.ToolCall, t tool.Tool, auth *permissionAuthorization, enqueue time.Time) (session.ToolResult, bool) {
 	record := e.executePrivate(ctx, r, sess, env, turnIdx, c, t, auth, enqueue)
-	result, cancelled := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
-	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil)
+	result, cancelled, originalReleased := e.resolveInbound(ctx, r, sess, env, turnIdx, c, record.result, record.assessment)
+	e.finalizeToolResult(r, sess, turnIdx, c, record, result, !cancelled && ctx.Err() == nil, originalReleased)
 	return result, cancelled
 }
 

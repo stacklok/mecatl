@@ -93,6 +93,74 @@ func testAvailabilityAfterStalePrincipalRevision(t *testing.T) {
 	}
 }
 
+func TestADR_0370_Scenario2_StaleInboundSuppressesPostHookAnnotations(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		readOnly bool
+		stale    bool
+	}{
+		{name: "read batch stale", readOnly: true, stale: true},
+		{name: "serial stale", stale: true},
+		{name: "serial released", stale: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const private = "POST_HOOK_PRIVATE_CONTENT"
+			release := make(chan struct{})
+			t.Cleanup(func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			})
+			reviewer := &inboundReviewer{entered: make(chan session.ToolCallID, 1), release: release, assessment: agent.ReviewAcceptable}
+			name := "Write"
+			if tc.readOnly {
+				name = "Read"
+			}
+			instrument := &fakeTool{name: name, readOnly: tc.readOnly, exec: func(_ context.Context, call session.ToolCall, _ tool.Workspace) (session.ToolResult, error) {
+				return session.NewToolResult(call.ID, "tool returned "+private), nil
+			}}
+			hook := &countingPostHook{message: "hook saw " + private}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			run := agent.NewEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("one", name, `{}`)), mockllm.TextTurn("done")), Catalog: catalogWith(t, instrument), Policy: staticAllowPolicy{}, Hooks: hook, ToolReviewer: reviewer}).Run(ctx, newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go"})
+			select {
+			case <-reviewer.entered:
+			case <-ctx.Done():
+				t.Fatal("inbound review did not begin")
+			}
+			if tc.stale {
+				agent.RefreshReviewTasksForTest(run, []session.Message{{Role: session.RoleUser, Text: "new root task", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
+			}
+			close(release)
+			events := drain(run)
+			available, canonical := availabilityAndCanonical(t, events, "one")
+			if !reflect.DeepEqual(available, canonical) || available.IsError != tc.stale {
+				t.Fatalf("unexpected effective result: available=%+v canonical=%+v", available, canonical)
+			}
+			annotations := 0
+			for _, ev := range events {
+				if strings.Contains(ev.Text, private) {
+					annotations++
+				}
+			}
+			wantAnnotations := 1
+			if tc.stale {
+				wantAnnotations = 0
+				if !strings.Contains(canonical.Content, "root instructions changed during review") || strings.Contains(canonical.Content, private) {
+					t.Fatalf("stale review did not withhold original result: %+v", canonical)
+				}
+			} else if !strings.Contains(canonical.Content, private) {
+				t.Fatalf("released result lost original content: %+v", canonical)
+			}
+			if annotations != wantAnnotations {
+				t.Fatalf("PostToolUse annotations = %d, want %d", annotations, wantAnnotations)
+			}
+		})
+	}
+}
+
 func availabilityAndCanonical(t *testing.T, events []session.Event, callID session.ToolCallID) (session.ToolResult, session.ToolResult) {
 	t.Helper()
 	var available, canonical *session.ToolResult
