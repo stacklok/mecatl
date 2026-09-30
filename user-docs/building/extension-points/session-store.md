@@ -26,9 +26,7 @@ Use the engine ports to expose only the operations your application needs.
 |gRPC driver|`github.com/stacklok/mecatl/adapters/grpcdriver`|Clients and server wrappers over an independently operated backend|
 
 Install `adapters/v0.1.1` with Go 1.27 or later. It resolves through the
-public Go proxy with its support and driver dependencies. The earlier
-`adapters/v0.1.0` tag pins support and driver to a PR-head revision outside
-`main`; `v0.1.1` uses the published dependency tags. The
+public Go proxy with its support and driver dependencies. The
 [adapter compatibility and release policy](https://github.com/stacklok/mecatl/blob/main/adapters/COMPATIBILITY.md)
 records the module boundaries and release verification. Local workspace
 replacements are for repository development only.

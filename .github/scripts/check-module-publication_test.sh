@@ -3,13 +3,14 @@ set -eu
 
 root=$(git rev-parse --show-toplevel)
 repo="$root/.scratch/module-publication-fixture-$$"
-mkdir -p "$repo/internal/adaptersupport" "$repo/adapters"
+mkdir -p "$repo/internal/adaptersupport" "$repo/contracts/gen/go/mecatl/driver" "$repo/adapters"
 trap 'rm -rf "$repo"' EXIT
 
 git -C "$repo" init -q
 printf 'module github.com/stacklok/mecatl/internal/adaptersupport\n\ngo 1.27.0\n' > "$repo/internal/adaptersupport/go.mod"
+printf 'module github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver\n\ngo 1.27.0\n' > "$repo/contracts/gen/go/mecatl/driver/go.mod"
 printf 'module github.com/stacklok/mecatl/adapters\n\ngo 1.27.0\n' > "$repo/adapters/go.mod"
-git -C "$repo" add internal/adaptersupport/go.mod adapters/go.mod
+git -C "$repo" add internal/adaptersupport/go.mod contracts/gen/go/mecatl/driver/go.mod adapters/go.mod
 git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.com commit -qm base
 base=$(git -C "$repo" rev-parse HEAD)
 git -C "$repo" update-ref refs/remotes/origin/main "$base"

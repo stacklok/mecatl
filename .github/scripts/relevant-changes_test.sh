@@ -105,6 +105,16 @@ run "studio: ci.yml (job definition) runs" studio true .github/workflows/ci.yml
 run "studio: Taskfile (task recipes) runs" studio true Taskfile.yml
 run "studio: .github/scripts change runs" studio true .github/scripts/relevant-changes.sh
 
+# --- module publication: immutable adapter dependency closure -----------------
+run "module publication: adapter manifest runs" module_publication true adapters/go.mod adapters/go.sum
+run "module publication: root and integration pins run" module_publication true go.mod integration/microvm/go.mod
+run "module publication: support and driver manifests run" module_publication true internal/adaptersupport/go.mod contracts/gen/go/mecatl/driver/go.mod
+run "module publication: check recipe and CI wiring run" module_publication true Taskfile.yml .github/workflows/ci.yml .github/scripts/check-module-publication.sh .github/scripts/relevant-changes.sh
+run "module publication: Go source alone skips" module_publication false engine/agent/loop.go adapters/jsonlstore/store.go
+run "module publication: docs and site skip" module_publication false docs/intro.md user-docs/building/extension-points/session-store.md website/src/index.tsx
+run "module publication: unrelated module metadata skips" module_publication false provider/openai/go.mod environment/microvm/go.sum
+run "module publication: mixed manifest and code runs" module_publication true cmd/mecated/main.go adapters/go.mod
+
 # --- microvm category: opt-in runtime jobs -------------------------------------
 # The nested module, its direct root integration closure, and the exact execution
 # control files run MicroVM CI; unrelated established component trees skip.
@@ -118,7 +128,7 @@ run "microvm: mixed change runs" microvm true docs/intro.md internal/adapter/mic
 run "microvm: unknown path fails closed to run" microvm true new-component/entry.go
 
 # --- fail-closed / safety across categories ------------------------------------
-for cat in go sdk site studio microvm; do
+for cat in go sdk site studio module_publication microvm; do
   run_raw "$cat: empty input fails closed to RUN" "$cat" true ''
   run_raw "$cat: unterminated input fails closed to RUN" "$cat" true 'docs/x.md'
   run "$cat: empty NUL record fails closed to RUN" "$cat" true ''

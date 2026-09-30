@@ -37,6 +37,7 @@ check_requirements() {
   done
 }
 check_requirements internal/adaptersupport/go.mod
+check_requirements contracts/gen/go/mecatl/driver/go.mod
 check_requirements adapters/go.mod
 
 pinned=$(go mod edit -json go.mod | jq -r '.Require[] | select(.Path == "github.com/stacklok/mecatl/adapters") | .Version')

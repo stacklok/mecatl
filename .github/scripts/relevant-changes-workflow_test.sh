@@ -116,6 +116,15 @@ for job in build analysis fuzz-smoke engine-standalone provider-standalone api-c
   assert_if "$job" has "needs.changes.outputs.go_relevant == 'true'"
 done
 
+# Publication is a conditional step in Build, not another runner on every PR.
+build_block="$(job_block build)"
+grep -Fq "if: needs.changes.outputs.module_publication_relevant == 'true'" <<<"$build_block" \
+  || fail 'Build must gate the publication step on module_publication_relevant'
+grep -Fq 'task test:module-publication' <<<"$build_block" \
+  || fail 'Build must run the publication task'
+grep -Fq 'git fetch --unshallow --tags origin main' <<<"$build_block" \
+  || fail 'Build must fetch ancestry and nested tags before checking pins'
+
 # The pure-TypeScript SDK unit job gates on sdk_relevant ALONE (no go, no
 # docs_only — sdk_relevant already implies a non-docs, TS/contract change).
 assert_if sdk has "needs.changes.outputs.sdk_relevant == 'true'"
