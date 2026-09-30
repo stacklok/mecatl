@@ -25,14 +25,13 @@ Use the engine ports to expose only the operations your application needs.
 |Redis|`github.com/stacklok/mecatl/adapters/redisstore`|Shared persistence across replicas|
 |gRPC driver|`github.com/stacklok/mecatl/adapters/grpcdriver`|Clients and server wrappers over an independently operated backend|
 
-The initial `adapters/v0.1.0` tag remains pending human publication. For now,
-select an immutable adapter revision that resolves through the public Go proxy;
-the adapter manifest already pins checksum-verifiable support and driver
-revisions, so no future dependency tags are required for ordinary installation.
-The [adapter compatibility and release policy](https://github.com/stacklok/mecatl/blob/main/adapters/COMPATIBILITY.md)
-records the module boundaries, release order, and offline candidate proof. Local
-workspace replacements are for repository development only. With Go 1.27 or
-later, select an actually available version (or published revision):
+The published `adapters/v0.1.0` tag pins support and driver revisions that
+standalone Go module resolution cannot fetch. An independently installable
+adapters release requires a corrected patch tag. The
+[adapter compatibility and release policy](https://github.com/stacklok/mecatl/blob/main/adapters/COMPATIBILITY.md)
+records the module boundaries and release verification. Local workspace
+replacements are for repository development only. Once a corrected release is
+published, install it with Go 1.27 or later:
 
 ```sh
 go get github.com/stacklok/mecatl/adapters@<AVAILABLE_VERSION>

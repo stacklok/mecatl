@@ -36,9 +36,9 @@ require (
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/stacklok/mecatl/adapters v0.0.0-20260929205240-3fd4c343ca56
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
-	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.0.0-20260929205240-3fd4c343ca56
+	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
 	github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09
-	github.com/stacklok/mecatl/internal/adaptersupport v0.0.0-20260929205240-3fd4c343ca56
+	github.com/stacklok/mecatl/internal/adaptersupport v0.1.0
 	github.com/stacklok/mecatl/provider/anthropic v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openai v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/provider/openaichat v0.0.0-00010101000000-000000000000

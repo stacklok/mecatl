@@ -32,12 +32,12 @@ github.com/redis/go-redis/v9 v9.22.0 h1:laDvpYXTJtZLloinw1fA5Kqd6HAEH2XKxOkG/PDq
 github.com/redis/go-redis/v9 v9.22.0/go.mod h1:y2g0Wj8rQvuK0ELM+oxSudcLtC09JScs98I/X9gRWY4=
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
 github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
-github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.0.0-20260929205240-3fd4c343ca56 h1:BvlJH/RpjblP/4lFSKPlPbb2nRkS8wx10kaulx0RTfg=
-github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.0.0-20260929205240-3fd4c343ca56/go.mod h1:CdrxCw84IKC9c07CffjVbpbDRdRMH3q02NY9NLiATHg=
+github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0 h1:e4yHnyb4iueZckYe8ddxu12wmHsFvdz4u/9Ph8vI8ig=
+github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0/go.mod h1:prHVTu2EYmTw8BcSPrgXFFJ7WgNr51K9bxaeR9RNk4k=
 github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09 h1:MHooQaFSrL9EC73VaJuZwyr+qSDJIIL043yJ2smSUT8=
 github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09/go.mod h1:hI3EP11xB9K+trfc4cf+GrLMY86wFdeye+tcLVIlZtI=
-github.com/stacklok/mecatl/internal/adaptersupport v0.0.0-20260929205240-3fd4c343ca56 h1:lAVW5u1vFvcXt0tJF1V3vjqiFAHshbqWxls45iYAUzM=
-github.com/stacklok/mecatl/internal/adaptersupport v0.0.0-20260929205240-3fd4c343ca56/go.mod h1:mi9LiPcXJ958oGVt+F2/aIjUfK0MZJw9krBeIm/PT2g=
+github.com/stacklok/mecatl/internal/adaptersupport v0.1.0 h1:KaCe+M36om+17HhXyuEQPm0cbyPf2EHFYuFli6Sloyc=
+github.com/stacklok/mecatl/internal/adaptersupport v0.1.0/go.mod h1:EMSuWmclHN8OJf+QJAkoOQErWz+r8C7GmLjSI5xr8DA=
 github.com/stacklok/toolhive-core/redisconn v0.0.2 h1:Ju7+LrajHdpCpBe5xmGdle1z0F/F2qByUdzZi6YSgJ4=
 github.com/stacklok/toolhive-core/redisconn v0.0.2/go.mod h1:YaR5xDqbFc+eoP7sDPi6rHyh6Vh90HQciGpCQtD5VeY=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
