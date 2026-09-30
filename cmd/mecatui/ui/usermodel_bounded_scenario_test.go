@@ -15,7 +15,7 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 	for i := range entries {
 		entries[i] = client.UserModelEntry{Key: strings.Repeat("k", i+1), Description: "description"}
 	}
-	m := newUserModelModel(t, &fakeUserModel{model: client.UserModel{Entries: entries}}, client.Capabilities{UserModel: true})
+	m := newUserModelModel(t, &fakeUserModel{model: client.UserModel{Entries: entries, Detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: entries[0].Key, Value: strings.Repeat("saved memory detail ", 200)}}}}, client.Capabilities{UserModel: true})
 	mm, cmd := m.runUserModel()
 	m = feedCmd(t, mm.(Model), cmd)
 	for _, width := range []int{60, 140} {
@@ -35,8 +35,12 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 			t.Fatalf("body overflows %d", width)
 		}
 		if width == 140 {
-			if s := m.modal.(*userModelState); len(s.list.View().Rows) <= 14 {
-				t.Fatalf("normal body still capped at fourteen rows: %d", len(s.list.View().Rows))
+			s := m.modal.(*userModelState)
+			if got := len(s.list.View().Rows); got <= 14 {
+				t.Fatalf("normal body still capped at fourteen rows: %d", got)
+			}
+			if got := len(strings.Split(stripANSIstr(m.renderBody()), "\n")); got != m.metrics.outerBounds.y1-m.metrics.outerBounds.y0 {
+				t.Fatalf("panel frame/chrome body rows=%d, card budget=%d", got, m.metrics.outerBounds.y1-m.metrics.outerBounds.y0)
 			}
 		}
 	}
@@ -48,6 +52,18 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 		want := min(width, 128)
 		if got := m.metrics.outerBounds.x1 - m.metrics.outerBounds.x0; got != want || m.metrics.outerBounds.x0 != (width-want)/2 {
 			t.Fatalf("detail card width/placement at %d: %+v", width, m.metrics.outerBounds)
+		}
+		if got := lipgloss.Width(m.renderBody()); got > width {
+			t.Fatalf("detail body overflows %d: %d", width, got)
+		}
+		if width == 140 {
+			s := m.modal.(*userModelState)
+			if got := len(s.viewport.View(s.detailLines).Rows); got <= 14 {
+				t.Fatalf("detail body still capped at fourteen rows: %d", got)
+			}
+			if got := len(strings.Split(stripANSIstr(m.renderBody()), "\n")); got != m.metrics.outerBounds.y1-m.metrics.outerBounds.y0 {
+				t.Fatalf("detail frame/chrome body rows=%d, card budget=%d", got, m.metrics.outerBounds.y1-m.metrics.outerBounds.y0)
+			}
 		}
 	}
 }

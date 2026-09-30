@@ -81,10 +81,15 @@ func (s *userModelState) HandleKey(msg tea.KeyPressMsg) (tea.Cmd, bool, bool) {
 		return nil, true, false
 	}
 	if move, ok := userModelMove(msg, s.deps.keys); ok && s.list != nil {
+		if s.requestKey != "" {
+			s.generation++
+			s.requestKey = ""
+			s.loading = false
+		}
 		s.list.Move(move)
 		return nil, true, false
 	}
-	if key.Matches(msg, s.deps.keys.Choose) && !s.loading && s.err == nil && s.list != nil && len(s.model.Entries) > 0 && s.detailer != nil {
+	if key.Matches(msg, s.deps.keys.Choose) && !s.loading && s.list != nil && len(s.model.Entries) > 0 && s.detailer != nil {
 		selected := s.list.CursorID()
 		if selected == "" {
 			return nil, true, false

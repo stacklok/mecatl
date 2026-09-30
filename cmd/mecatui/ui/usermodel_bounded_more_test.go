@@ -133,6 +133,13 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_StableSelectionAndReveal(t *
 			t.Fatalf("gutter/fit: %q", p.Text)
 		}
 	}
+
+	m, s = savedMemoryOpened(t, savedMemoryEntries(40))
+	s.Render(30, 10)
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyPgDown}, tea.KeyPressMsg{Code: tea.KeyEnd}, tea.KeyPressMsg{Code: tea.KeyHome})
+	if s.list.CursorID() != "fact/000" {
+		t.Fatalf("root Update did not route page/end/home navigation: %q", s.list.CursorID())
+	}
 }
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_IdentityAndAnchorContinuity(t *testing.T) {
 	_, s := savedMemoryOpened(t, savedMemoryEntries(20))
@@ -167,18 +174,22 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_IdentityAndAnchorContinuity(
 	}
 }
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario2_ExactDetailConsistency(t *testing.T) {
-	_, s := savedMemoryOpened(t, savedMemoryEntries(2))
+	m, s := savedMemoryOpened(t, savedMemoryEntries(2))
 	s.Render(70, 16)
 	cmd, _, _ := s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	msg := cmd().(client.UserModelDetailMsg)
-	msg.UserModel = client.UserModel{Entries: savedMemoryEntries(0), Detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: "fact/000", Value: "retained history"}, HistoryAvailable: true, History: []client.UserModelRevision{{Version: "v1"}}}}
-	s.HandleMsg(msg)
+	msg.UserModel = client.UserModel{Entries: savedMemoryEntries(2)[1:], Detail: &client.UserModelDetail{Current: client.UserModelRevision{Key: "fact/000", Value: "retained history"}, HistoryAvailable: true, History: []client.UserModelRevision{{Version: "v1"}}}}
+	m = applyAll(m, msg)
 	body, _ := s.Render(70, 16)
 	if !strings.Contains(body, "retained history") || s.view != userModelDetail {
 		t.Fatal("matching deleted fact lost detail")
 	}
-	s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	if s.list.CursorID() != "fact/001" {
+		t.Fatalf("escape did not clamp deleted detail selection: %q", s.list.CursorID())
+	}
 	s.setModel(client.UserModel{Entries: savedMemoryEntries(2)})
+	s.list.SetCursor(0)
 	s.Render(70, 16)
 	cmd, _, _ = s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	msg = cmd().(client.UserModelDetailMsg)
@@ -286,6 +297,61 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_OpenBackCloseAndFocus(t *tes
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testing.T) {
 	m, s := savedMemoryOpened(t, savedMemoryEntries(4))
 	s.Render(50, 10)
+
+	// Drive the public Model.Update seam: abandoning A for B must make A's
+	// response stale without leaving the panel in loading state, so B can retry.
+	mm, first := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	s = m.modal.(*userModelState)
+	lateA := first().(client.UserModelDetailMsg)
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = mm.(Model)
+	mm, _ = m.Update(lateA)
+	m = mm.(Model)
+	s = m.modal.(*userModelState)
+	if s.loading || s.err != nil || s.requestKey != "" || s.list.CursorID() != "fact/001" {
+		t.Fatalf("late A left B unavailable: loading=%v err=%v request=%q selected=%q", s.loading, s.err, s.requestKey, s.list.CursorID())
+	}
+	mm, second := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	lateB := second().(client.UserModelDetailMsg)
+	if lateB.RequestKey != "fact/001" {
+		t.Fatalf("Enter after late A fetched %q, want B", lateB.RequestKey)
+	}
+	mm, _ = m.Update(lateB)
+	m = mm.(Model)
+	s = m.modal.(*userModelState)
+	if s.view != userModelDetail || s.detail == nil || s.detail.Current.Key != "fact/001" {
+		t.Fatalf("B detail was not installed after retry: %+v", s)
+	}
+
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	s = m.modal.(*userModelState)
+	mm, failed := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	failure := failed().(client.UserModelDetailMsg)
+	failure.Err = errors.New("detail unavailable")
+	mm, _ = m.Update(failure)
+	m = mm.(Model)
+	s = m.modal.(*userModelState)
+	if s.err == nil {
+		t.Fatal("detail error was not retained for display")
+	}
+	mm, retry := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if retry == nil {
+		t.Fatal("Enter did not retry a visible detail error")
+	}
+	retried := retry().(client.UserModelDetailMsg)
+	mm, _ = m.Update(retried)
+	m = mm.(Model)
+	s = m.modal.(*userModelState)
+	if s.view != userModelDetail || s.err != nil {
+		t.Fatalf("retry did not clear detail error: view=%d err=%v", s.view, s.err)
+	}
+
+	m, s = savedMemoryOpened(t, savedMemoryEntries(4))
+	s.Render(50, 10)
 	cmd, _, _ := s.HandleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	old := cmd().(client.UserModelDetailMsg)
 	m = applyAll(m, old)
@@ -310,6 +376,10 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 	s.Render(45, 9)
 	selected := s.list.CursorID()
 	before := m.vp.YOffset()
+	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 1, Y: 1})
+	if s.list.Offset() != 0 || m.vp.YOffset() != before {
+		t.Fatal("top endpoint wheel escaped saved-memory panel")
+	}
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
 	s.Render(45, 9)
 	if s.list.Offset() != 1 || s.list.CursorID() != selected || m.vp.YOffset() != before {
@@ -326,5 +396,25 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if s.list.Offset() != offset || !s.compact {
 		t.Fatal("compact wheel moved list")
+	}
+
+	m, s = savedMemoryOpened(t, savedMemoryEntries(2))
+	s.Render(45, 9)
+	mm, cmd, _ := m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	detail := cmd().(client.UserModelDetailMsg)
+	detail.UserModel.Detail = &client.UserModelDetail{Current: client.UserModelRevision{Key: detail.RequestKey, Value: strings.Repeat("detail ", 200)}}
+	m = applyAll(m, detail)
+	s.Render(45, 9)
+	detailBefore := m.vp.YOffset()
+	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if s.viewport.Offset() != 0 || m.vp.YOffset() != detailBefore {
+		t.Fatal("detail top endpoint wheel escaped modal")
+	}
+	s.viewport.Move(bounded.End, len(s.detailLines))
+	detailEnd := s.viewport.Offset()
+	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if s.viewport.Offset() != detailEnd || m.vp.YOffset() != detailBefore {
+		t.Fatal("detail bottom endpoint wheel escaped modal")
 	}
 }
