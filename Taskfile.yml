@@ -523,6 +523,16 @@ tasks:
       - task: test:_suite
         vars: {RACE: '-race'}
 
+  test:module-publication:
+    desc: Check releaseable module pins against main and compile the published adapters tag through the public Go proxy without workspace replacements.
+    vars:
+      VERSION: '{{.VERSION | default ""}}'
+    env:
+      MODULE_PUBLICATION_VERSION: '{{.VERSION}}'
+    cmds:
+      - sh .github/scripts/check-module-publication_test.sh
+      - sh .github/scripts/check-module-publication.sh
+
   test:authn-standalone:
     desc: Prove the opt-in OIDC module builds and tests with GOWORK=off.
     cmds:

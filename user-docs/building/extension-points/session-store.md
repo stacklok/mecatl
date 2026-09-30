@@ -27,8 +27,8 @@ Use the engine ports to expose only the operations your application needs.
 
 Install `adapters/v0.1.1` with Go 1.27 or later. It resolves through the
 public Go proxy with its support and driver dependencies. The earlier
-`adapters/v0.1.0` tag has dependency pins that cannot be resolved for a
-standalone installation. The
+`adapters/v0.1.0` tag pins support and driver to a PR-head revision outside
+`main`; `v0.1.1` uses the published dependency tags. The
 [adapter compatibility and release policy](https://github.com/stacklok/mecatl/blob/main/adapters/COMPATIBILITY.md)
 records the module boundaries and release verification. Local workspace
 replacements are for repository development only.

@@ -1228,6 +1228,27 @@ jobs:
           (cd provider/ssefilter && go test ./...)
           (cd provider/anthropic && go test ./...)
 
+  module-publication:
+    name: Nested module publication
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_relevant == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # pin ancestry and nested tags must be available locally
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false # the task uses its own fresh module cache
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.53.1
+      - name: Verify nested module publication
+        run: task test:module-publication
+
   api-compat:
     name: API compat (engine public surface)
     needs: changes

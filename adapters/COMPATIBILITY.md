@@ -65,8 +65,9 @@ Redis, gRPC, the root host, or adapters. Root `go.mod` replacements and
 
 ## Release verification
 
-The `adapters/v0.1.0` tag retains dependency pins to a revision that the Go
-module resolver cannot fetch. Use `adapters/v0.1.1` or later for standalone
+The `adapters/v0.1.0` tag pins support and driver modules to a PR-head
+revision outside `main`. Proxy resolution of that revision is not a durable
+release dependency contract. Use `adapters/v0.1.1` or later for standalone
 installation; the existing `v0.1.0` tag is immutable.
 
 Release dependency-first from reviewed commits:
@@ -75,9 +76,12 @@ Release dependency-first from reviewed commits:
    `GOWORK=off go test ./...` before publishing its independent tag.
 2. In `adapters/`, run `GOWORK=off go mod tidy -diff` and
    `GOWORK=off go test ./...` against the pinned public dependencies. Review
-   `go.sum` and the dependency tags.
-3. A human publishes the adapters tag after confirming installation without
-   workspace or replace directives against the public checksum-backed proxy.
+   `go.sum` and the dependency tags. Run `task test:module-publication` to
+   check releaseable pins and the currently consumed adapters tag.
+3. A human publishes the adapters tag after review. Then run
+   `task test:module-publication VERSION=vX.Y.Z` to compile that exact tag
+   from the public Go proxy in an external module without workspace or replace
+   directives. Only pin it in root and integration manifests after this passes.
 
 ## Module tests
 
