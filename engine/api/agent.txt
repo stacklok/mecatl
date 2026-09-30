@@ -52,13 +52,14 @@
     method func (*PreparedRun).Run() *Run
     method func (*PreparedRun).Start() (*Run, PreparedRunTransition)
     method func (*Run).Approve(askID string, v session.ApprovalVerdict) error
-    method func (*Run).Cancel()
+    method func (*Run).Cancel(cause CancelCause)
     method func (*Run).CancelChild(childID string) bool
     method func (*Run).CancelSteer() (SteerOutcome, error)
     method func (*Run).EnqueueSteer(text string, parts []session.Content) (SteerOutcome, error)
     method func (*Run).EnqueueSteerWithMessageID(text string, parts []session.Content, messageID string) (SteerOutcome, error)
     method func (*Run).Events() <-chan session.Event
     method func (*Run).Outcome() RunOutcome
+    method func (*Run).OwnershipLost()
     method func (*Run).ResolveApproval(resolution ApprovalResolution) error
     method func (*Run).ResolveOrdinaryAsk(askID string, v session.ApprovalVerdict) AskResolution
     method func (*Run).ResolvePlanAsk(askID string, verdict session.ApprovalVerdict) AskResolution
@@ -110,6 +111,8 @@ const AskResolutionNotPending AskResolution = 0
 const AskResolutionNotPlan AskResolution = 3
 const AskResolutionPlanOriginated AskResolution = 2
 const AskResolutionResolved AskResolution = 1
+const CancelCauseOwnershipLost CancelCause = 1
+const CancelCauseRequested CancelCause = 0
 const DefaultAskReviewMaxDenies untyped int = 3
 const DefaultPreservedForkCap untyped int = 8
 const DispositionDone MemberDisposition = "done"
@@ -263,6 +266,7 @@ type ArtifactHandle string
 type AskResolution uint8
 type BranchJudge interface{Judge(ctx context.Context, candidates []BranchSummary, criteria string) (winner int, rationale string, usage session.AuxiliaryUsage, err error)}
 type BranchSummary struct{Label string; Summary string; Failed bool}
+type CancelCause uint8
 type CascadeCompactor struct{Counter TokenCounter; BudgetTokens int; KeepLastTurns int; StripToolBodyChars int; MaxCollapseChars int; LLM port.LLMProvider; ProviderModel session.ProviderModelID; Model string; SummaryMaxTokens int}
 type ChildAskReview struct{Allowed bool; Reason string}
 type ChildAskReviewRequest struct{Ask session.PendingAsk; Isolated bool}

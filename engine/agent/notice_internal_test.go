@@ -118,7 +118,7 @@ func TestBackgroundNoticeBatchesTwoFinishedChildren(t *testing.T) {
 				stop = true
 			}
 		case <-deadline:
-			r.Cancel()
+			r.Cancel(CancelCauseRequested)
 			t.Fatalf("run did not terminate (possible wedge)")
 		}
 		if stop {

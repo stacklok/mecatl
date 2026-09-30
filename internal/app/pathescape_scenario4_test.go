@@ -11,6 +11,7 @@ import (
 	"github.com/stacklok/mecatl/engine/adapter/memledger"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/adapter/permpolicy"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
@@ -258,7 +259,7 @@ func TestPathEscapePosture_Scenario4_HeadlessEscapeAskDoesNotHang(t *testing.T) 
 		for ev := range run.Events() {
 			if ev.Type == session.EvPermissionAsk && ev.Ask != nil && !askSeen {
 				askSeen = true
-				run.Cancel() // no approver wired: the await must END, not hang
+				run.Cancel(agent.CancelCauseRequested) // no approver wired: the await must END, not hang
 			}
 			if ev.Type == session.EvToolResult && ev.ToolResult != nil && ev.ToolResult.IsError {
 				denyResult = ev.ToolResult

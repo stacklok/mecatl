@@ -734,7 +734,7 @@ func TestCancelMidStream(t *testing.T) {
 
 	// Wait until the provider is streaming, then cancel.
 	<-blocking.started
-	r.Cancel()
+	r.Cancel(agent.CancelCauseRequested)
 
 	evs := drain(r)
 	res := lastResult(t, evs)
@@ -790,7 +790,7 @@ func TestCancelMidToolThenResumeSucceeds(t *testing.T) {
 
 	r := e.Run(context.Background(), sess, agent.EnvForWS(ws, nil), agent.RunRequest{Text: "look at a.go"})
 	<-toolStarted
-	r.Cancel()
+	r.Cancel(agent.CancelCauseRequested)
 	res := lastResult(t, drain(r))
 	if res.Stop != session.StopCancelled {
 		t.Fatalf("turn-1 stop = %q, want cancelled", res.Stop)
@@ -878,7 +878,7 @@ func TestCancelAwaitingApprovalThenResumeSucceeds(t *testing.T) {
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk {
 			sawAsk = true
-			r.Cancel()
+			r.Cancel(agent.CancelCauseRequested)
 		}
 	}
 	if !sawAsk {

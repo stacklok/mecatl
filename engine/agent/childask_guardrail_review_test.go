@@ -171,7 +171,7 @@ func TestPermissionReviewFreshnessAtExecutionAdmission(t *testing.T) {
 						Catalog: catalogWith(t, bash), Policy: policy, ToolReviewer: reviewer, Hooks: hook, Role: "subagent",
 					})
 					run := child.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "original task"})
-					t.Cleanup(run.Cancel)
+					t.Cleanup(func() { run.Cancel(agent.CancelCauseRequested) })
 					<-hook.entered
 					if change != "stable" {
 						agent.RefreshReviewTasksForTest(run, []session.Message{{Role: session.RoleUser, Text: "changed task", UserPromptProvenance: session.UserPromptProvenancePrincipal}})
@@ -292,7 +292,7 @@ func TestPermissionReviewCancellationCompletesWithoutConsumerSelfEmission(t *tes
 	})
 	run := child.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "inspect"})
 	<-reviewer.entered
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	events := drainWithTimeout(t, run)
 	if len(bash.ran()) != 0 || reviewer.count() != 1 {
 		t.Fatalf("executions=%d reviews=%d", len(bash.ran()), reviewer.count())

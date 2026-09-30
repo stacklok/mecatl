@@ -666,14 +666,9 @@ func buildGuardrailsChecker(cfg Config, provReg *providerRegistry, provider port
 	return engineGuardrailsChecker{reviewer: reviewer}
 }
 
-// buildGuardrailsEscapeChecker builds the ADR-0080 escape route's checker, or
-// nil when the knob is off or guardrails are unconfigured (the byte-identical
-// no-route posture). It reuses the SAME engine-backed VerdictChecker as the
-// hook-path Runner — the recursion guard (a tool-less one-turn engine that
-// fires no hooks) and the operator-tier-only config carry over unchanged. The
-// route is armed only on the MAIN escape policy, only at posture auto
-// (withEscapeGuardrailRoute enforces the posture gate), so a nil here is the
-// common case and costs nothing.
+// buildGuardrailsEscapeChecker builds the ADR-0080 permission escape check.
+// It is armed only on the main session at posture auto with the escape knob
+// and guardrails configured. Generic HookRunner requests carry no usage reporter.
 func buildGuardrailsEscapeChecker(cfg Config, provReg *providerRegistry, provider port.LLMProvider) modelhook.VerdictChecker {
 	if !cfg.GuardrailsEscape || !guardrailsConfigured(cfg) {
 		return nil

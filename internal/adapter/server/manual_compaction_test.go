@@ -469,7 +469,7 @@ func TestCompactSessionAuthorizationIdentityAndActiveGates(t *testing.T) {
 	if _, err := svc.CompactSession(context.Background(), sess.ID, owner); !errors.Is(err, server.ErrFailedPrecondition) {
 		t.Fatalf("live error = %v, want ErrFailedPrecondition", err)
 	}
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	for range run.Events() {
 	}
 	svc.FinishRun(sess.ID, run)

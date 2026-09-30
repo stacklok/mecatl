@@ -25,7 +25,13 @@ immediately and drives the loop in a background goroutine; the `Run` exposes:
 - `ResolveApproval(ApprovalResolution) error` — atomically validates the registered
   ask's review ID, purpose, and verdict eligibility and submits the verdict. Contextual
   result release must use this operation with the exact `result_release` acknowledgement.
-- `Cancel()` — cancels the run's context.
+- `OwnershipLost()` — irreversibly closes run-owned auxiliary admission and discards
+  pending usage without cancelling the run. A lease-owning host calls it for the
+  exact run before invalidating local mutation authority, then retracts any
+  pending ask before cancellation. It does not undo previously admitted work.
+- `Cancel(CancelCause)` — cancels the run. `CancelCauseRequested` preserves normal
+  child join-and-drain behavior; `CancelCauseOwnershipLost` (and unknown causes)
+  revokes auxiliary-usage ownership and clears pending private usage before cancellation.
 - `CancelChild(childID string) bool` — cancels ONE child run (subagent /
   parallel branch / team member) without touching the run itself ([subagents & teams](subagents-and-teams.md)).
 

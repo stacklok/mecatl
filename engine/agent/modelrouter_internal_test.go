@@ -1030,7 +1030,7 @@ func TestRouterBreakerOpensAfterConsecutiveMisses(t *testing.T) {
 	})
 	// Build a Run carrying the breaker (Engine.Run arms it when the router is wired),
 	// then derive the production routeTask via parentCaps.
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, nil, 0)
 	if caps.routeDecision == nil {
 		t.Fatal("routeTask must be wired when SubagentModelRouter is set")
@@ -1070,7 +1070,7 @@ func TestRouterBreakerResetsOnSuccess(t *testing.T) {
 			return ModelRouteResult{Reason: RouterMissBadVerdict}
 		}},
 	})
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, nil, 0)
 	// Two misses (below the threshold of 3), then a success resets, then more misses must
 	// not trip immediately — proving the reset.
@@ -1123,7 +1123,7 @@ func TestRouterBreakerSerializesConcurrentCalls(t *testing.T) {
 			return ModelRouteResult{Reason: RouterMissBadVerdict} // always miss → the breaker must open after `max`
 		}},
 	})
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, nil, 0)
 
 	const goroutines = 32
@@ -1176,7 +1176,7 @@ func TestRouterBreakerSharedAcrossFamilies(t *testing.T) {
 			return ModelRouteResult{Reason: RouterMissBadVerdict} // always miss
 		}},
 	})
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, nil, 0)
 
 	// Simulate a mixed turn: several "parallel branch" classifications + one "subagent"
@@ -1227,7 +1227,7 @@ func TestRouteTaskPropagatesRunCtx(t *testing.T) {
 			return ModelRouteResult{Reason: RouterMissCancelled}
 		}},
 	})
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, nil, 0)
 	if caps.routeDecision == nil {
 		t.Fatal("routeTask must be wired when SubagentModelRouter is set")
@@ -1285,7 +1285,7 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, parentSess, 0)
 	if caps.routeDecision == nil {
 		t.Fatal("routeTask must be wired when SubagentModelRouter is set")
@@ -1293,12 +1293,14 @@ func TestRouteTaskFoldsClassifierUsageIntoParentSession(t *testing.T) {
 
 	// First call: fold perCall into the parent session.
 	caps.routeDecision(context.Background(), "task 1")
+	run.drainPendingAuxiliaryUsage(parentSess)
 	if got := parentSess.UsageFor(session.UsageKindRouter).TotalTokens(); got != perCall {
 		t.Fatalf("after first routeTask call: sess.Usage.TotalTokens() = %d, want %d (first fold)", got, perCall)
 	}
 
 	// Second call: fold another perCall — must ACCUMULATE, not overwrite.
 	caps.routeDecision(context.Background(), "task 2")
+	run.drainPendingAuxiliaryUsage(parentSess)
 	if got := parentSess.UsageFor(session.UsageKindRouter).TotalTokens(); got != 2*perCall {
 		t.Fatalf("after second routeTask call: sess.Usage.TotalTokens() = %d, want %d (cumulative fold)", got, 2*perCall)
 	}
@@ -1329,10 +1331,11 @@ func TestRouteTaskNewCanonicalMissesShareBreakerAndFoldUsageOnce(t *testing.T) {
 			if err := parent.BeginTurn(); err != nil {
 				t.Fatal(err)
 			}
-			run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+			run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 			route := engine.parentCaps(run, parent, 0).routeDecision
 			for i := 0; i < defaultModelRouterMaxMisses; i++ {
 				got := route(t.Context(), "task")
+				run.drainPendingAuxiliaryUsage(parent)
 				if got.ok || got.reason != reason {
 					t.Fatalf("miss %d = reason %q ok=%v, want %q false", i+1, got.reason, got.ok, reason)
 				}
@@ -1376,12 +1379,13 @@ func TestRouteTaskFoldsClassifierUsageOnMissPath(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, parentSess, 0)
 
 	if routed := caps.routeDecision(context.Background(), "classify me"); routed.ok {
 		t.Fatal("the underlying router misses (ok=false), routeTask must pass through as miss")
 	}
+	run.drainPendingAuxiliaryUsage(parentSess)
 	if got := parentSess.UsageFor(session.UsageKindRouter).TotalTokens(); got != perCall {
 		t.Fatalf("miss path: sess.Usage.TotalTokens() = %d, want %d (miss must fold spend)", got, perCall)
 	}
@@ -1420,12 +1424,13 @@ func TestClassifierSpendTripsMaxRunTokens(t *testing.T) {
 	// which RESETS the consecutive-miss count on every call, so the breaker never advances
 	// regardless of its threshold — the fold runs on every (hit) call. We pass a non-default
 	// max only to make that independence explicit.
-	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses + 100}, children: newChildRunRegistry()}
+	run := &Run{router: &modelRouterBreaker{max: defaultModelRouterMaxMisses + 100}, children: newChildRunRegistry(), auxiliaryUsageActive: true}
 	caps := mainEngine.parentCaps(run, parentSess, 0)
 
 	tripped := false
 	for i := 0; i < 10; i++ {
 		caps.routeDecision(context.Background(), "classify")
+		run.drainPendingAuxiliaryUsage(parentSess)
 		if mainEngine.budgetExhausted(run, parentSess.UsageFor(session.UsageKindRouter)) {
 			tripped = true
 			// Assert it tripped at exactly the expected call (wantTrip-th call crosses budget).

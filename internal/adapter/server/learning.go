@@ -102,22 +102,12 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	}
 	accountingCtx := ctx
 	stopAccounting := func() {}
-	stillOwner := func() bool { return false }
 	if currentOwner {
-		accountingCtx, stopAccounting, stillOwner = s.mutationLeaseContext(ctx, id)
+		accountingCtx, stopAccounting, _ = s.mutationLeaseContext(ctx, id)
 	}
 	defer stopAccounting()
 	r, err := s.cfg.ReflectSession(accountingCtx, sess)
-	if len(r.Usage.Buckets) > 0 {
-		if stillOwner() {
-			sess.RecordAuxiliaryUsage(agent.RemapAuxiliaryUsage(accountingCtx, s.cfg.Diagnostics, session.UsageKindReflection, r.Usage))
-			if saveErr := s.saveSession(accountingCtx, sess); saveErr != nil {
-				s.cfg.Diagnostics.Log(context.Background(), port.LevelWarn, "reflection usage dropped")
-			}
-		} else {
-			s.cfg.Diagnostics.Log(context.Background(), port.LevelDebug, "reflection usage dropped")
-		}
-	}
+	s.recordExplicitReflectionUsage(accountingCtx, id, sess, currentOwner, r.Usage)
 	if err != nil {
 		return nil, explicitReflectionError(err)
 	}
@@ -141,6 +131,27 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		}
 	}
 	return &mecatlv1.ReflectionReceipt{ReflectionId: validLearningText(r.ID), Disposition: disposition, Reason: reason, Message: message, Queued: int32(r.Queued), Abstained: r.Abstained, Staged: int32(r.Staged), Promoted: int32(r.Promoted), Conflicted: int32(r.Conflicted)}, nil //nolint:gosec // coordinator counts are bounded far below int32
+}
+
+func (s *Service) recordExplicitReflectionUsage(ctx context.Context, id session.SessionID, sess *session.Session, currentOwner bool, returned session.AuxiliaryUsage) {
+	if len(returned.Buckets) == 0 {
+		return
+	}
+	usage := agent.RemapAuxiliaryUsage(ctx, s.cfg.Diagnostics, session.UsageKindReflection, returned)
+	accepted := false
+	var saveErr error
+	if currentOwner {
+		accepted, saveErr = s.cfg.MutationCapability.withMutation(id, func() error {
+			sess.RecordAuxiliaryUsage(usage)
+			return nil
+		})
+		if accepted && saveErr == nil {
+			saveErr = s.saveSession(ctx, sess)
+		}
+	}
+	if !accepted || saveErr != nil {
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelDebug, "reflection usage dropped")
+	}
 }
 
 func explicitAbstentionProjection(reason string) (string, string, error) {

@@ -79,7 +79,7 @@ func TestPlanApprovalReceiptCrossesTwoRunsOnceAwaiting(t *testing.T) {
 	for ev := range run.Events() {
 		if ev.Ask != nil {
 			askID = ev.Ask.AskID
-			run.Cancel()
+			run.Cancel(agent.CancelCauseRequested)
 		}
 	}
 	if askID == "" {

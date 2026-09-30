@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/internal/adapter/gitenv"
 	"github.com/stacklok/mecatl/internal/adapter/server"
@@ -189,7 +190,7 @@ func run(ctx context.Context, svc *server.Service, limits session.Limits, prompt
 		// Cancel is idempotent, so guarding on the first ask only is belt-and-braces.
 		if ev.Type == session.EvPermissionAsk && !noApprover {
 			noApprover = true
-			r.Cancel()
+			r.Cancel(agent.CancelCauseRequested)
 		}
 
 		if ev.Type == session.EvResult && ev.Result != nil {

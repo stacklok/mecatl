@@ -235,7 +235,7 @@ func (e *Engine) emitInboundReview(r *Run, turnIdx int, call session.ToolCall, a
 }
 
 func (e *Engine) resolveInbound(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, result session.ToolResult, assessment inboundAssessment) (session.ToolResult, bool) {
-	r.recordAuxiliaryUsageWhileActive(ctx, sess, session.UsageKindGuardrail, assessment.usage)
+	r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
 	if assessment.close != nil {
 		defer assessment.close()
 	}

@@ -9,7 +9,7 @@ import (
 
 // AuxiliaryUsageReporter is a synchronous, request-scoped auxiliary-usage callback.
 // Callers must not retain it; an Engine deactivates the installed callback when the
-// current hook request returns.
+// current permission evaluation returns.
 type AuxiliaryUsageReporter func(session.AuxiliaryUsage)
 
 type auxiliaryUsageReporterKey struct{}

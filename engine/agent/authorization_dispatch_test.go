@@ -20,17 +20,18 @@ import (
 
 type genericAuthorizationTool struct {
 	fakeTool
-	authorization session.ExternalAuthorization
-	required      bool
-	requestErr    error
-	requestCancel context.CancelFunc
-	requests      int
-	aborts        int
-	abortDeadline bool
-	abortErr      error
-	aborted       session.ExternalAuthorization
-	requested     session.ToolCall
-	order         *[]string
+	authorization  session.ExternalAuthorization
+	required       bool
+	requestErr     error
+	requestCancel  context.CancelFunc
+	requestEntered chan<- struct{}
+	requests       int
+	aborts         int
+	abortDeadline  bool
+	abortErr       error
+	aborted        session.ExternalAuthorization
+	requested      session.ToolCall
+	order          *[]string
 }
 
 func (t *genericAuthorizationTool) RequestAuthorization(_ context.Context, call session.ToolCall) (session.ExternalAuthorization, bool, error) {
@@ -38,6 +39,9 @@ func (t *genericAuthorizationTool) RequestAuthorization(_ context.Context, call 
 	t.requested = call
 	if t.order != nil {
 		*t.order = append(*t.order, "authorization")
+	}
+	if t.requestEntered != nil {
+		t.requestEntered <- struct{}{}
 	}
 	if t.requestCancel != nil {
 		t.requestCancel()
@@ -50,6 +54,18 @@ func (t *genericAuthorizationTool) AbortAuthorization(ctx context.Context, autho
 	t.aborted = authorization
 	_, t.abortDeadline = ctx.Deadline()
 	return t.abortErr
+}
+
+type authorizationBlockingReviewer struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+	usage   session.AuxiliaryUsage
+}
+
+func (r authorizationBlockingReviewer) Review(context.Context, agent.ChildAskReviewRequest) (agent.ChildAskReview, session.AuxiliaryUsage, error) {
+	r.entered <- struct{}{}
+	<-r.release
+	return agent.ChildAskReview{Allowed: true}, r.usage, nil
 }
 
 type authorizationPolicy struct{ order *[]string }
@@ -137,11 +153,33 @@ func (s authorizationOrderStore) Save(ctx context.Context, sess *session.Session
 	return s.SessionStore.Save(ctx, sess)
 }
 
+type authorizationDrainStore struct {
+	port.SessionStore
+	saved chan<- struct{}
+	once  sync.Once
+}
+
+func (s *authorizationDrainStore) Save(ctx context.Context, sess *session.Session) error {
+	err := s.SessionStore.Save(ctx, sess)
+	if err == nil && sess.State == session.StateAuthorizing {
+		s.once.Do(func() { s.saved <- struct{}{} })
+	}
+	return err
+}
+
 type authorizationOrderSink struct{ order *authorizationOrder }
 
 func (s authorizationOrderSink) Emit(_ context.Context, event session.Event) {
 	if event.Type == session.EvAuthorizationRequired {
 		s.order.add("event")
+	}
+}
+
+type authorizationUsageSink struct{ onRequired func() }
+
+func (s authorizationUsageSink) Emit(_ context.Context, event session.Event) {
+	if event.Type == session.EvAuthorizationRequired {
+		s.onRequired()
 	}
 }
 
@@ -415,7 +453,7 @@ func TestGenericAuthorizationPresentationAndCleanupMatrix(t *testing.T) {
 	}
 }
 
-func TestGenericAuthorizationRequiredFalseExecutesAndSavePrecedesEvent(t *testing.T) {
+func TestExternalAuthorizationParkPersistsDrainedAuxiliaryUsage(t *testing.T) {
 	t.Run("required false", func(t *testing.T) {
 		protected := newGenericAuthorizationTool("protected")
 		protected.required = false
@@ -438,8 +476,75 @@ func TestGenericAuthorizationRequiredFalseExecutesAndSavePrecedesEvent(t *testin
 		store := authorizationOrderStore{SessionStore: memstore.New(), order: order}
 		engine := newEngine(agent.Deps{LLM: mockllm.New(mockllm.ToolCallTurn(toolCall("call-1", protected.name, `{}`))), Catalog: catalogWith(t, protected), Store: store, Sink: authorizationOrderSink{order: order}})
 		drain(engine.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "go", CanPresentAuthorization: true}))
-		if got := order.String(); got != "[save event]" {
+		if got := order.String(); got != "[save save event]" {
 			t.Fatalf("order = %s", got)
+		}
+	})
+
+	t.Run("background callback drains before pending event", func(t *testing.T) {
+		usage := session.Usage{InputTokens: 6}
+		reviewerEntered := make(chan struct{}, 1)
+		releaseReviewer := make(chan struct{})
+		bash := &fakeShell{}
+		child := shellChildEngine(mockllm.New(substitutionAskTurns(1)...), bash)
+		subagent := agent.NewSubagentTool(child)
+		requestEntered := make(chan struct{}, 1)
+		protected := newGenericAuthorizationTool("protected")
+		protected.requestEntered = requestEntered
+		saved := make(chan struct{}, 1)
+		store := &authorizationDrainStore{SessionStore: memstore.New(), saved: saved}
+		requests := 0
+		provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(port.LLMRequest) {
+			requests++
+			if requests == 2 {
+				<-reviewerEntered
+			}
+		})},
+			mockllm.ToolCallTurn(toolCall("sub", "Subagent", `{"prompt":"child","background":true}`)),
+			mockllm.ToolCallTurn(toolCall("protected", protected.name, `{}`)),
+		)
+		sess := newSession(t, session.Limits{})
+		observedAtEvent := make(chan session.Usage, 1)
+		sink := authorizationUsageSink{onRequired: func() {
+			atEvent, err := store.Load(t.Context(), sess.ID)
+			if err != nil {
+				t.Errorf("load when authorization event published: %v", err)
+				observedAtEvent <- session.Usage{}
+				return
+			}
+			observedAtEvent <- atEvent.UsageFor(session.UsageKindAskReviewer)
+		}}
+		engine := newEngine(agent.Deps{
+			LLM: provider, Catalog: catalogWith(t, subagent, protected), Store: store, Sink: sink,
+			ChildAskReviewer: authorizationBlockingReviewer{entered: reviewerEntered, release: releaseReviewer,
+				usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+					session.UsageKindAskReviewer: {Models: map[string]session.Usage{"provider/reviewer": usage}},
+				}}},
+		})
+		run := engine.Run(t.Context(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "go", CanPresentAuthorization: true})
+		done := make(chan struct{})
+		go func() { defer close(done); drain(run) }()
+		<-requestEntered
+		<-saved
+		close(releaseReviewer)
+		<-done
+		select {
+		case got := <-observedAtEvent:
+			if got != usage {
+				t.Fatalf("durable usage at authorization event = %+v, want %+v", got, usage)
+			}
+		default:
+			t.Fatal("authorization event was not published")
+		}
+		loaded, err := store.Load(t.Context(), sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := loaded.UsageFor(session.UsageKindAskReviewer); got != usage {
+			t.Fatalf("durable drained ask-reviewer usage = %+v, want %+v", got, usage)
+		}
+		if run.Outcome() != agent.RunOutcomeAuthorizationPending {
+			t.Fatalf("outcome = %v, want authorization pending", run.Outcome())
 		}
 	})
 }

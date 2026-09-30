@@ -221,7 +221,7 @@ func TestPlanModeAutoApproveDoesNotFireInteractive(t *testing.T) {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin == session.ApprovalOriginPlan {
 			sawPlanAsk = true
 			built.Service.MaybeAutoApprovePlan(context.Background(), sess.ID, ev)
-			r.Cancel()
+			r.Cancel(agent.CancelCauseRequested)
 		}
 		if ev.Type == session.EvResult {
 			break
@@ -296,7 +296,7 @@ func TestPlanModeAutoApproveDoesNotFireForNonPlanAsk(t *testing.T) {
 	for ev := range r.Events() {
 		if ev.Type == session.EvPermissionAsk && ev.Ask != nil && ev.Ask.Origin != session.ApprovalOriginPlan {
 			built.Service.MaybeAutoApprovePlan(context.Background(), sess.ID, ev)
-			r.Cancel()
+			r.Cancel(agent.CancelCauseRequested)
 		}
 		if ev.Type == session.EvResult {
 			break

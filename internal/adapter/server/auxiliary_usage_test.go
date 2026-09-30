@@ -122,7 +122,7 @@ func completedAuxiliaryUsageSession(t *testing.T, id session.SessionID) *session
 	return sess
 }
 
-func TestReflectSessionAuxiliaryUsageRequiresCurrentOwnership(t *testing.T) {
+func TestReflectSessionOwnershipLossCannotOverwriteSuccessor(t *testing.T) {
 	usage := session.Usage{InputTokens: 5, OutputTokens: 2}
 	aux := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
 		session.UsageKindReflection: {Total: usage, Models: map[string]session.Usage{"server-provider/server-model": usage}},
@@ -229,6 +229,11 @@ func TestReflectSessionAuxiliaryUsageRequiresCurrentOwnership(t *testing.T) {
 		svc.cfg.ReflectSession = func(context.Context, *session.Session) (ReflectionReceipt, error) {
 			capability.Invalidate(id)
 			loseLease()
+			successor := completedAuxiliaryUsageSession(t, id)
+			successor.RecordTokenUsage(session.UsageKindMain, "successor-provider", "successor-model", session.Usage{InputTokens: 99})
+			if err := store.SessionStore.Save(t.Context(), successor); err != nil {
+				t.Fatal(err)
+			}
 			return ReflectionReceipt{Disposition: "completed", Usage: aux}, nil
 		}
 		if _, err := svc.ReflectSession(t.Context(), id); err != nil {
@@ -236,6 +241,16 @@ func TestReflectSessionAuxiliaryUsageRequiresCurrentOwnership(t *testing.T) {
 		}
 		if store.saves != 0 {
 			t.Fatalf("post-lease-loss accounting saves = %d, want zero", store.saves)
+		}
+		persisted, err := store.SessionStore.Load(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := persisted.UsageFor(session.UsageKindMain); got.InputTokens != 99 {
+			t.Fatalf("successor main usage = %+v, want successor state preserved", got)
+		}
+		if got := persisted.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+			t.Fatalf("late reflection usage overwrote successor state: %+v", got)
 		}
 		if diagnostics.count("reflection usage dropped") != 1 {
 			t.Fatalf("drop diagnostics = %#v, want one bounded message", diagnostics.messages)
