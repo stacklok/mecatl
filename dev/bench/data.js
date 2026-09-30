@@ -282942,6 +282942,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790767925691,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e52e8da8d76c72913ca5453be74b297fbd5565d6",
+          "message": "fix(release): resolve helper image per platform (#2011)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T15:23:21+03:00",
+          "tree_id": "f0c6385af1e3abfcb479cad7feea422ea67c2e96",
+          "url": "https://github.com/stacklok/mecatl/commit/e52e8da8d76c72913ca5453be74b297fbd5565d6"
+        },
+        "date": 1790771715455,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -370760,6 +370799,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790771712074,
+  "lastUpdate": 1790771716992,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
