@@ -34,7 +34,7 @@ require (
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/procfs v0.22.0
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/stacklok/mecatl/adapters v0.0.0-20260929205240-3fd4c343ca56
+	github.com/stacklok/mecatl/adapters v0.1.1
 	github.com/stacklok/mecatl/authn/oidc v0.0.0-00010101000000-000000000000
 	github.com/stacklok/mecatl/contracts/gen/go/mecatl/driver v0.1.0
 	github.com/stacklok/mecatl/engine v0.15.1-0.20260929125653-6142f5252a09

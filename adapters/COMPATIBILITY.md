@@ -66,9 +66,8 @@ Redis, gRPC, the root host, or adapters. Root `go.mod` replacements and
 ## Release verification
 
 The `adapters/v0.1.0` tag retains dependency pins to a revision that the Go
-module resolver cannot fetch. That immutable tag does not support standalone
-installation; publish a patch version from the corrected manifest after
-review and standalone verification.
+module resolver cannot fetch. Use `adapters/v0.1.1` or later for standalone
+installation; the existing `v0.1.0` tag is immutable.
 
 Release dependency-first from reviewed commits:
 
