@@ -326,6 +326,31 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_RejectsStaleResults(t *testi
 	m, s := savedMemoryOpened(t, savedMemoryEntries(4))
 	s.Render(50, 10)
 
+	// The root update seam must consume a same-generation reply for another
+	// exact key while the selected key's request remains pending.
+	mm, pending := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	matching := pending().(client.UserModelDetailMsg)
+	beforeOffset, beforeSelection := s.list.Offset(), s.list.CursorID()
+	wrong := matching
+	wrong.RequestKey = "fact/001"
+	wrong.UserModel.Detail = &client.UserModelDetail{Current: client.UserModelRevision{Key: wrong.RequestKey, Value: "wrong detail"}}
+	mm, _ = m.Update(wrong)
+	m = mm.(Model)
+	s = m.modal.(*userModelState)
+	if !s.loading || s.err != nil || s.requestKey != matching.RequestKey || s.view != userModelPanel || s.detail != nil || s.list.CursorID() != beforeSelection || s.list.Offset() != beforeOffset {
+		t.Fatalf("wrong-key reply mutated pending detail: loading=%v err=%v request=%q view=%d detail=%+v selection=%q offset=%d", s.loading, s.err, s.requestKey, s.view, s.detail, s.list.CursorID(), s.list.Offset())
+	}
+	mm, _ = m.Update(matching)
+	m = mm.(Model)
+	s = m.modal.(*userModelState)
+	if s.loading || s.err != nil || s.view != userModelDetail || s.detail == nil || s.detail.Current.Key != matching.RequestKey {
+		t.Fatalf("matching reply was not installed: loading=%v err=%v view=%d detail=%+v", s.loading, s.err, s.view, s.detail)
+	}
+
+	m, s = savedMemoryOpened(t, savedMemoryEntries(4))
+	s.Render(50, 10)
+
 	// Drive the public Model.Update seam: abandoning A for B must make A's
 	// response stale without leaving the panel in loading state, so B can retry.
 	mm, first := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -410,6 +435,12 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation(t *
 	s.Render(45, 9)
 	if s.list.Offset() != 1 || s.list.CursorID() != selected || m.vp.YOffset() != before {
 		t.Fatalf("wheel escaped visible viewport: offset=%d", s.list.Offset())
+	}
+	s.list.Scroll(bounded.End)
+	bottomOffset := s.list.Offset()
+	m = applyAll(m, tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: 1, Y: 1})
+	if s.list.Offset() != bottomOffset || s.list.CursorID() != selected || m.vp.YOffset() != before {
+		t.Fatalf("inventory bottom wheel escaped modal: offset=%d selection=%q conversation=%d", s.list.Offset(), s.list.CursorID(), m.vp.YOffset())
 	}
 	for _, msg := range []tea.Msg{tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 10}, tea.MouseMotionMsg{Button: tea.MouseLeft, X: 7, Y: 11}, tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 7, Y: 11}} {
 		m = applyAll(m, msg)

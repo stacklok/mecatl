@@ -244,9 +244,12 @@ func TestModelHasNoModelsStateField(t *testing.T) {
 
 func TestModelHasNoUserModelStateField(t *testing.T) {
 	st := reflect.TypeOf(Model{})
+	stateType := reflect.TypeFor[userModelState]()
+	pointerStateType := reflect.PointerTo(stateType)
 	for i := 0; i < st.NumField(); i++ {
-		if st.Field(i).Type.Name() == "userModelState" {
-			t.Error("Model has a userModelState field; /usermodel state lives only in m.modal")
+		fieldType := st.Field(i).Type
+		if fieldType == stateType || fieldType == pointerStateType {
+			t.Errorf("Model field %q has userModelState type; /usermodel state lives only in m.modal", st.Field(i).Name)
 		}
 	}
 }
