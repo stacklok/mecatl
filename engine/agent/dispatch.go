@@ -382,41 +382,82 @@ func (e *Engine) runReadBatch(ctx context.Context, r *Run, sess *session.Session
 	toRun = e.admitReadBatchActions(r, turnIdx, toRun, out)
 
 	// Phase 2: execute, PostToolUse, repair, and inbound-review the cleared
-	// read-only calls concurrently into private indexed records. No final result,
-	// recorder write, aggregate mutation, or release ask occurs in these goroutines.
-	var wg sync.WaitGroup
+	// read-only calls concurrently into private indexed records. The dispatcher
+	// alone publishes completed clean results; workers never emit availability or
+	// touch the recorder, aggregate, or release-ask state.
+	completed := make(chan int, len(toRun))
 	for i := range toRun {
-		wg.Add(1)
-		go func(p *readBatchPending) {
-			defer wg.Done()
+		go func(i int) {
+			p := &toRun[i]
 			p.record = e.executePrivate(ctx, r, sess, env, turnIdx, p.call, p.t, &p.auth, enqueue)
-		}(&toRun[i])
+			completed <- i
+		}(i)
 	}
-	wg.Wait()
+	available := e.publishCleanReadBatch(ctx, r, sess, env, turnIdx, toRun, completed)
 
-	// Drain inbound decisions in original call order. Only this dispatcher phase
-	// may surface result-release asks or finalize recorder/event output.
-	cancelled = false
-	for i := range toRun {
-		p := &toRun[i]
+	// Canonical results still drain only after every worker finishes.
+	cancelled = e.drainReadBatch(ctx, r, sess, env, turnIdx, toRun, available, out)
+
+	e.armReadBatchGrants(ctx, r, sess, env, toRun, out)
+	return out, cancelled
+}
+
+// publishCleanReadBatch consumes every worker completion on the dispatcher
+// goroutine. Workers only write their private record and send its index; this
+// keeps publication and event sequencing serial without blocking on a sibling.
+func (e *Engine) publishCleanReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, completed <-chan int) []bool {
+	available := make([]bool, len(pending))
+	for range pending {
+		i := <-completed
+		p := &pending[i]
+		if ctx.Err() != nil || inboundNeedsHold(p.record.assessment) {
+			continue
+		}
+		// Non-held assessments have a final, non-asking inbound disposition.
+		// Resolve it before publishing: principal revision changes can replace
+		// even an otherwise clean payload with a synthetic safe error.
+		result, _ := e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
+		// A stale binding can replace a clean assessment with a synthetic
+		// withholding result. Do not let a PostToolUse annotation quote the
+		// unreleased original in that case.
+		if reflect.DeepEqual(result, p.record.result) {
+			for _, event := range p.record.postEvents {
+				e.emit(r, event)
+			}
+		}
+		p.record.result = result
+		p.record.postEvents = nil // the canonical drain must not replay annotations
+		e.emit(r, session.Event{Type: session.EvToolResultAvailable, Turn: turnIdx, ToolResult: ptr(result)})
+		available[i] = true
+	}
+	return available
+}
+
+// drainReadBatch resolves held decisions serially and commits canonical results
+// in model-call order, including cancellation replacements for prior availability.
+func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, pending []readBatchPending, available []bool, out map[session.ToolCallID]session.ToolResult) (cancelled bool) {
+	for i := range pending {
+		p := &pending[i]
 		var result session.ToolResult
 		if cancelled || ctx.Err() != nil {
 			cancelled = true
-			closeInboundAssessment(p.record.assessment)
+			if !available[i] {
+				closeInboundAssessment(p.record.assessment)
+			}
 			if p.record.assessment.request.ReviewID != "" {
 				key := heldResultKey{reviewID: p.record.assessment.request.ReviewID, session: sess.ID, call: p.call.ID, env: env.Ref()}
 				r.reviewRoot.dropHeld(key)
 			}
 			result = session.NewToolError(p.call.ID, withheldResultText+": batch release was cancelled")
+		} else if available[i] {
+			result = p.record.result
 		} else {
 			result, cancelled = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
 		}
 		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, false)
 		out[p.call.ID] = result
 	}
-
-	e.armReadBatchGrants(ctx, r, sess, env, toRun, out)
-	return out, cancelled
+	return cancelled
 }
 
 func (e *Engine) admitReadBatchActions(r *Run, turnIdx int, pending []readBatchPending, out map[session.ToolCallID]session.ToolResult) []readBatchPending {
