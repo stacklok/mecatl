@@ -460,7 +460,7 @@ func assertRunEvents(t *testing.T, events []session.Event, callID session.ToolCa
 	var result *session.ResultPayload
 	matches := 0
 	for _, event := range events {
-		if event.ToolResult != nil && event.ToolResult.CallID == callID {
+		if event.Type == session.EvToolResult && event.ToolResult != nil && event.ToolResult.CallID == callID {
 			matches++
 			if event.ToolResult.Content != want {
 				t.Fatalf("tool %s content = %q, want %q", callID, event.ToolResult.Content, want)
