@@ -14,6 +14,7 @@ import {
   renameSessionRequestSchema,
   renameSessionResponseSchema,
   resolvePermissionRequestSchema,
+  resolvePlanAskRequestSchema,
   runStreamEventSchema,
   sessionDetailResponseSchema,
   sessionTranscriptResponseSchema,
@@ -372,6 +373,25 @@ const resolvePermissionRoute = createRoute({
   },
 });
 
+const resolvePlanAskRoute = createRoute({
+  method: "post",
+  operationId: "resolvePlanAsk",
+  path: "/api/v1/sessions/{sessionId}/runs/{runId}/plan-asks/{askId}",
+  request: {
+    body: {
+      content: { "application/json": { schema: resolvePlanAskRequestSchema } },
+      required: true,
+    },
+    params: permissionParameters,
+  },
+  responses: {
+    204: { description: "The exact plan verdict was acknowledged." },
+    409: errorResponse,
+    500: errorResponse,
+    503: unavailableResponse,
+  },
+});
+
 const authorizationPresentationRoute = createRoute({
   method: "get",
   operationId: "getAuthorizationPresentation",
@@ -668,6 +688,16 @@ export function registerChatRoutes(
     return context.body(null, 204);
   });
 
+  app.openapi(resolvePlanAskRoute, async (context) => {
+    if (chat === undefined) return unavailable(context);
+    const { askId, runId, sessionId } = context.req.valid("param");
+    const { verdict } = context.req.valid("json");
+    const outcome = await chat.resolvePlanAsk(sessionId, runId, askId, verdict);
+    if (outcome === "unavailable") return planUnavailable(context);
+    if (outcome === "stale") return stalePlanAsk(context);
+    return context.body(null, 204);
+  });
+
   app.openapi(authorizationPresentationRoute, async (context) => {
     if (chat === undefined) return unavailable(context);
     const { sessionId, authorizationId } = context.req.valid("param");
@@ -762,6 +792,26 @@ function staleRun(context: Parameters<typeof problem>[0]) {
     "stale_run_control",
     "Run is no longer active",
     "This control belongs to a run that has already ended or is no longer connected.",
+  );
+}
+
+function planUnavailable(context: Parameters<typeof problem>[0]) {
+  return problem(
+    context,
+    503,
+    "plan_control_unavailable",
+    "Exact plan review unavailable",
+    "This Mecatl server does not advertise exact plan ask control.",
+  );
+}
+
+function stalePlanAsk(context: Parameters<typeof problem>[0]) {
+  return problem(
+    context,
+    409,
+    "stale_run_control",
+    "Plan ask is no longer actionable",
+    "This plan ask is stale, consumed, or its live run did not opt into server-owned continuation.",
   );
 }
 

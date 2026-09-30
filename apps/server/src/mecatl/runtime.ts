@@ -247,8 +247,12 @@ function runtimeSnapshot(
   };
 }
 
-function copyCapabilities(capabilities: ServerCapabilities): ServerCapabilities {
-  return structuredClone(capabilities);
+function copyCapabilities(capabilities: ServerCapabilities): RuntimeResponse["capabilities"] {
+  return {
+    ...structuredClone(capabilities),
+    bash: capabilities.shell === true,
+    storageMigration: false,
+  };
 }
 
 function canonicalResource(url: URL): string {

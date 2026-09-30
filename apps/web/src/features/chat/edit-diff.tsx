@@ -285,13 +285,21 @@ const GUTTER_CLASS: Record<DiffLineKind, string> = {
   removed: "text-foreground",
 };
 
-function DiffRows({ lines, cap = DIFF_LINE_CAP }: { lines: DiffLine[]; cap?: number }) {
+function DiffRows({
+  lines,
+  cap = DIFF_LINE_CAP,
+  bounded = false,
+}: {
+  lines: DiffLine[];
+  cap?: number;
+  bounded?: boolean;
+}) {
   const [showAll, setShowAll] = useState(false);
   const bodyId = useId();
   if (lines.length === 0) {
     return <p className="px-3 py-1.5 text-xs text-muted-foreground">(no lines)</p>;
   }
-  const shown = showAll ? lines : lines.slice(0, cap);
+  const shown = !bounded && showAll ? lines : lines.slice(0, cap);
   const hidden = lines.length - shown.length;
   return (
     <>
@@ -305,14 +313,27 @@ function DiffRows({ lines, cap = DIFF_LINE_CAP }: { lines: DiffLine[]; cap?: num
             data-diff={line.kind}
             className={cn("flex min-w-max px-2", ROW_CLASS[line.kind])}
           >
-            <span className={cn("w-4 shrink-0 select-none text-center", GUTTER_CLASS[line.kind])}>
+            <span
+              aria-hidden="true"
+              className={cn("w-4 shrink-0 select-none text-center", GUTTER_CLASS[line.kind])}
+            >
               {GUTTER[line.kind]}
             </span>
+            {line.kind !== "context" && (
+              <span className="sr-only">
+                {line.kind === "added" ? "Added line: " : "Removed line: "}
+              </span>
+            )}
             <span className="whitespace-pre pl-1">{line.text}</span>
           </div>
         ))}
       </div>
-      {(hidden > 0 || showAll) && lines.length > cap && (
+      {bounded && hidden > 0 && (
+        <p className="border-t border-border/60 px-3 py-1 text-xs text-muted-foreground">
+          {hidden} more diff lines. Inspect raw arguments for the complete input.
+        </p>
+      )}
+      {!bounded && (hidden > 0 || showAll) && lines.length > cap && (
         <div className="border-t border-border/60 px-2 py-1">
           <Button
             type="button"
@@ -349,12 +370,14 @@ function DiffHeader({ path, note }: { path: string; note: string }) {
  * An Edit call: `path  -N +N (replace all)` over the before → after rows.
  */
 export function EditDiffBlock({
+  bounded = false,
   path,
   oldText,
   newText,
   replaceAll = false,
   className,
 }: {
+  bounded?: boolean;
   path: string;
   oldText: string;
   newText: string;
@@ -373,7 +396,7 @@ export function EditDiffBlock({
           Too many lines to align; showing the removed block, then the added block.
         </p>
       )}
-      <DiffRows lines={diff.lines} />
+      <DiffRows bounded={bounded} lines={diff.lines} />
     </div>
   );
 }
@@ -383,10 +406,12 @@ export function EditDiffBlock({
  * body — the whole file is new content as far as the reader can tell.
  */
 export function WriteBlock({
+  bounded = false,
   path,
   content,
   className,
 }: {
+  bounded?: boolean;
   path: string;
   content: string;
   className?: string;
@@ -398,7 +423,7 @@ export function WriteBlock({
       className={cn("overflow-hidden rounded-lg border border-border bg-background", className)}
     >
       <DiffHeader path={path} note={writeSizeNote(content)} />
-      <DiffRows lines={lines} />
+      <DiffRows bounded={bounded} lines={lines} />
     </div>
   );
 }
@@ -410,10 +435,12 @@ export function WriteBlock({
  * Edit/Write, passing the row's `args` as `rawArgs`.
  */
 export function ToolDiff({
+  bounded = false,
   name,
   rawArgs,
   className,
 }: {
+  bounded?: boolean;
   name: string;
   rawArgs: string | undefined;
   className?: string;
@@ -423,6 +450,7 @@ export function ToolDiff({
   if (parsed.kind === "edit") {
     return (
       <EditDiffBlock
+        bounded={bounded}
         path={parsed.path}
         oldText={parsed.oldString}
         newText={parsed.newString}
@@ -431,5 +459,12 @@ export function ToolDiff({
       />
     );
   }
-  return <WriteBlock path={parsed.path} content={parsed.content} className={className} />;
+  return (
+    <WriteBlock
+      bounded={bounded}
+      path={parsed.path}
+      content={parsed.content}
+      className={className}
+    />
+  );
 }
