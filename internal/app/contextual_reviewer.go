@@ -362,15 +362,34 @@ func (r *contextualToolReviewer) GuardrailCheckerRoute() (string, string) {
 	return r.checkerProviderID, r.checkerModelID
 }
 
+// Review budgets carry the existing typed timeout failure as their cause. An
+// unclassified cancellation or deadline belongs to the caller, not checker health.
+func reviewContextError(ctx context.Context) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	var failure agent.GuardrailReviewFailure
+	if ctx.Err() == context.DeadlineExceeded && errors.As(context.Cause(ctx), &failure) && failure.GuardrailReviewFailureCode() == agent.ReviewFailureTimeout {
+		return context.Cause(ctx)
+	}
+	return ctx.Err()
+}
+
 func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolReviewRequest, source agent.ReviewEvidenceSource) (agent.ToolReviewResult, error) {
 	deadline := r.deadline
 	if deadline <= 0 {
 		deadline = reviewTotalDeadline
 	}
-	ctx, cancel := context.WithTimeout(ctx, deadline)
+	ctx, cancel := context.WithTimeoutCause(ctx, deadline, newReviewFailure(agent.ReviewFailureTimeout, false))
 	defer cancel()
+	if ctx.Err() != nil {
+		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, reviewContextError(ctx)
+	}
 	if err := validateReviewRequest(req); err != nil {
 		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, classifyEvidenceFailure(err)
+	}
+	if ctx.Err() != nil {
+		return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, reviewContextError(ctx)
 	}
 	if len(req.Evidence) > 0 {
 		bound, ok := source.(boundReviewEvidenceSource)
@@ -385,7 +404,16 @@ func (r *contextualToolReviewer) Review(ctx context.Context, req agent.ToolRevie
 	var last error
 	budget := &reviewEvidenceBudget{}
 	for attempt := 0; attempt < maxReviewAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, reviewContextError(ctx)
+		}
 		result, completed, recoverable, err := r.reviewAttempt(ctx, req, source, budget)
+		if ctx.Err() != nil {
+			var terminal agent.GuardrailReviewTerminalFailure
+			if err == nil || !errors.As(err, &terminal) || !terminal.GuardrailReviewTerminalFailure() {
+				return agent.ToolReviewResult{Assessment: agent.ReviewUnresolved}, reviewContextError(ctx)
+			}
+		}
 		if completed {
 			return result, nil
 		}

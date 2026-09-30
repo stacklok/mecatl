@@ -221,8 +221,11 @@ type readBatchPending struct {
 
 func closeActionAssessments(prepared []readBatchPending) {
 	for i := range prepared {
-		if prepared[i].assessment != nil && prepared[i].assessment.action.close != nil {
-			prepared[i].assessment.action.close()
+		if prepared[i].assessment != nil {
+			prepared[i].assessment.cancel()
+			if prepared[i].assessment.action.close != nil {
+				prepared[i].assessment.action.close()
+			}
 		}
 	}
 }
@@ -234,6 +237,9 @@ func closePreparedOnCancel(prepared *[]readBatchPending, cancelled *bool) {
 }
 
 func closeInboundAssessment(assessment inboundAssessment) {
+	if assessment.cancel != nil {
+		assessment.cancel()
+	}
 	if assessment.close != nil {
 		assessment.close()
 	}
@@ -247,14 +253,14 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 		if sess.Mode == session.ModePlan && c.Name == presentPlanToolName {
 			res, cancelled := e.surfacePlanAsk(ctx, r, sess, turnIdx, c)
 			if cancelled {
-				return nil, true
+				return prepared, true
 			}
 			out[c.ID] = res
 			continue
 		}
 		decision, auth, cancelled := e.authorizeBound(ctx, r, sess, env, turnIdx, c)
 		if cancelled {
-			return nil, true
+			return prepared, true
 		}
 		if decision.Effect == governance.Deny {
 			out[c.ID] = denyResult(c, decision.Reason)
@@ -263,7 +269,7 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 		}
 		pre, herr := e.preHook(ctx, r, sess, turnIdx, c)
 		if herr != nil {
-			return nil, true
+			return prepared, true
 		}
 		if pre.blocked {
 			out[c.ID] = session.NewToolError(c.ID, pre.msg)
@@ -273,7 +279,7 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 		if pre.askApproval {
 			res, askCancelled, proceed := e.askHookApproval(ctx, r, sess, turnIdx, c, pre.msg)
 			if askCancelled {
-				return nil, true
+				return prepared, true
 			}
 			if !proceed {
 				out[c.ID] = res
@@ -283,7 +289,7 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 		if string(pre.effective.Args) != string(c.Args) {
 			decision, auth, cancelled = e.authorizeBound(ctx, r, sess, env, turnIdx, pre.effective)
 			if cancelled {
-				return nil, true
+				return prepared, true
 			}
 			if decision.Effect == governance.Deny {
 				out[c.ID] = denyResult(pre.effective, decision.Reason)
@@ -298,16 +304,23 @@ func (e *Engine) prepareReadBatch(ctx context.Context, r *Run, sess *session.Ses
 			e.emit(r, session.Event{Type: session.EvToolResult, Turn: turnIdx, ToolResult: ptr(res)})
 			continue
 		}
-		p := readBatchPending{call: pre.effective, t: actualTool, auth: auth}
+		prepared = append(prepared, readBatchPending{call: pre.effective, t: actualTool, auth: auth})
+	}
+	// Finish sibling permission and pre-hook approval waits before starting any
+	// contextual review budget. Evidence preparation remains dispatcher-serial.
+	for i := range prepared {
+		if ctx.Err() != nil {
+			return prepared, true
+		}
+		p := &prepared[i]
 		if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
-			if applies, _ := reviewPolicy(r.reviewRoot.reviewer, pre.effective.Name, ReviewJobAction, false); applies {
-				assessment := e.prepareActionAssessment(ctx, r, sess, env, pre.effective)
+			if applies, _ := reviewPolicy(r.reviewRoot.reviewer, p.call.Name, ReviewJobAction, false); applies {
+				assessment := e.prepareActionAssessment(ctx, r, sess, env, p.call)
 				p.assessment = &assessment
 			}
 		}
-		prepared = append(prepared, p)
 	}
-	return prepared, false
+	return prepared, ctx.Err() != nil
 }
 
 // runReadBatch runs a batch of read-only tool calls concurrently. Permission and
@@ -1583,7 +1596,7 @@ func (e *Engine) executePrivate(ctx context.Context, r *Run, sess *session.Sessi
 	res = session.RepairToolResult(res)
 	var assessment inboundAssessment
 	if r.reviewRoot != nil && r.reviewRoot.reviewer != nil {
-		assessment = e.prepareInboundAssessment(r, sess, env, c, res)
+		assessment = e.prepareInboundAssessment(ctx, r, sess, env, c, res)
 		assessInbound(ctx, r, &assessment)
 	}
 	return executionRecord{result: res, queued: queued, duration: dur, assessment: assessment, postEvents: postEvents}

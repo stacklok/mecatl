@@ -19,6 +19,7 @@ import (
 
 const (
 	defaultReviewEvidenceHandles = 16
+	reviewAssessmentTimeout      = 90 * time.Second
 	defaultReviewEvidenceBytes   = int64(400_000)
 	defaultReviewTrajectoryFacts = 256
 	defaultReviewTrajectoryBytes = int64(128_000)
@@ -339,13 +340,20 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 	authorizedPaths := make([]string, 0, len(paths))
 	authorityComplete := true
 	for _, path := range paths {
+		if ctx.Err() != nil {
+			break
+		}
 		if err := e.authorizeReviewEvidenceRead(ctx, r, sess, env, call.ID, path); err != nil {
 			authorityComplete = false
 			continue
 		}
 		authorizedPaths = append(authorizedPaths, path)
 	}
-	deps, depsComplete := snapshotActionDependencies(ctx, env.Workspace(), authorizedPaths)
+	var deps []actionDependency
+	depsComplete := false
+	if ctx.Err() == nil {
+		deps, depsComplete = snapshotActionDependencies(ctx, env.Workspace(), authorizedPaths)
+	}
 	depsComplete = depsComplete && authorityComplete
 	for i, dep := range deps {
 		state := "absent"
@@ -369,11 +377,22 @@ func (e *Engine) prepareActionReview(ctx context.Context, r *Run, sess *session.
 		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxEvidenceHandles: defaultReviewEvidenceHandles, MaxEvidenceBytes: defaultReviewEvidenceBytes, MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
-	prepared, prepareErr := e.prepareReviewEvidence(ctx, r, sess, env, req, nil)
+	var prepared PreparedReviewEvidence
+	var prepareErr error
+	if ctx.Err() == nil {
+		prepared, prepareErr = e.prepareReviewEvidence(ctx, r, sess, env, req, nil)
+	} else {
+		prepareErr = reviewFailure(ReviewFailureTimeout)
+	}
+	if prepareErr == nil && ctx.Err() != nil {
+		prepareErr = reviewFailure(ReviewFailureTimeout)
+	}
 	req.Evidence, req.EvidenceComplete = prepared.Evidence, prepared.Complete
 	out := actionReview{request: req, dependencies: deps, source: prepared.Source, close: prepared.Close, principalRevision: principalRevision, prepareErr: prepareErr}
-	if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok {
-		out.digest, out.repeat = issuer.GrantDigest(req)
+	if out.prepareErr == nil && ctx.Err() == nil {
+		if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok {
+			out.digest, out.repeat = issuer.GrantDigest(req)
+		}
 	}
 	return out
 }
@@ -424,6 +443,13 @@ func (e *Engine) prepareReviewEvidence(ctx context.Context, r *Run, sess *sessio
 	if err != nil {
 		if prepared.Close != nil {
 			prepared.Close()
+		}
+		var terminal GuardrailReviewTerminalFailure
+		if errors.As(err, &terminal) && terminal.GuardrailReviewTerminalFailure() {
+			return PreparedReviewEvidence{}, terminalReviewFailure(ReviewFailureEvidenceFailure)
+		}
+		if ctx.Err() != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+			return PreparedReviewEvidence{}, reviewFailure(ReviewFailureTimeout)
 		}
 		return PreparedReviewEvidence{}, terminalReviewFailure(ReviewFailureEvidenceFailure)
 	}
@@ -481,6 +507,9 @@ func snapshotActionDependencies(ctx context.Context, ws tool.Workspace, paths []
 	}
 	deps := make([]actionDependency, 0, len(paths))
 	for _, path := range paths {
+		if ctx.Err() != nil {
+			return deps, false
+		}
 		_, version, err := reader.ReadVersionBounded(ctx, path, defaultReviewEvidenceBytes)
 		if errors.Is(err, fs.ErrNotExist) {
 			deps = append(deps, actionDependency{path: path})
@@ -622,16 +651,25 @@ func (r *Run) publishActionDetail(ctx context.Context, sessionID session.Session
 
 type actionReviewAssessment struct {
 	action   actionReview
+	ctx      context.Context
+	cancel   context.CancelFunc
 	result   ToolReviewResult
 	err      error
 	grantHit bool
 }
 
 func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, call session.ToolCall) actionReviewAssessment {
-	action := e.prepareActionReview(ctx, r, sess, env, call)
-	assessment := actionReviewAssessment{action: action}
-	if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok && action.repeat {
-		assessment.grantHit = issuer.AllowsGrant(action.digest)
+	reviewCtx, cancel := context.WithTimeoutCause(ctx, reviewAssessmentTimeout, reviewFailure(ReviewFailureTimeout))
+	action := e.prepareActionReview(reviewCtx, r, sess, env, call)
+	assessment := actionReviewAssessment{action: action, ctx: reviewCtx, cancel: cancel}
+	if action.prepareErr == nil && reviewCtx.Err() == nil {
+		if issuer, ok := r.reviewRoot.reviewer.(ReviewGrantStore); ok && action.repeat {
+			assessment.grantHit = issuer.AllowsGrant(action.digest)
+		}
+	}
+	if action.prepareErr == nil && reviewCtx.Err() != nil {
+		assessment.action.prepareErr = reviewFailure(ReviewFailureTimeout)
+		assessment.grantHit = false
 	}
 	return assessment
 }
@@ -650,6 +688,8 @@ func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *ses
 	if !ok || !policy.GuardrailPermissionReviewEligible(call) {
 		return nil
 	}
+	reviewCtx, cancel := context.WithTimeoutCause(ctx, reviewAssessmentTimeout, reviewFailure(ReviewFailureTimeout))
+	defer cancel()
 	principal, principalComplete, revision := r.reviewRoot.principalSnapshotWithRevision()
 	trajectory, trajectoryComplete := r.reviewRoot.snapshot()
 	req := ToolReviewRequest{
@@ -660,7 +700,21 @@ func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *ses
 		Trajectory: trajectory, TrajectoryComplete: trajectoryComplete,
 		Capacity: ReviewCapacity{MaxTrajectoryFacts: defaultReviewTrajectoryFacts, MaxTrajectoryBytes: defaultReviewTrajectoryBytes},
 	}
-	result, err := r.reviewRoot.reviewer.Review(ctx, req, nil)
+	var result ToolReviewResult
+	var err error
+	if reviewCtx.Err() == nil {
+		result, err = r.reviewRoot.reviewer.Review(reviewCtx, req, nil)
+	}
+	if reviewCtx.Err() != nil {
+		var terminal GuardrailReviewTerminalFailure
+		if err == nil || !errors.As(err, &terminal) || !terminal.GuardrailReviewTerminalFailure() {
+			err = reviewFailure(ReviewFailureTimeout)
+			result = ToolReviewResult{Assessment: ReviewUnresolved}
+		}
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
 	if err == nil && !validReviewAssessment(result.Assessment) {
 		result.Assessment = ReviewUnresolved
 		err = reviewFailure(ReviewFailureInvalidAssessment)
@@ -692,7 +746,16 @@ func recordReviewFailure(reviewer ToolReviewer, result ToolReviewResult, err err
 	}
 }
 
-func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessment) {
+func assessAction(parent context.Context, r *Run, assessment *actionReviewAssessment) {
+	defer assessment.cancel()
+	if parent.Err() != nil {
+		return
+	}
+	ctx := assessment.ctx
+	if assessment.action.prepareErr == nil && ctx.Err() != nil {
+		assessment.action.prepareErr = reviewFailure(ReviewFailureTimeout)
+		assessment.grantHit = false
+	}
 	if assessment.action.prepareErr != nil {
 		assessment.result.Assessment = ReviewUnresolved
 		assessment.err = assessment.action.prepareErr
@@ -703,6 +766,14 @@ func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessmen
 		return
 	}
 	assessment.result, assessment.err = r.reviewRoot.reviewer.Review(ctx, assessment.action.request, assessment.action.source)
+	if parent.Err() != nil {
+		return
+	}
+	var terminal GuardrailReviewTerminalFailure
+	if ctx.Err() != nil && (assessment.err == nil || !errors.As(assessment.err, &terminal) || !terminal.GuardrailReviewTerminalFailure()) {
+		assessment.result = ToolReviewResult{Assessment: ReviewUnresolved}
+		assessment.err = reviewFailure(ReviewFailureTimeout)
+	}
 	if assessment.err == nil && !validReviewAssessment(assessment.result.Assessment) {
 		assessment.result.Assessment = ReviewUnresolved
 		assessment.err = reviewFailure(ReviewFailureInvalidAssessment)
@@ -712,6 +783,9 @@ func assessAction(ctx context.Context, r *Run, assessment *actionReviewAssessmen
 func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment) (session.ToolResult, bool, bool, bool) {
 	if assessment.action.close != nil {
 		defer assessment.action.close()
+	}
+	if ctx.Err() != nil {
+		return session.ToolResult{}, true, false, false
 	}
 	if !r.reviewRoot.principalRevisionIs(assessment.action.principalRevision) {
 		res := session.NewToolError(call.ID, "contextual guardrail review context changed during review; retry the action for a fresh assessment")
