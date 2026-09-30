@@ -582,7 +582,8 @@ type ResultPayload struct {
 // RequestManifestPayload is a content-free description of the exact neutral
 // request handed to the provider. It retains only closed provenance/decision
 // tokens, identifiers, and byte/count metadata; it deliberately carries no
-// content digest that could become an offline oracle.
+// content digest that could become an offline oracle. Estimated fields are
+// optional so manifests recorded before their introduction remain unknown.
 type RequestManifestPayload struct {
 	Provider                  string                   `json:"provider,omitempty"`
 	Model                     string                   `json:"model,omitempty"`
@@ -594,6 +595,33 @@ type RequestManifestPayload struct {
 	MessageCount              int                      `json:"message_count"`
 	MessageBytes              int                      `json:"message_bytes"`
 	Prompt                    []RequestPromptComponent `json:"prompt"`
+	// TokenEstimateMethod describes the local estimator used for every estimated
+	// token field. It is never a claim of provider-tokenizer exactness. Component
+	// estimates are independently measured diagnostics and must not be summed.
+	TokenEstimateMethod              string              `json:"token_estimate_method,omitempty"`
+	EstimatedRequestTokens           *int                `json:"estimated_request_tokens,omitempty"`
+	EstimatedSystemTokens            *int                `json:"estimated_system_tokens,omitempty"`
+	EstimatedEphemeralFragmentTokens *int                `json:"estimated_ephemeral_fragment_tokens,omitempty"`
+	EstimatedPersistedHistoryTokens  *int                `json:"estimated_persisted_history_tokens,omitempty"`
+	EstimatedAdvertisedToolTokens    *int                `json:"estimated_advertised_tool_tokens,omitempty"`
+	EstimatedSystemBytes             *int                `json:"estimated_system_bytes,omitempty"`
+	EstimatedEphemeralFragmentBytes  *int                `json:"estimated_ephemeral_fragment_bytes,omitempty"`
+	EstimatedPersistedHistoryBytes   *int                `json:"estimated_persisted_history_bytes,omitempty"`
+	EstimatedAdvertisedToolBytes     *int                `json:"estimated_advertised_tool_bytes,omitempty"`
+	AdvertisedTools                  []RequestToolMetric `json:"advertised_tools,omitempty"`
+}
+
+// RequestToolMetric describes an advertised request tool without retaining any
+// description or schema content. Its estimates include the tool-definition envelope.
+type RequestToolMetric struct {
+	Name                       string `json:"name"`
+	NameBytes                  int    `json:"name_bytes"`
+	DescriptionBytes           int    `json:"doc_bytes"`
+	SchemaBytes                int    `json:"schema_bytes"`
+	EstimatedNameTokens        int    `json:"estimated_name_tokens"`
+	EstimatedDescriptionTokens int    `json:"estimated_doc_tokens"`
+	EstimatedSchemaTokens      int    `json:"estimated_schema_tokens"`
+	EstimatedTokens            int    `json:"estimated_tokens"`
 }
 
 // RequestToolDecision records a decision the final request assembly actually
@@ -621,10 +649,25 @@ const (
 
 // RequestPromptComponent identifies one prompt component without retaining it.
 // Kind and Provenance are closed tokens; Bytes is the encoded component size.
+// EstimatedTokens is a local estimate, never a provider-tokenizer exact count.
+// Rules describe rendered blocks within a rules fragment, not serialized message
+// bytes or an additive breakdown of the request token estimate.
 type RequestPromptComponent struct {
-	Kind       string `json:"kind"`
-	Provenance string `json:"provenance"`
-	Bytes      int    `json:"bytes"`
+	Kind            string              `json:"kind"`
+	Provenance      string              `json:"provenance"`
+	Bytes           int                 `json:"bytes"`
+	EstimatedTokens *int                `json:"estimated_tokens,omitempty"`
+	Rules           []RequestRuleMetric `json:"rules,omitempty"`
+	OmittedRules    int                 `json:"omitted_rules,omitempty"`
+}
+
+// RequestRuleMetric measures one admitted rule block (including its fence and
+// Applies-when clause), not its serialized message envelope or omitted rules.
+type RequestRuleMetric struct {
+	Name            string `json:"name"`
+	Origin          string `json:"origin"`
+	RenderedBytes   int    `json:"rendered_bytes"`
+	EstimatedTokens int    `json:"estimated_tokens"`
 }
 
 // Request prompt kind and provenance tokens form a closed vocabulary.

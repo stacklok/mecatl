@@ -411,6 +411,132 @@ func TestNetworkEvidencePersistsAcrossJSONLStoreRestart(t *testing.T) {
 	}
 }
 
+func TestManifestEvidenceProjectsContextMetricsWithinBounds(t *testing.T) {
+	store, target := seededTarget(t, nil)
+	log := memstore.NewEventLog()
+	old := session.RequestManifestPayload{Model: "before-estimates", MessageCount: 1, MessageBytes: 7, Prompt: []session.RequestPromptComponent{{Provenance: session.RequestProvenanceRules}}}
+	if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvRequestManifest, RequestManifest: &old}); err != nil {
+		t.Fatal(err)
+	}
+	requestTokens, systemTokens, ephemeralTokens, historyTokens, toolTokens := 900, 120, 30, 600, 150
+	systemBytes, ephemeralBytes, historyBytes, toolBytes := 480, 120, 2400, 900
+	manifest := session.RequestManifestPayload{
+		Provider: "mock", Model: "realistic-model", TokenEstimateMethod: "bytes/4\nlocal",
+		EstimatedRequestTokens: &requestTokens, EstimatedSystemTokens: &systemTokens,
+		EstimatedEphemeralFragmentTokens: &ephemeralTokens, EstimatedPersistedHistoryTokens: &historyTokens,
+		EstimatedAdvertisedToolTokens: &toolTokens, EstimatedSystemBytes: &systemBytes,
+		EstimatedEphemeralFragmentBytes: &ephemeralBytes, EstimatedPersistedHistoryBytes: &historyBytes,
+		EstimatedAdvertisedToolBytes: &toolBytes,
+		Prompt: []session.RequestPromptComponent{{
+			Kind: "system\nprompt", Provenance: "stable", Bytes: systemBytes, EstimatedTokens: &systemTokens,
+			Rules: []session.RequestRuleMetric{
+				{Name: "project-rule", Origin: session.RequestProvenanceProject, RenderedBytes: 72, EstimatedTokens: 18},
+				{Name: "user-rule", Origin: "user", RenderedBytes: 64, EstimatedTokens: 16},
+			},
+			OmittedRules: 2,
+		}},
+		AdvertisedTools: []session.RequestToolMetric{{Name: "Read\nTool", NameBytes: 9, DescriptionBytes: 24, SchemaBytes: 88, EstimatedNameTokens: 2, EstimatedDescriptionTokens: 6, EstimatedSchemaTokens: 22, EstimatedTokens: 30}},
+	}
+	if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvRequestManifest, RequestManifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	overBudget := session.RequestManifestPayload{AdvertisedTools: []session.RequestToolMetric{{Name: strings.Repeat("x", maxEvidenceBytes)}}}
+	if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvRequestManifest, RequestManifest: &overBudget}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := execute(t, New(target.ID, store, log), `{"view":"manifest"}`)
+	if got.IsError || len(got.Content) > maxEvidenceBytes {
+		t.Fatalf("manifest evidence = %s", got.Content)
+	}
+	out := decodeLineageEvidence[manifestEvidence](t, got)
+	if out.ProjectionComplete || len(out.Rows) != 2 {
+		t.Fatalf("manifest projection bounds = %+v", out)
+	}
+	if oldRow := out.Rows[0]; oldRow.TokenEstimateMethod != "" || oldRow.EstimatedRequestTokens != nil || oldRow.EstimatedSystemBytes != nil || len(oldRow.AdvertisedTools) != 0 ||
+		len(oldRow.Components) != 1 || oldRow.Components[0].Rules != nil || oldRow.Components[0].OmittedRules != 0 {
+		t.Fatalf("old manifest fabricated estimates = %+v", oldRow)
+	}
+	row := out.Rows[1]
+	for _, metric := range []struct {
+		got  *int
+		want int
+	}{
+		{row.EstimatedRequestTokens, requestTokens}, {row.EstimatedSystemTokens, systemTokens},
+		{row.EstimatedEphemeralFragmentTokens, ephemeralTokens}, {row.EstimatedPersistedHistoryTokens, historyTokens},
+		{row.EstimatedAdvertisedToolTokens, toolTokens}, {row.EstimatedSystemBytes, systemBytes},
+		{row.EstimatedEphemeralFragmentBytes, ephemeralBytes}, {row.EstimatedPersistedHistoryBytes, historyBytes},
+		{row.EstimatedAdvertisedToolBytes, toolBytes},
+	} {
+		if metric.got == nil || *metric.got != metric.want {
+			t.Fatalf("manifest metric projection = %+v", row)
+		}
+	}
+	if row.TokenEstimateMethod != "bytes/4 local" || len(row.Components) != 1 || row.Components[0].Kind != "system prompt" ||
+		row.Components[0].Bytes != systemBytes || row.Components[0].EstimatedTokens == nil || *row.Components[0].EstimatedTokens != systemTokens ||
+		row.Components[0].OmittedRules != 2 || len(row.Components[0].Rules) != 2 ||
+		row.Components[0].Rules[0] != (manifestRuleMetric{Name: "project-rule", Origin: session.RequestProvenanceProject, RenderedBytes: 72, EstimatedTokens: 18}) ||
+		row.Components[0].Rules[1] != (manifestRuleMetric{Name: "user-rule", Origin: "user", RenderedBytes: 64, EstimatedTokens: 16}) ||
+		len(row.AdvertisedTools) != 1 || row.AdvertisedTools[0] != (manifestToolMetric{Name: "Read Tool", NameBytes: 9, DescriptionBytes: 24, SchemaBytes: 88, EstimatedNameTokens: 2, EstimatedDescriptionTokens: 6, EstimatedSchemaTokens: 22, EstimatedTokens: 30}) {
+		t.Fatalf("manifest metric projection = %+v", row)
+	}
+
+	view := New(target.ID, store, generatedLog{count: maxPerformanceScan + 1}).(*inspectTool).manifestView(context.Background(), target.ID, 0, 0)
+	if view.ScanComplete || view.Error != "event scan bound reached" || len(view.Rows) != 0 {
+		t.Fatalf("manifest scan bounds = %+v", view)
+	}
+}
+
+func TestManifestRuleProjectionBoundsAndConfidentiality(t *testing.T) {
+	const secret = "rule-body-path-hash-canary"
+	row := projectManifest(session.RequestManifestPayload{Prompt: []session.RequestPromptComponent{{
+		Kind: session.RequestPromptInstruction, Provenance: session.RequestProvenanceRules,
+		Rules: []session.RequestRuleMetric{
+			{Name: "project-rule", Origin: session.RequestProvenanceProject, RenderedBytes: 81, EstimatedTokens: 21},
+			{Name: "user-rule", Origin: "user", RenderedBytes: 63, EstimatedTokens: 16},
+			{Name: "/private/" + secret, Origin: "driver", RenderedBytes: 99, EstimatedTokens: 25},
+		},
+		OmittedRules: 3,
+	}}})
+	component := row.Components[0]
+	if component.OmittedRules != 3 || len(component.Rules) != 3 ||
+		component.Rules[0] != (manifestRuleMetric{Name: "project-rule", Origin: session.RequestProvenanceProject, RenderedBytes: 81, EstimatedTokens: 21}) ||
+		component.Rules[1] != (manifestRuleMetric{Name: "user-rule", Origin: "user", RenderedBytes: 63, EstimatedTokens: 16}) ||
+		component.Rules[2] != (manifestRuleMetric{Name: "unknown", Origin: session.RequestProvenanceUnknown, RenderedBytes: 99, EstimatedTokens: 25}) {
+		t.Fatalf("rule projection = %+v", component)
+	}
+	for _, unsafe := range []string{"safety<>", "safety ", "safety\n", strings.Repeat("s", 65)} {
+		if got := safeManifestRuleName(unsafe); got != "unknown" {
+			t.Fatalf("unsafe label %q aliased to %q", unsafe, got)
+		}
+	}
+	if got := safeManifestRuleName("safety"); got != "safety" {
+		t.Fatalf("valid label lost: %q", got)
+	}
+	if got := safeManifestRuleName(strings.Repeat("a", 64)); got != "unknown" {
+		t.Fatalf("hash-like rule label = %q", got)
+	}
+	encoded, err := json.Marshal(row)
+	if err != nil || strings.Contains(string(encoded), secret) || strings.Contains(string(encoded), "/private/") {
+		t.Fatalf("unsafe rule label leaked: %s (%v)", encoded, err)
+	}
+
+	store, target := seededTarget(t, nil)
+	log := memstore.NewEventLog()
+	rules := make([]session.RequestRuleMetric, maxEvidenceBytes)
+	for i := range rules {
+		rules[i] = session.RequestRuleMetric{Name: "bounded-rule", Origin: session.RequestProvenanceProject, RenderedBytes: 1, EstimatedTokens: 1}
+	}
+	manifest := session.RequestManifestPayload{Prompt: []session.RequestPromptComponent{{Provenance: session.RequestProvenanceRules, Rules: rules}}}
+	if err := log.Append(context.Background(), target.ID, session.Event{Type: session.EvRequestManifest, RequestManifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	out := New(target.ID, store, log).(*inspectTool).manifestView(context.Background(), target.ID, 0, 0)
+	if out.ProjectionComplete || len(out.Rows) != 0 {
+		t.Fatalf("oversized rule row was partially trusted: %+v", out)
+	}
+}
+
 func TestPerformanceReduction(t *testing.T) {
 	store, target := seededTarget(t, nil)
 	log := memstore.NewEventLog()

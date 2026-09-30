@@ -162,6 +162,53 @@ The built-in `openai` and `openrouter` providers send prompt-cache hints only
 through their canonical base URLs. A base URL override disables these hints so a
 compatible endpoint cannot reject an unsupported cache field.
 
+## Inspect context footprint (experimental)
+
+Use `mecated context scan` to estimate which local instructions, rules, and
+agent/skill definitions could contribute to a request. The scan reads the
+project you name and does not start the server. User-level sources require an
+explicit `--user-root`; MCP tool definitions require an offline `tools/list`
+JSON file passed with `--mcp-snapshot`. These are inventories, not evidence
+that a running agent loaded every listed item.
+
+```sh
+mecated context scan --user-root "$HOME" --format json . > .scratch/context-candidates.json
+mecated context scan . --format text
+```
+
+To inspect a request that ran with durable event evidence, save the authorized
+`InspectSession` manifest view as a JSON file, then select one row:
+
+```sh
+mecated context report --input .scratch/manifest.json --row 0 --inventory .scratch/context-candidates.json --format text
+mecated context report --input .scratch/manifest.json --row 0 --inventory .scratch/context-candidates.json --format json > .scratch/request.json
+```
+
+`report` also accepts a single `request.manifest` event or bare request-manifest
+JSON. It shows the request's estimated tokens, component sizes, and advertised
+tool schema/description sizes when those measurements were recorded. When the
+request has rule-level evidence, it lists included project and user rules
+separately and reports how many were omitted by the rules cap. It also marks
+MCP tool specifications that were advertised and names catalog tools that
+were filtered out, with unknown cost for anything not advertised. The
+`mcp_server` field is present only when a safe server ID can be inferred from
+the recorded tool name; it is not proof that other tools on that server loaded.
+When you supply `--inventory`, the JSON keeps the offline candidates separate
+from the measured request; matching names are not proof that a candidate was
+admitted. Retain the original inventory file if you want to compare candidate
+changes later. Legacy manifests show unknown token counts rather than zero. A
+report covers one request, not cumulative session usage; child sessions must
+be inspected separately. Compare compatible saved scans or reports with
+`mecated context diff --before PATH --after PATH` (add `--before-row` and
+`--after-row` for manifest-view inputs).
+
+The JSON output uses the experimental `mecatl.context/v0alpha1` format; run
+`mecated context --help` for the supported input shapes and field example.
+Estimated tokens use a local counter and do not equal provider billing. Rows
+for a request total, components, and fragments overlap, so do not sum them.
+Output excludes prompt/file bodies but includes names and sizes. Review the
+report before sharing it.
+
 ---
 
 ## Flag reference

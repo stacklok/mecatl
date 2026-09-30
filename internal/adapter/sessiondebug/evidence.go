@@ -352,16 +352,54 @@ type manifestEvidence struct {
 	Rows               []manifestRow `json:"rows"`
 }
 type manifestRow struct {
-	Provider                  string                           `json:"provider,omitempty"`
-	Model                     string                           `json:"model,omitempty"`
-	ReasoningEffort           string                           `json:"reasoning_effort,omitempty"`
-	ContextWindow             int                              `json:"context_window,omitempty"`
-	MessageCount              int                              `json:"message_count"`
-	MessageBytes              int                              `json:"message_bytes"`
-	AdvertisedToolSchemaBytes int                              `json:"advertised_tool_schema_bytes"`
-	Tools                     []string                         `json:"tools"`
-	Decisions                 []session.RequestToolDecision    `json:"decisions"`
-	Components                []session.RequestPromptComponent `json:"components"`
+	Provider                         string                        `json:"provider,omitempty"`
+	Model                            string                        `json:"model,omitempty"`
+	ReasoningEffort                  string                        `json:"reasoning_effort,omitempty"`
+	ContextWindow                    int                           `json:"context_window,omitempty"`
+	MessageCount                     int                           `json:"message_count"`
+	MessageBytes                     int                           `json:"message_bytes"`
+	AdvertisedToolSchemaBytes        int                           `json:"advertised_tool_schema_bytes"`
+	TokenEstimateMethod              string                        `json:"token_estimate_method,omitempty"`
+	EstimatedRequestTokens           *int                          `json:"estimated_request_tokens,omitempty"`
+	EstimatedSystemTokens            *int                          `json:"estimated_system_tokens,omitempty"`
+	EstimatedEphemeralFragmentTokens *int                          `json:"estimated_ephemeral_fragment_tokens,omitempty"`
+	EstimatedPersistedHistoryTokens  *int                          `json:"estimated_persisted_history_tokens,omitempty"`
+	EstimatedAdvertisedToolTokens    *int                          `json:"estimated_advertised_tool_tokens,omitempty"`
+	EstimatedSystemBytes             *int                          `json:"estimated_system_bytes,omitempty"`
+	EstimatedEphemeralFragmentBytes  *int                          `json:"estimated_ephemeral_fragment_bytes,omitempty"`
+	EstimatedPersistedHistoryBytes   *int                          `json:"estimated_persisted_history_bytes,omitempty"`
+	EstimatedAdvertisedToolBytes     *int                          `json:"estimated_advertised_tool_bytes,omitempty"`
+	Tools                            []string                      `json:"tools"`
+	AdvertisedTools                  []manifestToolMetric          `json:"advertised_tools,omitempty"`
+	Decisions                        []session.RequestToolDecision `json:"decisions"`
+	Components                       []manifestPromptComponent     `json:"components"`
+}
+
+type manifestToolMetric struct {
+	Name                       string `json:"name"`
+	NameBytes                  int    `json:"name_bytes"`
+	DescriptionBytes           int    `json:"doc_bytes"`
+	SchemaBytes                int    `json:"schema_bytes"`
+	EstimatedNameTokens        int    `json:"estimated_name_tokens"`
+	EstimatedDescriptionTokens int    `json:"estimated_doc_tokens"`
+	EstimatedSchemaTokens      int    `json:"estimated_schema_tokens"`
+	EstimatedTokens            int    `json:"estimated_tokens"`
+}
+
+type manifestPromptComponent struct {
+	Kind            string               `json:"kind"`
+	Provenance      string               `json:"provenance"`
+	Bytes           int                  `json:"bytes"`
+	EstimatedTokens *int                 `json:"estimated_tokens,omitempty"`
+	Rules           []manifestRuleMetric `json:"rules,omitempty"`
+	OmittedRules    int                  `json:"omitted_rules,omitempty"`
+}
+
+type manifestRuleMetric struct {
+	Name            string `json:"name"`
+	Origin          string `json:"origin"`
+	RenderedBytes   int    `json:"rendered_bytes"`
+	EstimatedTokens int    `json:"estimated_tokens"`
 }
 
 func (t *inspectTool) manifestView(ctx context.Context, id session.SessionID, offset, requested int) manifestEvidence {
@@ -409,14 +447,65 @@ func projectManifest(p session.RequestManifestPayload) manifestRow {
 	r := manifestRow{
 		Provider: safeLine(p.Provider), Model: safeLine(p.Model), ReasoningEffort: safeLine(p.ReasoningEffort),
 		ContextWindow: p.ContextWindow, MessageCount: p.MessageCount, MessageBytes: p.MessageBytes,
-		AdvertisedToolSchemaBytes: p.AdvertisedToolSchemaBytes,
-		Tools:                     safeLines(p.ToolNames),
+		AdvertisedToolSchemaBytes: p.AdvertisedToolSchemaBytes, TokenEstimateMethod: safeLine(p.TokenEstimateMethod),
+		EstimatedRequestTokens: p.EstimatedRequestTokens, EstimatedSystemTokens: p.EstimatedSystemTokens,
+		EstimatedEphemeralFragmentTokens: p.EstimatedEphemeralFragmentTokens,
+		EstimatedPersistedHistoryTokens:  p.EstimatedPersistedHistoryTokens,
+		EstimatedAdvertisedToolTokens:    p.EstimatedAdvertisedToolTokens,
+		EstimatedSystemBytes:             p.EstimatedSystemBytes,
+		EstimatedEphemeralFragmentBytes:  p.EstimatedEphemeralFragmentBytes,
+		EstimatedPersistedHistoryBytes:   p.EstimatedPersistedHistoryBytes,
+		EstimatedAdvertisedToolBytes:     p.EstimatedAdvertisedToolBytes,
+		Tools:                            safeLines(p.ToolNames),
+	}
+	for _, tool := range p.AdvertisedTools {
+		r.AdvertisedTools = append(r.AdvertisedTools, manifestToolMetric{
+			Name: safeLine(tool.Name), NameBytes: tool.NameBytes, DescriptionBytes: tool.DescriptionBytes,
+			SchemaBytes: tool.SchemaBytes, EstimatedNameTokens: tool.EstimatedNameTokens,
+			EstimatedDescriptionTokens: tool.EstimatedDescriptionTokens,
+			EstimatedSchemaTokens:      tool.EstimatedSchemaTokens, EstimatedTokens: tool.EstimatedTokens,
+		})
 	}
 	for _, d := range p.ToolDecisions {
 		r.Decisions = append(r.Decisions, session.RequestToolDecision{Name: safeLine(d.Name), Source: safeLine(d.Source), Decision: safeLine(d.Decision)})
 	}
 	for _, c := range p.Prompt {
-		r.Components = append(r.Components, session.RequestPromptComponent{Kind: safeLine(c.Kind), Provenance: safeLine(c.Provenance), Bytes: c.Bytes})
+		component := manifestPromptComponent{Kind: safeLine(c.Kind), Provenance: safeLine(c.Provenance), Bytes: c.Bytes, EstimatedTokens: c.EstimatedTokens, OmittedRules: c.OmittedRules}
+		for _, rule := range c.Rules {
+			component.Rules = append(component.Rules, manifestRuleMetric{
+				Name: safeManifestRuleName(rule.Name), Origin: manifestRuleOrigin(rule.Origin),
+				RenderedBytes: rule.RenderedBytes, EstimatedTokens: rule.EstimatedTokens,
+			})
+		}
+		r.Components = append(r.Components, component)
 	}
 	return r
+}
+
+func safeManifestRuleName(name string) string {
+	if name == "" || len(name) > 64 || name != safeLine(name) || strings.ContainsAny(name, `/\\:<>"`) || manifestHash(name) {
+		return "unknown"
+	}
+	return name
+}
+
+func manifestHash(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
+}
+
+func manifestRuleOrigin(origin string) string {
+	switch origin {
+	case session.RequestProvenanceProject, "user":
+		return origin
+	default:
+		return session.RequestProvenanceUnknown
+	}
 }

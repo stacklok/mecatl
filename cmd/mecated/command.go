@@ -79,7 +79,7 @@ func resolveCommand(argv []string) commandResolution {
 	// `mecated mcp login` is the sole interactive OAuth presenter. Command
 	// classification remains pure; settings, credentials, listener, and browser
 	// work happen only inside the captured action after argument validation.
-	if first == "mcp" {
+	if first == contextMCP {
 		return resolveMCPSubcommand(args)
 	}
 
@@ -94,6 +94,9 @@ func resolveCommand(argv []string) commandResolution {
 		}
 	}
 
+	if first == "context" {
+		return resolveContextCommand(args[2:])
+	}
 	// `mecated import` is an offline migration command. It never starts a
 	// listener or constructs an LLM provider.
 	if first == "import" {
@@ -257,6 +260,7 @@ func writeTopLevelCommands(out io.Writer) {
 	_, _ = fmt.Fprintf(out, "  mcp login SERVER [flags] authorize a configured OAuth MCP server\n")
 	_, _ = fmt.Fprintf(out, "  mcp remove NAME          remove a configured direct OAuth MCP server\n")
 	_, _ = fmt.Fprintf(out, "  microvm doctor|status|delete inspect and administer local microVM attachments\n")
+	_, _ = fmt.Fprintf(out, "  context scan|report|diff analyze local context candidates and recorded requests (experimental)\n")
 	_, _ = fmt.Fprintf(out, "  import                  import a Codex or Claude Code session, skills, and workspace files\n")
 	_, _ = fmt.Fprintf(out, "  config init             write or print an operator settings.yaml template\n")
 	_, _ = fmt.Fprintf(out, "  config validate         validate operator settings.yaml without writing\n")

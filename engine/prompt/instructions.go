@@ -13,6 +13,22 @@ import (
 type InstructionManifest struct {
 	Kind       string
 	Provenance string
+	Rules      *InstructionRules
+}
+
+// InstructionRules tracks admitted spans and the number omitted by rendering limits.
+type InstructionRules struct {
+	Spans        []RuleComponentSpan
+	OmittedCount int
+}
+
+// RuleComponentSpan identifies a rendered rule block by its byte range within
+// the instruction message. It retains neither body nor source location.
+type RuleComponentSpan struct {
+	Name   string
+	Origin string
+	Start  int
+	End    int
 }
 
 // Instruction manifest kind and provenance tokens form a closed vocabulary.

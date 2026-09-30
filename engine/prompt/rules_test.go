@@ -20,6 +20,83 @@ func (f fakeRulesSource) ListRules(context.Context) ([]prompt.Rule, error) {
 	return f.rules, f.err
 }
 
+type countingRulesSource struct {
+	rules []prompt.Rule
+	calls int
+}
+
+func (s *countingRulesSource) ListRules(context.Context) ([]prompt.Rule, error) {
+	s.calls++
+	return s.rules, nil
+}
+
+func TestRulesManifestTracksRenderedBlocks(t *testing.T) {
+	src := &countingRulesSource{rules: []prompt.Rule{
+		{Name: "evil\"<x>\nsafety", Body: "private-body\n", Origin: prompt.RuleOriginProject},
+		{Name: "user", Body: "user-body", Paths: []string{"**/*.go"}, Origin: prompt.RuleOriginUser},
+		{Name: "dropped", Body: "dropped-body", Origin: prompt.RuleOriginDriver},
+	}}
+	a := prompt.RulesAssembler{Src: src, MaxCount: 2}
+	messages, metadata, err := prompt.AssembleWithManifest(context.Background(), a)
+	if err != nil || src.calls != 1 || len(messages) != 1 || len(metadata) != 1 {
+		t.Fatalf("assembly = %v, %v, calls=%d, err=%v", messages, metadata, src.calls, err)
+	}
+	plain, err := a.Assemble(context.Background())
+	if err != nil || messages[0].Text != plain[0].Text {
+		t.Fatalf("manifest changed model message: %v", err)
+	}
+	meta := metadata[0]
+	if len(meta.Rules.Spans) != 2 || meta.Rules.OmittedCount != 1 {
+		t.Fatalf("metadata = %+v", meta)
+	}
+	if meta.Rules.Spans[0].Name != "" || meta.Rules.Spans[0].Origin != "project" || meta.Rules.Spans[1].Origin != "user" {
+		t.Fatalf("names/origins = %+v", meta.Rules.Spans)
+	}
+	for _, span := range meta.Rules.Spans {
+		block := messages[0].Text[span.Start:span.End]
+		if !strings.HasPrefix(block, "\n<rule ") || !strings.HasSuffix(block, "</rule>") {
+			t.Fatalf("incorrect rendered block: %q", block)
+		}
+	}
+	if !strings.Contains(messages[0].Text[meta.Rules.Spans[1].Start:meta.Rules.Spans[1].End], "**/*.go") {
+		t.Fatal("path glob must remain eager")
+	}
+	if strings.Contains(messages[0].Text, "dropped-body") || strings.Contains(meta.Rules.Spans[0].Name, "private-body") {
+		t.Fatal("dropped or body data leaked")
+	}
+}
+
+func TestRulesManifestByteLimitAndSafeNames(t *testing.T) {
+	src := &countingRulesSource{rules: []prompt.Rule{
+		{Name: "dir/secret", Body: "very long body"},
+		{Name: "omitted", Body: "not shown"},
+	}}
+	one, _, _ := prompt.AssembleWithManifest(context.Background(), prompt.RulesAssembler{Src: src, MaxCount: 1})
+	limit := strings.Index(one[0].Text, "</rule>") + len("</rule>")
+	messages, metadata, err := prompt.AssembleWithManifest(context.Background(), prompt.RulesAssembler{Src: src, MaxBytes: limit})
+	if err != nil || len(messages) != 1 || len(metadata[0].Rules.Spans) != 1 || metadata[0].Rules.OmittedCount != 1 || metadata[0].Rules.Spans[0].Name != "" {
+		t.Fatalf("byte-limited metadata = %+v, err=%v", metadata, err)
+	}
+}
+
+func TestRulesManifestNamesNeverAliasAnotherRule(t *testing.T) {
+	prefix := strings.Repeat("a", 64)
+	src := fakeRulesSource{rules: []prompt.Rule{
+		{Name: "safety", Body: "one", Origin: prompt.RuleOriginProject},
+		{Name: "safety<>", Body: "two", Origin: prompt.RuleOriginUser},
+		{Name: "safety ", Body: "three", Origin: prompt.RuleOriginUser},
+		{Name: prefix + "1", Body: "four", Origin: prompt.RuleOriginUser},
+	}}
+	_, metadata, err := prompt.AssembleWithManifest(context.Background(), prompt.RulesAssembler{Src: src})
+	if err != nil || len(metadata) != 1 || metadata[0].Rules == nil || len(metadata[0].Rules.Spans) != 4 {
+		t.Fatalf("rule metadata: %+v, err=%v", metadata, err)
+	}
+	spans := metadata[0].Rules.Spans
+	if spans[0].Name != "safety" || spans[1].Name != "" || spans[2].Name != "" || spans[3].Name != "" {
+		t.Fatalf("unsafe rule name acquired a different rule's identity: %+v", spans)
+	}
+}
+
 func TestRulesAssemblerNilSource(t *testing.T) {
 	got, err := prompt.RulesAssembler{Src: nil}.Assemble(context.Background())
 	if err != nil {
