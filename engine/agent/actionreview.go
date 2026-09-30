@@ -676,6 +676,7 @@ func (e *Engine) prepareActionAssessment(ctx context.Context, r *Run, sess *sess
 	return assessment
 }
 
+//nolint:gocyclo // Keep permission eligibility, review cancellation, and ask-preserving disposition in one auditable path.
 func (e *Engine) reviewChildPermissionAsk(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, ask session.PendingAsk) *uint64 {
 	if e.deps.Role == "" || r == nil || r.reviewRoot == nil || r.reviewRoot.reviewer == nil ||
 		ask.AskProvenance != governance.AskProvenanceBuiltinSubstitutionFloor ||
@@ -784,6 +785,7 @@ func assessAction(parent context.Context, r *Run, assessment *actionReviewAssess
 	}
 }
 
+//nolint:gocyclo // Keep cancellation, principal freshness, grant reuse, and terminal-failure enforcement explicit before approval.
 func (e *Engine) resolveActionAssessment(ctx context.Context, r *Run, sess *session.Session, env tool.Environment, turnIdx int, call session.ToolCall, auth *permissionAuthorization, assessment actionReviewAssessment) (session.ToolResult, bool, bool, bool) {
 	r.recordGuardrailUsageWhileActive(ctx, sess, assessment.usage)
 	if assessment.action.close != nil {

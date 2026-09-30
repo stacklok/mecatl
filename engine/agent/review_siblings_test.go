@@ -31,10 +31,10 @@ type siblingBudgetReviewer struct {
 	called []session.ToolCallID
 }
 
-func (r *siblingBudgetReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, failure bool) (bool, bool) {
+func (*siblingBudgetReviewer) GuardrailReviewPolicy(_ string, job ReviewJob, failure bool) (bool, bool) {
 	return job == ReviewJobAction, !failure
 }
-func (r *siblingBudgetReviewer) Review(ctx context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
+func (r *siblingBudgetReviewer) Review(_ context.Context, req ToolReviewRequest, _ ReviewEvidenceSource) (ToolReviewResult, error) {
 	r.mu.Lock()
 	r.called = append(r.called, req.EffectiveCall.ID)
 	r.mu.Unlock()
