@@ -284530,6 +284530,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790803586146,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a2313597ddf63f66f9b3b9e9f77debdcda9bba41",
+          "message": "Bound mecatui saved-memory browser (#2012)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T01:41:16+03:00",
+          "tree_id": "0b09aafbf9f134b872cf28ffbe0c5a3eb66d9485",
+          "url": "https://github.com/stacklok/mecatl/commit/a2313597ddf63f66f9b3b9e9f77debdcda9bba41"
+        },
+        "date": 1790808817402,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3325.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 112,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -372804,6 +372843,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790808814711,
+  "lastUpdate": 1790808818033,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
