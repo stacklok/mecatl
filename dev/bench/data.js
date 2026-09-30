@@ -283736,6 +283736,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790791873130,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9fb86105bc90e28185be8552179d7dfbdb18040a",
+          "message": "fix(adapters): use released module dependencies for standalone tests (#2021)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T23:28:30+03:00",
+          "tree_id": "4f4e7d35f2c071f1cec15eb4aebc9134a4f43bc9",
+          "url": "https://github.com/stacklok/mecatl/commit/9fb86105bc90e28185be8552179d7dfbdb18040a"
+        },
+        "date": 1790800857370,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3321.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 110,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -371782,6 +371821,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790800854433,
+  "lastUpdate": 1790800858095,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
