@@ -4,8 +4,8 @@
 **Work classification:** Architectural — changes the durable alias and project-configuration policy, introduces cross-provider model targets across existing consumers, reserves a virtual provider namespace, expands tool/protobuf/event contracts, and changes model-visible delegation routing.
 **Decision record:** [ADR 0369](../adr/0369-delegation-provider-model-selectors.md)
 **Phase:** provider-aware aliases and explicit delegation selection
-**Status:** proposed, amended 2026-09-27. Directing-human decisions recorded in this conversation.
-**Delivery:** Split. Alias resolution, configuration compatibility, the cross-provider child factory, model-facing schemas, discovery results, and durable event projections need interface review before implementation.
+**Status:** in-progress, 2026-09-27. Directing-human decisions and direct-amendment authorization recorded in this conversation.
+**Delivery:** Split, with a directing-human-authorized direct contract amendment included in the sole Implementation PR #2019. Alias resolution, configuration compatibility, the cross-provider child factory, model-facing schemas, discovery results, and durable event projections remain one implementation candidate.
 **Expected tasks:** deferred to orchestration
 
 This plan first makes a model alias an optional provider/model target everywhere aliases are consumed. Scalar aliases retain contextual same-provider behavior; an operator YAML object binds an atomic provider/model pair, and a companion CLI flag supplies the provider without parsing opaque model IDs. Project-level model policy is removed: a repository cannot influence model or provider selection even when trusted.
