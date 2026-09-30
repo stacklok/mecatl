@@ -23,7 +23,8 @@ export GOCACHE="${GOCACHE:-$out/buildcache}"
 if grep -E 'github.com/stacklok/mecatl/(adapters|contracts|internal|provider)|github.com/redis/go-redis|google.golang.org/grpc' "$out/engine-graph.txt"; then
  echo 'engine closure contains adapter, transport, or host modules' >&2; exit 1
 fi
-(cd "$out/consumer" && "$go_bin" mod tidy && "$go_bin" test ${2-} ./... && "$go_bin" list -m all > "$out/graph.txt")
+# Resolve only this consumer's build/test graph, not tests belonging to dependencies.
+(cd "$out/consumer" && "$go_bin" test -mod=mod ${2-} ./... && "$go_bin" list -m all > "$out/graph.txt")
 if grep -E '^github.com/stacklok/mecatl v|github.com/stacklok/mecatl/(internal/adapter/|internal/app|provider/)| => ' "$out/graph.txt"; then
  echo 'host module leaked into external graph' >&2; exit 1
 fi
