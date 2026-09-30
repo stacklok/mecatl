@@ -143,7 +143,7 @@ func TestSessionScopedAgentIdentity_Scenario1_MutationFollowsDefTools(t *testing
 	def := agents.AgentDef{Name: "writer", Tools: []string{"Read", "Write"}}
 	base := baseSubagentTools(cfg)
 
-	eng, mcpClose, _ := buildAgentDefRootEngine(context.Background(), cfg, def, "role", "src", oa, session.ProviderModelID{ProviderID: "p", ModelID: "model-x"},
+	eng, mcpClose, _ := buildAgentDefRootEngine(context.Background(), cfg, def, "src", oa, session.ProviderModelID{ProviderID: "p", ModelID: "model-x"},
 		func() int { return 128000 }, base, false /*allowShell*/, nil, hookexec.New(nil), nil, nil,
 		memstore.New(), testAgentDefRootPolicy(cfg), nil, nil, provReg, providerMock, nil)
 	if mcpClose != nil {
@@ -202,7 +202,7 @@ func TestSessionScopedAgentIdentity_Scenario1_AuthorityMintedFromDefCatalog(t *t
 	}
 	base := baseSubagentTools(cfg)
 
-	_, mcpClose, authority := buildAgentDefRootEngine(context.Background(), cfg, def, "role", "src", oa, session.ProviderModelID{ProviderID: "p", ModelID: "model-x"},
+	_, mcpClose, authority := buildAgentDefRootEngine(context.Background(), cfg, def, "src", oa, session.ProviderModelID{ProviderID: "p", ModelID: "model-x"},
 		func() int { return 128000 }, base, false /*allowShell*/, nil, hookexec.New(nil), nil, nil,
 		memstore.New(), testAgentDefRootPolicy(cfg), nil, nil, provReg, providerMock, nil)
 	if mcpClose != nil {
