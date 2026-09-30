@@ -832,15 +832,12 @@ func (r *Resolver) loadProjectRules(ws tool.WorkspaceReader) ([]governance.Rule,
 				"storage_management: IGNORING a project-tier authority block (operator-tier only)",
 				"file", src.path, "root", ws.Root())
 		}
-		// models: is project-overridable WITHIN AN OPERATOR ALLOWLIST,
-		// otherwise IGNORED. captureProjectModels applies the full gate (allowlist key
-		// stripped + WARN; opt-in by operator allowlist; trust gate) and merges the
-		// honoured slots/aliases/default across project files (local > shared by load
-		// order — first non-empty wins per field/key). It WARNs precisely on each
-		// not-honoured reason. Without an operator allowlist the project block is
-		// WARN-ignored.
-		if cfg.Models != nil {
-			projectModels = r.captureProjectModels(ws, src.path, cfg.Models, projectModels)
+		// Project model policy is disabled. parseYAMLForTier removed the opaque models
+		// node before nested schema decoding; emit exactly one value-free warning per source.
+		if hasTopLevelKey(data, "models") {
+			r.diag.Log(context.Background(), port.LevelWarn,
+				"models: IGNORING project-tier models block (operator-tier only)",
+				"file", src.path, "root", ws.Root())
 		}
 		rules = append(rules, rulesFromConfig(cfg, src.scope, &report)...)
 	}
@@ -993,12 +990,12 @@ func mergeFirstWinsSlots(dst, src ModelSlots) ModelSlots {
 // mergeFirstWins copies src entries into dst, keeping any key dst already holds (the
 // higher-precedence file wins, since loadProjectRules visits local before shared). A nil
 // dst is lazily allocated only when src has entries; a nil/empty src returns dst as-is.
-func mergeFirstWins(dst, src map[string]string) map[string]string {
+func mergeFirstWins(dst, src ModelAliases) ModelAliases {
 	if len(src) == 0 {
 		return dst
 	}
 	if dst == nil {
-		dst = make(map[string]string, len(src))
+		dst = make(ModelAliases, len(src))
 	}
 	for k, v := range src {
 		if _, exists := dst[k]; !exists {
@@ -1298,6 +1295,10 @@ func (r *Resolver) captureModels(m *ModelsSection) {
 		return
 	}
 	r.operatorModels = m
+	if len(m.Allowlist) > 0 {
+		r.diag.Log(context.Background(), port.LevelWarn,
+			"models.allowlist has no effect and is retained only for compatibility")
+	}
 }
 
 // captureOpenRouter records the FIRST operator-tier openrouter: block seen during

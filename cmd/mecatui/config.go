@@ -122,8 +122,9 @@ type config struct {
 	// modelAliases. INERT when dialling an external server. The *cliconfig.KeyValueList
 	// pointers are the flag bindings returned by cliconfig.RegisterModelFlags (issue
 	// #93: the type lives in cliconfig so the two mains cannot drift).
-	modelAliases *cliconfig.KeyValueList
-	modelSlots   *cliconfig.KeyValueList
+	modelAliases        *cliconfig.KeyValueList
+	modelAliasProviders *cliconfig.KeyValueList
+	modelSlots          *cliconfig.KeyValueList
 	// Subagent model router (embedded server
 	// only): the router is ENABLED by an operator-tier models.router: taxonomy in the
 	// user-global settings.yaml (the guardrails-parity enable model). The
@@ -419,7 +420,7 @@ func parseTransportFlags(mode transportMode, out io.Writer, args []string, brows
 	fs.StringVar(&cfg.defaultModel, "default-model", "", "use MODEL as the default for --default-provider; unknown models prevent startup")
 	fs.StringVar(&cfg.subagentModel, "subagent-model", "", "use MODEL for delegated agents that do not select one (default: session model)")
 	// Shared model alias/slot flags (cliconfig); mecatui keeps its own help wording.
-	cfg.modelAliases, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{
+	cfg.modelAliases, cfg.modelAliasProviders, cfg.modelSlots = cliconfig.RegisterModelFlags(fs, cliconfig.ModelFlagHelp{
 		ModelAlias: "define NAME=MODEL as a reusable model alias (repeatable)",
 		ModelSlot:  "assign SLOT=MODEL_OR_ALIAS for compaction, guardrail, title, or a default tier (repeatable)",
 	})

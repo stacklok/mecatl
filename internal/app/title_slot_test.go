@@ -101,7 +101,6 @@ models:
     title: project-title
 `, true)
 	cfg = foldOperatorModelSlots(cfg)
-	cfg = foldProjectModelBindings(cfg, captureCLIModelKeys(Config{}))
 	cfg.Model = mainModel
 	if got, ok := resolveSlotModel(cfg, slotTitle, mainModel); !ok || got != titleModel {
 		t.Fatalf("resolveSlotModel(title) = (%q, %v), want (%q, true)", got, ok, titleModel)

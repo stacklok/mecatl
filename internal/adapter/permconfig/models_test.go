@@ -86,15 +86,11 @@ func TestOperatorContextWindowsHonouredAndProjectIgnored(t *testing.T) {
 	if got := r.OperatorModelPolicy().ContextWindows["openai"]["shared-model"]; got != 321000 {
 		t.Fatalf("operator context window = %d, want 321000", got)
 	}
-	project := r.ProjectModelBindings(ws)
-	if project == nil || project.Default != "allowed" {
-		t.Fatalf("trusted project binding was not retained: %+v", project)
+	if project := r.ProjectModelBindings(ws); project != nil {
+		t.Fatalf("project model bindings must be disabled: %+v", project)
 	}
-	if project.ContextWindows != nil {
-		t.Fatalf("project context-window map must be stripped, got %+v", project.ContextWindows)
-	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.context_windows") {
-		t.Fatalf("dedicated project context_windows warning missing: %s", log)
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
+		t.Fatalf("project models warning missing: %s", log)
 	}
 }
 
@@ -114,7 +110,7 @@ func TestOperatorModelsFromCLIHonoured(t *testing.T) {
 	if m.Slots["compaction"].Model != "cheap" || m.Slots["guardrail"].Model != "fast" {
 		t.Fatalf("slots not parsed faithfully: %+v", m.Slots)
 	}
-	if m.Aliases["cheap"] != "gpt-4o-mini" || m.Aliases["fast"] != "gpt-4o" {
+	if m.Aliases["cheap"].Model != "gpt-4o-mini" || m.Aliases["fast"].Model != "gpt-4o" {
 		t.Fatalf("aliases not parsed faithfully: %+v", m.Aliases)
 	}
 }
@@ -135,7 +131,7 @@ func TestProjectModelsIgnoredWithWarn(t *testing.T) {
 	if r.OperatorModelSlots() != nil {
 		t.Fatal("a PROJECT-tier models: block must NOT become operator models")
 	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING a project-tier models") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected an ignore-WARN naming the project tier; got:\n%s", log)
 	}
 }
@@ -249,7 +245,7 @@ models:
 	if operator == nil || operator.Router == nil || operator.Router.Jev == nil || operator.Router.Jev.MaximumInputBytes != 1 {
 		t.Fatalf("project router altered operator maximum-input-bytes: %+v", operator)
 	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.router") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a router-strip WARN; got:\n%s", log)
 	}
 }
@@ -347,7 +343,7 @@ models:
 	if proj != nil && proj.DefaultProvider != "" {
 		t.Fatalf("a project-tier models.default_provider must NEVER be honoured (operator-tier only); got %q", proj.DefaultProvider)
 	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.default_provider") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a default_provider-strip WARN; got:\n%s", log)
 	}
 }
@@ -415,7 +411,7 @@ models:
 	if proj != nil && proj.Subagent != "" {
 		t.Fatalf("a project-tier models.subagent must NEVER be honoured (operator-tier only); got %q", proj.Subagent)
 	}
-	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models.subagent") {
+	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a subagent-strip WARN; got:\n%s", log)
 	}
 }

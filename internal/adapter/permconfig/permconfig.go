@@ -80,7 +80,7 @@ func parseYAMLForTier(data []byte, project bool) (Config, error) {
 		entries := root.Values[:0]
 		for _, entry := range root.Values {
 			key, _ := permconfigMappingKey(entry.Key)
-			if key != "harness_context" {
+			if key != "harness_context" && key != "models" {
 				entries = append(entries, entry)
 			}
 		}
