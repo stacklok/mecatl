@@ -61,10 +61,17 @@ func buildAgentDefRootEngine(
 	provReg *providerRegistry,
 	parentProviderID string,
 	guardrailWaiver *modelhook.WaiverHolder,
+	sessionRoot string,
 ) (*agent.Engine, func() error, session.Authority) {
 	model := providerModel.ModelID
+	// sessionRoot is THIS session's own bound placement root (ADR 0291), never
+	// cfg.Workspace unconditionally — cfg is a single deployment-wide value
+	// shared by every agent-bound session's engine build, so it alone cannot
+	// scope "memory: project" to two sessions on the same def bound to
+	// different placements (ADR 0353 Scenario 2, AC2.5). See
+	// resolveAgentMemoryHead's docs.
 	cat, pc, hooks, mcpClose, _, resources, _ := resolvedAgentDefCatalog(
-		ctx, cfg, def, source, model, base, true /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr)
+		ctx, cfg, def, source, model, base, true /*allowMutating*/, allowShell, skillIdx, defaultHooks, runner, mainMgr, sessionRoot)
 
 	deps := engineDepsForProvider(cfg, provider, providerModel, windowFn, store, policy, hooks, mcpProvider, instructions)
 	deps.Catalog = cat
@@ -189,9 +196,18 @@ func agentDefSessionEngineFactory(
 		clampedMode := clampPermissionMode(resolvePermissionMode(cfg.diag(), def), mode)
 		clampedLimits := tightenLimits(defLimits(def, defaultLimits()), limits)
 
+		// This session's own bound placement root (ADR 0291), read back off ctx —
+		// AgentDefSessionEngineFactory's own signature deliberately carries no
+		// workspace parameter (catalog assembly never binds a filesystem root
+		// itself), so the caller (createPerSessionEngine / the fork-clear and
+		// rehydration dispatch arm in buildAndRegisterSessionEngineWithBrokerTools)
+		// attaches THIS session's own resolved governance root to ctx before
+		// invoking this factory. "" (unset, e.g. profile: "no-fs") makes
+		// resolveAgentMemoryHead's "project" tier a no-op, never an error (AC2.6).
+		sessionRoot := server.AgentDefSessionRootFromContext(ctx)
 		eng, mcpClose, authority := buildAgentDefRootEngine(ctx, cfg, def, assets.agentReg.Detail(def.Name),
 			childProvider, session.ProviderModelID{ProviderID: pid, ModelID: model}, windowFn, base, allowShell, assets.skillIndex, hooks, runner, assets.globalMgr,
-			store, policy, mcpProvider, instructions, provReg, parentProviderID, guardrailWaiver)
+			store, policy, mcpProvider, instructions, provReg, parentProviderID, guardrailWaiver, sessionRoot)
 
 		closeFn := func() error {
 			if mcpClose != nil {
