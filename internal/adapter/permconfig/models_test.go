@@ -3,6 +3,7 @@ package permconfig
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -243,7 +244,25 @@ models:
 	}
 }
 
-// TestRouterStrictUnknownKeyRejected pins the strict parse of the router subtree.
+func TestRouterCategoryDescriptionBounded(t *testing.T) {
+	for name, description := range map[string]string{
+		"overlong": strings.Repeat("x", 513),
+		"control":  "safe\u0007unsafe",
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := fmt.Sprintf("models:\n  router:\n    categories:\n      - name: category\n        description: %q\n        model: target\n", description)
+			if _, err := parseYAML([]byte(raw)); err == nil {
+				t.Fatalf("router description %q was accepted", name)
+			}
+		})
+	}
+	valid := strings.Repeat("é", 256)
+	raw := fmt.Sprintf("models:\n  router:\n    categories:\n      - name: category\n        description: %q\n        model: target\n", valid)
+	if _, err := parseYAML([]byte(raw)); err != nil {
+		t.Fatalf("512-byte UTF-8 description rejected: %v", err)
+	}
+}
+
 func TestRouterStrictUnknownKeyRejected(t *testing.T) {
 	const bad = `
 models:

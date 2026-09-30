@@ -23,6 +23,7 @@ import (
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/hookexec"
+	"github.com/stacklok/mecatl/internal/adapter/permconfig"
 	"github.com/stacklok/mecatl/internal/adapter/server"
 )
 
@@ -44,6 +45,7 @@ type discoveryModel struct {
 	ProviderID   string `json:"provider_id"`
 	ModelID      string `json:"model_id"`
 	DisplayName  string `json:"display_name"`
+	Description  string `json:"description"`
 	Image        bool   `json:"image"`
 	Reasoning    bool   `json:"reasoning"`
 	ContextLimit int64  `json:"context_limit"`
@@ -52,7 +54,7 @@ type discoveryModel struct {
 func executeDiscovery(t *testing.T, inventory server.ModelInventory, args string) (session.ToolResult, discoveryResult) {
 	t.Helper()
 	call := session.ToolCall{ID: "call-1", Name: agentModelDiscoveryToolName, Args: json.RawMessage(args)}
-	result, err := newAgentModelDiscoveryTool(inventory).Execute(context.Background(), call, tool.Environment{})
+	result, err := newAgentModelDiscoveryTool(inventory, nil).Execute(context.Background(), call, tool.Environment{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -508,7 +510,7 @@ func TestInvariant_agent_model_discovery_Scenario4_SystemPromptContainsWorkflowN
 }
 
 func TestInvariant_agent_model_discovery_Scenario4_ToolSpecificationContract(t *testing.T) {
-	spec := newAgentModelDiscoveryTool(newTestModelInventory(nil)).Spec()
+	spec := newAgentModelDiscoveryTool(newTestModelInventory(nil), nil).Spec()
 	for _, clause := range []string{"strings.Fields", "strings.ToLower", "all selectable providers", "exact", "cursor", "restart without a cursor", "providers", "32 KiB", "never probes", "never selects"} {
 		if !strings.Contains(spec.Description, clause) {
 			t.Errorf("tool description missing actionable contract clause %q: %s", clause, spec.Description)
@@ -562,8 +564,173 @@ func TestInvariant_agent_model_discovery_Scenario4_SharedLiveInventory(t *testin
 	wg.Wait()
 }
 
+func TestADR_0369_Scenario2_RouterDiscovery(t *testing.T) {
+	categories := []permconfig.RouterCategory{
+		{Name: "fast", Description: "Quick mechanical work", Model: "private-target-a"},
+		{Name: "deep", Description: "Careful architecture", Model: "private-target-b"},
+	}
+	inventory := newTestModelInventory([]*mecatlv1.ModelInfo{{ProviderId: "openai", Id: "gpt-5", DisplayName: "GPT-5"}})
+	result, err := newAgentModelDiscoveryTool(inventory, categories).Execute(context.Background(), session.ToolCall{ID: "router", Args: json.RawMessage(`{}`)}, tool.Environment{})
+	if err != nil || result.IsError {
+		t.Fatalf("DiscoverModels: err=%v result=%+v", err, result)
+	}
+	var got discoveryResult
+	if err := json.Unmarshal([]byte(result.Content), &got); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	want := []discoveryModel{
+		{ProviderID: "model-router", ModelID: "deep", Description: "Careful architecture"},
+		{ProviderID: "model-router", ModelID: "fast", Description: "Quick mechanical work"},
+		{ProviderID: "openai", ModelID: "gpt-5", DisplayName: "GPT-5"},
+	}
+	if fmt.Sprint(got.Models) != fmt.Sprint(want) {
+		t.Fatalf("models = %+v, want %+v", got.Models, want)
+	}
+	if fmt.Sprint(got.Providers) != fmt.Sprint([]discoveryProviderResult{{ProviderID: "model-router", ModelCount: 2}, {ProviderID: "openai", ModelCount: 1}}) {
+		t.Fatalf("providers = %+v", got.Providers)
+	}
+	if !modelDiscoveryAvailable(nil, nil, categories) {
+		t.Fatal("router-only taxonomy did not make discovery available")
+	}
+	for name, candidate := range map[string][]permconfig.RouterCategory{
+		"empty":    nil,
+		"disabled": routerDiscoveryCategories(Config{RouterDisabled: true, RouterCategories: categories}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := newAgentModelDiscoveryTool(newTestModelInventory(nil), candidate).Execute(context.Background(), session.ToolCall{ID: session.ToolCallID(name), Args: json.RawMessage(`{}`)}, tool.Environment{})
+			if err != nil || result.IsError {
+				t.Fatalf("DiscoverModels: err=%v result=%+v", err, result)
+			}
+			var empty discoveryResult
+			if err := json.Unmarshal([]byte(result.Content), &empty); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(empty.Models) != 0 || modelDiscoveryAvailable(nil, nil, candidate) {
+				t.Fatalf("%s taxonomy published or advertised router rows: %+v", name, empty.Models)
+			}
+		})
+	}
+	cfg := Config{ProviderDefinitions: permconfig.ProviderDefinitions{"model-router": {
+		ID: "model-router", BaseURL: "https://provider.invalid/v1", DefaultModel: "hidden", APIFlavor: "openai-responses", Auth: permconfig.ProviderAuth{Method: "none"},
+	}}}
+	if _, err := buildProviderRegistry(cfg, fakeEnv(nil)); err == nil {
+		t.Fatal("reserved model-router custom provider was admitted")
+	}
+}
+
+func TestADR_0369_Scenario2_DiscoveryBounds(t *testing.T) {
+	categories := []permconfig.RouterCategory{
+		{Name: "zeta", Description: "first description", Model: "secret-z"},
+		{Name: "alpha", Description: "second description", Model: "secret-a"},
+	}
+	ordered := discoveryProjection(nil, []permconfig.RouterCategory{
+		{Name: "same", Description: "z-last", Model: "hidden-z"},
+		{Name: "same", Description: "a-first", Model: "hidden-a"},
+	})
+	if len(ordered) != 2 || ordered[0].Description != "a-first" || ordered[1].Description != "z-last" {
+		t.Fatalf("descriptions did not participate in canonical order: %+v", ordered)
+	}
+	lister := &fakeLister{models: []modelEntry{{ID: "must-not-fetch"}}}
+	d := discoveryFixture(t, map[string]providerEntry{"direct": {lister: lister}})
+	defer d.Close()
+	d.view.Store(&discoverySnapshot{projection: server.ModelSnapshot{Models: []*mecatlv1.ModelInfo{{
+		ProviderId: "direct", Id: "safe", DisplayName: "Safe direct", Image: true, Reasoning: true, ContextLimit: 123,
+	}}}})
+	discoveryTool := newAgentModelDiscoveryTool(d, categories)
+	execute := func(args string) (session.ToolResult, discoveryResult) {
+		result, err := discoveryTool.Execute(context.Background(), session.ToolCall{ID: "bounds", Args: json.RawMessage(args)}, tool.Environment{})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		var decoded discoveryResult
+		if !result.IsError {
+			if err := json.Unmarshal([]byte(result.Content), &decoded); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+		}
+		return result, decoded
+	}
+	_, targetSearch := execute(`{"query":"secret-a"}`)
+	if len(targetSearch.Models) != 0 {
+		t.Fatalf("category target entered discovery search: %+v", targetSearch.Models)
+	}
+	_, byDescription := execute(`{"query":"SECOND description"}`)
+	if len(byDescription.Models) != 1 || byDescription.Models[0].ModelID != "alpha" {
+		t.Fatalf("description search = %+v", byDescription.Models)
+	}
+	_, exact := execute(`{"provider_id":"model-router","model_id":"zeta"}`)
+	if len(exact.Models) != 1 || exact.Models[0].Description != "first description" {
+		t.Fatalf("exact router filter = %+v", exact.Models)
+	}
+	_, first := execute(`{"provider_id":"model-router","limit":1}`)
+	if len(first.Models) != 1 || first.Models[0].ModelID != "alpha" || first.NextCursor == "" {
+		t.Fatalf("canonical first page = %+v", first)
+	}
+	_, second := execute(fmt.Sprintf(`{"cursor":%q}`, first.NextCursor))
+	if len(second.Models) != 1 || second.Models[0].ModelID != "zeta" {
+		t.Fatalf("second page = %+v", second)
+	}
+	categories[1].Description = "changed description"
+	stale, _ := execute(fmt.Sprintf(`{"cursor":%q}`, first.NextCursor))
+	if !stale.IsError || stale.Content != agentModelDiscoveryStaleCursor {
+		t.Fatalf("description change did not stale cursor: %+v", stale)
+	}
+	_, direct := execute(`{"provider_id":"direct"}`)
+	if len(direct.Models) != 1 || direct.Models[0].DisplayName != "Safe direct" || !direct.Models[0].Image || !direct.Models[0].Reasoning || direct.Models[0].ContextLimit != 123 {
+		t.Fatalf("direct metadata changed: %+v", direct.Models)
+	}
+	if lister.calls.Load() != 0 {
+		t.Fatalf("discovery probed/refreshed provider %d time(s)", lister.calls.Load())
+	}
+	large := []permconfig.RouterCategory{{Name: "large", Description: strings.Repeat("x", 512), Model: "secret"}}
+	largeResult, err := newAgentModelDiscoveryTool(newTestModelInventory(nil), large).Execute(context.Background(), session.ToolCall{ID: "large", Args: json.RawMessage(`{}`)}, tool.Environment{})
+	if err != nil || largeResult.IsError || len(largeResult.Content) > maxAgentModelDiscoveryOutputBytes || strings.Contains(largeResult.Content, "secret") {
+		t.Fatalf("bounded router result = err %v result %+v", err, largeResult)
+	}
+}
+
+func TestADR_0369_Scenario2_RootSelectionUnaffected(t *testing.T) {
+	provider := mockllm.New(mockllm.TextTurn("unused"))
+	reg := regForTest(provider, providerOpenAI, "gpt-5")
+	if _, err := resolveProviderSelection(reg, "model-router"); err == nil {
+		t.Fatal("CreateSession provider resolution accepted model-router")
+	}
+	built, err := buildIsolated(t, context.Background(), Config{
+		UseMock: true, Workspace: t.TempDir(), NoSoul: true,
+		RouterCategories: []permconfig.RouterCategory{{Name: "router-only", Description: "delegated work", Model: "private-target"}},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+	for _, row := range built.Service.ListModels(context.Background()) {
+		if row.GetProviderId() == providerModelRouter {
+			t.Fatalf("ListModels published router row: %+v", row)
+		}
+	}
+	harness := server.NewHarnessServer(built.Service)
+	listed, err := harness.ListModels(context.Background(), &mecatlv1.ListModelsRequest{})
+	if err != nil {
+		t.Fatalf("/models backing ListModels: %v", err)
+	}
+	for _, row := range listed.GetModels() {
+		if row.GetProviderId() == providerModelRouter {
+			t.Fatalf("/models published router row: %+v", row)
+		}
+	}
+	if _, err := harness.CreateSession(context.Background(), &mecatlv1.CreateSessionRequest{ProviderId: providerModelRouter, ModelId: "router-only"}); err == nil {
+		t.Fatal("CreateSession accepted model-router")
+	}
+	cfg := Config{Model: "gpt-5", RouterCategories: []permconfig.RouterCategory{{Name: "router-only", Description: "delegated work", Model: "private-target"}}}
+	assets := catalogAssets{modelInventory: newTestModelInventory(nil)}
+	catalog, closeCatalog, _ := assembleCatalog(context.Background(), cfg, reg, memstore.New(), hookexec.New(nil), &assets, catalogSession{provider: provider, providerID: providerOpenAI, model: "gpt-5"})
+	defer func() { _ = closeCatalog() }()
+	if _, ok := catalog.Lookup(agentModelDiscoveryToolName); !ok {
+		t.Fatal("router-only taxonomy did not advertise DiscoverModels")
+	}
+}
 func TestInvariant_agent_model_discovery_Scenario4_PermissionPostureUnchanged(t *testing.T) {
-	discovery := newAgentModelDiscoveryTool(newTestModelInventory(nil))
+	discovery := newAgentModelDiscoveryTool(newTestModelInventory(nil), nil)
 	if !discovery.ReadOnly() {
 		t.Fatal("DiscoverModels must remain read-only")
 	}
