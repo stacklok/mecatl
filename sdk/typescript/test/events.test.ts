@@ -11,6 +11,7 @@ import type {
   SubagentEventPayload,
   TeamEventPayload,
   ToolCallEventPayload,
+  ToolResultEventPayload,
 } from "../src/events.js";
 import { decodeEvent, RetryDisposition, StreamProgress } from "../src/events.js";
 import { EventSchema, HarnessService } from "../src/gen/mecatl/v1/harness_pb.js";
@@ -106,6 +107,69 @@ describe("event unions", () => {
     if (result?.kind !== "result") throw new Error("expected result");
     expect(result.payload.stop).toBe("end_turn");
     await client.close();
+  });
+
+  it("decodes tool-result availability over gRPC and HTTP while canonical result remains a fallback", async () => {
+    const result = { callId: "call-available", content: "safe result", isError: false };
+    const transport = createRouterTransport((router) => {
+      router.service(HarnessService, {
+        createSession: () => ({ sessionId: "availability-grpc" }),
+        getCompatibilityInfo: () => ({ apiMajor: 1, capabilities: {}, features: ["server_info"] }),
+        converse: async function* () {
+          yield {
+            event: { runId: "run-availability", toolResult: result, type: "tool.result.available" },
+          };
+          yield { event: { runId: "run-availability", toolResult: result, type: "tool.result" } };
+          yield terminal("run-availability");
+        },
+      });
+    });
+    const grpc = connect({ transport });
+    const grpcSession = await grpc.sessions.create({});
+    const grpcEvents: Event[] = [];
+    for await (const event of await grpcSession.run("availability")) grpcEvents.push(event);
+    const grpcAvailable = grpcEvents[0];
+    if (grpcAvailable?.kind !== "tool.result.available")
+      throw new Error("expected tool.result.available");
+    expectTypeOf(grpcAvailable.payload).toEqualTypeOf<ToolResultEventPayload>();
+    expect(grpcAvailable.payload).toMatchObject(result);
+    const grpcCanonical = grpcEvents[1];
+    if (grpcCanonical?.kind !== "tool.result") throw new Error("expected canonical tool.result");
+    expect(grpcCanonical.payload).toMatchObject(result);
+    await grpc.close();
+
+    const httpFetch: typeof globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/v1/compatibility")
+        return Response.json({ api_major: 1, capabilities: {}, features: ["server_info"] });
+      if (path === "/v1/sessions" && init?.method === "POST")
+        return Response.json({ session_id: "availability-http" }, { status: 201 });
+      if (path.endsWith("/prompt")) {
+        return sseResponse([
+          { run_id: "run-availability", tool_result: result, type: "tool.result.available" },
+          { run_id: "run-availability", tool_result: result, type: "tool.result" },
+          {
+            result: { stop: "end_turn", text: "done" },
+            run_id: "run-availability",
+            type: "result",
+          },
+        ]);
+      }
+      return Response.json({}, { status: 404 });
+    };
+    const http = connect({ baseUrl: "http://mecatl.test", fetch: httpFetch });
+    const httpSession = await http.sessions.create({});
+    const httpEvents: Event[] = [];
+    for await (const event of await httpSession.run("availability")) httpEvents.push(event);
+    const httpAvailable = httpEvents[0];
+    if (httpAvailable?.kind !== "tool.result.available")
+      throw new Error("expected tool.result.available");
+    expectTypeOf(httpAvailable.payload).toEqualTypeOf<ToolResultEventPayload>();
+    expect(httpAvailable.payload).toMatchObject(result);
+    const httpCanonical = httpEvents[1];
+    if (httpCanonical?.kind !== "tool.result") throw new Error("expected canonical tool.result");
+    expect(httpCanonical.payload).toMatchObject(result);
+    await http.close();
   });
 
   it("preserves routing decision presence over gRPC and HTTP event decoding", async () => {
