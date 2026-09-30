@@ -67,7 +67,7 @@ func TestSessionScopedAgentIdentity_Scenario1_CatalogExactlyMatchesDef(t *testin
 	}
 	base := baseSubagentTools(cfg)
 	cat, _, _, mcpClose, _, _, _ := resolvedAgentDefCatalog(context.Background(), cfg, def, "test",
-		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil)
+		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil, cfg.Workspace)
 	if mcpClose != nil {
 		defer func() { _ = mcpClose() }()
 	}
@@ -99,7 +99,7 @@ func TestSessionScopedAgentIdentity_Scenario1_OmittedToolsUsesChildBaseSet(t *te
 	sort.Strings(want)
 
 	cat, _, _, mcpClose, _, _, _ := resolvedAgentDefCatalog(context.Background(), cfg, def, "test",
-		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil)
+		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil, cfg.Workspace)
 	if mcpClose != nil {
 		defer func() { _ = mcpClose() }()
 	}
@@ -120,7 +120,7 @@ func TestSessionScopedAgentIdentity_Scenario1_ExplicitlyListedToolOutsideBaseSet
 	base := baseSubagentTools(cfg)
 
 	cat, _, _, mcpClose, _, _, _ := resolvedAgentDefCatalog(context.Background(), cfg, def, "test",
-		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil)
+		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil, cfg.Workspace)
 	if mcpClose != nil {
 		defer func() { _ = mcpClose() }()
 	}
@@ -145,7 +145,7 @@ func TestSessionScopedAgentIdentity_Scenario1_MutationFollowsDefTools(t *testing
 
 	eng, mcpClose, _ := buildAgentDefRootEngine(context.Background(), cfg, def, "src", oa, "model-x",
 		func() int { return 128000 }, base, false /*allowShell*/, nil, hookexec.New(nil), nil, nil,
-		memstore.New(), testAgentDefRootPolicy(cfg), nil, nil, provReg, providerMock, nil)
+		memstore.New(), testAgentDefRootPolicy(cfg), nil, nil, provReg, providerMock, nil, cfg.Workspace)
 	if mcpClose != nil {
 		defer func() { _ = mcpClose() }()
 	}
@@ -172,7 +172,7 @@ func TestSessionScopedAgentIdentity_Scenario1_NoFSComposesWithDefCeiling(t *test
 	base := baseSubagentToolsNoFS()
 
 	cat, _, _, mcpClose, _, _, _ := resolvedAgentDefCatalog(context.Background(), cfg, def, "test",
-		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil)
+		"model-x", base, true /*allowMutating*/, false /*allowShell*/, nil, hookexec.New(nil), nil, nil, cfg.Workspace)
 	if mcpClose != nil {
 		defer func() { _ = mcpClose() }()
 	}
@@ -204,7 +204,7 @@ func TestSessionScopedAgentIdentity_Scenario1_AuthorityMintedFromDefCatalog(t *t
 
 	_, mcpClose, authority := buildAgentDefRootEngine(context.Background(), cfg, def, "src", oa, "model-x",
 		func() int { return 128000 }, base, false /*allowShell*/, nil, hookexec.New(nil), nil, nil,
-		memstore.New(), testAgentDefRootPolicy(cfg), nil, nil, provReg, providerMock, nil)
+		memstore.New(), testAgentDefRootPolicy(cfg), nil, nil, provReg, providerMock, nil, cfg.Workspace)
 	if mcpClose != nil {
 		defer func() { _ = mcpClose() }()
 	}

@@ -8386,8 +8386,11 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 					"member", spec.Name, "agent", def.Name, "skill", name, "source", reg.Detail(def.Name))
 			}
 			// Persistent per-agent memory (issue #33): the team-member path shares the
-			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here too.
-			memHead, _ := resolveAgentMemoryHead(cfg, def)
+			// SAME agentPromptConfig seam, so a memory-bearing def injects its head here
+			// too. A team member has no placement of its own distinct from its parent's,
+			// so "project" tier binds to cfg.Workspace, unchanged (resolveAgentMemoryHead's
+			// sessionRoot docs).
+			memHead, _ := resolveAgentMemoryHead(cfg, def, cfg.Workspace)
 			pc = agentPromptConfig(cfg, def, model, memHead, bodies...)
 			mode = resolvePermissionMode(cfg.diag(), def)
 			// A def's `hooks:` scope lifecycle hooks to this member's engine. A def that

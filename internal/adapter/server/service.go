@@ -279,7 +279,37 @@ type DebugSessionEngineFactory func(ctx context.Context, sel ProviderSelector, p
 // (echoed exactly like every other factory when no def restricts it further)
 // and the clamped Limits via SessionEngineResult.Limits; the caller applies
 // both to what it actually persists on the session.
+//
+// A placement-aware extension (memory: project, issue #33, ADR 0353 Scenario
+// 2 AC2.5) still needs to know THIS session's own bound governance root
+// (ADR 0291) despite the factory gaining no dedicated parameter for it — the
+// caller attaches it to ctx via ContextWithAgentDefSessionRoot before invoking
+// the factory; AgentDefSessionRootFromContext reads it back inside the
+// factory's own composition-layer closure. This keeps the factory's shape
+// exactly as originally frozen (no per-feature parameter growth) while still
+// letting two agent-bound sessions on the SAME def but DIFFERENT placements
+// resolve distinct project-memory files instead of leaking one into the other.
 type AgentDefSessionEngineFactory func(ctx context.Context, sel ProviderSelector, profile SessionProfile, mode session.PermissionMode, limits session.Limits, defName string) (SessionEngineResult, error)
+
+// agentDefSessionRootContextKey is the unexported context key backing
+// ContextWithAgentDefSessionRoot/AgentDefSessionRootFromContext.
+type agentDefSessionRootContextKey struct{}
+
+// ContextWithAgentDefSessionRoot attaches an agent-bound session's own
+// resolved governance root (ADR 0291's server-owned placement, PlacementGovernanceRoot)
+// to ctx before invoking AgentDefSessionEngineFactory. root is "" when the
+// session has no placement to bind to (profile: "no-fs"), which
+// AgentDefSessionRootFromContext's callers treat as inert, never an error.
+func ContextWithAgentDefSessionRoot(ctx context.Context, root string) context.Context {
+	return context.WithValue(ctx, agentDefSessionRootContextKey{}, root)
+}
+
+// AgentDefSessionRootFromContext returns the root attached by
+// ContextWithAgentDefSessionRoot, or "" if none was set.
+func AgentDefSessionRootFromContext(ctx context.Context) string {
+	root, _ := ctx.Value(agentDefSessionRootContextKey{}).(string)
+	return root
+}
 
 // ModelSnapshot captures model rows and provider statuses from one publication.
 type ModelSnapshot struct {
@@ -2748,8 +2778,13 @@ func (s *Service) createPerSessionEngine(ctx context.Context, mintID func() sess
 		// Agent-bound sessions (ADR 0353) never reach the MCPBroker attach
 		// branch below — AC1.10. This case is entirely independent of the
 		// debug/broker/callSessionEngine machinery in the default case.
+		// workspace (this createPerSessionEngine call's own param, resolved by
+		// createSession via PlacementGovernanceRoot) is THIS session's own bound
+		// governance root — attached to ctx so a placement-aware extension
+		// (memory: project, AC2.5) can scope itself to it instead of the
+		// deployment-wide cfg.Workspace. "" for profile: "no-fs" (AC2.6).
 		factoryDone := creatediag.Begin(ctx, "engine_factory")
-		res, err = s.cfg.AgentDefSessionEngine(ctx, sel, profile, mode, limits, opts.agentDefinitionName)
+		res, err = s.cfg.AgentDefSessionEngine(ContextWithAgentDefSessionRoot(ctx, workspace), sel, profile, mode, limits, opts.agentDefinitionName)
 		factoryDone(err)
 		if err == nil {
 			// ADR 0353 tighten-only clamps (AC1.12/AC1.13): the factory alone
@@ -6522,14 +6557,24 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 		// debug/exact-tools/broker machinery below. rehydrateSession refuses an
 		// agent-bound session outright (AC3.4), and rebuildGrantedAuthorizationEngine/
 		// connectWorkspaceServicesLocked both reject one before reaching this
-		// function (AC3.6), so today this arm is reached only by the Fork/Clone
-		// successor path (a FRESH id, not rehydration). sess.Limits carries the
-		// create-time-resolved (tighten-only clamped) value; the factory does not
-		// re-derive the def's ceiling from a bare zero Limits here.
+		// function (AC3.6), so today this arm is reached only by the Fork/Clear
+		// successor path (placement_successor.go, a FRESH id, not rehydration).
+		// sess.Limits carries the session's own already-persisted (already
+		// tighten-only clamped) value, mirroring how createPerSessionEngine
+		// threads the request's raw Limits at create time — the factory does not
+		// re-derive the def's ceiling from a bare zero Limits here. The session's
+		// own bound governance root (ADR 0291) is attached to ctx so a
+		// placement-aware extension (memory: project, AC2.5) can scope itself to
+		// it instead of the deployment-wide cfg.Workspace — see
+		// ContextWithAgentDefSessionRoot's docs.
 		if s.cfg.AgentDefSessionEngine == nil {
 			return nil, fmt.Errorf("%w: agent-bound session %q cannot be rebuilt (no agent-def session-engine factory configured)", ErrInvalidArgument, sess.ID)
 		}
-		res, err = s.cfg.AgentDefSessionEngine(ctx, sel, profile, mode, sess.Limits, sess.AgentDefinitionName)
+		workspace, workspaceErr := s.privateGovernanceRoot(ctx, sess)
+		if workspaceErr != nil {
+			return nil, workspaceErr
+		}
+		res, err = s.cfg.AgentDefSessionEngine(ContextWithAgentDefSessionRoot(ctx, workspace), sel, profile, mode, sess.Limits, sess.AgentDefinitionName)
 	} else if sess.Kind == session.SessionKindDebug {
 		target, loadErr := s.cfg.Store.Load(ctx, sess.Relationship.DebugTargetID)
 		if loadErr != nil || target == nil || sess.DebugTargetFingerprint == "" || !sess.Relationship.DebugTargetIncarnation.Valid() ||

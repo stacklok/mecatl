@@ -1049,7 +1049,10 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 // the "agent def engine built" INFO with the same fields the pre-extraction inline path
 // carried (tools/preloaded_skills) — the extraction must not silently drop diagnostics.
 func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, role, source string, childProvider port.LLMProvider, model string, windowFn func() int, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (*agent.Engine, func() error, []string, []string, int) {
-	cat, pc, hooks, mcpClose, names, resourceCapabilities, skillCount := resolvedAgentDefCatalog(ctx, cfg, def, source, model, base, allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr)
+	// A Subagent-delegate child has no placement of its own distinct from its
+	// parent's, so "project" memory binds to cfg.Workspace — unchanged from
+	// pre-ADR-0353 behavior (see resolveAgentMemoryHead's sessionRoot docs).
+	cat, pc, hooks, mcpClose, names, resourceCapabilities, skillCount := resolvedAgentDefCatalog(ctx, cfg, def, source, model, base, allowMutating, allowShell, skillIdx, defaultHooks, runner, mainMgr, cfg.Workspace)
 	// ProgressiveTools deliberately OFF: child catalogs are tiny and a ToolSearch
 	// tool would not be in the def allowlist. newChildEngineForProvider leaves it at
 	// its zero value (off), matching the original explicit omission, AND routes the
@@ -1076,7 +1079,11 @@ func buildAgentDefEngine(ctx context.Context, cfg Config, def agents.AgentDef, r
 // the def scopes none), the def's inline-MCP close func (nil when none opened),
 // the scoped tool NAMES (core ∪ MCP), the resource-capability list, and the
 // preloaded-skill count (for the caller's own "agent def engine built" log).
-func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDef, source, model string, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager) (cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner, mcpClose func() error, names []string, resourceCapabilities []string, skillCount int) {
+//
+// sessionRoot is threaded straight through to resolveAgentMemoryHead (see its
+// docs): a Subagent-delegate caller passes cfg.Workspace, a session-root
+// caller passes THIS session's own bound placement root.
+func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDef, source, model string, base map[string]tool.Tool, allowMutating, allowShell bool, skillIdx skillIndex, defaultHooks port.HookRunner, runner tool.CommandRunner, mainMgr *mcp.Manager, sessionRoot string) (cat *tool.Catalog, pc prompt.Config, hooks port.HookRunner, mcpClose func() error, names []string, resourceCapabilities []string, skillCount int) {
 	var diags []scopeDiag
 	names, diags = scopedToolNamesMode(def, base, allowMutating, allowShell, shellScopeMissReason(cfg))
 	for _, d := range diags {
@@ -1136,7 +1143,7 @@ func resolvedAgentDefCatalog(ctx context.Context, cfg Config, def agents.AgentDe
 	hooks = defHookRunner(cfg, def, defaultHooks)
 	// Persistent per-agent memory (issue #33): resolve the MEMORY.md head ONCE at
 	// build time (like skillBodies) so it rides the cache-stable StablePrefix.
-	memHead, _ := resolveAgentMemoryHead(cfg, def)
+	memHead, _ := resolveAgentMemoryHead(cfg, def, sessionRoot)
 	pc = agentPromptConfig(cfg, def, model, memHead, bodies...)
 	return cat, pc, hooks, mcpClose, names, resourceCapabilities, len(bodies)
 }
@@ -1262,22 +1269,36 @@ const agentMemoryDirName = "agents-memory"
 // root, a gated-out project tier, a missing file, or any read error yields
 // ("", false) and the def builds with no memory delta (byte-identical to today).
 //
+// sessionRoot is the CALLER's own resolved placement root (ADR 0291) to bind
+// "project" tier against — NOT necessarily cfg.Workspace. A Subagent-delegate
+// caller (buildAgentDefEngine, the team-member path) has no placement of its
+// own distinct from its parent's, so it passes cfg.Workspace verbatim
+// (byte-identical to pre-ADR-0353 behavior). An agent-bound SESSION-ROOT
+// caller (buildAgentDefRootEngine) passes THIS session's own bound
+// EnvironmentRef-derived root instead — cfg is a single deployment-wide value
+// shared by every session's engine build, so cfg.Workspace alone cannot tell
+// two agent-bound sessions on the same def but different placements apart
+// (ADR 0353 Scenario 2, AC2.5): using it unconditionally would leak one
+// session's project memory into another bound to a placement the operator
+// never specifically vetted.
+//
 // Tier → root dir:
 //   - "user"    => <UserConfigDir>/mecatl/agents-memory/ (the SAME XDG base
 //     buildUserModelStore uses; "" XDG base ⇒ fail-soft);
-//   - "project" => <cfg.Workspace>/.mecatl/agents-memory/ ONLY when the workspace
-//     is set AND ADMITTED (projectIngestionAdmitted — the SAME gate
-//     resolveAgentRegistry applies to project-tier defs; a project-tier memory
-//     points into the attacker-controllable workspace, so it is withheld on an
-//     untrusted workspace or when the ingestion grant is withheld, regardless of
-//     the def's own Origin);
+//   - "project" => <sessionRoot>/.mecatl/agents-memory/ ONLY when sessionRoot
+//     is set AND ADMITTED for THAT root (projectIngestionAdmittedForRoot — the
+//     ROOT-AWARE variant, never the bare global-flag projectIngestionAdmitted:
+//     a session bound to a placement other than cfg.Workspace must not read or
+//     write project memory there merely because the deployment's global trust
+//     flag happens to be true). An empty sessionRoot (no placement to bind to,
+//     e.g. profile: "no-fs") is simply inert, not an error.
 //   - anything else / gated-out => ("", false).
 //
 // The head is bounded to maxAgentMemoryBytes head-first (with a truncation marker)
 // and injection-scanned (skills.ScanForInjection, the user-model write-path
 // precedent) before it is returned for fenced-DATA injection by agentPromptConfig.
 // Exactly one INFO is logged on a hit; the CONTENT is NEVER logged.
-func resolveAgentMemoryHead(cfg Config, def agents.AgentDef) (string, bool) {
+func resolveAgentMemoryHead(cfg Config, def agents.AgentDef, sessionRoot string) (string, bool) {
 	tier := strings.ToLower(strings.TrimSpace(def.Memory))
 	var root, tierLabel string
 	switch tier {
@@ -1289,10 +1310,10 @@ func resolveAgentMemoryHead(cfg Config, def agents.AgentDef) (string, bool) {
 		root = filepath.Join(base, "mecatl", agentMemoryDirName)
 		tierLabel = "user"
 	case "project":
-		if cfg.Workspace == "" || !projectIngestionAdmitted(cfg) {
+		if sessionRoot == "" || !projectIngestionAdmittedForRoot(cfg, sessionRoot) {
 			return "", false
 		}
-		root = filepath.Join(cfg.Workspace, ".mecatl", agentMemoryDirName)
+		root = filepath.Join(sessionRoot, ".mecatl", agentMemoryDirName)
 		tierLabel = "project"
 	default:
 		return "", false
