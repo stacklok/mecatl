@@ -4507,6 +4507,15 @@ func (s *Service) SetMode(ctx context.Context, id session.SessionID, mode sessio
 		sess = loaded
 	}
 
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.3): an agent-bound session's mode is fixed for its entire
+		// lifetime (the bound def's own permissionMode ceiling was already resolved
+		// and clamped at create time) — rejected outright, never merely clamped,
+		// so the session's mode can never diverge from what its engine was built
+		// for (this is also what keeps engineAndEnvironmentFor's CASE 1 rebuild
+		// branch unreachable for such a session, AC3.4's implementation note).
+		return nil, fmt.Errorf("%w: mode is fixed for an agent-bound session %q", ErrInvalidArgument, id)
+	}
 	if err := sess.SetMode(mode); err != nil {
 		// A mid-turn refusal from the aggregate is a client-sequencing error.
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
@@ -4944,6 +4953,13 @@ func (s *Service) LoadSessionWithMCP(ctx context.Context, id session.SessionID, 
 	sess, err := s.loadSessionContext(ctx, id, true)
 	if err != nil {
 		return nil, err
+	}
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.5): the bound def's own resolved mcpServers: is the
+		// exclusive MCP scope for an agent-bound session (mirroring the create-time
+		// AC1.2 guard) — client-supplied MCP servers on resume are rejected
+		// outright rather than mounted alongside or instead of it.
+		return nil, fmt.Errorf("%w: client-supplied MCP servers are not supported for an agent-bound session %q", ErrInvalidArgument, id)
 	}
 	// Re-mount client MCP on resume, re-deriving provider/model and profile from
 	// persisted server-owned labels. EnvironmentRef is the sole placement identity;
@@ -6316,6 +6332,13 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 	}
 	switch {
 	case hasEngine && (se.runtimeRevision != desiredRuntimeRevision || se.builtForMode != "" && se.builtForMode != sess.Mode):
+		// ADR 0353 (Scenario 3 implementation note): this branch needs no direct
+		// edit for an agent-bound session. It can only fire when se.builtForMode !=
+		// sess.Mode, but SetMode is rejected outright for an agent-bound session
+		// (AC3.3) — its Mode never changes after bind — so se.builtForMode ==
+		// sess.Mode always holds for it and this arm never triggers. Closed
+		// transitively, not by a direct guard here; if a future refactor of SetMode
+		// or this branch makes it reachable again, AC3.3/AC3.4 should catch it.
 		// CASE 1: the registered per-session engine was built for a
 		// DIFFERENT mode than the session now holds — a plan↔execute switch re-resolved
 		// the model. Rebuild through the shared factory path, REPLACING the prior engine.
@@ -6345,6 +6368,11 @@ func (s *Service) engineAndEnvironmentFor(ctx context.Context, sess *session.Ses
 		s.mu.Unlock()
 	case !hasEngine && !s.needsRehydration(sess) && s.cfg.SessionEngine != nil &&
 		(desiredRuntimeRevision != s.cfg.SharedEngineRevision || s.cfg.ModeNeedsEngine != nil && s.cfg.ModeNeedsEngine(sess.Mode)):
+		// ADR 0353 (Scenario 3 implementation note): this branch needs no direct
+		// edit for an agent-bound session either. needsRehydration(sess) is now
+		// unconditionally true for one (AC3.4), so this case's own
+		// !s.needsRehydration(sess) guard already excludes it before this promotion
+		// could ever fire. Closed transitively, not by a direct guard here.
 		// CASE 2: a DEFAULT-FS session that would otherwise ride the
 		// shared engine, but its mode (plan) resolves a DIFFERENT model — promote it to a
 		// per-session factory engine. A default-FS session has the empty selector + a real
@@ -6423,7 +6451,15 @@ func (s *Service) needsRehydration(sess *session.Session) bool {
 		sess.Profile == string(ProfileNoFS) ||
 		sess.ProviderID != "" || sess.ModelID != "" ||
 		sess.ReasoningEffort != "" ||
-		s.cfg.DefaultModelPending
+		s.cfg.DefaultModelPending ||
+		// ADR 0353 (AC3.4): an agent-bound session ALWAYS needs rehydration, even
+		// with an empty selector, default profile, and no MCPBroker/LearnedSkills
+		// configured — the deployment's default engine is never this session's
+		// catalog. Without this clause, that "boring" configuration would leave
+		// every other disjunct false and this method would silently return false,
+		// letting engineAndEnvironmentFor fall through onto the shared engine
+		// instead of failing closed in rehydrateSession below.
+		sess.AgentDefinitionName != ""
 }
 
 // profileForSession reconstructs the tool-surface profile from server-owned durable
@@ -6457,6 +6493,15 @@ func profileForSession(sess *session.Session) SessionProfile {
 // in FIRST-REGISTRATION-WINS mode (a concurrent rehydration losing the race keeps
 // the winner's engine and tears its own down).
 func (s *Service) rehydrateSession(ctx context.Context, sess *session.Session) (*sessionEngine, error) {
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353 (AC3.4): fail closed rather than rebuild an agent-bound
+		// session's engine from the deployment's default catalog. Persisting the
+		// def's own authority so this seam could safely rebuild the SAME
+		// restricted catalog is deferred (issue #1796); until then, a lost
+		// in-memory registration (restart, eviction) must refuse to resume,
+		// never silently widen onto the shared/default engine.
+		return nil, fmt.Errorf("%w: agent-bound session %q cannot be rehydrated (session-scoped agent identity does not persist its def's authority across restart)", ErrInvalidArgument, sess.ID)
+	}
 	if sess.Kind == session.SessionKindDebug {
 		if sess.Profile != string(ProfileNoFS) || sess.EnvironmentRef.Kind != session.EnvKindNoFS || sess.Relationship.DebugTargetID == "" || sess.DebugTargetFingerprint == "" {
 			return nil, fmt.Errorf("%w: persisted debug session %q has invalid no-fs metadata", ErrInvalidArgument, sess.ID)
@@ -6542,7 +6587,21 @@ func (s *Service) buildAndRegisterSessionEngineWithBrokerTools(ctx context.Conte
 	s.mu.Lock()
 	specs := s.clientMCPSpecs[id]
 	s.mu.Unlock()
-	if sess.Kind == session.SessionKindDebug {
+	if sess.AgentDefinitionName != "" {
+		// ADR 0353: an agent-bound session's engine is built EXCLUSIVELY from its
+		// own bound def's resolved catalog via AgentDefSessionEngine — never the
+		// debug/exact-tools/broker machinery below. rehydrateSession refuses an
+		// agent-bound session outright (AC3.4), and rebuildGrantedAuthorizationEngine/
+		// connectWorkspaceServicesLocked both reject one before reaching this
+		// function (AC3.6), so today this arm is reached only by the Fork/Clone
+		// successor path (a FRESH id, not rehydration). sess.Limits carries the
+		// create-time-resolved (tighten-only clamped) value; the factory does not
+		// re-derive the def's ceiling from a bare zero Limits here.
+		if s.cfg.AgentDefSessionEngine == nil {
+			return nil, fmt.Errorf("%w: agent-bound session %q cannot be rebuilt (no agent-def session-engine factory configured)", ErrInvalidArgument, sess.ID)
+		}
+		res, err = s.cfg.AgentDefSessionEngine(ctx, sel, profile, mode, sess.Limits, sess.AgentDefinitionName)
+	} else if sess.Kind == session.SessionKindDebug {
 		target, loadErr := s.cfg.Store.Load(ctx, sess.Relationship.DebugTargetID)
 		if loadErr != nil || target == nil || sess.DebugTargetFingerprint == "" || !sess.Relationship.DebugTargetIncarnation.Valid() ||
 			target.Incarnation() != sess.Relationship.DebugTargetIncarnation ||
