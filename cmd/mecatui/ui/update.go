@@ -2471,14 +2471,6 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 	if m.modal == nil {
 		return m, nil, false
 	}
-	// A clear command composed while running stays actionable if a permission ask
-	// opens before Enter is pressed. Route it ahead of the approval surface:
-	// ClearSession cancels the ask and must never become Allow/Deny/Learn.
-	// The idle saved-memory browser owns Enter even if a draft remains behind it.
-	_, savedMemory := m.modal.(*userModelState)
-	if !savedMemory && m.pendingRecovery == nil && clearCommandSubmitted(msg, m.keys.Submit, m.prompt.Value()) {
-		return m.dispatchBareBuiltin(m.prompt.Value())
-	}
 	cmd, handled, closed := m.modal.HandleKey(msg)
 	if !handled {
 		return m, nil, false
@@ -2496,10 +2488,6 @@ func (m Model) dispatchSurfaceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool
 		return m, tea.Batch(cmd, m.prompt.Focus()), true
 	}
 	return m, cmd, true
-}
-
-func clearCommandSubmitted(msg tea.KeyPressMsg, submit key.Binding, prompt string) bool {
-	return key.Matches(msg, submit) && strings.EqualFold(strings.TrimSpace(prompt), "/clear")
 }
 
 // dispatchSurfaceMsg routes a NON-input Msg through the open modal surface

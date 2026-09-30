@@ -1554,7 +1554,7 @@ type ServerCapabilities struct {
 	// GetSoul returns its snapshot). Gates the /soul read-only inspection panel.
 	Soul bool `protobuf:"varint,10,opt,name=soul,proto3" json:"soul,omitempty"`
 	// user_model is true when the user-model store is wired (GetUserModel reads its
-	// live index). Gates the /usermodel read-only inspection panel.
+	// live index). Gates the /memory read-only inspection panel.
 	UserModel bool `protobuf:"varint,11,opt,name=user_model,json=userModel,proto3" json:"user_model,omitempty"`
 	// model_selection is true when >=1 provider is available (ListModels would return
 	// >0). Gates the client's /models picker the same way `agents` gates /agents.

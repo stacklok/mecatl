@@ -305,11 +305,12 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario3_OpenBackCloseAndFocus(t *tes
 	m = feedCmd(t, m, cmd)
 	s := m.modal.(*userModelState)
 	m.prompt.Rewrite("/clear")
-	mm, cmd, _ = m.dispatchSurfaceKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if mm.(Model).modal != s || cmd == nil || m.prompt.Value() != "/clear" {
+	mm, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.modal != s || m.clearPending != nil || cmd == nil || m.prompt.Value() != "/clear" {
 		t.Fatal("visible panel did not own Enter over hidden prompt")
 	}
-	m = feedCmd(t, mm.(Model), cmd)
+	m = feedCmd(t, m, cmd)
 	if s.view != userModelDetail {
 		t.Fatal("detail not opened")
 	}

@@ -35,6 +35,7 @@ type userModelState struct {
 	list        *bounded.List
 	viewport    *bounded.Viewport
 	compact     bool     // view cache: refreshed from every Render offer
+	listWidth   int      // view cache: preserves list anchors across model refreshes
 	detailLines []string // view cache: wrapped again on every Render
 }
 
@@ -178,15 +179,56 @@ func (s *userModelState) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 
 func (s *userModelState) setModel(model client.UserModel) {
 	s.model = model
-	items := make([]bounded.ListItem, 0, len(model.Entries))
-	for _, e := range model.Entries {
+	s.setListItems(s.listWidth)
+}
+
+const (
+	userModelDescriptionMarker = "\x1b[8m"
+	userModelDescriptionRail   = "│ "
+)
+
+func (s *userModelState) setListItems(width int) bool {
+	items := make([]bounded.ListItem, 0, len(s.model.Entries))
+	contentWidth := width - 2 // one selection cell and its trailing padding cell
+	railsFit := true
+	for _, e := range s.model.Entries {
 		text := terminaltext.Sanitize(e.Key)
 		if e.Description != "" {
-			text += "\n" + terminaltext.Sanitize(e.Description)
+			description := terminaltext.Sanitize(e.Description)
+			if railsFit {
+				if lines, ok := userModelDescriptionLines(description, contentWidth); ok {
+					text += "\n" + strings.Join(lines, "\n")
+				} else {
+					railsFit = false
+				}
+			}
+			if !railsFit {
+				text += "\n" + description
+			}
 		}
 		items = append(items, bounded.ListItem{ID: e.Key, Text: text})
 	}
 	s.list.SetItems(items)
+	return railsFit
+}
+
+func userModelDescriptionLines(description string, contentWidth int) ([]string, bool) {
+	descriptionWidth := contentWidth - ansi.StringWidth(userModelDescriptionRail)
+	if descriptionWidth < 1 {
+		return nil, false
+	}
+	var lines []string
+	for _, source := range strings.Split(description, "\n") {
+		for _, line := range strings.Split(ansi.Hardwrap(source, descriptionWidth, true), "\n") {
+			// Hardwrap leaves a grapheme that cannot fit on its own line intact.
+			// Do not let bounded.List wrap the marked rail line in that case.
+			if ansi.StringWidth(line) > descriptionWidth {
+				return nil, false
+			}
+			lines = append(lines, userModelDescriptionMarker+userModelDescriptionRail+line)
+		}
+	}
+	return lines, true
 }
 
 const userModelDisabledNote = "Saved memory is not enabled on this server.\nStart or connect to a server with memory enabled."
@@ -196,6 +238,20 @@ func userModelEmptyCopy(caps client.Capabilities) string {
 		return userModelDisabledNote
 	}
 	return "No saved memory yet."
+}
+
+func (s *userModelState) contentRowsFit(width, height, titleLines, metaLines, footerLines int) (int, bool) {
+	rows := height - titleLines - metaLines - footerLines
+	if width < 5 || rows < 1 {
+		return 0, false
+	}
+	if s.view == userModelPanel && !s.loading && s.err == nil && len(s.model.Entries) > 0 {
+		if !s.setListItems(width) {
+			return 0, false
+		}
+		s.listWidth = width
+	}
+	return rows, true
 }
 
 func (s *userModelState) Render(width, height int) (string, []ClickableRegion) {
@@ -216,8 +272,8 @@ func (s *userModelState) Render(width, height int) (string, []ClickableRegion) {
 	if s.view == userModelPanel && !s.loading && s.err == nil && len(s.model.Entries) > 0 {
 		meta = skillsTextLines(th.Style("muted"), renderUserModelMeta(s.model), width)
 	}
-	rows := height - len(titleLines) - len(meta) - len(footerLines)
-	if width < 3 || rows < 1 {
+	rows, fits := s.contentRowsFit(width, height, len(titleLines), len(meta), len(footerLines))
+	if !fits {
 		return renderSkillsCompact(th, s.deps.marks, width), nil
 	}
 	s.compact = false
@@ -243,8 +299,7 @@ func (s *userModelState) Render(width, height int) (string, []ClickableRegion) {
 				body = append(body, th.Style("muted").Render(fmt.Sprintf("↑ %d more", view.Above)))
 			}
 			for _, row := range view.Rows {
-				p := presentListRow(row, th.Style("toolName"), th.Style("toolArgs"))
-				body = append(body, p.Style.Render(p.Text))
+				body = append(body, s.renderListRow(row))
 			}
 			if view.Below > 0 {
 				body = append(body, th.Style("muted").Render(fmt.Sprintf("↓ %d more", view.Below)))
@@ -263,6 +318,16 @@ func (s *userModelState) Render(width, height int) (string, []ClickableRegion) {
 	result = append(result, body...)
 	result = append(result, footerLines...)
 	return strings.Join(result, "\n"), nil
+}
+
+func (s *userModelState) renderListRow(row bounded.ListRow) string {
+	p := presentListRow(row, s.deps.theme.Style("toolName"), s.deps.theme.Style("toolArgs"))
+	if !strings.HasPrefix(row.Text, userModelDescriptionMarker) {
+		return p.Style.Render(p.Text)
+	}
+	const gutterWidth = 2 // one selection cell and its trailing padding cell
+	description := strings.TrimPrefix(row.Text, userModelDescriptionMarker+userModelDescriptionRail)
+	return p.Style.Render(p.Text[:gutterWidth]) + s.deps.theme.Style("muted").Render(userModelDescriptionRail) + p.Style.Render(description)
 }
 
 func (s *userModelState) detailContent(width int) []string {

@@ -503,7 +503,7 @@ export type ServerCapabilities = Message<"mecatl.v1.ServerCapabilities"> & {
 
   /**
    * user_model is true when the user-model store is wired (GetUserModel reads its
-   * live index). Gates the /usermodel read-only inspection panel.
+   * live index). Gates the /memory read-only inspection panel.
    *
    * @generated from field: bool user_model = 11;
    */

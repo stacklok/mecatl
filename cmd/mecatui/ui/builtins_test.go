@@ -74,11 +74,11 @@ func builtinNames(caps client.Capabilities, w wiredCollaborators) []string {
 // caps.MCP && the MCP collaborator wired; /agents (the def inventory) needs caps.Agents &&
 // the agents collaborator wired; /team (the live overlay) needs caps.Teams;
 // /skills needs caps.Skills && the skills collaborator wired; /soul needs
-// caps.Soul && the soul collaborator wired; /usermodel needs caps.UserModel &&
+// caps.Soul && the soul collaborator wired; /memory needs caps.UserModel &&
 // the user-model collaborator wired; /models needs caps.ModelSelection && the model
 // lister wired; /worktrees needs caps.Worktrees && the worktree lister wired
 // (issue #102); /effort is gated identically to /models and follows it (ADR 0055).
-// The fixed order is clear, help, quit, session, mcp, agents, team, skills, soul, usermodel,
+// The fixed order is clear, help, quit, session, mcp, agents, team, skills, soul, memory,
 // models, effort, worktrees.
 func TestBuiltinCommandsCapsFilter(t *testing.T) {
 	all := client.Capabilities{MCP: true, Agents: true, Teams: true, Skills: true, Soul: true, UserModel: true, ModelSelection: true, Worktrees: true, Scheduling: true, ManualCompaction: true, Posture: "auto"}
@@ -107,9 +107,9 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 		{"soul cap but not wired", client.Capabilities{Soul: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"soul wired but no cap", client.Capabilities{}, wiredCollaborators{Soul: true}, []string{"clear", "help"}},
 		{"soul cap and wired", client.Capabilities{Soul: true}, wiredCollaborators{Soul: true}, []string{"clear", "help", "soul"}},
-		{"usermodel cap but not wired", client.Capabilities{UserModel: true}, wiredCollaborators{}, []string{"clear", "help"}},
-		{"usermodel wired but no cap", client.Capabilities{}, wiredCollaborators{UserModel: true}, []string{"clear", "help"}},
-		{"usermodel cap and wired", client.Capabilities{UserModel: true}, wiredCollaborators{UserModel: true}, []string{"clear", "help", "usermodel"}},
+		{"memory cap but not wired", client.Capabilities{UserModel: true}, wiredCollaborators{}, []string{"clear", "help"}},
+		{"memory wired but no cap", client.Capabilities{}, wiredCollaborators{UserModel: true}, []string{"clear", "help"}},
+		{"memory cap and wired", client.Capabilities{UserModel: true}, wiredCollaborators{UserModel: true}, []string{"clear", "help", "memory"}},
 		{"models cap but not wired", client.Capabilities{ModelSelection: true}, wiredCollaborators{}, []string{"clear", "help"}},
 		{"models wired but no cap", client.Capabilities{}, wiredCollaborators{Models: true}, []string{"clear", "help"}},
 		{"models cap and wired", client.Capabilities{ModelSelection: true}, wiredCollaborators{Models: true}, []string{"clear", "help", "models", "effort"}},
@@ -131,7 +131,7 @@ func TestBuiltinCommandsCapsFilter(t *testing.T) {
 			"all",
 			all,
 			wiredCollaborators{MCP: true, Agents: true, Skills: true, Soul: true, UserModel: true, Models: true, Worktrees: true, Scheduling: true, Sessions: true, Compactor: true},
-			[]string{"clear", "help", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel", "models", "effort", "worktrees", "schedule", "sessions", "posture"},
+			[]string{"clear", "help", "compact", "mcp", "agents", "team", "skills", "soul", "memory", "models", "effort", "worktrees", "schedule", "sessions", "posture"},
 		},
 	}
 	for _, tc := range cases {
@@ -660,15 +660,22 @@ func TestClearFailureKeepsActiveSourceBlockedUntilDelayedTerminal(t *testing.T) 
 	m.deps.DebugAsk = true
 	mm, _ := m.runDebugAsk()
 	m = mm.(Model)
-	askID := approvalSurfaceOf(t, m).ask.AskID
 	oldID := m.sessionID
 	m.queued = []string{"must not continue"}
 
 	m.prompt.Rewrite("/clear")
-	mm, clearCmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	mm, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if m.clearPending != nil || m.prompt.Value() != "/clear" || m.pendingApproval == nil {
+		t.Fatal("visible approval did not own Enter over hidden /clear draft")
+	}
+	mm, _ = m.runDebugAsk()
+	m = mm.(Model)
+	askID := approvalSurfaceOf(t, m).ask.AskID
+	mm, clearCmd := m.runClear()
 	m = mm.(Model)
 	if clearCmd == nil {
-		t.Fatal("/clear entered during approval did not issue ClearSession")
+		t.Fatal("explicit clear did not issue ClearSession")
 	}
 	pending := *m.clearPending
 	mm, _ = m.Update(clearSessionFailedMsg{sourceID: oldID, token: pending.token, err: errors.New("temporary")})
@@ -984,7 +991,7 @@ func TestDispatchBareBuiltinUnicodeWhitespaceThroughTextarea(t *testing.T) {
 // from the builtinCommands table AND that an unknown name is false.
 func TestIsKnownBuiltinName(t *testing.T) {
 	known := []string{
-		"clear", "help", "quit", "title", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "usermodel",
+		"clear", "help", "quit", "title", "session", "retry", "diagnostics", "compact", "mcp", "agents", "team", "skills", "soul", "memory",
 		"models", "effort", "worktrees", "schedule", "sessions", "learning", "learning-sensitivity", "posture",
 		"debug-ask",
 	}
@@ -995,6 +1002,9 @@ func TestIsKnownBuiltinName(t *testing.T) {
 	}
 	if isKnownBuiltinName("foo") {
 		t.Error("isKnownBuiltinName(\"foo\") = true, want false (unknown)")
+	}
+	if isKnownBuiltinName("usermodel") {
+		t.Error("isKnownBuiltinName(\"usermodel\") = true, want false (no alias)")
 	}
 	if isKnownBuiltinName("") {
 		t.Error("isKnownBuiltinName(\"\") = true, want false (empty)")

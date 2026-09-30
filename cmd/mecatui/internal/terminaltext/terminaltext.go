@@ -14,7 +14,7 @@ import (
 // newlines and tabs. It removes C0 controls, ESC, DEL, C1 controls, and Unicode
 // Cf format characters. Markdown must not pass through this function.
 func Sanitize(s string) string {
-	if !strings.ContainsFunc(s, isControl) {
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, isControl) {
 		return s
 	}
 	return strings.Map(func(r rune) rune {
@@ -43,7 +43,7 @@ func isControl(r rune) bool {
 // SanitizeSingleLine removes terminal controls from a single-line display
 // value. Unlike Sanitize, it removes layout newlines, tabs, U+2028, and U+2029.
 func SanitizeSingleLine(s string) string {
-	if !strings.ContainsFunc(s, isSingleLineControl) {
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, isSingleLineControl) {
 		return s
 	}
 	return strings.Map(func(r rune) rune {

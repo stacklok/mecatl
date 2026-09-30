@@ -145,7 +145,7 @@ type Deps struct {
 	Skills      client.SkillLister      // skills-inventory discovery for the /skills panel; nil disables it
 	Agents      client.AgentLister      // agent-definition discovery for the /agents panel; nil disables it
 	Soul        client.SoulFetcher      // soul (persona) inspection for the /soul panel; nil disables it
-	UserModel   client.UserModelLister  // user-model inspection for the /usermodel panel; nil disables it
+	UserModel   client.UserModelLister  // user-model inspection for the /memory panel; nil disables it
 	Reflections client.ReflectionClient // proposal review and explicit reflection; nil disables it
 	Dream       client.DreamClient      // manual memory consolidation review; nil disables /dream
 	Compactor   client.SessionCompactor // out-of-band session compaction; nil disables /compact

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
@@ -187,4 +189,98 @@ func TestUserModelPanelEmptyDisabledGolden(t *testing.T) {
 func TestUserModelPanelEmptyEnabledGolden(t *testing.T) {
 	m, _ := openedUserModel(t, newUserModelModel(t, &fakeUserModel{}, client.Capabilities{UserModel: true}))
 	compareGolden(t, "usermodel_empty_enabled.golden", stripANSI([]byte(m.View().Content)))
+}
+
+func TestUserModelDescriptionRailWrapsAndResizesWithoutChangingKeyRows(t *testing.T) {
+	entries := make([]client.UserModelEntry, 8)
+	for i := range entries {
+		entries[i] = client.UserModelEntry{
+			Key:         fmt.Sprintf("fact/%d-%s", i, strings.Repeat("key ", 8)),
+			Description: strings.Repeat("a wrapped saved-memory description ", 4),
+		}
+	}
+	_, s := savedMemoryOpened(t, entries)
+	s.Render(20, 14)
+	rows := s.list.View().Rows
+	railAt := -1
+	for i, row := range rows {
+		if row.ID == entries[0].Key && strings.HasPrefix(row.Text, userModelDescriptionMarker+userModelDescriptionRail) {
+			railAt = i
+			break
+		}
+	}
+	if railAt < 2 {
+		t.Fatalf("narrow list did not wrap the key before its description: %#v", rows)
+	}
+	for _, row := range rows[:railAt] {
+		if strings.HasPrefix(row.Text, userModelDescriptionMarker+userModelDescriptionRail) {
+			t.Fatalf("key continuation received a description rail: %#v", row)
+		}
+	}
+	for _, width := range []int{20, 70, 20} {
+		s.Render(width, 14)
+		for _, row := range s.list.View().Rows {
+			if ansi.StringWidth(s.renderListRow(row)) > width {
+				t.Fatalf("width=%d row overflows: %q", width, row.Text)
+			}
+		}
+	}
+
+	s.list.SetCursor(5)
+	s.Render(20, 14)
+	s.list.Scroll(bounded.LineDown)
+	top := s.list.View().Rows[0]
+	selected := s.list.CursorID()
+	for _, width := range []int{70, 20} {
+		s.Render(width, 14)
+		got := s.list.View().Rows[0]
+		if s.list.CursorID() != selected || got.ID != top.ID {
+			t.Fatalf("width=%d lost selection or top anchor: selected=%q top=%#v want=%#v", width, s.list.CursorID(), got, top)
+		}
+	}
+}
+
+func TestUserModelDescriptionRailRepairsInvalidUTF8(t *testing.T) {
+	_, s := savedMemoryOpened(t, []client.UserModelEntry{{Key: "fact/\x9b2J", Description: "\x9dtitle \xc3"}})
+	out, _ := s.Render(32, 14)
+	if !utf8.ValidString(out) || strings.Contains(out, "\x9b") || strings.Contains(out, "\x9d") || strings.Contains(out, "\xc3") || strings.Contains(out, userModelDescriptionMarker) {
+		t.Fatalf("unsafe bytes or hidden marker in rendered memory: %q", out)
+	}
+	if !strings.Contains(ansi.Strip(out), "│ �title �") {
+		t.Fatalf("invalid description bytes did not become visible replacement runes: %q", out)
+	}
+}
+
+func TestUserModelDescriptionRailWideGraphemesFitOrCompact(t *testing.T) {
+	entries := []client.UserModelEntry{
+		{Key: "fact/界", Description: "界🙂"},
+		{Key: "fact/emoji", Description: "🙂界"},
+	}
+	_, s := savedMemoryOpened(t, entries)
+
+	out, _ := s.Render(5, 80)
+	if !s.compact || strings.Contains(out, userModelDescriptionMarker) {
+		t.Fatalf("width 5 must use compact output without the rail sentinel: compact=%t output=%q", s.compact, out)
+	}
+	if s.list.CursorID() != entries[0].Key {
+		t.Fatalf("compact fallback changed selected key: %q", s.list.CursorID())
+	}
+
+	out, _ = s.Render(6, 80)
+	if s.compact || strings.Contains(out, userModelDescriptionMarker) {
+		t.Fatalf("width 6 must render rails without the sentinel: compact=%t output=%q", s.compact, out)
+	}
+	rows := s.list.View().Rows
+	haveRail := false
+	for _, row := range rows {
+		if strings.HasPrefix(row.Text, userModelDescriptionMarker+userModelDescriptionRail) {
+			haveRail = true
+		}
+		if got := ansi.StringWidth(s.renderListRow(row)); got > 6 {
+			t.Fatalf("width 6 row overflows (%d): %#v", got, row)
+		}
+	}
+	if !haveRail || s.list.CursorID() != entries[0].Key {
+		t.Fatalf("width 6 lost rail or selected key: rail=%t selected=%q rows=%#v", haveRail, s.list.CursorID(), rows)
+	}
 }

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 )
 
 func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(t *testing.T) {
@@ -76,6 +78,51 @@ func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_ResponsiveCardAndBodyBudget(
 			if got := len(strings.Split(stripANSIstr(m.renderBody()), "\n")); got != m.metrics.outerBounds.y1-m.metrics.outerBounds.y0 {
 				t.Fatalf("detail frame/chrome body rows=%d, card budget=%d", got, m.metrics.outerBounds.y1-m.metrics.outerBounds.y0)
 			}
+		}
+	}
+}
+
+func TestMecatuiSavedMemoryBoundedBrowser_Scenario1_RootResizeKeepsRailFitAndAnchor(t *testing.T) {
+	entries := make([]client.UserModelEntry, 10)
+	for i := range entries {
+		entries[i] = client.UserModelEntry{
+			Key:         fmt.Sprintf("fact/%02d/界-%s", i, strings.Repeat("long-key-", 8)),
+			Description: strings.Repeat("wide ���🙂 saved-memory description ", 6),
+		}
+	}
+	m, s := savedMemoryOpened(t, entries)
+
+	m = applyAll(m, tea.WindowSizeMsg{Width: 44, Height: 30})
+	_ = m.View()
+	for range 6 {
+		m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	s.list.Scroll(bounded.Top)
+	_ = m.View()
+	selected := s.list.CursorID()
+	anchor := s.list.View().Rows[0]
+	if anchor.ItemLine != 0 {
+		t.Fatalf("test requires a feasible first physical anchor, got {%q,%d}", anchor.ID, anchor.ItemLine)
+	}
+
+	for _, width := range []int{44, 120, 44} {
+		m = applyAll(m, tea.WindowSizeMsg{Width: width, Height: 30})
+		rendered := m.View().Content
+		if s.compact {
+			t.Fatalf("width %d unexpectedly used compact saved-memory output", width)
+		}
+		if strings.Contains(rendered, userModelDescriptionMarker) {
+			t.Fatalf("width %d leaked the internal description marker", width)
+		}
+		if !strings.Contains(rendered, m.deps.Theme.Style("muted").Render(userModelDescriptionRail)) {
+			t.Fatalf("width %d did not render the description rail with the muted style", width)
+		}
+		if got := lipgloss.Width(rendered); got > width {
+			t.Fatalf("width %d rendered %d cells", width, got)
+		}
+		rows := s.list.View().Rows
+		if len(rows) == 0 || s.list.CursorID() != selected || rows[0].ID != anchor.ID || rows[0].ItemLine != anchor.ItemLine {
+			t.Fatalf("width %d lost selected key or feasible top anchor: selected=%q top=%#v, want selected=%q anchor=%#v", width, s.list.CursorID(), rows, selected, anchor)
 		}
 	}
 }

@@ -2,7 +2,7 @@ package ui
 
 // surface_arch_test.go is the structural gate for the issue #555 Phase-2
 // surface interface (soul proof-of-pattern): it fails CI if any surface/soul
-// /skills/mcp/sessions/models/usermodel vocabulary is added outside its declared homes, or if
+// /skills/mcp/sessions/models/memory vocabulary is added outside its declared homes, or if
 // Model acquires a second `surface` field or any soulState/skillsState/mcpState/
 // sessionsState/modelsState/userModelState field back. It imitates approval_arch_test.go —
 // placement-only, additive; it never touches rendered output (the soul goldens
@@ -124,7 +124,7 @@ func TestSurfaceSymbolsLiveInSurfaceFiles(t *testing.T) {
 					t.Errorf("/models declaration %q lives in %s, want %s", n, file, want)
 				}
 				if want, ok := userModelSymbolHomes[n]; ok && file != want {
-					t.Errorf("/usermodel declaration %q lives in %s, want %s", n, file, want)
+					t.Errorf("/memory declaration %q lives in %s, want %s", n, file, want)
 				}
 			}
 		}
@@ -249,7 +249,7 @@ func TestModelHasNoUserModelStateField(t *testing.T) {
 	for i := 0; i < st.NumField(); i++ {
 		fieldType := st.Field(i).Type
 		if fieldType == stateType || fieldType == pointerStateType {
-			t.Errorf("Model field %q has userModelState type; /usermodel state lives only in m.modal", st.Field(i).Name)
+			t.Errorf("Model field %q has userModelState type; /memory state lives only in m.modal", st.Field(i).Name)
 		}
 	}
 }
@@ -259,7 +259,7 @@ func TestModelHasNoUserModelStateField(t *testing.T) {
 func TestModelKeepsUserModelGeneration(t *testing.T) {
 	field, ok := reflect.TypeOf(Model{}).FieldByName("userModelGen")
 	if !ok || field.Type.Kind() != reflect.Uint64 {
-		t.Error("Model must retain uint64 userModelGen as the /usermodel lifetime token")
+		t.Error("Model must retain uint64 userModelGen as the /memory lifetime token")
 	}
 }
 
