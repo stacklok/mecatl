@@ -86,9 +86,6 @@ func TestOperatorContextWindowsHonouredAndProjectIgnored(t *testing.T) {
 	if got := r.OperatorModelPolicy().ContextWindows["openai"]["shared-model"]; got != 321000 {
 		t.Fatalf("operator context window = %d, want 321000", got)
 	}
-	if project := r.ProjectModelBindings(ws); project != nil {
-		t.Fatalf("project model bindings must be disabled: %+v", project)
-	}
 	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("project models warning missing: %s", log)
 	}
@@ -237,10 +234,6 @@ models:
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, ExplicitFiles: []string{"/etc/mecatl/op.yaml"}, Diagnostics: diag}, env)
 	_ = r.Resolve(context.Background(), ws)
 
-	proj := r.ProjectModelBindings(ws)
-	if proj != nil && proj.Router != nil {
-		t.Fatal("a project-tier models.router must NEVER be honoured (operator-tier only)")
-	}
 	operator := r.OperatorModelPolicy()
 	if operator == nil || operator.Router == nil || operator.Router.Jev == nil || operator.Router.Jev.MaximumInputBytes != 1 {
 		t.Fatalf("project router altered operator maximum-input-bytes: %+v", operator)
@@ -339,10 +332,6 @@ models:
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, ExplicitFiles: []string{"/etc/mecatl/op.yaml"}, Diagnostics: diag}, env)
 	_ = r.Resolve(context.Background(), ws)
 
-	proj := r.ProjectModelBindings(ws)
-	if proj != nil && proj.DefaultProvider != "" {
-		t.Fatalf("a project-tier models.default_provider must NEVER be honoured (operator-tier only); got %q", proj.DefaultProvider)
-	}
 	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a default_provider-strip WARN; got:\n%s", log)
 	}
@@ -407,10 +396,6 @@ models:
 	r := newWithEnv(Options{Conventional: true, TrustProject: true, ExplicitFiles: []string{"/etc/mecatl/op.yaml"}, Diagnostics: diag}, env)
 	_ = r.Resolve(context.Background(), ws)
 
-	proj := r.ProjectModelBindings(ws)
-	if proj != nil && proj.Subagent != "" {
-		t.Fatalf("a project-tier models.subagent must NEVER be honoured (operator-tier only); got %q", proj.Subagent)
-	}
 	if log := buf.String(); !strings.Contains(log, "IGNORING project-tier models block") {
 		t.Fatalf("expected a subagent-strip WARN; got:\n%s", log)
 	}

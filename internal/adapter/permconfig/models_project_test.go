@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/stacklok/mecatl/engine/adapter/memfs"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/internal/adapter/slogdiag"
 )
@@ -17,11 +16,4 @@ func newCapturedResolver(t *testing.T, operatorPath, operatorYAML string, trust 
 		Diagnostics: slogdiag.New(&buf, false, port.LevelDebug),
 	}, envWithExplicit(operatorPath, operatorYAML))
 	return r, &buf
-}
-
-func TestProjectModelBindingsDisabled(t *testing.T) {
-	var nilResolver *Resolver
-	if got := nilResolver.ProjectModelBindings(&countingWS{Workspace: memfs.NewWorkspace("/x")}); got != nil {
-		t.Fatalf("disabled project model bindings = %+v", got)
-	}
 }

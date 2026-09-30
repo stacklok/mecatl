@@ -1839,16 +1839,11 @@ func Build(ctx context.Context, cfg Config) (*Built, error) {
 	cfg = foldOperatorGuardrails(cfg)
 	cfg.GuardrailsTaskWindow = clampReviewTaskWindow(cfg.GuardrailsTaskWindow)
 
-	// Per-slot models: fold the operator-tier `models:` YAML
-	// subtree (user-global + CLI only — a project file's models: block is handled by
-	// foldProjectModelBindings below) onto cfg.ModelSlots/cfg.ModelAliases, CLI flags
-	// (--model-slot/--model-alias) winning per key. Runs after the resolver is built;
-	// the routed call sites read the resolved slot models lazily.
-	//
-	// Precedence (CLI > project-YAML > operator-YAML > built-in): snapshot the
-	// CLI-set model-binding keys BEFORE this operator-YAML fold runs, so the later
-	// foldOperatorModelDefault / foldProjectModelBindings can layer the YAML rungs UNDER
-	// the CLI ones (a CLI-set key/--model is SKIPPED by both YAML folds).
+	// Per-slot models: fold the operator-tier `models:` YAML subtree (user-global +
+	// CLI only; project-tier models blocks are ignored) onto cfg.ModelSlots and
+	// cfg.ModelAliases, with explicit CLI bindings winning per key.
+	// Snapshot the CLI-set keys before folding operator YAML so that operator YAML
+	// never overrides an explicit CLI key.
 	//
 	// ORDERING INVARIANT (load-bearing — do NOT move this capture below foldOperatorModelSlots):
 	// the snapshot is only a faithful CLI-vs-YAML discriminator BECAUSE at THIS point cfg
