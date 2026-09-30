@@ -69,8 +69,8 @@ The existing [surface lifecycle](../design/surface-migration-plan.md#maintainer-
   - verify: `TestMecatuiSavedMemoryBoundedBrowser_Scenario3_WheelAndPointerIsolation`
 - AC3.4: While open, exactly one surface owns inventory/detail state and their key, render, and RPC-result paths; the root has no parallel user-model overlay field or legacy reducer/render/key branch. Closing tears down that state rather than retaining a Model tombstone.
   - verify: inspection — review `Model`, `renderBody`, `updateInventoryMsgs`, and key routing against the [surface migration checklist](../design/surface-migration-plan.md#maintainer-rules-for-future-migrations), alongside `TestMecatuiSavedMemoryBoundedBrowser_Scenario3_OpenBackCloseAndFocus`.
-- AC3.5: The existing TUI behavior reference and public TUI usage guide describe the shipped bounded navigation and compact fallback without presenting this plan as already implemented.
-  - verify: inspection — update [`docs/tui.md`](../tui.md) and the [public TUI usage guide](../../user-docs/mecatui/using-the-tui.md) with implementation, then run `task docs` and `task site:build`.
+- AC3.5: The TUI behavior reference describes the shipped bounded navigation and compact fallback. The public TUI usage guide identifies `/memory` as the saved-memory inspector and links to the memory guide; the visible panel owns its interaction hints instead of duplicating them in public prose.
+  - verify: inspection — check [`docs/tui.md`](../tui.md) for navigation and compact fallback and the [public TUI usage guide](../../user-docs/mecatui/using-the-tui.md) for command discovery and its memory link, then run `task docs` and `task site:build`.
 
 ## Out of scope
 
