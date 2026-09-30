@@ -280560,6 +280560,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790690664990,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "03cdfb508bf5a83e5b83311a76e3bfd95a239f38",
+          "message": "fix(guardrails): review ListDir results without reading directories (#2001)\n\nExclude ListDir directory operands from supplemental text-file evidence while retaining review of the returned listing. Add real-application regression coverage for acceptable delivery and prohibited or malformed withholding.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T08:42:23+03:00",
+          "tree_id": "eda4e24866b7922ff23d2eb29e0a3b7aaac0d7b2",
+          "url": "https://github.com/stacklok/mecatl/commit/03cdfb508bf5a83e5b83311a76e3bfd95a239f38"
+        },
+        "date": 1790747672790,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3299,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 91.5,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1157,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -367694,6 +367733,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790747669862,
+  "lastUpdate": 1790747673717,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
