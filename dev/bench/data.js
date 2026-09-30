@@ -253892,6 +253892,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790751538787,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d96c141642b4cfc417879c25da5bc0b2ceed84de",
+          "message": "fix(guardrails): isolate contextual reviewer instructions (#2006)\n\nCorrect the contextual reviewer's role exclusions so ordinary working-agent instructions, rules, and operator-profile preferences are not injected into checker requests. Preserve admitted facts as review data and ordinary worker context, with real-factory and retry regression coverage.\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T10:03:19+03:00",
+          "tree_id": "3946e5ef105881fcb82617519b6b622faddf45b2",
+          "url": "https://github.com/stacklok/mecatl/commit/d96c141642b4cfc417879c25da5bc0b2ceed84de"
+        },
+        "date": 1790752530764,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -368682,6 +368716,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790752527568,
+  "lastUpdate": 1790752531582,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
