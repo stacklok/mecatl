@@ -40,6 +40,46 @@ func attrInt(s tracetest.SpanStub, key string) (int64, bool) {
 	return 0, false
 }
 
+func TestADR_0370_Scenario1_AvailabilityLatency(t *testing.T) {
+	tr, exp := newTestTracing(t)
+	ctx := context.Background()
+	call := session.NewToolCall("availability-call", "read", nil)
+	available := session.NewToolResult("availability-call", "ready")
+	canonical := session.NewToolError("availability-call", "cancelled after availability")
+
+	tr.Emit(ctx, session.Event{Type: session.EvSessionInit})
+	tr.Emit(ctx, session.Event{Type: session.EvToolCall, ToolCall: &call})
+
+	if spans := exp.GetSpans(); len(spans) != 0 {
+		t.Fatalf("tool span ended before safe result availability; got %d exported spans", len(spans))
+	}
+
+	tr.Emit(ctx, session.Event{Type: session.EvToolResultAvailable, ToolResult: &available})
+
+	spans := exp.GetSpans()
+	tool, ok := spanByName(spans, "mecatl.tool")
+	if !ok {
+		t.Fatalf("tool span did not end at safe result availability; got %d exported spans", len(spans))
+	}
+	if tool.Status.Code != codes.Unset {
+		t.Errorf("availability span status = %v, want Unset", tool.Status.Code)
+	}
+
+	tr.Emit(ctx, session.Event{Type: session.EvToolResult, ToolResult: &canonical})
+
+	spans = exp.GetSpans()
+	if got := len(spans); got != 1 {
+		t.Errorf("canonical confirmation exported %d tool spans, want exactly 1", got)
+	}
+	tool, ok = spanByName(spans, "mecatl.tool")
+	if !ok {
+		t.Fatal("tool span disappeared after canonical confirmation")
+	}
+	if tool.Status.Code != codes.Unset {
+		t.Errorf("canonical confirmation changed availability span status to %v, want Unset", tool.Status.Code)
+	}
+}
+
 func TestTracingRunSpan(t *testing.T) {
 	tr, exp := newTestTracing(t)
 

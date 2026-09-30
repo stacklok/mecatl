@@ -23,7 +23,8 @@ const tracerName = "github.com/stacklok/mecatl/internal/adapter/telemetry"
 //     with the stop reason mapped to span status and token usage recorded as
 //     attributes;
 //   - a child span per tool, opened on tool.call and ended on the matching
-//     tool.result, keyed by ToolCallID.
+//     tool.result.available, keyed by ToolCallID. A canonical tool.result ends
+//     only spans from older or missed-availability streams.
 //
 // # Context
 //
@@ -77,7 +78,7 @@ func (t *Tracing) Emit(ctx context.Context, ev session.Event) {
 	case session.EvToolCall:
 		t.ensureRun(ctx)
 		t.startTool(ev.ToolCall)
-	case session.EvToolResult:
+	case session.EvToolResultAvailable, session.EvToolResult:
 		t.endTool(ev.ToolResult)
 	case session.EvResult:
 		t.endRun(ev.Result)
