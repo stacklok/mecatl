@@ -120,8 +120,9 @@ sequenceDiagram
   D-->>C: tool.call
   D->>T: Execute(call, ws)
   T-->>D: ToolResult
+  D->>D: PostToolUse hook and inbound review
+  D-->>C: tool.result.available
   D-->>C: tool.result
-  D->>D: PostToolUse hook
   D->>E: results
   E->>E: RecordToolResults → loop (next turn)
   E-->>C: result (StopEndTurn)
@@ -139,7 +140,14 @@ Enforced in `Engine.dispatch`:
 - A read-only batch (`runReadBatch`) authorizes + runs PreToolUse hooks for
   every call first (permission **asks are sequenced one at a time**, never two
   at once), then executes the cleared calls **concurrently**, one goroutine per
-  call, results merged under a mutex.
+  call. Each worker writes a private indexed record. The dispatcher publishes a
+  completed clean record as a safe `tool.result.available` event in completion
+  order; workers never publish events or touch the recorder, aggregate, or
+  release-ask state.
+- After every worker finishes, the dispatcher resolves held-result release
+  decisions serially, then drains canonical `tool.result` events in original
+  call order. Cancellation can replace an already available result with the
+  canonical synthetic error.
 - A mutating or **unknown** tool (`runOne`) runs **alone, serially**, never
   overlapping a sibling call in that dispatch.
 - A read-only tool whose specific call implements the unexported
