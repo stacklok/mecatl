@@ -137,12 +137,18 @@ func agentDefLookup(reg *agents.Registry, name string) (agents.AgentDef, bool) {
 // every other call site uses; there is no separate discovery path for a
 // session-root binding (AC1.17).
 //
-// sel is threaded through but deliberately unused this task: Task C composes
-// ADR 0353's full 5-case provider/model precedence (and the Limits/
-// PermissionMode tighten-only clamps) on top of this factory without changing
-// its shape. Until then, a def's own (provider, model) resolves through the
-// SAME resolveChildProvider chain buildAgentSubagentEngines already uses,
-// inheriting the deployment default when the def pins none.
+// sel is ADR 0353's 5-case provider/model precedence input (Task C,
+// resolveAgentDefRootProviderModel — a resolver DISTINCT from
+// resolveChildProvider/resolveProviderModel: those implement the existing
+// Subagent-delegate precedence (def-wins-over-parent, silent fallback on an
+// unavailable def-pinned provider), which is the WRONG contract for this
+// factory's case 5 (an unavailable def-pinned provider must FAIL session
+// creation, never silently fall back). limits is the request's RAW Limits
+// (createSession skips its general WithDefaults fold for an agent-bound
+// create so a zero field still means "not supplied" here); mode is the
+// request's resolved PermissionMode. Both are clamped tighten-only against
+// the def's own configured ceiling (AC1.12/AC1.13) and returned via
+// SessionEngineResult.Limits/BuiltForMode for the caller to persist.
 func agentDefSessionEngineFactory(
 	cfg Config,
 	provReg *providerRegistry,
@@ -156,8 +162,7 @@ func agentDefSessionEngineFactory(
 	guardrailWaiver *modelhook.WaiverHolder,
 ) server.AgentDefSessionEngineFactory {
 	mainRunner := buildCommandRunner(cfg)
-	return func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, defName string) (server.SessionEngineResult, error) {
-		_ = sel // Task C wires the request selector into the def's own resolved pair.
+	return func(ctx context.Context, sel server.ProviderSelector, profile server.SessionProfile, mode session.PermissionMode, limits session.Limits, defName string) (server.SessionEngineResult, error) {
 		def, ok := agentDefLookup(assets.agentReg, defName)
 		if !ok {
 			return server.SessionEngineResult{}, fmt.Errorf("%w: unknown agent definition %q", server.ErrInvalidArgument, defName)
@@ -173,7 +178,15 @@ func agentDefSessionEngineFactory(
 		allowShell := runner != nil
 
 		parentProviderID := provReg.Default()
-		childProvider, pid, model, windowFn := resolveChildProvider(cfg, provReg, def, provider, parentProviderID, cfg.Model)
+		childProvider, pid, model, windowFn, err := resolveAgentDefRootProviderModel(cfg, provReg, def, provider, parentProviderID, sel)
+		if err != nil {
+			return server.SessionEngineResult{}, err
+		}
+
+		// ADR 0353 tighten-only clamps (AC1.12/AC1.13): the def's own configured
+		// permissionMode/Limits are the ceiling; the request may only narrow them.
+		clampedMode := clampPermissionMode(resolvePermissionMode(cfg.diag(), def), mode)
+		clampedLimits := tightenLimits(defLimits(def, defaultLimits()), limits)
 
 		eng, mcpClose, authority := buildAgentDefRootEngine(ctx, cfg, def, assets.agentReg.Detail(def.Name),
 			childProvider, model, windowFn, base, allowShell, assets.skillIndex, hooks, runner, assets.globalMgr,
@@ -194,7 +207,8 @@ func agentDefSessionEngineFactory(
 			Capabilities: modelCapability(provReg, pid, model),
 			ProviderID:   pid,
 			ModelID:      model,
-			BuiltForMode: mode,
+			BuiltForMode: clampedMode,
+			Limits:       &clampedLimits,
 			Authority:    authority,
 			Close:        closeFn,
 		}, nil

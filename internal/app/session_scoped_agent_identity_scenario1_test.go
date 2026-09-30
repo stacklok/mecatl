@@ -248,7 +248,7 @@ func TestSessionScopedAgentIdentity_Scenario1_UnknownDefRejected(t *testing.T) {
 
 	factory := agentDefSessionEngineFactory(cfg, provReg, oa, memstore.New(), testAgentDefRootPolicy(cfg),
 		hookexec.New(nil), nil, nil, assets, nil)
-	_, err := factory(context.Background(), server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, "ghost-agent")
+	_, err := factory(context.Background(), server.ProviderSelector{}, server.ProfileDefault, session.ModeDefault, session.Limits{}, "ghost-agent")
 	if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
 		t.Fatalf("unknown agent_definition_name must be a loud InvalidArgument, got: %v", err)
 	}
@@ -400,4 +400,211 @@ func TestSessionScopedAgentIdentity_Scenario1_ResolvesViaExistingAgentDefSource(
 	if err == nil {
 		t.Fatal("an unresolvable name must be rejected even though a NAMED one just resolved via the same registry")
 	}
+}
+
+// --- AC1.12 / AC1.13 / AC1.14 (Task C) ----------------------------------------
+
+// writeAgentDefFrontmatterFile writes an agent-def markdown file from a raw
+// frontmatter body, verbatim — this test file's fixture writer for
+// frontmatter knobs writeScopedAgentDefFile doesn't expose (maxTurns/
+// maxToolCalls/permissionMode/provider/model), needed by the Task C tests
+// below.
+func writeAgentDefFrontmatterFile(t *testing.T, dir, name, frontmatter, body string) {
+	t.Helper()
+	content := "---\nname: " + name + "\ndescription: " + name + " specialist\n" + frontmatter + "---\n" + body
+	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write def %s: %v", name, err)
+	}
+}
+
+// TestSessionScopedAgentIdentity_Scenario1_LimitsTightenOnly pins AC1.12,
+// through the FULL composition: a request's Limits.max_turns/max_tool_calls
+// may only LOWER the bound def's own configured caps (maxTurns: 10,
+// maxToolCalls: 5) — never raise them — and an unset (zero) request field
+// means "not supplied, inherit the def's cap," never "explicitly unlimited."
+func TestSessionScopedAgentIdentity_Scenario1_LimitsTightenOnly(t *testing.T) {
+	ctx := context.Background()
+	ws := t.TempDir()
+	agentsDir := t.TempDir()
+	writeAgentDefFrontmatterFile(t, agentsDir, "capped", "tools: [Read]\nmaxTurns: 10\nmaxToolCalls: 5\n", "You are capped.")
+
+	llm := mockllm.New(mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, ctx, Config{
+		Workspace: ws, NoSoul: true, Model: "gpt-5", AgentsDirs: []string{agentsDir}, MockProvider: llm,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	cases := []struct {
+		name          string
+		request       session.Limits
+		wantTurns     int
+		wantToolCalls int
+	}{
+		{"unset request inherits the def's cap", session.Limits{}, 10, 5},
+		{"looser request is tightened down to the def's cap", session.Limits{MaxTurns: 100, MaxToolCalls: 100}, 10, 5},
+		{"tighter request narrows below the def's cap", session.Limits{MaxTurns: 3, MaxToolCalls: 2}, 3, 2},
+		{"per-field: tighter turns, unset tool calls inherits the def's cap", session.Limits{MaxTurns: 3}, 3, 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sess, err := built.Service.CreateSessionWithProfile(ctx, session.ModeDefault, tc.request,
+				server.ProviderSelector{}, server.ProfileDefault, server.WithAgentDefinitionName("capped"))
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if sess.Limits.MaxTurns != tc.wantTurns || sess.Limits.MaxToolCalls != tc.wantToolCalls {
+				t.Fatalf("Limits = %+v, want MaxTurns=%d MaxToolCalls=%d (request was %+v)", sess.Limits, tc.wantTurns, tc.wantToolCalls, tc.request)
+			}
+		})
+	}
+}
+
+// TestSessionScopedAgentIdentity_Scenario1_PermissionModeClampedNotRaised pins
+// AC1.13, through the FULL composition: a request mode looser than the bound
+// def's configured permissionMode is silently clamped to the def's value
+// (plan < default < acceptEdits) — never rejected, never raised. A def
+// configuring NO permissionMode imposes no ceiling at all (ordinary main
+// session behavior — ADR 0353's ceiling is opt-in per def).
+func TestSessionScopedAgentIdentity_Scenario1_PermissionModeClampedNotRaised(t *testing.T) {
+	ctx := context.Background()
+	ws := t.TempDir()
+	agentsDir := t.TempDir()
+	writeAgentDefFrontmatterFile(t, agentsDir, "planner", "tools: [Read]\npermissionMode: plan\n", "You plan only.")
+	writeScopedAgentDefFile(t, agentsDir, "unrestricted", []string{"Read"}, "No mode ceiling.")
+
+	llm := mockllm.New(mockllm.TextTurn("done"))
+	built, err := buildIsolated(t, ctx, Config{
+		Workspace: ws, NoSoul: true, Model: "gpt-5", AgentsDirs: []string{agentsDir}, MockProvider: llm,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer built.Close()
+
+	cases := []struct {
+		name     string
+		defName  string
+		reqMode  session.PermissionMode
+		wantMode session.PermissionMode
+	}{
+		{"looser default clamps down to the def's plan ceiling", "planner", session.ModeDefault, session.ModePlan},
+		{"looser acceptEdits clamps down to the def's plan ceiling", "planner", session.ModeAccept, session.ModePlan},
+		{"a request already at the def's ceiling is unchanged", "planner", session.ModePlan, session.ModePlan},
+		{"a def with no permissionMode imposes no ceiling: acceptEdits is honoured", "unrestricted", session.ModeAccept, session.ModeAccept},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sess, err := built.Service.CreateSessionWithProfile(ctx, tc.reqMode, session.Limits{},
+				server.ProviderSelector{}, server.ProfileDefault, server.WithAgentDefinitionName(tc.defName))
+			if err != nil {
+				t.Fatalf("CreateSession: %v", err)
+			}
+			if sess.Mode != tc.wantMode {
+				t.Fatalf("Mode = %q, want %q (request was %q)", sess.Mode, tc.wantMode, tc.reqMode)
+			}
+		})
+	}
+}
+
+// TestSessionScopedAgentIdentity_Scenario1_ProviderModelPairResolution pins
+// AC1.14, directly against resolveAgentDefRootProviderModel (the unit-level
+// seam agentDefSessionEngineFactory calls): all 5 cases of ADR 0353's
+// provider/model pair resolution, plus the request-side "unknown provider_id"
+// validation cases 3/4 already share with every other create path.
+func TestSessionScopedAgentIdentity_Scenario1_ProviderModelPairResolution(t *testing.T) {
+	oa := mockllm.New(mockllm.TextTurn("x"))
+	or := mockllm.New(mockllm.TextTurn("x"))
+	reg := twoProviderReg(oa, providerOpenAI, "parent-model", or, providerOpenRouter)
+	cfg := Config{Model: "parent-model"}
+
+	cases := []struct {
+		name    string
+		def     agents.AgentDef
+		sel     server.ProviderSelector
+		wantPID string
+		wantMdl string
+	}{
+		{
+			name:    "case 1: no override resolves the def's own base pair (def.Provider/def.Model)",
+			def:     agents.AgentDef{Name: "a", Provider: providerOpenRouter, Model: "anthropic/claude-sonnet-4.5"},
+			sel:     server.ProviderSelector{},
+			wantPID: providerOpenRouter, wantMdl: "anthropic/claude-sonnet-4.5",
+		},
+		{
+			name:    "case 1: no def pin, no override => deployment default",
+			def:     agents.AgentDef{Name: "b"},
+			sel:     server.ProviderSelector{},
+			wantPID: providerOpenAI, wantMdl: "parent-model",
+		},
+		{
+			name:    "case 2: model_id alone applies to the base pair's PROVIDER, never switches it",
+			def:     agents.AgentDef{Name: "c"}, // base pair = openai/parent-model
+			sel:     server.ProviderSelector{ModelID: "override-model"},
+			wantPID: providerOpenAI, wantMdl: "override-model",
+		},
+		{
+			name:    "case 3: provider_id alone switches provider and re-derives ITS OWN default model",
+			def:     agents.AgentDef{Name: "d", Model: "pinned-for-a-different-provider"},
+			sel:     server.ProviderSelector{ProviderID: providerOpenRouter},
+			wantPID: providerOpenRouter, wantMdl: builtinDefaultModel[providerOpenRouter],
+		},
+		{
+			name:    "case 4: both fields set uses the explicit pair verbatim",
+			def:     agents.AgentDef{Name: "e", Provider: providerOpenAI, Model: "def-pinned-model"},
+			sel:     server.ProviderSelector{ProviderID: providerOpenRouter, ModelID: "explicit-model"},
+			wantPID: providerOpenRouter, wantMdl: "explicit-model",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			childProvider, pid, mdl, windowFn, err := resolveAgentDefRootProviderModel(cfg, reg, tc.def, oa, providerOpenAI, tc.sel)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if pid != tc.wantPID || mdl != tc.wantMdl {
+				t.Fatalf("resolveAgentDefRootProviderModel = (%q,%q), want (%q,%q)", pid, mdl, tc.wantPID, tc.wantMdl)
+			}
+			if windowFn == nil {
+				t.Fatal("windowFn must not be nil")
+			}
+			if childProvider == nil {
+				t.Fatal("childProvider must not be nil")
+			}
+		})
+	}
+
+	t.Run("case 5: an unavailable definition-pinned provider fails session creation", func(t *testing.T) {
+		def := agents.AgentDef{Name: "z", Provider: "vendor-unknown"}
+		_, _, _, _, err := resolveAgentDefRootProviderModel(cfg, reg, def, oa, providerOpenAI, server.ProviderSelector{})
+		if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
+			t.Fatalf("an unavailable definition-pinned provider must fail session creation (never silently instantiate on another provider), got: %v", err)
+		}
+	})
+
+	t.Run("case 5 also covers case 2 (model_id alone still keys off the SAME unavailable base-pair provider)", func(t *testing.T) {
+		def := agents.AgentDef{Name: "z2", Provider: "vendor-unknown"}
+		_, _, _, _, err := resolveAgentDefRootProviderModel(cfg, reg, def, oa, providerOpenAI, server.ProviderSelector{ModelID: "some-model"})
+		if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
+			t.Fatalf("case 2 shares case 1's base-pair provider, so it must fail identically when that provider is unavailable, got: %v", err)
+		}
+	})
+
+	t.Run("an unknown REQUESTED provider_id (case 3) is InvalidArgument, mirroring every other create path", func(t *testing.T) {
+		_, _, _, _, err := resolveAgentDefRootProviderModel(cfg, reg, agents.AgentDef{Name: "f"}, oa, providerOpenAI,
+			server.ProviderSelector{ProviderID: "no-such-provider"})
+		if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
+			t.Fatalf("unknown provider_id must be InvalidArgument, got: %v", err)
+		}
+	})
+
+	t.Run("an unknown REQUESTED provider_id (case 4) is InvalidArgument, mirroring every other create path", func(t *testing.T) {
+		_, _, _, _, err := resolveAgentDefRootProviderModel(cfg, reg, agents.AgentDef{Name: "g"}, oa, providerOpenAI,
+			server.ProviderSelector{ProviderID: "no-such-provider", ModelID: "m"})
+		if err == nil || !errors.Is(err, server.ErrInvalidArgument) {
+			t.Fatalf("unknown provider_id must be InvalidArgument, got: %v", err)
+		}
+	})
 }
