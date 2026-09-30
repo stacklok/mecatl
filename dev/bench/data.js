@@ -254608,6 +254608,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790756709551,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d540607853bb8f7ab09dc13fbe25deceefbd29a6",
+          "message": "feat(adapters): publish production persistence implementations (#2005)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-09-30T13:35:14+03:00",
+          "tree_id": "44aa6b932fa99d9a77f6173e808313d788f81df4",
+          "url": "https://github.com/stacklok/mecatl/commit/d540607853bb8f7ab09dc13fbe25deceefbd29a6"
+        },
+        "date": 1790765239558,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -369704,6 +369738,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790765236502,
+  "lastUpdate": 1790765240530,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
