@@ -6,6 +6,29 @@ import (
 	"strings"
 )
 
+func applyDeploymentDefaultTarget(cfg Config) (Config, error) {
+	selector := strings.TrimSpace(cfg.DefaultModel)
+	if selector == "" {
+		return cfg, nil
+	}
+	target, known := lookupModelAliasTarget(cfg, selector)
+	if !known {
+		return cfg, nil
+	}
+	if strings.TrimSpace(target.Model) == "" {
+		return cfg, fmt.Errorf("default model %q means inherit", selector)
+	}
+	if target.ProviderID != "" {
+		if cfg.DefaultProvider != "" && strings.TrimSpace(cfg.DefaultProvider) != target.ProviderID {
+			return cfg, fmt.Errorf("default model alias provider conflicts with default provider")
+		}
+		cfg.DefaultProvider = target.ProviderID
+		cfg.defaultModelFromAlias = true
+	}
+	cfg.DefaultModel = strings.TrimSpace(target.Model)
+	return cfg, nil
+}
+
 // ResolveDeploymentDefault validates a persisted deployment default's provider with
 // the same registry and default-model resolver used at startup, without contacting
 // a provider. A supplied model is validated as an alias or concrete model selector,
@@ -14,14 +37,10 @@ import (
 func ResolveDeploymentDefault(ctx context.Context, cfg Config) (string, string, error) {
 	cfg.DefaultProvider = strings.TrimSpace(cfg.DefaultProvider)
 	cfg.DefaultModel = strings.TrimSpace(cfg.DefaultModel)
-	if cfg.DefaultModel != "" {
-		model, known := lookupModelAlias(cfg, cfg.DefaultModel)
-		if known {
-			if model == "" {
-				return "", "", fmt.Errorf("default model %q means inherit", cfg.DefaultModel)
-			}
-			cfg.DefaultModel = model
-		}
+	var err error
+	cfg, err = applyDeploymentDefaultTarget(cfg)
+	if err != nil {
+		return "", "", err
 	}
 	cfg.skipProviderNetworkDiscovery = true
 	reg, err := buildProviderRegistryContext(ctx, cfg, cfg.envDetector)

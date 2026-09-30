@@ -291,7 +291,8 @@ type MemberSpec struct{Name string; AgentType string; Lead bool; Mutating bool; 
 type MemberStopReason string
 type ModelRouteCategory struct{Name string; Description string}
 type ModelRouteRequest struct{TaskPrompt string; Categories []ModelRouteCategory; Default string}
-type ModelRouteResult struct{Category string; Model string; Usage session.AuxiliaryUsage; Reason string; OK bool; Confidence *float64}
+type ModelRouteResult struct{Category string; Provider string; Model string; Usage session.AuxiliaryUsage; Reason string; OK bool; Confidence *float64}
+type ModelTarget struct{Provider string; Model string}
 type ParallelOption func(*ParallelTool)
 type ParallelTool struct{}
 type PermissionReviewPolicyProvider interface{GuardrailPermissionReviewEligible(session.ToolCall) bool}
