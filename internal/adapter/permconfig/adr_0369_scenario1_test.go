@@ -63,9 +63,6 @@ permissions:
 			if len(rules) == 0 {
 				t.Fatal("whole-document decoding lost valid sibling permissions")
 			}
-			if got := r.ProjectModelBindings(ws); got != nil {
-				t.Fatalf("project models affected configuration: %+v", got)
-			}
 			log := logs.String()
 			if got := strings.Count(log, "IGNORING project-tier models block"); got != 1 {
 				t.Fatalf("models warning count = %d, log=%s", got, log)

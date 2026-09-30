@@ -313,11 +313,9 @@ func scalarModelSlots(slots permconfig.ModelSlots) map[string]string {
 
 // cliModelKeys is the snapshot of which model bindings the OPERATOR set on the CLI
 // (--model-slot / --model-alias / --model), taken BEFORE foldOperatorModelSlots merges
-// the operator-YAML in (ADR 0030 Phase 4). It is the mechanism by which a CLI flag
-// survives a project-tier override: foldProjectModelBindings overrides operator-YAML-set
-// keys but SKIPS any key recorded here, realising the precedence
+// the operator-YAML in. It preserves CLI precedence over operator settings.yaml.
 //
-//	CLI (operator flags) > project-YAML (capped) > operator-YAML (settings.yaml) > built-in
+//	CLI (operator flags) > operator-YAML (settings.yaml) > built-in
 //
 // At the capture point cfg.ModelSlots/cfg.ModelAliases hold ONLY the CLI-set keys (the
 // operator-YAML fold has not run yet), and cfg.Model is the CLI --model value (the
@@ -362,21 +360,19 @@ func captureCLIModelKeys(cfg Config) cliModelKeys {
 	return keys
 }
 
-// foldOperatorModelDefault applies an operator-YAML `models.default:` to cfg.Model (ADR
-// 0030 Phase 4), the operator-YAML rung of the default precedence
+// foldOperatorModelDefault applies an operator-YAML `models.default:` to cfg.Model,
+// the operator-YAML rung of the default precedence
 //
-//	CLI --model > project-YAML default (capped) > operator-YAML default > registry default
+//	CLI --model > operator-YAML default > registry default
 //
-// It is UNCAPPED (the operator's own binding — the allowlist caps PROJECT bindings only,
-// the operator is authoritative) and resolved through lookupModelAlias (the operator-merged
-// alias map; foldOperatorModelSlots has already folded operator-YAML aliases by the time
-// this runs in Build). cliKeys.modelSet (the pre-foldOperatorModelSlots snapshot) gates it:
-// a CLI --model wins, so the operator-YAML default is SKIPPED when --model was set. It runs
-// AFTER the registry default is assigned (so it overrides it) and BEFORE
-// foldProjectModelBindings (so a capped project default can override it in turn). No-op
-// (byte-identical) when there is no permResolver, no operator models: block, or no
-// operator models.default (or it resolves to inherit/unknown — fail-soft, keep the
-// registry default).
+// It is resolved through lookupModelAlias (the operator-merged alias map;
+// foldOperatorModelSlots has already folded operator-YAML aliases by the time this runs
+// in Build). cliKeys.modelSet (the pre-foldOperatorModelSlots snapshot) gates it: a CLI
+// --model wins, so the operator-YAML default is SKIPPED when --model was set. It runs
+// AFTER the registry default is assigned (so it overrides it). No-op (byte-identical)
+// when there is no permResolver, no operator models: block, or no operator
+// models.default (or it resolves to inherit/unknown — fail-soft, keep the registry
+// default).
 func foldOperatorModelDefault(cfg Config, cliKeys cliModelKeys) Config {
 	if cliKeys.modelSet {
 		return cfg // CLI --model wins over the operator-YAML default.
@@ -414,9 +410,8 @@ func foldOperatorModelDefault(cfg Config, cliKeys cliModelKeys) Config {
 // The value is the def-less child-default model selector for every Subagent /
 // Parallel-branch / team-member child that does not pin its own model.
 //
-// It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), the user-global + CLI tiers;
-// a project-tier subagent: was already stripped with a WARN in captureProjectModels). It
-// is a no-op (byte-identical) when --subagent-model was set on the CLI (cliKeys.subagentModelSet
+// It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), the user-global + CLI
+// tiers; project-tier models blocks are ignored with a WARN). It is a no-op (byte-identical) when --subagent-model was set on the CLI (cliKeys.subagentModelSet
 // — the flag WINS), when there is no permResolver, no operator models: block, or an empty
 // models.subagent. The value is set VERBATIM (NOT pre-resolved): the downstream
 // normalizeSubagentModel is the ONE validator and keeps aliases verbatim by design, so
@@ -485,8 +480,8 @@ func foldOperatorDefaultProvider(cfg Config) Config {
 // foldOperatorModelRouter folds the OPERATOR-TIER `models.router:` taxonomy (ADR 0031,
 // Phase 5) onto cfg: the routing categories, the default category, and the classifier
 // slot. It is OPERATOR-TIER ONLY (read from OperatorModelPolicy(), which is the
-// user-global + CLI tiers; a project-tier router: was already stripped with a WARN in
-// captureProjectModels). It is FAIL-SOFT: a category with an empty name OR an empty
+// user-global + CLI tiers; project-tier models blocks are ignored with a WARN). It is
+// FAIL-SOFT: a category with an empty name OR an empty
 // description OR an empty model selector is WARN-dropped (a category the classifier
 // cannot name/describe, or that maps to nothing, is useless) — the rest still load.
 // ADR 0042 (superseding 0031's enable model): the TAXONOMY enables the router, so this

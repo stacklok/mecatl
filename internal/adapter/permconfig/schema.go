@@ -160,17 +160,12 @@ type Config struct {
 	// keeps the CLI/default). The composition layer parses the string; permconfig only
 	// reads the scalar.
 	Posture string `yaml:"posture"`
-	// Models holds the per-slot model config (ADR 0030): the `models.slots` /
-	// `models.aliases` maps, the session `default`, and the operator-tier `allowlist`
-	// cap. At the OPERATOR tier (user-global + CLI) all fields are honoured. At the
-	// PROJECT tier (Phase 4) a models: block is honoured WITHIN the operator allowlist
-	// on a TRUSTED workspace (slots/aliases/default only); with no operator allowlist
-	// it stays WARN-ignored (the opt-in — byte-identical to pre-Phase-4), and a
-	// project-tier allowlist: key is always ignored with a WARN (non-wideable cap).
-	// The TOP `models:` mapping is parsed STRICTLY (an unknown key like `slotz:`
-	// errors), the inner slots/aliases maps stay free-form (composition validates the
-	// slot keys fail-soft). A nil Models means the key was absent. The composition
-	// layer reads the maps; permconfig only carries them.
+	// Models holds operator-tier model bindings. Project-tier models: blocks are
+	// ignored with a warning before nested schema decoding. The TOP `models:` mapping
+	// is parsed STRICTLY (an unknown key like `slotz:` errors), the inner slots/aliases
+	// maps stay free-form (composition validates the slot keys fail-soft). A nil Models
+	// means the key was absent. The composition layer reads the maps; permconfig only
+	// carries them.
 	Models *ModelsSection `yaml:"models"`
 	// ReasoningEffort is the OPERATOR-TIER reasoning-effort scalar (ADR 0055: the
 	// neutral vocabulary "" / "auto" / "low" / "medium" / "high" / "xhigh" / "max").
@@ -1700,9 +1695,8 @@ type ModelsSection struct {
 	// Aliases binds a short alias to a concrete model id (merged onto the CLI
 	// --model-alias map, CLI winning per key).
 	Aliases ModelAliases `yaml:"aliases"`
-	// Default is the session-default model selector (alias or concrete id). It is the
-	// project-overridable session default (ADR 0030 Phase 4) — within the operator
-	// allowlist; the operator's own Default is uncapped. Empty = absent.
+	// Default is the operator-tier session-default model selector (alias or concrete
+	// id). Empty = absent.
 	Default string `yaml:"default"`
 	// Subagent is the OPERATOR-TIER def-less child-default model selector (alias or
 	// concrete id): the settings.yaml twin of the --subagent-model flag (issue #288).
@@ -1727,12 +1721,7 @@ type ModelsSection struct {
 	// Empty = absent (the ladder's preferred default wins). The name pair
 	// (default = model, default_provider = provider) mirrors the wire grammar exactly.
 	DefaultProvider string `yaml:"default_provider"`
-	// Allowlist is the OPERATOR-TIER, non-wideable cap (ADR 0030 Phase 4): the set of
-	// model selectors (alias names and/or concrete ids) a PROJECT-tier models: block
-	// may bind to. An empty/absent allowlist means project models stay WARN-ignored
-	// (the opt-in: no cap ⇒ no project override, byte-identical to pre-Phase-4). It is
-	// honoured ONLY from the operator tiers; a project-tier allowlist: key is ignored
-	// with a WARN (a project cannot widen its own cap).
+	// Allowlist is retained for compatibility and has no effect.
 	Allowlist []string `yaml:"allowlist"`
 	// Router is the OPERATOR-TIER semantic Subagent model-router taxonomy (ADR 0031,
 	// Phase 5; enable model superseded by ADR 0042): a classifier slot, the routing

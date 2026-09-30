@@ -558,9 +558,13 @@ func ModelAliasTargets(models, providers *KeyValueList) app.ModelAliases {
 // converted to provider-aware targets. Entries with same-tier provider intent
 // are excluded so no consumer can silently discard that provider.
 func ScalarModelAliases(models, providers *KeyValueList) map[string]string {
-	out := models.AsMap()
-	if out == nil {
+	modelMap := models.AsMap()
+	if modelMap == nil {
 		return nil
+	}
+	out := make(map[string]string, len(modelMap))
+	for name, model := range modelMap {
+		out[name] = model
 	}
 	for name := range providers.AsMap() {
 		delete(out, name)
