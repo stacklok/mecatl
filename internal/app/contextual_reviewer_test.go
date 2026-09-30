@@ -59,7 +59,7 @@ func TestADR_0363_ContextualGuardrails_Scenario6_RubricContract(t *testing.T) {
 	if res.Assessment != agent.ReviewAcceptable {
 		t.Fatalf("assessment = %q", res.Assessment)
 	}
-	prompt := got.System.StablePrefix
+	systemPrompt := got.System.StablePrefix
 	for _, required := range []string{
 		"affirmative attempted authority crossing or redirection",
 		"ordinary issue requirements",
@@ -73,8 +73,8 @@ func TestADR_0363_ContextualGuardrails_Scenario6_RubricContract(t *testing.T) {
 		"An acceptable assessment requires empty missing_evidence, complete principal facts, evidence, and trajectory context, and completion of every evidence page chain that was started",
 		`source_ref must be "call" or one of the request's advertised allowed source refs`,
 	} {
-		if !strings.Contains(prompt, required) {
-			t.Errorf("system rubric missing %q\n%s", required, prompt)
+		if !strings.Contains(systemPrompt, required) {
+			t.Errorf("system rubric missing %q\n%s", required, systemPrompt)
 		}
 	}
 	if len(got.Tools) != 2 || got.Tools[0].Name != readReviewEvidenceToolName || got.Tools[1].Name != submitReviewAssessmentToolName {
