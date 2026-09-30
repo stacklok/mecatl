@@ -256756,6 +256756,40 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790803580285,
         "tool": "customBiggerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joe@stacklok.com",
+            "name": "Joe Beda",
+            "username": "jbeda"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a2313597ddf63f66f9b3b9e9f77debdcda9bba41",
+          "message": "Bound mecatui saved-memory browser (#2012)\n\nCo-authored-by: Mecatl <noreply@mecatl.dev>",
+          "timestamp": "2026-10-01T01:41:16+03:00",
+          "tree_id": "0b09aafbf9f134b872cf28ffbe0c5a3eb66d9485",
+          "url": "https://github.com/stacklok/mecatl/commit/a2313597ddf63f66f9b3b9e9f77debdcda9bba41"
+        },
+        "date": 1790808813586,
+        "tool": "customBiggerIsBetter",
+        "benches": [
+          {
+            "name": "single_session_long/cache_hit_rate",
+            "value": 0.9,
+            "unit": "ratio"
+          },
+          {
+            "name": "team_fanout/cache_hit_rate",
+            "value": 0.75,
+            "unit": "ratio"
+          }
+        ]
       }
     ],
     "mecatl scenarios (render allocs, advisory)": [
@@ -372770,6 +372804,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790808810803,
+  "lastUpdate": 1790808814711,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
