@@ -823,6 +823,7 @@ func buildAgentSubagentEngines(ctx context.Context, cfg Config, provider port.LL
 		meta = append(meta, agent.AgentMeta{
 			Name:                     def.Name,
 			Description:              def.Description,
+			Provider:                 pid,
 			Limits:                   defLimits(def, agent.DefaultChildLimits()),
 			AuthorityCeiling:         agentDefinitionAuthorityCeiling(def, names, resources, false),
 			WritableAuthorityCeiling: agentDefinitionAuthorityCeiling(def, writableNames, resources, true),

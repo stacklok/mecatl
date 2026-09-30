@@ -994,7 +994,7 @@ func TestWritableResumeUsesWritableChildEngine(t *testing.T) {
 		WithSubagentStore(memstore.New())).(*SubagentTool)
 
 	args := subagentArgs{Prompt: "continue", Resume: "subagent-abc"}
-	engine, _, _, routed, ok := tl.resolveEngineAndLimits("p1", args, true /*resuming*/, true /*writable*/, "")
+	engine, _, _, routed, ok := tl.resolveEngineAndLimits("p1", args, true /*resuming*/, true /*writable*/, "", nil)
 	if !ok {
 		t.Fatal("a writable resume with a wired store must resolve")
 	}

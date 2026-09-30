@@ -7311,6 +7311,31 @@ func writableExplorerDeps(cfg Config, provider port.LLMProvider, providerModel s
 // non-blank model routes on the parent provider with its window re-derived through
 // childWindowFor. Cross-provider routing by a bare model id is out of scope (the registry is
 // keyed by provider) — same posture as the read-only Subagent + Parallel factories.
+func buildWritableSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string) func(agent.ModelTarget) (*agent.Engine, bool) {
+	mainRunner := directWriteCommandRunner(cfg)
+	return func(target agent.ModelTarget) (*agent.Engine, bool) {
+		providerID := strings.TrimSpace(target.Provider)
+		model := strings.TrimSpace(target.Model)
+		if providerID == "" {
+			providerID = parentProviderID
+		}
+		if model == "" {
+			return nil, false
+		}
+		provider := parentProvider
+		if providerID != parentProviderID {
+			entry, ok := provReg.Lookup(providerID)
+			if !ok {
+				return nil, false
+			}
+			provider = entry.provider
+		}
+		windowFn := childWindowFor(cfg, provReg, providerID, model)
+		deps := writableExplorerDeps(cfg, provider, model, "task:read-write:model="+model, windowFn, mainRunner)
+		return agent.NewEngine(deps), true
+	}
+}
+
 func buildWritableSubagentEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string) func(model string) (*agent.Engine, bool) {
 	mainRunner := directWriteCommandRunner(cfg)
 	return func(model string) (*agent.Engine, bool) {
@@ -7739,8 +7764,11 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// override model) — never a clone-and-swap of the LLM on an existing engine. The
 	// closure hands engine/agent only func(string)(*Engine,bool); the registry never
 	// crosses (same shape/spirit as WithAgentEngines).
-	opts = append(opts, agent.WithSubagentEngineFactory(
-		buildSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner)))
+	opts = append(opts,
+		agent.WithSubagentProvider(parentProviderID),
+		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
+		agent.WithSubagentTargetEngineFactory(buildSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID, sandboxedRunner)),
+		agent.WithSubagentEngineFactory(buildSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner)))
 	// agent+model override factory: rebuild a named specialist's SCOPED engine on the
 	// per-call override model (the override runs on the def's resolved provider). The
 	// closure hands engine/agent only func(string,string)(*Engine,bool); the registry never
@@ -7796,8 +7824,10 @@ func buildSubagentTool(ctx context.Context, cfg Config, provReg *providerRegistr
 	// the OPT-IN router's writable pick. The closure hands engine/agent only
 	// func(string)(*Engine,bool). Skipped under no-FS (buildNoFSSubagentTool wires no
 	// writable path).
-	opts = append(opts, agent.WithWritableEngineFactory(
-		buildWritableSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel)))
+	opts = append(opts,
+		agent.WithWritableTargetEngineFactory(buildWritableSubagentTargetEngineFactory(cfg, provReg, provider, parentProviderID)),
+		agent.WithWritableEngineFactory(
+			buildWritableSubagentEngineFactory(cfg, provReg, provider, parentProviderID, parentModel)))
 	return agent.NewSubagentTool(
 		buildChildEngine(cfg, provReg, provider, parentProviderID, parentModel, sandboxedRunner),
 		opts...,
@@ -7838,6 +7868,27 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 		agent.WithSubagentOwnershipEnforced(cfg.OwnershipEnforced),
 		agent.WithSubagentNoFSNote(),
 		agent.WithSubagentReadLedgerFactory(func() tool.ReadLedger { return memledger.New() }),
+		agent.WithSubagentProvider(parentProviderID),
+		agent.WithSubagentSelectorResolver(buildSubagentSelectorResolver(cfg, provReg, parentProviderID)),
+		agent.WithSubagentTargetEngineFactory(func(target agent.ModelTarget) (*agent.Engine, bool) {
+			providerID := strings.TrimSpace(target.Provider)
+			if providerID == "" {
+				providerID = parentProviderID
+			}
+			model := strings.TrimSpace(target.Model)
+			if model == "" {
+				return nil, false
+			}
+			childProvider := provider
+			if providerID != parentProviderID {
+				entry, ok := provReg.Lookup(providerID)
+				if !ok {
+					return nil, false
+				}
+				childProvider = entry.provider
+			}
+			return newNoFSChild("task:model="+model, childProvider, model, childWindowFor(cfg, provReg, providerID, model)), true
+		}),
 		agent.WithSubagentEngineFactory(func(overrideModel string) (*agent.Engine, bool) {
 			overrideModel = strings.TrimSpace(overrideModel)
 			if overrideModel == "" {
@@ -7870,6 +7921,59 @@ func buildNoFSSubagentTool(ctx context.Context, cfg Config, provReg *providerReg
 // Cross-provider routing by a bare model id is intentionally out of scope this round
 // (the registry is keyed by provider, not model) — a def's `provider:` remains the
 // cross-provider seam.
+func buildSubagentSelectorResolver(cfg Config, provReg *providerRegistry, parentProviderID string) agent.SubagentSelectorResolver {
+	resolve := func(explicitProvider, selector string) (agent.ModelTarget, string, error) {
+		explicitProvider = strings.TrimSpace(explicitProvider)
+		selector = strings.TrimSpace(selector)
+		var target ModelTarget
+		if _, alias := lookupModelAliasTarget(cfg, selector); alias {
+			resolved, err := resolveModelTarget(cfg, parentProviderID, explicitProvider, selector)
+			if err != nil {
+				return agent.ModelTarget{}, "", err
+			}
+			target = resolved
+		} else {
+			target = ModelTarget{ProviderID: explicitProvider, Model: selector}
+			if target.ProviderID == "" {
+				target.ProviderID = parentProviderID
+			}
+		}
+		if target.Model == "" {
+			return agent.ModelTarget{}, "", fmt.Errorf("model is required")
+		}
+		if _, ok := provReg.Lookup(target.ProviderID); !ok {
+			return agent.ModelTarget{}, "", fmt.Errorf("unknown or unavailable provider")
+		}
+		factoryTarget := agent.ModelTarget{Model: target.Model}
+		if explicitProvider != "" || target.ProviderID != parentProviderID {
+			factoryTarget.Provider = target.ProviderID
+		}
+		return factoryTarget, target.ProviderID, nil
+	}
+	return func(provider, model string) (agent.ResolvedModelSelector, error) {
+		provider = strings.TrimSpace(provider)
+		model = strings.TrimSpace(model)
+		if provider != reservedModelRouterProvider {
+			target, actual, err := resolve(provider, model)
+			return agent.ResolvedModelSelector{Target: target, ActualProvider: actual, ProviderBearing: provider != "" || target.Provider != ""}, err
+		}
+		if cfg.RouterDisabled || len(cfg.RouterCategories) == 0 {
+			return agent.ResolvedModelSelector{}, fmt.Errorf("model router is unavailable")
+		}
+		for _, category := range cfg.RouterCategories {
+			if strings.TrimSpace(category.Name) != model {
+				continue
+			}
+			target, actual, err := resolve("", category.Model)
+			if err != nil {
+				return agent.ResolvedModelSelector{}, fmt.Errorf("router category is unresolvable")
+			}
+			return agent.ResolvedModelSelector{Target: target, ActualProvider: actual, ProviderBearing: true, ExplicitRouterCategory: model}, nil
+		}
+		return agent.ResolvedModelSelector{}, fmt.Errorf("unknown router category")
+	}
+}
+
 func buildSubagentTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string, runner tool.CommandRunner) func(agent.ModelTarget) (*agent.Engine, bool) {
 	return func(target agent.ModelTarget) (*agent.Engine, bool) {
 		providerID := strings.TrimSpace(target.Provider)

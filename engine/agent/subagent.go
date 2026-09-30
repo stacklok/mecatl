@@ -383,6 +383,10 @@ type subagentArgs struct {
 	// error. A non-positive value is ignored (no deadline).
 	TimeoutMs *int `json:"timeout_ms,omitempty"`
 
+	// Provider optionally selects the concrete provider for Model. The reserved
+	// "model-router" value interprets Model as an enabled router category.
+	Provider string `json:"provider,omitempty"`
+
 	// Model optionally PINS this child to a specific provider model for THIS call
 	// (cheaper for fan-out, stronger for deep analysis), overriding the inherited
 	// parent/explorer model. It is an opaque provider-model string; the composition
@@ -509,6 +513,8 @@ type AgentMeta struct {
 	Name string
 	// Description is the one-line summary the model uses to choose a specialist.
 	Description string
+	// Provider is the concrete provider used by this specialist.
+	Provider string
 	// Limits are the per-def session stop conditions the child session runs under
 	// when this agent is selected. The composition root derives them from the def's
 	// maxTurns/maxToolCalls (per-field falling back to the Subagent tool's default
@@ -560,6 +566,10 @@ var subagentSchema = json.RawMessage(`{
     "timeout_ms": {
       "type": "integer",
       "description": "Optional wall-clock deadline in milliseconds for the whole subagent run; if it exceeds this it is cancelled and returns a time-budget error. Omit for no deadline."
+    },
+    "provider": {
+      "type": "string",
+      "description": "Optional provider id for model. Use model-router with an enabled category name in model. Omit with model to keep the parent's provider."
     },
     "model": {
       "type": "string",
@@ -657,7 +667,8 @@ type SubagentTool struct {
 	// agentMeta in WithAgentEngines so it stays in lockstep with agentEngines. A
 	// name absent from the map (or a zero Limits) means "use t.limits" — the same
 	// default the no-`agent` explorer path uses.
-	agentLimits map[string]session.Limits
+	agentLimits    map[string]session.Limits
+	agentProviders map[string]string
 	// agentCeilings and writableAgentCeilings are populated only from
 	// operator-managed definitions. A missing entry deliberately means no specialist
 	// ceiling. Keeping the modes separate prevents a read-only child from persisting
@@ -722,6 +733,11 @@ type SubagentTool struct {
 	// agent-layer types — and no adapter/proto/server type crosses (same shape as
 	// WithAgentEngines).
 	engineFactory func(model string) (*Engine, bool)
+	// targetEngineFactory is the provider-aware sibling used for resolved explicit
+	// selectors. selectorResolver owns aliases, registry checks, and router categories.
+	targetEngineFactory func(ModelTarget) (*Engine, bool)
+	selectorResolver    SubagentSelectorResolver
+	providerID          string
 
 	// agentModelFactory, when non-nil, mints a child engine for a per-call
 	// `agent`+`model` combination: the model runs on the named specialist's
@@ -821,6 +837,7 @@ type SubagentTool struct {
 	// layering-clean: the closure takes a string and returns *Engine — both agent-layer
 	// types — and no adapter/proto/server type crosses.
 	writableEngineFactory func(model string) (*Engine, bool)
+	writableTargetFactory func(ModelTarget) (*Engine, bool)
 
 	// shellDisabledNote, when non-empty, replaces Spec()'s isolated-worktree-shell
 	// clause with an honest read-only-only description carrying this reason (set by
@@ -1157,6 +1174,24 @@ func WithSubagentEngineFactory(f func(model string) (*Engine, bool)) SubagentOpt
 	return func(t *SubagentTool) { t.engineFactory = f }
 }
 
+// WithSubagentTargetEngineFactory injects the provider-aware fresh-child factory
+// used after composition resolves an explicit selector.
+func WithSubagentTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption {
+	return func(t *SubagentTool) { t.targetEngineFactory = f }
+}
+
+// WithSubagentSelectorResolver injects composition-owned alias, provider, and
+// explicit router-category resolution.
+func WithSubagentSelectorResolver(r SubagentSelectorResolver) SubagentOption {
+	return func(t *SubagentTool) { t.selectorResolver = r }
+}
+
+// WithSubagentProvider supplies the concrete provider used by the inherited child
+// engine so start metadata remains truthful when no explicit selector is present.
+func WithSubagentProvider(provider string) SubagentOption {
+	return func(t *SubagentTool) { t.providerID = strings.TrimSpace(provider) }
+}
+
 // WithAgentModelEngineFactory injects the composition-supplied factory that mints a child
 // engine for a per-call `agent`+`model` combination. The override model runs on the named
 // specialist's resolved provider, and the def's SCOPED engine (catalog/prompt/hooks/
@@ -1259,6 +1294,12 @@ func WithWritableEngineFactory(f func(model string) (*Engine, bool)) SubagentOpt
 	return func(t *SubagentTool) { t.writableEngineFactory = f }
 }
 
+// WithWritableTargetEngineFactory is the provider-aware direct-write sibling of
+// WithWritableEngineFactory.
+func WithWritableTargetEngineFactory(f func(ModelTarget) (*Engine, bool)) SubagentOption {
+	return func(t *SubagentTool) { t.writableTargetFactory = f }
+}
+
 // WithAgentEngines injects the per-definition child engines (keyed by agent name)
 // and their (name, description) metadata for progressive disclosure. The
 // composition root builds each engine with a SCOPED, read-only catalog (the Subagent
@@ -1278,9 +1319,16 @@ func WithAgentEngines(engines map[string]*Engine, meta []AgentMeta) SubagentOpti
 		// agent is selected. A zero Limits is skipped — the name then falls back to
 		// t.limits in Execute, identical to the no-`agent` path.
 		t.agentLimits = nil
+		t.agentProviders = nil
 		t.agentCeilings = nil
 		t.writableAgentCeilings = nil
 		for _, m := range meta {
+			if m.Provider != "" {
+				if t.agentProviders == nil {
+					t.agentProviders = make(map[string]string, len(meta))
+				}
+				t.agentProviders[m.Name] = m.Provider
+			}
 			if m.Managed {
 				if t.agentCeilings == nil {
 					t.agentCeilings = make(map[string]governance.CapabilitySet, len(meta))
@@ -1660,7 +1708,38 @@ func (t *SubagentTool) ExecuteWithParent(ctx context.Context, call session.ToolC
 // It returns ok=false with a model-addressable error ToolResult on a bad selection (an
 // unsupported combination, an unknown agent, an unwired/unroutable model), and the chosen
 // engine + limits on success.
-func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagentArgs, writable bool, routedModel string) (engine *Engine, limits session.Limits, errResult session.ToolResult, routed, ok bool) {
+func (t *SubagentTool) resolveExplicitSelector(callID session.ToolCallID, args *subagentArgs) (*ResolvedModelSelector, session.ToolResult, bool) {
+	provider := strings.TrimSpace(args.Provider)
+	model := strings.TrimSpace(args.Model)
+	if provider != "" && model == "" {
+		return nil, session.NewToolError(callID, "Subagent: `provider` requires `model`"), false
+	}
+	if model == "" {
+		return nil, session.ToolResult{}, true
+	}
+	if t.selectorResolver == nil {
+		if provider != "" {
+			return nil, session.NewToolError(callID, "Subagent: per-call `provider` selection is not supported in this deployment"), false
+		}
+		return nil, session.ToolResult{}, true
+	}
+	resolved, err := t.selectorResolver(provider, model)
+	if err != nil || strings.TrimSpace(resolved.Target.Model) == "" {
+		detail := "unresolvable selector"
+		if err != nil {
+			detail = sanitizedRoutingText(err.Error())
+		}
+		return nil, session.NewToolError(callID, "Subagent: invalid provider/model selector: "+detail), false
+	}
+	if args.Agent != "" && resolved.ProviderBearing {
+		return nil, session.NewToolError(callID, "Subagent: a named `agent` does not accept a provider-bearing call-level selector; use a model-only override"), false
+	}
+	args.Model = resolved.Target.Model
+	args.Provider = provider
+	return &resolved, session.ToolResult{}, true
+}
+
+func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagentArgs, writable bool, routedModel string, explicit *ResolvedModelSelector) (engine *Engine, limits session.Limits, errResult session.ToolResult, routed, ok bool) {
 	wantAgent := strings.TrimSpace(args.Agent)
 	wantModel := strings.TrimSpace(args.Model)
 
@@ -1712,6 +1791,22 @@ func (t *SubagentTool) selectChildEngine(callID session.ToolCallID, args subagen
 	// call NEVER runs a read-only engine (the pre-#285 bug the writable clobber caused).
 	engine = t.childEngine
 	limits = t.limits
+	if explicit != nil {
+		factory := t.targetEngineFactory
+		if writable {
+			factory = t.writableTargetFactory
+		}
+		if factory == nil {
+			return nil, session.Limits{}, session.NewToolError(callID,
+				"Subagent: resolved provider/model selection is not supported in this deployment"), false, false
+		}
+		eng, found := factory(explicit.Target)
+		if !found || eng == nil {
+			return nil, session.Limits{}, session.NewToolError(callID,
+				"Subagent: selected provider/model is unknown or unavailable"), false, false
+		}
+		return eng, limits, session.ToolResult{}, false, true
+	}
 	if writable {
 		return t.selectWritableExplorerEngine(callID, wantModel, routedModel, limits)
 	}
@@ -1991,6 +2086,9 @@ func validateFork(callID session.ToolCallID, args subagentArgs, caps parentCaps)
 	case strings.TrimSpace(args.Agent) != "":
 		return nil, session.NewToolError(callID,
 			"Subagent: `fork` cannot be combined with `agent` — a forked subagent runs on the parent's engine, not a specialist"), false
+	case strings.TrimSpace(args.Provider) != "":
+		return nil, session.NewToolError(callID,
+			"Subagent: `fork` cannot be combined with `provider` or `model` — a forked subagent inherits the parent's engine/model"), false
 	case strings.TrimSpace(args.Model) != "":
 		return nil, session.NewToolError(callID,
 			"Subagent: `fork` cannot be combined with `model` — a forked subagent inherits the parent's engine/model"), false
@@ -2117,18 +2215,13 @@ func (t *SubagentTool) validatePreconditions(callID session.ToolCallID, args sub
 // It is a method (not a free func) to read t.writableEngineFactory / t.agentModelFactory /
 // t.routableAgents. The ctx is the run's ctx, threaded to routeTask so a Run.Cancel
 // propagates into the classifier turn (issue #94).
-func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string, decision *session.RoutingDecision) {
-	skipped := func(reason string) (string, string, string, *session.RoutingDecision) {
+func (t *SubagentTool) maybeRouteModelTarget(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category string, target ModelTarget, reason string, decision *session.RoutingDecision) {
+	skipped := func(reason string) (string, ModelTarget, string, *session.RoutingDecision) {
 		if caps.skipRoute == nil {
-			return "", "", reason, nil
+			return "", ModelTarget{}, reason, nil
 		}
-		return "", "", reason, caps.skipRoute(reason)
+		return "", ModelTarget{}, reason, caps.skipRoute(reason)
 	}
-	// PRECEDENCE (issue #397): the explicit CHOICE gates (resume / fork / per-call model /
-	// agent def) attribute BEFORE the router-absent gate, so a delegation that pinned its
-	// model is never mislabeled "router-disabled" when no router is wired. The choice
-	// exists regardless of whether a router could have consumed a pick; naming it is the
-	// accurate why.
 	switch {
 	case resuming:
 		return skipped(session.RoutingReasonResume)
@@ -2151,7 +2244,7 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 		} else if t.agentModelFactory == nil {
 			return skipped(session.RoutingReasonRouterDisabled)
 		}
-	} else if writable && t.writableEngineFactory == nil {
+	} else if writable && t.writableEngineFactory == nil && t.writableTargetFactory == nil {
 		return skipped(session.RoutingReasonRouterDisabled)
 	}
 	if caps.routeDecision == nil {
@@ -2159,9 +2252,14 @@ func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, r
 	}
 	routed := caps.routeConfigured(ctx, args.Prompt)
 	if routed.ok {
-		return routed.category, strings.TrimSpace(routed.model), "", routed.decision
+		return routed.category, ModelTarget{Provider: strings.TrimSpace(routed.provider), Model: strings.TrimSpace(routed.model)}, "", routed.decision
 	}
-	return "", "", routed.reason, routed.decision
+	return "", ModelTarget{}, routed.reason, routed.decision
+}
+
+func (t *SubagentTool) maybeRouteModel(ctx context.Context, args subagentArgs, resuming, writable bool, caps parentCaps) (category, model, reason string, decision *session.RoutingDecision) {
+	category, target, reason, decision := t.maybeRouteModelTarget(ctx, args, resuming, writable, caps)
+	return category, target.Model, reason, decision
 }
 
 // reconcileRoutedModel makes delegation-start metadata agree with the engine that will
@@ -2203,7 +2301,7 @@ func reconcileRoutedModel(category, routedModel, reason string, accepted bool, d
 // plain default delegation (the run() hook gates it on no model/agent/fork/resume), so it
 // never collides with an explicit args.Model/args.Agent — and a resume ignores it (a
 // resumed child runs on the default explorer engine only).
-func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args subagentArgs, resuming, writable bool, routedModel string) (engine *Engine, limits session.Limits, errResult session.ToolResult, routed, ok bool) {
+func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args subagentArgs, resuming, writable bool, routedModel string, explicit *ResolvedModelSelector) (engine *Engine, limits session.Limits, errResult session.ToolResult, routed, ok bool) {
 	if resuming {
 		eng, errRes, vok := t.validateResume(callID, args)
 		if !vok {
@@ -2211,7 +2309,7 @@ func (t *SubagentTool) resolveEngineAndLimits(callID session.ToolCallID, args su
 		}
 		engine = eng
 	} else {
-		eng, lim, errRes, accepted, sok := t.selectChildEngine(callID, args, writable, routedModel)
+		eng, lim, errRes, accepted, sok := t.selectChildEngine(callID, args, writable, routedModel, explicit)
 		if !sok {
 			return nil, session.Limits{}, errRes, false, false
 		}
@@ -2346,6 +2444,11 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 		}
 	}
 
+	selector, errResult, ok := t.resolveExplicitSelector(call.ID, &args)
+	if !ok {
+		return errResult, nil
+	}
+
 	resuming := strings.TrimSpace(args.Resume) != ""
 	if resuming && caps.authorityBound {
 		persisted, resumeResult, loaded := t.loadOwnedResumeSession(ctx, call.ID, session.SessionID(args.Resume))
@@ -2381,9 +2484,22 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// default explorer. routingReason names WHY the router did not classify (empty on a
 	// hit) and rides the subagent.start event (issue #397). The run's ctx threads down so
 	// a Run.Cancel propagates into the classifier turn (issue #94).
-	routedCategory, routedModel, routingReason, routingDecision := t.maybeRouteModel(ctx, args, resuming, writable, caps)
+	routedCategory, routedTarget, routingReason, routingDecision := t.maybeRouteModelTarget(ctx, args, resuming, writable, caps)
+	routedModel := routedTarget.Model
+	if selector != nil && selector.ExplicitRouterCategory != "" {
+		routedCategory, routedTarget, routedModel, routingReason, routingDecision = "", ModelTarget{}, "", "", nil
+	}
+	factorySelector := selector
+	canUseTargetFactory := (!writable && t.targetEngineFactory != nil) || (writable && t.writableTargetFactory != nil)
+	automaticTarget := selector == nil && args.Agent == "" && routedModel != "" && canUseTargetFactory
+	if automaticTarget {
+		factorySelector = &ResolvedModelSelector{Target: routedTarget, ActualProvider: routedTarget.Provider}
+	}
 
-	engine, limits, errResult, routedAccepted, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel)
+	engine, limits, errResult, routedAccepted, ok := t.resolveEngineAndLimits(call.ID, args, resuming, writable, routedModel, factorySelector)
+	if automaticTarget && ok {
+		routedAccepted = true
+	}
 	if !ok {
 		return errResult, nil
 	}
@@ -2392,6 +2508,21 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	}
 	routedCategory, routedModel, routingReason, routingDecision = reconcileRoutedModel(
 		routedCategory, routedModel, routingReason, routedAccepted, routingDecision)
+
+	actualProvider, explicitRouterCategory := t.providerID, ""
+	if factorySelector != nil {
+		actualProvider = factorySelector.ActualProvider
+		if actualProvider == "" {
+			actualProvider = factorySelector.Target.Provider
+		}
+		explicitRouterCategory = factorySelector.ExplicitRouterCategory
+	}
+
+	if args.Agent != "" {
+		if provider := t.agentProviders[args.Agent]; provider != "" {
+			actualProvider = provider
+		}
+	}
 
 	// Background requires the parent run's child registry: it is where the started
 	// child's rendered result lands for SubagentStatus collection and what the
@@ -2463,7 +2594,8 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 			forkHistory: forkHistory, forkInstructions: forkInstructions,
 			routedCategory: routedCategory, routedModel: routedModel, routingReason: routingReason,
 			routingDecision: routingDecision,
-			timeoutCtx:      timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
+			provider:        actualProvider, explicitRouterCategory: explicitRouterCategory,
+			timeoutCtx: timeoutCtx, cancelCall: cancelCall, cancelTimeout: cancelTimeout,
 		}), nil
 	}
 
@@ -2555,15 +2687,17 @@ func (t *SubagentTool) run(ctx context.Context, call session.ToolCall, env tool.
 	// UI). No child content.
 	if emit != nil {
 		emit(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{
-			ParentCallID:     string(call.ID),
-			ChildID:          string(childID),
-			ChildIncarnation: child.Incarnation(),
-			Goal:             subagentGoal(args),
-			RoutedCategory:   routedCategory,
-			RoutedModel:      routedModel,
-			RoutingReason:    routingReasonPayload(routingReason),
-			RoutingDecision:  cloneRoutingDecision(routingDecision),
-			Model:            engine.Model(),
+			ParentCallID:           string(call.ID),
+			ChildID:                string(childID),
+			ChildIncarnation:       child.Incarnation(),
+			Goal:                   subagentGoal(args),
+			RoutedCategory:         routedCategory,
+			RoutedModel:            routedModel,
+			Provider:               actualProvider,
+			ExplicitRouterCategory: explicitRouterCategory,
+			RoutingReason:          routingReasonPayload(routingReason),
+			RoutingDecision:        cloneRoutingDecision(routingDecision),
+			Model:                  engine.Model(),
 		}})
 	}
 
@@ -2749,12 +2883,14 @@ type backgroundChild struct {
 	// child was not routed (no router, or a fail-soft miss). The engine field already
 	// carries the routed engine — these are the LABELS only. routingReason is the
 	// bare-metadata why-not (issue #397), captured with them (empty on a routed hit).
-	routedCategory  string
-	routedModel     string
-	routingReason   string
-	routingDecision *session.RoutingDecision
-	childID         session.SessionID
-	authority       session.Authority
+	routedCategory         string
+	routedModel            string
+	routingReason          string
+	routingDecision        *session.RoutingDecision
+	provider               string
+	explicitRouterCategory string
+	childID                session.SessionID
+	authority              session.Authority
 	// timeoutCtx is non-nil iff a per-call timeout_ms deadline applies (the
 	// DeadlineExceeded disambiguation read, same as the foreground path).
 	timeoutCtx    context.Context //nolint:containedctx // deadline-disambiguation handle, mirrors run()'s timeoutCtx local
@@ -2816,15 +2952,17 @@ func (t *SubagentTool) startBackground(ctx context.Context, b backgroundChild) s
 	// subagent.start always precedes the started-result on the stream.
 	if b.emit != nil {
 		b.emit(session.Event{Type: session.EvSubagentStart, Subagent: &session.SubagentPayload{
-			ParentCallID:    string(b.call.ID),
-			ChildID:         string(b.childID),
-			Goal:            subagentGoal(b.args),
-			Background:      true,
-			RoutedCategory:  b.routedCategory,
-			RoutedModel:     b.routedModel,
-			RoutingReason:   routingReasonPayload(b.routingReason),
-			RoutingDecision: cloneRoutingDecision(b.routingDecision),
-			Model:           b.engine.Model(),
+			ParentCallID:           string(b.call.ID),
+			ChildID:                string(b.childID),
+			Goal:                   subagentGoal(b.args),
+			Background:             true,
+			RoutedCategory:         b.routedCategory,
+			RoutedModel:            b.routedModel,
+			Provider:               b.provider,
+			ExplicitRouterCategory: b.explicitRouterCategory,
+			RoutingReason:          routingReasonPayload(b.routingReason),
+			RoutingDecision:        cloneRoutingDecision(b.routingDecision),
+			Model:                  b.engine.Model(),
 		}})
 	}
 	go t.driveBackground(ctx, b)
