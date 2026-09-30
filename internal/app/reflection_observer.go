@@ -846,7 +846,8 @@ func buildConfiguredReflectionObserver(
 	if provider == nil || repository == nil {
 		return nil
 	}
-	if selected, ok := resolveSlotModel(cfg, slotReflection, model); ok && selected != "" {
+	if reflectionProvider, _, selected, ok := resolveAuxiliarySlotTarget(cfg, cfg.modelProviderRegistry, slotReflection, provider, "", model); ok {
+		provider = reflectionProvider
 		model = selected
 	}
 	if cfg.LearningSensitivity == learning.SensitivityUnset {

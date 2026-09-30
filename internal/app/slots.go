@@ -161,24 +161,75 @@ var slotDefaultTier = map[string]string{
 // WARN here would re-fire N times for one misconfigured slot (the documented
 // per-derivation-duplication trap). The one-time misconfig WARN lives in the
 // build-once path instead (slotMisconfig, narrated by logSlotConfigFacts from Build).
-func resolveSlotModel(cfg Config, slotName, parentModel string) (model string, configured bool) {
-	_ = parentModel // the caller owns the fallback; named for call-site symmetry.
+func resolveSlotTarget(cfg Config, slotName, contextualProvider string) (ModelTarget, bool) {
 	sel := selectorForSlot(cfg, slotName)
 	if sel == "" {
-		return "", false // no slot configured: byte-identical default.
+		return ModelTarget{}, false
 	}
-	id, known := lookupModelAlias(cfg, sel)
-	if known && id != "" {
-		return id, true
+	target, err := resolveModelTarget(cfg, contextualProvider, "", sel)
+	if err != nil || strings.TrimSpace(target.Model) == "" {
+		return ModelTarget{}, false
 	}
-	return "", false // configured but unresolvable: fail-soft, degrade to inherit.
+	return target, true
+}
+
+func resolveAuxiliarySlotTarget(cfg Config, reg *providerRegistry, slotName string, fallbackProvider port.LLMProvider, fallbackProviderID, fallbackModel string) (port.LLMProvider, string, string, bool) {
+	target, configured := resolveSlotTarget(cfg, slotName, fallbackProviderID)
+	if !configured {
+		return fallbackProvider, fallbackProviderID, fallbackModel, false
+	}
+	if target.ProviderID == "" || target.ProviderID == fallbackProviderID {
+		return fallbackProvider, fallbackProviderID, target.Model, true
+	}
+	if reg == nil {
+		return fallbackProvider, fallbackProviderID, fallbackModel, false
+	}
+	entry, ok := reg.Lookup(target.ProviderID)
+	if !ok || entry.provider == nil {
+		return fallbackProvider, fallbackProviderID, fallbackModel, false
+	}
+	return entry.provider, target.ProviderID, target.Model, true
+}
+
+func resolveSlotModel(cfg Config, slotName, parentModel string) (model string, configured bool) {
+	_ = parentModel // the caller owns the fallback; named for call-site symmetry.
+	target, configured := resolveSlotTarget(cfg, slotName, "")
+	if !configured {
+		return "", false
+	}
+	return target.Model, true
+}
+
+// resolvePlanSessionModel is the single provider-bound plan-slot resolver used by
+// construction, capability projection, debug construction, and reported identity.
+// A cross-provider target is incompatible with persisted provider replay and falls
+// back to the ordinary non-plan model without rebasing the target model.
+func resolvePlanSessionModel(cfg Config, providerID, ordinaryModel string, mode session.PermissionMode) (model string, crossProviderFallback bool) {
+	if mode != session.ModePlan {
+		return ordinaryModel, false
+	}
+	target, configured := resolveSlotTarget(cfg, slotPlan, providerID)
+	if !configured {
+		return ordinaryModel, false
+	}
+	if target.ProviderID != providerID {
+		return ordinaryModel, true
+	}
+	return target.Model, false
+}
+
+func warnPlanProviderFallback(ctx context.Context, cfg Config, fallback bool) {
+	if fallback {
+		cfg.diag().Log(ctx, port.LevelWarn,
+			"cross-provider plan model is incompatible with persisted session provider; using ordinary session model")
+	}
 }
 
 // titleGenerationEligible resolves the opt-in title slot once per session creation.
 // The returned closure intentionally exposes only eligibility to the server: title
 // routing remains composition-owned and the session provider is never changed.
 func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.ProviderSelector) bool {
-	if model, configured := resolveSlotModel(cfg, slotTitle, cfg.Model); !configured || model == "" {
+	if _, configured := resolveSlotTarget(cfg, slotTitle, ""); !configured {
 		return nil
 	}
 	return func(sel server.ProviderSelector) bool {
@@ -186,7 +237,11 @@ func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.Prov
 		if providerID == "" {
 			providerID = reg.Default()
 		}
-		_, available := reg.Lookup(providerID)
+		target, configured := resolveSlotTarget(cfg, slotTitle, providerID)
+		if !configured {
+			return false
+		}
+		_, available := reg.Lookup(target.ProviderID)
 		return available
 	}
 }
@@ -194,8 +249,7 @@ func titleGenerationEligible(cfg Config, reg *providerRegistry) func(server.Prov
 // titleGeneratorForSession resolves each call against the session's fixed provider.
 // It returns nil when the provider disappeared or the explicit slot is unavailable.
 func titleGeneratorForSession(cfg Config, reg *providerRegistry) func(server.ProviderSelector) server.SessionTitleGenerator {
-	model, configured := resolveSlotModel(cfg, slotTitle, cfg.Model)
-	if !configured || model == "" {
+	if _, configured := resolveSlotTarget(cfg, slotTitle, ""); !configured {
 		return nil
 	}
 	return func(sel server.ProviderSelector) server.SessionTitleGenerator {
@@ -207,7 +261,11 @@ func titleGeneratorForSession(cfg Config, reg *providerRegistry) func(server.Pro
 		if !ok {
 			return nil
 		}
-		generator, err := server.NewSessionTitleGeneratorWithAttribution(entry.provider, providerID, model)
+		provider, targetProviderID, model, configured := resolveAuxiliarySlotTarget(cfg, reg, slotTitle, entry.provider, providerID, "")
+		if !configured || provider == nil {
+			return nil
+		}
+		generator, err := server.NewSessionTitleGeneratorWithAttribution(provider, targetProviderID, model)
 		if err != nil {
 			return nil
 		}
@@ -741,8 +799,12 @@ func boundedRouterFact(value string) string {
 // shared-engine model), because promotion only matters for a session that would
 // otherwise ride the shared engine.
 func modeNeedsEngine(cfg Config) func(mode session.PermissionMode) bool {
-	planModel, configured := resolveSlotModel(cfg, slotPlan, cfg.Model)
-	if !configured || planModel == "" || planModel == cfg.Model {
+	providerID := strings.TrimSpace(cfg.DefaultProvider)
+	if cfg.modelProviderRegistry != nil {
+		providerID = cfg.modelProviderRegistry.Default()
+	}
+	planModel, crossProviderFallback := resolvePlanSessionModel(cfg, providerID, cfg.Model, session.ModePlan)
+	if !crossProviderFallback && planModel == cfg.Model {
 		// No active plan slot (or it resolves to the shared-engine model): a mode flip
 		// never changes the model, so never promote — nil keeps the default-FS path
 		// byte-identical.
