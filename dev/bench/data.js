@@ -281751,6 +281751,45 @@ window.BENCHMARK_DATA = {
         },
         "date": 1790752534927,
         "tool": "customSmallerIsBetter"
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ozz@stacklok.com",
+            "name": "Juan Antonio Osorio",
+            "username": "JAORMX"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0213c108fdda21ee79176ccbcf95d71ec8fdf69c",
+          "message": "fix(sdk): update brace-expansion advisory resolution (#2007)",
+          "timestamp": "2026-09-30T11:13:47+03:00",
+          "tree_id": "d9ae19f71c04b039863b914fcd1b51bba76e95cb",
+          "url": "https://github.com/stacklok/mecatl/commit/0213c108fdda21ee79176ccbcf95d71ec8fdf69c"
+        },
+        "date": 1790756713385,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "tui_scrollback_view/allocs_per_op",
+            "value": 3278,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_scrollback_view_steady/allocs_per_op",
+            "value": 69,
+            "unit": "allocs/op"
+          },
+          {
+            "name": "tui_spinner_tick_vpview/allocs_per_op",
+            "value": 1156,
+            "unit": "allocs/op"
+          }
+        ]
       }
     ],
     "mecatl scenarios (smaller-is-better)": [
@@ -369227,6 +369266,6 @@ window.BENCHMARK_DATA = {
       }
     ]
   },
-  "lastUpdate": 1790756710472,
+  "lastUpdate": 1790756714256,
   "repoUrl": "https://github.com/stacklok/mecatl"
 }
