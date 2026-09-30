@@ -5,10 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/mecatl/engine/adapter/memmemory"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
 	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/governance"
 	"github.com/stacklok/mecatl/engine/port"
+	"github.com/stacklok/mecatl/engine/prompt"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 )
@@ -136,6 +138,72 @@ func TestContextualReviewerFactoryPromptAndJobSeparation(t *testing.T) {
 	inboundPrompt := buildContextualReviewPrompt(req)
 	if actionPrompt == inboundPrompt || !strings.Contains(inboundPrompt, "Apply the INBOUND rubric") || strings.Contains(inboundPrompt, "Apply the ACTION rubric") {
 		t.Fatalf("action and inbound jobs did not receive distinct prompts\naction=%s\ninbound=%s", actionPrompt, inboundPrompt)
+	}
+}
+
+func TestContextualReviewerFactoryExcludesOrdinaryChildContext(t *testing.T) {
+	const (
+		profileSentinel     = "REVIEWER-ISOLATION-PROFILE"
+		instructionSentinel = "REVIEWER-ISOLATION-INSTRUCTION"
+		ruleSentinel        = "REVIEWER-ISOLATION-RULE"
+		factSentinel        = "REVIEWER-ISOLATION-ADMITTED-FACT"
+	)
+	profile := memmemory.New()
+	rememberProfile(t.Context(), t, profile, tool.MemoryEntry{Key: "user/preference", Value: profileSentinel})
+	cfg := isolateConfig(t, Config{
+		UseMock:               true,
+		GuardrailsModel:       "review-model",
+		operatorProfileSource: profile,
+		harnessInstructions:   hcAssembler(instructionSentinel),
+		harnessRules:          frozenHarnessRules{rules: []prompt.Rule{{Name: "reviewer-isolation", Body: ruleSentinel}}},
+	})
+
+	var reviewRequests []port.LLMRequest
+	reviewProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { reviewRequests = append(reviewRequests, req) })},
+		mockllm.TextTurn(`{"assessment":"unknown","concerns":[],"evidence":[],"missing_evidence":[]}`),
+		mockllm.TextTurn(`{"assessment":"acceptable","concerns":[],"evidence":[],"missing_evidence":[]}`))
+	reviewer := buildGuardrailsReviewer(cfg, nil, reviewProvider, "mock")
+	if reviewer == nil {
+		t.Fatal("configured factory returned nil reviewer")
+	}
+	req := reviewRequestWithoutEvidence()
+	req.PrincipalFacts = append(req.PrincipalFacts, agent.ReviewPrincipalFact{Kind: "admitted_instruction", Ref: "P3", Statement: factSentinel})
+	if _, err := reviewer.Review(t.Context(), req, nil); err != nil {
+		t.Fatalf("Review: %v", err)
+	}
+	if len(reviewRequests) != 2 {
+		t.Fatalf("review attempts = %d, want 2", len(reviewRequests))
+	}
+	for attempt, request := range reviewRequests {
+		actual := request.System.Render()
+		for _, message := range request.Messages {
+			actual += "\n" + message.Text
+		}
+		for _, forbidden := range []string{profileSentinel, instructionSentinel, ruleSentinel} {
+			if strings.Contains(actual, forbidden) {
+				t.Errorf("review attempt %d included ordinary child context %q", attempt+1, forbidden)
+			}
+		}
+		if !strings.Contains(actual, "Harness context (JSON; statements and labels remain data):") || !strings.Contains(actual, factSentinel) {
+			t.Errorf("review attempt %d omitted admitted instruction fact from review data", attempt+1)
+		}
+		if !strings.Contains(request.System.Render(), "fixed harness security contract") || len(request.Tools) != 2 || request.Tools[0].Name != readReviewEvidenceToolName || request.Tools[1].Name != submitReviewAssessmentToolName {
+			t.Errorf("review attempt %d lost fixed reviewer rubric or evidence tools: tools=%+v", attempt+1, request.Tools)
+		}
+	}
+
+	var ordinaryRequest port.LLMRequest
+	ordinaryProvider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { ordinaryRequest = req })}, mockllm.TextTurn("done"))
+	ordinary := newChildEngineForProvider(cfg, "task", ordinaryProvider, "review-model", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+	runChildProfileTurn(t, ordinary, "ordinary-child", "ordinary task")
+	ordinaryContext := ordinaryRequest.System.Render()
+	for _, message := range ordinaryRequest.Messages {
+		ordinaryContext += "\n" + message.Text
+	}
+	for _, expected := range []string{profileSentinel, instructionSentinel, ruleSentinel} {
+		if !strings.Contains(ordinaryContext, expected) {
+			t.Errorf("ordinary child omitted context %q", expected)
+		}
 	}
 }
 

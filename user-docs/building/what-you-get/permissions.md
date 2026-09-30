@@ -377,11 +377,15 @@ admit project steering and read-only child Shell access.
 
 ## Layer 2: model-backed guardrails
 
-Guardrails use a separate, tool-less model to inspect matched tool content:
+Guardrails use a separate model to inspect matched tool content:
 
 - `PreToolUse` checks outbound arguments for exfiltration before execution.
 - `PostToolUse` checks inbound results for prompt injection before the agent
   reads them.
+
+Ordinary harness instructions, project rules, and operator-profile preferences are
+not injected as reviewer instructions. Relevant admitted instruction facts remain
+available as review data.
 
 ### Assessments and enforcement
 

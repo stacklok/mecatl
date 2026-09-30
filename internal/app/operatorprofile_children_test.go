@@ -86,7 +86,7 @@ func TestInternalPurposeChildRolesExcludeOperatorProfile(t *testing.T) {
 	store := memmemory.New()
 	cfg := Config{Model: "m", operatorProfileSource: store, harnessInstructions: hcAssembler("INTERNAL-ROLE-MUST-NOT-SEE")}
 	provider := mockllm.New()
-	for _, role := range []string{"guardrail-checker", "model-router", "parallel-judge", "ask-reviewer", "usermodel-review"} {
+	for _, role := range []string{"guardrail-reviewer", "model-router", "parallel-judge", "ask-reviewer", "usermodel-review"} {
 		if got := childOperatorProfileSource(cfg, role); got != nil {
 			t.Errorf("internal role %q inherited operator profile", role)
 		}

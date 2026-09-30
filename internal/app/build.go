@@ -6878,7 +6878,7 @@ func childTelemetryFor(cfg Config, role string) (port.EventSink, port.ToolCallRe
 
 func childOperatorProfileSource(cfg Config, role string) prompt.OperatorProfileSource {
 	switch role {
-	case "guardrail-checker", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
+	case "guardrail-reviewer", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
 		return nil
 	default:
 		return cfg.operatorProfileSource
@@ -7009,7 +7009,7 @@ func childEngineDepsForProvider(cfg Config, role string, provider port.LLMProvid
 	deps.PromptConfig = applyContextualGuardrailWorkerPosture(pc, guardrailsConfigured(cfg) && len(cat.Tools()) > 0)
 	if cfg.harnessInstructions != nil {
 		switch role {
-		case "guardrail-checker", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
+		case "guardrail-reviewer", "ask-reviewer", "model-router", "usermodel-review", "parallel-judge":
 		default:
 			instructions := cfg.harnessInstructions
 			if generation, ok := instructions.(generationInstructions); ok {
