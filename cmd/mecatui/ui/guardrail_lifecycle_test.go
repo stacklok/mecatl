@@ -128,6 +128,107 @@ func TestGuardrailFinalHookSkipsUnneededDetailFetch(t *testing.T) {
 	}
 }
 
+func TestGuardrailEmptyReviewIDsStayIndependent(t *testing.T) {
+	r := &guardrailDetailRecorder{}
+	m := guardrailTestModel(t, r, false)
+	first := guardrailTestHook("", "operational_failure", "unresolved", "pass_advisory")
+	m = applyAll(m, first, first)
+	if m.conv.scrollback.Len() != 2 || r.calls != 0 || len(m.conv.guardrailReviews) != 0 {
+		t.Fatal("unidentified warnings were merged, stored, or fetched")
+	}
+	for _, id := range []string{"one", "two"} {
+		m = applyAll(m, client.PermissionAskMsg{AskID: id, Tool: "Read", Guardrail: &client.GuardrailApprovalScope{Kind: "result_release"}})
+	}
+	if m.conv.scrollback.Len() != 2 || r.calls != 0 {
+		t.Fatal("unidentified asks changed warnings or issued detail RPCs")
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.conv.scrollback.Len() != 3 {
+		t.Fatal("first unidentified ask did not leave its own receipt")
+	}
+	firstReceipt := m.conv.scrollback.SnapshotAt(2)
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.conv.scrollback.Len() != 4 || m.conv.scrollback.SnapshotAt(2) != firstReceipt || len(m.conv.guardrailReviews) != 0 {
+		t.Fatal("unidentified receipts merged or changed each other")
+	}
+	m = applyAll(m, guardrailTestHook("", "operational_failure", "unresolved", "release_result"))
+	if m.conv.scrollback.Len() != 5 || m.conv.scrollback.SnapshotAt(2) != firstReceipt || r.calls != 0 {
+		t.Fatal("unidentified final hook overwrote a receipt or fetched detail")
+	}
+}
+
+func TestGuardrailRefusedSendRestoresAskWithoutRemovingOtherReceipts(t *testing.T) {
+	m := guardrailTestModel(t, &guardrailDetailRecorder{}, false)
+	for _, id := range []string{"first", "second"} {
+		m = applyAll(m, client.PermissionAskMsg{AskID: id, Tool: "Read", Guardrail: &client.GuardrailApprovalScope{Kind: "result_release"}})
+	}
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	firstReceipt := m.conv.scrollback.SnapshotAt(0)
+	m = applyAll(m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.restoreControlRefused(client.ControlRefusedMsg{AskID: "second", Text: "rejected"}) {
+		t.Fatal("rejected approval was not restored")
+	}
+	if m.conv.scrollback.Len() != 1 || m.conv.scrollback.SnapshotAt(0) != firstReceipt || approvalSurfaceOf(t, m).ask.AskID != "second" {
+		t.Fatal("rejected send removed the wrong receipt or did not restore its ask")
+	}
+}
+
+func TestGuardrailAbandonedApprovalCannotRestoreIntoReplacementDocument(t *testing.T) {
+	for _, boundary := range []struct {
+		name    string
+		abandon func(Model) Model
+	}{
+		{"stream closes without result", func(m Model) Model { return applyAll(m, client.StreamClosedMsg{}) }},
+		{"session reset", func(m Model) Model { return m.resetSession() }},
+		{"session derived reset", func(m Model) Model { return m.resetSessionDerived() }},
+		{"session switch", func(m Model) Model { return applyAll(m, client.SessionReadyMsg{SessionID: "replacement"}) }},
+		{"same session rebind", func(m Model) Model { return applyAll(m, client.SessionReadyMsg{SessionID: m.sessionID}) }},
+	} {
+		for _, reviewID := range []string{"review", ""} {
+			t.Run(boundary.name+"/"+reviewID, func(t *testing.T) {
+				m := guardrailTestModel(t, &guardrailDetailRecorder{}, false)
+				m.phase = phaseRunning
+				control := &authorizationControlRecorder{err: errors.New("delayed approval send failure")}
+				m.authorization = mcpAuthorizationState{controlStream: client.NewAuthorizationEventStream(client.NewFakeEventStream(), control), controlGen: 1, runningControlGen: 1}
+				m = applyAll(m, client.PermissionAskMsg{AskID: "old-ask", Tool: "Read", Guardrail: &client.GuardrailApprovalScope{ReviewID: reviewID, Kind: "result_release"}})
+				next, send := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+				m = next.(Model)
+				var delayed client.StreamErrMsg
+				for _, msg := range collectLeaves(send) {
+					if failure, ok := msg.(client.StreamErrMsg); ok {
+						delayed = failure
+					}
+				}
+				if delayed.Err == nil || control.askID != "old-ask" {
+					t.Fatal("approval send did not produce its deferred failure")
+				}
+				if m.pendingApproval == nil || m.phase != phaseRunning {
+					t.Fatal("approval did not remain pending while the run continued")
+				}
+				receiptID := m.pendingApproval.ask.review.blockID
+				m = boundary.abandon(m)
+				if m.pendingApproval != nil {
+					t.Error("abandoned approval still permits restoration")
+				}
+				// Replace only the document so another reset cannot mask missing cleanup.
+				m.conv = conversation{}
+				if id := m.conv.scrollback.Notices().AddNotice("replacement document notice"); id != receiptID {
+					t.Fatalf("fixture needs colliding block IDs: got %d, want %d", id, receiptID)
+				}
+				before := m.conv.scrollback.SnapshotAt(0)
+				m.prompt.Rewrite("replacement draft")
+				m = applyAll(m, delayed)
+				if m.conv.scrollback.Len() == 0 || m.conv.scrollback.SnapshotAt(0) != before {
+					t.Fatal("delayed failure removed or changed the replacement notice")
+				}
+				if approvalSurfaceFor(&m) != nil || m.phase == phaseAwaitingApproval || m.prompt.Value() != "replacement draft" {
+					t.Fatal("delayed failure restored an abandoned ask or changed the new draft")
+				}
+			})
+		}
+	}
+}
+
 func TestGuardrailWithheldResultDoesNotSuggestRerunningTool(t *testing.T) {
 	for _, disposition := range []string{"withhold_result", "deny"} {
 		m := guardrailTestModel(t, &guardrailDetailRecorder{}, false)

@@ -50,17 +50,15 @@ func (m MessageCards) AddUser(in UserInput) BlockID {
 // RemoveUser removes the user card with id without affecting other cards. It returns
 // false when id does not identify a user card in this conversation.
 func (m MessageCards) RemoveUser(id BlockID) bool {
-	for i, card := range m.conversation.cards {
-		if card.id != id {
-			continue
-		}
-		if _, ok := card.payload.(UserCardSnapshot); !ok {
-			return false
-		}
-		m.conversation.removeCard(i)
-		return true
+	i := m.conversation.index(id)
+	if i < 0 {
+		return false
 	}
-	return false
+	if _, ok := m.conversation.cards[i].payload.(UserCardSnapshot); !ok {
+		return false
+	}
+	m.conversation.removeCard(i)
+	return true
 }
 
 // AddAssistant appends an assistant card and returns its new, stable block ID.

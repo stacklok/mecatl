@@ -22,7 +22,7 @@ func (m Model) runGuardrails() (tea.Model, tea.Cmd) {
 type guardrailPresentation struct {
 	blockID          scrollback.BlockID
 	hook             client.HookMsg
-	requested        bool
+	needsFinalDetail bool
 	approvalResolved bool
 	guardrailDetailState
 }
@@ -54,15 +54,50 @@ func routineGuardrail(review *client.GuardrailReview) bool {
 
 func (c *conversation) guardrailReview(id string) *guardrailPresentation {
 	if id == "" {
-		return &guardrailPresentation{}
+		return &guardrailPresentation{needsFinalDetail: true}
 	}
 	if c.guardrailReviews == nil {
 		c.guardrailReviews = make(map[string]*guardrailPresentation)
 	}
 	if c.guardrailReviews[id] == nil {
-		c.guardrailReviews[id] = &guardrailPresentation{}
+		c.guardrailReviews[id] = &guardrailPresentation{needsFinalDetail: true}
 	}
 	return c.guardrailReviews[id]
+}
+
+func (r *guardrailPresentation) show(c *conversation, text string) {
+	if r.blockID == 0 {
+		r.blockID = c.scrollback.Notices().AddNotice(text)
+	} else {
+		c.scrollback.Notices().UpdateNotice(r.blockID, text)
+	}
+}
+
+func (r *guardrailPresentation) handoffToApproval(c *conversation) {
+	c.scrollback.Notices().RemoveNotice(r.blockID)
+	r.blockID = 0
+	r.requestID = 0
+	r.approvalResolved = false
+}
+
+func (r *guardrailPresentation) resolveApproval(c *conversation, detail guardrailDetailState, text string, debug bool) string {
+	r.guardrailDetailState = detail
+	r.requestID = 0 // The closed ask's token must not become a receipt token.
+	r.approvalResolved = true
+	// Only missing prompt detail permits one fresh request after a nonroutine final hook.
+	r.needsFinalDetail = r.detail.Concern == "" && r.detail.SourceDisplay == ""
+	if r.hook.Guardrail != nil {
+		text += ". " + guardrailReviewReason(r.hook.Guardrail)
+	}
+	text += guardrailDetailText(r, debug)
+	r.show(c, text)
+	return text
+}
+
+func (r *guardrailPresentation) beginDetailRequest(requestID uint64) {
+	r.requestID = requestID
+	r.needsFinalDetail = false
+	r.unavailable = false
 }
 
 // Live and replay share the visibility policy. A live approval takes ownership
@@ -82,12 +117,7 @@ func (c *conversation) addGuardrailHook(msg client.HookMsg, debug bool) *guardra
 		return nil
 	}
 	r.hook = msg
-	text := guardrailPresentationText(r, debug)
-	if r.blockID == 0 {
-		r.blockID = c.scrollback.Notices().AddNotice(text)
-	} else {
-		c.scrollback.Notices().UpdateNotice(r.blockID, text)
-	}
+	r.show(c, guardrailPresentationText(r, debug))
 	return r
 }
 
@@ -163,7 +193,7 @@ func (m *Model) applyGuardrailDetail(msg client.GuardrailReviewDetailMsg) {
 	if r == nil || !r.applyDetail(msg, m.sessionID, msg.ReviewID) {
 		return
 	}
-	m.conv.scrollback.Notices().UpdateNotice(r.blockID, guardrailPresentationText(r, m.deps.Debug))
+	r.show(&m.conv, guardrailPresentationText(r, m.deps.Debug))
 }
 
 func guardrailCoverageCurrent(msg client.GuardrailCoverageMsg, sessionID string, requestID uint64) bool {

@@ -160,19 +160,19 @@ func (s *approvalSurface) HandleMsg(msg tea.Msg) (tea.Cmd, bool, bool) {
 	return nil, true, false
 }
 
-func (s *approvalSurface) applyGuardrailHook(msg client.HookMsg) bool {
+func (s *approvalSurface) applyGuardrailHook(msg client.HookMsg) *guardrailPresentation {
 	asks := []*pendingAsk{&s.ask}
 	for i := range s.queue {
 		asks = append(asks, &s.queue[i])
 	}
 	for _, ask := range asks {
-		if ask.guardrail != nil && ask.guardrail.ReviewID == msg.Guardrail.ReviewID {
+		if msg.Guardrail.ReviewID != "" && ask.guardrail != nil && ask.guardrail.ReviewID == msg.Guardrail.ReviewID {
 			ask.Reason = guardrailHookText(msg)
 			s.argsVPReady = false
-			return true
+			return ask.review
 		}
 	}
-	return false
+	return nil
 }
 
 func (s *approvalSurface) applyReviewDetail(ask *pendingAsk, msg client.GuardrailReviewDetailMsg) bool {
@@ -292,7 +292,7 @@ func (s *approvalSurface) isDebugMCPMutationAsk(msg client.PermissionAskMsg) boo
 //
 // opening reports whether this ask became the visible head (false = deduped or
 // enqueued).
-func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open bool, interrupted phase, detailRequest uint64) (opening bool) {
+func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open bool, interrupted phase, detailRequest uint64, review *guardrailPresentation) (opening bool) {
 	if s.known(msg.AskID) {
 		return false
 	}
@@ -302,7 +302,7 @@ func (s *approvalSurface) applyPermissionAsk(msg client.PermissionAskMsg, open b
 	}
 	next := pendingAsk{
 		AskID: msg.AskID, Tool: msg.Tool, Args: msg.Args, Reason: msg.Reason, expectedRunID: msg.ExpectedRunID,
-		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail,
+		focusedVerdict: client.VerdictAllowOnce, offerAlways: offerAlways, guardrail: msg.Guardrail, review: review,
 		guardrailDetailState: guardrailDetailState{requestID: detailRequest},
 	}
 	if open {
@@ -545,6 +545,7 @@ type pendingAsk struct {
 	focusedVerdict client.Verdict
 	offerAlways    bool
 	guardrail      *client.GuardrailApprovalScope
+	review         *guardrailPresentation
 	expectedRunID  string
 	guardrailDetailState
 }

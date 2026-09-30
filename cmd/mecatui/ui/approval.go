@@ -110,10 +110,8 @@ func (m *Model) restoreRefusedApproval(err error) bool {
 
 func (m *Model) restoreApprovalIntent(intent *approvalResolvedIntent, err error) bool {
 	m.pendingApproval = nil
-	if intent.guardrail != nil {
-		r := m.conv.guardrailReview(intent.guardrail.ReviewID)
-		m.conv.scrollback.Notices().RemoveNotice(r.blockID)
-		r.blockID, r.requestID, r.approvalResolved = 0, 0, false
+	if intent.ask.review != nil {
+		intent.ask.review.handoffToApproval(&m.conv)
 	} else {
 		m.conv.retractLatestNotice(intent.notice)
 	}
@@ -170,18 +168,7 @@ func (m *Model) addApprovalNotice(ask pendingAsk, text string) string {
 		m.conv.addNotice(text)
 		return text
 	}
-	r := m.conv.guardrailReview(ask.guardrail.ReviewID)
-	r.guardrailDetailState = ask.guardrailDetailState
-	r.requestID, r.approvalResolved = 0, true
-	// A final nonroutine hook may fetch missing detail once with a new token;
-	// the closed prompt's request must never be reused.
-	r.requested = r.detail.Concern != "" || r.detail.SourceDisplay != ""
-	if r.hook.Guardrail != nil {
-		text += ". " + guardrailReviewReason(r.hook.Guardrail)
-	}
-	text += guardrailDetailText(r, m.deps.Debug)
-	r.blockID = m.conv.scrollback.Notices().AddNotice(text)
-	return text
+	return ask.review.resolveApproval(&m.conv, ask.guardrailDetailState, text, m.deps.Debug)
 }
 
 func (m Model) finishApprovalIntent(advance approvalAdvance, resume phase, cmd tea.Cmd) (tea.Model, tea.Cmd, bool) {
@@ -256,18 +243,17 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 	if s.known(msg.AskID) {
 		return m.afterEvent()
 	}
+	var review *guardrailPresentation
 	if msg.Guardrail != nil {
-		r := m.conv.guardrailReview(msg.Guardrail.ReviewID)
-		m.conv.scrollback.Notices().RemoveNotice(r.blockID)
-		r.blockID, r.requestID = 0, 0
-		r.requested, r.approvalResolved = true, false
+		review = m.conv.guardrailReview(msg.Guardrail.ReviewID)
+		review.handoffToApproval(&m.conv)
 		if !m.deps.Debug {
 			msg.Reason = "The safety review needs your decision before this action can run."
 			if msg.Guardrail.Kind == guardrailResultRelease {
 				msg.Reason = "The tool has already run. Its result is withheld from the model pending your decision."
 			}
-			if r.hook.Guardrail != nil {
-				msg.Reason = guardrailHookText(r.hook)
+			if review.hook.Guardrail != nil {
+				msg.Reason = guardrailHookText(review.hook)
 			}
 		}
 	}
@@ -280,7 +266,7 @@ func (m Model) applyPermissionAsk(msg client.PermissionAskMsg) (tea.Model, tea.C
 		detailCmd = client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, detailSessionID, msg.Guardrail.ReviewID, detailRequest)
 	}
 	open := s.ask.AskID != ""
-	opening := s.applyPermissionAsk(msg, open, m.phase, detailRequest)
+	opening := s.applyPermissionAsk(msg, open, m.phase, detailRequest, review)
 	if opening {
 		m.phase = phaseAwaitingApproval
 		m.activeTool = ""

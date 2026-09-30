@@ -1375,19 +1375,20 @@ func (m Model) updateStreamEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applyHookMsg(msg client.HookMsg) (tea.Model, tea.Cmd) {
-	if msg.Guardrail != nil {
-		if s := approvalSurfaceFor(&m); s != nil && s.applyGuardrailHook(msg) {
-			m.conv.guardrailReview(msg.Guardrail.ReviewID).hook = msg
-			return m.afterEvent()
+	if msg.Guardrail != nil && msg.Guardrail.ReviewID != "" {
+		if s := approvalSurfaceFor(&m); s != nil {
+			if review := s.applyGuardrailHook(msg); review != nil {
+				review.hook = msg
+				return m.afterEvent()
+			}
 		}
 	}
 	r := m.conv.addGuardrailHook(msg, m.deps.Debug)
 	var detailCmd tea.Cmd
-	if r != nil && msg.Guardrail.Disposition != "ask_action" && !routineGuardrail(msg.Guardrail) && !r.requested && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
+	if r != nil && msg.Guardrail.Disposition != "ask_action" && !routineGuardrail(msg.Guardrail) && r.needsFinalDetail && m.deps.Guardrails != nil && msg.Guardrail.ReviewID != "" {
 		m.guardrailDetailRequest++
-		r.requestID, r.requested = m.guardrailDetailRequest, true
-		r.unavailable = false
-		m.conv.scrollback.Notices().UpdateNotice(r.blockID, guardrailPresentationText(r, m.deps.Debug))
+		r.beginDetailRequest(m.guardrailDetailRequest)
+		r.show(&m.conv, guardrailPresentationText(r, m.deps.Debug))
 		detailCmd = client.GetGuardrailReviewDetailCmd(m.deps.Ctx, m.deps.Guardrails, m.sessionID, msg.Guardrail.ReviewID, r.requestID)
 	}
 	model, cmd := m.afterEvent()
@@ -4197,6 +4198,7 @@ func (Model) refreshCmd() tea.Cmd { return tea.ClearScreen }
 // endRun tears down the current run: clears the stream/channel/cancel, returns to
 // idle, and re-focuses input. The stop reason updates the status line.
 func (m Model) endRun(stop string) Model {
+	m.settlePendingApproval()
 	m.admissionSubmission = nil
 	if m.cancelRun != nil {
 		m.cancelRun()

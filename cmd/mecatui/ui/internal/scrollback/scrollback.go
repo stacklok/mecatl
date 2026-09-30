@@ -1,6 +1,9 @@
 package scrollback
 
-import "reflect"
+import (
+	"reflect"
+	"slices"
+)
 
 // BlockID is a non-zero identifier allocated by a Conversation for a card or its
 // changed-files appendix. IDs are unique within one Conversation and are never
@@ -112,6 +115,10 @@ func (c *Conversation) append(payload PayloadSnapshot) BlockID {
 	c.nextID++
 	c.cards = append(c.cards, card{id: c.nextID, payload: clonePayload(payload)})
 	return c.nextID
+}
+
+func (c *Conversation) index(id BlockID) int {
+	return slices.IndexFunc(c.cards, func(card card) bool { return card.id == id })
 }
 
 func (c *Conversation) replace(i int, payload PayloadSnapshot) bool {
