@@ -193,7 +193,7 @@ func TestSubproviderChildCompactorAndCounter(t *testing.T) {
 	childProvider, _, model, windowFn := resolveChildProvider(cfg, reg,
 		agents.AgentDef{Name: "big", Provider: providerOpenRouter, Model: childModel},
 		reg.entries[providerOpenAI].provider, providerOpenAI, "gpt-5")
-	deps := childEngineDepsForProvider(cfg, "", childProvider, model, windowFn, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	deps := childEngineDepsForProvider(cfg, "", childProvider, session.ProviderModelID{ProviderID: providerOpenRouter, ModelID: model}, windowFn, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 
 	// Compactor.Model is bound BY VALUE to the child's model (the contamination vector).
 	cc, ok := deps.Compactor.(agent.CascadeCompactor)
@@ -224,7 +224,7 @@ func TestSubproviderChildTelemetryOff(t *testing.T) {
 	cfg := Config{Model: "gpt-5", Sink: fakeSink{}, ToolCallRecorder: &recordingToolLogger{}, Diagnostics: injectedDiag}
 	provider := mockllm.New()
 	// A provider-switched child (the same path a def-pinned / Half-B session child takes).
-	deps := childEngineDepsForProvider(cfg, "member:explorer", provider, "gpt-5", func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	deps := childEngineDepsForProvider(cfg, "member:explorer", provider, testProviderModel("gpt-5"), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	if deps.Sink != nil {
 		t.Fatalf("child Deps.Sink = %v, want nil (child telemetry off; pre-feature byte-identity)", deps.Sink)
 	}
@@ -259,13 +259,13 @@ func TestMaxRunTokensPropagatesToParentAndChild(t *testing.T) {
 	cfg := Config{Model: "gpt-5", MaxRunTokens: budget}
 	provider := mockllm.New()
 
-	parent := engineDepsForProvider(cfg, provider, cfg.Model, func() int { return defaultContextWindowTokens }, nil,
+	parent := engineDepsForProvider(cfg, provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, nil,
 		permpolicy.NewPolicy([]governance.Rule{{Effect: governance.Allow}}, nil), hookexec.New(nil), nil, nil)
 	if parent.MaxRunTokens != budget {
 		t.Fatalf("parent Deps.MaxRunTokens = %d, want %d (engineDepsForProvider must thread the budget)", parent.MaxRunTokens, budget)
 	}
 
-	child := childEngineDepsForProvider(cfg, "member:explorer", provider, cfg.Model, func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
+	child := childEngineDepsForProvider(cfg, "member:explorer", provider, testProviderModel(cfg.Model), func() int { return defaultContextWindowTokens }, tool.NewCatalog(), promptConfig(cfg, ""), nil)
 	if child.MaxRunTokens != budget {
 		t.Fatalf("child Deps.MaxRunTokens = %d, want %d (children must INHERIT the budget)", child.MaxRunTokens, budget)
 	}

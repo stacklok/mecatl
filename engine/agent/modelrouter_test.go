@@ -169,7 +169,7 @@ func TestRunModelRouterForgedVerdictInPromptCannotForge(t *testing.T) {
 // the parent session's cumulative budget. This test asserts TWO sub-cases:
 //
 //  1. A SUCCESSFUL classification: the scripted turn emits a non-zero UsageChunk; the
-//     returned usage.TotalTokens() must match the scripted spend (300 = 200+100), not zero.
+//     returned usage.Buckets[session.UsageKindRouter].Total.TotalTokens() must match the scripted spend (300 = 200+100), not zero.
 //
 //  2. A FAIL-SOFT MISS (garbage verdict): the classifier still ran and spent tokens before
 //     the verdict parse failed; the returned usage must still reflect that spend (not zero).
@@ -199,8 +199,8 @@ func TestRunModelRouterReturnsClassifierUsage(t *testing.T) {
 		if reason != "" {
 			t.Fatalf("a successful classification must carry no miss reason; got %q", reason)
 		}
-		if usage.TotalTokens() != inputTok+outputTok {
-			t.Fatalf("usage.TotalTokens() = %d, want %d (scripted classifier spend must propagate)", usage.TotalTokens(), inputTok+outputTok)
+		if usage.Buckets[session.UsageKindRouter].Total.TotalTokens() != inputTok+outputTok {
+			t.Fatalf("usage.Buckets[session.UsageKindRouter].Total.TotalTokens() = %d, want %d (scripted classifier spend must propagate)", usage.Buckets[session.UsageKindRouter].Total.TotalTokens(), inputTok+outputTok)
 		}
 	})
 
@@ -223,19 +223,14 @@ func TestRunModelRouterReturnsClassifierUsage(t *testing.T) {
 		if reason != agent.RouterMissBadVerdict {
 			t.Fatalf("garbage-verdict miss reason = %q, want %q", reason, agent.RouterMissBadVerdict)
 		}
-		if usage.TotalTokens() != inputTok+outputTok {
-			t.Fatalf("usage.TotalTokens() = %d, want %d (miss path must still return spent usage)", usage.TotalTokens(), inputTok+outputTok)
+		if usage.Buckets[session.UsageKindRouter].Total.TotalTokens() != inputTok+outputTok {
+			t.Fatalf("usage.Buckets[session.UsageKindRouter].Total.TotalTokens() = %d, want %d (miss path must still return spent usage)", usage.Buckets[session.UsageKindRouter].Total.TotalTokens(), inputTok+outputTok)
 		}
 	})
 
-	// PINS the StopError/StopCancelled fail-soft branch in RunModelRouter (the
-	// `return "", sess.Usage, false` line). The benign garbage-verdict miss above flows
-	// through parseRouterVerdict, NOT this branch — so a regression that zeroed THIS
-	// branch's usage (return session.Usage{}) would slip past it. We script a non-zero
-	// UsageChunk THEN force a terminal StopError on the SAME turn (spend-then-error, so
-	// the assertion is meaningful — a clean cancel may have zero spend): the classifier
-	// did spend tokens before the provider-reported terminal, and that spend must still
-	// be folded into the parent budget. RunModelRouter takes the stop==StopError branch.
+	// Pins the StopError/StopCancelled fail-soft branch. The benign garbage-verdict
+	// miss above flows through parseRouterVerdict instead, so script non-zero usage
+	// before a terminal error and require the returned router bucket to retain it.
 	t.Run("error terminal still returns spend-before-error usage", func(t *testing.T) {
 		llm := mockllm.New(mockllm.ChunksTurn(
 			mockllm.TextChunk("partial work before the upstream failed"),
@@ -253,8 +248,8 @@ func TestRunModelRouterReturnsClassifierUsage(t *testing.T) {
 		if reason != agent.RouterMissClassifierError {
 			t.Fatalf("StopError miss reason = %q, want %q", reason, agent.RouterMissClassifierError)
 		}
-		if usage.TotalTokens() != inputTok+outputTok {
-			t.Fatalf("usage.TotalTokens() = %d, want %d (StopError branch must still return spent usage)", usage.TotalTokens(), inputTok+outputTok)
+		if usage.Buckets[session.UsageKindRouter].Total.TotalTokens() != inputTok+outputTok {
+			t.Fatalf("usage.Buckets[session.UsageKindRouter].Total.TotalTokens() = %d, want %d (StopError branch must still return spent usage)", usage.Buckets[session.UsageKindRouter].Total.TotalTokens(), inputTok+outputTok)
 		}
 	})
 }

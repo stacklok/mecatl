@@ -25,6 +25,12 @@ type recordingObserver struct {
 	sess  *session.Session
 }
 
+type usageErrorObserver struct{ recordingObserver }
+
+func (o *usageErrorObserver) ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error) {
+	return session.AuxiliaryUsage{}, o.err
+}
+
 func (o *recordingObserver) Observe(_ context.Context, tr learning.Trajectory) error {
 	o.calls++
 	o.tr = tr
@@ -208,13 +214,54 @@ func TestLearningObserverIneligibleTerminals(t *testing.T) {
 				if obs.calls != 0 {
 					t.Fatal("observer ran while awaiting")
 				}
-				r.Cancel()
+				r.Cancel(agent.CancelCauseRequested)
 			}
 		}
 		if obs.calls != 0 {
 			t.Fatalf("observer calls = %d, want 0", obs.calls)
 		}
 	})
+}
+
+type blockingUsageObserver struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+	usage   session.AuxiliaryUsage
+}
+
+func (*blockingUsageObserver) Observe(context.Context, learning.Trajectory) error { return nil }
+func (o *blockingUsageObserver) ObserveWithUsage(context.Context, learning.Trajectory) (session.AuxiliaryUsage, error) {
+	o.entered <- struct{}{}
+	<-o.release
+	return o.usage, nil
+}
+
+func TestCompletionObserverUsageDropsAfterOwnershipLoss(t *testing.T) {
+	usage := session.Usage{InputTokens: 7}
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	observer := &blockingUsageObserver{entered: entered, release: release, usage: session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindReflection: {Models: map[string]session.Usage{"provider/reflection": usage}},
+	}}}
+	e := newEngine(agent.Deps{
+		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Policy: permpolicy.NewPolicy(nil, nil),
+		LearningMode: learning.Auto, LearningObserver: observer,
+	})
+	sess := newSession(t, session.Limits{})
+	run := e.Run(t.Context(), sess, agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range run.Events() {
+		}
+	}()
+	<-entered
+	run.Cancel(agent.CancelCauseOwnershipLost)
+	close(release)
+	<-done
+	if got := sess.UsageFor(session.UsageKindReflection); got != (session.Usage{}) {
+		t.Fatalf("observer usage crossed ownership loss: %+v", got)
+	}
 }
 
 func TestLearningObserverErrorIsDiagnostic(t *testing.T) {
@@ -233,6 +280,20 @@ func TestLearningObserverErrorIsDiagnostic(t *testing.T) {
 	}
 	if sess.State != session.StateCompleted {
 		t.Fatalf("state = %s, want completed", sess.State)
+	}
+}
+
+func TestLearningUsageObserverErrorHasDistinctDiagnostic(t *testing.T) {
+	diag := newRecordingDiag()
+	observer := &usageErrorObserver{recordingObserver: recordingObserver{err: errors.New("observe failed")}}
+	e := newEngine(agent.Deps{
+		LLM: mockllm.New(mockllm.TextTurn("done")), Catalog: tool.NewCatalog(), Diagnostics: diag,
+		LearningMode: learning.Auto, LearningObserver: observer,
+	})
+	for range e.Run(context.Background(), newSession(t, session.Limits{}), agent.MemEnv("/ws"), agent.RunRequest{Text: "hello"}).Events() {
+	}
+	if _, ok := diag.findLine("completed-trajectory usage observer failed"); !ok {
+		t.Fatal("usage observer failure was not reported through a distinct diagnostic")
 	}
 }
 

@@ -400,7 +400,7 @@ func (f *crashOwnershipFixture) assertOneConcurrentSurvivor(t *testing.T) {
 		t.Fatalf("lease after survivor takeover = %v, want ErrLeaseHeld", err)
 	}
 
-	winner.Cancel()
+	winner.Cancel(agent.CancelCauseRequested)
 	for range winner.Events() {
 	}
 	f.survivor.FinishRun(f.sessionID, winner)

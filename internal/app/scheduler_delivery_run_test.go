@@ -856,7 +856,7 @@ func TestFireDelivery_Scenario4_BusyOriginQueuesNotCollides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartRunContent: %v", err)
 	}
-	defer run.Cancel()
+	defer run.Cancel(agent.CancelCauseRequested)
 	// Wait for the run to be live AND the block tool to be executing (the run
 	// is parked in dispatch). IsLive true is necessary but the loop may still be
 	// in recordPrompt; a short sleep lets the dispatch reach the blocking tool.
@@ -877,7 +877,7 @@ func TestFireDelivery_Scenario4_BusyOriginQueuesNotCollides(t *testing.T) {
 		t.Fatalf("pending = %d, want 1 (the note is queued for the busy origin)", len(pending))
 	}
 	// Cancel the blocked run so the test can drain cleanly.
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	for range run.Events() {
 	}
 }
@@ -1175,7 +1175,7 @@ func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartRunContent: %v", err)
 	}
-	defer run.Cancel()
+	defer run.Cancel(agent.CancelCauseRequested)
 	if !eventually(2*time.Second, func() bool { return svc.IsLive(sess.ID) }) {
 		t.Fatalf("origin run did not go live")
 	}
@@ -1197,7 +1197,7 @@ func TestFireStarted_BusyOriginEnqueueOnly(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("pending = %d, want 1 (started note queued)", len(pending))
 	}
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	for range run.Events() {
 	}
 }

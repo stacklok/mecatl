@@ -121,7 +121,7 @@ func TestCloudNativeLearning_Scenario6_WeightedAdmissionUsesAttemptLifecycle(t *
 		PlacementProvider: appTestPlacementProvider{root: trajectory.Workspace}, PlacementScope: "test",
 	}
 	userMemory := memmemory.New()
-	observer, ok := buildReflectionObserver(cfg, provider, cfg.Model, userMemory, nil, proposals, coordinator, nil).(*reflectionObserver)
+	observer, ok := buildReflectionObserver(cfg, provider, session.ProviderModelID{ProviderID: providerOpenAI, ModelID: cfg.Model}, userMemory, nil, proposals, coordinator, nil).(*reflectionObserver)
 	if !ok {
 		t.Fatal("weighted reflection observer was not built")
 	}

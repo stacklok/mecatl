@@ -173,7 +173,7 @@ func TestDrainDoesNotBlockExistingRun(t *testing.T) {
 		t.Fatal("the live run was removed/ended after Drain — Drain must NOT cancel an in-flight run")
 	}
 	// Now explicitly cancel the run (the bounded GracefulStop's job, not Drain's).
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	var stop session.StopReason
 	for ev := range run.Events() {
 		if ev.Type == session.EvResult && ev.Result != nil {

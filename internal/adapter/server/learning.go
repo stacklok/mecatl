@@ -11,7 +11,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	mecatlv1 "github.com/stacklok/mecatl/contracts/gen/go/mecatl/v1"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/learning"
+	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 	"github.com/stacklok/mecatl/engine/tool"
 	"github.com/stacklok/mecatl/internal/adapter/memory"
@@ -27,6 +29,7 @@ type ReflectionReceipt struct {
 	Staged      int
 	Promoted    int
 	Conflicted  int
+	Usage       session.AuxiliaryUsage
 }
 
 // ExplicitReflector submits one caller-owned completed session for reflection.
@@ -78,6 +81,15 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 	if err != nil {
 		return nil, err
 	}
+	currentOwner := s.mutationLeaseHeld(id)
+	if currentOwner {
+		unlock := s.runEntryMu.lock(id)
+		defer unlock()
+		sess, err = s.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if sess.State != session.StateCompleted {
 		return nil, fmt.Errorf("%w: reflection requires a completed session", ErrFailedPrecondition)
 	}
@@ -88,7 +100,14 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		}
 		ctx = memory.WithWorkspace(ctx, workspace)
 	}
-	r, err := s.cfg.ReflectSession(ctx, sess)
+	accountingCtx := ctx
+	stopAccounting := func() {}
+	if currentOwner {
+		accountingCtx, stopAccounting, _ = s.mutationLeaseContext(ctx, id)
+	}
+	defer stopAccounting()
+	r, err := s.cfg.ReflectSession(accountingCtx, sess)
+	s.recordExplicitReflectionUsage(accountingCtx, id, sess, currentOwner, r.Usage)
 	if err != nil {
 		return nil, explicitReflectionError(err)
 	}
@@ -112,6 +131,27 @@ func (s *Service) ReflectSession(ctx context.Context, id session.SessionID) (*me
 		}
 	}
 	return &mecatlv1.ReflectionReceipt{ReflectionId: validLearningText(r.ID), Disposition: disposition, Reason: reason, Message: message, Queued: int32(r.Queued), Abstained: r.Abstained, Staged: int32(r.Staged), Promoted: int32(r.Promoted), Conflicted: int32(r.Conflicted)}, nil //nolint:gosec // coordinator counts are bounded far below int32
+}
+
+func (s *Service) recordExplicitReflectionUsage(ctx context.Context, id session.SessionID, sess *session.Session, currentOwner bool, returned session.AuxiliaryUsage) {
+	if len(returned.Buckets) == 0 {
+		return
+	}
+	usage := agent.RemapAuxiliaryUsage(ctx, s.cfg.Diagnostics, session.UsageKindReflection, returned)
+	accepted := false
+	var saveErr error
+	if currentOwner {
+		accepted, saveErr = s.cfg.MutationCapability.withMutation(id, func() error {
+			sess.RecordAuxiliaryUsage(usage)
+			return nil
+		})
+		if accepted && saveErr == nil {
+			saveErr = s.saveSession(ctx, sess)
+		}
+	}
+	if !accepted || saveErr != nil {
+		s.cfg.Diagnostics.Log(context.Background(), port.LevelDebug, "reflection usage dropped")
+	}
 }
 
 func explicitAbstentionProjection(reason string) (string, string, error) {

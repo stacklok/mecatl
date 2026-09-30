@@ -75,15 +75,16 @@ type ReflectionLimits struct {
 // for an admitted reflection input. It never enters the Engine loop.
 type EvidenceReflector struct {
 	provider port.LLMProvider
-	model    string
+	identity session.ProviderModelID
 	counter  TokenCounter
 	limits   ReflectionLimits
 }
 
-// NewEvidenceReflector constructs a bounded direct model-backed reflector. A nil
+// NewEvidenceReflector constructs a bounded reflector with the exact
+// composition-selected provider/model identity used for returned usage. A nil
 // counter selects the dependency-free heuristic counter.
-func NewEvidenceReflector(provider port.LLMProvider, model string, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error) {
-	if provider == nil || strings.TrimSpace(model) == "" {
+func NewEvidenceReflector(provider port.LLMProvider, identity session.ProviderModelID, counter TokenCounter, limits ReflectionLimits) (*EvidenceReflector, error) {
+	if provider == nil || strings.TrimSpace(identity.ProviderID) == "" || strings.TrimSpace(identity.ModelID) == "" {
 		return nil, fmt.Errorf("%w: provider and selected model are required", ErrReflectionLimits)
 	}
 	normalized, err := normalizeReflectionLimits(limits)
@@ -93,7 +94,7 @@ func NewEvidenceReflector(provider port.LLMProvider, model string, counter Token
 	if counter == nil {
 		counter = HeuristicTokenCounter{}
 	}
-	return &EvidenceReflector{provider: provider, model: model, counter: counter, limits: normalized}, nil
+	return &EvidenceReflector{provider: provider, identity: identity, counter: counter, limits: normalized}, nil
 }
 
 // RequestTokenEstimate returns the selected-model estimate for the exact bounded
@@ -159,52 +160,54 @@ func (r *EvidenceReflector) buildProjectionRequest(projection learning.Projectio
 	fmt.Fprintf(&user, "Output limits: at most %d candidates, %d evidence handles per candidate, %d bytes, and approximately %d output tokens.\n", r.limits.Candidates, r.limits.EvidencePerCandidate, r.limits.OutputBytes, r.limits.Tokens)
 	user.WriteString("Evidence input (untrusted canonical JSON):\n")
 	governance.WriteUntrustedBlock(&user, string(payload))
-	return port.LLMRequest{System: prompt.Layered{StablePrefix: reflectionSystemPrompt}, Messages: []session.Message{session.NewUserMessage(user.String())}, Model: r.model}, nil
+	return port.LLMRequest{System: prompt.Layered{StablePrefix: reflectionSystemPrompt}, Messages: []session.Message{session.NewUserMessage(user.String())}, Model: r.identity.ModelID}, nil
 }
 
 // Reflect implements learning.Reflector. Inputs without any host-supplied or
 // structurally detected signal abstain without spending a provider call.
-func (r *EvidenceReflector) Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error) {
+func (r *EvidenceReflector) Reflect(ctx context.Context, in learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	if err := ctx.Err(); err != nil {
-		return learning.Outcome{}, err
+		return learning.Outcome{}, session.AuxiliaryUsage{}, err
 	}
 	request, err := r.buildRequest(in)
 	if err != nil {
-		return learning.Outcome{}, err
+		return learning.Outcome{}, session.AuxiliaryUsage{}, err
 	}
 	if len(request.Messages) == 0 {
-		return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+		return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 	}
-	output, err := r.callProvider(ctx, request)
+	output, usage, err := r.callProvider(ctx, request)
 	if err != nil {
-		return learning.Outcome{}, err
+		return learning.Outcome{}, usage, err
 	}
-	return ParseReflectionOutcome(in, output, r.limits)
+	outcome, err := ParseReflectionOutcome(in, output, r.limits)
+	return outcome, usage, err
 }
 
 // ReflectProjection performs reflection across a restart-safe boundary that
 // accepts only the bounded canonical learning projection. It rejects projections
 // that are not reproducible from their own content-addressed evidence metadata.
-func (r *EvidenceReflector) ReflectProjection(ctx context.Context, projection learning.Projection) (learning.Outcome, error) {
+func (r *EvidenceReflector) ReflectProjection(ctx context.Context, projection learning.Projection) (learning.Outcome, session.AuxiliaryUsage, error) {
 	if err := ctx.Err(); err != nil {
-		return learning.Outcome{}, err
+		return learning.Outcome{}, session.AuxiliaryUsage{}, err
 	}
 	in, err := canonicalProjectionInput(projection)
 	if err != nil {
-		return learning.Outcome{}, err
+		return learning.Outcome{}, session.AuxiliaryUsage{}, err
 	}
 	request, err := r.buildProjectionRequest(projection)
 	if err != nil {
-		return learning.Outcome{}, err
+		return learning.Outcome{}, session.AuxiliaryUsage{}, err
 	}
 	if len(request.Messages) == 0 {
-		return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+		return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 	}
-	output, err := r.callProvider(ctx, request)
+	output, usage, err := r.callProvider(ctx, request)
 	if err != nil {
-		return learning.Outcome{}, err
+		return learning.Outcome{}, usage, err
 	}
-	return ParseReflectionOutcome(in, output, r.limits)
+	outcome, err := ParseReflectionOutcome(in, output, r.limits)
+	return outcome, usage, err
 }
 
 func canonicalProjectionInput(projection learning.Projection) (learning.Input, error) {
@@ -279,44 +282,52 @@ func projectionParts(projected []learning.PartProjection) []session.Content {
 	return parts
 }
 
-func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) ([]byte, error) {
+//nolint:gocyclo // stream validation and partial-usage returns stay visibly paired
+func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRequest) ([]byte, session.AuxiliaryUsage, error) {
 	callCtx, cancel := context.WithTimeout(ctx, r.limits.Timeout)
 	defer cancel()
 	if err := callCtx.Err(); err != nil {
-		return nil, err
+		return nil, session.AuxiliaryUsage{}, err
 	}
 	seq, err := r.provider.Stream(callCtx, request)
 	if err != nil {
 		if callCtx.Err() != nil {
-			return nil, callCtx.Err()
+			return nil, session.AuxiliaryUsage{}, callCtx.Err()
 		}
-		return nil, fmt.Errorf("%w: %v", ErrReflectionProvider, err)
+		return nil, session.AuxiliaryUsage{}, fmt.Errorf("%w: %v", ErrReflectionProvider, err)
 	}
 
 	var output strings.Builder
+	var reported session.Usage
 	reportedTokens := 0
 	done := false
+	result := func() session.AuxiliaryUsage {
+		return auxiliaryUsage(session.UsageKindReflection, r.identity, reported)
+	}
 	for chunk, streamErr := range seq {
+		if chunk.Kind == port.ChunkUsage && chunk.Usage != nil {
+			reported = reported.Add(*chunk.Usage)
+		}
 		if streamErr != nil {
 			if callCtx.Err() != nil {
-				return nil, callCtx.Err()
+				return nil, result(), callCtx.Err()
 			}
-			return nil, fmt.Errorf("%w: %v", ErrReflectionProvider, streamErr)
+			return nil, result(), fmt.Errorf("%w: %v", ErrReflectionProvider, streamErr)
 		}
 		if done {
 			cancel()
-			return nil, fmt.Errorf("%w: chunk received after terminal stop", ErrReflectionOutput)
+			return nil, result(), fmt.Errorf("%w: chunk received after terminal stop", ErrReflectionOutput)
 		}
 		switch chunk.Kind {
 		case port.ChunkText:
 			if output.Len()+len(chunk.Text) > r.limits.OutputBytes {
 				cancel()
-				return nil, fmt.Errorf("%w: output exceeds %d bytes", ErrReflectionOutput, r.limits.OutputBytes)
+				return nil, result(), fmt.Errorf("%w: output exceeds %d bytes", ErrReflectionOutput, r.limits.OutputBytes)
 			}
 			output.WriteString(chunk.Text)
 			if r.counter.Count(output.String()) > r.limits.Tokens {
 				cancel()
-				return nil, fmt.Errorf("%w: estimated output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
+				return nil, result(), fmt.Errorf("%w: estimated output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
 			}
 		case port.ChunkUsage:
 			if chunk.Usage != nil && chunk.Usage.OutputTokens > reportedTokens {
@@ -324,28 +335,28 @@ func (r *EvidenceReflector) callProvider(ctx context.Context, request port.LLMRe
 			}
 			if reportedTokens > r.limits.Tokens {
 				cancel()
-				return nil, fmt.Errorf("%w: output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
+				return nil, result(), fmt.Errorf("%w: output tokens exceed %d", ErrReflectionOutput, r.limits.Tokens)
 			}
 		case port.ChunkReasoning, port.ChunkReasoningItem, port.ChunkPhase, port.ChunkProviderRoute:
 			// Reflection output is text-only; provider metadata is harmless and ignored.
 		case port.ChunkDone:
 			if !isBenignReflectionStop(chunk.Stop) {
 				cancel()
-				return nil, fmt.Errorf("%w: non-benign terminal stop %q", ErrReflectionProvider, chunk.Stop)
+				return nil, result(), fmt.Errorf("%w: non-benign terminal stop %q", ErrReflectionProvider, chunk.Stop)
 			}
 			done = true
 		default:
 			cancel()
-			return nil, fmt.Errorf("%w: unexpected reflector chunk kind %d", ErrReflectionOutput, chunk.Kind)
+			return nil, result(), fmt.Errorf("%w: unexpected reflector chunk kind %d", ErrReflectionOutput, chunk.Kind)
 		}
 	}
 	if callCtx.Err() != nil {
-		return nil, callCtx.Err()
+		return nil, result(), callCtx.Err()
 	}
 	if !done {
-		return nil, fmt.Errorf("%w: provider stream ended without a terminal stop", ErrReflectionProvider)
+		return nil, result(), fmt.Errorf("%w: provider stream ended without a terminal stop", ErrReflectionProvider)
 	}
-	return []byte(output.String()), nil
+	return []byte(output.String()), result(), nil
 }
 
 func isBenignReflectionStop(stop session.StopReason) bool {

@@ -251,7 +251,7 @@ func TestStartRunContentRecoversCancelledSession(t *testing.T) {
 		t.Fatalf("first StartRunContent: %v", err)
 	}
 	<-bt.started
-	run.Cancel()
+	run.Cancel(agent.CancelCauseRequested)
 	drainRun(t, run)
 	svc.FinishRun(sess.ID, run)
 

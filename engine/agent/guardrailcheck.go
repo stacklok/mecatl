@@ -28,9 +28,9 @@ var guardrailCheckLimits = session.Limits{MaxTurns: 1, MaxToolCalls: 1, MaxConse
 // engine must be a tool-less checker Engine that fires no hooks and carries no
 // nested reviewer, so a check can never recurse or call a tool. It returns an error
 // on a nil engine rather than panicking, since it is a leaf helper.
-func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, error) {
+func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (string, session.AuxiliaryUsage, error) {
 	if engine == nil {
-		return "", fmt.Errorf("agent: RunGuardrailCheck requires a non-nil engine")
+		return "", session.AuxiliaryUsage{}, fmt.Errorf("agent: RunGuardrailCheck requires a non-nil engine")
 	}
 	ctx, cancel := context.WithTimeout(ctx, guardrailCheckTimeout)
 	defer cancel()
@@ -47,8 +47,9 @@ func RunGuardrailCheck(ctx context.Context, engine *Engine, prompt string) (stri
 	// and its own (non-existent) asks auto-deny — no nesting, no surfacing.
 	run := engine.Run(ctx, sess, judgeEnvironment, RunRequest{Text: prompt})
 	final, stop := drainChild(run, childPosture{role: "guardrail-checker"})
+	usage := utilityEngineUsage(session.UsageKindGuardrail, engine.deps.ProviderModel, sess)
 	if stop == session.StopError || stop == session.StopCancelled {
-		return "", fmt.Errorf("guardrail checker run did not complete (stop %q)", stop)
+		return "", usage, fmt.Errorf("guardrail checker run did not complete (stop %q)", stop)
 	}
-	return final, nil
+	return final, usage, nil
 }

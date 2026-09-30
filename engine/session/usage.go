@@ -2,9 +2,8 @@ package session
 
 import "strings"
 
-// UsageKind identifies a canonical token-usage bucket. "main" and its
-// descendants are reserved for normal agent-run accounting; "session_title" is
-// the server-owned title-generator bucket.
+// UsageKind identifies a canonical token-usage bucket. Recognized constants define
+// current writers; readers preserve every non-empty kind for forward compatibility.
 type UsageKind string
 
 const (
@@ -12,6 +11,18 @@ const (
 	UsageKindMain UsageKind = "main"
 	// UsageKindSessionTitle is the server-owned title-generator accounting bucket.
 	UsageKindSessionTitle UsageKind = "session_title"
+	// UsageKindCompaction is the session compaction-summary accounting bucket.
+	UsageKindCompaction UsageKind = "compaction"
+	// UsageKindReflection is the evidence-reflection accounting bucket.
+	UsageKindReflection UsageKind = "reflection"
+	// UsageKindRouter is the model-router accounting bucket.
+	UsageKindRouter UsageKind = "router"
+	// UsageKindAskReviewer is the child-ask reviewer accounting bucket.
+	UsageKindAskReviewer UsageKind = "ask_reviewer"
+	// UsageKindGuardrail is the model-backed guardrail accounting bucket.
+	UsageKindGuardrail UsageKind = "guardrail"
+	// UsageKindParallelJudge is the Parallel judge accounting bucket.
+	UsageKindParallelJudge UsageKind = "parallel_judge"
 )
 
 // TokenUsage is one canonical usage bucket. Total is always the element-wise
@@ -20,6 +31,49 @@ const (
 type TokenUsage struct {
 	Total  Usage
 	Models map[string]Usage
+}
+
+// AuxiliaryUsage is purpose- and model-attributed usage returned by auxiliary
+// model work. Buckets are owned by the value that contains them.
+type AuxiliaryUsage struct {
+	Buckets map[UsageKind]TokenUsage
+}
+
+// Merge returns an owned aggregate of a and other. Empty kinds are ignored and
+// each bucket total is derived from its model entries.
+func (a AuxiliaryUsage) Merge(other AuxiliaryUsage) AuxiliaryUsage {
+	out := AuxiliaryUsage{Buckets: make(map[UsageKind]TokenUsage, len(a.Buckets)+len(other.Buckets))}
+	mergeAuxiliaryUsage(out.Buckets, a.Buckets)
+	mergeAuxiliaryUsage(out.Buckets, other.Buckets)
+	return out
+}
+
+func mergeAuxiliaryUsage(out, in map[UsageKind]TokenUsage) {
+	for kind, bucket := range in {
+		if kind == "" {
+			continue
+		}
+		merged := out[kind]
+		if merged.Models == nil {
+			merged.Models = make(map[string]Usage, len(bucket.Models))
+		}
+		for model, usage := range bucket.Models {
+			if model == "" {
+				model = unknownModelAttribution
+			}
+			merged.Models[model] = merged.Models[model].Add(usage)
+		}
+		merged.Total = sumModelUsage(merged.Models)
+		out[kind] = merged
+	}
+}
+
+func sumModelUsage(models map[string]Usage) Usage {
+	var total Usage
+	for _, usage := range models {
+		total = total.Add(usage)
+	}
+	return total
 }
 
 const unknownModelAttribution = "unknown"
@@ -33,10 +87,27 @@ func modelAttribution(providerID, modelID string) string {
 	return providerID + "/" + modelID
 }
 
+// RecordAuxiliaryUsage adds every valid returned auxiliary bucket to the ledger.
+// Bucket totals are derived from their model entries.
+func (s *Session) RecordAuxiliaryUsage(usage AuxiliaryUsage) {
+	if s == nil {
+		return
+	}
+	for kind, bucket := range usage.Buckets {
+		if kind == "" {
+			continue
+		}
+		for attribution, value := range bucket.Models {
+			s.recordTokenUsage(kind, attribution, value)
+		}
+	}
+}
+
 // RecordTokenUsage adds usage to a canonical bucket under the opaque provider/model
-// attribution. It does not affect the main-run budget unless kind is UsageKindMain.
+// attribution. Empty kinds are invalid; all non-empty kinds are preserved so a
+// newer writer's bucket can round-trip through older readers.
 func (s *Session) RecordTokenUsage(kind UsageKind, providerID, modelID string, usage Usage) {
-	if kind != UsageKindMain && kind != UsageKindSessionTitle {
+	if kind == "" {
 		return
 	}
 	s.recordTokenUsage(kind, modelAttribution(providerID, modelID), usage)
@@ -67,19 +138,17 @@ func (s *Session) TokenUsageSnapshot() map[UsageKind]TokenUsage {
 func (s *Session) RestoreTokenUsage(usage map[UsageKind]TokenUsage) {
 	s.tokenUsage = make(map[UsageKind]TokenUsage, len(usage))
 	for kind, bucket := range usage {
-		if kind != UsageKindMain && kind != UsageKindSessionTitle {
+		if kind == "" {
 			continue
 		}
 		models := make(map[string]Usage, len(bucket.Models))
-		var total Usage
 		for model, value := range bucket.Models {
 			if model == "" {
 				model = unknownModelAttribution
 			}
 			models[model] = models[model].Add(value)
-			total = total.Add(value)
 		}
-		s.tokenUsage[kind] = TokenUsage{Total: total, Models: models}
+		s.tokenUsage[kind] = TokenUsage{Total: sumModelUsage(models), Models: models}
 	}
 }
 

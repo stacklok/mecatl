@@ -104,7 +104,7 @@ func TestADR_0259_EvidenceProjectionIsBoundedFencedAndInjectionSafe(t *testing.T
 
 	var request port.LLMRequest
 	provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(got port.LLMRequest) { request = got })}, mockllm.TextTurn(`{"kind":"abstained","candidates":[]}`))
-	reflector, err := agent.NewEvidenceReflector(provider, "reflection-model", nil, agent.ReflectionLimits{})
+	reflector, err := agent.NewEvidenceReflector(provider, session.ProviderModelID{ProviderID: "test", ModelID: "reflection-model"}, nil, agent.ReflectionLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

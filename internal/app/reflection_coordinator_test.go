@@ -17,6 +17,7 @@ type testReflector struct {
 	calls   []session.SessionID
 	start   chan session.SessionID
 	release <-chan struct{}
+	usage   session.AuxiliaryUsage
 }
 
 type attemptBarrierReflector struct {
@@ -26,7 +27,7 @@ type attemptBarrierReflector struct {
 	calls    int
 }
 
-func (r *attemptBarrierReflector) Reflect(ctx context.Context, _ learning.Input) (learning.Outcome, error) {
+func (r *attemptBarrierReflector) Reflect(ctx context.Context, _ learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	attempt := r.calls
 	r.calls++
@@ -34,13 +35,13 @@ func (r *attemptBarrierReflector) Reflect(ctx context.Context, _ learning.Input)
 	r.started <- attempt
 	select {
 	case <-r.releases[attempt]:
-		return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+		return learning.Outcome{Kind: learning.OutcomeAbstained}, session.AuxiliaryUsage{}, nil
 	case <-ctx.Done():
-		return learning.Outcome{}, ctx.Err()
+		return learning.Outcome{}, session.AuxiliaryUsage{}, ctx.Err()
 	}
 }
 
-func (r *testReflector) Reflect(ctx context.Context, in learning.Input) (learning.Outcome, error) {
+func (r *testReflector) Reflect(ctx context.Context, in learning.Input) (learning.Outcome, session.AuxiliaryUsage, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, in.Trajectory.SessionID)
 	r.mu.Unlock()
@@ -51,10 +52,10 @@ func (r *testReflector) Reflect(ctx context.Context, in learning.Input) (learnin
 		select {
 		case <-r.release:
 		case <-ctx.Done():
-			return learning.Outcome{}, ctx.Err()
+			return learning.Outcome{}, session.AuxiliaryUsage{}, ctx.Err()
 		}
 	}
-	return learning.Outcome{Kind: learning.OutcomeAbstained}, nil
+	return learning.Outcome{Kind: learning.OutcomeAbstained}, r.usage, nil
 }
 func (*testReflector) RequestTokenEstimate(learning.Input) (int, error) {
 	return 1, nil
@@ -330,5 +331,35 @@ func TestReflectionObserverSelectsMediaHeavyInputWithoutQueueGrowth(t *testing.T
 	defer c.mu.Unlock()
 	if c.queued != 0 || c.queuedBytes != 0 || len(c.pending) != 0 {
 		t.Fatalf("completed input retained queue state: queued=%d bytes=%d pending=%d", c.queued, c.queuedBytes, len(c.pending))
+	}
+}
+
+func TestAuxiliaryTokenUsage_Scenario2_DetachedReflectionUsageIsDropped(t *testing.T) {
+	diagnostics := newCapturingDiagnostics()
+	usage := session.AuxiliaryUsage{Buckets: map[session.UsageKind]session.TokenUsage{
+		session.UsageKindReflection: {
+			Total:  session.Usage{InputTokens: 3, OutputTokens: 1},
+			Models: map[string]session.Usage{"provider/model": {InputTokens: 3, OutputTokens: 1}},
+		},
+	}}
+	reflector := &testReflector{usage: usage}
+	coordinator := newReflectionCoordinator(context.Background(), reflectionCoordinatorConfig{
+		Workers: 1, Capacity: 1, Diagnostics: diagnostics,
+	})
+	t.Cleanup(coordinator.Close)
+
+	queued, err := coordinator.Enqueue(testJob("principal", "detached-source", reflector))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := coordinator.Wait(context.Background(), queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.Usage.Buckets) != 0 {
+		t.Fatalf("detached receipt retained usage: %#v", receipt.Usage)
+	}
+	if got := diagnostics.countContaining("detached reflection usage dropped"); got != 1 {
+		t.Fatalf("drop diagnostics = %d, want exactly one", got)
 	}
 }

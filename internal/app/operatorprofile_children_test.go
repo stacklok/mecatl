@@ -40,7 +40,7 @@ func TestUserFacingChildRolesInjectFreshVolatileOperatorProfile(t *testing.T) {
 			var requests []port.LLMRequest
 			provider := mockllm.NewWith([]mockllm.Option{mockllm.WithRequestObserver(func(req port.LLMRequest) { requests = append(requests, req) })}, mockllm.TextTurn("done"), mockllm.TextTurn("done"))
 			cfg := Config{Model: "m", operatorProfileSource: store}
-			eng := newChildEngineForProvider(cfg, role, provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+			eng := newChildEngineForProvider(cfg, role, provider, testProviderModel("m"), fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
 
 			runChildProfileTurn(t, eng, "child-1", "Answer in English, exactly.")
 			rememberProfile(context.Background(), t, store, tool.MemoryEntry{Key: "user/output/language", Value: "Prefer Japanese by default."})
@@ -68,7 +68,7 @@ func TestSpecialistNameContainingJudgeRetainsHarnessContext(t *testing.T) {
 		harnessInstructions:   hcAssembler("SPECIALIST-CONTEXT"),
 	}
 	provider := mockllm.New(mockllm.TextTurn("done"))
-	deps := childEngineDepsForProvider(cfg, "task:review-judge", provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+	deps := childEngineDepsForProvider(cfg, "task:review-judge", provider, testProviderModel("m"), fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
 	if deps.OperatorProfileSource != store {
 		t.Fatal("ordinary named specialist lost operator profile")
 	}
@@ -76,7 +76,7 @@ func TestSpecialistNameContainingJudgeRetainsHarnessContext(t *testing.T) {
 		t.Fatal("ordinary named specialist lost harness instructions")
 	}
 
-	judge := childEngineDepsForProvider(cfg, "parallel-judge", provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+	judge := childEngineDepsForProvider(cfg, "parallel-judge", provider, testProviderModel("m"), fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
 	if judge.OperatorProfileSource != nil || judge.Instructions != nil {
 		t.Fatal("internal parallel judge inherited user-facing context")
 	}
@@ -90,7 +90,7 @@ func TestInternalPurposeChildRolesExcludeOperatorProfile(t *testing.T) {
 		if got := childOperatorProfileSource(cfg, role); got != nil {
 			t.Errorf("internal role %q inherited operator profile", role)
 		}
-		deps := childEngineDepsForProvider(cfg, role, provider, "m", fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
+		deps := childEngineDepsForProvider(cfg, role, provider, testProviderModel("m"), fixedDefaultWindow, tool.NewCatalog(), prompt.Config{}, nil)
 		if deps.Instructions != nil {
 			t.Errorf("internal role %q inherited harness instructions", role)
 		}

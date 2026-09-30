@@ -8,6 +8,7 @@ import (
 
 	"github.com/stacklok/mecatl/engine/adapter/memlease"
 	"github.com/stacklok/mecatl/engine/adapter/mockllm"
+	"github.com/stacklok/mecatl/engine/agent"
 	"github.com/stacklok/mecatl/engine/port"
 	"github.com/stacklok/mecatl/engine/session"
 )
@@ -55,7 +56,7 @@ func TestSessionStaleNoLeaseIsLiveNotStale(t *testing.T) {
 		t.Fatalf("StartRun: %v", err)
 	}
 	t.Cleanup(func() {
-		run.Cancel()
+		run.Cancel(agent.CancelCauseRequested)
 		for range run.Events() {
 		}
 		svc.FinishRun(sess.ID, run)

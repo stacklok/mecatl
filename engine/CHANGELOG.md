@@ -38,7 +38,26 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
   `agent.AskResolutionNotPlan`. The new method consumes only a root
   plan-originated ask and reports ordinary asks without changing them.
   `Run.Approve` and `ResolveOrdinaryAsk` retain their existing behavior.
+
+- **Auxiliary-usage purpose normalization** — adds `agent.RemapAuxiliaryUsage`,
+  allowing owner-side adapters to retain producer-reported model totals while
+  confining the returned result to their authorized auxiliary-purpose bucket.
   Added (minor).
+
+- **Auxiliary provider/model identity** — adds `session.ProviderModelID`, the
+  opaque server-selected provider/model identity for an auxiliary model call, and
+  `agent.Deps.ProviderModel` so composition supplies that exact immutable identity
+  alongside the engine's LLM provider. It deliberately carries no selector/default,
+  context-window, reasoning-effort, provider-instance, or credential semantics.
+  Added (minor).
+
+- **Purpose-attributed auxiliary token usage foundation** — adds
+  `session.AuxiliaryUsage` with owned-copy merging and the recognized
+  `compaction`, `reflection`, `router`, `ask_reviewer`, `guardrail`, and
+  `parallel_judge` usage-kind constants. Canonical ledgers preserve non-empty
+  opaque kinds for forward-compatible persistence; only the separate router
+  bucket joins main usage in the internal `MaxRunTokens` spend bound. Added
+  (minor).
 
 - **Delegated-model routing decision evidence** — adds `agent.ModelRouteResult`,
   `agent.SubagentModelRouter`, and `session.RoutingDecision`, with optional decision
@@ -322,6 +341,41 @@ The covered surface is the eight core packages (`session`, `governance`, `learni
 ### Changed
 
 - **Workspace-free harness prompt sources (ADR 0357)** — `prompt.InstructionAssembler.Assemble`, `CommandExpander.Expand`, `CommandLister.List`, and `AssembleWithManifest` no longer accept an execution workspace. `RootAssembler` and `NewDirCommandExpander` instead bind a source `tool.Workspace` at construction. This intentionally breaks implementers and callers so execution placement cannot implicitly select instruction or command authority. Changed (breaking, pre-v1 minor).
+
+- **Exact reflection identity** — `agent.NewEvidenceReflector` now requires a
+  `session.ProviderModelID` and the identity-less
+  `NewEvidenceReflectorForProviderModel` compatibility constructor is removed.
+  Reflection usage is therefore always attributed to its composition-selected
+  provider/model rather than a fabricated `unknown/<model>` identity. Changed
+  (breaking, pre-v1 minor).
+
+- **Contextual reviewer usage results** — `agent.ToolReviewer.Review` now returns
+  `session.AuxiliaryUsage`, including partial usage returned with an error. The engine
+  remaps and records completed review usage on the reviewed session while it retains
+  run ownership. `port.AuxiliaryUsageReporter`, `WithAuxiliaryUsageReporter`, and
+  `AuxiliaryUsageReporterFromContext` provide the synchronous request-scoped adapter
+  seam used by the main-session path-escape check. Changed (breaking, pre-v1 minor).
+
+- **Run ownership transition and typed cancellation** — adds idempotent
+  `(*agent.Run).OwnershipLost()` to revoke run-owned auxiliary admission without
+  cancelling, allowing lease-owning hosts to retract a pending ask before
+  cancellation. Adds `agent.CancelCause` with zero-value `CancelCauseRequested`
+  and `CancelCauseOwnershipLost`, and changes `(*agent.Run).Cancel()` to
+  `Cancel(CancelCause)`. Ownership-loss and unknown causes revoke auxiliary
+  admission as a backstop; requested cancellation preserves join-and-drain
+  behavior. Changed (breaking, pre-v1 minor).
+
+- **Returned utility-engine usage** — `agent.ChildAskReviewer.Review`,
+  `agent.BranchJudge.Judge`, and `agent.RunGuardrailCheck` now return
+  `session.AuxiliaryUsage`; `agent.ModelRouteResult.Usage` and
+  `agent.RunModelRouter` carry the same purpose-attributed result. Changed
+  (breaking, pre-v1 minor).
+
+- **Direct auxiliary usage results** — `agent.Compactor.Compact`,
+  `agent.EvidenceReflector.Reflect` / `ReflectProjection`, and the
+  `learning.Reflector` seam now return `session.AuxiliaryUsage`; direct compaction
+  and reflection callers record it only while they retain current session
+  ownership. Changed (breaking, pre-v1 minor).
 
 - **Exact Team parent-call correlation** — Team-tool member relationships now
   populate the existing `session.SessionRelationship.CallID`; validation permits
