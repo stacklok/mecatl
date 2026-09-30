@@ -454,7 +454,10 @@ func (e *Engine) drainReadBatch(ctx context.Context, r *Run, sess *session.Sessi
 		} else {
 			result, cancelled = e.resolveInbound(ctx, r, sess, env, turnIdx, p.call, p.record.result, p.record.assessment)
 		}
-		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, false)
+		// A held result becomes displayable only after resolveInbound returns its
+		// release or synthetic withholding decision. Clean results were published
+		// on completion and must not be published twice.
+		e.finalizeToolResult(r, sess, turnIdx, p.call, p.record, result, !available[i] && !cancelled && ctx.Err() == nil)
 		out[p.call.ID] = result
 	}
 	return cancelled
@@ -1639,7 +1642,7 @@ func (e *Engine) finalizeToolResult(r *Run, sess *session.Session, turnIdx int, 
 			e.emit(r, event)
 		}
 	}
-	if available && !inboundNeedsHold(record.assessment) {
+	if available {
 		e.emit(r, session.Event{Type: session.EvToolResultAvailable, Turn: turnIdx, ToolResult: ptr(result)})
 	}
 	if e.deps.ToolCallRecorder != nil {
