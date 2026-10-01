@@ -152,6 +152,10 @@ The palette also includes workspace-defined slash commands. See
 [Skills, commands, and soul](/features/skills-commands-and-soul.md) for how the
 server discovers and expands them.
 
+To read a long active soul, open `/soul` while the session is idle. Use `↑`/`↓`
+to move one wrapped row, `pgup`/`pgdn` to move by the visible page, or the mouse
+wheel to move one row per event. Press `esc` to close the inspector.
+
 ## Monitor delegated work
 
 Press `f6` to open the agents overlay for Subagents, Parallel runs, and Teams.

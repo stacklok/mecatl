@@ -5,16 +5,16 @@
 
 
 
-             ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-             ┃                                                                        ┃
-             ┃  Soul (persona)                                                        ┃
-             ┃                                                                        ┃
-             ┃  No soul (persona) is enabled on this server.                          ┃
-             ┃  Create ~/.config/mecatl/soul.md (or pass --soul-file) and reconnect.  ┃
-             ┃                                                                        ┃
-             ┃  read-only persona · pgup/pgdn scroll · esc close                      ┃
-             ┃                                                                        ┃
-             ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                                                  ┃
+┃  Soul (persona)                                                                                  ┃
+┃                                                                                                  ┃
+┃  No soul (persona) is enabled on this server.                                                    ┃
+┃  Create ~/.config/mecatl/soul.md (or pass --soul-file) and reconnect.                            ┃
+┃                                                                                                  ┃
+┃  read-only persona · pgup/pgdn scroll · esc close                                                ┃
+┃                                                                                                  ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
 
 

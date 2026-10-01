@@ -51,7 +51,9 @@ func TestMecatuiCardLayout_Scenario3_DynamicDetailsFitWidth(t *testing.T) {
 		assertFits(t, "dream", renderDreamOverlay(th, dreamState{view: dreamReview, plan: plan}, client.Capabilities{}, hk, width, 60))
 		proposal := &client.LearningProposal{ID: long, Status: long, Version: long, Kind: long, Key: long, Value: long, Description: long, Body: long, Triggers: []string{long}, Evidence: []client.LearningEvidence{{Locator: long, SessionID: long, Digest: long, Preview: long}}}
 		assertFits(t, "reflections", renderReflectionsOverlay(th, reflectionsState{view: reflectionsDetail, detail: proposal}, client.Capabilities{LearningProposals: true}, hk, width, 60))
-		assertFits(t, "soul", centerCard(th, renderSoulPanel(th, soulState{soul: client.Soul{Present: true, Content: long, SHA256: long}}, client.Capabilities{Soul: true}, hk, width), width, 40))
+		st := &soulState{view: soulPanel, soul: client.Soul{Present: true, Content: long, SHA256: long}, deps: surfaceDeps{theme: th, caps: client.Capabilities{Soul: true}, marks: hk}}
+		soulBody, _ := st.Render(width-th.Style("askCard").GetHorizontalFrameSize(), 40-th.Style("askCard").GetVerticalFrameSize())
+		assertFits(t, "soul", centerCard(th, soulBody, width, 40))
 		inventory := &userModelState{deps: surfaceDeps{theme: th, caps: client.Capabilities{UserModel: true}, marks: hk}, list: &bounded.List{}, viewport: &bounded.Viewport{}}
 		inventory.setModel(client.UserModel{Entries: []client.UserModelEntry{{Key: long, Description: long}}})
 		body, _ := inventory.Render(width, 40)
