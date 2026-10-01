@@ -45,7 +45,7 @@ complete public surface.
 On a gRPC session, `guardrailCoverage()` reads effective checker status and
 `guardrailReviewDetail(reviewId)` retrieves owner-authorized live review detail.
 HTTP connections raise `UnsupportedFeatureError` for these methods because the
-server exposes no HTTP routes. See [Permissions and posture](/features/permissions-and-posture.md)
+server exposes no HTTP routes. See [Permissions and posture](/features/security-and-execution/permissions-and-posture.md)
 for guardrail behavior.
 
 ## Workflow ownership

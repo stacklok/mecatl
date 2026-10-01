@@ -55,8 +55,8 @@ is listed, and its follow-on reading is noted. Read any that cover your area.
 | 1 | [Project README](../README.md) — feature overview and quick start |
 | 2 | [Build your first agent](../user-docs/building/getting-started/first-agent.md) |
 | 3 | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
-| 4 | [Run `mecated` standalone](../user-docs/building/deployment/mecated.md) |
-| Optional | [Local microVM environments](../user-docs/building/deployment/microvm-environments.md) |
+| 4 | [Run `mecated` standalone](../user-docs/operating/mecated.md) |
+| Optional | [Local microVM environments](../user-docs/operating/microvm-environments.md) |
 | Then | Choose a task, feature, deployment, or reference from the [public documentation](../user-docs/intro.md) |
 
 ---

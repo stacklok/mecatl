@@ -209,7 +209,7 @@ A warning's explanation updates its existing entry when available; a review that
 needs your decision shows the explanation in its approval prompt. An unavailable
 or expired explanation does not imply a security finding. Check the displayed
 outcome to see whether the action stopped, the result was withheld, or work
-continued. See [guardrail approvals](/features/permissions-and-posture.md#guardrails)
+continued. See [guardrail approvals](/features/security-and-execution/permissions-and-posture.md#guardrails)
 for the available choices.
 
 An explicit `--debug=false` overrides the environment. Debug mode is client-only

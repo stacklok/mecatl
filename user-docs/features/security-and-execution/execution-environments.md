@@ -21,7 +21,7 @@ default so filesystem and shell tools run in a repository-scoped VM. Linux amd64
 with KVM is the qualified path. An unmerged Darwin arm64 path exists for Apple
 Silicon macOS 15+ with Hypervisor.framework, but native and signed-release
 qualification remain pending, so it is experimental rather than released support.
-See [Local microVM environments](/building/deployment/microvm-environments.md) for
+See [Local microVM environments](/operating/microvm-environments.md) for
 platform requirements and the source qualification procedure.
 
 A session can instead select the `no-fs` profile
@@ -120,7 +120,7 @@ Operation lease expiry fences the environment and retains the unresolved
 operation identity for administrator recovery. A `503` response with
 `placement_unavailable` is generic: check provider readiness, the configured
 profile's capacity, and retained allocations. Use the existing
-[administrative lifecycle operation](../building/deployment/mecak8s.md#run-an-administrative-lifecycle-operation)
+[administrative lifecycle operation](/operating/mecak8s.md#run-an-administrative-lifecycle-operation)
 to retire an eligible environment and delete its retained storage when you need
 to free capacity.
 
@@ -213,7 +213,7 @@ The scope applies to `RetireEnvironment`, `ReplaceExecutor`, `RecoverEnvironment
 preserves each operation's exact owner and identity checks and grants no
 `mayAttestOwner`, attach, file, command, run, or reference authority. Scope order
 does not change the authority digest; adding or removing a creator does. Follow
-the [administrative runbook](../building/deployment/mecak8s.md#run-an-administrative-lifecycle-operation)
+the [administrative runbook](/operating/mecak8s.md#run-an-administrative-lifecycle-operation)
 for quiesced upgrades and scope removal.
 
 Use only basename file names. The projected Secret keys in this example are
@@ -223,7 +223,7 @@ but paths escaping the mounted directory are rejected. Keep every referenced
 filename immutable and use a new name for changed signing, TLS, or CA material.
 Stage those files before publishing a higher-generation manifest and retain the
 overlap files. Secret and ConfigMap projections are independent; see the
-[authority rotation procedure](../building/deployment/mecak8s.md#rotate-execution-provider-authority)
+[authority rotation procedure](/operating/mecak8s.md#rotate-execution-provider-authority)
 for publication, verification, and recovery from mixed-material digest drift.
 Increase `generation` for every authority change. Key IDs and `(id, version)` fingerprints cannot be
 reused; the provider persists a bounded high-water ledger in its authority
@@ -264,7 +264,7 @@ storage, and `/tmp` are explicitly bounded per profile. Each profile also requir
 Preserve the authority ConfigMap and current manifest across upgrades and
 same-release reinstalls. A missing ledger with retained allocations is not a new
 installation: do not bootstrap it at generation 1. See the
-[provider lifecycle procedure](/building/deployment/mecak8s.md#upgrade-uninstall-and-reinstall-the-execution-provider)
+[provider lifecycle procedure](/operating/mecak8s.md#upgrade-uninstall-and-reinstall-the-execution-provider)
 for ownership checks, retained network protection, and quiesced CRD/provider
 upgrade order. Schema-2 environment migration remains an explicit operation;
 complete it before enabling new sessions.

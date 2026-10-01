@@ -168,13 +168,13 @@ the overlay to inspect bounded activity previews; `/team` opens the same overlay
 on the Teams tab.
 
 See
-[Subagents, teams, and parallel](/features/subagents-and-teams.md#watch-a-delegation-in-mecatui)
+[Subagents, teams, and parallel](/features/agent-behavior/subagents-and-teams.md#watch-a-delegation-in-mecatui)
 for delegation behavior and the information available in `mecatui`.
 
 ## Change conversation settings
 
 Press `shift+tab` to switch the active permission mode. See
-[Choose a permission mode](/features/permissions-and-posture.md#choose-a-permission-mode)
+[Choose a permission mode](/features/security-and-execution/permissions-and-posture.md#choose-a-permission-mode)
 for the available modes and their behavior.
 
 |Command|Result|

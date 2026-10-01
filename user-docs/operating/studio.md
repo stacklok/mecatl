@@ -282,7 +282,7 @@ refreshes its state and briefly reports only what it can verify, such as a run
 still working or the chat waiting for approval. Reloading the page does not
 create a return notice.
 
-When a [scheduled task](/features/scheduled-tasks.md) delivers a start or
+When a [scheduled task](/features/sessions/scheduled-tasks.md) delivers a start or
 completion note to this chat, the transcript shows the recorded note with its
 schedule and fire attribution. The note body appears as plain text. A task's
 fire history alone does not add a note to the chat. An open, visible chat checks
