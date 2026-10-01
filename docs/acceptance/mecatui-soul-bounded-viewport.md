@@ -4,7 +4,7 @@
 **Work classification:** Bounded — this changes the local, user-visible geometry and browsing behavior of an existing TUI inspector without changing a public API, persistence boundary, protocol, security boundary, or architecture.
 **Decision record:** None — the responsive card, pointer-owned viewport, and modal input behavior remain private to `cmd/mecatui/ui`; their rationale belongs in this plan.
 **Phase:** bounded browsing adoption, soul inspector slice
-**Status:** proposed, 2026-09-30. The directing operator selected the established bounded-card size, page, and wheel conventions; ready for plan/interface review.
+**Status:** in-progress, 2026-10-01. Implementation is underway against approved plan baseline `0e396dc4631d94bf773062ac85cf9c9544ea332f`.
 **Delivery:** Split. Responsive geometry, physical paging, and wheel ownership change the visible interaction contract and merit separate review before implementation.
 **Expected tasks:** 1
 **Issue:** [stacklok/mecatl#1899](https://github.com/stacklok/mecatl/issues/1899).
