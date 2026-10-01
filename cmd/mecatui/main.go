@@ -1052,7 +1052,6 @@ func resolveTransportWithHook(ctx context.Context, cfg config, beforeEmbeddedSta
 		diag.Log(ctx, port.LevelInfo, "mecatui: embedded server diagnostics log opened",
 			"path", diagSink.Path)
 	}
-	fmt.Fprintf(os.Stderr, "mecatui: hosting an embedded mecated at %s\n", srv.Target())
 	if addr := srv.AdminAddr(); addr != "" {
 		paths := "/metrics /debug/pprof /debug/vars /debug/flightrecorder"
 		if cfg.perfMCP {

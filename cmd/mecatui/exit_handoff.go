@@ -93,6 +93,6 @@ func writeFinalSessionHandoff(w io.Writer, final tea.Model) bool {
 	if err != nil {
 		return false
 	}
-	_, err = io.WriteString(w, finalSessionHandoffPrefix+string(quoted)+"\n")
+	_, err = io.WriteString(w, "\n"+finalSessionHandoffPrefix+string(quoted)+"\n")
 	return err == nil
 }

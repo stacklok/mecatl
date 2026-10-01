@@ -77,6 +77,9 @@ normal exit, `mecatui` writes a JSON-quoted ID record to standard error:
 mecatui: final-session-id="01JOPAQUESESSIONID"
 ```
 
+A blank line separates the exit record from startup notices. `mecatui` does not
+print the embedded server's private socket address.
+
 After an embedded session ends normally, the lines that follow show a
 shell-quoted `mecatui --resume '<SESSION_ID>'` command for that exact final chat.
 Use it to return to the same chat. The separately labelled `--resume-latest`

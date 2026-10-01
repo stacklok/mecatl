@@ -185,7 +185,7 @@ func TestMecatuiExitHandoff_Scenario2_ExitMatrix(t *testing.T) {
 		{"no session", "", true, nil, false, ""},
 		{"failed", "final", true, errors.New("failed"), false, ""},
 		{"interrupted", "final", true, nil, true, ""},
-		{"connected", "remote", false, nil, false, finalSessionHandoffPrefix + `"remote"` + "\n"},
+		{"connected", "remote", false, nil, false, "\n" + finalSessionHandoffPrefix + `"remote"` + "\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false

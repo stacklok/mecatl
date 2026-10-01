@@ -199,8 +199,8 @@ func checkEmbeddedCompositionChild(t *testing.T, scenario string) {
 	}
 	got := stderr.String()
 	line := strings.Index(got, finalSessionHandoffPrefix)
-	if line < 0 || strings.Count(got, finalSessionHandoffPrefix) != 1 || strings.LastIndex(got[:line], "\x1b[?1049l") < 0 || !strings.Contains(got[line:], "handoff-child-cleaned\n") {
-		t.Fatalf("handoff must follow teardown and precede server shutdown: %q", got)
+	if line < 1 || got[line-1] != '\n' || strings.Contains(got, "hosting an embedded mecated at") || strings.Count(got, finalSessionHandoffPrefix) != 1 || strings.LastIndex(got[:line], "\x1b[?1049l") < 0 || !strings.Contains(got[line:], "handoff-child-cleaned\n") {
+		t.Fatalf("handoff must follow teardown with a separating line and no startup socket address: %q", got)
 	}
 	fields := strings.SplitN(got[line:], "\n", 2)
 	var id string
