@@ -1,0 +1,66 @@
+name: Qualify native Brood Box release helper
+
+on:
+  push:
+    branches: [fix/native-brood-box-release-digest]
+    paths:
+      - .github/workflows/qualify-native-brood-box.yml
+      - .github/workflows/release.yml
+      - environment/microvm/cmd/mecatl-oci-tree-digest/**
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      BROOD_DISCOVERY_REFERENCE: ghcr.io/stacklok/brood-box/base:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: environment/microvm/go.mod
+          cache: false
+      - name: Run the exact release resolution block without publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+          workflow = Path('.github/workflows/release.yml').read_text()
+          job = workflow.split('  resolve-brood-base:\n', 1)[1].split('  endorse-brood-resolution:\n', 1)[0]
+          lines = job.splitlines()
+          start = next(i for i, line in enumerate(lines) if line.strip() == 'docker buildx imagetools inspect "${BROOD_DISCOVERY_REFERENCE}" --raw > brood-base-index.json')
+          end = next(i for i, line in enumerate(lines[start:], start) if line.strip().startswith("jq -s '{amd64:"))
+          block = textwrap.dedent('\n'.join(lines[start:end + 1]))
+          assert 'gh release' not in block and 'upload-release-assets' not in block
+          Path('qualify-resolution.sh').write_text('set -euo pipefail\n' + block + '\n')
+          PY
+          bash qualify-resolution.sh
+          .github/scripts/verify-brood-resolution.sh brood-base-index.json brood-platforms.json
+      - name: Verify fresh-cache ARM64 digest and warm-cache target rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          alpine_reference='docker.io/library/alpine@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6'
+          reference="$(jq -er '.arm64.reference' brood-platforms.json)"
+          expected="$(jq -er '.arm64.tree_digest' brood-platforms.json)"
+          actual="$(docker run --rm --platform linux/amd64 -v "${PWD}/brood-tree:/release" "$alpine_reference" /release/digest "$reference" /release/repeat-arm64 linux/arm64)"
+          test "$actual" = "$expected"
+          if docker run --rm --platform linux/amd64 -v "${PWD}/brood-tree:/release" "$alpine_reference" /release/digest "$reference" /release/repeat-arm64 linux/amd64; then
+            echo 'ARM64 manifest accepted as amd64' >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-brood-box-resolution
+          path: |
+            brood-base-index.json
+            brood-platforms.json
+          retention-days: 3

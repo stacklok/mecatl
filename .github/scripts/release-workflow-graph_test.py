@@ -65,8 +65,15 @@ def test_release_workflow_graph_and_contract(release_path: Path, release_pr_path
     assert "map({key:.platform,value:.}) | from_entries" in publish
 
     resolver = "\n".join(job_lines["resolve-brood-base"])
-    assert 'GOWORK=off go -C environment/microvm build' in resolver
-    assert '-o "../../brood-tree/digest-${arch}" ./cmd/mecatl-oci-tree-digest' in resolver
+    assert 'BROOD_DISCOVERY_REFERENCE: ghcr.io/stacklok/brood-box/base:latest' in resolver
+    assert 'reference="ghcr.io/stacklok/brood-box/base@${manifest}"' in resolver
+    assert 'GOARCH=amd64 GOWORK=off go -C environment/microvm build' in resolver
+    assert '-o "../../brood-tree/digest" ./cmd/mecatl-oci-tree-digest' in resolver
+    assert resolver.index("mkdir -p brood-tree") < resolver.index("GOWORK=off go") < resolver.index("for arch in amd64 arm64; do")
+    assert 'docker run --rm --platform linux/amd64' in resolver
+    assert '"/release/digest" "${reference}" "/release/cache-${arch}" "linux/${arch}"' in resolver
+    assert 'docker run --rm --platform "linux/${arch}"' not in resolver
+    assert "setup-qemu" not in resolver and "binfmt" not in resolver
 
     validator = "sh .github/scripts/validate-execution-base-images.sh"
     execution = "\n".join(job_lines["publish-execution-images"])
