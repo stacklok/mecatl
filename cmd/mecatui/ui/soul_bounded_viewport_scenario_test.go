@@ -62,50 +62,60 @@ func TestMecatuiSoulBoundedViewport_Scenario1_WidthCapAndFrameAccounting(t *test
 
 func TestMecatuiSoulBoundedViewport_Scenario1_UsesAvailableHeightAndCompactFallback(t *testing.T) {
 	m := soulScenario(t, soulScenarioRows())
-	s := soulActive(m)
-	for _, height := range []int{10, 24, 60} {
-		out, _ := s.Render(94, height)
+	for _, height := range []int{32, 52, 80} {
+		m = resize(m, 94, height)
+		out := m.View().Content
+		s := soulActive(m)
 		if s.viewport == nil {
 			t.Fatalf("height %d: no viewport: %q", height, out)
 		}
-		title := len(strings.Split(ansi.Wrap("Soul (persona)", 94, ""), "\n"))
-		meta := len(strings.Split(ansi.Wrap(renderSoulMeta(s.soul), 94, ""), "\n"))
-		footer := len(strings.Split(ansi.Wrap(soulPanelFooter(s.soul, s.deps.marks), 94, ""), "\n"))
-		want := height - title - meta - footer - 4 // three separators and overflow indicator
+		offerH := m.vp.Height() - m.deps.Theme.Style("askCard").GetVerticalFrameSize()
+		title := len(strings.Split(ansi.Wrap("Soul (persona)", s.bodyWidth, ""), "\n"))
+		meta := len(strings.Split(ansi.Wrap(renderSoulMeta(s.soul), s.bodyWidth, ""), "\n"))
+		footer := len(strings.Split(ansi.Wrap(soulPanelFooter(s.soul, s.deps.marks), s.bodyWidth, ""), "\n"))
+		want := offerH - title - meta - footer - 4 // three separators and overflow indicator
 		if s.viewport.Height() != want {
 			t.Fatalf("height %d: viewport %d, want %d", height, s.viewport.Height(), want)
 		}
-		if lipgloss.Height(out) > height || !strings.Contains(ansi.Strip(out), fmt.Sprintf("lines 1–%d of 90", want)) {
+		if m.metrics.outerBounds.y1-m.metrics.outerBounds.y0 > m.vp.Height() || !strings.Contains(ansi.Strip(out), fmt.Sprintf("lines 1–%d of 90", want)) {
 			t.Fatalf("height %d: unexpected view %q", height, ansi.Strip(out))
 		}
 	}
 	short := soulScenario(t, "one row")
-	body, _ := soulActive(short).Render(94, 10)
-	if strings.Contains(ansi.Strip(body), "lines 1") || soulActive(short).viewport.Height() != 10-1-1-len(strings.Split(ansi.Wrap(soulPanelFooter(soulActive(short).soul, soulActive(short).deps.marks), 94, ""), "\n"))-3 {
+	short = resize(short, 94, 32)
+	body := short.View().Content
+	s := soulActive(short)
+	if strings.Contains(ansi.Strip(body), "lines 1") || s.viewport.Height() != short.vp.Height()-short.deps.Theme.Style("askCard").GetVerticalFrameSize()-1-1-len(strings.Split(ansi.Wrap(soulPanelFooter(s.soul, s.deps.marks), s.bodyWidth, ""), "\n"))-3 {
 		t.Fatalf("non-overflow geometry/indicator: %q", ansi.Strip(body))
 	}
 
-	for _, size := range [][2]int{{1, 1}, {10, 3}, {94, 5}} {
-		out, _ := s.Render(size[0], size[1])
+	for _, size := range [][2]int{{10, 11}, {94, 11}} {
+		m = resize(m, size[0], size[1])
+		out := m.View().Content
+		s := soulActive(m)
 		want := ansi.Cut(s.deps.marks.closeOnly+" close", 0, size[0])
-		if s.viewport != nil || ansi.Strip(out) != want || lipgloss.Height(out) > size[1] {
+		if s.viewport != nil || !strings.Contains(ansi.Strip(out), want) || m.metrics.outerBounds.y1-m.metrics.outerBounds.y0 > m.vp.Height() {
 			t.Fatalf("compact %v: %q, want close only %q", size, ansi.Strip(out), want)
 		}
 	}
-	out, _ := s.Render(0, 0)
-	if out != "" {
-		t.Fatalf("nonpositive: %q", out)
+	m = resize(m, 94, 0)
+	m.vp.SetHeight(0)
+	_ = m.View()
+	if out := m.renderBody(); out != "" {
+		t.Fatalf("nonpositive offer: %q", out)
 	}
 }
 
 func TestMecatuiSoulBoundedViewport_Scenario1_WrappedPhysicalEndpointsAndResize(t *testing.T) {
-	content := "spaced words and words\n" + strings.Repeat("longtoken", 12) + "\n界界界界界\ncontinuation at end"
+	content := "spaced words and words\n" + strings.Repeat("longtoken ", 80) + "\n界界界界界\ncontinuation at end"
 	m := soulScenario(t, content)
+	m = resize(m, 30, 42)
+	_ = m.View()
 	s := soulActive(m)
-	s.Render(18, 16)
+	bodyWidth := s.bodyWidth
 	expected := []string{}
 	for _, line := range strings.Split(content, "\n") {
-		expected = append(expected, strings.Split(ansi.Wrap(line, 18, ""), "\n")...)
+		expected = append(expected, strings.Split(ansi.Wrap(line, bodyWidth, ""), "\n")...)
 	}
 	if s.total != len(expected) || s.total <= s.viewport.Height() {
 		t.Fatalf("physical rows %d, want %d", s.total, len(expected))
@@ -115,18 +125,22 @@ func TestMecatuiSoulBoundedViewport_Scenario1_WrappedPhysicalEndpointsAndResize(
 		for range i {
 			s.viewport.Move(bounded.LineDown, s.total)
 		}
-		window, _ := s.Render(18, 16)
-		if !strings.Contains("\n"+ansi.Strip(window)+"\n", "\n"+row+"\n") {
+		m = resize(m, 30, 42)
+		window := m.View().Content
+		s = soulActive(m)
+		if !strings.Contains(ansi.Strip(window), row) {
 			t.Fatalf("physical row %d %q unreachable: %q", i, row, ansi.Strip(window))
 		}
 	}
 
 	s.viewport.Move(bounded.End, s.total)
-	out, _ := s.Render(18, 16)
-	if !strings.Contains(ansi.Strip(out), "continuation at\nend") || s.viewport.Offset() != s.total-s.viewport.Height() {
+	out := m.View().Content
+	if !strings.Contains(ansi.Strip(out), "continuation at end") || s.viewport.Offset() != s.total-s.viewport.Height() {
 		t.Fatalf("last physical row missing: %q", ansi.Strip(out))
 	}
-	s.Render(35, 25)
+	m = resize(m, 35, 31)
+	_ = m.View()
+	s = soulActive(m)
 	if s.viewport.Offset() > max(0, s.total-s.viewport.Height()) {
 		t.Fatal("resize did not clamp")
 	}
@@ -215,24 +229,29 @@ func TestMecatuiSoulBoundedViewport_Scenario2_OpenResultAndClose(t *testing.T) {
 }
 
 func TestMecatuiSoulBoundedViewport_Scenario2_RemappableNavigation(t *testing.T) {
-	m := soulScenario(t, soulScenarioRows())
-	s := soulActive(m)
+	m := soulScenario(t, strings.Repeat("wrapped physical soul rows ", 80))
 	m.keys.Up = key.NewBinding(key.WithKeys("ctrl+a"))
 	m.keys.Down = key.NewBinding(key.WithKeys("ctrl+b"))
 	m.keys.ScrollD = key.NewBinding(key.WithKeys("ctrl+g"))
 	m.keys.ScrollU = key.NewBinding(key.WithKeys("ctrl+h"))
 	m.keys.ScrollTop = key.NewBinding(key.WithKeys("ctrl+j"))
 	m.keys.ScrollBottom = key.NewBinding(key.WithKeys("ctrl+k"))
+	s := soulActive(m)
 	s.deps.keys = m.keys
+	m = resize(m, 30, 36)
 	_ = m.View()
-	h := s.viewport.Height()
+	s = soulActive(m)
+	h, total := s.viewport.Height(), s.total
+	if total <= h {
+		t.Fatalf("wrapped content did not overflow: total=%d height=%d", total, h)
+	}
 	for _, step := range []struct {
 		key  rune
 		want int
-	}{{'b', 1}, {'g', 1 + h}, {'h', 1}, {'a', 0}, {'k', 90 - h}, {'j', 0}} {
+	}{{'b', 1}, {'g', min(1+h, total-h)}, {'h', 1}, {'a', 0}, {'k', total - h}, {'j', 0}} {
 		mm, _ := m.Update(tea.KeyPressMsg{Code: step.key, Mod: tea.ModCtrl})
 		m = mm.(Model)
-		if got := s.viewport.Offset(); got != step.want {
+		if got := soulActive(m).viewport.Offset(); got != step.want {
 			t.Fatalf("ctrl+%c offset %d, want %d", step.key, got, step.want)
 		}
 	}
@@ -277,16 +296,36 @@ func TestMecatuiSoulBoundedViewport_Scenario2_WheelOwnershipAndCompactIsolation(
 	if s.viewport.Offset() != end || !m.vp.AtBottom() {
 		t.Fatal("end wheel escaped soul")
 	}
-	s.Render(5, 1)
+	m = resize(m, 10, 11)
+	_ = m.View()
+	s = soulActive(m)
 	if s.viewport != nil {
 		t.Fatal("compact constructed viewport")
 	}
-	if _, handled := s.HandleWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown}); !handled {
-		t.Fatal("compact soul must consume wheel")
+	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	if soulActive(m).viewport != nil || !m.vp.AtBottom() {
+		t.Fatal("compact wheel escaped soul or reconstructed viewport")
+	}
+
+	m = resize(m, 94, 30)
+	_ = m.View()
+	s = soulActive(m)
+	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = mm.(Model)
+	offset, conversationOffset := soulActive(m).viewport.Offset(), m.vp.YOffset()
+	m = resize(m, 94, 0)
+	m.vp.SetHeight(0)
+	_ = m.View()
+	if out := m.renderBody(); out != "" {
+		t.Fatalf("zero-height modal should not render: %q", out)
 	}
 	mm, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	m = mm.(Model)
-	if s.viewport != nil || !m.vp.AtBottom() {
-		t.Fatal("compact wheel escaped soul or reconstructed viewport")
+	if got := soulActive(m).viewport.Offset(); got != offset {
+		t.Fatalf("zero-height wheel moved invisible soul from %d to %d", offset, got)
+	}
+	if m.vp.YOffset() != conversationOffset {
+		t.Fatalf("zero-height wheel moved hidden conversation from %d to %d", conversationOffset, m.vp.YOffset())
 	}
 }

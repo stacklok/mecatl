@@ -4226,6 +4226,9 @@ func (m Model) endRun(stop string) Model {
 // The conversation viewport receives wheel events only while no modal is open.
 func (m Model) onMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
+		if m.width <= 0 || m.vp.Height() <= 0 {
+			return m, nil
+		}
 		cmd, _ := m.modal.HandleWheel(msg)
 		return m, cmd
 	}
