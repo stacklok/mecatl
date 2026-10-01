@@ -12,7 +12,7 @@
 
 A client needs to see when each tool call becomes safe to display so an operator can identify the long-running call in a concurrent batch. Every effective tool result therefore gets a transient `tool.result.available` projection as soon as its own execution, PostToolUse processing, repair, inbound review, and any release decision finish. The canonical `tool.result` remains authoritative and ordered for recorder, conversation, reconstruction, and model use.
 
-The owning current-behavior pages are the contributor [agent-loop architecture](../architecture/agent-loop.md) and the public [embedded agent-loop guide](../../user-docs/building/what-you-get/agent-loop.md). Their event-stream and read-batch descriptions will be corrected in the implementation PR after the behavior lands. The protobuf `Event.type` and `Event.tool_result` source comments will own the exact wire reference and regenerate the gRPC schema.
+The owning current-behavior pages are the contributor [agent-loop architecture](../architecture/agent-loop.md) and the public [agent-loop guide](../../user-docs/features/sessions/agent-loop.md). Their event-stream and read-batch descriptions will be corrected in the implementation PR after the behavior lands. The protobuf `Event.type` and `Event.tool_result` source comments will own the exact wire reference and regenerate the gRPC schema.
 
 ## Human decisions
 

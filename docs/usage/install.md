@@ -4,4 +4,4 @@ matlatl: orphan-intentional
 
 # Installation documentation moved
 
-See [Install Mecatl](../../user-docs/install.md).
+See [Install `mecatui`](../../user-docs/mecatui/installation.md).

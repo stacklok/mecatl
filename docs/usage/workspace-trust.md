@@ -4,4 +4,4 @@ matlatl: orphan-intentional
 
 # Workspace-trust documentation moved
 
-See [Permissions and posture](../../user-docs/features/permissions-and-posture.md#project-trust).
+See [Permissions and posture](../../user-docs/features/security-and-execution/permissions-and-posture.md#project-trust).

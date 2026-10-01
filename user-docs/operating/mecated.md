@@ -339,7 +339,7 @@ If the provider cannot supply metadata, configure a verified window under the ex
 provider/model key in operator-global `models.context_windows`, then restart
 `mecated` to load the settings. The deployment-wide `--context-window-override`
 takes precedence over that map. Use the provider's actual limit rather than a guessed
-value to bypass rejection; see [Context windows](/features/context-windows.md) for
+value to bypass rejection; see [Context windows](/features/sessions/context-windows.md) for
 configuration and precedence. Discovery metadata is process-local and reacquired
 after restart; previously successful metadata can remain usable until then even
 after a listing failure. It does not establish current inference authorization.
@@ -347,7 +347,7 @@ after a listing failure. It does not establish current inference authorization.
 This gate covers Service session entry, including failed-step retry and restored
 approval resumption. Direct child, utility, and team engine entry can still use the
 128000 defensive fallback for unknown models. For rejected text and attachment
-recovery in `mecatui`, see [model context troubleshooting](/features/choose-models.md#model-context-metadata-is-unavailable).
+recovery in `mecatui`, see [model context troubleshooting](/features/sessions/choose-models.md#model-context-metadata-is-unavailable).
 
 #### Offline mock providers (no credentials)
 

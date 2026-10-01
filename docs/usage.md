@@ -8,25 +8,25 @@ See [ADR 0321](./adr/0321-canonical-user-documentation-ownership.md) for the own
 
 | Legacy topic | Canonical page |
 | --- | --- |
-| Installation | [Install Mecatl](../user-docs/install.md) |
+| Installation | [Install `mecatui`](../user-docs/mecatui/installation.md) |
 | Offline demo | [See Mecatl in 60 seconds](../user-docs/building/getting-started/demo.md) |
-| `mecated` operation | [Run mecated standalone](../user-docs/building/deployment/mecated.md) |
-| Local microVM environments | [Local microVM environments](../user-docs/building/deployment/microvm-environments.md) |
-| Guardrails and permissions | [Permissions and posture](../user-docs/features/permissions-and-posture.md) |
-| Models and providers | [Choose models and providers](../user-docs/features/choose-models.md) |
-| Workspace trust | [Permissions and posture](../user-docs/features/permissions-and-posture.md#project-trust) |
-| Skills, commands, soul, and user model | [Skills, commands, and soul](../user-docs/features/skills-commands-and-soul.md) |
-| `mecak8s` | [Cloud-native k8s with mecak8s](../user-docs/building/deployment/mecak8s.md) |
+| `mecated` operation | [Run mecated standalone](../user-docs/operating/mecated.md) |
+| Local microVM environments | [Local microVM environments](../user-docs/operating/microvm-environments.md) |
+| Guardrails and permissions | [Permissions and posture](../user-docs/features/security-and-execution/permissions-and-posture.md) |
+| Models and providers | [Choose models and providers](../user-docs/features/sessions/choose-models.md) |
+| Workspace trust | [Permissions and posture](../user-docs/features/security-and-execution/permissions-and-posture.md#project-trust) |
+| Skills, commands, soul, and user model | [Skills, commands, and soul](../user-docs/features/agent-behavior/skills-commands-and-soul.md) |
+| `mecak8s` | [Cloud-native k8s with mecak8s](../user-docs/operating/mecak8s.md) |
 | gRPC API | [gRPC API reference](../user-docs/reference/grpc-api.md) |
 | HTTP and SSE API | [HTTP and SSE API reference](../user-docs/reference/http-sse-api.md) |
-| Configuration | [Configure Mecatl](../user-docs/building/deployment/settings.md) |
-| Hooks | [Hook system](../user-docs/building/what-you-get/hooks.md) |
-| `mecatequi` CI | [Single-shot CI with mecatequi](../user-docs/building/deployment/mecatequi.md) |
+| Configuration | [Configure Mecatl](../user-docs/operating/settings.md) |
+| Hooks | [Hook system](../user-docs/features/security-and-execution/hooks.md) |
+| `mecatequi` CI | [Single-shot CI with mecatequi](../user-docs/operating/mecatequi.md) |
 | Troubleshooting | [Mecatl documentation](../user-docs/intro.md) |
 
 ## Plan approval
 
-See [Permissions and guardrails](../user-docs/building/what-you-get/permissions.md#plan-mode).
+See [Permissions and posture](../user-docs/features/security-and-execution/permissions-and-posture.md#plan-mode).
 
 ## Provider login and ToolHive
 
@@ -55,4 +55,4 @@ Use `thv llm` tooling for ToolHive's externally owned credential lifecycle; Meca
 does not print or copy a ToolHive token.
 `thv llm token` tooling.
 
-See [Run mecated standalone](../user-docs/building/deployment/mecated.md#a-toolhive-managed-llm-gateway-no-api-key-needed).
+See [Run mecated standalone](../user-docs/operating/mecated.md#operator-defined-providers).

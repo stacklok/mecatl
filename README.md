@@ -59,7 +59,7 @@ Homebrew:
 brew install stacklok/tap/mecatl
 ```
 
-[Install and verify Mecatl](./user-docs/install.md) covers Conda-forge,
+[Install and verify Mecatl](./user-docs/mecatui/installation.md) covers Conda-forge,
 release archives, verification, and source builds. Build `mecademo`,
 `mecatequi`, and `mecak8s` from a checkout with `task build`.
 
@@ -75,7 +75,7 @@ The supplied `mecak8s` runtime demonstrates this deployment model. It uses
 Redis for session state and event logs, Kubernetes leases to ensure one writer
 per session, and a drain path for replacing pods. You can also embed the engine
 and provide the backing services and execution environment yourself. See
-[What is a cloud-native harness?](./user-docs/building/cloud-native-harness.md)
+[What is a cloud-native harness?](./user-docs/cloud-native-harness.md)
 for the runtime guarantees and boundaries.
 
 ## Open and modular by design

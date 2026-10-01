@@ -30,7 +30,7 @@ A new interaction should follow the same event and capability boundaries as an
 existing one: do not show an unavailable control as if it were actionable, and
 do not substitute a client guess for a server-confirmed result. See the
 [API architecture](architecture/api-surface.md) for the wire boundary and
-[permissions and posture](../user-docs/features/permissions-and-posture.md)
+[permissions and posture](../user-docs/features/security-and-execution/permissions-and-posture.md)
 for the operator-facing meaning of safety controls.
 
 ## Layout and navigation

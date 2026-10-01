@@ -88,7 +88,7 @@ task build
 ```
 
 Set a real provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
-`OPENROUTER_API_KEY`) in that shell first. See [Choose models and providers](../../../../user-docs/features/choose-models.md).
+`OPENROUTER_API_KEY`) in that shell first. See [Choose models and providers](../../../../user-docs/features/sessions/choose-models.md).
 
 ## 3. Configure and run the bot
 
