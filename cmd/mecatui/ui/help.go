@@ -6,10 +6,12 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/stacklok/mecatl/cmd/mecatui/client"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/welcome"
 )
 
@@ -38,50 +40,94 @@ type helpRow struct {
 // widening just shifts the action column right uniformly.
 const helpKeyWidth = 22
 
+// helpMinCardWidth keeps the Help overlay stable and readable once the terminal
+// is large enough, while helpCardWidthFraction prevents it occupying the entire
+// conversation on wider terminals.
+const (
+	helpMinCardWidth      = 69
+	helpCardWidthFraction = 80
+)
+
 // renderHelpOverlay draws the "?" keys-&-features overlay centred over the
-// conversation region. When the body is taller than the offered height, it windows
-// complete ANSI lines and reserves a row for its scroll indicator.
-func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height, scroll int, hk helpKeys) string {
-	body := helpBody(th, caps, hk)
+// conversation region. Its root-owned viewport wraps the live help lines to the
+// card's inner width before windowing them.
+func renderHelpOverlay(th theme.Theme, caps client.Capabilities, width, height int, viewport *bounded.Viewport, hk helpKeys) string {
+	lines := helpRenderedLines(helpBody(th, caps, hk))
 	if height <= 0 {
-		return centerCard(th, body, width, height)
+		return centerCard(th, strings.Join(lines, "\n"), width, height)
 	}
-	lines := helpRenderedLines(body)
-	cardChrome := lipgloss.Height(th.Style("askCard").Render(""))
-	if height <= cardChrome {
-		// A card cannot fit in this exceptionally small viewport. Keep the overlay
-		// usable rather than overflowing the conversation region.
-		return lines[clampScroll(scroll, len(lines), 1)]
+	view, total, window := helpViewportView(th, lines, width, height, viewport, hk)
+	if len(view.Rows) == 0 {
+		return ""
 	}
-	window := helpWindowHeight(th, height, len(lines))
-	scroll = clampScroll(scroll, len(lines), window)
-	body = strings.TrimSuffix(windowRenderedLinesWithIndicator(th, lines, scroll, window, func(start, end, total int) string {
-		return helpScrollIndicator(hk, start, end, total)
-	}), "\n")
-	return centerCard(th, body, width, height)
+	if height <= lipgloss.Height(th.Style("askCard").Render("")) {
+		return view.Rows[0]
+	}
+	body := strings.Join(view.Rows, "\n")
+	if total > window {
+		for _, indicator := range helpIndicatorRows(hk, view.Above, view.Above+len(view.Rows), total, helpBodyWidth(th, width)) {
+			body += "\n" + th.Style("muted").Render(indicator)
+		}
+	}
+	return centerHelpCard(th, body, width, height)
+}
+
+func centerHelpCard(th theme.Theme, body string, width, height int) string {
+	card := th.Style("askCard").Width(helpCardWidth(width)).Render(body)
+	if width <= 0 || height <= 0 {
+		return card
+	}
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card)
+}
+
+// helpViewportView configures the caller-owned help viewport for one frame. It
+// first measures wrapped content with every available body row, then reserves a
+// final row for Help's own navigation indicator only when the content overflows.
+func helpViewportView(th theme.Theme, lines []string, width, height int, viewport *bounded.Viewport, hk helpKeys) (bounded.ViewportView, int, int) {
+	bodyWidth := helpBodyWidth(th, width)
+	cardHeight := lipgloss.Height(th.Style("askCard").Render(""))
+	bodyHeight := max(1, height-cardHeight)
+	measure := *viewport
+	measure.SetGeometry(bodyWidth, bodyHeight, 0, bounded.Wrap)
+	measured := measure.View(lines)
+	total := measured.Above + len(measured.Rows) + measured.Below
+	window := bodyHeight
+	if total > window {
+		window = max(1, bodyHeight-len(helpIndicatorRows(hk, 0, 0, total, bodyWidth)))
+	}
+	viewport.SetGeometry(bodyWidth, window, 0, bounded.Wrap)
+	view := viewport.View(lines)
+	total = view.Above + len(view.Rows) + view.Below
+	return view, total, window
+}
+
+func helpCardWidth(width int) int {
+	if width <= 0 {
+		return helpMinCardWidth
+	}
+	return min(width, max(helpMinCardWidth, width*helpCardWidthFraction/100))
+}
+
+func helpBodyWidth(th theme.Theme, width int) int {
+	return max(1, helpCardWidth(width)-th.Style("askCard").GetHorizontalFrameSize())
+}
+
+func helpIndicatorRows(hk helpKeys, start, end, total, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	return strings.Split(ansi.Hardwrap(helpScrollIndicator(hk, start, end, total), width, true), "\n")
+}
+
+// helpRenderedLines splits the independently styled help body into source lines.
+func helpRenderedLines(body string) []string {
+	return strings.Split(body, "\n")
 }
 
 // helpScrollIndicator keeps the navigation affordances in every clipped frame,
 // including the initial top view where the help body's footer is not visible.
 func helpScrollIndicator(hk helpKeys, start, end, total int) string {
 	return fmt.Sprintf("lines %d–%d of %d · %s close · %s/%s scroll · %s page · %s jump", start+1, end, total, hk.close, hk.navUp, hk.navDown, hk.scroll, hk.jump)
-}
-
-// helpRenderedLines splits the help body into complete styled lines. helpBody
-// renders every line independently, so windowing cannot leave a terminal style open.
-func helpRenderedLines(body string) []string {
-	return strings.Split(body, "\n")
-}
-
-// helpWindowHeight accounts for the card chrome and its scroll indicator. The
-// indicator replaces one content row only when it is needed, keeping the card within
-// the actual conversation viewport.
-func helpWindowHeight(th theme.Theme, height, total int) int {
-	window := max(1, height-lipgloss.Height(th.Style("askCard").Render("")))
-	if total > window {
-		window = max(1, window-1)
-	}
-	return window
 }
 
 // helpBody builds the overlay's text: a title, grouped chord sections (each row

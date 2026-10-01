@@ -71,7 +71,7 @@ func qmark() tea.KeyPressMsg { return tea.KeyPressMsg{Code: '?', Text: "?"} }
 // TestHelpOverlayEmbeddedGolden locks the help overlay under embedded defaults:
 // mcp/commands/skills rows carry [not enabled]; memory/teams/shell are available.
 func TestHelpOverlayEmbeddedGolden(t *testing.T) {
-	m := helpModel(t, embeddedCaps())
+	m := applyAll(helpModel(t, embeddedCaps()), tea.WindowSizeMsg{Width: 200, Height: 30})
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "help_embedded.golden", got)
@@ -81,7 +81,7 @@ func TestHelpOverlayEmbeddedGolden(t *testing.T) {
 // server: every row available, no [not enabled] tags, plus the commands +
 // memory prose lines.
 func TestHelpOverlayAllOnGolden(t *testing.T) {
-	m := helpModel(t, allOnCaps())
+	m := applyAll(helpModel(t, allOnCaps()), tea.WindowSizeMsg{Width: 200, Height: 30})
 	m = goldenStatusFrame(t, m)
 	got := stripANSI([]byte(m.View().Content))
 	compareGolden(t, "help_all_on.golden", got)
