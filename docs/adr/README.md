@@ -232,7 +232,8 @@ Documentation/citation conventions are in [`docs/design/README.md`](../design/RE
 - [0312 — Confidential ToolHive broker client credentials](./0312-confidential-toolhive-broker-client.md)
 - [0314 — Dynamic Client Registration for MCP broker upstreams](./0314-mcp-broker-dcr-client.md)
 - [0325 — Durable Dynamic Client Registration for direct MCP profiles](./0325-direct-mcp-dcr.md)
-- [0345 — Host-local direct MCP onboarding and credential custody](./0345-direct-mcp-onboarding.md) *(proposed)*
+- [0345 — Host-local direct MCP onboarding and credential custody](./0345-direct-mcp-onboarding.md) *(proposed; decision 5's wrapping-key garbage-collection deferral partially superseded by 0362 for the explicit reset operation)*
+- [0362 — Root-scoped native MCP custody reset](./0362-native-mcp-custody-reset.md) *(proposed; partially supersedes 0345 decision 5)*
 - [0326 — Lazy ToolHive grants refresh declared metadata](./0326-lazy-toolhive-metadata-refresh.md)
 - [0335 — Idle-session MCP broker workspace refresh](./0335-idle-session-broker-workspace-refresh.md) *(Decision 6 superseded by 0358)*
 - [0358 — Durable workspace-enrollment broker authority provenance](./0358-durable-workspace-enrollment-broker-authority.md) *(proposed; supersedes ADR 0335 Decision 6 only)*

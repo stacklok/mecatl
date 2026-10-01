@@ -289,6 +289,11 @@ func resolveMCPSubcommand(args []string) commandResolution {
 	if len(args) >= 3 && args[2] == "remove" {
 		return commandResolution{handled: true, run: subcommandAction(func(_ io.Reader, stdout, _ io.Writer) error { return runMCPRemove(args[3:], stdout) })}
 	}
+	if len(args) >= 3 && args[2] == "reset-custody" {
+		return commandResolution{handled: true, run: subcommandAction(func(stdin io.Reader, stdout, stderr io.Writer) error {
+			return runMCPResetCustody(args[3:], stdin, stdout, stderr)
+		})}
+	}
 	if len(args) >= 3 && args[2] == "login" {
 		return commandResolution{
 			handled: true,
@@ -301,7 +306,7 @@ func resolveMCPSubcommand(args []string) commandResolution {
 }
 
 func writeMCPHelp(out io.Writer) {
-	_, _ = fmt.Fprintln(out, "Usage: mecated mcp <subcommand>\n\nSubcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]  discover, save, and authorize a direct OAuth server\n  list [--file PATH]                                                show configured profiles without network or prompts\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--file PATH]                                         remove a local profile (no upstream revocation)\n\nLifecycle settings are host-local; changes affect newly started daemons. Use mecated mcp login SERVER to authorize a profile.")
+	_, _ = fmt.Fprintln(out, "Usage: mecated mcp <subcommand>\n\nSubcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]  discover, save, and authorize a direct OAuth server\n  list [--file PATH]                                                show configured profiles without network or prompts\n  reset-custody NAME [--file PATH]                                discard and recreate one native MCP custody root\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--file PATH]                                         remove a local profile (no upstream revocation)\n\nLifecycle settings are host-local; changes affect newly started daemons. Use mecated mcp login SERVER to authorize a profile.")
 }
 
 func mcpUsageError(argv []string) error {
@@ -309,7 +314,7 @@ func mcpUsageError(argv []string) error {
 	if len(argv) >= 3 {
 		sub = argv[2]
 	}
-	const commands = "available subcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]\n  list [--file PATH]\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--file PATH]"
+	const commands = "available subcommands:\n  add NAME URL [--file PATH] [--credential-store auto|keyring|file]\n  list [--file PATH]\n  reset-custody NAME [--file PATH]\n  login SERVER [--no-browser] [--file PATH | --permission-config PATH ...] [--reset-dcr-registration | --retry-dcr-registration]\n  remove NAME [--file PATH]"
 	if sub == "" {
 		return errors.New("mcp: missing subcommand\n" + commands)
 	}
