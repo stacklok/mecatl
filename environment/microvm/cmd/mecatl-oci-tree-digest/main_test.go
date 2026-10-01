@@ -16,6 +16,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	gomicrovmimage "github.com/stacklok/go-microvm/image"
+
 	"github.com/stacklok/mecatl/environment/microvm"
 )
 
