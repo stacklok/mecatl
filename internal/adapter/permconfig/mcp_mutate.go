@@ -64,6 +64,7 @@ func addDirectMCPServer(data []byte, name, endpoint, issuer, root, keyDeclaratio
 	}
 	if serversNode == nil {
 		entry := directMCPEntry("servers:\n" + directMCPServerEntry(name, endpoint, issuer, root, keyDeclaration))
+		alignDirectMCPEntry(entry, mcpMap)
 		mcpMap.Values = append(mcpMap.Values, entry)
 		return validateDirectMCPDocument(doc)
 	}
@@ -128,8 +129,9 @@ func RemoveDirectMCPServer(data []byte, name string) ([]byte, error) {
 		if ok && strings.EqualFold(value.Value, name) {
 			if len(servers.Values) == 1 {
 				if len(mcpMap.Values) == 1 {
-					mcpMap.Values = nil
-					mcpMap.Values = append(mcpMap.Values, directMCPEntry("mode: global\n"))
+					entry := directMCPEntry("mode: global\n")
+					alignDirectMCPEntry(entry, mcpMap)
+					mcpMap.Values = []*ast.MappingValueNode{entry}
 				} else {
 					for j, entry := range mcpMap.Values {
 						if entry.Value == serversNode {
@@ -178,6 +180,20 @@ func directMCPEntry(text string) *ast.MappingValueNode {
 		panic("invalid static MCP settings YAML")
 	}
 	return doc.Mapping().Values[0]
+}
+
+// alignDirectMCPEntry shifts a standalone fragment, parsed at column 1, to the
+// column of parent's existing keys. Block serialization takes indentation from
+// token positions, so an unshifted entry would land at the document root.
+func alignDirectMCPEntry(entry *ast.MappingValueNode, parent *ast.MappingNode) {
+	if len(parent.Values) == 0 {
+		return
+	}
+	currentColumn := parent.Values[0].Key.GetToken().Position.Column
+	entryColumn := entry.Key.GetToken().Position.Column
+	if currentColumn > entryColumn {
+		entry.AddColumn(currentColumn - entryColumn)
+	}
 }
 
 func directMCPServerNode(name, endpoint, issuer, root, keyDeclaration string) ast.Node {

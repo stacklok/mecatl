@@ -83,3 +83,33 @@ func TestAddDirectMCPServerWithKeyFileModeNestsPath(t *testing.T) {
 		t.Fatalf("local.key.file = %#v, want path /tmp/mcp-credential-key:\n%s", local.Key.File, added)
 	}
 }
+
+// TestDirectMCPMutationNestsUnderModeOnlySection covers an mcp section that
+// holds only mode (the shape removing the last server leaves): the inserted
+// servers key, and the mode re-added on removal, must stay under mcp.
+func TestDirectMCPMutationNestsUnderModeOnlySection(t *testing.T) {
+	for _, before := range []string{"mcp:\n  mode: global\n", "mcp:\n    mode: global\n"} {
+		added, err := AddDirectMCPServer([]byte(before), "Calendar", "https://mcp.example/mcp", "https://issuer.example", "/tmp/credentials", "MECATL_MCP_CREDENTIAL_KEY")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := parseYAML(added)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.MCP == nil || cfg.MCP.Mode != "global" || len(cfg.MCP.Servers) != 1 || cfg.MCP.Servers[0].Name != "Calendar" {
+			t.Fatalf("server not nested under mcp beside mode:\n%s", added)
+		}
+		removed, err := RemoveDirectMCPServer(added, "calendar")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err = parseYAML(removed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.MCP == nil || cfg.MCP.Mode != "global" || len(cfg.MCP.Servers) != 0 {
+			t.Fatalf("mode not retained under mcp after removing the last server:\n%s", removed)
+		}
+	}
+}
