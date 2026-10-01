@@ -11,6 +11,21 @@
 
 After a normal embedded `mecatui` exit, the operator sees an exact command to resume the final active chat, a separately labelled `--resume-latest` alternative, and a short factual session summary. The existing JSON-quoted `final-session-id` stderr record remains intact for scripts. A connected client's human-readable handoff is optional; the required behavior is limited to embedded mode.
 
+## Illustrative output
+
+For a clean embedded exit with an available snapshot, aim for a compact block like this after the terminal is restored:
+
+```text
+mecatui: final-session-id="01JOPAQUESESSIONID"
+Session: Fix the failing tests
+Model calls: 12
+Tokens (main): 29,713 input, 1,807 output, 6,432 cache read
+Resume: mecatui --resume '01JOPAQUESESSIONID'
+Or: mecatui --resume-latest (may select a different chat)
+```
+
+This is presentation direction, not a byte-for-byte golden. The interface contract and acceptance criteria govern the record, data sources, shell safety, and failure cases; a missing title or snapshot omits the corresponding summary lines. The embedded server's separate startup notice is not shown here.
+
 ## Human decisions
 
 None — the operator selected embedded mode as the required path, made connected-mode presentation optional based on implementation complexity, and requested the exact resume command, `--resume-latest` guidance, title, model-call count, and token counts. This plan defines their sources and failure behavior.
