@@ -1,6 +1,6 @@
 # ADR 0369 — Model aliases and delegation selectors use provider/model pairs
 
-- Status: Proposed
+- Status: Accepted in this implementation candidate; authoritative on merge
 - Date: 2026-09-26; amended 2026-09-27
 - Scope: composition-owned model aliases and project model configuration; delegated child-engine selection in `Subagent`, `Parallel`, and `Team`; the agent-facing `DiscoverModels` inventory; delegation observability; and model-visible discovery guidance.
 - Supersedes: ADR 0030 for model-only alias targets and trusted-project `models:` bindings, and ADR 0031 and ADR 0034 for the assumption that an explicit delegation selector and router target are same-provider model strings. Their fixed-provider session replay, slot taxonomy, classifier, breaker, automatic-routing evidence, and fail-soft automatic-routing rules otherwise remain unchanged.

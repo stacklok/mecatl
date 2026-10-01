@@ -4,7 +4,7 @@
 **Work classification:** Architectural — changes the durable alias and project-configuration policy, introduces cross-provider model targets across existing consumers, reserves a virtual provider namespace, expands tool/protobuf/event contracts, and changes model-visible delegation routing.
 **Decision record:** [ADR 0369](../adr/0369-delegation-provider-model-selectors.md)
 **Phase:** provider-aware aliases and explicit delegation selection
-**Status:** in-progress, 2026-09-27. Directing-human decisions and direct-amendment authorization recorded in this conversation.
+**Status:** landed in this implementation candidate, 2026-09-27; authoritative on merge. Directing-human decisions and direct-amendment authorization recorded in this conversation.
 **Delivery:** Split, with a directing-human-authorized direct contract amendment included in the sole Implementation PR #2019. Alias resolution, configuration compatibility, the cross-provider child factory, model-facing schemas, discovery results, and durable event projections remain one implementation candidate.
 **Expected tasks:** deferred to orchestration
 
