@@ -480,6 +480,10 @@ func registerParallelTool(ctx context.Context, cfg Config, cat *tool.Catalog, re
 		// router OFF the Parallel tool runs byte-identically on the shared branch child.
 		agent.WithParallelEngineFactory(
 			buildParallelEngineFactory(cfg, reg, s.provider, s.providerID, s.model, forceCopyRunner)),
+		agent.WithParallelTargetEngineFactory(
+			buildParallelTargetEngineFactory(cfg, reg, s.provider, s.providerID, forceCopyRunner)),
+		agent.WithParallelSelectorResolver(buildSubagentSelectorResolver(cfg, reg, s.providerID)),
+		agent.WithParallelProvider(s.providerID),
 	}
 	// NO nil fallback here: Phase A builds exactly ONE reaper per process —
 	// silently minting a per-assembly LRU would multiply the ForkPreservedCap
@@ -527,7 +531,7 @@ func registerTeamTools(ctx context.Context, cfg Config, cat *tool.Catalog, reg *
 		}
 		return
 	}
-	factory, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(ctx, cfg, reg, s.provider, s.providerID, s.model, refMgr, a.agentReg, a.skillIndex, a, s.noFS)
+	factory, selectorFactory, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(ctx, cfg, reg, s.provider, s.providerID, s.model, refMgr, a.agentReg, a.skillIndex, a, s.noFS)
 	cat.MustRegister(agent.NewTeamTool(
 		agent.TeamMemberEngineFactory(factory),
 		agent.WithTeamToolForker(fk),
@@ -537,6 +541,8 @@ func registerTeamTools(ctx context.Context, cfg Config, cat *tool.Catalog, reg *
 		agent.WithTeamToolHooks(teamHooks),
 		agent.WithTeamToolStore(store),
 		agent.WithTeamToolTokenBudget(cfg.MaxTeamTokens),
+		agent.WithTeamSelectorResolver(buildSubagentSelectorResolver(cfg, reg, s.providerID)),
+		agent.WithTeamToolSelectorFactory(selectorFactory),
 	))
 	cat.MustRegister(agent.NewInspectMemberToolWithOwnership(store, cfg.OwnershipEnforced))
 	if s.narrate {

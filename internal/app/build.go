@@ -7370,20 +7370,33 @@ func buildWritableSubagentEngineFactory(cfg Config, provReg *providerRegistry, p
 // member factories. composition owns the category→model→engine mapping; engine/agent only
 // ever sees func(string)(*Engine,bool).
 func buildParallelEngineFactory(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, _ string, runner tool.CommandRunner) func(model string) (*agent.Engine, bool) {
+	targetFactory := buildParallelTargetEngineFactory(cfg, provReg, provider, parentProviderID, runner)
 	return func(model string) (*agent.Engine, bool) {
-		model = strings.TrimSpace(model)
+		return targetFactory(agent.ModelTarget{Model: model})
+	}
+}
+
+func buildParallelTargetEngineFactory(cfg Config, provReg *providerRegistry, parentProvider port.LLMProvider, parentProviderID string, runner tool.CommandRunner) func(agent.ModelTarget) (*agent.Engine, bool) {
+	return func(target agent.ModelTarget) (*agent.Engine, bool) {
+		providerID := strings.TrimSpace(target.Provider)
+		if providerID == "" {
+			providerID = parentProviderID
+		}
+		model := strings.TrimSpace(target.Model)
 		if model == "" {
 			return nil, false
 		}
-		// Use the routed model DIRECTLY — NOT through resolveDefaultChildModel (which would
-		// re-run the def-less `SubagentModel > parent` chain and discard the routed id when a
-		// cheap-child default is configured). The routed id is the ALREADY-RESOLVED concrete
-		// model composition's buildModelRouterTask produced; the same discipline
-		// buildSubagentEngineFactory uses for a per-call model override. The branch catalog
-		// mirrors parallelChildDeps exactly (Read/Grep/Glob/Edit/Write + Shell when wired).
+		provider := parentProvider
+		if providerID != parentProviderID {
+			entry, ok := provReg.Lookup(providerID)
+			if !ok {
+				return nil, false
+			}
+			provider = entry.provider
+		}
 		childCat := writableExplorerCatalog(runner, "routed parallel child tool catalog")
-		windowFn := childWindowFor(cfg, provReg, parentProviderID, model)
-		deps := childEngineDepsForProvider(cfg, "parallel:model="+model, provider, session.ProviderModelID{ProviderID: parentProviderID, ModelID: model}, windowFn,
+		windowFn := childWindowFor(cfg, provReg, providerID, model)
+		deps := childEngineDepsForProvider(cfg, "parallel:model="+model, provider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn,
 			childCat, promptConfig(modelCfgFor(cfg, model), cfg.gitStatus), nil)
 		return agent.NewEngine(deps), true
 	}
@@ -8224,7 +8237,7 @@ func routeChildForker(cfg Config, local tool.EnvironmentForker) tool.Environment
 // both are filesystem acts), NO shell runners, and every member gets the no-FS
 // child surface (see buildMemberEngine's noFS branch). `a` carries the catalog
 // assets the no-FS member surface registers over; it is read only when noFS.
-func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, tool.EnvironmentForker, tool.EnvironmentForker, func(tool.Workspace) tool.Workspace, port.HookRunner) {
+func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, mainMgr *mcp.Manager, agentReg *agents.Registry, skillIdx skillIndex, a catalogAssets, noFS bool) (server.MemberEngineFactory, func(*team.Team, agent.MemberSpec, agent.ResolvedModelSelector) agent.MemberBuild, tool.EnvironmentForker, tool.EnvironmentForker, func(tool.Workspace) tool.Workspace, port.HookRunner) {
 	// A single hooks runner shared by the supervisor and the member coordination
 	// tools. hookexec.New(nil) matches buildEngine's default: the configured-hook map
 	// is not yet wired from cfg anywhere, so this is an inert (no-op) runner today,
@@ -8236,7 +8249,8 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 		// loudly), no shell runners, and the no-FS member catalog for everyone. A
 		// no-FS base can never be relaxed, so no shared-base re-view either.
 		factory := buildMemberEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, nil, nil, false, mainMgr, a, true)
-		return factory, nil, nil, nil, teamHooks
+		selectorFactory := buildMemberSelectorEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, nil, nil, false, mainMgr, a, true)
+		return factory, selectorFactory, nil, nil, nil, teamHooks
 	}
 	// agentReg is the SHARED registry (Build's single resolveAgentSeam): a
 	// member whose spec.AgentType names a def adopts that def's scoped
@@ -8282,7 +8296,8 @@ func buildTeamWiring(_ context.Context, cfg Config, provReg *providerRegistry, p
 	mutatingRunner := buildForceCopyRunner(cfg)
 	roIsolationAvailable := memberRunner != nil
 	factory := buildMemberEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, memberRunner, mutatingRunner, roIsolationAvailable, mainMgr, a, false)
-	return factory, fk, roFk, childWorkspaceView, teamHooks
+	selectorFactory := buildMemberSelectorEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, agentReg, skillIdx, memberRunner, mutatingRunner, roIsolationAvailable, mainMgr, a, false)
+	return factory, selectorFactory, fk, roFk, childWorkspaceView, teamHooks
 }
 
 // applyTeamConfig wires the opt-in agent-teams capability into the server.Config.
@@ -8304,7 +8319,7 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 	// agentReg is the ONE registry Build resolved (resolveAgentSeam).
 	// The gRPC CreateTeam path is always the DEFAULT (filesystem) profile — a
 	// no-FS team exists only inside a no-fs session's in-catalog Team tool.
-	factory, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillIdx, a, false)
+	factory, _, fk, roFk, sharedBaseWorkspace, teamHooks := buildTeamWiring(context.Background(), cfg, reg, provider, reg.Default(), cfg.Model, mainMgr, agentReg, skillIdx, a, false)
 	svcCfg.MemberEngine = factory
 	if a.mcpRuntimes != nil {
 		svcCfg.MemberEngineForOperation = func(ctx context.Context) server.MemberEngineFactory {
@@ -8313,7 +8328,7 @@ func applyTeamConfig(svcCfg *server.Config, cfg Config, reg *providerRegistry, p
 			if candidate == nil {
 				return nil
 			}
-			operationFactory, _, _, _, _ := buildTeamWiring(ctx, cfg, reg, provider, reg.Default(), cfg.Model, candidate.manager, agentReg, skillIdx, runtimeAssets, false)
+			operationFactory, _, _, _, _, _ := buildTeamWiring(ctx, cfg, reg, provider, reg.Default(), cfg.Model, candidate.manager, agentReg, skillIdx, runtimeAssets, false)
 			return operationFactory
 		}
 	}
@@ -8416,22 +8431,37 @@ func applyMemberRoute(cfg Config, provReg *providerRegistry, parentProviderID, r
 //
 //nolint:gocyclo // Member catalog shaping and its generation lease share one teardown transaction.
 func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, teamHooks port.HookRunner, reg *agents.Registry, skillIdx skillIndex, runner, mutatingRunner tool.CommandRunner, roIsolationAvailable bool, mainMgr *mcp.Manager, a catalogAssets, noFS bool) server.MemberEngineFactory {
-	cfg.operatorProfileSource, _ = a.userModelStore.(prompt.OperatorProfileSource)
+	selectorFactory := buildMemberSelectorEngine(cfg, provReg, provider, parentProviderID, parentModel, teamHooks, reg, skillIdx, runner, mutatingRunner, roIsolationAvailable, mainMgr, a, noFS)
 	return func(t *team.Team, spec agent.MemberSpec, routedModel string) agent.MemberBuild {
+		selected := agent.ResolvedModelSelector{}
+		if strings.TrimSpace(spec.AgentType) == "" {
+			selected.Target.Model = routedModel
+		}
+		return selectorFactory(t, spec, selected)
+	}
+}
+
+//nolint:gocyclo // Member catalog shaping and its generation lease share one teardown transaction.
+func buildMemberSelectorEngine(cfg Config, provReg *providerRegistry, provider port.LLMProvider, parentProviderID, parentModel string, teamHooks port.HookRunner, reg *agents.Registry, skillIdx skillIndex, runner, mutatingRunner tool.CommandRunner, roIsolationAvailable bool, mainMgr *mcp.Manager, a catalogAssets, noFS bool) func(*team.Team, agent.MemberSpec, agent.ResolvedModelSelector) agent.MemberBuild {
+	cfg.operatorProfileSource, _ = a.userModelStore.(prompt.OperatorProfileSource)
+	return func(t *team.Team, spec agent.MemberSpec, selected agent.ResolvedModelSelector) agent.MemberBuild {
 		generationClose, err := retainHarnessGeneration(cfg)
 		if err != nil {
 			return agent.MemberBuild{}
 		}
 		if noFS {
-			childProvider, providerID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
-			// OPT-IN model router: an undefined member the supervisor classified
-			// runs on the ALREADY-RESOLVED routed model with its re-derived window, through
-			// the SAME contamination-safe newChildEngineForProvider path the default uses.
-			// (The no-FS member is always undefined here — agent-def adoption is skipped on
-			// this branch — so any routedModel applies.) Empty routedModel = the default model.
-			if rm := strings.TrimSpace(routedModel); rm != "" {
-				model = rm
-				windowFn = childWindowFor(cfg, provReg, parentProviderID, rm)
+			childProvider, childProviderID, model, windowFn := resolveChildProvider(cfg, provReg, agents.AgentDef{}, provider, parentProviderID, parentModel)
+			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
+				model = selectedModel
+				if selectedProvider := strings.TrimSpace(selected.Target.Provider); selectedProvider != "" && selectedProvider != childProviderID {
+					entry, ok := provReg.Lookup(selectedProvider)
+					if !ok {
+						_ = generationClose()
+						return agent.MemberBuild{}
+					}
+					childProvider, childProviderID = entry.provider, selectedProvider
+				}
+				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
 			}
 			classified := newNoFSClassifiedChildCatalog(context.Background(), cfg, a)
 			cat := classified.catalog
@@ -8446,8 +8476,8 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			}
 			mustValidateClassifiedCatalog(classified, "no-FS team member tool catalog")
 			pc := applyNoFSPosture(promptConfig(modelCfgFor(cfg, model), ""), noFSMemberNote)
-			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn, cat, pc, nil)
-			return agent.MemberBuild{Engine: eng, Close: generationClose, MCPToolNames: exempt}
+			eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, cat, pc, nil)
+			return agent.MemberBuild{Engine: eng, Provider: childProviderID, Close: generationClose, MCPToolNames: exempt}
 		}
 		classified := newClassifiedCatalog()
 		cat := classified.catalog
@@ -8464,12 +8494,12 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// def-less model the call site supplied (the build-time default, or a
 			// session-selected provider in Half B). A DEFINED member overrides these
 			// via resolveProviderModel below.
-			model         = defaultModel
-			pc            = promptConfig(modelCfgFor(cfg, defaultModel), cfg.gitStatus)
-			childProvider = defaultProvider
-			providerID    = defaultProviderID
-			windowFn      = defaultWindowFn
-			mode          session.PermissionMode
+			model           = defaultModel
+			pc              = promptConfig(modelCfgFor(cfg, defaultModel), cfg.gitStatus)
+			childProvider   = defaultProvider
+			childProviderID = defaultProviderID
+			windowFn        = defaultWindowFn
+			mode            session.PermissionMode
 			// memberLimits carries ONLY the def-set per-round stop conditions (zero =
 			// unset); AddMember per-field merges them onto the team default (s.limits).
 			memberLimits session.Limits
@@ -8561,7 +8591,11 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// Resolve the def's (provider, model, window) via the SHARED helper: a
 			// pinned-and-known provider switches the member engine; a def pinning none
 			// inherits the parent. resolve ONCE; thread the model into agentPromptConfig.
-			childProvider, providerID, model, windowFn = resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
+			childProvider, childProviderID, model, windowFn = resolveChildProvider(cfg, provReg, def, provider, parentProviderID, parentModel)
+			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
+				model = selectedModel
+				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
+			}
 			bodies, missing := preloadedSkillBodies(def, skillIdx)
 			for _, name := range missing {
 				cfg.diag().Log(context.Background(), port.LevelWarn, "team member agent def references an unknown skill; not preloaded",
@@ -8598,9 +8632,21 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			// member, so run it on the ALREADY-RESOLVED routed model in place of the
 			// def-less default (a DEFINED member never reaches here — its def pinned the
 			// model via resolveChildProvider above). applyMemberRoute is a no-op on an empty
-			// routedModel (router off, miss, or zero-caps RunTeam), so the default
+			// selection (router off, miss, or zero-caps RunTeam), so the default
 			// keeps the member's own model.
-			model, windowFn, pc = applyMemberRoute(cfg, provReg, parentProviderID, routedModel, model, windowFn, pc)
+			if selectedModel := strings.TrimSpace(selected.Target.Model); selectedModel != "" {
+				model = selectedModel
+				if selectedProvider := strings.TrimSpace(selected.Target.Provider); selectedProvider != "" && selectedProvider != childProviderID {
+					entry, ok := provReg.Lookup(selectedProvider)
+					if !ok {
+						_ = generationClose()
+						return agent.MemberBuild{}
+					}
+					childProvider, childProviderID = entry.provider, selectedProvider
+				}
+				windowFn = childWindowFor(cfg, provReg, childProviderID, model)
+				pc = promptConfig(modelCfgFor(cfg, model), cfg.gitStatus)
+			}
 		}
 
 		// Team coordination tools ALWAYS, in both branches: they bypass the def
@@ -8618,7 +8664,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 		// compacts/counts on its own model (contamination fix); an inherited-default
 		// member now resolves the parent model's REAL window via childWindowFor too
 		// (issue #64), flooring to 128k only for a genuinely uncatalogued model.
-		eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: providerID, ModelID: model}, windowFn, cat, pc, memberHooks)
+		eng := newChildEngineForProvider(cfg, "member:"+spec.Name, childProvider, session.ProviderModelID{ProviderID: childProviderID, ModelID: model}, windowFn, cat, pc, memberHooks)
 		memberClose := sync.OnceValue(func() error {
 			var mcpErr, generationErr error
 			if mcpClose != nil {
@@ -8629,7 +8675,7 @@ func buildMemberEngine(cfg Config, provReg *providerRegistry, provider port.LLMP
 			}
 			return errors.Join(mcpErr, generationErr)
 		})
-		return agent.MemberBuild{Engine: eng, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
+		return agent.MemberBuild{Engine: eng, Provider: childProviderID, Mode: mode, Limits: memberLimits, Close: memberClose, MCPToolNames: mcpNames, IsolateReadOnly: isolateReadOnly}
 	}
 }
 
