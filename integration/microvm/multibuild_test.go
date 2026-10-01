@@ -53,10 +53,13 @@ func (multiBuildVM) Stop(context.Context) error        { return nil }
 func (multiBuildVM) CleanupBoot(context.Context) error { return nil }
 
 type multiBuildBackend struct {
-	mu     sync.Mutex
-	server *guestagent.RepositoryServer
-	starts int
-	roots  map[string]string // offline mount translation, host path -> guest path
+	mu        sync.Mutex
+	server    *guestagent.RepositoryServer
+	starts    int
+	roots     map[string]string // offline mount translation, host path -> guest path
+	pipes     []net.Conn
+	guestDone sync.WaitGroup
+	closed    bool
 }
 
 func (b *multiBuildBackend) Reconcile(context.Context, string) (microvm.LaunchReconcileResult, error) {
@@ -103,17 +106,30 @@ func (b *multiBuildBackend) Start(_ context.Context, launch microvm.GoMicroVMLau
 
 func (b *multiBuildBackend) dial(ctx context.Context, _ string) (io.ReadWriteCloser, error) {
 	b.mu.Lock()
-	guestServer := b.server
-	b.mu.Unlock()
-	if guestServer == nil {
+	defer b.mu.Unlock()
+	if b.closed || b.server == nil {
 		return nil, errors.New("repository guest is not booted")
 	}
 	host, guest := net.Pipe()
-	go func() {
-		_ = guestServer.ServeAuthenticated(ctx, guest)
-		_ = guest.Close()
-	}()
+	b.pipes = append(b.pipes, host, guest)
+	b.guestDone.Add(1)
+	go func(server *guestagent.RepositoryServer) {
+		defer b.guestDone.Done()
+		defer guest.Close()
+		_ = server.ServeAuthenticated(ctx, guest)
+	}(b.server)
 	return host, nil
+}
+
+func (b *multiBuildBackend) closePipes() {
+	b.mu.Lock()
+	b.closed = true
+	pipes := b.pipes
+	b.pipes = nil
+	b.mu.Unlock()
+	for _, pipe := range pipes {
+		_ = pipe.Close()
+	}
 }
 
 type multiBuildFixture struct {
@@ -218,6 +234,7 @@ func newMultiBuildFixture(t *testing.T) *multiBuildFixture {
 	go func() { done <- daemon.Serve(ctx, listener) }()
 	t.Cleanup(func() {
 		cancel()
+		backend.closePipes()
 		select {
 		case err := <-done:
 			if err != nil && !errors.Is(err, context.Canceled) {
@@ -225,6 +242,16 @@ func newMultiBuildFixture(t *testing.T) *multiBuildFixture {
 			}
 		case <-time.After(5 * time.Second):
 			t.Error("microvmd did not join retained handlers")
+		}
+		guestsDone := make(chan struct{})
+		go func() {
+			backend.guestDone.Wait()
+			close(guestsDone)
+		}()
+		select {
+		case <-guestsDone:
+		case <-time.After(5 * time.Second):
+			t.Error("guest pipe handlers did not stop")
 		}
 	})
 	return &multiBuildFixture{repository: repository, composition: composition, backend: backend, verified: verified, endpoint: "unix://" + socket}

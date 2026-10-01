@@ -2,6 +2,8 @@ package jsonlstore
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -414,6 +416,70 @@ func TestLineageRecoverySettlesHistoricalAndReparentedPartitions(t *testing.T) {
 		if filepath.Ext(entry.Name()) == ".dirty" {
 			t.Fatalf("recovery left dirty partition %q", entry.Name())
 		}
+	}
+}
+
+func TestLineageReadDuringSaveFailsClosedThenRecovers(t *testing.T) {
+	st, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := lineageTestSession(t, "root", session.SessionKindMain, session.SessionRelationship{})
+	if err := st.Create(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	paused := make(chan struct{})
+	resume := make(chan struct{})
+	st.lineagePartitionWriteObserver = func(string) {
+		close(paused)
+		<-resume
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	saved := make(chan error, 1)
+	go func() { saved <- st.Save(ctx, root) }()
+	select {
+	case <-paused:
+	case <-ctx.Done():
+		close(resume)
+		select {
+		case err := <-saved:
+			t.Fatalf("save did not reach partition publication: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("save did not stop after context cancellation")
+		}
+	}
+	query := port.SessionLineageQuery{RootID: root.ID, RootIncarnation: root.Incarnation(), Limit: 10}
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := st.ReadSessionLineage(t.Context(), query)
+		readDone <- err
+	}()
+	var readErr error
+	readBlocked := false
+	select {
+	case readErr = <-readDone:
+	case <-ctx.Done():
+		readBlocked = true
+	}
+	close(resume)
+	if err := <-saved; err != nil {
+		t.Fatal(err)
+	}
+	if readBlocked {
+		select {
+		case <-readDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("read did not stop after save")
+		}
+		t.Fatal("read blocked on a concurrent save")
+	}
+	if !errors.Is(readErr, errLineagePartitionIncomplete) {
+		t.Fatalf("read during save = %v, want incomplete partition", readErr)
+	}
+	result, err := st.ReadSessionLineage(t.Context(), query)
+	if err != nil || len(result.Records) != 1 || result.Records[0].ID != root.ID {
+		t.Fatalf("read after save = %+v, %v", result, err)
 	}
 }
 
