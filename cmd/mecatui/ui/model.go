@@ -19,6 +19,7 @@ import (
 	customization "github.com/stacklok/mecatl/cmd/mecatui/customization"
 	"github.com/stacklok/mecatl/cmd/mecatui/internal/terminaltext"
 	"github.com/stacklok/mecatl/cmd/mecatui/theme"
+	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/bounded"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/internal/scrollback"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/platform"
 	"github.com/stacklok/mecatl/cmd/mecatui/ui/prompttextarea"
@@ -714,9 +715,10 @@ type Model struct {
 	// lets the picker label the current model "picked this session" (vs a launch-time
 	// workspace/global default). Zero until a restart-now pick. Display-only.
 	pickedThisSession client.ModelSelection
-	showHelp          bool           // the "?" keys-&-features overlay is open (caps-driven; see help.go)
-	helpScroll        int            // first visible complete help-body line while the overlay is open
-	stream            *client.Stream // current run's stream
+	showHelp          bool             // the "?" keys-&-features overlay is open (caps-driven; see help.go)
+	helpScroll        int              // first visible wrapped help-body row while the overlay is open
+	helpViewport      bounded.Viewport // root-owned wrapped help-body viewport
+	stream            *client.Stream   // current run's stream
 	cancelRun         context.CancelFunc
 
 	// quitArmed is true after a first ctrl+c on an empty prompt: a second ctrl+c

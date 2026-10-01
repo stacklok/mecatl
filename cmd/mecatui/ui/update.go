@@ -2353,42 +2353,44 @@ func (m Model) onPendingApprovalRecoveryKey(msg tea.KeyPressMsg) (tea.Model, tea
 // phase routing, so navigation never reaches the conversation and every other key
 // remains swallowed.
 func (m Model) onHelpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	m.clampHelpScroll()
-	total, window := m.helpScrollGeometry()
+	total, _ := m.helpScrollGeometry()
 	switch {
 	case key.Matches(msg, m.keys.Help), key.Matches(msg, m.keys.Close):
 		m.showHelp = false
 		m.helpScroll = 0
+		m.helpViewport.Reset()
 		_ = m.prompt.Focus()
 	case key.Matches(msg, m.keys.ScrollD):
-		m.helpScroll = clampScroll(m.helpScroll+window, total, window)
+		m.helpViewport.Move(bounded.PageDown, total)
 	case key.Matches(msg, m.keys.ScrollU):
-		m.helpScroll = clampScroll(m.helpScroll-window, total, window)
+		m.helpViewport.Move(bounded.PageUp, total)
 	case key.Matches(msg, m.keys.Down):
-		m.helpScroll = clampScroll(m.helpScroll+1, total, window)
+		m.helpViewport.Move(bounded.LineDown, total)
 	case key.Matches(msg, m.keys.Up):
-		m.helpScroll = clampScroll(m.helpScroll-1, total, window)
+		m.helpViewport.Move(bounded.LineUp, total)
 	case key.Matches(msg, m.keys.ScrollBottom):
-		m.helpScroll = maxScrollOffset(total, window)
+		m.helpViewport.Move(bounded.End, total)
 	case key.Matches(msg, m.keys.ScrollTop):
-		m.helpScroll = 0
+		m.helpViewport.Move(bounded.Top, total)
 	}
+	m.helpScroll = m.helpViewport.Offset()
 	return m, nil
 }
 
-// helpScrollGeometry derives the same complete rendered lines and window used by
+// helpScrollGeometry derives the same wrapped rows and window used by
 // renderHelpOverlay, keeping key navigation and height-bounded rendering aligned.
-func (m Model) helpScrollGeometry() (total, window int) {
+func (m *Model) helpScrollGeometry() (total, window int) {
 	lines := helpRenderedLines(helpBody(m.deps.Theme, m.caps, m.helpKeyMarkings()))
-	return len(lines), helpWindowHeight(m.deps.Theme, m.vp.Height(), len(lines))
+	_, total, window = helpViewportView(m.deps.Theme, lines, m.width, m.vp.Height(), &m.helpViewport, m.helpKeyMarkings())
+	m.helpScroll = m.helpViewport.Offset()
+	return total, window
 }
 
 // clampHelpScroll keeps a retained offset valid after a relayout changes the
 // viewport geometry. It deliberately preserves a still-valid offset rather than
 // pinning an earlier End selection to the new bottom.
 func (m *Model) clampHelpScroll() {
-	total, window := m.helpScrollGeometry()
-	m.helpScroll = clampScroll(m.helpScroll, total, window)
+	m.helpScrollGeometry()
 }
 
 // selection owner is active.
@@ -3303,6 +3305,7 @@ func (m Model) onIdleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// in onKey; blur the input while it is up.
 		m.showHelp = true
 		m.helpScroll = 0
+		m.helpViewport.Reset()
 		m.prompt.Blur()
 		return m, nil
 	case key.Matches(msg, m.keys.MCPPanel):
